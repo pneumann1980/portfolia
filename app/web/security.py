@@ -131,6 +131,9 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                                  headers={"WWW-Authenticate": 'Basic realm="Portfolia", charset="UTF-8"'})
 
 
+MAX_BODY = 1_000_000  # Formulare der App sind klein; Importe laufen über das Importverzeichnis
+
+
 class CsrfMiddleware:
     """Double-Submit-Cookie als reine ASGI-Middleware (puffert den Body, damit der Endpunkt ihn lesen kann)."""
 
@@ -149,6 +152,10 @@ class CsrfMiddleware:
         scope.setdefault("state", {})["csrf_token"] = token or new_token
         downstream_receive = receive
         if request.method not in self.SAFE:
+            length = request.headers.get("content-length", "")
+            if length.isdigit() and int(length) > MAX_BODY:
+                await PlainTextResponse("Anfrage zu groß", status_code=413)(scope, receive, send)
+                return
             site = request.headers.get("sec-fetch-site")
             if site and site not in ("same-origin", "none"):
                 await PlainTextResponse("Cross-Site-Anfrage abgelehnt", status_code=403)(scope, receive, send)
@@ -161,7 +168,7 @@ class CsrfMiddleware:
                     msg = await receive()
                     body += msg.get("body", b"")
                     more = msg.get("more_body", False)
-                    if len(body) > 1_000_000:
+                    if len(body) > MAX_BODY:
                         await PlainTextResponse("Anfrage zu groß", status_code=413)(scope, receive, send)
                         return
                 sent = (parse_qs(body.decode("utf-8", "replace")).get("csrf_token") or [""])[0]

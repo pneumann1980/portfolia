@@ -57,7 +57,8 @@ def build_zip(path: Path, *, transactions: list[dict[str, Any]], assets: list[di
     if manual_prices is not None:
         files["manual_prices.csv"] = to_csv(manual_prices, MANUAL_COLUMNS)
     if accounts is not None:
-        files["accounts.csv"] = to_csv(accounts, ACCOUNT_COLUMNS)
+        files["accounts.csv"] = to_csv(accounts, ACCOUNT_COLUMNS + sorted({k for a in accounts for k in a}
+                                                                          - set(ACCOUNT_COLUMNS)))
     checksums = {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
     if "bad_checksum" in mutate:
         checksums[mutate["bad_checksum"]] = "0" * 64

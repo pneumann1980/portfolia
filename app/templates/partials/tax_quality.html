@@ -1,0 +1,6 @@
+{% if rows %}
+<p class="hint">Regelwerk: {{ pack_name }}</p>
+<div class="table-wrap"><table><thead><tr><th>Jahr</th><th>Stufe</th><th>Meldung</th></tr></thead><tbody>
+  {% for y, i in rows %}<tr><td><a href="/tax?year={{ y }}#year">{{ y }}</a></td><td><span class="badge {{ 'warn' if i.severity == 'warning' else ('crit' if i.severity == 'critical' else '') }}">{{ {'warning': 'Warnung', 'critical': 'kritisch'}.get(i.severity, i.severity) }}</span></td><td>{{ i.text }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% else %}<p class="hint">Keine steuerrelevanten Auffälligkeiten{% if pack_name %} (Regelwerk: {{ pack_name }}){% endif %}.</p>{% endif %}

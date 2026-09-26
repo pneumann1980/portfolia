@@ -204,13 +204,33 @@ def make_router() -> APIRouter:
         path, name = found
         inline = request.query_params.get("inline") == "1"
         return FileResponse(path, media_type="application/pdf", filename=name,
-                            content_disposition_type="inline" if inline else "attachment")
+                            content_disposition_type="inline" if inline else "attachment",
+                            headers={"Cache-Control": "private, no-store"})
 
     @router.post("/tax/report/{rid}/delete")
     def delete_report(request: Request, rid: int) -> Response:
         ctx = get_ctx(request)
         tax_service(ctx).delete_report(rid)
         return _back(request, "/tax#reports")
+
+    @router.get("/tax/quality", response_class=HTMLResponse)
+    async def tax_quality(request: Request) -> HTMLResponse:
+        ctx = get_ctx(request)
+        rows: list[tuple[int, Any]] = []
+        pack_name = ""
+        if ctx.portfolio() is not None:
+            svc = tax_service(ctx)
+
+            def collect() -> None:
+                nonlocal pack_name
+                pack, inp, _ = svc.overview()
+                pack_name = pack.name
+                for y in reversed(svc.data_years(inp) if inp is not None else []):
+                    _, _, res = svc.compute(y)
+                    rows.extend((y, i) for i in (res.issues if res else []) if i.severity != "info")
+
+            await run_in_threadpool(collect)
+        return render(request, "partials/tax_quality.html", alerts=[], rows=rows[:200], pack_name=pack_name)
 
     @router.get("/api/tax/releases")
     def releases(request: Request) -> JSONResponse:

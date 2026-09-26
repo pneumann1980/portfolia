@@ -356,6 +356,10 @@ class PriceService:
             ts = parse_iso(q["market_time"]) or parse_iso(q["fetched_at"])
             if ts and ts.astimezone(local_tz()).date() == today:
                 n += self.store.upsert_daily(s, [Bar(date=today, close=q["price"])], f"{q['source']}-eod", q["ccy"])
+                meta = self.store.meta(s)
+                if meta is not None and meta["history_from"] and (meta["history_to"] or "") < today.isoformat():
+                    # Tagesschluss aus dem Kurs ersetzt den täglichen Historienabruf (spart CoinGecko-Kontingent)
+                    self.store.set_meta(s, history_to=today.isoformat())
         return n
 
     def _bump(self) -> None:

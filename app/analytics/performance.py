@@ -92,10 +92,12 @@ def xirr(flows: Sequence[tuple[date, float]], guess: float = 0.1) -> float | Non
     cfs = np.array([cf for _, cf in flows])
 
     def f(r: float) -> float:
-        return float(np.sum(cfs / np.power(1.0 + r, ts)))
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+            return float(np.sum(cfs / np.power(1.0 + r, ts)))
 
     def df(r: float) -> float:
-        return float(np.sum(-ts * cfs / np.power(1.0 + r, ts + 1.0)))
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+            return float(np.sum(-ts * cfs / np.power(1.0 + r, ts + 1.0)))
 
     r = guess
     for _ in range(50):

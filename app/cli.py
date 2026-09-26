@@ -4,6 +4,7 @@ Befehle:
   hash-password            Passwort-Hash für AUTH_PASSWORD_HASH erzeugen (PBKDF2-SHA256)
   validate <datei.zip>     Import-Datei prüfen, ohne zu importieren
   sample-zip <ziel.zip>    Beispiel-Import mit anonymisierten Testdaten erzeugen
+  backup                   Sicherung der App-Datenbank nach /data/backups erstellen
 """
 
 from __future__ import annotations
@@ -40,6 +41,15 @@ def main(argv: list[str]) -> None:
 
         path = write_sample_zip(Path(args[0]))
         print(f"Beispiel-Import geschrieben: {path}")
+    elif cmd == "backup":
+        from app.config import Config
+        from app.context import AppContext
+        from app.jobs.maintenance import backup_now
+
+        ctx = AppContext(Config.from_env())
+        ctx.startup()
+        res = backup_now(ctx, "cli")
+        print(f"Sicherung erstellt: {res['file']} ({res['bytes'] // 1024} KB)")
     else:
         print(__doc__)
         sys.exit(1)

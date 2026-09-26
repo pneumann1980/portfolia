@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -10,6 +11,7 @@ from fastapi.responses import HTMLResponse, Response
 
 from app.jobs import tasks
 from app.settings_store import DEFAULTS
+from app.util.timeutil import iso, parse_iso
 from app.web.deps import get_ctx, render
 
 log = logging.getLogger(__name__)
@@ -27,9 +29,20 @@ async def import_check(request: Request) -> HTMLResponse:
     return render(request, "partials/import_result.html", alerts=[], out=out)
 
 
+MANUAL_REFRESH_COOLDOWN_S = 60
+
+
 @router.post("/actions/prices/refresh", response_class=HTMLResponse)
 def refresh_prices(request: Request) -> HTMLResponse:
     ctx = get_ctx(request)
+    # Sperrzeit gegen Mehrfachklicks: jeder erzwungene Abruf kostet Kontingent (CoinGecko, Yahoo)
+    last = parse_iso(ctx.db.get_state("last_manual_refresh"))
+    now = datetime.now(UTC)
+    if last is not None and (now - last).total_seconds() < MANUAL_REFRESH_COOLDOWN_S:
+        wait = int(MANUAL_REFRESH_COOLDOWN_S - (now - last).total_seconds()) + 1
+        return HTMLResponse(f'<span class="badge warn">Bitte {wait} s warten – Kurse werden gerade '
+                            'aktualisiert.</span>')
+    ctx.db.set_state("last_manual_refresh", iso(now))
     if ctx.scheduler is not None:
         ctx.scheduler.trigger("prices_crypto", 0.5, force=True)
         ctx.scheduler.trigger("prices_securities", 0.5, force=True)
@@ -118,6 +131,14 @@ async def save_settings(request: Request) -> Response:
             s.set("llm.model", model[:80])
     elif section == "backup":
         s.set("backup.keep", _int(f.get("keep"), 14, 1, 365))
+        s.set("backup.hour", _int(f.get("hour"), 3, 0, 23))
+        try:
+            from app.jobs.maintenance import prune_backups, reschedule_backup
+
+            reschedule_backup(ctx)
+            prune_backups(ctx, int(s.get("backup.keep", 14)))
+        except ImportError:  # pragma: no cover
+            pass
     else:
         handler = _EXTRA_SECTIONS.get(str(section))
         if handler is not None:

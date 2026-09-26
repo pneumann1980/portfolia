@@ -308,32 +308,12 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
     meta_rows = ctx.db.q("SELECT series, history_from, history_to, history_status, history_error, last_history_fetch "
                          "FROM series_meta WHERE history_status IS NOT NULL ORDER BY history_status DESC, series")
     usage = ctx.db.q("SELECT * FROM api_usage ORDER BY period DESC, provider LIMIT 40")
-    tax_quality = _tax_quality(ctx)
-    return render(request, "quality.html", active="quality", tax_quality=tax_quality, imports=imports, cur=cur,
+    return render(request, "quality.html", active="quality", imports=imports, cur=cur,
                   active_id=active,
                   report=report, diff=diff, check=check, issues=issues, val=val, ledger_issues=ledger_issues[:300],
                   sources=sources, events=events, jobs=jobs, next_runs=next_runs, cg=ctx.prices.cg_budget(),
                   hist=hist, meta_rows=meta_rows, usage=usage, secrets=ctx.config.secrets.status(),
                   cash_tracked=(led.cash_tracked if led else {}))
-
-
-def _tax_quality(ctx: Any) -> dict[str, Any] | None:
-    """Warnungen des Steuer-Regelwerks je Jahr (ohne reine Hinweise) – optional, darf nie die Seite brechen."""
-    if ctx.portfolio() is None:
-        return None
-    try:
-        from app.tax.service import tax_service
-
-        svc = tax_service(ctx)
-        pack, inp, _ = svc.overview()
-        rows = []
-        for y in reversed(svc.data_years(inp) if inp is not None else []):
-            _, _, res = svc.compute(y)
-            rows += [(y, i) for i in (res.issues if res else []) if i.severity != "info"]
-        return {"pack": pack.name, "years": rows[:200]}
-    except Exception as e:
-        log.warning("Steuerhinweise nicht verfügbar: %s", e)
-        return None
 
 
 # -- Einstellungen ---------------------------------------------------------------------------------------
@@ -344,9 +324,16 @@ def settings_page(request: Request, saved: str = "") -> HTMLResponse:
     pf = ctx.portfolio()
     led = ctx.ledger()
     accounts = pf.all_accounts() if pf else []
+    backups: list[dict[str, Any]] = []
+    try:
+        from app.jobs.maintenance import list_backups
+
+        backups = list_backups(ctx)
+    except Exception as e:  # Wartungsmodul optional
+        log.debug("Backups nicht lesbar: %s", e)
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,
                   detected_cash=(led.cash_tracked if led else {}), secrets=ctx.config.secrets.status(),
-                  config=ctx.config, saved=saved)
+                  config=ctx.config, saved=saved, backups=backups)
 
 
 def fmt_ts(ts: str | None) -> str:

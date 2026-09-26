@@ -80,12 +80,21 @@
 </section>
 
 <section class="card" id="backup">
-  <div class="card-head"><h2>Backups</h2></div>
+  <div class="card-head"><h2>Backups</h2>
+    <div class="row"><button class="btn sm" hx-post="/actions/backup" hx-target="#backup-msg" hx-indicator="#bk-spin">Jetzt sichern</button>
+      <span id="bk-spin" class="htmx-indicator spinner"></span><span id="backup-msg"></span></div></div>
   <form method="post" action="/settings/save" class="grid-3">
-    <label class="field">Anzahl Sicherungen (täglich)<input type="number" min="1" max="365" name="keep" value="{{ s['backup.keep'] }}"></label>
+    <label class="field">Anzahl Sicherungen<input type="number" min="1" max="365" name="keep" value="{{ s['backup.keep'] }}"></label>
+    <label class="field">Uhrzeit (Stunde, täglich)<input type="number" min="0" max="23" name="hour" value="{{ s['backup.hour'] }}"></label>
     <div>{{ save('backup') }}</div>
   </form>
-  <p class="hint">Tägliche Kopie von <code>app.sqlite</code> nach <code>/data/backups</code>.</p>
+  <p class="hint">Tägliche, geprüfte Kopie von <code>app.sqlite</code> (gzip) nach <code>/data/backups</code>. Wiederherstellen:
+    Container stoppen, Datei entpacken und als <code>/data/app.sqlite</code> ablegen (vorher <code>app.sqlite-wal</code>/<code>-shm</code> entfernen), Container starten.</p>
+  {% if backups %}
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Datei</th><th>Erstellt</th><th class="num">Größe</th></tr></thead><tbody>
+    {% for b in backups[:20] %}<tr><td class="mono">{{ b.name }}</td><td>{{ b.created|datetime_de }}</td><td class="num">{{ (b.bytes / 1024)|round|int }} KB</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="hint">Noch keine Sicherung vorhanden.</p>{% endif %}
 </section>
 
 {% block extra_settings %}{% endblock %}

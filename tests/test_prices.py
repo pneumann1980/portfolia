@@ -144,3 +144,24 @@ def test_coingecko_budget_throttle(db):
     assert due is False and "gedrosselt" in why
     q.add(20)
     assert svc.crypto_due() == (False, "Monatskontingent erschöpft")
+
+
+def test_eod_close_advances_history_so_no_daily_refetch(db, monkeypatch):
+    from app.ledger.engine import run_ledger
+    from app.util.timeutil import today_local
+    from tests.helpers import portfolio, tx
+
+    svc = _service(db)
+    today = today_local()
+    pf = portfolio([tx("b", "2026-01-05", "buy", frm=("Börse", "EUR", 100), to=("Börse", "BTC", "0.001"),
+                       value=100)])
+    led = run_ledger(pf)
+    s = svc.series_for(pf.asset("BTC"))
+    old = (today - timedelta(days=3)).isoformat()
+    svc.store.set_meta(s, history_from="2025-12-29", history_to=old, last_history_fetch="2026-01-01T00:00:00Z",
+                       history_status="ok")
+    svc.store.upsert_quotes([Quote(s, 61000.0, "EUR", datetime.now(UTC), "coingecko")])
+    assert svc._needs(s, date(2025, 12, 29), today, False)[0]  # ohne Tagesschluss: Abruf nötig
+    assert svc.write_eod_closes(pf, led) == 1
+    assert svc.store.meta(s)["history_to"] == today.isoformat()
+    assert not svc._needs(s, date(2025, 12, 29), today, False)[0]

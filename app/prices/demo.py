@@ -9,9 +9,32 @@ from __future__ import annotations
 import hashlib
 import math
 import random
+from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
+import numpy as np
+
 from app.prices.models import Bar, IntradayBar, Quote
+
+CACHE_SERIES = 48  # kompakte Pfade (≈ 150 KB je Serie über 10 Jahre); ältere werden bei Bedarf neu erzeugt
+
+
+@dataclass(frozen=True)
+class _Path:
+    day: np.ndarray  # Tage seit Start (int32)
+    close: np.ndarray
+    open: np.ndarray
+    high: np.ndarray
+    low: np.ndarray
+    factor: np.ndarray
+
+    def __len__(self) -> int:
+        return len(self.day)
+
+    def bar(self, start: date, i: int) -> Bar:
+        return Bar(date=start + timedelta(days=int(self.day[i])), close=float(self.close[i]), open=float(self.open[i]),
+                   high=float(self.high[i]), low=float(self.low[i]), volume=None, split_factor=float(self.factor[i]))
 
 
 class DemoProvider:
@@ -21,15 +44,17 @@ class DemoProvider:
         self.anchors = anchors or {}
         self.splits: dict[str, list[tuple[date, float]]] = {}
         self.start = start
-        self._cache: dict[str, dict[date, Bar]] = {}
+        self._cache: OrderedDict[str, _Path] = OrderedDict()
 
     def _rng(self, series: str) -> random.Random:
         seed = int(hashlib.sha256(series.encode()).hexdigest()[:12], 16)
         return random.Random(seed)
 
-    def _path(self, series: str) -> dict[date, Bar]:
-        if series in self._cache:
-            return self._cache[series]
+    def _path(self, series: str) -> _Path:
+        hit = self._cache.get(series)
+        if hit is not None:
+            self._cache.move_to_end(series)
+            return hit
         rng = self._rng(series)
         crypto = series.startswith("demo:cg:") or series.startswith("cg:")
         vol = 0.024 if crypto else 0.011
@@ -46,8 +71,8 @@ class DemoProvider:
             shift = math.log(max(ap, 1e-9)) - logp[idx]
         else:
             shift = math.log(10 + rng.random() * 200)
-        out: dict[date, Bar] = {}
         splits = self.splits.get(series, [])
+        days, closes, opens, highs, lows, factors = [], [], [], [], [], []
         for i, lp in enumerate(logp):
             d = self.start + timedelta(days=i)
             # Pfad ist auf heutiger Stückbasis; vor Splits wie gehandelt (× Verhältnis) ausgeben
@@ -61,22 +86,32 @@ class DemoProvider:
             lo = min(o, c) * (1 - abs(rng.gauss(0, vol * 0.5)))
             if not crypto and d.weekday() >= 5:
                 continue
-            out[d] = Bar(date=d, close=round(c, 6), open=round(o, 6), high=round(h, 6), low=round(lo, 6), volume=None,
-                         split_factor=factor)
-        self._cache[series] = out
-        return out
+            days.append(i)
+            closes.append(round(c, 6))
+            opens.append(round(o, 6))
+            highs.append(round(h, 6))
+            lows.append(round(lo, 6))
+            factors.append(factor)
+        path = _Path(np.array(days, dtype=np.int32), np.array(closes), np.array(opens), np.array(highs),
+                     np.array(lows), np.array(factors))
+        self._cache[series] = path
+        while len(self._cache) > CACHE_SERIES:
+            self._cache.popitem(last=False)
+        return path
 
     def history(self, series: str, start: date, end: date | None = None) -> list[Bar]:
         end = end or date.today()
-        return [b for d, b in sorted(self._path(series).items()) if start <= d <= end]
+        p = self._path(series)
+        i0 = int(np.searchsorted(p.day, (start - self.start).days, side="left"))
+        i1 = int(np.searchsorted(p.day, (end - self.start).days, side="right"))
+        return [p.bar(self.start, i) for i in range(i0, i1)]
 
     def quote(self, series: str) -> Quote | None:
         path = self._path(series)
-        if not path:
+        if not len(path):
             return None
-        days = sorted(path)
-        last = path[days[-1]]
-        prev = path[days[-2]] if len(days) > 1 else last
+        last = path.bar(self.start, len(path) - 1)
+        prev = path.bar(self.start, len(path) - 2) if len(path) > 1 else last
         # leichte Intraday-Bewegung
         rng = self._rng(series + datetime.now(UTC).strftime("%Y%m%d%H%M")[:-1])
         price = last.close * (1 + rng.gauss(0, 0.004))

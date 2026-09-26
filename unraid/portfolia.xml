@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Portfolia</Name>
+  <Repository>ghcr.io/pneumann1980/portfolia:latest</Repository>
+  <Registry>https://github.com/pneumann1980/portfolia/pkgs/container/portfolia</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/pneumann1980/portfolia/issues</Support>
+  <Project>https://github.com/pneumann1980/portfolia</Project>
+  <Overview>Selbst gehostetes Portfolio-Dashboard für Aktien, ETFs und Kryptowerte (nur LAN). Liest einen kuratierten Import (ZIP) read-only, bewertet mit Yahoo Finance, CoinGecko und EZB-Kursen, berechnet TTWROR/IRR, Haltefristen und Steueraufstellungen (PDF) und zeigt passende News und YouTube-Videos. Keine Telemetrie, keine Schreibzugriffe auf Broker oder Börsen. Steuerfunktionen sind informativ – keine Steuerberatung.</Overview>
+  <Category>Tools: Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/pneumann1980/portfolia/main/unraid/portfolia.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/pneumann1980/portfolia/main/app/static/img/icon-256.png</Icon>
+  <ExtraParams>--init</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Eine Import-Datei (ZIP gemäß Datenvertrag, siehe README) im Importordner. Ohne API-Schlüssel funktionieren Yahoo- und EZB-Kurse; für Krypto-Kurse wird ein kostenloser CoinGecko-Demo-Schlüssel empfohlen.</Requires>
+  <Config Name="Web-Oberfläche" Target="8080" Default="8080" Mode="tcp" Description="Port der Weboberfläche (nur im LAN freigeben)." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Daten (appdata)" Target="/data" Default="/mnt/user/appdata/portfolia" Mode="rw" Description="App-Datenbank, Kurs-Cache, Backups, Berichte, sources.yaml, lokale Steuerparameter (tax_rules)." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/portfolia</Config>
+  <Config Name="Import (nur lesen)" Target="/import" Default="/mnt/user/appdata/portfolia-import" Mode="ro" Description="Ordner mit den Import-ZIPs (wird alle 5 Minuten geprüft, nur lesend eingebunden). Nicht innerhalb des Datenordners ablegen." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/portfolia-import</Config>
+  <Config Name="Zeitzone" Target="TZ" Default="Europe/Berlin" Mode="" Description="Zeitzone für Tagesgrenzen, Zeitpläne und Anzeige." Type="Variable" Display="always" Required="true" Mask="false">Europe/Berlin</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Benutzer-ID, unter der die App läuft (Unraid: 99 = nobody)." Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Gruppen-ID (Unraid: 100 = users)." Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
+  <Config Name="CoinGecko API-Key" Target="COINGECKO_API_KEY" Default="" Mode="" Description="Kostenloser Demo-Schlüssel von coingecko.com (Budget ca. 10.000 Aufrufe/Monat, die App drosselt ab 80 %)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="CoinGecko-Tarif" Target="COINGECKO_PLAN" Default="demo" Mode="" Description="demo oder pro (bestimmt API-Adresse und Header)." Type="Variable" Display="advanced" Required="false" Mask="false">demo</Config>
+  <Config Name="Finnhub API-Key" Target="FINNHUB_API_KEY" Default="" Mode="" Description="Optional: Unternehmensnews je Aktie (finnhub.io)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="YouTube API-Key" Target="YOUTUBE_API_KEY" Default="" Mode="" Description="Optional: Kanal-Auflösung und Discovery (YouTube Data API v3). Ohne Schlüssel werden Kanal-RSS-Feeds genutzt." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Anthropic API-Key" Target="ANTHROPIC_API_KEY" Default="" Mode="" Description="Optional: KI-Zusammenfassungen (standardmäßig aus, in den Einstellungen aktivieren; hartes Tagesbudget). Es werden nur Asset-Namen und Artikeltexte gesendet." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="CryptoPanic API-Key" Target="CRYPTOPANIC_API_KEY" Default="" Mode="" Description="Optional: Krypto-News-Aggregator." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Authentifizierung" Target="AUTH_MODE" Default="none" Mode="" Description="none (nur LAN bzw. hinter Reverse-Proxy mit eigener Anmeldung) oder basic." Type="Variable" Display="always" Required="false" Mask="false">none</Config>
+  <Config Name="Benutzername" Target="AUTH_USER" Default="" Mode="" Description="Nur bei AUTH_MODE=basic." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Passwort-Hash" Target="AUTH_PASSWORD_HASH" Default="" Mode="" Description="Nur bei AUTH_MODE=basic. Erzeugen: docker exec -it Portfolia python -m app hash-password" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Log-Level" Target="LOG_LEVEL" Default="INFO" Mode="" Description="DEBUG, INFO, WARNING, ERROR (strukturierte Logs auf stdout)." Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+  <Config Name="Basiswährung" Target="BASE_CURRENCY" Default="EUR" Mode="" Description="Derzeit nur EUR." Type="Variable" Display="advanced" Required="false" Mask="false">EUR</Config>
+  <Config Name="Reverse-Proxy IPs" Target="FORWARDED_ALLOW_IPS" Default="127.0.0.1" Mode="" Description="IP(s) des Reverse-Proxys, dessen X-Forwarded-Header vertraut wird (z. B. 172.17.0.1)." Type="Variable" Display="advanced" Required="false" Mask="false">127.0.0.1</Config>
+  <Config Name="Unterpfad" Target="ROOT_PATH" Default="" Mode="" Description="Nur bei Betrieb unter einem Unterpfad hinter einem Reverse-Proxy, z. B. /portfolia." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Demo-Modus" Target="DEMO_MODE" Default="false" Mode="" Description="true = synthetische Kurse ohne Internetzugriff (nur zum Ausprobieren)." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+</Container>
