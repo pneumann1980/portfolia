@@ -34,4 +34,5 @@ testpaths = ["tests"]
 addopts = "-q"
 filterwarnings = [
   "ignore::DeprecationWarning:feedparser.*",
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
 ]

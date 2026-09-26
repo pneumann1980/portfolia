@@ -18,10 +18,13 @@ import secrets
 import threading
 import time
 from collections import defaultdict
+from urllib.parse import parse_qs
 
+from starlette.datastructures import MutableHeaders
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 log = logging.getLogger(__name__)
 
@@ -128,25 +131,60 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                                  headers={"WWW-Authenticate": 'Basic realm="Portfolia", charset="UTF-8"'})
 
 
-class CsrfMiddleware(BaseHTTPMiddleware):
+class CsrfMiddleware:
+    """Double-Submit-Cookie als reine ASGI-Middleware (puffert den Body, damit der Endpunkt ihn lesen kann)."""
+
     SAFE = frozenset({"GET", "HEAD", "OPTIONS"})
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope)
         token = request.cookies.get(CSRF_COOKIE)
+        new_token = None if token else secrets.token_urlsafe(24)
+        scope.setdefault("state", {})["csrf_token"] = token or new_token
+        downstream_receive = receive
         if request.method not in self.SAFE:
             site = request.headers.get("sec-fetch-site")
             if site and site not in ("same-origin", "none"):
-                return PlainTextResponse("Cross-Site-Anfrage abgelehnt", status_code=403)
+                await PlainTextResponse("Cross-Site-Anfrage abgelehnt", status_code=403)(scope, receive, send)
+                return
             sent = request.headers.get("x-csrf-token")
-            if not sent and request.headers.get("content-type", "").startswith(
-                    ("application/x-www-form-urlencoded", "multipart/form-data")):
-                form = await request.form()
-                sent = str(form.get("csrf_token") or "")
+            if not sent and request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
+                body = b""
+                more = True
+                while more:
+                    msg = await receive()
+                    body += msg.get("body", b"")
+                    more = msg.get("more_body", False)
+                    if len(body) > 1_000_000:
+                        await PlainTextResponse("Anfrage zu groß", status_code=413)(scope, receive, send)
+                        return
+                sent = (parse_qs(body.decode("utf-8", "replace")).get("csrf_token") or [""])[0]
+                replayed = False
+
+                async def replay() -> Message:
+                    nonlocal replayed
+                    if not replayed:
+                        replayed = True
+                        return {"type": "http.request", "body": body, "more_body": False}
+                    return await receive()
+
+                downstream_receive = replay
             if not token or not sent or not hmac.compare_digest(token, sent):
-                return PlainTextResponse("CSRF-Token fehlt oder ist ungültig – Seite neu laden.", status_code=403)
-        request.state.csrf_token = token or secrets.token_urlsafe(24)
-        response = await call_next(request)
-        if not token:
-            response.set_cookie(CSRF_COOKIE, request.state.csrf_token, httponly=False, samesite="strict",
-                                secure=request.url.scheme == "https", path="/")
-        return response
+                await PlainTextResponse("CSRF-Token fehlt oder ist ungültig – Seite neu laden.",
+                                        status_code=403)(scope, receive, send)
+                return
+
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start" and new_token:
+                headers = MutableHeaders(scope=message)
+                secure = "; Secure" if scope.get("scheme") == "https" else ""
+                headers.append("set-cookie", f"{CSRF_COOKIE}={new_token}; Path=/; SameSite=Strict{secure}")
+            await send(message)
+
+        await self.app(scope, downstream_receive, send_wrapper)

@@ -169,8 +169,9 @@ def asset_chart(request: Request, asset_id: str, range: str = "1J", kind: str = 
         out["candles"] = candles
         out["ccy"] = ccy
         out["has_ohlc"] = any(r["open"] is not None for r in rows)
-    # Transaktionsmarker (Kauf/Verkauf) mit Kurs je Einheit (split-bereinigt auf heutige Stückbasis)
-    split_rows = {r["date"]: r["split_factor"] for r in (ctx.store.daily_range(s, since, today) if s else [])}
+    # Transaktionsmarker (Kauf/Verkauf) mit Kurs je Einheit, split-bereinigt auf heutige Stückbasis
+    # (Splits aus den Kapitalmaßnahmen des Ledgers – unabhängig von der Kursquelle)
+    splits = pf.split_events().get(asset_id, [])
     markers = []
     for t in pf.txs:
         if t.date < since or not t.value_eur:
@@ -183,7 +184,10 @@ def asset_chart(request: Request, asset_id: str, range: str = "1J", kind: str = 
             side, qty = "sell", t.from_qty
         if side is None or not qty:
             continue
-        sf = split_rows.get(t.date.isoformat(), 1.0) or 1.0
+        sf = 1.0
+        for sd, ratio in splits:
+            if sd > t.date:
+                sf *= ratio
         unit = float(t.value_eur) / float(qty) / sf
         ts = t.ts.isoformat() if rng in ("1T", "1W") else t.date.isoformat()
         markers.append({"t": ts, "side": side, "price": _r(unit, 6), "qty": float(qty) * sf,

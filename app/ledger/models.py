@@ -187,3 +187,22 @@ class Portfolio:
     def depot_group(self, account: str) -> str:
         info = self.accounts.get(account)
         return (info.depot_group if info and info.depot_group else account)
+
+    def split_events(self) -> dict[str, list[tuple[date, float]]]:
+        """Aktiensplits aus Kapitalmaßnahmen (gleiches Asset, Verhältnis ≠ 1) je Asset, chronologisch."""
+        out: dict[str, list[tuple[date, float]]] = {}
+        for t in self.txs:
+            if (t.type == "corporate_action" and t.from_asset and t.from_asset == t.to_asset and t.from_qty
+                    and t.to_qty and t.from_qty != t.to_qty):
+                out.setdefault(t.from_asset, []).append((t.date, float(t.to_qty / t.from_qty)))
+        for v in out.values():
+            v.sort()
+        return out
+
+    def split_factor_after(self, asset_id: str, d: date) -> float:
+        """Kumuliertes Split-Verhältnis aller Splits *nach* Tag d (für Umrechnung auf heutige Stückbasis)."""
+        f = 1.0
+        for sd, ratio in self.split_events().get(asset_id, []):
+            if sd > d:
+                f *= ratio
+        return f

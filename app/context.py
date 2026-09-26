@@ -100,9 +100,12 @@ class AppContext:
                     if asset and qty and not pf.asset(asset).is_fiat:
                         s = self.prices.series_for(pf.asset(asset))
                         if s:
-                            anchors[s] = (t.date, float(t.value_eur / qty))
+                            # Anker auf heutige Stückbasis umrechnen (Splits nach dem Handelstag)
+                            anchors[s] = (t.date, float(t.value_eur / qty) / pf.split_factor_after(asset, t.date))
         assert self.demo is not None
         self.demo.anchors = anchors
+        self.demo.splits = {s: ev for aid, ev in pf.split_events().items()
+                            if (s := self.prices.series_for(pf.asset(aid)))}
         self.demo._cache.clear()
 
     def engine_options(self, scope: str | None = None) -> EngineOptions:

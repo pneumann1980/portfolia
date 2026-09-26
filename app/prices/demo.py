@@ -19,6 +19,7 @@ class DemoProvider:
 
     def __init__(self, anchors: dict[str, tuple[date, float]] | None = None, start: date = date(2015, 1, 1)) -> None:
         self.anchors = anchors or {}
+        self.splits: dict[str, list[tuple[date, float]]] = {}
         self.start = start
         self._cache: dict[str, dict[date, Bar]] = {}
 
@@ -46,15 +47,22 @@ class DemoProvider:
         else:
             shift = math.log(10 + rng.random() * 200)
         out: dict[date, Bar] = {}
+        splits = self.splits.get(series, [])
         for i, lp in enumerate(logp):
             d = self.start + timedelta(days=i)
-            c = math.exp(lp + shift)
+            # Pfad ist auf heutiger Stückbasis; vor Splits wie gehandelt (× Verhältnis) ausgeben
+            factor = 1.0
+            for sd, ratio in splits:
+                if sd > d:
+                    factor *= ratio
+            c = math.exp(lp + shift) * factor
             o = c * math.exp(vol * 0.3 * rng.gauss(0, 1))
             h = max(o, c) * (1 + abs(rng.gauss(0, vol * 0.5)))
             lo = min(o, c) * (1 - abs(rng.gauss(0, vol * 0.5)))
             if not crypto and d.weekday() >= 5:
                 continue
-            out[d] = Bar(date=d, close=round(c, 6), open=round(o, 6), high=round(h, 6), low=round(lo, 6), volume=None)
+            out[d] = Bar(date=d, close=round(c, 6), open=round(o, 6), high=round(h, 6), low=round(lo, 6), volume=None,
+                         split_factor=factor)
         self._cache[series] = out
         return out
 
