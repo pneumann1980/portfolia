@@ -1,0 +1,7 @@
+# Neutrales Regelwerk: keine Steuerparameter, nur Metadaten.
+pack:
+  id: neutral
+  version: "1.0"
+  updated: "2026-09-26"
+rules:
+  2000: {}

@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block title %}Steuern & Haltefristen{% endblock %}
+{% block heading %}Steuern &amp; Haltefristen{% endblock %}
+
+{% macro gtable(t, limit=150, compact=false) -%}
+{% if t and t.rows %}
+<div class="table-wrap">
+<table class="{{ 'compact' if compact }}">
+  <thead><tr>{% for c in t.columns %}<th class="{{ 'num' if c.kind in ('eur','qty','int','pct') }}">{{ c.title }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for r in t.rows[:limit] %}
+    <tr>{% for c in t.columns %}<td class="{{ 'num' if c.kind in ('eur','qty','int','pct') }}{{ ' nowrap' if c.kind in ('date','eur') }}">
+      {%- if c.key == 'asset' and r.asset_id is defined -%}<a href="{{ asset_url(r.asset_id) }}">{{ r[c.key] }}</a>
+      {%- elif c.kind == 'eur' and r[c.key] is not none -%}<span class="{{ 'delta ' ~ (r[c.key]|tone) if c.key in ('gain','gain_pending','c_net','k_share','k_other') }}">{{ r[c.key]|tcell(c.kind) }}</span>
+      {%- else -%}{{ r[c.key]|tcell(c.kind) }}{%- endif -%}</td>{% endfor %}</tr>
+  {% endfor %}
+  </tbody>
+  {% if t.totals %}<tfoot><tr>{% for c in t.columns %}<td class="{{ 'num' if c.kind in ('eur','qty','int','pct') }}"><b>{{ t.totals[c.key]|tcell(c.kind) if t.totals[c.key] is defined else '' }}</b></td>{% endfor %}</tr></tfoot>{% endif %}
+</table>
+</div>
+{% if t.rows|length > limit %}<p class="hint">{{ limit }} von {{ t.rows|length }} Zeilen angezeigt – vollständig im PDF.</p>{% endif %}
+{% else %}<p class="hint">Keine Vorgänge.</p>{% endif %}
+{%- endmacro %}
+
+{% macro meters(ms) -%}
+{% for m in ms %}
+  <div class="tax-meter">
+    <div class="row between"><span>{{ m.label }}</span>
+      <span class="nowrap"><b>{{ m.value|eur }}</b> / {{ m.limit|eur(0) }}</span></div>
+    <div class="meter {{ m.state if m.state != 'ok' }}" role="meter" aria-valuenow="{{ m.value }}" aria-valuemin="0" aria-valuemax="{{ m.limit }}" aria-label="{{ m.label }}"><div style="width:{{ [m.ratio * 100, 100]|min }}%"></div></div>
+    <div class="hint">
+      {% if m.kind == 'freigrenze' %}
+        {% if m.value <= 0 %}keine positiven Einkünfte{% elif m.state == 'crit' %}<span class="badge crit">Freigrenze erreicht</span> Betrag voll steuerpflichtig{% else %}<span class="badge good">unter der Freigrenze</span> steuerfrei{% if m.state == 'warn' %} – Grenze fast erreicht{% endif %}{% endif %}
+      {% else %}{{ 'ausgeschöpft' if m.state == 'warn' else 'nicht ausgeschöpft' }}{% endif %}
+      {% if m.note %} · {{ m.note }}{% endif %}
+    </div>
+  </div>
+{% endfor %}
+{%- endmacro %}
+
+{% block content %}
+<div class="alert"><span class="icon">i</span><div><b>Informativ – keine Steuerberatung.</b> Berechnung nach Regelwerk
+  „{{ pack.name }}“ (Version {{ pack.version }}). Maßgeblich sind amtliche Vordrucke/ELSTER und Steuerbescheinigungen.</div></div>
+{% if override_error %}<div class="alert crit"><span class="icon">!</span><div>Lokale Steuerparameter ignoriert: {{ override_error }}</div></div>{% endif %}
+{% if saved %}<div class="alert good"><span class="icon">✓</span><div>{% if saved.startswith('report') %}Bericht erzeugt – Download unten.{% else %}Gespeichert.{% endif %}</div></div>{% endif %}
+
+{% if ov and ov.has_holding_period %}
+{% for i in ov.issues %}<div class="alert warn"><span class="icon">!</span><div>{{ i.text }}</div></div>{% endfor %}
+<section class="kpis" aria-label="Haltefristen Kryptowerte">
+  {% for k in ov.kpis %}
+  <div class="kpi"><div class="label">{{ k.label }}{% if k.hint %} <span title="{{ k.hint }}">ⓘ</span>{% endif %}</div>
+    <div class="value">{% if k.kind == 'date' %}{{ k.value|date_de if k.value else '–' }}{% elif k.kind == 'int' %}{{ k.value }}{% else %}<span class="{{ 'delta ' ~ k.tone if k.tone }}">{{ k.value|eur_kpi }}</span>{% endif %}</div>
+    <div class="sub">{{ k.sub }}</div></div>
+  {% endfor %}
+</section>
+
+<div class="grid-2" style="margin-top:16px">
+  <section class="card">
+    <div class="card-head"><h2>Freigaben der nächsten 12 Monate</h2><span class="hint">Wert zu aktuellen Kursen, der steuerfrei wird</span></div>
+    <div class="chart" data-chart="releases" data-src="/api/tax/releases" role="img" aria-label="Balkendiagramm: Wert der Kryptowerte, deren Haltefrist je Monat endet"></div>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Nächste Freigaben</h2><span class="hint">Lots nach Ende der Haltefrist</span></div>
+    {% if ov.releases %}
+    <div class="table-wrap"><table class="compact">
+      <thead><tr><th>Steuerfrei ab</th><th>Kryptowert · Wallet</th><th class="num">Menge</th><th class="num">Wert</th><th class="num">G/V</th></tr></thead>
+      <tbody>{% for r in ov.releases[:12] %}
+        <tr><td class="nowrap">{{ r.date|date_de }}<div class="hint">in {{ (r.date - today).days }} Tagen</div></td>
+          <td><a href="{{ asset_url(r.asset_id) }}">{{ r.asset_id.split('#')[0] }}</a><div class="hint">{{ r.account }}</div></td>
+          <td class="num">{{ r.qty|qty }}</td><td class="num nowrap">{{ r.value|eur }}</td>
+          <td class="num nowrap"><span class="delta {{ r.gain|tone }}">{{ r.gain|eur(2, true) }}</span></td></tr>
+      {% endfor %}</tbody></table></div>
+      {% if ov.releases|length > 12 %}<p class="hint">{{ ov.releases|length - 12 }} weitere Freigaben in den nächsten 12 Monaten.</p>{% endif %}
+    {% else %}<p class="hint">Keine Lots, deren Haltefrist in den nächsten 12 Monaten endet.</p>{% endif %}
+  </section>
+</div>
+
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Haltefristen je Kryptowert und Wallet</h2>{% for n in ov.notes %}<span class="hint">{{ n }}</span>{% endfor %}</div>
+  {{ gtable(ov.positions, 200, true) }}
+</section>
+{% endif %}
+
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Realisiert je Jahr</h2><span class="hint">Krypto bis/über 1 Jahr Haltedauer, Leistungen § 22 Nr. 3, Kapitalerträge</span></div>
+  {% if ov and ov.years %}
+  <div class="table-wrap"><table class="compact">
+    <thead><tr>{% for c in ov.years.columns %}<th class="{{ 'num' if c.kind != 'text' }}">{{ c.title }}</th>{% endfor %}{% if ov.meters_by_year %}<th>Freigrenzen</th>{% endif %}</tr></thead>
+    <tbody>{% for r in ov.years.rows %}
+      <tr class="{{ 'active' if r.year == year }}">{% for c in ov.years.columns %}<td class="num nowrap">
+        {%- if c.key == 'year' %}<a href="/tax?year={{ r.year }}#year">{{ r.year }}</a>{% elif c.kind == 'eur' %}<span class="delta {{ r[c.key]|tone if c.key in ('c_net','k_share','k_other') }}">{{ r[c.key]|tcell('eur') }}</span>{% else %}{{ r[c.key]|tcell(c.kind) }}{% endif -%}
+      </td>{% endfor %}
+      {% if ov.meters_by_year %}<td class="nowrap">{% for m in ov.meters_by_year.get(r.year, [])[:2] %}<span class="badge {{ {'crit': 'crit', 'warn': 'warn'}.get(m.state, 'good') }}" title="{{ m.label }}: {{ m.value|eur }} / {{ m.limit|eur(0) }}">{{ '§ 23' if m.id == 'fg23' else '§ 22 Nr. 3' }} {{ (m.ratio * 100)|round|int }} %</span> {% endfor %}</td>{% endif %}
+      </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="hint">Keine realisierten Vorgänge.</p>{% endif %}
+</section>
+
+<section class="card" id="year" style="margin-top:16px">
+  <div class="card-head"><h2>Steuerjahr {{ year }}</h2>
+    <nav class="seg" aria-label="Jahr wählen">{% for y in years|reverse %}<a class="{{ 'active' if y == year }}" href="/tax?year={{ y }}#year">{{ y }}</a>{% endfor %}</nav></div>
+  {% if res %}
+  {% for i in res.issues if i.severity != 'info' %}<div class="alert warn"><span class="icon">!</span><div>{{ i.text }}</div></div>{% endfor %}
+  <div class="grid-2">
+    <div>
+      <h3>Zusammenfassung</h3>
+      <table class="compact lines">
+        <tbody>{% for l in res.summary %}
+          {% if l.kind == 'text' and l.amount is none %}<tr class="group"><th colspan="2">{{ l.label }}</th></tr>
+          {% else %}<tr class="{{ 'strong' if l.strong }}"><td style="padding-left:{{ 8 + l.indent * 14 }}px">{{ l.label }}{% if l.note %}<div class="hint">{{ l.note }}</div>{% endif %}</td>
+            <td class="num nowrap">{{ l.amount|tcell('eur') }}</td></tr>{% endif %}
+        {% endfor %}</tbody>
+      </table>
+    </div>
+    <div>
+      <h3>Frei- und Pauschbeträge</h3>
+      {{ meters(res.meters) }}
+      {% if res.estimate %}
+      <h3 style="margin-top:14px">Schätzung (vereinfacht)</h3>
+      <table class="compact lines"><tbody>{% for l in res.estimate %}
+        {% if l.kind == 'text' and l.amount is none %}<tr class="group"><th colspan="2">{{ l.label }}</th></tr>
+        {% else %}<tr class="{{ 'strong' if l.strong }}"><td style="padding-left:{{ 8 + l.indent * 14 }}px">{{ l.label }}{% if l.note %}<div class="hint">{{ l.note }}</div>{% endif %}</td><td class="num nowrap">{{ l.amount|tcell('eur') }}</td></tr>{% endif %}
+      {% endfor %}</tbody></table>
+      {% endif %}
+    </div>
+  </div>
+
+  <h3 style="margin-top:16px">Übertragungshilfe</h3>
+  {% if res.fields %}
+  {% set any_line = res.fields|selectattr('line')|list|length > 0 %}
+  <div class="table-wrap"><table class="compact">
+    <thead><tr><th>Formular · Abschnitt / Feld</th>{% if any_line %}<th>Zeile</th>{% endif %}<th class="num">Wert</th></tr></thead>
+    <tbody>{% for f in res.fields %}<tr>
+      <td><span class="hint">{{ f.form }}{% if f.section %} · {{ f.section }}{% endif %}</span><div>{{ f.label }}</div>{% if f.note %}<div class="hint">{{ f.note }}</div>{% endif %}</td>
+      {% if any_line %}<td>{{ f.line or '–' }}</td>{% endif %}
+      <td class="{{ 'num nowrap' if f.text is none }}"><b>{{ f.text if f.text is not none else f.amount|tcell('eur') }}</b></td></tr>{% endfor %}</tbody>
+  </table></div>
+  <p class="hint">Zeilennummern erscheinen nur, wenn sie in den Steuerparametern hinterlegt sind – sie ändern sich jährlich.</p>
+  {% else %}<p class="hint">Für {{ year }} ergeben sich aus den Daten keine Eintragungen.</p>{% endif %}
+
+  {% for s in res.sections %}{% for t in s.tables if t.rows %}
+  <details class="box" style="margin-top:8px"><summary>{{ t.title }} <span class="badge">{{ t.rows|length }}</span></summary>
+    {% if t.note %}<p class="hint">{{ t.note }}</p>{% endif %}
+    {{ gtable(t, html_rows, true) }}
+  </details>
+  {% endfor %}{% endfor %}
+
+  {% set infos = res.issues|selectattr('severity', 'equalto', 'info')|list %}
+  {% if infos %}<details class="box" style="margin-top:8px"><summary>Hinweise <span class="badge">{{ infos|length }}</span></summary>
+    <ul class="list">{% for i in infos %}<li>{{ i.text }}</li>{% endfor %}</ul></details>{% endif %}
+  <details class="box" style="margin-top:8px"><summary>Methodik und Annahmen</summary>
+    <ul class="list">{% for a in res.assumptions %}<li>{{ a }}</li>{% endfor %}</ul></details>
+  {% endif %}
+</section>
+
+<div class="grid-2" style="margin-top:16px">
+<section class="card" id="reports">
+  <div class="card-head"><h2>PDF-Bericht {{ year }}</h2><span class="hint">Aufstellungen als Beleg zur Steuererklärung</span></div>
+  <form method="post" action="/tax/report" class="stack" hx-post="/tax/report" hx-target="#report-result" hx-indicator="#rep-spin">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}">
+    {% for d in documents %}
+    <label class="check"><input type="checkbox" name="doc" value="{{ d.id }}" {% if d.default %}checked{% endif %}> <span><b>{{ d.title }}</b><br><span class="hint">{{ d.description }}</span></span></label>
+    {% endfor %}
+    <div class="row"><button class="btn primary" type="submit">Steuerbericht {{ year }} erzeugen</button><span id="rep-spin" class="htmx-indicator spinner"></span></div>
+    <div id="report-result"></div>
+  </form>
+  {% if reports %}
+  <h3 style="margin-top:14px">Erzeugte Berichte</h3>
+  <ul class="list">
+    {% for r in reports %}
+    <li class="list-item">
+      <div><b>{{ r.year }}</b> · {{ r.created_at|datetime_de }} <span class="hint">· {{ r.rulepack }}{% if r.import_id %} · Import #{{ r.import_id }}{% endif %}</span>
+        <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:4px">{% for d in r.summary.docs or [] %}
+          <a class="btn sm" href="/tax/report/{{ r.id }}/{{ d.id }}.pdf" download>{{ d.title }} <span class="hint">({{ (d.bytes / 1024)|round|int }} KB)</span></a>
+          <a class="btn sm ghost" href="/tax/report/{{ r.id }}/{{ d.id }}.pdf?inline=1" target="_blank" rel="noopener" title="Im Browser öffnen" aria-label="{{ d.title }} im Browser öffnen">↗</a>
+        {% endfor %}</div></div>
+      <form method="post" action="/tax/report/{{ r.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="icon-btn" title="Bericht löschen" aria-label="Bericht löschen">×</button></form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section class="card" id="options">
+  <div class="card-head"><h2>Optionen</h2><span class="hint">Wahlrechte und Angaben; Felder mit „{{ year }}“ gelten nur für dieses Jahr</span></div>
+  <form method="post" action="/tax/options" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}">
+    {% for group, items in specs|groupby('group') %}
+    <fieldset class="box"><legend>{{ group }}</legend>
+      {% for s in items %}
+        {% if s.kind == 'bool' %}
+          <label class="check"><input type="checkbox" name="{{ s.key }}" value="1" {% if options[s.key] %}checked{% endif %}> <span>{{ s.label }}{% if s.help %}<br><span class="hint">{{ s.help }}</span>{% endif %}</span></label>
+        {% elif s.kind == 'choice' %}
+          <label class="field">{{ s.label }}
+            <select name="{{ s.key }}">{% for v, lbl in s.choices %}<option value="{{ v }}" {% if options[s.key]|string == v %}selected{% endif %}>{{ lbl }}</option>{% endfor %}</select>
+            {% if s.help %}<span class="hint">{{ s.help }}</span>{% endif %}</label>
+        {% elif s.kind in ('amount', 'percent') %}
+          <label class="field"><span>{{ s.label }}{% if s.per_year %} <span class="badge">{{ year }}</span>{% endif %}</span>
+            <input type="text" inputmode="decimal" name="{{ s.key }}" value="{{ options[s.key] if options[s.key] is not none else '' }}" placeholder="{{ '0' if s.kind == 'amount' else 'z. B. 42' }}"></label>
+        {% elif s.kind == 'map' %}
+          <div class="field"><span>{{ s.label }}</span>
+          {% if income_tags %}
+            {% for tag in income_tags %}
+            <label class="field inline">{{ tag }}
+              <select name="{{ s.key }}__{{ tag }}">{% for v, lbl in s.choices %}<option value="{{ v }}" {% if (options[s.key] or {}).get(tag, s.default.get(tag)) == v %}selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></label>
+            {% endfor %}
+          {% else %}<span class="hint">Keine Erträge im Import.</span>{% endif %}
+          {% if s.help %}<span class="hint">{{ s.help }}</span>{% endif %}</div>
+        {% endif %}
+      {% endfor %}
+    </fieldset>
+    {% endfor %}
+    <div class="row"><button class="btn primary" type="submit">Optionen speichern</button></div>
+  </form>
+</section>
+</div>
+
+<div class="grid-2" style="margin-top:16px">
+<section class="card" id="mapping">
+  <div class="card-head"><h2>Zuordnung Wertpapiere</h2><span class="hint">Steuerabzug je Depot, Fondsart je Wertpapier</span></div>
+  {% if sec_accounts or securities %}
+  <form method="post" action="/tax/mapping" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}">
+    {% if sec_accounts %}<fieldset class="box"><legend>Depots</legend>
+    {% for acc in sec_accounts %}
+      <label class="field"><span>{{ acc }} {% if account_kind_source.get(acc) in ('default',) %}<span class="badge warn">angenommen</span>{% endif %}</span>
+        <select name="acc__{{ acc }}"><option value="">automatisch ({{ ACCOUNT_KINDS[account_kinds.get(acc, 'domestic')] }})</option>
+          {% for k, lbl in ACCOUNT_KINDS.items() %}<option value="{{ k }}" {% if account_kind_source.get(acc) == 'settings' and account_kinds.get(acc) == k %}selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></label>
+    {% endfor %}</fieldset>{% endif %}
+    {% if securities %}<fieldset class="box"><legend>Wertpapiere</legend>
+    {% for a in securities %}
+      <label class="field"><span>{{ a.name }} {% if asset_type_source.get(a.asset_id) == 'heuristic' %}<span class="badge warn">geschätzt</span>{% endif %}</span>
+        <select name="type__{{ a.asset_id }}"><option value="">automatisch ({{ ASSET_TYPES.get(asset_types.get(a.asset_id), '–') }})</option>
+          {% for k, lbl in ASSET_TYPES.items() %}<option value="{{ k }}" {% if asset_type_source.get(a.asset_id) == 'settings' and asset_types.get(a.asset_id) == k %}selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></label>
+    {% endfor %}</fieldset>{% endif %}
+    <div class="row"><button class="btn primary" type="submit">Zuordnung speichern</button></div>
+  </form>
+  {% else %}<p class="hint">Keine Wertpapiere im Import.</p>{% endif %}
+</section>
+
+<section class="card" id="profile">
+  <div class="card-head"><h2>Regelwerk &amp; Deckblatt</h2></div>
+  <form method="post" action="/tax/pack" class="row" style="gap:8px;flex-wrap:wrap">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="field">Regelwerk
+      <select name="pack" data-autosubmit>
+        <option value="auto">Automatisch</option>
+        {% for p in packs %}<option value="{{ p.id }}" {% if p.id == pack.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+      </select></label>
+    <noscript><button class="btn" type="submit">Wechseln</button></noscript>
+  </form>
+  <dl class="kv" style="margin-top:10px">
+    <dt>Version</dt><dd>{{ pack.version }}{% if override_active %} <span class="badge info">lokale Parameter aktiv</span>{% endif %}</dd>
+    {% if params_meta.updated %}<dt>Parameter-Stand</dt><dd>{{ params_meta.updated|date_de }}{% if params_meta.reviewed_through %}, geprüft bis {{ params_meta.reviewed_through }}{% endif %}</dd>{% endif %}
+    <dt>Lokale Anpassung</dt><dd><code>{{ override_path or '–' }}</code></dd>
+  </dl>
+  <p class="hint">{{ pack.description }} Neue Freigrenzen, Basiszinsen oder geprüfte Formularzeilen lassen sich ohne Update über die lokale Parameterdatei eintragen (siehe README).</p>
+  <form method="post" action="/tax/profile" class="stack" style="margin-top:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}">
+    <label class="field">Name (Deckblatt)<input type="text" name="name" value="{{ profile.name or '' }}" autocomplete="name"></label>
+    <label class="field">Steuer-ID<input type="text" name="tax_id" value="{{ profile.tax_id or '' }}" inputmode="numeric"></label>
+    <label class="field">Steuernummer<input type="text" name="tax_number" value="{{ profile.tax_number or '' }}"></label>
+    <p class="hint">Optional, nur für die PDF-Deckblätter; bleibt lokal in der App-Datenbank.</p>
+    <div class="row"><button class="btn" type="submit">Speichern</button></div>
+  </form>
+</section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/tax.js?v={{ version }}"></script>{% endblock %}

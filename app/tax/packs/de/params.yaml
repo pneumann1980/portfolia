@@ -1,0 +1,108 @@
+# Steuerparameter Deutschland (EStG / InvStG) für das Regelwerk "de".
+#
+# Aktualisierung ohne Programm-Update: /data/tax_rules/de.yaml mit derselben Struktur anlegen und nur
+# geänderte Werte eintragen (wird tief gemischt; Fehler werden in der App angezeigt und der Override
+# ignoriert). Beispiel für einen neuen Basiszins und eine verifizierte Formularzeile:
+#
+#   pack: {reviewed_through: 2027}
+#   per_year:
+#     basiszins: {2026: 0.0320}
+#   forms:
+#     2026:
+#       anlage_so: {so_23_gain: {line: "47"}}
+#
+# Zeilennummern amtlicher Formulare ändern sich jährlich und sind hier bewusst NICHT hinterlegt
+# (line: null) – die Übertragungshilfe nennt dann nur die Feldbezeichnung.
+
+pack:
+  id: de
+  version: "2026.1"
+  updated: "2026-09-26"
+  reviewed_through: 2026
+  sources:
+    - "§ 23 Abs. 1 S. 1 Nr. 2, Abs. 3 S. 5 EStG (private Veräußerungsgeschäfte, Freigrenze)"
+    - "§ 22 Nr. 3 EStG (Einkünfte aus Leistungen, Freigrenze 256 €)"
+    - "§ 20, § 32d EStG (Kapitalerträge, Abgeltungsteuer, Verlustverrechnung Aktien)"
+    - "§§ 16, 18, 19, 20 InvStG (Investmenterträge, Vorabpauschale, Teilfreistellung)"
+    - "BMF-Schreiben zu Kryptowerten vom 10.05.2022 und 06.03.2025"
+    - "BMF-Schreiben zum Basiszins für die Vorabpauschale (jährlich)"
+
+# Werte gelten ab dem angegebenen Veranlagungsjahr, bis ein späteres Jahr sie ändert.
+rules:
+  2018:
+    currency: EUR
+    crypto:
+      holding_period_years: 1        # § 23 Abs. 1 S. 1 Nr. 2 EStG
+      freigrenze_23: 600             # § 23 Abs. 3 S. 5 EStG (bis VZ 2023)
+      freigrenze_22_3: 256           # § 22 Nr. 3 S. 2 EStG
+    capital:
+      flat_rate: 0.25                # § 32d Abs. 1 EStG
+      soli_rate: 0.055
+      sparer_pauschbetrag_single: 801
+      sparer_pauschbetrag_joint: 1602
+      vp_factor: 0.7                 # § 18 Abs. 1 InvStG: 70 % des Basiszinses
+      wht_credit_cap: 0.15           # anrechenbare Quellensteuer im DBA-Regelfall
+      teilfreistellung:              # § 20 InvStG (Privatvermögen)
+        etf_equity: 0.30
+        etf_mixed: 0.15
+        fund_realestate: 0.60
+        fund_realestate_foreign: 0.80
+        etf_other: 0.0
+  2023:
+    capital:
+      sparer_pauschbetrag_single: 1000   # § 20 Abs. 9 EStG ab VZ 2023
+      sparer_pauschbetrag_joint: 2000
+  2024:
+    crypto:
+      freigrenze_23: 1000            # ab VZ 2024
+
+# Werte nur für genau das angegebene Jahr (keine Fortschreibung).
+per_year:
+  # Basiszins zur Berechnung der Vorabpauschale des Kalenderjahres (BMF). Negative Werte → keine
+  # Vorabpauschale. Die Vorabpauschale eines Jahres gilt am ersten Werktag des Folgejahres als zugeflossen.
+  basiszins:
+    2018: 0.0087
+    2019: 0.0052
+    2020: 0.0007
+    2021: -0.0045
+    2022: -0.0005
+    2023: 0.0255
+    2024: 0.0229
+    2025: 0.0253
+    # 2026: bitte nach Veröffentlichung durch das BMF (Januar 2026) im Override eintragen
+
+forms:
+  default:
+    anlage_so:
+      title: "Anlage SO"
+      fields:
+        so_23_desc: {section: "Private Veräußerungsgeschäfte – andere Wirtschaftsgüter", label: "Bezeichnung des Wirtschaftsguts", line: null}
+        so_23_acq: {section: "Private Veräußerungsgeschäfte – andere Wirtschaftsgüter", label: "Zeitpunkt der Anschaffung", line: null}
+        so_23_disp: {section: "Private Veräußerungsgeschäfte – andere Wirtschaftsgüter", label: "Zeitpunkt der Veräußerung", line: null}
+        so_23_price: {section: "Private Veräußerungsgeschäfte – andere Wirtschaftsgüter", label: "Veräußerungspreis oder an dessen Stelle tretender Wert", line: null}
+        so_23_cost: {section: "Private Veräußerungsgeschäfte – andere Wirtschaftsgüter", label: "Anschaffungskosten", line: null}
+        so_23_wk: {section: "Private Veräußerungsgeschäfte – andere Wirtschaftsgüter", label: "Werbungskosten", line: null}
+        so_23_gain: {section: "Private Veräußerungsgeschäfte – andere Wirtschaftsgüter", label: "Gewinn / Verlust", line: null}
+        so_22_3_desc: {section: "Einkünfte aus Leistungen (§ 22 Nr. 3 EStG)", label: "Art der Leistung", line: null}
+        so_22_3_income: {section: "Einkünfte aus Leistungen (§ 22 Nr. 3 EStG)", label: "Einnahmen", line: null}
+        so_22_3_wk: {section: "Einkünfte aus Leistungen (§ 22 Nr. 3 EStG)", label: "Werbungskosten", line: null}
+    anlage_kap:
+      title: "Anlage KAP"
+      fields:
+        kap_foreign_total: {section: "Kapitalerträge, die nicht dem inländischen Steuerabzug unterlegen haben", label: "Ausländische Kapitalerträge (ohne Investmenterträge)", line: null}
+        kap_foreign_share_gains: {section: "Kapitalerträge, die nicht dem inländischen Steuerabzug unterlegen haben", label: "darin enthaltene Gewinne aus Aktienveräußerungen i. S. d. § 20 Abs. 2 S. 1 Nr. 1 EStG", line: null}
+        kap_foreign_losses_other: {section: "Kapitalerträge, die nicht dem inländischen Steuerabzug unterlegen haben", label: "darin enthaltene Verluste ohne Verluste aus der Veräußerung von Aktien", line: null}
+        kap_foreign_losses_shares: {section: "Kapitalerträge, die nicht dem inländischen Steuerabzug unterlegen haben", label: "darin enthaltene Verluste aus der Veräußerung von Aktien i. S. d. § 20 Abs. 2 S. 1 Nr. 1 EStG", line: null}
+        kap_wht: {section: "Anrechenbare ausländische Steuern", label: "Anrechenbare noch nicht angerechnete ausländische Steuern", line: null}
+    anlage_kap_inv:
+      title: "Anlage KAP-INV"
+      fund_labels:
+        etf_equity: "Aktienfonds"
+        etf_mixed: "Mischfonds"
+        fund_realestate: "Immobilienfonds"
+        fund_realestate_foreign: "Auslands-Immobilienfonds"
+        etf_other: "Sonstige Investmentfonds"
+      fields:
+        inv_dist: {section: "Investmenterträge ohne inländischen Steuerabzug – Ausschüttungen", label: "Ausschüttungen", line: null}
+        inv_vp: {section: "Investmenterträge ohne inländischen Steuerabzug – Vorabpauschalen", label: "Vorabpauschalen", line: null}
+        inv_gain: {section: "Investmenterträge ohne inländischen Steuerabzug – Veräußerungen", label: "Gewinne / Verluste aus der Veräußerung (vor Teilfreistellung)", line: null}

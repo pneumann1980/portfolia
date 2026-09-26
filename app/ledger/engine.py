@@ -43,6 +43,8 @@ class EngineOptions:
     unmatched_transfers_as_flows: bool = True
     cash_overrides: tuple[tuple[str, bool], ...] = ()  # (account, cash_tracked)
     until: date | None = None  # nur Transaktionen bis einschließlich dieses Datums
+    # Stichtage (Tagesende), zu denen der Lot-Bestand festgehalten wird (z. B. 31.12. für die Vorabpauschale)
+    snapshot_dates: tuple[date, ...] = ()
 
 
 @dataclass(slots=True)
@@ -218,6 +220,7 @@ class LedgerResult:
     last_date: date | None
     tx_count: int = 0
     tx_by_asset: dict[str, list[str]] = field(default_factory=dict)
+    lot_snapshots: dict[date, list[Lot]] = field(default_factory=dict)
 
     # -- Aggregationen -------------------------------------------------------------------------
     def holdings_by_asset(self) -> dict[str, Decimal]:
@@ -665,6 +668,10 @@ class _Engine:
             amt = self.fiat_amount(asset, qty, v)
             if tag in o.tax_tags:
                 self.taxes.append(TaxEvent(tx.tx_id, tx.date, amt or ZERO, tag, fa, tx.related_asset))
+                if not self.cash.get(fa, False):
+                    # Konto ohne Cash-Führung: Ertrag/Erlös wurde brutto als Abfluss gebucht, ausgezahlt wurde
+                    # netto – die einbehaltene Steuer mindert den Abfluss.
+                    self.flow(tx, amt, "tax_withheld", fa, asset, qty)
                 return
             if tag in o.loss_tags:
                 self.fees.append(FeeEvent(tx.tx_id, tx.date, asset, qty, amt or ZERO, "cost", fa))
@@ -689,12 +696,25 @@ class _Engine:
                       asset, -qty)
             self.aflow(tx, asset, -v if v else None, -qty, kind)
 
+    def _snapshot(self) -> list[Lot]:
+        out = [Lot(lot.id, lot.root_id, lot.asset, lot.account, lot.qty, lot.cost, lot.acq_ts, lot.acq_date,
+                   lot.acq_tx, lot.origin, lot.income_tag)
+               for lst in self.lots.values() for lot in lst if lot.qty > DUST]
+        out.sort(key=Lot.sort_key)
+        return out
+
     def run(self) -> LedgerResult:
         txs = sorted(self.pf.txs, key=lambda t: (t.ts, t.seq))
         if self.opts.until is not None:
             txs = [t for t in txs if t.date <= self.opts.until]
+        pending = sorted(set(self.opts.snapshot_dates))
+        snapshots: dict[date, list[Lot]] = {}
         for t in txs:
+            while pending and t.date > pending[0]:
+                snapshots[pending.pop(0)] = self._snapshot()
             self.process(t)
+        for d in pending:
+            snapshots[d] = self._snapshot()
         if self._unmatched:
             how = ("als externe Zahlungsströme zum Marktwert" if self.opts.unmatched_transfers_as_flows
                    else "ohne Zahlungsstrom")
@@ -720,6 +740,7 @@ class _Engine:
             last_date=txs[-1].date if txs else None,
             tx_count=len(txs),
             tx_by_asset=dict(self.tx_by_asset),
+            lot_snapshots=snapshots,
         )
 
 

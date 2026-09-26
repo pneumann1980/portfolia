@@ -417,3 +417,26 @@ details.box summary { cursor: pointer; font-weight: 580; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 @media print { .sidebar, .bottom-nav, .topbar, .panel, .panel-backdrop { display: none !important; } .content { padding: 0; } }
+
+/* -- Steuern & Haltefristen --------------------------------------------------------------------- */
+.grid-2 > *, .grid-3 > * { min-width: 0; }
+table.compact th, table.compact td { padding: 5px 6px; font-size: 0.82rem; }
+table.compact th { white-space: normal; vertical-align: bottom; }
+table.lines td { border-bottom: 0; }
+table.lines tr.group th { position: static; padding-top: 12px; color: var(--ink); font-size: 0.84rem; border-bottom: 1px solid var(--border); white-space: normal; }
+table.lines tr.strong td { font-weight: 620; border-top: 1px solid var(--border); }
+table.lines .hint { font-weight: 400; }
+tr.active td { background: var(--surface-2); }
+#year h3, #reports h3 { margin: 4px 0 8px; }
+.tax-meter { margin: 0 0 12px; }
+.tax-meter .row { display: flex; gap: 8px; font-size: 0.86rem; margin-bottom: 4px; align-items: baseline; }
+.tax-meter .row > span:first-child { flex: 1; min-width: 0; }
+.tax-meter .hint { margin-top: 4px; }
+fieldset.box { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+fieldset.box legend { font-weight: 600; font-size: 0.86rem; padding: 0 4px; color: var(--ink); }
+label.check { align-items: flex-start; }
+label.check input { margin-top: 3px; }
+label.field.inline { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
+label.field.inline select { max-width: 62%; }
+#reports .list-item { align-items: flex-start; justify-content: space-between; }
+#reports .list-item form { flex: none; }

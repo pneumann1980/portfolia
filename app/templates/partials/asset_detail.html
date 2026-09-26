@@ -115,7 +115,7 @@
   {% endif %}
 
   <section class="card">
-    <div class="card-head"><h2>FIFO-Lots</h2><span class="hint">{{ lots|length }} offen · Reihenfolge {{ 'global je Asset' if account_scope == 'global' else 'je Konto' }}</span></div>
+    <div class="card-head"><h2>FIFO-Lots</h2><span class="hint">{{ lots|length }} offen · {% if tax_pack %}Zuordnung laut Steuer-Regelwerk{% else %}Reihenfolge {{ 'global je Asset' if account_scope == 'global' else 'je Konto' }}{% endif %}</span></div>
     {% if balances|length > 1 %}
     <div class="row" style="margin-bottom:8px">{% for acc, q in balances.items() %}<span class="badge">{{ acc }}: {{ q|qty }}</span>{% endfor %}</div>
     {% endif %}
@@ -131,13 +131,13 @@
           <td class="num">{{ l.lot.cost|eur }}</td>
           <td class="num">{{ l.value|eur }}</td>
           <td class="num"><span class="delta {{ l.gain|tone }}">{{ l.gain|eur(2, true) }}</span></td>
-          {% if a.is_crypto %}<td class="nowrap">{% if l.is_free %}<span class="badge good">✓ steuerfrei</span>{% else %}{{ l.tax_free|date_de }} <small class="muted">({{ l.days_left }} T.)</small>{% endif %}</td>{% endif %}
+          {% if a.is_crypto %}<td class="nowrap">{% if l.is_free %}<span class="badge good">✓ steuerfrei</span>{% elif l.tax_free %}{{ l.tax_free|date_de }} <small class="muted">({{ l.days_left }} T.)</small>{% else %}<span class="muted">–</span>{% endif %}</td>{% endif %}
         </tr>
       {% else %}<tr><td colspan="7" class="hint">Keine offenen Lots.</td></tr>{% endfor %}
       </tbody>
     </table>
     </div>
-    {% if a.is_crypto %}<p class="hint">Haltefrist § 23 EStG: Veräußerung ab dem Tag nach Ablauf eines Jahres steuerfrei (nur informativ, keine Steuerberatung).</p>{% endif %}
+    {% if a.is_crypto %}<p class="hint">Haltefristen nach Regelwerk „{{ tax_pack or 'Deutschland' }}“ (<a href="/tax">Steuern &amp; Haltefristen</a>) – nur informativ, keine Steuerberatung.</p>{% endif %}
   </section>
 
   <section class="card">

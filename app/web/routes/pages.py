@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -18,6 +19,7 @@ from app.web.deps import get_ctx, render
 from app.web.svg import sparkline
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 SORT_KEYS = {
     "name": lambda p: p.asset.name.lower(),
@@ -126,6 +128,22 @@ def tax_free_date(acq: date) -> date:
     return add_years(acq, 1) + timedelta(days=1)
 
 
+def tax_lots(ctx: Any, a: Any) -> tuple[list[Any], Any, str | None]:
+    """Lots und Haltefrist-Regel des aktiven Steuer-Regelwerks (z. B. FIFO je Wallet); Fallback: Anzeige-Ledger."""
+    try:
+        from app.tax.service import tax_service
+
+        svc = tax_service(ctx)
+        pack = svc.pack()
+        led = svc.ledger(pack, svc.options(pack))
+        return led.lots_for(a.asset_id), pack.holding_end, pack.name
+    except Exception as e:  # Steuermodul optional – Detailansicht darf nicht daran scheitern
+        log.debug("Steuer-Lots nicht verfügbar: %s", e)
+        led = ctx.ledger()
+        return (led.lots_for(a.asset_id) if led else [],
+                lambda asset, acq: tax_free_date(acq) if asset.is_crypto else None, None)
+
+
 def asset_context(ctx: Any, asset_id: str) -> dict[str, Any]:
     pf = ctx.portfolio()
     led = ctx.ledger()
@@ -138,8 +156,9 @@ def asset_context(ctx: Any, asset_id: str) -> dict[str, Any]:
     pi = prices.get(asset_id)
     today = today_local()
     lots = []
-    for lot in led.lots_for(asset_id):
-        tf = tax_free_date(lot.acq_date) if a.is_crypto else None
+    lot_list, holding_end, pack_name = tax_lots(ctx, a) if a.is_crypto else (led.lots_for(asset_id), None, None)
+    for lot in lot_list:
+        tf = holding_end(a, lot.acq_date) if holding_end is not None and lot.origin != "phantom" else None
         cur = float(lot.qty) * (pi.price_eur if pi and pi.valued else 0)
         lots.append({"lot": lot, "tax_free": tf, "is_free": tf is not None and tf <= today, "value": cur,
                      "gain": cur - float(lot.cost), "days_left": (tf - today).days if tf and tf > today else 0})
@@ -176,6 +195,7 @@ def asset_context(ctx: Any, asset_id: str) -> dict[str, Any]:
         "realized": realized, "income": float(income), "fees": fees, "txs": txs[:60], "tx_total": len(txs),
         "info": info or {}, "info_at": info_at, "series": series, "meta": meta, "perf": perf, "news": news,
         "colors": asset_colors(asset_id, a.segment), "account_scope": ctx.settings.get("ledger.scope", "global"),
+        "tax_pack": pack_name,
     }
 
 
@@ -288,11 +308,32 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
     meta_rows = ctx.db.q("SELECT series, history_from, history_to, history_status, history_error, last_history_fetch "
                          "FROM series_meta WHERE history_status IS NOT NULL ORDER BY history_status DESC, series")
     usage = ctx.db.q("SELECT * FROM api_usage ORDER BY period DESC, provider LIMIT 40")
-    return render(request, "quality.html", active="quality", imports=imports, cur=cur, active_id=active,
+    tax_quality = _tax_quality(ctx)
+    return render(request, "quality.html", active="quality", tax_quality=tax_quality, imports=imports, cur=cur,
+                  active_id=active,
                   report=report, diff=diff, check=check, issues=issues, val=val, ledger_issues=ledger_issues[:300],
                   sources=sources, events=events, jobs=jobs, next_runs=next_runs, cg=ctx.prices.cg_budget(),
                   hist=hist, meta_rows=meta_rows, usage=usage, secrets=ctx.config.secrets.status(),
                   cash_tracked=(led.cash_tracked if led else {}))
+
+
+def _tax_quality(ctx: Any) -> dict[str, Any] | None:
+    """Warnungen des Steuer-Regelwerks je Jahr (ohne reine Hinweise) – optional, darf nie die Seite brechen."""
+    if ctx.portfolio() is None:
+        return None
+    try:
+        from app.tax.service import tax_service
+
+        svc = tax_service(ctx)
+        pack, inp, _ = svc.overview()
+        rows = []
+        for y in reversed(svc.data_years(inp) if inp is not None else []):
+            _, _, res = svc.compute(y)
+            rows += [(y, i) for i in (res.issues if res else []) if i.severity != "info"]
+        return {"pack": pack.name, "years": rows[:200]}
+    except Exception as e:
+        log.warning("Steuerhinweise nicht verfügbar: %s", e)
+        return None
 
 
 # -- Einstellungen ---------------------------------------------------------------------------------------

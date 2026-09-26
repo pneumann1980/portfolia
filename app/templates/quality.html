@@ -151,6 +151,17 @@
   </tbody></table></div>{% else %}<p class="hint">Keine Auffälligkeiten.</p>{% endif %}
 </section>
 
+{% if tax_quality %}
+<section class="card" id="tax">
+  <div class="card-head"><h2>Steuerrelevante Hinweise</h2><span class="hint">Regelwerk {{ tax_quality.pack }} · je Jahr</span></div>
+  {% if tax_quality.years %}
+  <div class="table-wrap"><table><thead><tr><th>Jahr</th><th>Stufe</th><th>Meldung</th></tr></thead><tbody>
+    {% for y, i in tax_quality.years %}<tr><td><a href="/tax?year={{ y }}#year">{{ y }}</a></td><td><span class="badge {{ 'warn' if i.severity == 'warning' else ('crit' if i.severity == 'critical' else '') }}">{{ {'warning': 'Warnung', 'critical': 'kritisch', 'info': 'Hinweis'}.get(i.severity, i.severity) }}</span></td><td>{{ i.text }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="hint">Keine steuerrelevanten Auffälligkeiten.</p>{% endif %}
+</section>
+{% endif %}
+
 <section class="card" id="jobs">
   <div class="card-head"><h2>Hintergrundjobs</h2>
     <div class="row"><button class="btn sm" hx-post="/actions/backfill" hx-target="#bf-msg">Historie nachladen</button><span id="bf-msg"></span></div></div>
