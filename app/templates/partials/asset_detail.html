@@ -1,0 +1,166 @@
+{# Gemeinsamer Inhalt für Detailseite und Seitenpanel. Erwartet: a, pos, pi, lots, info, perf, … #}
+{% set aid_q = urlq(a.asset_id) %}
+<div class="stack" data-asset-detail="{{ a.asset_id }}">
+  <div class="asset-head">
+    <span class="dot" style="width:14px;height:14px;margin-top:8px;background:{{ colors.light }}" data-color-light="{{ colors.light }}" data-color-dark="{{ colors.dark }}"></span>
+    <div style="flex:1;min-width:0">
+      <h1 style="font-size:1.2rem">{{ a.name }}</h1>
+      <div class="hint">{{ a.symbol }}{% if a.wkn %} · WKN {{ a.wkn }}{% endif %}{% if a.isin %} · {{ a.isin }}{% endif %} · {{ a.category_label }}
+        {% if series %} · Quelle {{ series.split(':')[0]|replace('cg','CoinGecko')|replace('yahoo','Yahoo')|replace('demo','Demo') }}{% endif %}</div>
+    </div>
+    <div style="text-align:right">
+      {% if pi and pi.valued %}
+        <div class="price">{{ pi.price_eur|price }}</div>
+        {% if pi.ccy and pi.ccy != 'EUR' and pi.price_native %}<div class="hint">{{ pi.price_native|num(2) }} {{ pi.ccy }} · Kurs {{ (1 / pi.fx_rate)|num(4) if pi.fx_rate else '–' }} {{ pi.ccy }}/EUR</div>{% endif %}
+        <div class="hint">
+          {% if pi.prev_close_eur %}<span class="delta {{ (pi.price_eur - pi.prev_close_eur)|tone }}">{{ (pi.price_eur - pi.prev_close_eur)|arrow }} {{ (pi.price_eur / pi.prev_close_eur - 1)|pct }}</span> · {% endif %}
+          {{ pi.ts|datetime_de }}
+          {% if pi.stale %}<span class="badge warn">veraltet</span>{% endif %}
+          {% if pi.kind == 'manual' %}<span class="badge info">manuell</span>{% endif %}
+          {% if pi.kind == 'daily' %}<span class="badge warn">Schlusskurs</span>{% endif %}
+        </div>
+      {% else %}
+        <div class="price muted">–</div><span class="badge crit">unbewertet</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Kursverlauf</h2>
+      <div class="row">
+        <div class="seg" role="group" aria-label="Zeitraum" data-range-group="price-{{ aid_q }}">
+          {% for r in ['1T','1W','1M','6M','1J','MAX'] %}<button type="button" data-range="{{ r }}" aria-pressed="{{ 'true' if r == '1J' else 'false' }}">{{ 'Max' if r == 'MAX' else r }}</button>{% endfor %}
+        </div>
+        <div class="seg" role="group" aria-label="Darstellung" data-kind-group="price-{{ aid_q }}">
+          <button type="button" data-kind="line" aria-pressed="true">Linie</button>
+          <button type="button" data-kind="candle" aria-pressed="false">Kerzen</button>
+        </div>
+      </div>
+    </div>
+    <div id="price-{{ aid_q }}" class="chart" data-chart="price" data-src="/api/asset/{{ aid_q }}/chart" data-range="1J" data-kind="line"
+         role="img" aria-label="Kursverlauf mit Kauf- und Verkaufsmarkern"></div>
+    <div class="legend">
+      <span><i style="background:var(--series-1);height:3px"></i>Kurs (EUR{{ ', split-bereinigt' if a.is_security }})</span>
+      <span><span style="color:var(--series-2)">▲</span> Kauf</span><span><span style="color:var(--series-3)">▼</span> Verkauf</span>
+      <span><i style="background:var(--ink-2)"></i>Ø Einstand</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Kennzahlen</h2>{% if perf %}<span class="hint">seit {{ perf.start_date|date_de }}</span>{% endif %}</div>
+    <div class="facts cols-3">
+      <div class="fact"><div class="k">Bestand</div><div class="v">{{ pos.qty|qty if pos else '0' }} {{ a.symbol }}</div></div>
+      <div class="fact"><div class="k">Wert</div><div class="v">{{ pos.value|eur if pos else '–' }}</div></div>
+      <div class="fact"><div class="k">Gewicht</div><div class="v">{{ pos.weight|pct(2, false) if pos else '–' }}</div></div>
+      <div class="fact"><div class="k">Einstand (offene Lots)</div><div class="v">{{ pos.cost|eur if pos else '–' }}</div></div>
+      <div class="fact"><div class="k">Ø Einstand je Einheit</div><div class="v">{{ pos.avg_cost|price if pos and pos.avg_cost else '–' }}</div></div>
+      <div class="fact"><div class="k">Unrealisierter G/V</div><div class="v"><span class="delta {{ pos.unrealized|tone if pos else 'neutral' }}">{{ pos.unrealized|eur(2, true) if pos else '–' }}{% if pos and pos.unrealized_pct is not none %} ({{ pos.unrealized_pct|pct }}){% endif %}</span></div></div>
+      <div class="fact"><div class="k">Realisierter G/V</div><div class="v"><span class="delta {{ realized|tone }}">{{ realized|eur(2, true) }}</span></div></div>
+      <div class="fact"><div class="k">Erträge</div><div class="v">{{ income|eur }}</div></div>
+      <div class="fact"><div class="k">Gebühren (in diesem Asset)</div><div class="v">{{ fees|eur }}</div></div>
+      <div class="fact"><div class="k" title="Zeitgewichtete Rendite (TTWROR) seit erstem Zugang">Rendite TTWROR</div><div class="v"><span class="delta {{ perf.ttwror|tone if perf else 'neutral' }}">{{ perf.ttwror|pct if perf and perf.ttwror is not none else '–' }}</span></div></div>
+      <div class="fact"><div class="k" title="Interner Zinsfuß p. a.">IRR p. a.</div><div class="v"><span class="delta {{ perf.irr|tone if perf else 'neutral' }}">{{ perf.irr|pct if perf and perf.irr is not none else '–' }}</span></div></div>
+      <div class="fact"><div class="k">Gesamt-G/V (inkl. realisiert &amp; Erträge)</div><div class="v"><span class="delta {{ perf.gain|tone if perf else 'neutral' }}">{{ perf.gain|eur(2, true) if perf else '–' }}</span></div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Positionsverlauf</h2>
+      <div class="seg" role="group" aria-label="Zeitraum" data-range-group="pos-{{ aid_q }}">
+        {% for r in ['6M','1J','3J','MAX'] %}<button type="button" data-range="{{ r }}" aria-pressed="{{ 'true' if r == 'MAX' else 'false' }}">{{ 'Max' if r == 'MAX' else r }}</button>{% endfor %}
+      </div></div>
+    <div id="pos-{{ aid_q }}" class="chart" data-chart="position" data-src="/api/asset/{{ aid_q }}/position" data-range="MAX" role="img" aria-label="Stückzahl und Wert der Position über die Zeit"></div>
+  </section>
+
+  {% if info.get('targetMedianPrice') or info.get('targetMeanPrice') %}
+  {% set lo = info.get('targetLowPrice') %}{% set hi = info.get('targetHighPrice') %}{% set med = info.get('targetMedianPrice') or info.get('targetMeanPrice') %}
+  {% set cur = pi.price_native if pi and pi.price_native else None %}
+  <section class="card">
+    <div class="card-head"><h2>Analysten-Kursziele</h2><span class="hint">{{ info.get('numberOfAnalystOpinions') or '?' }} Analysten · Stand {{ info_at|datetime_de }}</span></div>
+    {% if lo and hi and cur %}
+    {% set vmin = [lo, cur]|min * 0.95 %}{% set vmax = [hi, cur]|max * 1.05 %}{% set span = vmax - vmin %}
+    <div class="target-bar" aria-hidden="true">
+      <div class="track"></div>
+      <div class="range" style="left:{{ ((lo - vmin) / span * 100)|round(2) }}%;width:{{ ((hi - lo) / span * 100)|round(2) }}%"></div>
+      <div class="mark" style="left:{{ ((med - vmin) / span * 100)|round(2) }}%"></div>
+      <div class="mark cur" style="left:{{ ((cur - vmin) / span * 100)|round(2) }}%"></div>
+      <div class="lbl" style="left:{{ ((cur - vmin) / span * 100)|round(2) }}%">aktuell</div>
+    </div>
+    {% endif %}
+    <div class="facts cols-3">
+      <div class="fact"><div class="k">Tief</div><div class="v">{{ lo|num(2) }} {{ info.get('currency', '') }}</div></div>
+      <div class="fact"><div class="k">Median</div><div class="v">{{ med|num(2) }} {{ info.get('currency', '') }}{% if cur %} <span class="delta {{ (med / cur - 1)|tone }}">({{ (med / cur - 1)|pct }})</span>{% endif %}</div></div>
+      <div class="fact"><div class="k">Hoch</div><div class="v">{{ hi|num(2) }} {{ info.get('currency', '') }}</div></div>
+      {% if info.get('recommendationKey') %}<div class="fact"><div class="k">Konsens</div><div class="v">{{ info.get('recommendationKey')|replace('_', ' ') }}</div></div>{% endif %}
+    </div>
+    <p class="hint">Quelle: Yahoo Finance. Keine Anlageberatung.</p>
+  </section>
+  {% endif %}
+
+  {% if info %}
+  <section class="card">
+    <div class="card-head"><h2>Stammdaten</h2>{% if info_at %}<span class="hint">Stand {{ info_at|datetime_de }}</span>{% endif %}</div>
+    <div class="facts cols-3">
+      {% if info.get('marketCap') %}<div class="fact"><div class="k">Marktkapitalisierung</div><div class="v">{{ (info.get('marketCap') / 1e9)|num(1) }} Mrd. {{ info.get('currency', '') }}</div></div>{% endif %}
+      {% if info.get('trailingPE') %}<div class="fact"><div class="k">KGV (trailing)</div><div class="v">{{ info.get('trailingPE')|num(1) }}</div></div>{% endif %}
+      {% if info.get('forwardPE') %}<div class="fact"><div class="k">KGV (erwartet)</div><div class="v">{{ info.get('forwardPE')|num(1) }}</div></div>{% endif %}
+      {% if info.get('fullExchangeName') or info.get('exchange') %}<div class="fact"><div class="k">Börse</div><div class="v">{{ info.get('fullExchangeName') or info.get('exchange') }}</div></div>{% endif %}
+      {% if info.get('currency') %}<div class="fact"><div class="k">Währung</div><div class="v">{{ info.get('currency') }}</div></div>{% endif %}
+      {% if info.get('sector') %}<div class="fact"><div class="k">Sektor</div><div class="v">{{ info.get('sector') }}</div></div>{% endif %}
+      {% if info.get('dividendYield') %}<div class="fact"><div class="k">Dividendenrendite</div><div class="v">{{ info.get('dividendYield')|num(2) }} %</div></div>{% endif %}
+      {% if info.get('fiftyTwoWeekLow') %}<div class="fact"><div class="k">52 Wochen</div><div class="v">{{ info.get('fiftyTwoWeekLow')|num(2) }} – {{ info.get('fiftyTwoWeekHigh')|num(2) }}</div></div>{% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>FIFO-Lots</h2><span class="hint">{{ lots|length }} offen · Reihenfolge {{ 'global je Asset' if account_scope == 'global' else 'je Konto' }}</span></div>
+    {% if balances|length > 1 %}
+    <div class="row" style="margin-bottom:8px">{% for acc, q in balances.items() %}<span class="badge">{{ acc }}: {{ q|qty }}</span>{% endfor %}</div>
+    {% endif %}
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Anschaffung</th><th>Konto</th><th class="num">Menge</th><th class="num">Einstand</th><th class="num">Wert</th><th class="num">G/V</th>{% if a.is_crypto %}<th>Steuerfrei ab</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for l in lots %}
+        <tr>
+          <td class="nowrap">{{ l.lot.acq_date|date_de }}{% if l.lot.origin != 'buy' %} <span class="badge {{ 'warn' if l.lot.origin == 'phantom' else '' }}">{{ {'income': 'Ertrag', 'trade': 'Tausch', 'deposit': 'Zugang', 'corporate_action': 'Kapitalmaßn.', 'phantom': 'ohne Einstand'}.get(l.lot.origin, l.lot.origin) }}</span>{% endif %}</td>
+          <td>{{ l.lot.account }}</td>
+          <td class="num">{{ l.lot.qty|qty }}</td>
+          <td class="num">{{ l.lot.cost|eur }}</td>
+          <td class="num">{{ l.value|eur }}</td>
+          <td class="num"><span class="delta {{ l.gain|tone }}">{{ l.gain|eur(2, true) }}</span></td>
+          {% if a.is_crypto %}<td class="nowrap">{% if l.is_free %}<span class="badge good">✓ steuerfrei</span>{% else %}{{ l.tax_free|date_de }} <small class="muted">({{ l.days_left }} T.)</small>{% endif %}</td>{% endif %}
+        </tr>
+      {% else %}<tr><td colspan="7" class="hint">Keine offenen Lots.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if a.is_crypto %}<p class="hint">Haltefrist § 23 EStG: Veräußerung ab dem Tag nach Ablauf eines Jahres steuerfrei (nur informativ, keine Steuerberatung).</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>News &amp; Videos</h2><a class="btn sm ghost" href="/news?asset={{ aid_q }}">Alle</a></div>
+    {% include "partials/news_list_compact.html" %}
+  </section>
+
+  <details class="box">
+    <summary>Transaktionen ({{ tx_total }})</summary>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Datum</th><th>Typ</th><th>Abgang</th><th>Zugang</th><th class="num">Wert</th><th class="num">Gebühr</th></tr></thead>
+      <tbody>
+      {% for t in txs %}
+        <tr><td class="nowrap">{{ t.ts|datetime_de if not t.date_only else t.date|date_de }}</td>
+          <td>{{ t.type }}{% if t.tag %} <span class="badge">{{ t.tag }}</span>{% endif %}</td>
+          <td>{% if t.from_asset %}{{ t.from_qty|qty }} {{ t.from_asset }}<br><small class="muted">{{ t.from_account }}</small>{% endif %}</td>
+          <td>{% if t.to_asset %}{{ t.to_qty|qty }} {{ t.to_asset }}<br><small class="muted">{{ t.to_account }}</small>{% endif %}</td>
+          <td class="num">{{ t.value_eur|eur if t.value_eur is not none else '–' }}{% if t.orig_price %}<br><small class="muted">{{ t.orig_price }} {{ t.orig_ccy or '' }}</small>{% endif %}</td>
+          <td class="num">{% if t.fee_qty %}{{ t.fee_eur|eur if t.fee_eur is not none else '' }}<br><small class="muted">{{ t.fee_qty|qty }} {{ t.fee_asset }}</small>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </details>
+</div>

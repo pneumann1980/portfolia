@@ -1,0 +1,311 @@
+# Portfolia – Quellen für News & Videos
+#
+# Diese Datei wird beim ersten Start nach /data/sources.yaml kopiert und danach NICHT mehr überschrieben.
+# Du kannst jede Quelle aktivieren/deaktivieren (active), gewichten (weight) oder ergänzen.
+# Entscheidungen zu YouTube-Vorschlägen (abonnieren/ignorieren/blockieren) schreibt die App hierher zurück.
+#
+# Verifikation: Beim Start und danach periodisch prüft Portfolia jede aktive Quelle. Nicht erreichbare
+# Quellen werden automatisch pausiert und unter „Datenqualität → Datenquellen“ gemeldet – nie still gelöscht.
+# Hinweis zur Erstellung: Die URLs/Handles unten entsprechen dem Stand der Konfiguration; in der
+# Build-Umgebung war kein Internetzugriff auf diese Hosts möglich, daher erfolgt die Prüfung zur Laufzeit.
+#
+# Typen:
+#   rss              – fester RSS/Atom-Feed (url)
+#   rss_per_asset    – Feed je Asset (url_template mit {ticker} oder {query}); applies_to: security|crypto|all
+#   finnhub          – Finnhub company-news (FINNHUB_API_KEY), je Aktie
+#   cryptopanic      – CryptoPanic-API (CRYPTOPANIC_API_KEY), Währungsfilter = gehaltene Coins
+#   binance_api      – Binance-Ankündigungen (öffentliche CMS-Schnittstelle, kein offizieller RSS)
+#   bybit_api        – Bybit-Ankündigungen (offizielle v5-API)
+# require_match: true → nur Meldungen behalten, die einem gehaltenen Asset zugeordnet werden können.
+
+version: 1
+
+settings:
+  fetch_interval_minutes: 30
+  retention_days: 90
+  request_timeout_s: 20
+  max_items_per_feed: 60
+  languages: [de, en]
+  per_asset_top_n: 40            # Feeds je Asset nur für die größten N Positionen (Last begrenzen)
+  shorts_hidden: true
+  # Reißerische Titelmuster (Groß-/Kleinschreibung egal) → ausgeblendet
+  title_blocklist:
+    - "100x"
+    - "1000x"
+    - "guaranteed"
+    - "garantiert"
+    - "last chance"
+    - "letzte chance"
+    - "millionaire"
+    - "millionär"
+    - "get rich"
+    - "to the moon"
+    - "must buy"
+    - "going to explode"
+    - "explodiert gleich"
+  # Kontextwörter, die bei mehrdeutigen Kürzeln zusätzlich vorkommen müssen
+  context_words: [crypto, krypto, kryptowährung, cryptocurrency, coin, token, blockchain, altcoin, staking, mainnet,
+                  wallet, defi, airdrop, exchange, börse, kurs, price, btc, eth]
+  # Mehrdeutige Kürzel/Namen: Treffer zählen nur mit Kontextwort (oder zusätzlichem eindeutigem Alias)
+  ambiguous_terms: [SUI, TAP, PI, NIGHT, ONE, NEAR, GAS, SAND, FLOW, LINK, DOT, ICP, OP, ARB, APT, ADA, ATOM, CAKE,
+                    GALA, HOT, MASK, STX, TIA, ALGO, ROSE, TRX, KAS, ON, T, F, A, SOL, BNB, ETC, IOTA, MINA, JUP, WIF,
+                    POPCAT, PEPE, BONK, RAY, SEI, INJ, TON, XLM, XRP, UNI, AAVE, MKR, IMX, FET, RNDR, GRT, HBAR, VET]
+  # Ausschlussmuster je Asset-Kürzel (Regex, Groß-/Kleinschreibung egal)
+  exclude_patterns:
+    SUI: ["sui generis"]
+    PI: ["raspberry pi", "\\bpi day\\b", "\\bπ\\b"]
+    NIGHT: ["good night", "night shift", "overnight"]
+    ONE: ["\\bone of\\b", "\\bno one\\b"]
+    LINK: ["\\blink in bio\\b"]
+  # Standardgewichte (Quellen können eigene Gewichte setzen)
+  default_weights:
+    primary: 1.0        # Unternehmens- und Projektquellen
+    agency: 0.8         # Nachrichtenagenturen, große Portale
+    crypto_portal: 0.7  # Krypto-Fachportale
+    youtube: 0.6        # abonnierte YouTube-Kanäle
+    discovered: 0.4     # über Entdeckung gefundene Kanäle (bis zur Bestätigung)
+
+sources:
+  # ---- Aktien / alle Assets: Feeds je Asset --------------------------------------------------------
+  - id: yahoo_ticker
+    name: Yahoo Finance (Ticker)
+    type: rss_per_asset
+    applies_to: security
+    url_template: "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
+    weight: 0.8
+    language: en
+    active: true
+  - id: google_news_de
+    name: Google News (de)
+    type: rss_per_asset
+    applies_to: all
+    url_template: "https://news.google.com/rss/search?q={query}&hl=de&gl=DE&ceid=DE:de"
+    weight: 0.8
+    language: de
+    active: true
+  - id: google_news_en
+    name: Google News (en)
+    type: rss_per_asset
+    applies_to: all
+    url_template: "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+    weight: 0.8
+    language: en
+    active: true
+  - id: finnhub
+    name: Finnhub Company News
+    type: finnhub
+    applies_to: security
+    weight: 0.8
+    language: en
+    active: true            # wirkt nur mit FINNHUB_API_KEY
+
+  # ---- Finanzportale (de) ------------------------------------------------------------------------------
+  - id: finanzen_net
+    name: finanzen.net
+    type: rss
+    url: "https://www.finanzen.net/rss/news"
+    weight: 0.8
+    language: de
+    active: true
+  - id: onvista
+    name: onvista
+    type: rss
+    url: "https://www.onvista.de/news/feed/rss.xml"
+    weight: 0.8
+    language: de
+    active: true
+  - id: handelsblatt_finanzen
+    name: Handelsblatt Finanzen
+    type: rss
+    url: "https://www.handelsblatt.com/contentexport/feed/finanzen"
+    weight: 0.8
+    language: de
+    active: true
+  - id: der_aktionaer
+    name: DER AKTIONÄR
+    type: rss
+    url: "https://www.deraktionaer.de/aktionaer-news.rss"
+    weight: 0.8
+    language: de
+    active: true
+  - id: btc_echo
+    name: BTC-ECHO
+    type: rss
+    url: "https://www.btc-echo.de/feed/"
+    weight: 0.7
+    language: de
+    active: true
+
+  # ---- Finanzportale (en) ------------------------------------------------------------------------------
+  - id: reuters_markets
+    name: Reuters (über Google News)
+    type: rss
+    # Reuters bietet seit 2020 keine öffentlichen RSS-Feeds mehr – Abruf über Google-News-Suche nach Domain
+    url: "https://news.google.com/rss/search?q=site:reuters.com+markets&hl=en-US&gl=US&ceid=US:en"
+    weight: 0.8
+    language: en
+    active: true
+  - id: cnbc
+    name: CNBC
+    type: rss
+    url: "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+    weight: 0.8
+    language: en
+    active: true
+  - id: yahoo_finance
+    name: Yahoo Finance
+    type: rss
+    url: "https://finance.yahoo.com/news/rssindex"
+    weight: 0.8
+    language: en
+    active: true
+  - id: marketwatch
+    name: MarketWatch
+    type: rss
+    url: "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+    weight: 0.8
+    language: en
+    active: true
+
+  # ---- Krypto (en) --------------------------------------------------------------------------------------
+  - id: coindesk
+    name: CoinDesk
+    type: rss
+    url: "https://www.coindesk.com/arc/outboundfeeds/rss/"
+    weight: 0.7
+    language: en
+    active: true
+  - id: cointelegraph
+    name: Cointelegraph
+    type: rss
+    url: "https://cointelegraph.com/rss"
+    weight: 0.7
+    language: en
+    active: true
+  - id: decrypt
+    name: Decrypt
+    type: rss
+    url: "https://decrypt.co/feed"
+    weight: 0.7
+    language: en
+    active: true
+  - id: theblock
+    name: The Block
+    type: rss
+    url: "https://www.theblock.co/rss.xml"
+    weight: 0.7
+    language: en
+    active: true
+  - id: cryptopanic
+    name: CryptoPanic
+    type: cryptopanic
+    weight: 0.7
+    language: en
+    active: true            # wirkt nur mit CRYPTOPANIC_API_KEY
+
+  # ---- Projekte (Primärquellen) -------------------------------------------------------------------------
+  - id: kaspa_blog
+    name: Kaspa (Projekt)
+    type: rss
+    url: "https://kaspa.org/feed/"
+    weight: 1.0
+    language: en
+    assets: [KAS]           # Zuordnung ohne Textmatch (Primärquelle zu genau diesem Asset)
+    active: true
+
+  # ---- Börsen-Ankündigungen (Listings, Delistings, Wartungen, Migrationen) ------------------------------
+  - id: bitpanda_blog
+    name: Bitpanda (Blog/Ankündigungen)
+    type: rss
+    url: "https://blog.bitpanda.com/rss/"
+    weight: 1.0
+    language: en
+    require_match: true
+    active: true
+  - id: binance_announcements
+    name: Binance Ankündigungen
+    type: binance_api
+    url: "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&pageNo=1&pageSize=30"
+    weight: 1.0
+    language: en
+    require_match: true
+    active: true
+  - id: bybit_announcements
+    name: Bybit Ankündigungen
+    type: bybit_api
+    url: "https://api.bybit.com/v5/announcements/index?locale=en-US&limit=30"
+    weight: 1.0
+    language: en
+    require_match: true
+    active: true
+  - id: mexc_announcements
+    name: MEXC Ankündigungen
+    type: rss
+    url: ""                 # kein offizieller RSS-Feed bekannt – bei Bedarf URL ergänzen und aktivieren
+    weight: 1.0
+    language: en
+    require_match: true
+    active: false
+    note: "Kein offizieller RSS-Feed verfügbar."
+  - id: xt_announcements
+    name: XT.com Ankündigungen
+    type: rss
+    url: ""
+    weight: 1.0
+    language: en
+    require_match: true
+    active: false
+    note: "Kein offizieller RSS-Feed verfügbar."
+  - id: coinex_announcements
+    name: CoinEx Ankündigungen
+    type: rss
+    url: ""
+    weight: 1.0
+    language: en
+    require_match: true
+    active: false
+    note: "Kein offizieller RSS-Feed verfügbar."
+  - id: gateio_announcements
+    name: Gate.io Ankündigungen
+    type: rss
+    url: ""
+    weight: 1.0
+    language: en
+    require_match: true
+    active: false
+    note: "Kein offizieller RSS-Feed verfügbar."
+
+youtube:
+  # Kanal-Abos über RSS (ohne API-Key). Handles werden beim Start zur Channel-ID aufgelöst; nicht
+  # auflösbare Handles werden deaktiviert und gemeldet – nie geraten oder still ersetzt.
+  channels:
+    # Krypto/Makro (en)
+    - {handle: "@CoinBureau", group: "Krypto/Makro", language: en, weight: 0.6, active: true}
+    - {handle: "@RaoulPalTJM", group: "Krypto/Makro", language: en, weight: 0.6, active: true}
+    - {handle: "@RealVisionFinance", group: "Krypto/Makro", language: en, weight: 0.6, active: true}
+    - {handle: "@intothecryptoverse", group: "Krypto/Makro", language: en, weight: 0.6, active: true}
+    - {handle: "@Bankless", group: "Krypto/Makro", language: en, weight: 0.6, active: true}
+    - {handle: "@AnthonyPompliano", group: "Krypto/Makro", language: en, weight: 0.6, active: true}
+    # Finanzen/Märkte (en)
+    - {handle: "@markets", group: "Märkte", language: en, weight: 0.6, active: true}
+    - {handle: "@CNBCtelevision", group: "Märkte", language: en, weight: 0.6, active: true}
+    - {handle: "@YahooFinance", group: "Märkte", language: en, weight: 0.6, active: true}
+    # Deutsch
+    - {handle: "@Finanzfluss", group: "Deutsch", language: de, weight: 0.6, active: true}
+    - {handle: "@MissionMoney", group: "Deutsch", language: de, weight: 0.6, active: true}
+    - {handle: "@DerAktionaerTV", group: "Deutsch", language: de, weight: 0.6, active: true}
+    - {handle: "@Blocktrainer", group: "Deutsch", language: de, weight: 0.6, active: true}
+    # Unternehmenskanäle gehaltener Aktien (Primärquelle, Zuordnung zum Asset per 'assets')
+    - {handle: "@palantirtech", group: "Unternehmen", language: en, weight: 1.0, active: true, assets: ["WKN:A2QA4J"]}
+  discovery:
+    enabled: true              # wirkt nur mit YOUTUBE_API_KEY
+    top_n_positions: 10
+    min_subscribers: 100000
+    min_views: 5000
+    published_within_days: 7
+    daily_unit_budget: 2500    # Suche = 100 Einheiten; Standardkontingent 10.000/Tag
+    query_suffix_crypto: "crypto"
+    query_suffix_security: "stock"
+  # Entscheidungen aus der Oberfläche (werden von der App gepflegt)
+  ignored_channels: []
+  blocked_channels: []

@@ -1,0 +1,18 @@
+{% set lvl = {'imported': 'good', 'unchanged': '', 'failed': 'crit', 'pending': 'warn', 'none': 'warn', 'busy': 'warn'}.get(out.status, '') %}
+<div class="alert {{ lvl }}" role="status" style="text-align:left">
+  <span class="icon">{{ '✓' if out.status == 'imported' else ('!' if lvl in ('crit', 'warn') else 'i') }}</span>
+  <div style="flex:1">
+    <b>{{ out.message }}</b>{% if out.filename %} <span class="mono">{{ out.filename }}</span>{% endif %}
+    {% if out.duration_ms %}<span class="hint"> · {{ (out.duration_ms / 1000)|num(1) }} s</span>{% endif %}
+    {% if out.diff and not out.diff.first_import %}
+      <div class="small">Neu {{ out.diff.new }} · geändert {{ out.diff.changed }} · entfernt {{ out.diff.removed }} · Bestandsänderungen {{ out.diff.holdings|length }}</div>
+    {% endif %}
+    {% if out.report %}
+      {% set errs = out.report.messages|selectattr('severity', 'equalto', 'error')|list %}
+      {% set warns = out.report.messages|selectattr('severity', 'equalto', 'warning')|list %}
+      {% if errs %}<ul class="small">{% for m in errs[:15] %}<li>{% if m.file %}<span class="mono">{{ m.file }}{% if m.line %}:{{ m.line }}{% endif %}</span> {% endif %}{{ m.message }}</li>{% endfor %}{% if errs|length > 15 %}<li>… {{ errs|length - 15 }} weitere</li>{% endif %}</ul>{% endif %}
+      {% if warns %}<div class="small">{{ warns|length }} Warnung{{ 'en' if warns|length != 1 }} – siehe <a href="/quality#import">Datenqualität</a>.</div>{% endif %}
+    {% endif %}
+    {% if out.status == 'imported' %}<div class="small"><a href="/">Zur Übersicht</a> (Kurse und Historie werden im Hintergrund geladen)</div>{% endif %}
+  </div>
+</div>

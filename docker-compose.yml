@@ -1,0 +1,28 @@
+# Lokales Testen: `docker compose up --build`, dann http://localhost:8080
+# Import-Dateien nach ./import legen (read-only gemountet). Daten liegen in ./data.
+services:
+  portfolia:
+    build: .
+    image: portfolia:local
+    container_name: portfolia
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Europe/Berlin
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      PORT: "8080"
+      BASE_CURRENCY: EUR
+      LOG_LEVEL: INFO
+      COINGECKO_API_KEY: "${COINGECKO_API_KEY:-}"
+      FINNHUB_API_KEY: "${FINNHUB_API_KEY:-}"
+      YOUTUBE_API_KEY: "${YOUTUBE_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      AUTH_MODE: "${AUTH_MODE:-none}"
+      AUTH_USER: "${AUTH_USER:-}"
+      AUTH_PASSWORD_HASH: "${AUTH_PASSWORD_HASH:-}"
+      DEMO_MODE: "${DEMO_MODE:-false}"
+    volumes:
+      - ./data:/data
+      - ./import:/import:ro
+    restart: unless-stopped

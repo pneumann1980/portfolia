@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Positionen{% endblock %}
+{% block heading %}Positionen{% endblock %}
+{% block content %}
+<form class="filters" id="pos-filters" hx-get="/positions" hx-target="#positions-body" hx-swap="innerHTML"
+      hx-trigger="change" hx-push-url="true" hx-indicator="#pos-spinner">
+  <input type="hidden" name="sort" value="{{ params.sort }}">
+  <input type="hidden" name="dir" value="{{ params.dir }}">
+  <input type="hidden" name="view" value="{{ params.view }}">
+  <label class="field">Depot / Konto
+    <select name="account">
+      <option value="">Alle</option>
+      {% for a in accounts %}<option value="{{ a.value }}" {% if params.account == a.value %}selected{% endif %}>{{ a.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="field">Segment
+    <select name="segment">
+      <option value="">Alle</option>
+      {% for s in segments %}<option value="{{ s }}" {% if params.segment == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="field">Kategorie
+    <select name="category">
+      <option value="">Alle</option>
+      {% for c in categories %}<option value="{{ c }}" {% if params.category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+    </select>
+  </label>
+  <div class="seg" role="group" aria-label="Ansicht" style="align-self:flex-end">
+    <a href="?{{ 'account=' ~ urlq(params.account) ~ '&segment=' ~ urlq(params.segment) ~ '&category=' ~ urlq(params.category) }}&view=table" class="{{ 'active' if params.view != 'treemap' }}">Tabelle</a>
+    <a href="?{{ 'account=' ~ urlq(params.account) ~ '&segment=' ~ urlq(params.segment) ~ '&category=' ~ urlq(params.category) }}&view=treemap" class="{{ 'active' if params.view == 'treemap' }}">Treemap</a>
+  </div>
+  <span id="pos-spinner" class="htmx-indicator spinner" aria-hidden="true"></span>
+</form>
+<div id="positions-body">
+  {% include "partials/positions_table.html" %}
+</div>
+{% endblock %}

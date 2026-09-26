@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}{{ a.name }}{% endblock %}
+{% block heading %}<a href="/positions" class="muted">Positionen</a> / {{ a.name }}{% endblock %}
+{% block content %}
+{% include "partials/asset_detail.html" %}
+{% endblock %}

@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Übersicht{% endblock %}
+{% block heading %}Übersicht{% endblock %}
+{% block topbar_actions %}
+  <button class="btn sm ghost" hx-post="/actions/prices/refresh" hx-target="#refresh-msg" hx-swap="innerHTML" title="Kurse jetzt aktualisieren">
+    <svg width="16" height="16"><use href="#i-refresh"/></svg><span class="hide-sm">Aktualisieren</span></button>
+{% endblock %}
+{% block content %}
+<div id="refresh-msg" class="row" style="margin-bottom:8px"></div>
+{% set stale_n = val.stale|length %}{% set unval_n = val.unvalued|length %}
+{% if stale_n %}<div class="alert warn"><span class="icon">!</span><div>{{ stale_n }} Kurs{{ 'e' if stale_n != 1 }} veraltet – es wird der letzte bekannte Wert verwendet.
+  <a href="/quality#prices">Details</a></div></div>{% endif %}
+{% if unval_n %}<div class="alert"><span class="icon">i</span><div>{{ unval_n }} Position{{ 'en' if unval_n != 1 }} ohne Kurs (mit 0 € angesetzt):
+  {% for p in val.unvalued[:6] %}{{ p.asset.name }}{{ ', ' if not loop.last }}{% endfor %}{% if unval_n > 6 %} …{% endif %}</div></div>{% endif %}
+
+<section class="kpis" aria-label="Kennzahlen">
+  <div class="kpi hero">
+    <div class="label">Depotwert</div>
+    <div class="value">{{ val.total_value|eur }}</div>
+    <div class="sub"><span class="delta {{ val.day_change|tone }}">{{ val.day_change|arrow }} {{ val.day_change|eur(2, true) }} ({{ val.day_change_pct|pct }})</span> heute</div>
+    <div class="sub" title="{{ val.last_update|datetime_de }}">Stand: {{ val.last_update|rel_time }}{% if val.last_update %} · {{ val.last_update|datetime_de }}{% endif %}</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Seit Jahresbeginn <span title="TTWROR – zeitgewichtete Rendite, Ein- und Auszahlungen neutralisiert (Methodik Portfolio Performance)">ⓘ</span></div>
+    {% if kpi.ytd and kpi.ytd.ttwror is not none %}
+      <div class="value"><span class="delta {{ kpi.ytd.ttwror|tone }}">{{ kpi.ytd.ttwror|arrow }} {{ kpi.ytd.ttwror|pct }}</span></div>
+      <div class="sub">{{ kpi.ytd.gain|eur_kpi(true) }}</div>
+    {% else %}<div class="value muted">–</div><div class="sub">Historie wird geladen</div>{% endif %}
+  </div>
+  <div class="kpi">
+    <div class="label">Gesamt-G/V <span title="Depotwert minus eingesetztes Kapital (Summe externer Ein- und Auszahlungen)">ⓘ</span></div>
+    <div class="value"><span class="delta {{ val.total_gain|tone }}">{{ val.total_gain|eur_kpi(true) }}</span></div>
+    <div class="sub">Kapital {{ val.invested|eur_compact }}</div>
+  </div>
+  <div class="kpi">
+    <div class="label">IRR p. a. <span title="Interner Zinsfuß (geldwertgewichtet) seit Beginn: berücksichtigt Zeitpunkt und Höhe aller Ein- und Auszahlungen">ⓘ</span></div>
+    {% if kpi.irr is not none %}<div class="value"><span class="delta {{ kpi.irr|tone }}">{{ kpi.irr|pct }}</span></div>
+    <div class="sub">TTWROR gesamt {{ kpi.ttwror_max|pct }}</div>
+    {% else %}<div class="value muted">–</div><div class="sub">noch keine Historie</div>{% endif %}
+  </div>
+  <div class="kpi">
+    <div class="label">Unrealisiert / Realisiert</div>
+    <div class="value" style="font-size:1rem"><span class="delta {{ val.unrealized|tone }}">{{ val.unrealized|eur(0, true) }}</span><br><span class="delta {{ val.realized|tone }}">{{ val.realized|eur(0, true) }}</span></div>
+    <div class="sub">Erträge {{ val.income|eur(0) }} · Gebühren {{ val.fees|eur(0) }}</div>
+  </div>
+</section>
+
+<div class="grid-2" style="margin-top:16px">
+  <section class="card" aria-labelledby="alloc-h">
+    <div class="card-head">
+      <h2 id="alloc-h">Allokation</h2>
+      <div class="seg" role="group" aria-label="Diagrammtyp" data-alloc-toggle>
+        <button type="button" data-mode="sunburst" aria-pressed="true">Sunburst</button>
+        <button type="button" data-mode="donut" aria-pressed="false">Donut</button>
+      </div>
+    </div>
+    <div class="seg" role="group" aria-label="Donut-Ebene" data-alloc-level style="display:none;margin-bottom:6px">
+      <button type="button" data-level="segment" aria-pressed="false">Segment</button>
+      <button type="button" data-level="category" aria-pressed="false">Kategorie</button>
+      <button type="button" data-level="position" aria-pressed="true">Position</button>
+    </div>
+    <div id="alloc-chart" class="chart tall" data-chart="allocation" data-src="/api/allocation" data-mode="sunburst" data-level="position"
+         role="img" aria-label="Allokation nach Segment, Kategorie und Position"></div>
+    <p class="hint">Klick auf eine Position öffnet die Detailansicht; „Sonstige“ (&lt; {{ threshold|num(1) }} %) per Klick aufklappen. Tabellenansicht: <a href="/positions">Positionen</a>.</p>
+  </section>
+
+  <section class="card" aria-labelledby="hist-h">
+    <div class="card-head">
+      <h2 id="hist-h">Wertentwicklung</h2>
+      <div class="seg" role="group" aria-label="Zeitraum" data-range-group="hist-chart">
+        {% for r in ['1M','6M','YTD','1J','3J','MAX'] %}<button type="button" data-range="{{ r }}" aria-pressed="{{ 'true' if r == default_range else 'false' }}">{{ 'Max' if r == 'MAX' else r }}</button>{% endfor %}
+      </div>
+    </div>
+    <div id="hist-chart" class="chart tall" data-chart="history" data-src="/api/history" data-range="{{ default_range }}"
+         role="img" aria-label="Depotwert und eingesetztes Kapital im Zeitverlauf"></div>
+    <div class="legend"><span><i style="background:var(--series-1);height:3px"></i>Depotwert</span><span><i style="background:var(--muted)"></i>Eingesetztes Kapital (kumulierte Ein-/Auszahlungen)</span></div>
+  </section>
+</div>
+
+<div class="grid-2" style="margin-top:16px">
+  <section class="card" aria-labelledby="movers-h">
+    <div class="card-head"><h2 id="movers-h">Top-Bewegungen heute</h2></div>
+    <div class="movers">
+      <div>
+        <h3 class="muted" style="margin-bottom:4px">Gewinner</h3>
+        <div class="list">
+        {% for p in gainers %}
+          <a class="list-item" href="{{ asset_url(p.asset_id) }}" data-panel="{{ panel_url(p.asset_id) }}" data-title="{{ p.asset.name }}">
+            <span class="dot" style="background:{{ p.colors.light }}" data-color-light="{{ p.colors.light }}" data-color-dark="{{ p.colors.dark }}"></span>
+            <span class="grow"><span class="title">{{ p.asset.name }}</span><span class="meta">{{ p.value|eur }}</span></span>
+            <span class="delta up">▲ {{ p.day_change_pct|pct }}</span>
+          </a>
+        {% else %}<p class="hint">Keine Gewinner heute.</p>{% endfor %}
+        </div>
+      </div>
+      <div>
+        <h3 class="muted" style="margin-bottom:4px">Verlierer</h3>
+        <div class="list">
+        {% for p in losers %}
+          <a class="list-item" href="{{ asset_url(p.asset_id) }}" data-panel="{{ panel_url(p.asset_id) }}" data-title="{{ p.asset.name }}">
+            <span class="dot" style="background:{{ p.colors.light }}" data-color-light="{{ p.colors.light }}" data-color-dark="{{ p.colors.dark }}"></span>
+            <span class="grow"><span class="title">{{ p.asset.name }}</span><span class="meta">{{ p.value|eur }}</span></span>
+            <span class="delta down">▼ {{ p.day_change_pct|pct }}</span>
+          </a>
+        {% else %}<p class="hint">Keine Verlierer heute.</p>{% endfor %}
+        </div>
+      </div>
+    </div>
+  </section>
+  <section class="card" aria-labelledby="news-h">
+    <div class="card-head"><h2 id="news-h">Neueste relevante News</h2><a class="btn sm ghost" href="/news">Alle</a></div>
+    {% include "partials/news_list_compact.html" %}
+  </section>
+</div>
+{% endblock %}

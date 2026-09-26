@@ -1,0 +1,64 @@
+{% macro sort_link(key, label, cls='') -%}
+  {% set is_cur = params.sort == key %}
+  {% set nd = 'asc' if (is_cur and params.dir == 'desc') else 'desc' %}
+  <th class="{{ cls }}" {% if is_cur %}aria-sort="{{ 'descending' if params.dir == 'desc' else 'ascending' }}"{% endif %}>
+    <a href="/positions?account={{ urlq(params.account) }}&segment={{ urlq(params.segment) }}&category={{ urlq(params.category) }}&sort={{ key }}&dir={{ nd }}&view={{ params.view }}"
+       hx-get="/positions?account={{ urlq(params.account) }}&segment={{ urlq(params.segment) }}&category={{ urlq(params.category) }}&sort={{ key }}&dir={{ nd }}&view={{ params.view }}"
+       hx-target="#positions-body" hx-push-url="true">{{ label }}{% if is_cur %} <span class="sort">{{ '↓' if params.dir == 'desc' else '↑' }}</span>{% endif %}</a>
+  </th>
+{%- endmacro %}
+{% if params.view == 'treemap' %}
+<section class="card">
+  <div class="card-head"><h2>Treemap</h2><span class="hint">Fläche = Wert · Farbe = Veränderung heute</span></div>
+  <div class="chart tall" data-chart="treemap" data-src="/api/treemap?account={{ urlq(params.account) }}" role="img" aria-label="Treemap der Positionen nach Wert, eingefärbt nach Tagesveränderung"></div>
+  <div class="legend"><span><span class="swatch" style="background:var(--div-neg)"></span>Verlust heute</span><span><span class="swatch" style="background:var(--div-mid);outline:1px solid var(--border)"></span>unverändert</span><span><span class="swatch" style="background:var(--div-pos)"></span>Gewinn heute</span></div>
+</section>
+{% endif %}
+<section class="card flush" style="margin-top:{{ '16px' if params.view == 'treemap' else '0' }}">
+  <div class="card-head"><h2>{{ rows|length }} Position{{ 'en' if rows|length != 1 }}{% if val.account %} · {{ val.account }}{% endif %}</h2>
+    <span class="hint">Summe {{ totals.value|eur }}</span></div>
+  <div class="table-wrap" style="margin:0;padding:0 8px 8px">
+  <table>
+    <thead><tr>
+      {{ sort_link('name', 'Position') }}
+      {{ sort_link('qty', 'Stück', 'num') }}
+      {{ sort_link('price', 'Kurs', 'num') }}
+      {{ sort_link('value', 'Wert', 'num') }}
+      {{ sort_link('day', 'Heute', 'num') }}
+      {{ sort_link('cost', 'Einstand', 'num') }}
+      {{ sort_link('gain', 'G/V €', 'num') }}
+      {{ sort_link('gain_pct', '%', 'num') }}
+      {{ sort_link('weight', 'Gewicht', 'num') }}
+      <th>30 Tage</th>
+    </tr></thead>
+    <tbody>
+    {% for p in rows %}
+      <tr class="clickable" data-panel="{{ panel_url(p.asset_id) }}" data-title="{{ p.asset.name }}" data-href="{{ asset_url(p.asset_id) }}" tabindex="0">
+        <td><div class="name"><span class="dot" style="background:{{ p.colors.light }}" data-color-light="{{ p.colors.light }}" data-color-dark="{{ p.colors.dark }}"></span>
+          <span class="t"><b>{{ p.asset.name }}</b><small>{{ p.asset.symbol }} · {{ p.category }}
+            {% if not p.price.valued %} · <span class="badge crit">unbewertet</span>{% elif p.price.stale %} · <span class="badge warn" title="{{ p.price.note or 'Kurs veraltet' }}">veraltet</span>{% endif %}
+            {% if p.price.kind == 'manual' %} · <span class="badge info" title="{{ p.price.note }}">manuell</span>{% endif %}</small></span></div></td>
+        <td class="num">{{ p.qty|qty }}</td>
+        <td class="num">{{ p.price.price_eur|price if p.price.valued else '–' }}{% if p.price.ccy and p.price.ccy != 'EUR' and p.price.price_native %}<br><small class="muted">{{ p.price.price_native|num(2) }} {{ p.price.ccy }}</small>{% endif %}</td>
+        <td class="num"><b>{{ p.value|eur }}</b></td>
+        <td class="num"><span class="delta {{ p.day_change_pct|tone }}">{{ p.day_change_pct|pct if p.day_change_pct is not none else '–' }}</span>{% if p.day_change %}<br><small class="muted">{{ p.day_change|eur(2, true) }}</small>{% endif %}</td>
+        <td class="num">{{ p.cost|eur if not p.asset.is_fiat else '–' }}</td>
+        <td class="num" colspan="2"><span class="delta {{ p.unrealized|tone }}">{{ p.unrealized|eur(2, true) if not p.asset.is_fiat else '–' }}</span>{% if p.unrealized_pct is not none %}<br><small class="delta {{ p.unrealized_pct|tone }}">{{ p.unrealized_pct|pct }}</small>{% endif %}</td>
+        <td class="num">{{ (p.weight)|pct(1, false) }}</td>
+        <td>{{ sparks.get(p.asset_id, '') }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="10" class="hint">Keine Positionen für diese Auswahl.</td></tr>
+    {% endfor %}
+    </tbody>
+    <tfoot><tr>
+      <td>Summe</td><td></td><td></td>
+      <td class="num">{{ totals.value|eur }}</td>
+      <td class="num"><span class="delta {{ totals.day|tone }}">{{ totals.day|eur(2, true) }}</span></td>
+      <td class="num">{{ totals.cost|eur }}</td>
+      <td class="num" colspan="2"><span class="delta {{ totals.gain|tone }}">{{ totals.gain|eur(2, true) }}</span>{% if totals.cost %}<br><small class="delta {{ totals.gain|tone }}">{{ (totals.gain / totals.cost)|pct }}</small>{% endif %}</td>
+      <td class="num">{{ totals.weight|pct(1, false) }}</td><td></td>
+    </tr></tfoot>
+  </table>
+  </div>
+</section>

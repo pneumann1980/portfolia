@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Datenqualität{% endblock %}
+{% block heading %}Datenqualität{% endblock %}
+{% block content %}
+<div class="stack">
+
+<section class="card" id="import">
+  <div class="card-head"><h2>Import</h2>
+    <div class="row">
+      <button class="btn primary sm" hx-post="/actions/import/check" hx-target="#import-result" hx-indicator="#imp-spin">Import prüfen</button>
+      <button class="btn sm" hx-post="/actions/import/check" hx-vals='{"force": "1"}' hx-target="#import-result" hx-indicator="#imp-spin" title="Neueste Datei erneut validieren/importieren">Erneut prüfen</button>
+      <span id="imp-spin" class="htmx-indicator spinner"></span>
+    </div>
+  </div>
+  <div id="import-result"></div>
+  {% if cur %}
+  <dl class="kv">
+    <dt>Datei</dt><dd class="mono">{{ cur.filename }}</dd>
+    <dt>Status</dt><dd>{% if cur.status == 'active' %}<span class="badge good">aktiv</span>{% elif cur.status == 'failed' %}<span class="badge crit">abgelehnt</span>{% else %}<span class="badge">{{ cur.status }}</span>{% endif %}</dd>
+    <dt>Verarbeitet</dt><dd>{{ cur.processed_at|datetime_de }}{% if cur.duration_ms %} · {{ (cur.duration_ms / 1000)|num(2) }} s{% endif %}</dd>
+    {% if cur.generated_at %}<dt>Erzeugt (Manifest)</dt><dd>{{ cur.generated_at|datetime_de }} · Bewertungsstichtag {{ cur.valuation_date|date_de }} · Schema {{ cur.schema_version }}</dd>{% endif %}
+    {% if cur.notes %}<dt>Notizen</dt><dd>{{ cur.notes }}</dd>{% endif %}
+    <dt>SHA-256</dt><dd class="mono small">{{ cur.file_sha256 }}</dd>
+  </dl>
+  {% if report %}
+    {% set errs = report.messages|selectattr('severity', 'equalto', 'error')|list %}
+    {% set warns = report.messages|selectattr('severity', 'equalto', 'warning')|list %}
+    {% set infos = report.messages|selectattr('severity', 'equalto', 'info')|list %}
+    <div class="row" style="margin:10px 0"><span class="badge crit">{{ errs|length }} Fehler</span><span class="badge warn">{{ warns|length }} Warnungen</span><span class="badge">{{ infos|length }} Hinweise</span></div>
+    {% for group, items in [('Fehler', errs), ('Warnungen', warns), ('Hinweise', infos)] if items %}
+    <details class="box" {% if group == 'Fehler' %}open{% endif %}>
+      <summary>{{ group }} ({{ items|length }})</summary>
+      <div class="table-wrap"><table><thead><tr><th>Datei</th><th>Zeile</th><th>Spalte</th><th>Meldung</th></tr></thead><tbody>
+      {% for m in items[:500] %}<tr><td class="mono">{{ m.file or '' }}</td><td class="num">{{ m.line or '' }}</td><td class="mono">{{ m.column or '' }}</td><td>{{ m.message }}</td></tr>{% endfor %}
+      </tbody></table></div>
+    </details>
+    {% endfor %}
+  {% endif %}
+  {% if diff %}
+  <h3 style="margin-top:14px">Änderungen zur Vorversion</h3>
+  {% if diff.first_import %}<p class="hint">Erster Import – {{ diff.new }} Transaktionen.</p>{% else %}
+  <div class="row" style="margin:6px 0"><span class="badge good">+{{ diff.new }} neu</span><span class="badge warn">{{ diff.changed }} geändert</span><span class="badge crit">−{{ diff.removed }} entfernt</span><span class="badge">{{ diff.holdings|length }} Bestandsänderungen</span></div>
+  {% if diff.holdings %}<details class="box" open><summary>Bestandsänderungen je Asset</summary><div class="table-wrap"><table>
+    <thead><tr><th>Asset</th><th class="num">Vorher</th><th class="num">Nachher</th><th class="num">Differenz</th></tr></thead><tbody>
+    {% for h in diff.holdings %}<tr><td>{{ h.name }}</td><td class="num">{{ h.old|qty }}</td><td class="num">{{ h.new|qty }}</td><td class="num"><span class="delta {{ h.delta|tone }}">{{ h.delta }}</span></td></tr>{% endfor %}
+  </tbody></table></div></details>{% endif %}
+  {% if diff.new_list %}<details class="box"><summary>Neue Transaktionen ({{ diff.new }})</summary><div class="table-wrap"><table>
+    <thead><tr><th>tx_id</th><th>Zeitpunkt</th><th>Typ</th><th>Abgang</th><th>Zugang</th></tr></thead><tbody>
+    {% for t in diff.new_list %}<tr><td class="mono">{{ t.tx_id }}</td><td>{{ t.datetime|datetime_de }}</td><td>{{ t.type }}{% if t.tag %} <span class="badge">{{ t.tag }}</span>{% endif %}</td><td>{{ t['from'] }}</td><td>{{ t.to }}</td></tr>{% endfor %}
+  </tbody></table></div></details>{% endif %}
+  {% if diff.changed_list %}<details class="box"><summary>Geänderte Transaktionen ({{ diff.changed }})</summary><div class="table-wrap"><table>
+    <thead><tr><th>tx_id</th><th>Feld</th><th>Alt</th><th>Neu</th></tr></thead><tbody>
+    {% for t in diff.changed_list %}{% for f in t.fields %}<tr><td class="mono">{{ t.tx_id if loop.first else '' }}</td><td class="mono">{{ f.field }}</td><td>{{ f.old }}</td><td>{{ f.new }}</td></tr>{% endfor %}{% endfor %}
+  </tbody></table></div></details>{% endif %}
+  {% if diff.removed_list %}<details class="box"><summary>Entfernte Transaktionen ({{ diff.removed }})</summary><div class="table-wrap"><table>
+    <thead><tr><th>tx_id</th><th>Zeitpunkt</th><th>Typ</th></tr></thead><tbody>
+    {% for t in diff.removed_list %}<tr><td class="mono">{{ t.tx_id }}</td><td>{{ t.datetime }}</td><td>{{ t.type }}</td></tr>{% endfor %}
+  </tbody></table></div></details>{% endif %}
+  {% endif %}{% endif %}
+  {% else %}<p class="hint">Noch kein Import verarbeitet.</p>{% endif %}
+
+  <details class="box" style="margin-top:12px"><summary>Importhistorie ({{ imports|length }})</summary><div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>Datei</th><th>Verarbeitet</th><th>Status</th><th class="num">Tx</th><th>Daten</th></tr></thead><tbody>
+    {% for i in imports %}{% set c = (i.counts_json and i.counts_json|fromjson) or {} %}
+      <tr><td><a href="/quality?import_id={{ i.id }}#import">{{ i.id }}</a></td><td class="mono">{{ i.filename }}</td><td>{{ i.processed_at|datetime_de }}</td>
+        <td>{% if i.status == 'active' %}<span class="badge good">aktiv</span>{% elif i.status == 'failed' %}<span class="badge crit">abgelehnt</span>{% else %}<span class="badge">{{ i.status }}</span>{% endif %}</td>
+        <td class="num">{{ c.get('transactions', '–') }}</td><td>{{ 'vorhanden' if i.data_retained else '–' }}</td></tr>
+    {% endfor %}
+  </tbody></table></div></details>
+</section>
+
+<section class="card" id="holdings">
+  <div class="card-head"><h2>Abgleich mit holdings_check</h2>{% if check %}<span class="hint">{{ check.ok }} von {{ check.checked }} übereinstimmend</span>{% endif %}</div>
+  {% if check and check.deviations %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Asset</th><th>Konto</th><th class="num">Ledger</th><th class="num">Soll</th><th class="num">Differenz</th></tr></thead><tbody>
+    {% for d in check.deviations %}<tr><td>{{ d.name }}</td><td>{{ d.account or 'alle' }}</td><td class="num">{{ d.actual|qty }}</td><td class="num">{{ d.expected|qty }}</td><td class="num"><span class="delta {{ d.diff|tone }}">{{ d.diff }}</span></td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="hint">Bestände werden immer aus dem Ledger berechnet; holdings_check dient nur dem Abgleich.</p>
+  {% elif check %}<p><span class="badge good">✓</span> Alle Soll-Bestände werden reproduziert.</p>{% else %}<p class="hint">Keine Daten.</p>{% endif %}
+  {% if check and check.not_in_check %}<details class="box"><summary>Im Ledger, aber nicht in holdings_check ({{ check.not_in_check|length }})</summary>
+    <ul class="small">{% for x in check.not_in_check %}<li>{{ x.name }}: {{ x.actual|qty }}</li>{% endfor %}</ul></details>{% endif %}
+</section>
+
+<section class="card" id="issues">
+  <div class="card-head"><h2>Bekannte Datenprobleme (issues.csv)</h2><span class="hint">{{ issues|length }}</span></div>
+  {% if issues %}{% set cols = issues[0].keys()|list %}
+  <div class="table-wrap"><table><thead><tr>{% for c in cols %}<th>{{ c }}</th>{% endfor %}</tr></thead><tbody>
+    {% for row in issues %}<tr>{% for c in cols %}<td>{% if c == 'severity' %}<span class="badge {{ {'error': 'crit', 'critical': 'crit', 'warning': 'warn', 'warn': 'warn'}.get(row[c], '') }}">{{ row[c] }}</span>{% else %}{{ row[c] }}{% endif %}</td>{% endfor %}</tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="hint">Keine Einträge.</p>{% endif %}
+</section>
+
+<section class="card" id="prices">
+  <div class="card-head"><h2>Kurse: unbewertet &amp; veraltet</h2></div>
+  {% if val %}
+    {% set problems = val.positions|selectattr('price.stale')|list + val.unvalued %}
+    {% if problems %}
+    <div class="table-wrap"><table><thead><tr><th>Asset</th><th>Status</th><th>Quelle</th><th>Stand</th><th>Hinweis</th></tr></thead><tbody>
+    {% for p in val.unvalued %}<tr><td>{{ p.asset.name }}</td><td><span class="badge crit">unbewertet (0 €)</span></td><td>{{ p.asset.quote_source }}{% if p.asset.quote_id %}: {{ p.asset.quote_id }}{% endif %}</td><td>–</td><td>{{ p.price.note or '' }}</td></tr>{% endfor %}
+    {% for p in val.positions if p.price.valued and p.price.stale %}<tr><td>{{ p.asset.name }}</td><td><span class="badge warn">veraltet</span></td><td>{{ p.price.source }}</td><td>{{ p.price.ts|datetime_de }}</td><td>{{ p.price.note or 'letzter bekannter Kurs wird verwendet' }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% else %}<p><span class="badge good">✓</span> Alle Positionen aktuell bewertet.</p>{% endif %}
+  {% endif %}
+  {% if hist and (hist.estimated_days or hist.unvalued_assets) %}
+  <details class="box"><summary>Historie: geschätzte Kurse</summary>
+    <ul class="small">{% for k, v in hist.estimated_days.items() if v %}<li>{{ k }}: {{ v }} Tage mit Transaktionskurs statt Marktkurs</li>{% endfor %}</ul>
+  </details>{% endif %}
+  {% if meta_rows %}
+  <details class="box"><summary>Historische Kursreihen ({{ meta_rows|length }})</summary><div class="table-wrap"><table>
+    <thead><tr><th>Reihe</th><th>Von</th><th>Bis</th><th>Status</th><th>Abruf</th></tr></thead><tbody>
+    {% for m in meta_rows %}<tr><td class="mono">{{ m.series }}</td><td>{{ m.history_from|date_de }}</td><td>{{ m.history_to|date_de }}</td>
+      <td>{% if m.history_status == 'ok' %}<span class="badge good">ok</span>{% elif m.history_status == 'partial' %}<span class="badge warn" title="Demo-API: max. 365 Tage Historie">unvollständig</span>{% else %}<span class="badge crit" title="{{ m.history_error or '' }}">{{ m.history_status }}</span>{% endif %}</td>
+      <td>{{ m.last_history_fetch|datetime_de }}</td></tr>{% endfor %}
+  </tbody></table></div></details>{% endif %}
+</section>
+
+<section class="card" id="sources">
+  <div class="card-head"><h2>Datenquellen &amp; Kontingente</h2></div>
+  <div class="grid-2">
+    <div>
+      <h3>CoinGecko (Monat)</h3>
+      <div class="meter {{ 'crit' if cg.exhausted else ('warn' if cg.throttled else '') }}" style="margin:6px 0" role="meter" aria-valuenow="{{ cg.used }}" aria-valuemax="{{ cg.limit }}"><div style="width:{{ [cg.pct, 100]|min }}%"></div></div>
+      <p class="small">{{ cg.used }} / {{ cg.limit }} Aufrufe ({{ cg.pct|num(1) }} %){% if cg.projected %} · Prognose Monatsende ≈ {{ cg.projected }}{% endif %}
+        {% if cg.throttled %}<span class="badge warn">gedrosselt ab {{ '80' }} %</span>{% endif %}</p>
+    </div>
+    <div>
+      <h3>API-Keys</h3>
+      <ul class="small">{% for k, v in secrets.items() %}<li><span class="mono">{{ k }}</span>: {% if v %}<span class="badge good">gesetzt</span>{% else %}<span class="badge">nicht gesetzt</span>{% endif %}</li>{% endfor %}</ul>
+    </div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Quelle</th><th>Art</th><th>Status</th><th>Letzter Erfolg</th><th class="num">Fehler in Folge</th><th>Nächster Versuch</th><th>Letzter Fehler</th></tr></thead><tbody>
+    {% for s in sources %}
+      <tr><td>{{ s.name or s.source_id }}<br><small class="mono muted">{{ s.source_id }}</small></td><td>{{ s.kind }}</td>
+        <td>{% if s.verified == 'ok' %}<span class="badge good">ok</span>{% elif s.verified == 'unreachable' %}<span class="badge crit">nicht erreichbar</span>{% else %}<span class="badge">{{ s.verified or '–' }}</span>{% endif %}</td>
+        <td>{{ s.last_success|datetime_de }}</td><td class="num">{{ s.consecutive_failures }}</td><td>{{ s.next_allowed|datetime_de }}</td>
+        <td class="small">{{ (s.last_error or '')[:160] }}</td></tr>
+    {% else %}<tr><td colspan="7" class="hint">Noch keine Abrufe.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if usage %}<details class="box"><summary>Nutzung je Zeitraum</summary><div class="table-wrap"><table><thead><tr><th>Anbieter</th><th>Zeitraum</th><th class="num">Aufrufe</th><th class="num">Einheiten</th></tr></thead><tbody>
+    {% for u in usage %}<tr><td>{{ u.provider }}</td><td>{{ u.period }}</td><td class="num">{{ u.calls }}</td><td class="num">{{ u.units }}</td></tr>{% endfor %}</tbody></table></div></details>{% endif %}
+</section>
+
+<section class="card" id="ledger">
+  <div class="card-head"><h2>Ledger-Hinweise</h2><span class="hint">{{ ledger_issues|length }}</span></div>
+  {% if cash_tracked %}<p class="small">Cash-Führung je Konto: {% for acc, v in cash_tracked.items() %}<span class="badge {{ 'good' if v else '' }}">{{ acc }}: {{ 'mit Cash' if v else 'ohne Cash' }}</span> {% endfor %}
+    <a href="/settings#ledger">ändern</a></p>{% endif %}
+  {% if ledger_issues %}<div class="table-wrap"><table><thead><tr><th>Stufe</th><th>Code</th><th>tx_id</th><th>Meldung</th></tr></thead><tbody>
+    {% for i in ledger_issues %}<tr><td><span class="badge {{ 'warn' if i.severity == 'warning' else '' }}">{{ i.severity }}</span></td><td class="mono">{{ i.code }}</td><td class="mono">{{ i.tx_id or '' }}</td><td>{{ i.message }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="hint">Keine Auffälligkeiten.</p>{% endif %}
+</section>
+
+<section class="card" id="jobs">
+  <div class="card-head"><h2>Hintergrundjobs</h2>
+    <div class="row"><button class="btn sm" hx-post="/actions/backfill" hx-target="#bf-msg">Historie nachladen</button><span id="bf-msg"></span></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Job</th><th>Status</th><th>Letzter Lauf</th><th>Nächster Lauf</th><th>Ergebnis/Fehler</th></tr></thead><tbody>
+  {% for name, j in jobs.items() %}
+    <tr><td class="mono">{{ name }}</td>
+      <td>{% if j.running %}<span class="badge info"><span class="spinner"></span> läuft</span>{% elif j.last_ok %}<span class="badge good">ok</span>{% elif j.last_ok is not none %}<span class="badge crit">Fehler</span>{% endif %}
+        {% if j.running and j.progress %}<div class="progress" style="margin-top:4px;min-width:80px"><div style="width:{{ (j.progress.done / j.progress.total * 100) if j.progress.total else 0 }}%"></div></div>{% endif %}</td>
+      <td>{{ j.last_end|datetime_de }}</td><td>{{ next_runs.get(name)|datetime_de }}</td>
+      <td class="small">{{ j.last_error or (j.progress|tojson if j.progress and not j.running else '') }}</td></tr>
+  {% else %}<tr><td colspan="5" class="hint">Noch keine Läufe.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="card" id="log">
+  <div class="card-head"><h2>Fehlerprotokoll</h2><span class="hint">letzte {{ events|length }} Warnungen/Fehler</span></div>
+  <div class="table-wrap"><table><thead><tr><th>Zeit</th><th>Stufe</th><th>Komponente</th><th>Meldung</th></tr></thead><tbody>
+    {% for e in events %}<tr><td class="nowrap">{{ e.ts|datetime_de }}</td><td><span class="badge {{ 'crit' if e.level in ('ERROR', 'CRITICAL') else 'warn' }}">{{ e.level }}</span></td><td class="mono small">{{ e.logger }}</td><td class="small">{{ e.message }}</td></tr>
+    {% else %}<tr><td colspan="4" class="hint">Keine Einträge.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+</div>
+{% endblock %}

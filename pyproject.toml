@@ -1,0 +1,37 @@
+[project]
+name = "portfolia"
+version = "0.5.0"
+description = "Self-hosted Portfolio-Dashboard (Aktien & Krypto) für Unraid/Docker – nur lesend, EUR-basiert, mit Steuer-Modul."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["app/static/vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "RUF", "S"]
+ignore = [
+  "S101",   # assert in tests
+  "S311",   # pseudo-random generators are fine for demo data
+  "S608",   # SQL built from constant fragments only (placeholders for values)
+  "RUF001", "RUF002", "RUF003",  # German typography (–, „“) is intentional
+  "SIM108",
+  "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]
+"scripts/*" = ["S"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+  "ignore::DeprecationWarning:feedparser.*",
+]

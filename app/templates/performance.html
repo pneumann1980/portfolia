@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Performance{% endblock %}
+{% block heading %}Performance{% endblock %}
+{% block content %}
+<form class="filters" method="get" action="/performance">
+  <label class="field">Betrachtung
+    <select name="scope" data-autosubmit>
+      {% for o in scopes %}<option value="{{ o.value }}" {% if o.value == scope %}selected{% endif %}>{{ o.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="field">Zeitraum
+    <select name="period" data-autosubmit>
+      {% for p in periods %}<option value="{{ p }}" {% if p == period and not start and not end %}selected{% endif %}>{{ period_labels[p] }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="field">Von <input type="date" name="start" value="{{ start }}" min="{{ hist_start.isoformat() }}" max="{{ hist_end.isoformat() }}"></label>
+  <label class="field">Bis <input type="date" name="end" value="{{ end }}" min="{{ hist_start.isoformat() }}" max="{{ hist_end.isoformat() }}"></label>
+  <button class="btn" type="submit">Anwenden</button>
+</form>
+
+{% if unvalued %}<div class="alert warn"><span class="icon">!</span><div>Unbewertete Positionen (0 €) verzerren die Rendite: {{ unvalued|join(', ') }}.</div></div>{% endif %}
+{% if estimated %}<div class="alert"><span class="icon">i</span><div>Für einige Zeiträume fehlen historische Kurse; dort wird mit Transaktionskursen geschätzt:
+  {% for n, d in estimated[:8] %}{{ n }} ({{ d }} Tage){{ ', ' if not loop.last }}{% endfor %}{% if estimated|length > 8 %} …{% endif %}</div></div>{% endif %}
+
+<section class="kpis six" aria-label="Kennzahlen {{ sel_label }}">
+  <div class="kpi hero">
+    <div class="label">TTWROR · {{ sel_label }} <span title="True Time-Weighted Rate of Return: tägliche Renditen, Ein- und Auszahlungen neutralisiert. Zuflüsse zu Tagesbeginn, Abflüsse zu Tagesende (Portfolio Performance).">ⓘ</span></div>
+    <div class="value"><span class="delta {{ sel.ttwror|tone }}">{{ sel.ttwror|arrow }} {{ sel.ttwror|pct if sel.ttwror is not none else '–' }}</span></div>
+    <div class="sub">{% if sel.ttwror_pa is not none %}{{ sel.ttwror_pa|pct }} p. a.{% else %}p. a. erst ab 1 Jahr{% endif %} · {{ sel.days }} Tage</div>
+  </div>
+  <div class="kpi"><div class="label">IRR p. a. <span title="Interner Zinsfuß (geldwertgewichtet): Anfangswert als Einzahlung, alle Ein-/Auszahlungen mit Datum, Endwert als Auszahlung.">ⓘ</span></div>
+    <div class="value"><span class="delta {{ sel.irr|tone }}">{{ sel.irr|pct if sel.irr is not none else '–' }}</span></div>
+    <div class="sub">{% if sel.days < 365 %}annualisiert, Zeitraum &lt; 1 Jahr{% else %}geldgewichtet{% endif %}</div></div>
+  <div class="kpi"><div class="label">Absoluter G/V</div><div class="value"><span class="delta {{ sel.gain|tone }}">{{ sel.gain|eur_kpi(true) }}</span></div>
+    <div class="sub">inkl. Erträge, nach Gebühren</div></div>
+  <div class="kpi"><div class="label">Wert Beginn → Ende</div><div class="value" style="font-size:1rem">{{ sel.start_value|eur_compact }} → {{ sel.end_value|eur_compact }}</div>
+    <div class="sub">{{ sel.start_date|date_de }} – {{ sel.end_date|date_de }}</div></div>
+  <div class="kpi"><div class="label">Ein-/Auszahlungen</div><div class="value" style="font-size:1rem">{{ sel.inflows|eur_compact }} / {{ sel.outflows|eur_compact }}</div>
+    <div class="sub">netto {{ sel.net_flows|eur(0, true) }}</div></div>
+  <div class="kpi"><div class="label">Max. Drawdown</div><div class="value"><span class="delta down">{{ sel.max_drawdown|pct if sel.max_drawdown is not none else '–' }}</span></div>
+    <div class="sub">größter Rückgang vom Hoch</div></div>
+</section>
+
+<div class="grid-2" style="margin-top:16px">
+  <section class="card span-2">
+    <div class="card-head"><h2>Kumulierte Rendite vs. Benchmark</h2><span class="hint">TTWROR in % · Benchmarks: Kursentwicklung in EUR</span></div>
+    <div class="chart tall" data-chart="perf" data-src="/api/performance/series?scope={{ urlq(scope) }}&period={{ period }}&start={{ start }}&end={{ end }}" role="img" aria-label="Kumulierte Rendite des Portfolios im Vergleich zu Benchmarks"></div>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Jahresrenditen</h2><span class="hint">TTWROR je Kalenderjahr</span></div>
+    <div class="chart" data-chart="annual" data-src="/api/performance/annual?scope={{ urlq(scope) }}" role="img" aria-label="Jahresrenditen als Balken"></div>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Drawdown</h2><span class="hint">Abstand zum bisherigen Höchststand</span></div>
+    <div class="chart" data-chart="drawdown" data-src="/api/performance/series?scope={{ urlq(scope) }}&period={{ period }}&start={{ start }}&end={{ end }}" role="img" aria-label="Drawdown-Verlauf"></div>
+  </section>
+  <section class="card span-2">
+    <div class="card-head"><h2>Beitrag je Position</h2><span class="hint">Absoluter G/V im Zeitraum (Wertänderung minus Zu-/Abflüsse der Position)</span></div>
+    <div class="chart tall" data-chart="waterfall" data-src="/api/performance/contrib?period={{ period }}&start={{ start }}&end={{ end }}" role="img" aria-label="Wasserfalldiagramm der Beiträge je Position"></div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Zeiträume</h2></div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Zeitraum</th><th class="num">TTWROR</th><th class="num">TTWROR p. a.</th><th class="num">IRR p. a.</th><th class="num">G/V absolut</th><th class="num">Max. Drawdown</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr><td><a href="/performance?scope={{ urlq(scope) }}&period={{ r.key }}">{{ r.label }}</a></td>
+        <td class="num"><span class="delta {{ r.ttwror|tone }}">{{ r.ttwror|pct if r.ttwror is not none else '–' }}</span></td>
+        <td class="num">{{ r.ttwror_pa|pct if r.ttwror_pa is not none else '–' }}</td>
+        <td class="num">{{ r.irr|pct if r.irr is not none else '–' }}</td>
+        <td class="num"><span class="delta {{ r.gain|tone }}">{{ r.gain|eur(2, true) if r.gain is not none else '–' }}</span></td>
+        <td class="num">{{ r.max_drawdown|pct if r.max_drawdown is not none else '–' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <details class="box" style="margin-top:12px">
+    <summary>Methodik</summary>
+    <p class="small"><b>TTWROR</b> (zeitgewichtet): r<sub>t</sub> = (MV<sub>t</sub> + Abflüsse<sub>t</sub>) / (MV<sub>t−1</sub> + Zuflüsse<sub>t</sub>) − 1, verkettet über alle Tage. Externe Zahlungsströme sind neutralisiert – misst die Qualität der Anlageentscheidungen.
+      <b>IRR</b> (geldgewichtet): interner Zinsfuß aus Anfangswert, datierten Zahlungsströmen und Endwert – misst die tatsächliche Verzinsung des eingesetzten Kapitals.</p>
+    <p class="small"><b>Externe Zahlungsströme:</b> Ein-/Auszahlungen in EUR/USD; bei Depots ohne Cash-Konto gelten Käufe als Einzahlung und Verkaufserlöse als Auszahlung; nicht zugeordnete Krypto-Zu-/Abgänge zum Marktwert (einstellbar). Erträge (Staking, Dividenden) sind Rendite. Kennzahlen je Segment/Kategorie/Position verwenden Zu- und Abflüsse der jeweiligen Positionen (Käufe, Verkäufe, Tausche, Ausschüttungen).</p>
+  </details>
+</section>
+{% endblock %}

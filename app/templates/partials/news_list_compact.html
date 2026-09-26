@@ -1,0 +1,12 @@
+<div class="list">
+{% for n in news %}
+  <a class="list-item" href="{{ n.url }}" target="_blank" rel="noopener noreferrer">
+    <span class="grow">
+      <span class="title">{% if n.kind == 'video' %}▶ {% endif %}{{ n.title }}</span>
+      <span class="meta">{{ n.source_name or n.channel_name or '' }} · {{ n.published_at|rel_time_iso }}</span>
+    </span>
+  </a>
+{% else %}
+  <p class="hint">Noch keine News. Quellen werden alle 30 Minuten abgerufen (<a href="/news">News &amp; Videos</a>).</p>
+{% endfor %}
+</div>

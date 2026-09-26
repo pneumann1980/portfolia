@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Einstellungen{% endblock %}
+{% block heading %}Einstellungen{% endblock %}
+{% macro save(section) %}<input type="hidden" name="section" value="{{ section }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="row" style="margin-top:12px"><button class="btn primary" type="submit">Speichern</button>{% if saved == section %}<span class="badge good">✓ gespeichert</span>{% endif %}</div>{% endmacro %}
+{% block content %}
+<div class="stack">
+<section class="card" id="general">
+  <div class="card-head"><h2>Darstellung</h2></div>
+  <form method="post" action="/settings/save" class="grid-2">
+    <label class="field">Schwelle „Sonstige“ in der Allokation (%)
+      <input type="number" name="other_threshold_pct" step="0.1" min="0" max="20" value="{{ s['allocation.other_threshold_pct'] }}"></label>
+    <label class="field">Standard-Zeitraum Wertentwicklung
+      <select name="default_range">{% for r in ['1M','3M','6M','YTD','1J','3J','5J','MAX'] %}<option {% if s['ui.default_range'] == r %}selected{% endif %}>{{ r }}</option>{% endfor %}</select></label>
+    <div>{{ save('general') }}</div>
+  </form>
+</section>
+
+<section class="card" id="ledger">
+  <div class="card-head"><h2>Berechnung &amp; Zahlungsströme</h2></div>
+  <form method="post" action="/settings/save">
+    <div class="grid-2">
+      <label class="field">Lot-Reihenfolge für Anzeige und G/V
+        <select name="scope">
+          <option value="global" {% if s['ledger.scope'] == 'global' %}selected{% endif %}>FIFO global je Asset (Standard)</option>
+          <option value="account" {% if s['ledger.scope'] == 'account' %}selected{% endif %}>FIFO je Konto/Wallet</option>
+        </select></label>
+      <label class="check" style="align-self:end"><input type="checkbox" name="unmatched_flows" value="1" {% if s['ledger.unmatched_transfers_as_flows'] %}checked{% endif %}>
+        Nicht zugeordnete Krypto-/Wertpapier-Zu- und Abgänge als externe Zahlungsströme (zum Marktwert)</label>
+    </div>
+    <h3 style="margin-top:14px">Cash-Führung je Konto</h3>
+    <p class="hint">Konten <b>ohne</b> Cash-Führung behandeln Käufe als Einzahlung und Verkaufserlöse als Auszahlung (z. B. Depot, dessen Verrechnungskonto nicht im Ledger steht). „Automatisch“ erkennt Konten mit Fiat-Ein-/Auszahlungen als geführt.</p>
+    <div class="table-wrap"><table><thead><tr><th>Konto</th><th>Erkannt</th><th>Einstellung</th></tr></thead><tbody>
+      {% for acc in accounts %}{% set ov = s['ledger.cash_overrides'].get(acc) %}
+      <tr><td>{{ acc }}</td><td>{{ 'mit Cash' if detected_cash.get(acc) else 'ohne Cash' }}</td>
+        <td><select name="cash__{{ acc }}"><option value="auto" {% if ov is none %}selected{% endif %}>Automatisch</option>
+          <option value="yes" {% if ov == true %}selected{% endif %}>mit Cash-Führung</option>
+          <option value="no" {% if ov == false %}selected{% endif %}>ohne Cash-Führung</option></select></td></tr>
+      {% else %}<tr><td colspan="3" class="hint">Noch kein Import.</td></tr>{% endfor %}
+    </tbody></table></div>
+    {{ save('ledger') }}
+  </form>
+</section>
+
+<section class="card" id="prices">
+  <div class="card-head"><h2>Kurse &amp; Benchmarks</h2></div>
+  <form method="post" action="/settings/save">
+    <div class="grid-3">
+      <label class="field">Krypto veraltet nach (Minuten)<input type="number" name="stale_crypto_minutes" min="5" value="{{ s['prices.stale_crypto_minutes'] }}"></label>
+      <label class="field">Aktien veraltet nach (Stunden, an Handelstagen)<input type="number" name="stale_security_hours" min="1" value="{{ s['prices.stale_security_hours'] }}"></label>
+      <label class="field">CoinGecko-Monatslimit<input type="number" name="coingecko_monthly_limit" min="100" value="{{ s['prices.coingecko_monthly_limit'] }}"></label>
+      <label class="field">Drosseln ab (% des Limits)<input type="number" name="coingecko_throttle_pct" min="10" max="100" value="{{ s['prices.coingecko_throttle_pct'] }}"></label>
+    </div>
+    <label class="field" style="margin-top:10px"><span>Benchmarks (eine Zeile je Benchmark: <code>Name | Quelle:Symbol</code>, z. B. <code>MSCI World | yahoo:EUNL.DE</code>)</span>
+      <textarea name="benchmarks">{% for b in s['performance.benchmarks'] %}{{ b.name }} | {{ b.series }}
+{% endfor %}</textarea></label>
+    <label class="field" style="margin-top:10px"><span>Krypto-Historie vor dem CoinGecko-Fenster (365 Tage) aus Yahoo (<code>SYMBOL=YAHOO-SYMBOL</code>, nur eindeutige EUR-Paare)</span>
+      <textarea name="crypto_history_fallback">{% for k, v in s['prices.crypto_history_fallback'].items() %}{{ k }}={{ v }}
+{% endfor %}</textarea></label>
+    {{ save('prices') }}
+  </form>
+</section>
+
+<section class="card" id="news">
+  <div class="card-head"><h2>News &amp; optionales LLM</h2></div>
+  <form method="post" action="/settings/save">
+    <div class="grid-3">
+      <label class="field">Mindest-Relevanz für Dashboard/Feed<input type="number" step="0.05" min="0" name="min_relevance" value="{{ s['news.min_relevance'] }}"></label>
+      <label class="field">News im Dashboard<input type="number" min="1" max="20" name="dashboard_count" value="{{ s['news.dashboard_count'] }}"></label>
+    </div>
+    <label class="check" style="margin-top:10px"><input type="checkbox" name="llm_enabled" value="1" {% if s['llm.enabled'] %}checked{% endif %} {% if not secrets['ANTHROPIC_API_KEY'] %}disabled{% endif %}>
+      Zusammenfassungen &amp; Tagesdigest per Anthropic Claude API {% if not secrets['ANTHROPIC_API_KEY'] %}<span class="badge">ANTHROPIC_API_KEY nicht gesetzt</span>{% endif %}</label>
+    <div class="grid-3" style="margin-top:8px">
+      <label class="field">Tages-Token-Budget<input type="number" min="0" name="llm_budget" value="{{ s['llm.daily_token_budget'] }}"></label>
+      <label class="field">Modell<input type="text" name="llm_model" value="{{ s['llm.model'] }}"></label>
+    </div>
+    <p class="hint">Es werden ausschließlich Asset-Namen und Artikeltexte gesendet – niemals Stückzahlen, Werte oder Kontonamen. Quellen, Gewichte und YouTube-Kanäle: <code>/data/sources.yaml</code> bzw. Seite <a href="/news?tab=sources">News → Quellen</a>.</p>
+    {{ save('news') }}
+  </form>
+</section>
+
+<section class="card" id="backup">
+  <div class="card-head"><h2>Backups</h2></div>
+  <form method="post" action="/settings/save" class="grid-3">
+    <label class="field">Anzahl Sicherungen (täglich)<input type="number" min="1" max="365" name="keep" value="{{ s['backup.keep'] }}"></label>
+    <div>{{ save('backup') }}</div>
+  </form>
+  <p class="hint">Tägliche Kopie von <code>app.sqlite</code> nach <code>/data/backups</code>.</p>
+</section>
+
+{% block extra_settings %}{% endblock %}
+
+<section class="card" id="system">
+  <div class="card-head"><h2>System</h2></div>
+  <dl class="kv">
+    <dt>Version</dt><dd>{{ version }}</dd>
+    <dt>Datenverzeichnis</dt><dd class="mono">{{ config.data_dir }}</dd>
+    <dt>Importverzeichnis</dt><dd class="mono">{{ config.import_dir }}</dd>
+    <dt>Zeitzone</dt><dd>{{ config.tz }}</dd>
+    <dt>Authentifizierung</dt><dd>{{ 'Basic-Auth' if config.auth_mode == 'basic' else 'keine (nur LAN / Reverse-Proxy)' }}</dd>
+    <dt>API-Keys</dt><dd>{% for k, v in secrets.items() %}<span class="badge {{ 'good' if v else '' }}">{{ k }}: {{ 'gesetzt' if v else '–' }}</span> {% endfor %}</dd>
+  </dl>
+</section>
+</div>
+{% endblock %}

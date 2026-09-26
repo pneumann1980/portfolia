@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Fehler {{ code }}{% endblock %}
+{% block heading %}Fehler {{ code }}{% endblock %}
+{% block content %}
+<section class="card empty-state">
+  <h1>{{ message }}</h1>
+  <p><a href="/">Zur Übersicht</a></p>
+</section>
+{% endblock %}
