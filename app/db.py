@@ -18,6 +18,20 @@ SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 # Weitere Migrationen werden hier angehängt: (version, sql)
 MIGRATIONS: list[tuple[int, str]] = [
     (1, "__schema__"),
+    (2, """
+CREATE TABLE IF NOT EXISTS yt_channel (
+  handle      TEXT PRIMARY KEY,
+  channel_id  TEXT,
+  title       TEXT,
+  subscribers INTEGER,
+  status      TEXT NOT NULL,          -- ok | unresolvable | pending
+  error       TEXT,
+  method      TEXT,                   -- api | page | pinned
+  resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_news_channel ON news_item(channel_id);
+CREATE INDEX IF NOT EXISTS ix_news_video ON news_item(video_id);
+"""),
 ]
 
 

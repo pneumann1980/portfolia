@@ -1,0 +1,5 @@
+{% if n.is_read %}
+<button class="icon-btn" title="Als ungelesen markieren" aria-label="Als ungelesen markieren" hx-post="/news/{{ n.id }}/read" hx-vals='{"unread": "1", "fragment": "1"}' hx-target="#rb-{{ n.id }}">✓</button>
+{% else %}
+<button class="icon-btn" title="Als gelesen markieren" aria-label="Als gelesen markieren" hx-post="/news/{{ n.id }}/read" hx-vals='{"fragment": "1"}' hx-target="#rb-{{ n.id }}">○</button>
+{% endif %}

@@ -12,3 +12,4 @@ feedparser==6.0.14
 defusedxml==0.7.1
 bcrypt==5.0.0
 tzdata==2026.4
+anthropic==1.8.0

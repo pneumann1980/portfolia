@@ -394,6 +394,7 @@ body.panel-open { overflow: hidden; }
 .news-item .title { font-weight: 600; color: var(--ink); }
 .news-item.read .title { color: var(--ink-2); font-weight: 500; }
 .news-item .meta { font-size: 0.78rem; color: var(--ink-2); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 3px; }
+.news-item .icon-btn { font-size: 1.1rem; min-width: 34px; min-height: 34px; justify-content: center; }
 .news-item .summary { font-size: 0.86rem; color: var(--ink-2); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-width: 520px) { .news-item .thumb { flex-basis: 96px; width: 96px; } }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-x: auto; }

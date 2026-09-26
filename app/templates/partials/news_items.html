@@ -1,0 +1,38 @@
+{% for x in items %}{% set n = x.row %}
+<article class="news-item {{ 'read' if n.is_read }}" id="news-{{ n.id }}">
+  {% if n.kind == 'video' and n.video_id %}
+    <a href="{{ n.url }}" target="_blank" rel="noopener noreferrer" hx-post="/news/{{ n.id }}/read" hx-swap="none" hx-trigger="click" tabindex="-1">
+      <img class="thumb" src="https://i.ytimg.com/vi/{{ n.video_id }}/mqdefault.jpg" alt="" loading="lazy"></a>
+  {% elif n.image_url %}
+    <img class="thumb" src="/img/news/{{ n.id }}" alt="" loading="lazy">
+  {% endif %}
+  <div class="body">
+    <a class="title" href="{{ n.url }}" target="_blank" rel="noopener noreferrer" hx-post="/news/{{ n.id }}/read" hx-swap="none" hx-trigger="click">{{ n.title }}</a>
+    <div class="meta">
+      <span>{{ n.channel_name if n.kind == 'video' and n.channel_name else n.source_name }}</span>
+      <span>· {{ n.published_at|rel_time_iso }}</span>
+      {% if n.kind == 'video' %}
+        {% if n.duration_s %}<span>· {{ n.duration_s|duration }}</span>{% endif %}
+        {% if n.views %}<span>· {{ n.views|num(0) }} Aufrufe</span>{% endif %}
+        {% if n.is_live %}<span class="badge crit">LIVE</span>{% endif %}
+        {% if n.is_short %}<span class="badge">Short</span>{% endif %}
+      {% endif %}
+      {% for aid, name in x.assets[:4] %}<a class="badge info" href="/news?tab={{ 'videos' if n.kind == 'video' else 'articles' }}&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
+      {% if n.dup_count %}<span class="badge" title="Weitere Quellen berichten ebenfalls">+{{ n.dup_count }}</span>{% endif %}
+      {% if n.hidden_reason %}<span class="badge warn">ausgeblendet: {{ n.hidden_reason }}</span>{% endif %}
+      <span class="badge" title="Relevanz inkl. Aktualität">{{ x.score|num(2) }}</span>
+    </div>
+    {% if n.llm_summary %}<div class="summary"><span class="badge info">KI</span> {{ n.llm_summary }}</div>
+    {% elif n.summary %}<div class="summary">{{ n.summary }}</div>{% endif %}
+  </div>
+  <div id="rb-{{ n.id }}">{% include "partials/news_read_button.html" %}</div>
+</article>
+{% else %}
+<p class="hint">Keine Meldungen für diese Auswahl. Quellen werden alle 30 Minuten abgerufen; Status unter „Quellen“.</p>
+{% endfor %}
+{% if total > page * page_size %}
+<div id="news-more" style="text-align:center;margin-top:10px">
+  <button class="btn" hx-get="/news?tab={{ params.tab }}&asset={{ urlq(params.asset) }}&source={{ urlq(params.source) }}&days={{ params.days }}&status={{ params.status }}&sort={{ params.sort }}&shorts={{ params.shorts }}&hidden={{ params.hidden }}&page={{ page + 1 }}"
+          hx-target="#news-more" hx-swap="outerHTML">Weitere laden ({{ total - page * page_size }})</button>
+</div>
+{% endif %}

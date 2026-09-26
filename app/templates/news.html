@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}News & Videos{% endblock %}
+{% block heading %}News &amp; Videos{% endblock %}
+{% block topbar_actions %}
+  <button class="btn sm ghost" hx-post="/news/refresh" hx-target="#news-msg" title="Quellen jetzt abrufen"><svg width="16" height="16"><use href="#i-refresh"/></svg><span>Abrufen</span></button>
+{% endblock %}
+{% macro tab_link(key, label, badge=None) -%}
+  <a href="/news?tab={{ key }}&asset={{ urlq(params.asset) }}&days={{ params.days }}&sort={{ params.sort }}" class="{{ 'active' if params.tab == key }}">{{ label }}{% if badge %} <span class="badge warn">{{ badge }}</span>{% endif %}</a>
+{%- endmacro %}
+{% block content %}
+<div id="news-msg" class="row" style="margin-bottom:6px"></div>
+{% for e in cfg_errors %}<div class="alert crit"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+<nav class="tabs" aria-label="Bereiche">
+  {{ tab_link('articles', 'Artikel') }}
+  {{ tab_link('videos', 'Videos') }}
+  {{ tab_link('suggestions', 'Kanal-Vorschläge', n_suggestions if n_suggestions else None) }}
+  {{ tab_link('sources', 'Quellen') }}
+</nav>
+
+{% if params.tab in ('articles', 'videos') %}
+  {% if digest and llm.enabled() %}
+  <details class="box" style="margin-bottom:12px" open>
+    <summary>Tagesdigest vom {{ digest.day|date_de }} <span class="badge info">KI-Zusammenfassung</span></summary>
+    <div class="small" style="white-space:pre-line;margin-top:8px">{{ digest.content }}</div>
+    <p class="hint">Automatisch erstellt aus Titeln und Teasern der Meldungen – keine Anlageberatung.</p>
+  </details>
+  {% endif %}
+  <form class="filters" method="get" action="/news">
+    <input type="hidden" name="tab" value="{{ params.tab }}">
+    <label class="field">Asset
+      <select name="asset" data-autosubmit>
+        <option value="">Alle Positionen</option>
+        {% for aid, name in assets %}<option value="{{ aid }}" {% if params.asset == aid %}selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select></label>
+    <label class="field">Quelle
+      <select name="source" data-autosubmit>
+        <option value="">Alle</option>
+        {% for s in sources %}<option value="{{ s.source_id }}" {% if params.source == s.source_id %}selected{% endif %}>{{ s.source_name }}</option>{% endfor %}
+      </select></label>
+    <label class="field">Zeitraum
+      <select name="days" data-autosubmit>
+        {% for d, l in [(1, '24 Stunden'), (7, '7 Tage'), (30, '30 Tage'), (90, '90 Tage')] %}<option value="{{ d }}" {% if params.days == d %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select></label>
+    <label class="field">Status
+      <select name="status" data-autosubmit>
+        {% for v, l in [('all', 'Alle'), ('unread', 'Ungelesen'), ('read', 'Gelesen')] %}<option value="{{ v }}" {% if params.status == v %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select></label>
+    <label class="field">Sortierung
+      <select name="sort" data-autosubmit>
+        <option value="relevance" {% if params.sort == 'relevance' %}selected{% endif %}>Relevanz</option>
+        <option value="time" {% if params.sort == 'time' %}selected{% endif %}>Zeit</option>
+      </select></label>
+    {% if params.tab == 'videos' %}<label class="check"><input type="checkbox" name="shorts" value="1" data-autosubmit {% if params.shorts %}checked{% endif %}> Shorts</label>{% endif %}
+    <label class="check"><input type="checkbox" name="hidden" value="1" data-autosubmit {% if params.hidden %}checked{% endif %}> Ausgeblendete</label>
+    <button class="btn sm ghost" type="button" hx-post="/news/read-all" hx-vals='{"tab": "{{ params.tab }}", "days": "{{ params.days }}"}'>Alle als gelesen</button>
+  </form>
+  <section class="card">
+    <div class="card-head"><h2>{{ total }} {{ 'Artikel' if params.tab == 'articles' else 'Videos' }}</h2>
+      <span class="hint" title="Relevanz = Treffer (Titel > Beschreibung) × Quellgewicht × Positionsgewicht × Aktualität">Sortiert nach {{ 'Relevanz' if params.sort == 'relevance' else 'Zeit' }} ⓘ</span></div>
+    <div id="news-list">
+      {% include "partials/news_items.html" %}
+    </div>
+  </section>
+
+{% elif params.tab == 'suggestions' %}
+  <section class="card">
+    <div class="card-head"><h2>Kanal-Vorschläge aus der Entdeckung</h2><span class="hint">Gefunden über die YouTube-Suche zu den größten Positionen</span></div>
+    {% if not suggestions %}<p class="hint">Noch keine Vorschläge. Die Entdeckung läuft täglich und benötigt <code>YOUTUBE_API_KEY</code>.</p>{% endif %}
+    <div class="list">
+    {% for s in suggestions %}
+      <div class="list-item">
+        {% if s.sample_video %}<img class="thumb" style="width:96px;aspect-ratio:16/9;border-radius:6px;object-fit:cover" src="https://i.ytimg.com/vi/{{ s.sample_video }}/mqdefault.jpg" alt="" loading="lazy">{% endif %}
+        <div class="grow">
+          <div class="title">{{ s.title or s.channel_id }} {% if s.handle %}<span class="muted small">{{ s.handle }}</span>{% endif %}</div>
+          <div class="meta">{{ (s.subscribers or 0)|num(0) }} Abonnenten · {{ s.hits }} Treffer · zu: {{ s.found_for }} · zuletzt {{ s.last_seen|rel_time_iso }}</div>
+          {% if s.sample_title %}<div class="meta">z. B. „{{ s.sample_title }}“</div>{% endif %}
+        </div>
+        {% if s.status == 'new' %}
+        <div class="row">
+          <button class="btn sm primary" hx-post="/youtube/suggestion/{{ s.channel_id }}/subscribe">Abonnieren</button>
+          <button class="btn sm" hx-post="/youtube/suggestion/{{ s.channel_id }}/ignore">Ignorieren</button>
+          <button class="btn sm" hx-post="/youtube/suggestion/{{ s.channel_id }}/block" hx-confirm="Kanal blockieren? Videos dieses Kanals werden überall ausgeblendet.">Blockieren</button>
+        </div>
+        {% else %}<span class="badge {{ 'good' if s.status == 'subscribed' else ('crit' if s.status == 'blocked' else '') }}">{{ {'subscribed': 'abonniert', 'ignored': 'ignoriert', 'blocked': 'blockiert'}.get(s.status, s.status) }}</span>{% endif %}
+      </div>
+    {% endfor %}
+    </div>
+    <p class="hint">Entscheidungen werden in <code>/data/sources.yaml</code> gespeichert. Entdeckte Videos haben bis zur Bestätigung das Gewicht 0,4.</p>
+  </section>
+
+{% else %}
+  <section class="card">
+    <div class="card-head"><h2>Nachrichtenquellen</h2><span class="hint mono">{{ sources_path }}</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Quelle</th><th>Typ</th><th class="num">Gewicht</th><th>Status</th><th>Letzter Erfolg</th><th class="num">Meldungen</th><th></th></tr></thead>
+      <tbody>
+      {% for s in src_list %}{% set st = status_rows.get(s.id) %}
+        <tr>
+          <td><b>{{ s.name }}</b><br><small class="muted">{{ s.language }}{% if s.require_match %} · nur zugeordnete{% endif %}{% if s.note %} · {{ s.note }}{% endif %}</small></td>
+          <td class="mono small">{{ s.type }}</td>
+          <td class="num"><form hx-post="/news/source" class="row" style="justify-content:flex-end;gap:4px"><input type="hidden" name="id" value="{{ s.id }}"><input type="hidden" name="action" value="weight">
+            <input type="number" name="weight" min="0" max="1" step="0.1" value="{{ s.weight }}" style="width:70px"><button class="btn sm ghost" type="submit">✓</button></form></td>
+          <td>{% if not s.active %}<span class="badge">inaktiv</span>{% elif st and st.verified == 'unreachable' %}<span class="badge crit" title="{{ st.last_error or '' }}">nicht erreichbar – pausiert</span>{% elif st and st.verified == 'ok' %}<span class="badge good">ok</span>{% elif s.type in ('finnhub', 'cryptopanic') %}<span class="badge">API-Key nötig</span>{% else %}<span class="badge">noch nicht geprüft</span>{% endif %}
+            {% if st and st.last_error and st.consecutive_failures %}<br><small class="muted">{{ st.last_error[:90] }}</small>{% endif %}</td>
+          <td>{{ st.last_success|datetime_de if st else '–' }}</td>
+          <td class="num">{{ counts.get(s.id, 0) }}</td>
+          <td><button class="btn sm" hx-post="/news/source" hx-vals='{"id": "{{ s.id }}", "action": "{{ 'deactivate' if s.active else 'activate' }}"}'>{{ 'Deaktivieren' if s.active else 'Aktivieren' }}</button></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+  <section class="card" style="margin-top:16px">
+    <div class="card-head"><h2>YouTube-Kanäle</h2><span class="hint">{% if has_yt_key %}API-Key gesetzt · {{ yt_units }} Einheiten heute{% else %}ohne API-Key (Kanal-RSS){% endif %}</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Handle</th><th>Aufgelöst</th><th class="num">Abonnenten</th><th>Status</th><th>Gruppe</th><th></th></tr></thead>
+      <tbody>
+      {% for c in channels %}{% set ch = c.channel %}
+        <tr>
+          <td class="mono">{{ ch.handle or '–' }}</td>
+          <td>{{ c.title or '–' }}{% if c.channel_id %}<br><small class="mono muted">{{ c.channel_id }}</small>{% endif %}</td>
+          <td class="num">{{ c.subscribers|num(0) if c.subscribers else '–' }}</td>
+          <td>{% if not ch.active %}<span class="badge">inaktiv</span>{% elif c.status == 'ok' and ch.confirmed %}<span class="badge good">bestätigt</span>{% elif c.status == 'pinned' %}<span class="badge good">Channel-ID fest</span>{% elif c.status == 'ok' %}<span class="badge info">aufgelöst – bitte bestätigen</span>{% elif c.status == 'unresolvable' %}<span class="badge crit" title="{{ c.error or '' }}">nicht auflösbar – deaktiviert</span>{% else %}<span class="badge warn" title="{{ c.error or '' }}">ausstehend</span>{% endif %}
+            {% if c.error %}<br><small class="muted">{{ c.error }}</small>{% endif %}</td>
+          <td>{{ ch.group }}</td>
+          <td class="nowrap">
+            {% if c.status == 'ok' and not ch.confirmed %}<button class="btn sm primary" hx-post="/youtube/channel" hx-vals='{"key": "{{ ch.key }}", "action": "confirm"}'>Bestätigen</button>{% endif %}
+            {% if c.status in ('unresolvable', 'pending') %}<button class="btn sm" hx-post="/youtube/channel" hx-vals='{"key": "{{ ch.key }}", "action": "resolve"}'>Erneut auflösen</button>{% endif %}
+            <button class="btn sm" hx-post="/youtube/channel" hx-vals='{"key": "{{ ch.key }}", "action": "{{ 'deactivate' if ch.active else 'activate' }}"}'>{{ 'Deaktivieren' if ch.active else 'Aktivieren' }}</button>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <p class="hint">Handles werden beim Start zur Channel-ID aufgelöst (Kanalseite bzw. YouTube Data API). Nicht auflösbare Handles werden nicht abgerufen und nie geraten oder ersetzt.
+      Entdeckung: täglich Top {{ discovery.top_n_positions }} Positionen, ab {{ discovery.min_subscribers|num(0) }} Abonnenten, Tagesbudget {{ discovery.daily_unit_budget|num(0) }} Einheiten.</p>
+  </section>
+  <section class="card" style="margin-top:16px">
+    <div class="card-head"><h2>Filter</h2></div>
+    <dl class="kv">
+      <dt>Reißerische Titel</dt><dd>{{ settings.title_blocklist|join(', ') }}</dd>
+      <dt>Mehrdeutige Kürzel</dt><dd>{{ settings.ambiguous_terms|join(', ') }}</dd>
+      <dt>Kontextwörter</dt><dd>{{ settings.context_words|join(', ') }}</dd>
+      <dt>Sprachen</dt><dd>{{ settings.languages|join(', ') }}</dd>
+      <dt>Aufbewahrung</dt><dd>{{ settings.retention_days }} Tage · Abruf alle {{ settings.fetch_interval_minutes }} Minuten</dd>
+    </dl>
+  </section>
+{% endif %}
+{% endblock %}

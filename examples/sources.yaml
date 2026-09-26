@@ -47,9 +47,9 @@ settings:
   context_words: [crypto, krypto, kryptowährung, cryptocurrency, coin, token, blockchain, altcoin, staking, mainnet,
                   wallet, defi, airdrop, exchange, börse, kurs, price, btc, eth]
   # Mehrdeutige Kürzel/Namen: Treffer zählen nur mit Kontextwort (oder zusätzlichem eindeutigem Alias)
-  ambiguous_terms: [SUI, TAP, PI, NIGHT, ONE, NEAR, GAS, SAND, FLOW, LINK, DOT, ICP, OP, ARB, APT, ADA, ATOM, CAKE,
-                    GALA, HOT, MASK, STX, TIA, ALGO, ROSE, TRX, KAS, ON, T, F, A, SOL, BNB, ETC, IOTA, MINA, JUP, WIF,
-                    POPCAT, PEPE, BONK, RAY, SEI, INJ, TON, XLM, XRP, UNI, AAVE, MKR, IMX, FET, RNDR, GRT, HBAR, VET]
+  ambiguous_terms: [SUI, TAP, PI, NIGHT, ONE, NEAR, GAS, SAND, FLOW, LINK, DOT, OP, ARB, APT, ADA, ATOM, CAKE,
+                    GALA, HOT, MASK, STX, TIA, ALGO, ROSE, SOL, UNI, SEI, TON, KAS, JUP, WIF, POL, ETC, FET, VET,
+                    RAY, MINA, PEPE, BONK, S, ON, T, F, A]
   # Ausschlussmuster je Asset-Kürzel (Regex, Groß-/Kleinschreibung egal)
   exclude_patterns:
     SUI: ["sui generis"]

@@ -42,7 +42,7 @@ DEFAULTS: dict[str, Any] = {
     # LLM (optional, standardmäßig aus)
     "llm.enabled": False,
     "llm.daily_token_budget": 60000,
-    "llm.model": "claude-haiku-4-5",
+    "llm.model": "claude-opus-5",
     "llm.digest": True,
     # Steuer
     "tax.rulepack": "auto",
