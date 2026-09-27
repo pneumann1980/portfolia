@@ -416,7 +416,7 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
 
 ## Betrieb und Fehlerbehebung
 
-* **Ressourcen:** Image ca. 285–310 MB (unkomprimiert),
+* **Ressourcen:** Image ca. 280 MB (unkomprimiert),
   Speicherbedarf im Leerlauf ca. 100–180 MB (je nach Portfoliogröße), kurzzeitig mehr beim erstmaligen
   Laden der Historie – ein Speicherlimit sollte nicht unter 512 MB liegen. Python legt seinen Bytecode beim
   ersten Start unter `/data/cache/pyc` ab (ca. 20 MB, darf jederzeit gelöscht werden); Kaltstart ca. 4 s,

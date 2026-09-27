@@ -104,7 +104,7 @@ Rücknahmepreisen; Basiszins 2026 ist noch nicht hinterlegt (erst für den Beric
 | CoinGecko | < 8.000 Aufrufe/Monat | 1 Sammelaufruf je 10 min ≈ 4.400/Monat + einmalig 1 Historienabruf je Coin; laufende Tageshistorie aus den 23:30-Schlusskursen; Drosselung ab 80 % |
 | Datenschutz | keine Stückzahlen/Werte/Konten in externen Anfragen | per Test geprüft |
 | Leerlauf-RAM | < 250 MB | Beispiel-Import 98 MB; Großimport 177 MB (Spitze 413 MB während der erstmaligen Historienberechnung) |
-| Image | < 350 MB | ≈ 285–311 MB (ohne `strip`, siehe unten) |
+| Image | < 350 MB | 282 MB (CI-Build ohne `strip`, siehe unten) |
 
 ---
 
