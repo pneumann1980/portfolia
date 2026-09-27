@@ -6,11 +6,14 @@ die Positionen mit öffentlichen Kursquellen, berechnet Performance (TTWROR/IRR 
 Portfolio Performance), zeigt Haltefristen und erstellt Steueraufstellungen als PDF. Passende News und
 YouTube-Videos werden je Position gefiltert.
 
-* **Datenquellen:** Buchungen stammen aus dem kuratierten Import (ZIP, **read-only**, wird nie verändert)
-  und/oder werden direkt in Portfolia erfasst (siehe [Buchungen erfassen](#buchungen-in-portfolia-erfassen)) –
-  auch ganz ohne Import. In der App erfasste Buchungen und Assets liegen neben abgeleiteten Daten (Kurse,
-  News, Snapshots, Berichte) in `/data/app.sqlite`; sie sind in den täglichen Sicherungen und im Gesamtexport
-  (Import-ZIP) enthalten.
+* **Datenquellen:** Buchungen stammen aus dem kuratierten Import (ZIP, **read-only**, wird nie verändert),
+  werden direkt in Portfolia erfasst (siehe [Buchungen erfassen](#buchungen-in-portfolia-erfassen)) oder aus
+  **CSV-Exporten von Börsen, Wallets und Steuertools** übernommen (siehe [CSV-Import](#csv-import-aus-börsen-und-wallets))
+  – auch ganz ohne Import. Es gibt **keine Online-Anbindung** an Börsen oder Wallets. In der App erfasste
+  Buchungen und Assets liegen neben abgeleiteten Daten (Kurse, News, Snapshots, Berichte) in `/data/app.sqlite`.
+* **Export und Sicherung:** Alles lässt sich jederzeit im einheitlichen Import-Format (Datenvertrag, Schema 1.1)
+  exportieren; nach jeder Änderung entsteht automatisch eine **datierte ZIP-Sicherung**, importierte ZIP-Dateien
+  werden mit Datum archiviert (siehe [Backups](#einstellungen-sicherheit-backups)).
 * **Sparpläne:** Laufende Sparpläne werden erkannt und nach dem Datenstand als **markierte Schätzung**
   fortgeführt, bis der Import oder eine manuell erfasste Buchung die echte Ausführung enthält (siehe
   [Sparpläne](#sparpläne)).
@@ -30,15 +33,16 @@ für Smartphones (≈390 px) optimiert.
 2. [Erste Schritte](#erste-schritte)
 3. [Datenvertrag (Import-ZIP)](#datenvertrag-import-zip)
 4. [Buchungen in Portfolia erfassen](#buchungen-in-portfolia-erfassen)
-5. [Berechnungen](#berechnungen)
-6. [Sparpläne](#sparpläne)
-7. [Kurse und Datenquellen](#kurse-und-datenquellen)
-8. [News und YouTube](#news-und-youtube)
-9. [Steuern und Haltefristen](#steuern-und-haltefristen)
-10. [Einstellungen, Sicherheit, Backups](#einstellungen-sicherheit-backups)
-11. [Betrieb und Fehlerbehebung](#betrieb-und-fehlerbehebung)
-12. [Entwicklung](#entwicklung)
-13. [Grenzen und Lizenz](#grenzen-und-lizenz)
+5. [CSV-Import aus Börsen und Wallets](#csv-import-aus-börsen-und-wallets)
+6. [Berechnungen](#berechnungen)
+7. [Sparpläne](#sparpläne)
+8. [Kurse und Datenquellen](#kurse-und-datenquellen)
+9. [News und YouTube](#news-und-youtube)
+10. [Steuern und Haltefristen](#steuern-und-haltefristen)
+11. [Einstellungen, Sicherheit, Backups](#einstellungen-sicherheit-backups)
+12. [Betrieb und Fehlerbehebung](#betrieb-und-fehlerbehebung)
+13. [Entwicklung](#entwicklung)
+14. [Grenzen und Lizenz](#grenzen-und-lizenz)
 
 ---
 
@@ -55,6 +59,7 @@ für Smartphones (≈390 px) optimiert.
    |---|---|---|---|
    | `/data` | `/mnt/user/appdata/portfolia` | rw | Datenbank, Cache, Backups, Berichte, `sources.yaml`, `tax_rules/` |
    | `/import` | `/mnt/user/appdata/portfolia-import` | **ro** | Import-ZIPs (nicht innerhalb von `/data` ablegen) |
+   | `/exports` | `/mnt/user/appdata/portfolia-exports` | rw | datierte ZIP-Sicherungen und Import-Archiv (`EXPORT_DIR=/exports`); gern auf eine gesicherte Freigabe legen |
 
 3. Optional API-Schlüssel eintragen (werden nur aus Umgebungsvariablen gelesen, nie angezeigt oder geloggt).
 4. Container starten, Weboberfläche über *WebUI* öffnen (Port 8080).
@@ -76,9 +81,11 @@ services:
       PUID: "1000"
       PGID: "1000"
       COINGECKO_API_KEY: ""      # empfohlen (kostenloser Demo-Schlüssel)
+      EXPORT_DIR: /exports       # datierte ZIP-Sicherungen (optional, sonst /data/exports)
     volumes:
       - ./data:/data
       - ./import:/import:ro
+      - ./exports:/exports
     restart: unless-stopped
 ```
 
@@ -106,6 +113,7 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | IPs eines Reverse-Proxys, dessen `X-Forwarded-*` vertraut wird |
 | `ROOT_PATH` | – | Betrieb unter Unterpfad hinter einem Proxy (z. B. `/portfolia`) |
 | `DEMO_MODE` | `false` | synthetische Kurse ohne Internetzugriff (zum Ausprobieren) |
+| `EXPORT_DIR` | `/data/exports` | datierte ZIP-Sicherungen im Import-Format und Archiv der importierten ZIP-Dateien |
 
 ---
 
@@ -121,7 +129,8 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 3. Nach dem Import lädt Portfolia im Hintergrund aktuelle Kurse und die Kurshistorie (Fortschritt oben
    eingeblendet) und berechnet tägliche Snapshots für Performance-Kennzahlen.
 4. Alternativ oder ergänzend Buchungen direkt erfassen: *Buchungen → Neue Buchung* (siehe
-   [Buchungen erfassen](#buchungen-in-portfolia-erfassen)).
+   [Buchungen erfassen](#buchungen-in-portfolia-erfassen)) oder CSV-Exporte von Börsen und Wallets einlesen:
+   *Buchungen → CSV importieren* (siehe [CSV-Import](#csv-import-aus-börsen-und-wallets)).
 
 Ausprobieren ohne Internet: `DEMO_MODE=true` (deutlich gekennzeichnete synthetische Kurse).
 
@@ -222,7 +231,7 @@ Prüfen ohne Import: `docker exec portfolia python -m app validate /import/datei
 
 Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Portfolia erfassen
 (*Buchungen* in der Seitenleiste bzw. *Mehr → Buchungen*). Die Seite listet **alle** Buchungen mit Filtern
-(Konto, Asset, Quelle, Typ, Jahr, Suche) und Kennzeichnung der Quelle (Import, manuell, Sparplan).
+(Konto, Asset, Quelle, Typ, Jahr, Suche) und Kennzeichnung der Quelle (Import, manuell, CSV-Import, Sparplan).
 
 * **Vorlagen:** Kauf, Verkauf, Tausch, Übertrag zwischen eigenen Konten, Ertrag (Dividende mit
   Quellensteuer, Zinsen, Staking, Lending, Airdrop …), Ein-/Auszahlung, Kosten/Verlust, Kapitalmaßnahme und
@@ -232,8 +241,8 @@ Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Port
   Angabe Tageskurs × Menge (Schlusskurs, am laufenden Tag aktueller Kurs, ersatzweise manueller Kurs oder
   letzter Transaktionskurs der letzten 31 Tage). Die Herkunft des Werts wird gespeichert.
 * **Prüfung:** derselbe Validator wie beim Import (Pflichtbeine, `value_eur`, Transfers …). Hinweise, wenn
-  ein Abgang den Bestand eines Kontos ins Minus drückt oder eine Buchung einer Import-Buchung stark ähnelt
-  (gleiche Konten und Assets, ±2 Tage, Menge ±1 % → „Dublette?“, auch unter *Datenqualität*).
+  ein Abgang den Bestand eines Kontos ins Minus drückt oder eine manuelle Buchung einer Import-Buchung stark
+  ähnelt (gleiche Konten und Assets, ±2 Tage, Menge ±1 % → „Dublette?“, auch unter *Datenqualität*).
 * **Bearbeiten, Kopieren, Löschen:** IDs `PF-M-000001` ff.; Import-Buchungen lassen sich als Vorlage kopieren.
   Löschen ist umkehrbar; jede Änderung steht im Änderungsprotokoll (*Datenqualität*).
 * **Assets:** neue Positionen mit Kursquelle (CoinGecko-ID bzw. Yahoo-Symbol), Kategorie und Steuerart
@@ -241,11 +250,83 @@ Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Port
 * **Zusammenspiel mit dem Import:** Der Import bleibt unverändert, manuelle Buchungen kommen hinzu. Enthält ein
   späterer Import dieselbe `tx_id`, gilt die Import-Buchung (keine Doppelzählung); ähnliche Buchungen mit
   anderer ID werden nur gemeldet. Manuell erfasste Sparplan-Ausführungen ersetzen passende Schätzungen.
-* **Gesamtexport:** Import + manuelle Buchungen + freigegebene Sparplan-Ausführungen als Import-ZIP
-  (Schema 1.1, mit aktuellem Bestand als `holdings_check`) – als Sicherung, zum Umzug oder als neuer
-  kuratierter Import.
+* **Gesamtexport:** Import + manuelle und per CSV importierte Buchungen + freigegebene Sparplan-Ausführungen als
+  Import-ZIP (Schema 1.1, mit aktuellem Bestand als `holdings_check`, steuerlichen Einstufungen als `tax_type` bzw.
+  `tax_withholding` und allen Konten) – als Sicherung, zum Umzug oder als neuer kuratierter Import. Zusätzlich
+  entsteht nach jeder Änderung automatisch eine datierte Kopie (siehe [Backups](#einstellungen-sicherheit-backups)).
 * **Ohne Import:** Alle Ansichten (Positionen, Performance, Steuern, Sparpläne) funktionieren auch nur mit
   manuell erfassten Buchungen. Steuerberichte weisen manuell erfasste Buchungen des Jahres aus.
+
+---
+
+## CSV-Import aus Börsen und Wallets
+
+*Buchungen → CSV importieren* liest CSV-Exporte ein und übersetzt sie in das einheitliche Buchungsformat des
+Datenvertrags. Es gibt bewusst **keine Online-Anbindung** (keine API-Schlüssel von Börsen, kein Wallet-Sync) –
+nur Dateien, die du selbst exportierst.
+
+**Unterstützte Formate** (automatisch erkannt; unbekannte Vorgänge werden mit Zeilennummer gemeldet, nie geraten):
+
+| Gruppe | Format | Export |
+|---|---|---|
+| Börse | Binance – Kontoauszug (*Transaction History*) | Orders → Transaction History → Generate all statements |
+| Börse | Bitpanda – Transaktionsverlauf (inkl. Bitpanda Stocks) | Verlauf → Transaktionen exportieren |
+| Börse | Kraken – Ledgers | Documents → Export → Ledgers |
+| Börse | Coinbase – Transaktionsbericht (inkl. Advanced Trade) | Profil → Berichte → Transaktionsverlauf |
+| Börse | Crypto.com App – Krypto- und Fiat-Wallet | Konten → Wallet → Verlauf exportieren |
+| Wallet | Ledger Live, Trezor Suite (auch ältere Trezor-Exporte), Electrum, Exodus | Export der jeweiligen App |
+| Steuertool | Koinly (Transaktionsexport, „Bulk edit“, Universal-Vorlage), Blockpit, CoinTracking | Export als CSV |
+| Portfolia | Datenvertrag (`transactions.csv`) | eigene Listen, andere Portfolia-Instanzen |
+| alle anderen | **Eigenes Format**: Spalten einmal zuordnen (Datum, Zu-/Abgang, Gebühr, Gegenwert, Vorgangsart …) | Zuordnung wird gespeichert und künftig automatisch erkannt |
+
+Über die Steuertool-Formate (bzw. den bei vielen Börsen angebotenen Export „im Koinly-Format“) sind praktisch alle
+Börsen und Wallets abgedeckt, die diese Tools unterstützen; Koinly-Wallets werden zu Konten, Koinly-IDs werden über
+`koinly_id` den Assets zugeordnet.
+
+**Ablauf**
+
+1. **Hochladen** (bis 25 MB): Format (automatisch), Konto (z. B. „Binance“), optional Zeitzone, Zahlenformat,
+   Stichtag. Die Originaldatei bleibt gespeichert (Download jederzeit möglich).
+2. **Vorschau:** jede Zeile als Buchung (Kauf, Verkauf, Tausch, Zu-/Abgang, Ertrag mit Tag wie `staking`,
+   `interest`, `airdrop`, Gebühr) mit Status *neu*, *bereits importiert*, *mögliche Dublette*, *vor Stichtag*,
+   *unvollständig* oder *ignoriert*.
+3. **Zuordnen:** unbekannte Symbole einem vorhandenen Asset zuordnen, als neues Asset anlegen (Vorschlag für
+   Name und CoinGecko-ID gängiger Coins) oder ignorieren; Konten der Datei auf Portfolia-Konten abbilden.
+   Zuordnungen gelten für alle weiteren Importe.
+4. **Übernehmen:** gültige Zeilen werden Journal-Buchungen (`PF-C-…`, Quelle „CSV · <Format>“, bearbeitbar).
+   Offene Zeilen (z. B. ohne EUR-Wert) bleiben im Import und lassen sich später ergänzen und nachschieben.
+5. **Rückgängig:** nimmt alle Buchungen eines Imports zurück; danach kann dieselbe Datei erneut (korrigiert)
+   übernommen werden.
+
+**Wichtige Regeln**
+
+* **Überträge zwischen eigenen Konten:** Ein Abgang (z. B. Binance-Auszahlung) und ein passender Zugang auf einem
+  anderen Konto (z. B. Ledger-Eingang) – in derselben Datei oder aus einem früheren Import – werden zu **einem
+  Transfer** zusammengeführt (`PF-T-…`): Anschaffungsdatum und Einstand bleiben erhalten (Haltefrist!), die
+  Differenz gilt als Netzwerkgebühr. Sicherheit „hoch“ (gleicher Transaktions-Hash oder ≥ 98 % der Menge innerhalb
+  von 24 h) wird automatisch übernommen, „mittel“ (bis 72 h, ≥ 50 % der Menge) erst nach Bestätigung. Ein Transfer
+  lässt sich unter *Buchungen* wieder auflösen. Passt ein Vorgang nur zu einer Buchung im kuratierten Import, gibt
+  es einen Hinweis – Importbuchungen werden nie verändert.
+* **EUR-Werte** (Käufe, Verkäufe, Tausch, Erträge brauchen einen): Eingabe → Fiat-Seite des Handels
+  (EZB-Devisenkurs für Fremdwährungen) → Gegenwert laut Datei → Stablecoin (Marktkurs, sonst 1 USD bzw. 1 EUR) →
+  gespeicherter Tageskurs des erhaltenen bzw. abgegebenen Assets → Transaktionskurs aus Import/Journal oder aus
+  derselben Datei (± 31 Tage). Die Herkunft wird angezeigt und gespeichert. „Kurse laden“ holt Tageskurse und
+  Devisenkurse für Assets und Zeitraum der Datei. Grenze: Die kostenlose CoinGecko-API liefert nur 365 Tage
+  Historie – für ältere Krypto-Zeiträume ein Yahoo-Symbol hinterlegen (*Einstellungen → Kurse*) oder Werte
+  eingeben.
+* **Doppelte Zeilen:** Wiederholte oder überlappende Exporte derselben Quelle werden über die Kennung der Zeile
+  erkannt (ID der Börse bzw. Prüfsumme). Gegen Import und andere Quellen wird auf gleichen Zeitpunkt (± Zeitzonen-
+  versatz in ganzen Stunden, ± 10 Minuten) und gleiche Mengen (± 0,5 %) geprüft; auf demselben Konto werden solche
+  Zeilen standardmäßig ausgelassen, auf anderen Konten nur markiert.
+* **Stichtag:** Mit kuratiertem Import werden standardmäßig nur Zeilen **nach** dessen Stand (`valuation_date`)
+  vorgeschlagen – ältere stehen dort bereits. Der Stichtag lässt sich je Import ändern oder leeren.
+* **Interne Umbuchungen** eines Anbieters (Spot ↔ Earn/Staking/Funding, Kraken-Staking-Varianten wie `DOT.S`)
+  werden übersprungen; der Bestand bleibt auf dem einen Konto des Anbieters.
+* **Nicht unterstützt:** Futures, Margin, Optionen, NFTs (Zeilen werden gezählt und übersprungen). Umbuchungen
+  in diese Bereiche gelten als intern – bei aktivem Derivatehandel können Bestände deshalb abweichen.
+* Exportformate ändern sich gelegentlich; unbekannte Vorgänge erscheinen als „nicht lesbar“ mit Zeilennummer
+  und können über „Eigenes Format“ oder manuell erfasst werden. Rückfragen zu Formaten bitte mit einer
+  anonymisierten Beispielzeile.
 
 ---
 
@@ -445,21 +526,29 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
 
 * **Einstellungen:** Darstellung (Schwelle „Sonstige“, Standardzeitraum), Ledger (FIFO-Bereich,
   Cash-Führung je Konto), Kurse (Veraltungsgrenzen, CoinGecko-Budget, Benchmarks, Krypto-Historien-Fallback),
-  News/KI, Backups.
+  News/KI, Backups, ZIP-Sicherungen.
 * **Zugriff:** Nur im LAN betreiben. Optional Basic-Auth (`AUTH_MODE=basic`, PBKDF2- oder bcrypt-Hash,
   Sperre nach 10 Fehlversuchen in 5 Minuten) oder hinter einem Reverse-Proxy mit eigener Anmeldung
   (`FORWARDED_ALLOW_IPS`, ggf. `ROOT_PATH`).
 * **Härtung:** CSRF-Schutz (Double-Submit-Cookie, `Sec-Fetch-Site`), Content-Security-Policy ohne externe
   Quellen außer YouTube-Vorschaubildern (`i.ytimg.com`; andere Bilder werden serverseitig mit SSRF-Schutz
-  zwischengespeichert), `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, begrenzte Anfragegröße,
+  zwischengespeichert), `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, begrenzte Anfragegröße
+  (Formulare 1 MB, CSV-Upload 25 MB – auch ohne `Content-Length`),
   PDF-Downloads mit `Cache-Control: no-store`, Container ohne Root-Rechte und ohne Capabilities.
 * **Backups:** täglich (Uhrzeit einstellbar, Standard 03:15) über die SQLite-Online-Backup-API mit
   Integritätsprüfung, gzip-komprimiert nach `/data/backups`, Aufbewahrung 14 Stück (einstellbar); manuell
   unter *Einstellungen → Backups* oder per `docker exec -u 99:100 portfolia python -m app backup`.
   **Wiederherstellen:** Container stoppen, Sicherung entpacken (`gunzip`), als `/data/app.sqlite` ablegen,
-  `app.sqlite-wal`/`-shm` entfernen, Container starten. **Wichtig:** In Portfolia erfasste Buchungen und
-  Assets existieren nur in der App-Datenbank – Sicherungen aktiv lassen und zusätzlich regelmäßig den
-  Gesamtexport (*Buchungen → Gesamtexport*) ablegen.
+  `app.sqlite-wal`/`-shm` entfernen, Container starten. **Wichtig:** In Portfolia erfasste und per CSV
+  importierte Buchungen und Assets existieren nur in der App-Datenbank – deshalb zusätzlich:
+* **ZIP-Sicherungen im Import-Format:** Nach jeder Änderung an Buchungen (manuell, CSV-Import, Sparplan-
+  Freigabe, neuer Import, Assets) schreibt Portfolia – gebündelt nach zwei Minuten ohne weitere Änderung – eine
+  datierte Datei `portfolia-export-JJJJ-MM-TT_HHMMSS.zip` nach `EXPORT_DIR` (Standard `/data/exports`), nur wenn
+  sich der Inhalt geändert hat. Jede Datei ist ein vollständiger kuratierter Import (Schema 1.1) und lässt sich
+  direkt in den Importordner legen; Journal-Buchungen werden dabei über ihre `tx_id` erkannt (keine Doppelzählung).
+  Jede erfolgreich importierte ZIP-Datei wird zusätzlich mit Datum unter `EXPORT_DIR/import-archiv/` abgelegt.
+  Aufbewahrung (Standard 30 Sicherungen, 20 Import-Kopien), manuelles Sichern und Download unter
+  *Einstellungen → ZIP-Sicherungen*. Empfehlung: `EXPORT_DIR` auf eine Freigabe mit eigener Sicherung legen.
 
 ---
 

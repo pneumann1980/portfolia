@@ -340,9 +340,19 @@ def settings_page(request: Request, saved: str = "") -> HTMLResponse:
         backups = list_backups(ctx)
     except Exception as e:  # Wartungsmodul optional
         log.debug("Backups nicht lesbar: %s", e)
+    exports: list[dict[str, Any]] = []
+    archive: list[dict[str, Any]] = []
+    try:
+        from app.jobs.exports import list_archive, list_exports
+
+        exports, archive = list_exports(ctx), list_archive(ctx)
+    except Exception as e:  # Exportmodul optional / Verzeichnis nicht lesbar
+        log.debug("Exporte nicht lesbar: %s", e)
+    job = ctx.db.q1("SELECT last_end, last_ok, last_error FROM job_status WHERE job='auto_export'")
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,
                   detected_cash=(led.cash_tracked if led else {}), secrets=ctx.config.secrets.status(),
-                  config=ctx.config, saved=saved, backups=backups)
+                  config=ctx.config, saved=saved, backups=backups, exports=exports, archive=archive,
+                  export_job=job)
 
 
 def fmt_ts(ts: str | None) -> str:

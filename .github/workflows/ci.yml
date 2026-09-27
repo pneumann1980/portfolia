@@ -80,11 +80,16 @@ jobs:
           # native Erweiterungen laden (fängt beschädigte Bibliotheken ab, auch wenn die App sie erst später braucht)
           docker run --rm --entrypoint python portfolia:ci -c \
             "import numpy, pandas, lxml.etree, PIL.Image, curl_cffi, bcrypt, reportlab.pdfgen.canvas, yfinance; print('native ok')"
-          mkdir -p ci-data ci-import && cp examples/beispiel-import.zip ci-import/ && touch -d '1 hour ago' ci-import/beispiel-import.zip
+          mkdir -p ci-data ci-import ci-exports && cp examples/beispiel-import.zip ci-import/ && touch -d '1 hour ago' ci-import/beispiel-import.zip
           # Containernamen brauchen mindestens zwei Zeichen
           docker run -d --name portfolia-ci -e DEMO_MODE=true -e PUID=$(id -u) -e PGID=$(id -g) -p 8080:8080 \
-            -v "$PWD/ci-data:/data" -v "$PWD/ci-import:/import:ro" portfolia:ci
+            -e EXPORT_DIR=/exports -v "$PWD/ci-data:/data" -v "$PWD/ci-import:/import:ro" -v "$PWD/ci-exports:/exports" \
+            portfolia:ci
           trap 'docker logs portfolia-ci 2>&1 | tail -30; docker rm -f portfolia-ci >/dev/null' EXIT
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/healthz && break; sleep 2; done
           curl -fsS http://127.0.0.1:8080/ | grep -q Portfolia
           curl -fsS -o /dev/null http://127.0.0.1:8080/plans
+          curl -fsS http://127.0.0.1:8080/journal/csv | grep -q "CSV-Import"
+          # der Import wird mit Datum archiviert (Exportverzeichnis außerhalb von /data, Besitzrechte per PUID/PGID)
+          for i in $(seq 1 30); do ls ci-exports/import-archiv/import-*.zip >/dev/null 2>&1 && break; sleep 2; done
+          ls -l ci-exports/import-archiv/import-*.zip

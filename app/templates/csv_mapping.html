@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}CSV-Import · Spalten zuordnen{% endblock %}
+{% block heading %}CSV-Import{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/csv">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
+{% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+<section class="card">
+  <div class="card-head"><h2>Spalten zuordnen · {{ b.filename }}</h2></div>
+  <p class="hint">Das Format wurde nicht automatisch erkannt. Ordne die Spalten der Datei den Feldern zu; die Zuordnung wird unter
+    dem angegebenen Namen gespeichert und bei künftigen Dateien mit derselben Kopfzeile automatisch verwendet.
+    Eine Zeile mit Zu- <i>und</i> Abgang ist ein Handel/Tausch, nur Zugang ein Zufluss, nur Abgang ein Abfluss; die Vorgangsart
+    (z. B. „Staking“) bestimmt, ob ein Zufluss ein Ertrag ist.</p>
+  {% if header %}
+  <details class="box" open><summary>Erste Zeilen der Datei</summary>
+    <div class="table-wrap"><table class="compact"><thead><tr>{% for h in header %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for r in sample %}<tr>{% for h in header %}<td class="nowrap">{{ r.get(h, '') }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+  </details>
+  <form method="post" action="/journal/csv/{{ b.id }}/mapping" class="stack" style="gap:12px;margin-top:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="edit-grid">
+      {% for f, label in fields.items() %}{% set cur = spec.get('columns', {}).get(f, '') %}
+      <label class="field">{{ label }}<select name="col_{{ f }}"><option value="">—</option>{% for h in header %}<option value="{{ h }}" {% if cur == h %}selected{% endif %}>{{ h }}</option>{% endfor %}</select></label>
+      {% endfor %}
+    </div>
+    <div class="grid-3">
+      <label class="field">Name der Zuordnung<input type="text" name="name" value="{{ spec.get('name', '') }}" maxlength="60" required></label>
+      <label class="field">Zeitzone von Zeitangaben ohne Zone<select name="tz">{% for v, l in tz_choices %}<option value="{{ v }}" {% if spec.get('tz', '') == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+      <label class="field">Dezimaltrenner<select name="decimal"><option value="">automatisch</option><option value="." {% if spec.get('decimal') == '.' %}selected{% endif %}>Punkt</option><option value="," {% if spec.get('decimal') == ',' %}selected{% endif %}>Komma</option></select></label>
+      <label class="field">Währung des Gegenwerts (falls keine Spalte)<input type="text" name="value_ccy_fixed" value="{{ spec.get('value_ccy_fixed', '') }}" placeholder="z. B. EUR" maxlength="10"></label>
+    </div>
+    {% if labels %}
+    <h3>Vorgangsarten laut Datei</h3>
+    <p class="hint">Ohne Angabe gilt: Zu- und Abgang → Handel; Bezeichnungen wie „Staking“, „Reward“, „Zinsen“, „Airdrop“ werden als Ertrag erkannt, „Gebühr“, „Kosten“, „Geschenk“ als Abgang mit dieser Art.</p>
+    <div class="table-wrap"><table class="compact"><thead><tr><th>Bezeichnung</th><th>Behandeln als</th></tr></thead><tbody>
+      {% for l in labels %}<tr><td>{{ l }}<input type="hidden" name="lbl_{{ loop.index0 }}" value="{{ l }}"></td>
+        <td><select name="map_{{ loop.index0 }}" aria-label="Behandlung von {{ l }}"><option value="">automatisch</option>{% for k, kl in kinds.items() %}<option value="{{ k }}" {% if type_map.get(l) == k %}selected{% endif %}>{{ kl }}</option>{% endfor %}</select></td></tr>{% endfor %}
+    </tbody></table></div>
+    {% elif spec.get('columns', {}).get('type') %}<p class="hint">Nach „Vorschau aktualisieren“ erscheinen hier die Vorgangsarten der Datei.</p>{% endif %}
+    <div class="row">
+      <button class="btn" type="submit" name="preview" value="1">Vorschau aktualisieren</button>
+      <button class="btn primary" type="submit">Zuordnung speichern und auswerten</button>
+      <a class="btn ghost" href="/journal/csv">Abbrechen</a>
+    </div>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

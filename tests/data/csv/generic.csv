@@ -1,0 +1,3 @@
+Datum;Art;Eingang;Eingang Währung;Ausgang;Ausgang Währung;Gebühr;Gebühr Währung;ID
+01.08.2024 10:00;Kauf;0,01;BTC;500,00;EUR;0,50;EUR;G1
+02.08.2024 11:00;Staking;1,5;DOT;;;;;G2

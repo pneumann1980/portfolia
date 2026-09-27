@@ -1,0 +1,6 @@
+Operation Date,Status,Currency Ticker,Operation Type,Operation Amount,Operation Fees,Operation Hash,Account Name,Account xpub,Countervalue Ticker,Countervalue at Operation Date,Countervalue at CSV Export
+2024-01-08T12:30:00.000Z,Confirmed,BTC,IN,0.01,0.00002,hash-a,Bitcoin 1,xpub1,EUR,420.00,600.00
+2024-02-08T12:30:00.000Z,Confirmed,BTC,OUT,0.003,0.0001,hash-b,Bitcoin 1,xpub1,EUR,120.00,180.00
+2024-02-09T12:30:00.000Z,Confirmed,ETH,FEES,0.001,0.001,hash-c,Ethereum 1,xpub2,EUR,2.50,3.00
+2024-02-10T12:30:00.000Z,Failed,ETH,OUT,0.5,0.001,hash-d,Ethereum 1,xpub2,EUR,1200,1500
+2024-02-11T12:30:00.000Z,Confirmed,DOT,REWARD,0.2,0,hash-e,Polkadot 1,xpub3,EUR,1.10,1.20

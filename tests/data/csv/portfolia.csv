@@ -1,0 +1,3 @@
+tx_id,datetime,type,tag,from_account,from_asset,from_qty,to_account,to_asset,to_qty,fee_asset,fee_qty,fee_eur,value_eur,note
+X-1,2024-07-01T10:00:00Z,buy,,Depot,EUR,500,Depot,SAP,3,EUR,1,1,500,Kauf
+X-2,2024-07-02,deposit,dividend,,,,Depot,EUR,12.5,,,,12.5,Dividende

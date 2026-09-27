@@ -1,0 +1,1319 @@
+"""CSV-Import: Datei → Vorschau → Übernahme ins Journal → bei Bedarf rückgängig.
+
+Ablauf
+------
+1. **Hochladen**: Datei (≤ 25 MB) wird komprimiert gespeichert, das Profil erkannt (oder gewählt) und jede Zeile in
+   das Zwischenformat :class:`~app.csvimport.model.Rec` übersetzt. Nichts wird online abgefragt.
+2. **Auswerten** (bei jeder Änderung von Zuordnungen/Optionen erneut): Symbole → Assets, Konten der Datei →
+   Konten in Portfolia, Umwandlung in das einheitliche Buchungsformat (``transactions.csv``), EUR-Werte, Prüfung mit
+   demselben Validator wie der Import, Erkennung bereits importierter Zeilen (Quellkennung), möglicher Dubletten
+   (gleicher Zeitpunkt ± Zeitzonenversatz, gleiche Mengen) und Transfer-Paare (Abgang hier, Zugang dort).
+3. **Übernehmen**: gültige, ausgewählte Zeilen werden Journal-Buchungen (``PF-C-…``); bestätigte Transfer-Paare
+   werden zu einer Transfer-Buchung (``PF-T-…``) zusammengeführt, die Einzelbuchungen bleiben als „merged“ erhalten.
+   Die Übernahme ist inkrementell: offene Zeilen können später ergänzt und nachgeschoben werden.
+4. **Rückgängig**: alle Buchungen des Stapels werden zurückgenommen; Transfers mit Buchungen anderer Stapel werden
+   aufgelöst, deren Einzelbuchungen gelten wieder.
+
+EUR-Werte (Reihenfolge): Eingabe → Wert aus der Datei (Journal-Format) → Fiat-Seite des Handels (Devisenkurs der EZB
+bzw. Yahoo für Fremdwährungen) → Gegenwert laut Datei → Stablecoin-Seite (Marktkurs, sonst 1 USD bzw. 1 EUR) →
+gespeicherter Tageskurs des erhaltenen bzw. abgegebenen Assets → Transaktionskurs aus Import/Journal oder aus der
+Datei (± 31 Tage). Fehlt der Wert bei Handel oder Ertrag, bleibt die Zeile offen, bis er eingegeben oder nach
+„Kurse laden“ verfügbar ist.
+"""
+
+from __future__ import annotations
+
+import bisect
+import dataclasses
+import functools
+import gzip
+import hashlib
+import json
+import logging
+import threading
+from collections import defaultdict
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+from typing import Any
+
+from app.csvimport import model as M
+from app.csvimport.model import ParseOptions, Rec
+from app.csvimport.profiles import BUILTIN, PROFILES, MappingProfile, Profile, detect, header_matcher
+from app.csvimport.reader import CsvError, read_table, zone
+from app.importer import contract as C
+from app.importer.validate import validate_tx_rows
+from app.journal.service import JournalService, _now, journal_service
+from app.ledger.engine import run_ledger
+from app.ledger.models import AssetInfo, Portfolio, Tx
+from app.util.numbers import parse_number
+from app.util.timeutil import fmt_de_date, iso, parse_iso, to_local_date, today_local
+
+log = logging.getLogger(__name__)
+
+MAX_UPLOAD = 25 * 1024 * 1024
+PAGE = 100
+MAX_STALE_DAYS = 5
+MAX_TX_PRICE_DAYS = 31
+TRANSFER_BEFORE = timedelta(hours=2)  # Zugang höchstens so lange vor dem Abgang (Uhren, Zeitzonen)
+TRANSFER_AFTER = timedelta(hours=72)  # … und höchstens so lange danach
+TRANSFER_MIN_RATIO = Decimal("0.5")  # Zugang ≥ 50 % des Abgangs (Netzwerkgebühren bei kleinen Beträgen)
+DUP_QTY_TOL = Decimal("0.005")
+_LOCK = threading.RLock()  # Auswerten/Übernehmen/Rückgängig nacheinander (Doppelklick, parallele Tabs)
+
+
+def _locked(fn: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        with _LOCK:
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+STATUS_LABEL = {"new": "neu", "known": "bereits importiert", "duplicate": "mögliche Dublette", "before": "vor Stichtag",
+                "ignored": "ignoriert", "invalid": "unvollständig", "committed": "übernommen",
+                "merged": "als Transfer übernommen"}
+STATUS_BADGE = {"new": "good", "known": "", "duplicate": "warn", "before": "", "ignored": "", "invalid": "crit",
+                "committed": "info", "merged": "info"}
+BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial": "teilweise übernommen",
+                "committed": "übernommen", "reverted": "rückgängig gemacht"}
+NEED_VALUE_TAGS = frozenset(C.INCOME_TAGS) | frozenset(C.LOSS_TAGS) | frozenset(C.GIFT_OUT_TAGS) | \
+    frozenset(C.GIFT_IN_TAGS)
+
+
+ROW_COLS = ("tx_id", "datetime", "type", "tag", "from_account", "from_asset", "from_qty", "to_account", "to_asset",
+            "to_qty", "fee_asset", "fee_qty", "fee_eur", "value_eur", "orig_price", "orig_ccy", "source", "source_ref",
+            "flag", "note", "related_asset")
+
+
+def _dec(v: Any) -> Decimal | None:
+    if v in (None, ""):
+        return None
+    return v if isinstance(v, Decimal) else Decimal(str(v))
+
+
+def s(v: Decimal | None) -> str:
+    if v is None:
+        return ""
+    return "0" if v == 0 else format(v.normalize(), "f")
+
+
+def money(v: Decimal) -> Decimal:
+    return v.quantize(Decimal("0.01")) if abs(v) >= 1 else v.quantize(Decimal("0.00000001")).normalize()
+
+
+# ----------------------------------------------------------------------------------------------------
+# (De-)Serialisierung des Zwischenformats
+# ----------------------------------------------------------------------------------------------------
+
+def rec_to_json(r: Rec) -> str:
+    d = dataclasses.asdict(r)
+    d["ts"] = iso(r.ts)
+    for k, v in list(d.items()):
+        if isinstance(v, Decimal):
+            d[k] = s(v)
+    return json.dumps({k: v for k, v in d.items() if v not in (None, {}, "")}, ensure_ascii=False)
+
+
+def rec_from_json(raw: str) -> Rec:
+    d = json.loads(raw)
+    ts = parse_iso(d.pop("ts"))
+    assert ts is not None
+    for k in ("out_qty", "in_qty", "fee_qty", "value", "fee_value"):
+        if k in d:
+            d[k] = Decimal(d[k])
+    return Rec(ts=ts, **d)
+
+
+# ----------------------------------------------------------------------------------------------------
+# Symbole → Assets
+# ----------------------------------------------------------------------------------------------------
+
+class SymbolResolver:
+    def __init__(self, assets: Mapping[str, AssetInfo], saved: Mapping[str, str | None]) -> None:
+        self.assets = assets
+        self.saved = dict(saved)
+        self.by_id = {aid.upper(): aid for aid in assets}
+        self.by_koinly = {str(a.koinly_id).strip().upper(): aid for aid, a in assets.items() if a.koinly_id}
+        self.by_sym: dict[str, set[str]] = defaultdict(set)
+        self.by_alias: dict[str, set[str]] = defaultdict(set)
+        for aid, a in assets.items():
+            self.by_sym[a.symbol.upper()].add(aid)
+            for al in a.aliases:
+                self.by_alias[al.strip().upper()].add(aid)
+        self._cache: dict[str, tuple[str | None, str]] = {}
+
+    def resolve(self, raw: str) -> tuple[str | None, str]:
+        key = raw.strip().upper()
+        hit = self._cache.get(key)
+        if hit is None:
+            hit = self._resolve(key)
+            self._cache[key] = hit
+        return hit
+
+    def _resolve(self, key: str) -> tuple[str | None, str]:
+        if key in self.saved:
+            aid = self.saved[key]
+            return (aid, "saved") if aid else (None, "ignored")
+        base, _, kid = key.partition(";")
+        base = base.strip()
+        if kid and kid.strip() in self.by_koinly:
+            return self.by_koinly[kid.strip()], "koinly"
+        if key in self.by_koinly:
+            return self.by_koinly[key], "koinly"
+        if base in self.by_id:
+            return self.by_id[base], "id"
+        cands = self.by_sym.get(base, set())
+        if len(cands) == 1:
+            return next(iter(cands)), "symbol"
+        al = self.by_alias.get(base, set())
+        if len(al) == 1 and not cands:
+            return next(iter(al)), "alias"
+        if base in C.ISO_CURRENCIES:
+            return base, "fiat"
+        if len(cands) > 1 or len(al) > 1:
+            return None, "ambiguous"
+        return None, "unknown"
+
+
+# ----------------------------------------------------------------------------------------------------
+# Bewertung in EUR (nur gespeicherte Kurse; keine Online-Abfrage)
+# ----------------------------------------------------------------------------------------------------
+
+class Valuer:
+    def __init__(self, ctx: Any, assets: Mapping[str, AssetInfo], pf: Portfolio | None, today: date) -> None:
+        self.ctx = ctx
+        self.assets = assets
+        self.today = today
+        self.manual = pf.manual_prices if pf is not None else {}
+        self._fx: dict[tuple[str, date], tuple[Decimal, str] | None] = {}
+        self._px: dict[tuple[str, date], tuple[Decimal, str] | None] = {}
+        self.tx_prices: dict[str, list[tuple[date, Decimal]]] = defaultdict(list)
+        self.implied: dict[str, list[tuple[date, Decimal]]] = defaultdict(list)
+        for t in (pf.txs if pf is not None else []):
+            if t.type not in ("buy", "sell", "trade") or not t.value_eur or t.flag == "estimated":
+                continue
+            for aid, q in ((t.to_asset, t.to_qty), (t.from_asset, t.from_qty)):
+                if aid and q and aid in assets and not assets[aid].is_fiat:
+                    self.tx_prices[aid].append((t.date, t.value_eur / q))
+        for v in self.tx_prices.values():
+            v.sort()
+
+    def is_fiat(self, aid: str | None) -> bool:
+        if not aid:
+            return False
+        a = self.assets.get(aid)
+        return a.is_fiat if a is not None else aid in C.ISO_CURRENCIES
+
+    def fx(self, amount: Decimal, ccy: str | None, d: date) -> tuple[Decimal, str] | None:
+        if not ccy:
+            return None
+        c = ccy.strip().upper()
+        if c == "EUR":
+            return amount, "EUR"
+        if c in M.EUR_STABLE:
+            return amount, f"{c} ≈ 1 EUR"
+        base = "USD" if c in M.USD_STABLE else c
+        if base not in C.ISO_CURRENCIES:
+            return None
+        key = (base, d)
+        if key not in self._fx:
+            row = self.ctx.store.fx_on_or_before(base, d)
+            if row and row[0] and (d - date.fromisoformat(row[1])).days <= MAX_STALE_DAYS:
+                self._fx[key] = (Decimal(str(row[0])), row[1])
+            else:
+                self._fx[key] = None
+        hit = self._fx[key]
+        if hit is None:
+            return None
+        rate, on = hit
+        label = f"Devisenkurs {base} {fmt_de_date(on)}"
+        if c != base:
+            label = f"{c} ≈ 1 USD, {label}"
+        return amount / rate, label
+
+    def price(self, aid: str, d: date) -> tuple[Decimal, str] | None:
+        key = (aid, d)
+        if key in self._px:
+            return self._px[key]
+        self._px[key] = hit = self._price(aid, d)
+        return hit
+
+    def _price(self, aid: str, d: date) -> tuple[Decimal, str] | None:
+        a = self.assets.get(aid)
+        if a is None:
+            return None
+        if a.is_fiat:
+            return self.fx(Decimal(1), aid, d)
+        series = self.ctx.prices.series_for(a)
+        if series:
+            row = self.ctx.store.close_on_or_before(series, d)
+            if row is not None and row["close"]:
+                age = (d - date.fromisoformat(row["date"])).days
+                if age == 0 or (age <= MAX_STALE_DAYS and d < self.today - timedelta(days=1)):
+                    conv = self.fx(Decimal(str(row["close"])), row["ccy"] or "EUR", d)
+                    if conv:
+                        label = f"Schlusskurs {fmt_de_date(row['date'])}"
+                        return conv[0], label if age == 0 else f"{label} (letzter verfügbarer)"
+            if d >= self.today - timedelta(days=1):
+                q = self.ctx.store.latest(series)
+                if q is not None and q["price"]:
+                    conv = self.fx(Decimal(str(q["price"])), q["ccy"] or "EUR", d)
+                    if conv:
+                        return conv[0], "aktueller Kurs"
+        manual = [x for x in self.manual.get(aid, []) if x[0] <= d]
+        if manual:
+            md, mp = max(manual)
+            return Decimal(str(mp)), f"manueller Kurs {fmt_de_date(md)}"
+        sym = a.symbol.upper()
+        if sym in M.USD_STABLE or sym in M.EUR_STABLE:
+            conv = self.fx(Decimal(1), sym, d)
+            if conv:
+                return conv[0], f"Stablecoin: {conv[1]}"
+        for src, label in ((self.tx_prices, "Transaktionskurs"), (self.implied, "Kurs aus der Datei")):
+            hit = self._nearest(src.get(aid), d)
+            if hit is not None:
+                return hit[1], f"{label} {fmt_de_date(hit[0])} (ersatzweise)"
+        return None
+
+    @staticmethod
+    def _nearest(vals: list[tuple[date, Decimal]] | None, d: date) -> tuple[date, Decimal] | None:
+        if not vals:
+            return None
+        i = bisect.bisect_left(vals, (d, Decimal(0)))
+        best = None
+        for j in (i - 1, i, i + 1):
+            if 0 <= j < len(vals):
+                dist = abs((vals[j][0] - d).days)
+                if dist <= MAX_TX_PRICE_DAYS and (best is None or dist < best[0]):
+                    best = (dist, vals[j])
+        return best[1] if best else None
+
+    def add_implied(self, aid: str | None, d: date, value: Decimal, qty: Decimal | None) -> None:
+        if aid and qty and qty > 0 and value > 0 and not self.is_fiat(aid):
+            bisect.insort(self.implied[aid], (d, value / qty))
+            self._px = {k: v for k, v in self._px.items() if k[0] != aid}
+
+
+# ----------------------------------------------------------------------------------------------------
+# Zeilenkontext
+# ----------------------------------------------------------------------------------------------------
+
+@dataclass
+class RowCtx:
+    id: int
+    idx: int
+    line: int | None
+    rec: Rec
+    status: str
+    decision: str | None
+    value_in: str | None
+    fee_in: str | None
+    pair_ref: str | None
+    pair_conf: str | None
+    pair_ok: int | None
+    tx_id: str | None
+    row: dict[str, str] | None = None
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    value_src: str | None = None
+    fee_src: str | None = None
+    symbols: dict[str, str | None] = field(default_factory=dict)
+    dup_of: list[str] = field(default_factory=list)
+    dup_same_account: bool = False
+    prev_ref: str | None = None
+
+    @property
+    def ts(self) -> datetime:
+        return self.rec.ts
+
+    @property
+    def d(self) -> date:
+        return to_local_date(self.rec.ts)
+
+    @property
+    def open(self) -> bool:
+        return self.status not in ("committed", "merged")
+
+    @property
+    def missing_value(self) -> bool:
+        return any(e.startswith("EUR-Wert fehlt") for e in self.errors)
+
+    @property
+    def default_include(self) -> bool:
+        """Vorschlag ohne Wahl des Nutzers: neu → ja; Dublette auf anderem Konto → ja; sonst nein."""
+        return self.status == "new" or (self.status == "duplicate" and not self.dup_same_account)
+
+    def include(self) -> bool:
+        if self.status == "new":
+            return self.decision != "skip"
+        if self.status == "duplicate":
+            return self.decision == "include" or (self.decision is None and not self.dup_same_account)
+        if self.status == "before":
+            return self.decision == "include"
+        return False
+
+
+def _row_d(v: str | None) -> Decimal | None:
+    return Decimal(v) if v not in (None, "") else None
+
+
+# ----------------------------------------------------------------------------------------------------
+# Dienst
+# ----------------------------------------------------------------------------------------------------
+
+class CsvImportService:
+    def __init__(self, ctx: Any) -> None:
+        self.ctx = ctx
+        self.db = ctx.db
+
+    @property
+    def journal(self) -> JournalService:
+        return journal_service(self.ctx)
+
+    # -- Profile & eigene Formate -------------------------------------------------------------------------
+    def mapping_profiles(self) -> list[MappingProfile]:
+        out = []
+        for r in self.db.q("SELECT * FROM csv_mapping ORDER BY name"):
+            try:
+                out.append(MappingProfile(r["id"], r["name"], json.loads(r["spec_json"])))
+            except (ValueError, TypeError) as e:
+                log.warning("Zuordnung %s unlesbar: %s", r["id"], e)
+        return out
+
+    def profile(self, pid: str) -> Profile | None:
+        if pid in PROFILES:
+            return PROFILES[pid]
+        if pid.startswith("mapping:"):
+            return next((p for p in self.mapping_profiles() if p.id == pid), None)
+        return None
+
+    def profiles(self) -> list[Profile]:
+        return [*BUILTIN, *self.mapping_profiles()]
+
+    def save_mapping(self, name: str, spec: dict[str, Any], mid: int | None = None) -> int:
+        stamp = _now()
+        raw = json.dumps(spec, ensure_ascii=False)
+        if mid:
+            self.db.x("UPDATE csv_mapping SET name=?, spec_json=?, updated_at=? WHERE id=?", (name, raw, stamp, mid))
+            return mid
+        cur = self.db.x("INSERT INTO csv_mapping(name, spec_json, created_at, updated_at) VALUES (?,?,?,?)",
+                        (name, raw, stamp, stamp))
+        return int(cur.lastrowid)  # type: ignore[arg-type]
+
+    def delete_mapping(self, mid: int) -> None:
+        self.db.x("DELETE FROM csv_mapping WHERE id=?", (mid,))
+
+    # -- Stapel -------------------------------------------------------------------------------------------
+    def batches(self, limit: int = 50) -> list[Any]:
+        return self.db.q("SELECT id, filename, file_size, profile, account, status, summary_json, created_at, "
+                         "committed_at, reverted_at FROM csv_batch ORDER BY id DESC LIMIT ?", (limit,))
+
+    def batch(self, bid: int) -> Any:
+        return self.db.q1("SELECT * FROM csv_batch WHERE id=?", (bid,))
+
+    def options(self, batch: Any) -> dict[str, Any]:
+        return json.loads(batch["options_json"] or "{}")
+
+    def raw(self, batch: Any) -> bytes:
+        return gzip.decompress(batch["raw_gz"])
+
+    def upload(self, data: bytes, filename: str, profile_id: str, account: str,
+               options: Mapping[str, Any]) -> tuple[int | None, list[str]]:
+        if len(data) > MAX_UPLOAD:
+            return None, [f"Datei zu groß ({len(data) // 1024 // 1024} MB, höchstens 25 MB)."]
+        name = (filename or "upload.csv").replace("\\", "/").rsplit("/", 1)[-1][:120] or "upload.csv"
+        extra = self.mapping_profiles()
+        try:
+            table = read_table(data, header_matcher(extra))
+        except CsvError as e:
+            return None, [str(e)]
+        prof = self.profile(profile_id) if profile_id and profile_id != "auto" else detect(table.keys, extra)
+        status = "preview" if prof is not None else "mapping"
+        acc = (account or "").strip()[:80] or (prof.account if prof else "") or name.rsplit(".", 1)[0][:40]
+        opts = {k: str(v).strip() for k, v in options.items() if v is not None}
+        base = self.ctx.base_portfolio()
+        if "cutoff" not in opts and base is not None and base.valuation_date is not None:
+            opts["cutoff"] = base.valuation_date.isoformat()
+        stamp = _now()
+        cur = self.db.x(
+            "INSERT INTO csv_batch(filename, file_sha256, file_size, raw_gz, profile, account, options_json, status, "
+            "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (name, hashlib.sha256(data).hexdigest(), len(data), gzip.compress(data, 6),
+             prof.id if prof else "unknown", acc, json.dumps(opts, ensure_ascii=False), status, stamp, stamp))
+        bid = int(cur.lastrowid)  # type: ignore[arg-type]
+        if prof is not None:
+            self.process(bid)
+        log.info("CSV-Datei hochgeladen: %s (Stapel %s, Profil %s)", name, bid, prof.id if prof else "unbekannt")
+        return bid, []
+
+    def table(self, batch: Any) -> Any:
+        return read_table(self.raw(batch), header_matcher(self.mapping_profiles()))
+
+    def parse_options(self, batch: Any, prof: Profile) -> ParseOptions:
+        o = self.options(batch)
+        return ParseOptions(tz=zone(o.get("tz") or prof.tz), decimal=o.get("decimal") or prof.decimal,
+                            dayfirst={"1": True, "0": False}.get(o.get("dayfirst", "")), account=batch["account"],
+                            default_asset=o.get("default_asset", ""), filename=batch["filename"],
+                            mapping={"accounts_from_file": o.get("accounts_from_file") == "1",
+                                     **(getattr(prof, "spec", None) or {})})
+
+    @_locked
+    def set_profile(self, bid: int, pid: str) -> list[str]:
+        batch = self.batch(bid)
+        if batch is None or batch["status"] not in ("mapping", "preview"):
+            return ["Stapel nicht gefunden oder bereits übernommen."]
+        prof = self.profile(pid)
+        if prof is None:
+            return ["Unbekanntes Format."]
+        acc = batch["account"] or prof.account
+        self.db.x("UPDATE csv_batch SET profile=?, account=?, status='preview', updated_at=? WHERE id=?",
+                  (prof.id, acc, _now(), bid))
+        self.process(bid)
+        return []
+
+    @_locked
+    def set_options(self, bid: int, form: Mapping[str, Any]) -> list[str]:
+        batch = self.batch(bid)
+        if batch is None or batch["status"] in ("reverted",):
+            return ["Stapel nicht gefunden."]
+        opts = self.options(batch)
+        for k in ("tz", "decimal", "dayfirst", "default_asset", "cutoff", "accounts_from_file"):
+            if k in form:
+                v = str(form.get(k) or "").strip()
+                if k == "cutoff" and v:
+                    try:
+                        date.fromisoformat(v)
+                    except ValueError:
+                        return ["Stichtag ungültig (JJJJ-MM-TT)."]
+                if k == "default_asset":
+                    v = v.upper()[:20]
+                opts[k] = v
+        account = str(form.get("account") or batch["account"]).strip()[:80] or batch["account"]
+        committed = self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status IN ('committed','merged')",
+                                   (bid,), default=0)
+        reparse = any(opts.get(k) != self.options(batch).get(k) for k in ("tz", "decimal", "dayfirst",
+                                                                           "default_asset", "accounts_from_file")) \
+            or account != batch["account"]
+        if reparse and committed:
+            return ["Zeitzone, Zahlenformat, Standardwährung und Konto lassen sich nach der ersten Übernahme nicht "
+                    "mehr ändern – Stapel zuerst rückgängig machen."]
+        self.db.x("UPDATE csv_batch SET options_json=?, account=?, updated_at=? WHERE id=?",
+                  (json.dumps(opts, ensure_ascii=False), account, _now(), bid))
+        if reparse:
+            self.process(bid)
+        else:
+            self.evaluate(bid)
+        return []
+
+    @_locked
+    def discard(self, bid: int) -> bool:
+        batch = self.batch(bid)
+        if batch is None:
+            return False
+        n = self.db.scalar("SELECT COUNT(*) FROM journal_tx WHERE batch_id=? AND status <> 'reverted'", (bid,),
+                           default=0)
+        if n:
+            return False
+        self.db.x("DELETE FROM csv_batch WHERE id=?", (bid,))
+        return True
+
+    # -- Einlesen -----------------------------------------------------------------------------------------
+    @_locked
+    def process(self, bid: int) -> None:
+        """Datei mit dem Profil des Stapels (neu) lesen und die Vorschauzeilen ersetzen."""
+        batch = self.batch(bid)
+        if batch is None:
+            return
+        prof = self.profile(batch["profile"])
+        if prof is None:
+            return
+        summary: dict[str, Any]
+        recs: list[Rec] = []
+        try:
+            table = self.table(batch)
+            res = prof.parse(table, self.parse_options(batch, prof))
+            recs = sorted(res.recs, key=lambda r: (r.ts, r.line))
+            summary = {"rows_read": res.rows_read, "recs": len(recs), "skipped": dict(res.skipped),
+                       "errors": [{"line": ln, "message": m} for ln, m in res.errors[:500]],
+                       "error_count": len(res.errors), "notes": res.notes, "header": table.header[:60],
+                       "delimiter": table.delimiter, "encoding": table.encoding, "header_line": table.header_line}
+        except CsvError as e:
+            summary = {"rows_read": 0, "recs": 0, "skipped": {}, "errors": [{"line": 0, "message": str(e)}],
+                       "error_count": 1, "notes": []}
+        with self.db.transaction() as c:
+            c.execute("DELETE FROM csv_row WHERE batch_id=? AND status NOT IN ('committed','merged')", (bid,))
+            done = {r["idx"] for r in c.execute("SELECT idx FROM csv_row WHERE batch_id=?", (bid,))}
+            c.executemany("INSERT INTO csv_row(batch_id, idx, line, rec_json, status) VALUES (?,?,?,?, 'new')",
+                          [(bid, i, r.line, rec_to_json(r)) for i, r in enumerate(recs) if i not in done])
+            c.execute("UPDATE csv_batch SET summary_json=?, updated_at=? WHERE id=?",
+                      (json.dumps(summary, ensure_ascii=False, default=str), _now(), bid))
+        self.evaluate(bid)
+
+    # -- Zuordnungen --------------------------------------------------------------------------------------
+    def saved_symbols(self) -> dict[str, str | None]:
+        return {r["symbol"]: r["asset_id"] for r in self.db.q("SELECT symbol, asset_id FROM csv_symbol")}
+
+    def saved_accounts(self) -> dict[str, str]:
+        return {r["name"]: r["account"] for r in self.db.q("SELECT name, account FROM csv_account")}
+
+    def set_symbol(self, symbol: str, asset_id: str | None) -> None:
+        self.db.x("INSERT INTO csv_symbol(symbol, asset_id, updated_at) VALUES (?,?,?) ON CONFLICT(symbol) DO "
+                  "UPDATE SET asset_id=excluded.asset_id, updated_at=excluded.updated_at",
+                  (symbol.strip().upper()[:80], asset_id, _now()))
+
+    def delete_symbol(self, symbol: str) -> None:
+        self.db.x("DELETE FROM csv_symbol WHERE symbol=?", (symbol,))
+
+    def set_account(self, name: str, account: str) -> None:
+        if not account.strip():
+            self.db.x("DELETE FROM csv_account WHERE name=?", (name,))
+            return
+        self.db.x("INSERT INTO csv_account(name, account, updated_at) VALUES (?,?,?) ON CONFLICT(name) DO "
+                  "UPDATE SET account=excluded.account, updated_at=excluded.updated_at",
+                  (name[:120], account.strip()[:80], _now()))
+
+    def known_assets(self) -> dict[str, AssetInfo]:
+        return self.journal.known_assets()
+
+    # -- Auswerten ----------------------------------------------------------------------------------------
+    def _load(self, bid: int) -> list[RowCtx]:
+        out = []
+        for r in self.db.q("SELECT * FROM csv_row WHERE batch_id=? ORDER BY idx", (bid,)):
+            rc = RowCtx(id=r["id"], idx=r["idx"], line=r["line"], rec=rec_from_json(r["rec_json"]), status=r["status"],
+                        decision=r["decision"], value_in=r["value_in"], fee_in=r["fee_in"], pair_ref=r["pair_ref"],
+                        pair_conf=r["pair_conf"], pair_ok=r["pair_ok"], tx_id=r["tx_id"])
+            if r["row_json"]:
+                rc.row = json.loads(r["row_json"])
+            msgs = json.loads(r["messages"] or "{}")
+            rc.errors, rc.warnings = msgs.get("errors", []), msgs.get("warnings", [])
+            rc.value_src, rc.fee_src = msgs.get("value_src"), msgs.get("fee_src")
+            rc.dup_of, rc.dup_same_account = msgs.get("dup_of", []), bool(msgs.get("dup_same"))
+            rc.symbols = msgs.get("symbols", {})
+            out.append(rc)
+        return out
+
+    @_locked
+    def evaluate(self, bid: int) -> dict[str, Any]:
+        batch = self.batch(bid)
+        if batch is None or batch["status"] == "mapping":
+            return {}
+        prof = self.profile(batch["profile"])
+        source = f"csv:{batch['profile']}"
+        opts = self.options(batch)
+        rows = self._load(bid)
+        assets = self.known_assets()
+        resolver = SymbolResolver(assets, self.saved_symbols())
+        acc_map = self.saved_accounts()
+        pf = self.ctx.recorded_portfolio()
+        valuer = Valuer(self.ctx, {**assets, **{c: AssetInfo(asset_id=c, name=c, asset_class="fiat")
+                                                 for c in C.ISO_CURRENCIES if c not in assets}},
+                        pf, today_local())
+        cutoff = date.fromisoformat(opts["cutoff"]) if opts.get("cutoff") else None
+        known = {r["external_id"]: r for r in self.db.q(
+            "SELECT external_id, status, tx_id, batch_id FROM journal_tx WHERE source=? AND external_id IS NOT NULL "
+            "AND status <> 'reverted'", (source,))}
+        open_rows = [rc for rc in rows if rc.open]
+        seen_ext: dict[str, int] = {}
+        for rc in open_rows:
+            rc.errors, rc.warnings, rc.dup_of, rc.dup_same_account = [], [], [], False
+            rc.value_src = rc.fee_src = None
+            rc.row = self._build(rc, resolver, acc_map, batch, source, prof)
+        # Werte: zuerst Zeilen mit Fiat-Seite/Dateiwert (liefern Kurse für die übrigen), dann Kursabfragen
+        for rc in open_rows:
+            if rc.row is not None and not rc.errors:
+                self._value(rc, valuer, first_pass=True)
+        for rc in open_rows:
+            if rc.row is not None and not rc.errors:
+                self._value(rc, valuer, first_pass=False)
+        # Prüfung mit dem Import-Validator
+        classes = {aid: {"asset_class": a.asset_class} for aid, a in valuer.assets.items()}
+        checkable = [rc for rc in open_rows if rc.row is not None and not rc.errors]
+        rep, _parsed = validate_tx_rows([{**rc.row, "tx_id": f"Z{rc.idx}"} for rc in checkable  # type: ignore[dict-item]
+                                         ], classes)
+        by_line = {i + 1: rc for i, rc in enumerate(checkable)}
+        for m in rep.errors:
+            rc = by_line.get(m.line or 0)
+            if rc is not None:
+                rc.errors.append(_strip_prefix(m.message))
+        for m in rep.warnings:
+            rc = by_line.get(m.line or 0)
+            if rc is not None and m.code not in ("fee_eur", "value_eur"):
+                rc.warnings.append(_strip_prefix(m.message))
+        # Status
+        for rc in open_rows:
+            ext = rc.rec.ext_id or ""
+            if rc.symbols and any(v == "ignored" for v in rc.symbols.values()):
+                rc.status = "ignored"
+            elif ext and ext in known:
+                k = known[ext]
+                rc.status = "known"
+                rc.warnings.insert(0, f"bereits importiert als {k['tx_id']}" + (" (gelöscht)" if k["status"] ==
+                                                                                 "deleted" else ""))
+            elif ext and ext in seen_ext:
+                rc.status = "known"
+                rc.warnings.insert(0, f"doppelte Zeile in der Datei (wie Zeile {seen_ext[ext]})")
+            elif rc.errors or rc.row is None:
+                rc.status = "invalid"
+            elif cutoff is not None and rc.d <= cutoff:
+                rc.status = "before"
+            else:
+                rc.status = "new"
+            if ext:
+                seen_ext.setdefault(ext, rc.line or 0)
+        self._duplicates([rc for rc in open_rows if rc.status == "new"], pf, source)
+        self._transfers(bid, rows, pf, valuer)
+        self._save(rows)
+        counts = defaultdict(int)
+        for rc in rows:
+            counts[rc.status] += 1
+        return dict(counts)
+
+    def _build(self, rc: RowCtx, resolver: SymbolResolver, acc_map: Mapping[str, str], batch: Any, source: str,
+               prof: Profile | None) -> dict[str, str] | None:
+        r = rc.rec
+        syms: dict[str, str | None] = {}
+
+        def res(raw: str | None) -> str | None:
+            if not raw:
+                return None
+            aid, how = resolver.resolve(raw)
+            syms[raw] = aid if aid else how
+            if how in ("unknown", "ambiguous"):
+                rc.errors.append(f"Asset für „{raw}“ zuordnen" + (" (mehrdeutig)" if how == "ambiguous" else ""))
+            return aid
+
+        def acc(name: str | None) -> str:
+            n = (name or "").strip() or batch["account"]
+            return acc_map.get(n, n)
+
+        base = dict.fromkeys(ROW_COLS, "")
+        base["datetime"] = to_local_date(r.ts).isoformat() if r.date_only else r.ts.astimezone(UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        base["source"] = source
+        base["source_ref"] = (r.ext_id or "")[:200]
+        note = " · ".join(x for x in (r.label if r.kind != M.DIRECT else None, r.note) if x)
+        base["note"] = note[:500]
+        if r.kind == M.DIRECT and r.row is not None:
+            row = {**base, **{k: v for k, v in r.row.items() if k in base and k not in ("source", "source_ref",
+                                                                                          "tx_id", "flag")}}
+            row["note"] = (r.row.get("note") or "")[:500]
+            for col in ("from_asset", "to_asset", "fee_asset", "related_asset"):
+                if row[col]:
+                    row[col] = res(row[col]) or ""
+            for col in ("from_account", "to_account"):
+                if row[col]:
+                    row[col] = acc(row[col])
+            rc.symbols = syms
+            return row
+        a_out, a_in, a_fee = res(r.out_sym), res(r.in_sym), res(r.fee_sym)
+        rc.symbols = syms
+        if rc.errors:
+            return None
+        row = dict(base)
+        account = acc(r.account)
+        if r.fee_qty and a_fee:
+            row["fee_asset"], row["fee_qty"] = a_fee, s(r.fee_qty)
+        fiat = {aid: (aid in C.ISO_CURRENCIES and aid not in resolver.assets) or
+                (aid in resolver.assets and resolver.assets[aid].is_fiat) for aid in (a_out, a_in) if aid}
+        if r.kind in (M.TRADE, M.CONVERSION):
+            if a_out and r.out_qty:
+                row["from_account"], row["from_asset"], row["from_qty"] = account, a_out, s(r.out_qty)
+            if a_in and r.in_qty:
+                row["to_account"], row["to_asset"], row["to_qty"] = account, a_in, s(r.in_qty)
+            if r.kind == M.CONVERSION:
+                row["type"], row["tag"] = "corporate_action", "migration"
+            elif row["from_asset"] and row["to_asset"]:
+                fo, ti = fiat.get(a_out or "", False), fiat.get(a_in or "", False)
+                row["type"] = "buy" if fo and not ti else "sell" if ti and not fo else "trade"
+                if row["type"] in ("buy", "sell"):
+                    fiat_aid, fiat_q = (a_out, r.out_qty) if fo else (a_in, r.in_qty)
+                    crypto_q = r.in_qty if fo else r.out_qty
+                    if fiat_aid and fiat_aid != "EUR" and fiat_q and crypto_q:
+                        row["orig_price"], row["orig_ccy"] = s(money(fiat_q / crypto_q)), fiat_aid
+            elif row["to_asset"]:
+                row["type"] = "buy"
+                row["note"] = " · ".join(x for x in (row["note"], "Zahlung von außen (z. B. Karte)") if x)[:500]
+            elif row["from_asset"]:
+                row["type"] = "sell"
+                row["note"] = " · ".join(x for x in (row["note"], "Erlös nach außen (z. B. Karte)") if x)[:500]
+            else:
+                rc.errors.append("Handel ohne Mengen")
+                return None
+        elif r.kind == M.DEPOSIT:
+            row["type"], row["tag"] = "deposit", r.tag or ""
+            row["to_account"], row["to_asset"], row["to_qty"] = account, a_in or "", s(r.in_qty)
+        elif r.kind == M.WITHDRAWAL:
+            row["type"], row["tag"] = "withdrawal", r.tag or ""
+            row["from_account"], row["from_asset"], row["from_qty"] = account, a_out or "", s(r.out_qty)
+        elif r.kind == M.FEE:
+            row["type"], row["tag"] = "withdrawal", "fee"
+            row["from_account"], row["from_asset"], row["from_qty"] = account, a_fee or "", s(r.fee_qty)
+            row["fee_asset"] = row["fee_qty"] = ""
+        elif r.kind == M.TRANSFER:
+            row["type"] = "transfer"
+            row["from_account"], row["from_asset"], row["from_qty"] = account, a_out or "", s(r.out_qty)
+            row["to_account"], row["to_asset"], row["to_qty"] = acc(r.to_account), a_in or "", s(r.in_qty)
+            if r.in_qty and r.out_qty and r.in_qty > r.out_qty:
+                row["to_qty"] = s(r.out_qty)
+        else:
+            rc.errors.append(f"Unbekannte Vorgangsart {r.kind}")
+            return None
+        return row
+
+    def _value(self, rc: RowCtx, V: Valuer, first_pass: bool) -> None:
+        row = rc.row
+        assert row is not None
+        r = rc.rec
+        d = rc.d
+        typ, tag = row["type"], row["tag"]
+        fa, fq = row["from_asset"] or None, _row_d(row["from_qty"])
+        ta, tq = row["to_asset"] or None, _row_d(row["to_qty"])
+        need = typ in ("buy", "sell", "trade") or (typ in ("deposit", "withdrawal") and tag in NEED_VALUE_TAGS)
+        want = need or (typ in ("deposit", "withdrawal") and not V.is_fiat(ta or fa))
+        if rc.value_in:
+            v = parse_number(rc.value_in)
+            if v is not None and v >= 0:
+                row["value_eur"], rc.value_src = s(money(v)), "Eingabe"
+        if not row["value_eur"] and want and rc.value_src is None:
+            hit: tuple[Decimal, str] | None = None
+            implied = False
+            if typ in ("buy", "sell", "trade"):
+                if fa and fq and V.is_fiat(fa):
+                    hit, implied = V.fx(fq, fa, d), True
+                elif ta and tq and V.is_fiat(ta):
+                    hit, implied = V.fx(tq, ta, d), True
+            rv, rvc = (r.value, r.value_ccy) if r.value is not None else \
+                (r.fee_value, r.fee_value_ccy) if r.kind == M.FEE else (None, None)
+            if hit is None and rv is not None and rvc:
+                conv = V.fx(rv, rvc, d)
+                if conv:
+                    hit, implied = (conv[0], f"Gegenwert laut Datei ({conv[1]})"), True
+            if hit is None and typ in ("trade", "buy", "sell"):
+                for aid, q in ((fa, fq), (ta, tq)):
+                    a = V.assets.get(aid or "")
+                    if aid and q and a is not None and a.symbol.upper() in (M.USD_STABLE | M.EUR_STABLE):
+                        p = V.price(aid, d)
+                        if p:
+                            hit, implied = (q * p[0], p[1]), True
+                            break
+            if hit is None and not first_pass:
+                for aid, q in ((ta, tq), (fa, fq)):
+                    if aid and q and not V.is_fiat(aid):
+                        p = V.price(aid, d)
+                        if p:
+                            hit = (q * p[0], f"{p[1]} × Menge")
+                            break
+            if hit is not None:
+                row["value_eur"], rc.value_src = s(money(hit[0])), hit[1]
+                if implied:
+                    if typ == "buy":
+                        V.add_implied(ta, d, hit[0], tq)
+                    elif typ == "sell":
+                        V.add_implied(fa, d, hit[0], fq)
+                    elif typ == "trade":
+                        V.add_implied(ta, d, hit[0], tq)
+                        V.add_implied(fa, d, hit[0], fq)
+        elif row["value_eur"] and rc.value_src is None:
+            rc.value_src = "Datei"
+        fee_a, fee_q = row["fee_asset"] or None, _row_d(row["fee_qty"])
+        if fee_a and fee_q and not row["fee_eur"]:
+            fhit: tuple[Decimal, str] | None = None
+            if rc.fee_in:
+                v = parse_number(rc.fee_in)
+                if v is not None and v >= 0:
+                    fhit = (v, "Eingabe")
+            if fhit is None and V.is_fiat(fee_a):
+                fhit = V.fx(fee_q, fee_a, d)
+            if fhit is None and r.fee_value is not None and r.fee_value_ccy:
+                conv = V.fx(r.fee_value, r.fee_value_ccy, d)
+                if conv:
+                    fhit = (conv[0], f"Gegenwert laut Datei ({conv[1]})")
+            if fhit is None and row["value_eur"]:
+                v = Decimal(row["value_eur"])
+                for aid, q in ((fa, fq), (ta, tq)):
+                    if aid == fee_a and q:
+                        fhit = (v / q * fee_q, "Kurs des Vorgangs")
+                        break
+            if fhit is None and not first_pass:
+                p = V.price(fee_a, d)
+                if p:
+                    fhit = (fee_q * p[0], f"{p[1]} × Menge")
+            if fhit is not None:
+                row["fee_eur"], rc.fee_src = s(money(fhit[0])), fhit[1]
+        if first_pass:
+            return
+        if need and not row["value_eur"]:
+            asset = ta if ta and not V.is_fiat(ta) else fa
+            rc.errors.append(f"EUR-Wert fehlt (kein Kurs für {asset} am {fmt_de_date(d)}) – Wert eingeben oder "
+                             "„Kurse laden“")
+        elif want and not row["value_eur"]:
+            rc.warnings.append("ohne EUR-Wert (Zu-/Abgang wird mit 0 € angesetzt, sofern kein Transfer)")
+        if fee_a and fee_q and not row["fee_eur"]:
+            rc.warnings.append(f"Gebühr {fee_q.normalize():f} {fee_a} ohne EUR-Wert (wird mit 0 € angesetzt)")
+
+    # -- Dubletten ----------------------------------------------------------------------------------------
+    def _duplicates(self, rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
+        if pf is None or not rows:
+            return
+        index: dict[tuple[str, str], list[Tx]] = defaultdict(list)
+        for t in pf.txs:
+            if t.origin == "journal" and (t.source or "") == source:
+                continue  # gleiche Quelle: Erkennung über die Quellkennung
+            index[(t.from_asset or "", t.to_asset or "")].append(t)
+        for lst in index.values():
+            lst.sort(key=lambda t: t.ts)
+        for rc in rows:
+            row = rc.row
+            if row is None:
+                continue
+            key = (row["from_asset"], row["to_asset"])
+            cands = index.get(key)
+            if not cands:
+                continue
+            lo = bisect.bisect_left([t.ts for t in cands], rc.ts - timedelta(hours=15))
+            fq, tq = _row_d(row["from_qty"]), _row_d(row["to_qty"])
+            for t in cands[lo:]:
+                if t.ts > rc.ts + timedelta(hours=15):
+                    break
+                if not _qty_eq(fq, t.from_qty) or not _qty_eq(tq, t.to_qty):
+                    continue
+                delta = abs((t.ts - rc.ts).total_seconds())
+                if not (rc.rec.date_only or t.date_only):
+                    if not (delta <= 600 or delta % 3600 <= 120 or delta % 3600 >= 3480):
+                        continue
+                elif t.date != rc.d:
+                    continue
+                rc.dup_of.append(t.tx_id)
+                if row["from_account"] in (t.from_account, t.to_account) or \
+                        row["to_account"] in (t.from_account, t.to_account):
+                    rc.dup_same_account = rc.dup_same_account or bool(row["from_account"] or row["to_account"])
+            if rc.dup_of:
+                rc.status = "duplicate"
+                rc.warnings.insert(0, f"ähnelt {', '.join(rc.dup_of[:3])}" + (" (gleiches Konto)" if
+                                                                                rc.dup_same_account else ""))
+
+    # -- Transfers ----------------------------------------------------------------------------------------
+    def _transfers(self, bid: int, rows: list[RowCtx], pf: Portfolio | None, V: Valuer) -> None:
+        """Abgänge und Zugänge desselben Kryptowerts auf verschiedenen Konten zu Transfer-Paaren zuordnen."""
+        @dataclass
+        class Side:
+            ref: str
+            account: str
+            asset: str
+            qty: Decimal
+            ts: datetime
+            txhash: str | None
+            rc: RowCtx | None
+
+        def eligible(rc: RowCtx, typ: str) -> bool:
+            row = rc.row
+            if row is None or row["type"] != typ or row["tag"]:
+                return False
+            if rc.status not in ("new", "duplicate") and not (rc.status == "before" and rc.decision == "include"):
+                return False
+            return not V.is_fiat(row["from_asset"] if typ == "withdrawal" else row["to_asset"])
+
+        outs: list[Side] = []
+        ins: list[Side] = []
+        for rc in rows:
+            if not rc.open:
+                continue
+            prev = (rc.pair_ref, rc.pair_ok)
+            rc.pair_ref = rc.pair_conf = None
+            if eligible(rc, "withdrawal"):
+                assert rc.row is not None
+                outs.append(Side(f"b:{rc.idx}", rc.row["from_account"], rc.row["from_asset"],
+                                 Decimal(rc.row["from_qty"]), rc.ts, rc.rec.txhash, rc))
+            elif eligible(rc, "deposit"):
+                assert rc.row is not None
+                ins.append(Side(f"b:{rc.idx}", rc.row["to_account"], rc.row["to_asset"], Decimal(rc.row["to_qty"]),
+                                rc.ts, rc.rec.txhash, rc))
+            rc.pair_ok = prev[1] if prev[0] else None
+            rc.prev_ref = prev[0]
+        if not outs and not ins:
+            return
+        for jr in self.db.q(
+                "SELECT tx_id, type, from_account, from_asset, from_qty, to_account, to_asset, to_qty, ts_utc "
+                "FROM journal_tx WHERE status='active' AND (batch_id IS NULL OR batch_id<>?) AND type IN "
+                "('deposit','withdrawal') AND (tag IS NULL OR tag='')", (bid,)):
+            ts = parse_iso(jr["ts_utc"])
+            if ts is None:
+                continue
+            if jr["type"] == "withdrawal" and jr["from_asset"] and not V.is_fiat(jr["from_asset"]):
+                outs.append(Side(f"j:{jr['tx_id']}", jr["from_account"], jr["from_asset"], Decimal(jr["from_qty"]), ts,
+                                 None, None))
+            elif jr["type"] == "deposit" and jr["to_asset"] and not V.is_fiat(jr["to_asset"]):
+                ins.append(Side(f"j:{jr['tx_id']}", jr["to_account"], jr["to_asset"], Decimal(jr["to_qty"]), ts, None,
+                                None))
+        ins_by: dict[str, list[Side]] = defaultdict(list)
+        for i in ins:
+            ins_by[i.asset].append(i)
+        for lst in ins_by.values():
+            lst.sort(key=lambda x: x.ts)
+        cands: list[tuple[tuple[int, Decimal, float], Side, Side, str]] = []
+        for o in outs:
+            lst = ins_by.get(o.asset)
+            if not lst:
+                continue
+            lo = bisect.bisect_left([x.ts for x in lst], o.ts - TRANSFER_BEFORE)
+            for i in lst[lo:]:
+                if i.ts > o.ts + TRANSFER_AFTER:
+                    break
+                if i.account == o.account or (o.rc is None and i.rc is None):
+                    continue
+                hash_eq = bool(o.txhash and i.txhash and o.txhash.lower() == i.txhash.lower())
+                ratio = i.qty / o.qty if o.qty else Decimal(0)
+                if not hash_eq and not (TRANSFER_MIN_RATIO <= ratio <= Decimal("1.001")):
+                    continue
+                dt = abs((i.ts - o.ts).total_seconds())
+                conf = "hoch" if hash_eq or (ratio >= Decimal("0.98") and dt <= 86400) else "mittel"
+                cands.append(((0 if hash_eq else 1, abs(1 - ratio), dt), o, i, conf))
+        cands.sort(key=lambda x: x[0])
+        used: set[str] = set()
+        for _score, o, i, conf in cands:
+            if o.ref in used or i.ref in used:
+                continue
+            used.update((o.ref, i.ref))
+            for me, other in ((o, i), (i, o)):
+                if me.rc is not None:
+                    me.rc.pair_ref, me.rc.pair_conf = other.ref, conf
+                    if me.rc.prev_ref != other.ref:
+                        me.rc.pair_ok = None
+        for rc in rows:
+            if rc.open and rc.pair_ref is None:
+                rc.pair_ok = None
+        self._import_counterparts([s_ for s_ in (*outs, *ins) if s_.rc is not None and s_.ref not in used], pf, V)
+
+    @staticmethod
+    def _import_counterparts(sides: list[Any], pf: Portfolio | None, V: Valuer) -> None:
+        """Hinweis, wenn ein nicht abgeglichener Zu-/Abgang zu einer Buchung im kuratierten Import passt – der
+        Transfer lässt sich nur dort zusammenführen (Importbuchungen werden nie verändert)."""
+        if pf is None or not sides:
+            return
+        idx: dict[tuple[str, str], list[Tx]] = defaultdict(list)
+        for t in pf.txs:
+            if t.origin != "import" or t.tag or t.type not in ("deposit", "withdrawal"):
+                continue
+            aid = t.to_asset if t.type == "deposit" else t.from_asset
+            if aid and not V.is_fiat(aid):
+                idx[(t.type, aid)].append(t)
+        for side in sides:
+            rc = side.rc
+            want = "deposit" if rc.row["type"] == "withdrawal" else "withdrawal"
+            for t in idx.get((want, side.asset), []):
+                acc = t.to_account if want == "deposit" else t.from_account
+                qty = (t.to_qty if want == "deposit" else t.from_qty) or Decimal(0)
+                if acc == side.account or not qty:
+                    continue
+                o_ts, i_ts = (side.ts, t.ts) if want == "deposit" else (t.ts, side.ts)
+                o_q, i_q = (side.qty, qty) if want == "deposit" else (qty, side.qty)
+                if not (o_ts - TRANSFER_BEFORE <= i_ts <= o_ts + TRANSFER_AFTER):
+                    continue
+                if TRANSFER_MIN_RATIO <= i_q / o_q <= Decimal("1.001"):
+                    rc.warnings.append(f"passt zu {t.tx_id} im kuratierten Import ({acc}) – Transfer dort erfassen, "
+                                       "sonst zählt der Vorgang als Zu-/Abgang")
+                    break
+
+    def _save(self, rows: list[RowCtx]) -> None:
+        data = []
+        for rc in rows:
+            if not rc.open:
+                continue
+            msgs = {"errors": rc.errors[:10], "warnings": rc.warnings[:10], "value_src": rc.value_src,
+                    "fee_src": rc.fee_src, "dup_of": rc.dup_of[:5], "dup_same": rc.dup_same_account,
+                    "symbols": rc.symbols}
+            data.append((json.dumps(rc.row, ensure_ascii=False) if rc.row is not None else None, rc.status,
+                         json.dumps(msgs, ensure_ascii=False), rc.pair_ref, rc.pair_conf, rc.pair_ok, rc.id))
+        if data:
+            self.db.xmany("UPDATE csv_row SET row_json=?, status=?, messages=?, pair_ref=?, pair_conf=?, pair_ok=? "
+                          "WHERE id=?", data)
+
+    # -- Ansicht ------------------------------------------------------------------------------------------
+    def rows(self, bid: int) -> list[RowCtx]:
+        return self._load(bid)
+
+    def overview(self, bid: int) -> dict[str, Any]:
+        rows = self._load(bid)
+        counts: dict[str, int] = defaultdict(int)
+        for rc in rows:
+            counts[rc.status] += 1
+        unknown: dict[str, dict[str, Any]] = {}
+        accounts: dict[str, int] = defaultdict(int)
+        missing_price: dict[str, int] = defaultdict(int)
+        for rc in rows:
+            if not rc.open:
+                continue
+            for raw, v in rc.symbols.items():
+                if v in ("unknown", "ambiguous"):
+                    u = unknown.setdefault(raw.upper(), {"symbol": raw.upper(), "count": 0, "ambiguous": v ==
+                                                         "ambiguous", "hint": rc.rec.class_hint.get(raw)})
+                    u["count"] += 1
+            for a in (rc.rec.account, rc.rec.to_account):
+                if a:
+                    accounts[a] += 1
+            for e in rc.errors:
+                if e.startswith("EUR-Wert fehlt") and rc.row is not None:
+                    missing_price[rc.row["to_asset"] if rc.row["to_asset"] and rc.row["type"] != "sell"
+                                  else rc.row["from_asset"]] += 1
+        pairs = [rc for rc in rows if rc.open and rc.pair_ref and rc.row is not None and
+                 rc.row["type"] == "withdrawal"]
+        pairs += [rc for rc in rows if rc.open and rc.pair_ref and rc.pair_ref.startswith("j:") and rc.row is not None
+                  and rc.row["type"] == "deposit"]
+        return {"counts": dict(counts), "unknown": sorted(unknown.values(), key=lambda u: -u["count"]),
+                "accounts": dict(accounts), "missing_price": dict(missing_price), "pairs": pairs,
+                "to_commit": sum(1 for rc in rows if rc.open and rc.include()), "total": len(rows),
+                "by_idx": {rc.idx: rc for rc in rows}}
+
+    # -- Eingaben -----------------------------------------------------------------------------------------
+    @_locked
+    def set_rows(self, bid: int, form: Mapping[str, Any]) -> None:
+        rows = {rc.idx: rc for rc in self._load(bid)}
+        data = []
+        for key in form:
+            k = str(key)
+            if not k.startswith(("dec_", "val_", "fee_", "pair_")):
+                continue
+            kind, _, num_ = k.partition("_")
+            if not num_.isdigit() or int(num_) not in rows:
+                continue
+            rc = rows[int(num_)]
+            if not rc.open:
+                continue
+            v = str(form.get(k) or "").strip()
+            if kind == "dec":
+                rc.decision = v if v in ("include", "skip") else None
+            elif kind == "val":
+                rc.value_in = v[:40] or None
+            elif kind == "fee":
+                rc.fee_in = v[:40] or None
+            elif kind == "pair":
+                rc.pair_ok = 1 if v == "1" else 0 if v == "0" else None
+                if rc.pair_ref and rc.pair_ref.startswith("b:") and int(rc.pair_ref[2:]) in rows:
+                    partner = rows[int(rc.pair_ref[2:])]
+                    partner.pair_ok = rc.pair_ok
+                    data.append(partner)
+            data.append(rc)
+        if data:
+            self.db.xmany("UPDATE csv_row SET decision=?, value_in=?, fee_in=?, pair_ok=? WHERE id=?",
+                          [(rc.decision, rc.value_in, rc.fee_in, rc.pair_ok, rc.id) for rc in
+                           {rc.id: rc for rc in data}.values()])
+        self.evaluate(bid)
+
+    @_locked
+    def set_all(self, bid: int, status: str, decision: str | None) -> None:
+        self.db.x("UPDATE csv_row SET decision=? WHERE batch_id=? AND status=?", (decision, bid, status))
+        self.evaluate(bid)
+
+    # -- Übernehmen ---------------------------------------------------------------------------------------
+    @_locked
+    def commit(self, bid: int) -> dict[str, Any]:
+        batch = self.batch(bid)
+        if batch is None or batch["status"] in ("mapping", "reverted"):
+            return {"errors": ["Stapel nicht übernehmbar."]}
+        self.evaluate(bid)
+        rows = self._load(bid)
+        by_idx = {rc.idx: rc for rc in rows}
+        chosen = [rc for rc in rows if rc.open and rc.include() and rc.row is not None and not rc.errors]
+        if not chosen:
+            return {"errors": ["Keine übernehmbaren Zeilen (Status „neu“ bzw. ausgewählt, ohne Fehler)."]}
+        assets = self.known_assets()
+        classes = {aid: {"asset_class": a.asset_class} for aid, a in assets.items()}
+        for c in C.ISO_CURRENCIES:
+            classes.setdefault(c, {"asset_class": "fiat"})
+        rep, parsed = validate_tx_rows([{**rc.row, "tx_id": f"Z{rc.idx}"} for rc in chosen], classes)  # type: ignore
+        if rep.errors:
+            return {"errors": [m.message for m in rep.errors[:10]]}
+        p_by_idx = {rc.idx: p for rc, p in zip(chosen, parsed, strict=True)}
+        source = f"csv:{batch['profile']}"
+        stamp = _now()
+        js = self.journal
+        created = merged = transfers = 0
+        pairs: list[tuple[RowCtx, str]] = []  # (Zeile, Gegenbuchung) – bestätigte Paare
+        with self.db.transaction() as c:
+            for rc in chosen:
+                p = p_by_idx[rc.idx]
+                pair_other = rc.pair_ref if rc.pair_ref and pair_accepted(rc) else None
+                if pair_other and pair_other.startswith("b:"):
+                    other = by_idx.get(int(pair_other[2:]))
+                    if other is None or not other.include() or other.idx not in p_by_idx:
+                        pair_other = None
+                status = "merged" if pair_other else "active"
+                tx_id = js._insert(c, p, rc.value_src, None, stamp, None, source,
+                                   external_id=rc.rec.ext_id, batch_id=bid, status=status, log=False)
+                rc.tx_id = tx_id
+                rc.status = "merged" if pair_other else "committed"
+                c.execute("UPDATE csv_row SET status=?, tx_id=? WHERE id=?", (rc.status, tx_id, rc.id))
+                if pair_other:
+                    pairs.append((rc, pair_other))
+                    merged += 1
+                else:
+                    created += 1
+            done: set[str] = set()
+            for rc, other_ref in pairs:
+                if rc.tx_id in done:
+                    continue
+                if other_ref.startswith("b:"):
+                    other = by_idx[int(other_ref[2:])]
+                    other_tx = other.tx_id
+                else:
+                    other_tx = other_ref[2:]
+                    j = c.execute("SELECT status FROM journal_tx WHERE tx_id=?", (other_tx,)).fetchone()
+                    if j is None or j["status"] != "active":
+                        c.execute("UPDATE journal_tx SET status='active' WHERE tx_id=?", (rc.tx_id,))
+                        c.execute("UPDATE csv_row SET status='committed' WHERE id=?", (rc.id,))
+                        merged -= 1
+                        created += 1
+                        continue
+                if other_tx is None:
+                    continue
+                t_id = self._merge(c, js, rc.tx_id or "", other_tx, bid, stamp)  # type: ignore[arg-type]
+                if t_id:
+                    transfers += 1
+                done.update((rc.tx_id or "", other_tx))
+            chosen_ids = {rc.id for rc in chosen}
+            left = sum(1 for rc in rows if rc.open and rc.id not in chosen_ids and rc.status == "invalid")
+            c.execute("UPDATE csv_batch SET status=?, committed_at=?, updated_at=? WHERE id=?",
+                      ("partial" if left else "committed", stamp, stamp, bid))
+            js._log(c, "csv_commit", f"csv:{bid}", None, {"created": created, "merged": merged,
+                                                           "transfers": transfers}, stamp)
+        js.after_change()
+        log.info("CSV-Stapel %s übernommen: %d Buchungen, %d Transfers", bid, created, transfers)
+        return {"created": created, "transfers": transfers, "merged": merged, "errors": []}
+
+    def _merge(self, c: Any, js: JournalService, a_tx: str, b_tx: str, bid: int, stamp: str) -> str | None:
+        """Abgang + Zugang → Transfer-Buchung; beide Einzelbuchungen werden „merged“."""
+        a = c.execute("SELECT * FROM journal_tx WHERE tx_id=?", (a_tx,)).fetchone()
+        b = c.execute("SELECT * FROM journal_tx WHERE tx_id=?", (b_tx,)).fetchone()
+        if a is None or b is None:
+            return None
+        w, dpt = (a, b) if a["type"] == "withdrawal" else (b, a)
+        if w["type"] != "withdrawal" or dpt["type"] != "deposit" or w["from_asset"] != dpt["to_asset"]:
+            return None
+        fq, tq = Decimal(w["from_qty"]), Decimal(dpt["to_qty"])
+        fee_asset, fee_qty, fee_eur = w["fee_asset"], w["fee_qty"], w["fee_eur"]
+        if not fee_qty and dpt["fee_qty"]:
+            fee_asset, fee_qty, fee_eur = dpt["fee_asset"], dpt["fee_qty"], dpt["fee_eur"]
+        note = f"Transfer {w['from_account']} → {dpt['to_account']} (abgeglichen: {w['tx_id']}, {dpt['tx_id']})"
+        row = {"tx_id": "T", "datetime": w["ts_utc"], "type": "transfer", "tag": "",
+               "from_account": w["from_account"], "from_asset": w["from_asset"], "from_qty": s(fq),
+               "to_account": dpt["to_account"], "to_asset": dpt["to_asset"], "to_qty": s(min(tq, fq)),
+               "fee_asset": fee_asset or "", "fee_qty": fee_qty or "", "fee_eur": fee_eur or "", "value_eur": "",
+               "note": note}
+        classes = {x: {"asset_class": "crypto"} for x in (w["from_asset"], fee_asset) if x}
+        if fee_asset and fee_asset in C.ISO_CURRENCIES:
+            classes[fee_asset] = {"asset_class": "fiat"}
+        rep, parsed = validate_tx_rows([row], classes)
+        if rep.errors or not parsed:
+            log.warning("Transfer %s/%s nicht zusammenführbar: %s", a_tx, b_tx, [m.message for m in rep.errors])
+            return None
+        t_id = js._insert(c, parsed[0], None, None, stamp, None, "transfer", batch_id=bid,
+                          pair_refs=f"{w['tx_id']},{dpt['tx_id']}", log=True)
+        c.execute("UPDATE journal_tx SET status='merged', merged_into=?, updated_at=? WHERE tx_id IN (?,?)",
+                  (t_id, stamp, w["tx_id"], dpt["tx_id"]))
+        return t_id
+
+    # -- Rückgängig ---------------------------------------------------------------------------------------
+    @_locked
+    def revert(self, bid: int) -> dict[str, Any]:
+        batch = self.batch(bid)
+        if batch is None or batch["status"] not in ("partial", "committed"):
+            return {"errors": ["Nur übernommene Stapel lassen sich rückgängig machen."]}
+        stamp = _now()
+        js = self.journal
+        n = 0
+        with self.db.transaction() as c:
+            own = [r["tx_id"] for r in c.execute("SELECT tx_id FROM journal_tx WHERE batch_id=? AND source<>'transfer'",
+                                                 (bid,))]
+            own_set = set(own)
+            transfers = [t for t in c.execute("SELECT * FROM journal_tx WHERE source='transfer' AND status IN "
+                                              "('active','deleted')")
+                         if t["batch_id"] == bid or own_set & {x.strip() for x in (t["pair_refs"] or "").split(",")}]
+            for t in transfers:
+                js.unpair_in(c, t, stamp, keep=frozenset({bid}))
+            for tx in own:
+                cur = c.execute("UPDATE journal_tx SET status='reverted', merged_into=NULL, updated_at=? WHERE tx_id=? "
+                                "AND status <> 'reverted'", (stamp, tx))
+                n += cur.rowcount
+            c.execute("UPDATE csv_row SET status='new', tx_id=NULL WHERE batch_id=? AND status IN ('committed',"
+                      "'merged')", (bid,))
+            c.execute("UPDATE csv_batch SET status='reverted', reverted_at=?, updated_at=? WHERE id=?",
+                      (stamp, stamp, bid))
+            js._log(c, "csv_revert", f"csv:{bid}", None, {"reverted": n, "transfers": len(transfers)}, stamp)
+        js.after_change()
+        log.info("CSV-Stapel %s rückgängig gemacht (%d Buchungen)", bid, n)
+        return {"reverted": n, "transfers": len(transfers), "errors": []}
+
+    @_locked
+    def reopen(self, bid: int) -> bool:
+        """Rückgängig gemachten Stapel wieder als Vorschau öffnen (erneut übernehmen)."""
+        batch = self.batch(bid)
+        if batch is None or batch["status"] != "reverted":
+            return False
+        self.db.x("UPDATE csv_batch SET status='preview', updated_at=? WHERE id=?", (_now(), bid))
+        self.evaluate(bid)
+        return True
+
+    # -- Kurse für neue Assets laden ----------------------------------------------------------------------
+    def load_prices(self, bid: int) -> dict[str, Any]:
+        """Tagesschlusskurse und Devisenkurse für die Assets und den Zeitraum des Stapels laden, dann neu bewerten."""
+        rows = [rc for rc in self._load(bid) if rc.open and rc.row is not None]
+        assets = self.known_assets()
+        txs: list[Tx] = []
+        for i, rc in enumerate(rows):
+            row = rc.row
+            assert row is not None
+            try:
+                txs.append(Tx(seq=i, tx_id=f"Z{rc.idx}", ts=rc.ts, date=rc.d, date_only=False, type=row["type"],
+                              tag=row["tag"] or None, from_account=row["from_account"] or None,
+                              from_asset=row["from_asset"] or None, from_qty=_row_d(row["from_qty"]),
+                              to_account=row["to_account"] or None, to_asset=row["to_asset"] or None,
+                              to_qty=_row_d(row["to_qty"]), fee_asset=row["fee_asset"] or None,
+                              fee_qty=_row_d(row["fee_qty"]), fee_eur=None, value_eur=_row_d(row["value_eur"])))
+            except (ArithmeticError, ValueError):
+                continue
+        if not txs:
+            return {"skipped": "keine Zeilen"}
+        used = {a for t in txs for a in (t.from_asset, t.to_asset, t.fee_asset) if a}
+        pf_assets = {aid: assets.get(aid) or AssetInfo(asset_id=aid, name=aid, asset_class="fiat" if aid in
+                                                       C.ISO_CURRENCIES else "crypto") for aid in used}
+        pf = Portfolio(import_id=None, txs=txs, assets=pf_assets, accounts={})
+        led = run_ledger(pf, self.ctx.engine_options())
+        res = self.ctx.prices.backfill(pf, led, progress=lambda p: self.ctx.job_progress("csv_prices", p))
+        self.ctx.invalidate_history()
+        self.evaluate(bid)
+        return res
+
+    # -- Aufräumen ----------------------------------------------------------------------------------------
+    def symbol_rows(self) -> list[Any]:
+        return self.db.q("SELECT * FROM csv_symbol ORDER BY symbol")
+
+    def account_rows(self) -> list[Any]:
+        return self.db.q("SELECT * FROM csv_account ORDER BY name")
+
+
+def pair_accepted(rc: RowCtx) -> bool:
+    """Transfer-Paar übernehmen: bestätigt – oder unbestätigt mit hoher Sicherheit (gleicher Hash bzw. ≥ 98 % der
+    Menge innerhalb von 24 Stunden)."""
+    return rc.pair_ok == 1 or (rc.pair_ok is None and rc.pair_conf == "hoch")
+
+
+def _qty_eq(a: Decimal | None, b: Decimal | None) -> bool:
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    return abs(a - b) <= max(abs(b) * DUP_QTY_TOL, Decimal("1e-8"))
+
+
+def _strip_prefix(msg: str) -> str:
+    return msg.split(": ", 1)[1] if msg.startswith("Z") and ": " in msg[:12] else msg
+
+
+def csv_service(ctx: Any) -> CsvImportService:
+    svc = getattr(ctx, "_csv_service", None)
+    if svc is None:
+        svc = CsvImportService(ctx)
+        ctx._csv_service = svc
+    return svc

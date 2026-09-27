@@ -46,6 +46,15 @@ class Scheduler:
                            misfire_grace_time=3600)
         return True
 
+    def debounce(self, name: str, delay_s: float, **kwargs: Any) -> bool:
+        """Einmaliger Lauf nach ``delay_s`` – ein erneuter Aufruf davor verschiebt den Lauf (Änderungen bündeln)."""
+        runner = self.jobs.get(name)
+        if runner is None:
+            return False
+        self.sched.add_job(runner, "date", run_date=datetime.now(UTC) + timedelta(seconds=delay_s),
+                           id=f"{name}-debounce", kwargs=kwargs, replace_existing=True, misfire_grace_time=3600)
+        return True
+
     def setup_default_jobs(self) -> None:
         s = self.ctx.settings
         self.register("import_poll", lambda ctx: _outcome(tasks.import_check(ctx, "poll")),
@@ -81,7 +90,7 @@ class Scheduler:
     def next_runs(self) -> dict[str, str | None]:
         out = {}
         for j in self.sched.get_jobs():
-            if "-once-" in j.id:
+            if "-once-" in j.id or j.id.endswith("-debounce"):
                 continue
             out[j.id] = j.next_run_time.isoformat() if j.next_run_time else None
         return out

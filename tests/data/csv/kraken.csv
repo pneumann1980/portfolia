@@ -1,0 +1,10 @@
+"txid","refid","time","type","subtype","aclass","asset","wallet","amount","fee","balance"
+"L1","R1","2024-03-01 10:00:00","deposit","","currency","ZEUR","spot / main",1000.0000,0.0000,1000.0000
+"L2","T1","2024-03-02 11:00:00","trade","","currency","ZEUR","spot / main",-500.0000,1.3000,498.7000
+"L3","T1","2024-03-02 11:00:00","trade","","currency","XXBT","spot / main",0.0100000000,0.0000000000,0.0100000000
+"L4","S1","2024-03-03 00:00:00","staking","","currency","DOT.S","earn / bonded",0.1500000000,0.0000000000,10.15
+"L5","S2","2024-03-03 01:00:00","transfer","spottostaking","currency","DOT","spot / main",-10.0000000000,0.0000000000,0
+"","S2","2024-03-03 01:00:00","transfer","stakingfromspot","currency","DOT.S","earn / bonded",10.0000000000,0.0000000000,10
+"L7","W1","2024-03-04 12:00:00","withdrawal","","currency","XXBT","spot / main",-0.0050000000,0.0001000000,0.0049
+"L8","E1","2024-03-05 12:00:00","earn","reward","currency","ETH","earn / flexible",0.0010000000,0.0000000000,0.001
+"L9","E2","2024-03-05 13:00:00","earn","allocation","currency","ETH","earn / flexible",0.5000000000,0.0000000000,0.501

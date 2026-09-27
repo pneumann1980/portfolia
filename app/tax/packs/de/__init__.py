@@ -808,8 +808,9 @@ class GermanyPack(RulePack):
         manual = sum(1 for t in inp.pf.txs if t.origin == "journal" and t.date.year == year)
         if manual:
             issues.append(Issue("info", "manual_tx",
-                                f"{manual} Buchungen des Jahres wurden in Portfolia erfasst (nicht aus dem Import) – "
-                                "Belege (Abrechnungen, Kontoauszüge) für Rückfragen bereithalten.", manual))
+                                f"{manual} Buchungen des Jahres wurden in Portfolia erfasst oder per CSV importiert "
+                                "(nicht aus dem kuratierten Import) – Belege (Abrechnungen, Kontoauszüge, "
+                                "Original-CSV) für Rückfragen bereithalten.", manual))
         conf = sum(1 for t in inp.pf.txs if t.flag == "confirmed" and t.date.year <= year)
         if conf:
             issues.append(Issue("info", "confirmed_tx",

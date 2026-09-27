@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.importer import contract as C
 from app.journal import forms
-from app.journal.service import SOURCE_LABEL, TAX_TYPES, journal_service, tx_form_data
+from app.journal.service import TAX_TYPES, editable, journal_service, source_label, tx_form_data
 from app.util.timeutil import today_local
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
@@ -20,9 +20,10 @@ from app.web.deps import get_ctx, render
 log = logging.getLogger(__name__)
 
 PAGE = 200
-ORIGINS = {"import": "Import", "journal": "manuell", "plan": "Sparplan"}
+ORIGINS = {"import": "Import", "journal": "manuell", "csv": "CSV-Import", "plan": "Sparplan"}
 SAVED = {"created": "Buchung gespeichert.", "updated": "Änderung gespeichert.", "deleted": "Buchung gelöscht.",
-         "restored": "Buchung wiederhergestellt.", "asset": "Asset gespeichert."}
+         "restored": "Buchung wiederhergestellt.", "asset": "Asset gespeichert.",
+         "unpaired": "Transfer aufgelöst – Ab- und Zugang gelten wieder einzeln."}
 ASSET_FIELDS = ("asset_id", "name", "asset_class", "quote_source", "quote_id", "isin", "wkn", "category", "tax_type",
                 "aliases", "note")
 
@@ -88,7 +89,8 @@ def make_router() -> APIRouter:
             assets=sorted(pf.assets.values(), key=lambda a: a.name.lower()) if pf else [],
             names={aid: a.name for aid, a in pf.assets.items()} if pf else {},
             syms={aid: a.symbol for aid, a in pf.assets.items()} if pf else {},
-            years=svc.years(), origins=ORIGINS, tx_types=forms.TYPE_LABEL, source_label=SOURCE_LABEL,
+            years=svc.years(), origins=ORIGINS, tx_types=forms.TYPE_LABEL, source_label=source_label,
+            jmeta=svc.meta([r["t"].tx_id for r in rows if r["kind"] in ("journal", "csv")]),
             saved=SAVED.get(saved), saved_tx=tx, warnings=warnings, own_assets=svc.assets(),
             deleted=svc.deleted(), has_import=ctx.active_import_id() is not None,
         )
@@ -176,7 +178,7 @@ def make_router() -> APIRouter:
     def edit_form(request: Request, tx_id: str) -> HTMLResponse:
         svc = journal_service(get_ctx(request))
         row = svc.get(tx_id)
-        if row is None or row["status"] != "active" or row["source"] != "manual" or row["group_ref"]:
+        if row is None or not editable(row):
             raise HTTPException(404)
         errors = (["Diese Buchung ist inzwischen im Import enthalten (gleiche ID) – Änderungen bitte im Import "
                    "vornehmen."] if svc.in_import(tx_id) else [])
@@ -196,9 +198,13 @@ def make_router() -> APIRouter:
     @router.post("/journal/{tx_id}/delete")
     async def delete(request: Request, tx_id: str) -> Response:
         svc = journal_service(get_ctx(request))
+        row = svc.get(tx_id)
         if not await run_in_threadpool(svc.delete, tx_id):
             raise HTTPException(404)
-        log.info("Manuelle Buchung gelöscht: %s", tx_id)
+        if row is not None and row["source"] == "transfer":
+            log.info("Transfer aufgelöst: %s", tx_id)
+            return _back(request, "/journal?saved=unpaired")
+        log.info("Buchung gelöscht: %s", tx_id)
         return _back(request, "/journal?saved=deleted")
 
     @router.post("/journal/{tx_id}/restore")

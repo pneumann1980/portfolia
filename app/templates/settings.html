@@ -97,6 +97,37 @@
   {% else %}<p class="hint">Noch keine Sicherung vorhanden.</p>{% endif %}
 </section>
 
+<section class="card" id="export">
+  <div class="card-head"><h2>ZIP-Sicherungen (Import-Format)</h2>
+    <div class="row"><a class="btn sm" href="/journal/export.zip" download>Gesamtexport herunterladen</a>
+      <button class="btn sm" hx-post="/actions/export" hx-target="#export-msg" hx-indicator="#ex-spin">Jetzt sichern</button>
+      <span id="ex-spin" class="htmx-indicator spinner"></span><span id="export-msg"></span></div></div>
+  <p class="hint">Nach jeder Änderung an Buchungen (manuell, CSV-Import, Sparplan-Freigabe, neuer Import) entsteht – gebündelt nach zwei
+    Minuten Ruhe – eine datierte Datei <code>portfolia-export-JJJJ-MM-TT_HHMMSS.zip</code> im einheitlichen Import-Format (Datenvertrag,
+    Schema 1.1). Sie enthält Import, in der App erfasste und per CSV importierte Buchungen, Assets, Konten und manuelle Kurse
+    und kann jederzeit als kuratierter Import verwendet werden. Unveränderte Stände werden nicht erneut gesichert.
+    Importierte ZIP-Dateien werden zusätzlich mit Datum archiviert.</p>
+  <form method="post" action="/settings/save" class="grid-3">
+    <label class="check" style="align-self:end"><input type="checkbox" name="auto" value="1" {% if s['export.auto'] %}checked{% endif %}> Nach Änderungen automatisch sichern</label>
+    <label class="field">Anzahl ZIP-Sicherungen<input type="number" min="1" max="1000" name="keep" value="{{ s['export.keep'] }}"></label>
+    <label class="field">Anzahl archivierter Import-Dateien<input type="number" min="1" max="1000" name="import_keep" value="{{ s['export.import_keep'] }}"></label>
+    <div>{{ save('export') }}</div>
+  </form>
+  <p class="hint">Verzeichnis: <code>{{ config.export_dir }}</code> (Umgebungsvariable <code>EXPORT_DIR</code>, z. B. auf eine Unraid-Freigabe außerhalb von appdata).
+    {% if export_job and export_job.last_ok == 0 %}<span class="badge crit">Letzte automatische Sicherung fehlgeschlagen: {{ export_job.last_error }}</span>{% endif %}</p>
+  {% if exports %}
+  <div class="table-wrap"><table class="compact"><thead><tr><th>ZIP-Sicherung</th><th>Erstellt</th><th class="num">Größe</th></tr></thead><tbody>
+    {% for e in exports[:30] %}<tr><td class="mono"><a href="/exports/{{ e.name }}" download>{{ e.name }}</a></td><td>{{ e.created|datetime_de }}</td><td class="num">{{ (e.bytes / 1024)|round(1) }} KB</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="hint">Noch keine ZIP-Sicherung – sie entsteht bei der nächsten Änderung oder mit „Jetzt sichern“.</p>{% endif %}
+  {% if archive %}
+  <details class="box" style="margin-top:8px"><summary>Archivierte Import-Dateien <span class="badge">{{ archive|length }}</span></summary>
+    <div class="table-wrap"><table class="compact"><thead><tr><th>Datei</th><th>Archiviert</th><th class="num">Größe</th></tr></thead><tbody>
+      {% for e in archive %}<tr><td class="mono"><a href="/exports/{{ e.name }}" download>{{ e.name }}</a></td><td>{{ e.created|datetime_de }}</td><td class="num">{{ (e.bytes / 1024)|round(1) }} KB</td></tr>{% endfor %}
+    </tbody></table></div>
+  </details>{% endif %}
+</section>
+
 {% block extra_settings %}{% endblock %}
 
 <section class="card" id="system">

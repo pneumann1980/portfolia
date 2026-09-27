@@ -22,7 +22,9 @@ services:
       AUTH_USER: "${AUTH_USER:-}"
       AUTH_PASSWORD_HASH: "${AUTH_PASSWORD_HASH:-}"
       DEMO_MODE: "${DEMO_MODE:-false}"
+      EXPORT_DIR: /exports
     volumes:
       - ./data:/data
       - ./import:/import:ro
+      - ./exports:/exports
     restart: unless-stopped

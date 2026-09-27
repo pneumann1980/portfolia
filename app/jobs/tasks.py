@@ -33,6 +33,13 @@ def run_job(ctx: AppContext, name: str, fn: Callable[[], dict[str, Any] | None])
 def import_check(ctx: AppContext, trigger: str = "poll", force: bool = False) -> ImportOutcome:
     out = check_import_dir(ctx.db, ctx.config.import_dir, ctx.engine_options("global"), trigger=trigger, force=force)
     if out.status == "imported":
+        if out.filename:
+            try:  # datierte Kopie der importierten ZIP-Datei (Archiv neben den ZIP-Sicherungen)
+                from app.jobs.exports import archive_import
+
+                archive_import(ctx, ctx.config.import_dir / out.filename)
+            except Exception as e:  # das Archiv darf den Import nie blockieren
+                log.warning("Import-Datei konnte nicht archiviert werden: %s", e)
         ctx.invalidate_data()
         # Schätzungen sofort mit dem neuen Import abgleichen (keine Doppelzählung echter Sparplan-Buchungen)
         try:

@@ -143,6 +143,101 @@ CREATE TABLE IF NOT EXISTS journal_log (
   after_json  TEXT
 );
 """),
+    (5, """
+-- CSV-Importe (Börsen, Wallets, Steuertools): Datei, Vorschau je Zeile, Zuordnungen, eigene Formate.
+CREATE TABLE IF NOT EXISTS csv_batch (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename     TEXT NOT NULL,
+  file_sha256  TEXT NOT NULL,
+  file_size    INTEGER NOT NULL,
+  raw_gz       BLOB NOT NULL,                  -- Originaldatei (gzip) – Nachvollziehbarkeit, erneute Analyse
+  profile      TEXT NOT NULL,                  -- binance | bitpanda | … | mapping:<id> | unknown
+  account      TEXT NOT NULL,
+  options_json TEXT,                           -- Zeitzone, Dezimaltrenner, Standardwährung, Stichtag
+  status       TEXT NOT NULL,                  -- mapping | preview | partial | committed | reverted
+  summary_json TEXT,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL,
+  committed_at TEXT,
+  reverted_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS csv_row (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id   INTEGER NOT NULL REFERENCES csv_batch(id) ON DELETE CASCADE,
+  idx        INTEGER NOT NULL,
+  line       INTEGER,
+  rec_json   TEXT NOT NULL,                    -- Vorgang laut Datei (Zwischenformat)
+  row_json   TEXT,                             -- Buchung im einheitlichen Format
+  status     TEXT NOT NULL,     -- new | known | duplicate | before | ignored | invalid | committed | merged
+  decision   TEXT,                             -- include | skip (Wahl des Nutzers)
+  value_in   TEXT,                             -- eingegebener EUR-Wert
+  fee_in     TEXT,                             -- eingegebener EUR-Wert der Gebühr
+  pair_ref   TEXT,                             -- Transfer-Gegenbuchung: b:<idx> (Datei) | j:<tx_id> (Journal)
+  pair_conf  TEXT,                             -- hoch | mittel
+  pair_ok    INTEGER,                          -- NULL = Vorschlag, 1 = bestätigt, 0 = abgelehnt
+  messages   TEXT,
+  tx_id      TEXT,
+  UNIQUE(batch_id, idx)
+);
+CREATE INDEX IF NOT EXISTS ix_csv_row_batch ON csv_row(batch_id, status);
+CREATE TABLE IF NOT EXISTS csv_symbol (
+  symbol     TEXT PRIMARY KEY,                 -- Symbol laut Datei (Großbuchstaben, ggf. mit Koinly-ID)
+  asset_id   TEXT,                             -- NULL = Zeilen mit diesem Symbol ignorieren
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS csv_account (
+  name       TEXT PRIMARY KEY,                 -- Konto/Wallet laut Datei
+  account    TEXT NOT NULL,                    -- Konto in Portfolia
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS csv_mapping (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  spec_json  TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+-- journal_tx: Bezug zum CSV-Import, Transfer-Abgleich; Quellkennung nur für nicht zurückgenommene Buchungen
+-- eindeutig (nach „Rückgängig“ kann dieselbe Datei erneut importiert werden).
+CREATE TABLE journal_tx_v5 (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  tx_id         TEXT NOT NULL UNIQUE,          -- PF-M-… manuell, PF-C-… CSV, PF-T-… abgeglichener Transfer
+  source        TEXT NOT NULL,                 -- manual | csv:<profil> | transfer
+  external_id   TEXT,                          -- Kennung in der Quelle (idempotenter Import)
+  group_ref     TEXT,
+  status        TEXT NOT NULL DEFAULT 'active',-- active | deleted | replaced | merged | reverted
+  ts_utc        TEXT NOT NULL,
+  date_only     INTEGER NOT NULL DEFAULT 0,
+  type          TEXT NOT NULL,
+  tag           TEXT,
+  from_account  TEXT, from_asset TEXT, from_qty TEXT,
+  to_account    TEXT, to_asset TEXT, to_qty TEXT,
+  fee_asset     TEXT, fee_qty TEXT, fee_eur TEXT,
+  value_eur     TEXT,
+  value_source  TEXT,
+  orig_price    TEXT, orig_ccy TEXT,
+  related_asset TEXT,
+  note          TEXT,
+  form_json     TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  batch_id      INTEGER,                       -- CSV-Import
+  merged_into   TEXT,                          -- status merged: tx_id des Transfers
+  pair_refs     TEXT                           -- Transfer: tx_ids der beiden Einzelbuchungen (kommagetrennt)
+);
+INSERT INTO journal_tx_v5(id, tx_id, source, external_id, group_ref, status, ts_utc, date_only, type, tag,
+  from_account, from_asset, from_qty, to_account, to_asset, to_qty, fee_asset, fee_qty, fee_eur, value_eur,
+  value_source, orig_price, orig_ccy, related_asset, note, form_json, created_at, updated_at)
+SELECT id, tx_id, source, external_id, group_ref, status, ts_utc, date_only, type, tag,
+  from_account, from_asset, from_qty, to_account, to_asset, to_qty, fee_asset, fee_qty, fee_eur, value_eur,
+  value_source, orig_price, orig_ccy, related_asset, note, form_json, created_at, updated_at FROM journal_tx;
+DROP TABLE journal_tx;
+ALTER TABLE journal_tx_v5 RENAME TO journal_tx;
+CREATE INDEX IF NOT EXISTS ix_journal_tx_status ON journal_tx(status);
+CREATE INDEX IF NOT EXISTS ix_journal_tx_batch ON journal_tx(batch_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_journal_tx_ext ON journal_tx(source, external_id)
+  WHERE external_id IS NOT NULL AND status <> 'reverted';
+"""),
 ]
 
 

@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}CSV-Import · {{ b.filename }}{% endblock %}
+{% block heading %}CSV-Import{% endblock %}
+{% macro leg(acc, asset, q, sign) -%}
+  {%- if asset %}<span class="nowrap">{{ sign }}{{ q|qty }} {{ asset }}</span>{% if acc %}<div class="hint">{{ acc }}</div>{% endif %}{% else %}–{% endif -%}
+{%- endmacro %}
+{% macro hidden_nav() -%}<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="_status" value="{{ status }}"><input type="hidden" name="_offset" value="{{ offset }}">{%- endmacro %}
+{% set open = b.status in ('preview', 'partial', 'committed') %}
+{% set committed_n = ov.counts.get('committed', 0) + ov.counts.get('merged', 0) %}
+{% block content %}
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/csv">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
+{% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+{% if msg == 'commit' %}<div class="alert good"><span class="icon">✓</span><div>Übernommen: {{ request.query_params.get('n', '0') }} Buchungen{% if request.query_params.get('t', '0') != '0' %}, {{ request.query_params.get('t') }} Transfers abgeglichen{% endif %}. <a href="/journal">Zu den Buchungen</a></div></div>
+{% elif msg == 'reverted' %}<div class="alert good"><span class="icon">✓</span><div>Import rückgängig gemacht – die Buchungen dieses Imports zählen nicht mehr.</div></div>
+{% elif msg == 'prices' %}<div class="alert good"><span class="icon">✓</span><div>Kurse geladen und Werte neu ermittelt.</div></div>
+{% elif msg %}<div class="alert good"><span class="icon">✓</span><div>Gespeichert und neu ausgewertet.</div></div>{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>{{ b.filename }}</h2>
+    <div class="row"><span class="badge {{ 'good' if b.status == 'committed' else 'warn' if b.status in ('preview', 'partial') else '' }}">{{ batch_status.get(b.status, b.status) }}</span>
+      <a class="btn sm ghost" href="/journal/csv/{{ b.id }}/file" download>Originaldatei</a></div></div>
+  <dl class="kv">
+    <dt>Format</dt><dd>{{ prof.label if prof else b.profile }}{% if prof and prof.id.startswith('mapping:') %} · <a href="/journal/csv/{{ b.id }}/mapping">Zuordnung bearbeiten</a>{% endif %}</dd>
+    <dt>Konto</dt><dd>{{ b.account }}{% if prof and prof.multi_account %} <span class="hint">(Ersatz für Zeilen ohne Konto)</span>{% endif %}</dd>
+    <dt>Gelesen</dt><dd>{{ summary.get('rows_read', 0) }} Zeilen → {{ ov.total }} Vorgänge{% if summary.get('skipped') %}, {{ summary.skipped.values()|sum }} übersprungen{% endif %}{% if summary.get('error_count') %}, <b>{{ summary.error_count }} nicht lesbar</b>{% endif %}</dd>
+    <dt>Status der Zeilen</dt><dd>{% for k, n in ov.counts.items() %}<a class="badge {{ status_badge.get(k, '') }}" href="/journal/csv/{{ b.id }}?status={{ 'committed' if k == 'merged' else k }}">{{ status_label.get(k, k) }}: {{ n }}</a> {% endfor %}</dd>
+    {% if options.get('cutoff') %}<dt>Stichtag</dt><dd>nur Buchungen nach dem {{ options.cutoff|date_de }} werden vorgeschlagen</dd>{% endif %}
+    <dt>Eingelesen</dt><dd>{{ b.created_at|datetime_de }}{% if b.committed_at %} · übernommen {{ b.committed_at|datetime_de }}{% endif %}{% if b.reverted_at %} · rückgängig {{ b.reverted_at|datetime_de }}{% endif %}</dd>
+  </dl>
+  {% if summary.get('skipped') or summary.get('errors') %}
+  <details class="box" style="margin-top:10px"><summary>Übersprungene und nicht lesbare Zeilen</summary>
+    {% if summary.get('skipped') %}<ul class="plain">{% for k, n in summary.skipped.items() %}<li>{{ n }} × {{ k }}</li>{% endfor %}</ul>{% endif %}
+    {% if summary.get('errors') %}<div class="table-wrap"><table class="compact"><thead><tr><th class="num">Zeile</th><th>Meldung</th></tr></thead><tbody>
+      {% for e in summary.errors[:200] %}<tr><td class="num">{{ e.line }}</td><td>{{ e.message }}</td></tr>{% endfor %}</tbody></table></div>
+      {% if summary.error_count > 200 %}<p class="hint">… und {{ summary.error_count - 200 }} weitere.</p>{% endif %}
+      <p class="hint">Nicht lesbare Zeilen werden nicht übernommen – bei Bedarf manuell erfassen oder das Format über „Eigenes Format“ zuordnen.</p>{% endif %}
+  </details>{% endif %}
+  {% if b.status in ('preview', 'partial') %}
+  <details class="box" style="margin-top:8px"><summary>Optionen (Konto, Stichtag, Zeitzone, Zahlenformat)</summary>
+    <form method="post" action="/journal/csv/{{ b.id }}/options" class="stack" style="gap:10px;margin-top:8px">{{ hidden_nav() }}
+      <div class="grid-3">
+        <label class="field">Konto / Wallet<input type="text" name="account" list="dl-accounts" value="{{ b.account }}" {% if committed_n %}disabled{% endif %}></label>
+        <label class="field">Stichtag (nur Buchungen danach)<input type="date" name="cutoff" value="{{ options.get('cutoff', '') }}"></label>
+        <label class="field">Zeitzone ohne Angabe<select name="tz" {% if committed_n %}disabled{% endif %}>{% for v, l in tz_choices %}<option value="{{ v }}" {% if options.get('tz', '') == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+        <label class="field">Dezimaltrenner<select name="decimal" {% if committed_n %}disabled{% endif %}><option value="">wie Format</option><option value="." {% if options.get('decimal') == '.' %}selected{% endif %}>Punkt</option><option value="," {% if options.get('decimal') == ',' %}selected{% endif %}>Komma</option></select></label>
+        <label class="field">Datumsformat<select name="dayfirst" {% if committed_n %}disabled{% endif %}><option value="">automatisch</option><option value="1" {% if options.get('dayfirst') == '1' %}selected{% endif %}>Tag zuerst</option><option value="0" {% if options.get('dayfirst') == '0' %}selected{% endif %}>Monat zuerst</option></select></label>
+        {% if prof and (prof.needs_asset or prof.id.startswith('mapping:')) %}<label class="field">Währung (ohne Spalte)<input type="text" name="default_asset" value="{{ options.get('default_asset', '') }}" {% if committed_n %}disabled{% endif %}></label>{% endif %}
+        {% if prof and prof.id == 'ledger' %}<label class="check" style="align-self:end"><input type="hidden" name="accounts_from_file" value=""><input type="checkbox" name="accounts_from_file" value="1" {% if options.get('accounts_from_file') == '1' %}checked{% endif %} {% if committed_n %}disabled{% endif %}> je Ledger-Konto ein eigenes Konto</label>{% endif %}
+      </div>
+      {% if committed_n %}<p class="hint">Konto, Zeitzone und Zahlenformat sind nach der ersten Übernahme fest – zum Ändern den Import rückgängig machen.</p>{% endif %}
+      <div class="row"><button class="btn sm" type="submit">Neu auswerten</button></div>
+    </form>
+    {% if not committed_n %}
+    <form method="post" action="/journal/csv/{{ b.id }}/profile" class="row" style="margin-top:10px">{{ hidden_nav() }}
+      <label class="field">Anderes Format<select name="profile">
+        {% for g, ps in groups %}<optgroup label="{{ g }}">{% for p in ps %}<option value="{{ p.id }}" {% if prof and p.id == prof.id %}selected{% endif %}>{{ p.label }}</option>{% endfor %}</optgroup>{% endfor %}
+        <option value="mapping:new">Spalten selbst zuordnen …</option></select></label>
+      <button class="btn sm ghost" type="submit">Wechseln</button></form>{% endif %}
+  </details>{% endif %}
+</section>
+
+{% if open and ov.unknown %}
+<section class="card" style="margin-top:16px" id="assets">
+  <div class="card-head"><h2>1 · Assets zuordnen <span class="badge warn">{{ ov.unknown|length }}</span></h2></div>
+  <p class="hint">Diese Symbole kennt Portfolia noch nicht. Einem vorhandenen Asset zuordnen oder neu anlegen (mit Kursquelle für
+    Bewertung und Historie); „ignorieren“ überspringt alle Zeilen mit dem Symbol. Zuordnungen gelten auch für künftige Importe.</p>
+  <form method="post" action="/journal/csv/{{ b.id }}/symbols">{{ hidden_nav() }}
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>Symbol</th><th class="num">Zeilen</th><th>Aktion</th><th>Vorhandenes Asset</th><th>Neu: ID / Name</th><th>Neu: Klasse / Kurs-ID</th></tr></thead>
+    <tbody>{% for u in ov.unknown %}{% set base = u.symbol.split(';')[0] %}{% set kc = known_coins.get(base) %}{% set i = loop.index0 %}
+      <tr><td class="mono" data-label="Symbol">{{ u.symbol }}<input type="hidden" name="sym_{{ i }}" value="{{ u.symbol }}">{% if u.ambiguous %}<div class="hint">mehrdeutig</div>{% endif %}</td>
+        <td class="num" data-label="Zeilen">{{ u.count }}</td>
+        <td data-label="Aktion"><select name="act_{{ i }}"><option value="">später</option><option value="new" {% if not u.ambiguous %}selected{% endif %}>neu anlegen</option><option value="map" {% if u.ambiguous %}selected{% endif %}>zuordnen</option><option value="ignore">ignorieren</option></select></td>
+        <td data-label="Vorhanden"><input type="text" name="asset_{{ i }}" list="dl-assets" placeholder="ID oder Name" autocomplete="off"></td>
+        <td data-label="Neu"><input type="text" name="id_{{ i }}" value="{{ base }}" aria-label="ID für {{ u.symbol }}" style="max-width:9em"> <input type="text" name="name_{{ i }}" value="{{ kc[0] if kc else base }}" aria-label="Name für {{ u.symbol }}"></td>
+        <td data-label="Klasse"><select name="class_{{ i }}" aria-label="Klasse für {{ u.symbol }}"><option value="crypto" {% if u.hint != 'security' %}selected{% endif %}>Krypto</option><option value="security" {% if u.hint == 'security' %}selected{% endif %}>Wertpapier</option><option value="fiat">Währung</option></select>
+          <input type="text" name="qid_{{ i }}" value="{{ kc[1] if kc and u.hint != 'security' else '' }}" placeholder="{{ 'Yahoo-Symbol' if u.hint == 'security' else 'CoinGecko-ID' }}" aria-label="Kurs-ID für {{ u.symbol }}" style="max-width:12em">
+          {% if kc and u.hint != 'security' %}<div class="hint">Vorschlag – bitte prüfen</div>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <p class="hint">CoinGecko-ID: Teil der Adresse auf coingecko.com (z. B. „bitcoin“, „solana“). Wertpapiere: Yahoo-Symbol (z. B. „AAPL“, „EUNL.DE“) oder leer für manuelle Kurse.</p>
+  <div class="row" style="margin-top:8px"><button class="btn primary" type="submit">Zuordnungen speichern</button></div>
+  </form>
+</section>{% endif %}
+
+{% if open and ov.accounts and (prof and prof.multi_account or ov.accounts|length > 1) %}
+<section class="card" style="margin-top:16px" id="konten">
+  <div class="card-head"><h2>Konten</h2></div>
+  <p class="hint">Konten laut Datei und das Konto in Portfolia, auf das sie gebucht werden (z. B. „Binance Spot“ → „Binance“). Gleiche Namen wie bei anderen Importen verwenden, damit Überträge abgeglichen werden.</p>
+  <form method="post" action="/journal/csv/{{ b.id }}/accounts">{{ hidden_nav() }}
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Konto laut Datei</th><th class="num">Zeilen</th><th>Konto in Portfolia</th></tr></thead><tbody>
+    {% for name, n in ov.accounts.items() %}<tr><td>{{ name }}<input type="hidden" name="accname_{{ loop.index0 }}" value="{{ name }}"></td><td class="num">{{ n }}</td>
+      <td><input type="text" name="acc_{{ loop.index0 }}" value="{{ acc_map.get(name, name) }}" list="dl-accounts" autocomplete="off" aria-label="Konto für {{ name }}"></td></tr>{% endfor %}
+  </tbody></table></div>
+  <div class="row" style="margin-top:8px"><button class="btn sm" type="submit">Konten speichern</button></div>
+  </form>
+</section>{% endif %}
+
+{% if open and ov.missing_price %}
+<section class="card" style="margin-top:16px" id="kurse">
+  <div class="card-head"><h2>Fehlende EUR-Werte</h2></div>
+  <p class="hint">Für Käufe, Verkäufe, Tausch und Erträge braucht jede Buchung einen EUR-Wert. Er stammt aus der Datei, aus Devisenkursen
+    oder aus gespeicherten Tageskursen. Für neue Assets und ältere Zeiträume fehlen diese Kurse oft noch:</p>
+  <ul class="plain">{% for a, n in ov.missing_price.items() %}<li><b>{{ a }}</b>: {{ n }} Zeile{{ 'n' if n != 1 }}</li>{% endfor %}</ul>
+  <div class="row" style="margin-top:8px">
+    {% if job and job.running %}<div hx-get="/journal/csv/{{ b.id }}/prices/status" hx-trigger="load delay:2s" hx-swap="outerHTML"><span class="badge info">Kurse werden geladen …</span></div>
+    {% else %}<div id="price-status"><button class="btn" hx-post="/journal/csv/{{ b.id }}/prices" hx-target="#price-status" hx-swap="innerHTML">Kurse laden</button></div>{% endif %}
+  </div>
+  <p class="hint">Lädt Tagesschlusskurse (CoinGecko bzw. Yahoo) und Devisenkurse (EZB) für den Zeitraum der Datei. Die kostenlose
+    CoinGecko-API liefert nur 365 Tage – für ältere Krypto-Zeiträume unter <a href="/settings#prices">Einstellungen → Kurse</a> ein Yahoo-Symbol
+    hinterlegen (z. B. <code>SOL=SOL-EUR</code>) oder den Wert je Zeile unten eingeben.</p>
+</section>{% endif %}
+
+{% if open and ov.pairs %}
+<section class="card" style="margin-top:16px" id="transfers">
+  <div class="card-head"><h2>Überträge zwischen eigenen Konten <span class="badge">{{ ov.pairs|length }}</span></h2></div>
+  <p class="hint">Abgang auf einem Konto und passender Zugang auf einem anderen werden zu einem Transfer zusammengeführt – das
+    Anschaffungsdatum bleibt erhalten (Haltefrist), die Differenz gilt als Netzwerkgebühr. Sicherheit „hoch“ (gleicher Hash oder
+    ≥ 98 % der Menge innerhalb von 24 h) wird automatisch übernommen, „mittel“ erst nach Bestätigung.</p>
+  <form method="post" action="/journal/csv/{{ b.id }}/rows">{{ hidden_nav() }}
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>Abgang</th><th>Zugang</th><th>Sicherheit</th><th>Transfer?</th></tr></thead>
+    <tbody>{% for rc in ov.pairs %}{% set other = ov.by_idx.get(rc.pair_ref[2:]|int) if rc.pair_ref.startswith('b:') else none %}
+      <tr><td data-label="Abgang">{% if rc.row.type == 'withdrawal' %}{{ rc.ts|datetime_de }} · {{ leg(rc.row.from_account, rc.row.from_asset, rc.row.from_qty, '−') }}{% else %}<span class="mono">{{ rc.pair_ref[2:] }}</span> <span class="hint">(bereits erfasst)</span>{% endif %}</td>
+        <td data-label="Zugang">{% if rc.row.type == 'deposit' %}{{ rc.ts|datetime_de }} · {{ leg(rc.row.to_account, rc.row.to_asset, rc.row.to_qty, '+') }}{% elif other %}{{ other.ts|datetime_de }} · {{ leg(other.row.to_account, other.row.to_asset, other.row.to_qty, '+') }}{% else %}<span class="mono">{{ rc.pair_ref[2:] }}</span> <span class="hint">(bereits erfasst)</span>{% endif %}</td>
+        <td data-label="Sicherheit"><span class="badge {{ 'good' if rc.pair_conf == 'hoch' else 'warn' }}">{{ rc.pair_conf }}</span></td>
+        <td data-label="Transfer?"><select name="pair_{{ rc.idx }}"><option value="" {% if rc.pair_ok is none %}selected{% endif %}>{{ 'ja (automatisch)' if rc.pair_conf == 'hoch' else 'nein (Vorschlag)' }}</option><option value="1" {% if rc.pair_ok == 1 %}selected{% endif %}>ja</option><option value="0" {% if rc.pair_ok == 0 %}selected{% endif %}>nein</option></select></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <div class="row" style="margin-top:8px"><button class="btn sm" type="submit">Auswahl speichern</button></div>
+  </form>
+</section>{% endif %}
+
+<section class="card" style="margin-top:16px" id="zeilen">
+  <div class="card-head"><h2>Vorschau <span class="badge">{{ total_sel }}</span></h2>
+    {% if b.status in ('preview', 'partial') %}<form method="post" action="/journal/csv/{{ b.id }}/commit" class="inline" data-confirm="{{ ov.to_commit }} Buchungen übernehmen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit" {% if not ov.to_commit %}disabled{% endif %}>{{ ov.to_commit }} Buchung{{ 'en' if ov.to_commit != 1 }} übernehmen</button></form>{% endif %}</div>
+  <nav class="tabs" aria-label="Status">{% for k, l in filters.items() %}{% set n = (ov.counts.get('committed', 0) + ov.counts.get('merged', 0)) if k == 'committed' else (ov.total if not k else ov.counts.get(k, 0)) %}{% if n or not k or k == status %}<a class="{{ 'active' if status == k }}" href="/journal/csv/{{ b.id }}{% if k %}?status={{ k }}{% endif %}">{{ l }} <span class="badge">{{ n }}</span></a>{% endif %}{% endfor %}</nav>
+  {% if rows %}
+  <form method="post" action="/journal/csv/{{ b.id }}/rows">{{ hidden_nav() }}
+  <div class="table-wrap cards-wrap"><table class="compact cards journal">
+    <thead><tr><th class="num">Zeile</th><th>Datum</th><th>Vorgang</th><th>Abgang</th><th>Zugang</th><th class="num">Gebühr</th><th class="num">EUR-Wert</th><th>Status</th><th>Übernehmen</th></tr></thead>
+    <tbody>{% for rc in rows %}{% set r = rc.row %}
+      <tr><td class="num" data-label="Zeile">{{ rc.line }}</td>
+        <td class="nowrap" data-label="Datum">{{ rc.ts|datetime_de }}</td>
+        <td data-label="Vorgang">{% if r %}{{ tx_types.get(r.type, r.type) }}{% if r.tag %} · {{ tag_label.get(r.tag, r.tag) }}{% endif %}{% else %}{{ kind_label.get(rc.rec.kind, rc.rec.kind) }}{% endif %}
+          {% if rc.rec.label %}<div class="hint" title="{{ rc.rec.label }}">{{ rc.rec.label|truncate(34, true, '…', 0) }}</div>{% endif %}{% if rc.rec.note %}<div class="hint" title="{{ rc.rec.note }}">{{ rc.rec.note|truncate(48, true, '…', 0) }}</div>{% endif %}</td>
+        {% if r %}
+        <td data-label="Abgang">{{ leg(r.from_account, r.from_asset, r.from_qty, '−') }}</td>
+        <td data-label="Zugang">{{ leg(r.to_account, r.to_asset, r.to_qty, '+') }}</td>
+        <td class="num" data-label="Gebühr">{% if r.fee_qty %}<span class="nowrap">{{ r.fee_qty|qty }} {{ r.fee_asset }}</span>{% if r.fee_eur %}<div class="hint">{{ r.fee_eur|eur }}</div>{% endif %}{% else %}–{% endif %}
+          {% if rc.open and r.fee_qty and not r.fee_eur %}<input type="text" name="fee_{{ rc.idx }}" value="{{ rc.fee_in or '' }}" inputmode="decimal" placeholder="€" aria-label="Gebühr in EUR" style="max-width:7em">{% endif %}</td>
+        {% else %}
+        <td data-label="Abgang">{% if rc.rec.out_sym %}{{ rc.rec.out_qty|qty }} {{ rc.rec.out_sym }}{% else %}–{% endif %}</td>
+        <td data-label="Zugang">{% if rc.rec.in_sym %}{{ rc.rec.in_qty|qty }} {{ rc.rec.in_sym }}{% else %}–{% endif %}</td>
+        <td class="num" data-label="Gebühr">{% if rc.rec.fee_sym %}{{ rc.rec.fee_qty|qty }} {{ rc.rec.fee_sym }}{% else %}–{% endif %}</td>
+        {% endif %}
+        <td class="num" data-label="EUR-Wert">{% if r and r.value_eur %}{{ r.value_eur|eur }}{% if rc.value_src %}<div class="hint wrap">{{ rc.value_src }}</div>{% endif %}{% else %}–{% endif %}
+          {% if rc.open and r and (rc.missing_value or rc.value_in) %}<input type="text" name="val_{{ rc.idx }}" value="{{ rc.value_in or '' }}" inputmode="decimal" placeholder="Wert in €" aria-label="EUR-Wert" style="max-width:8em">{% endif %}</td>
+        <td data-label="Status"><span class="badge {{ status_badge.get(rc.status, '') }}">{{ status_label.get(rc.status, rc.status) }}</span>{% if rc.tx_id %} <span class="mono hint">{{ rc.tx_id }}</span>{% endif %}
+          {% if rc.pair_ref %}<div><span class="badge {{ 'good' if pair_accepted(rc) else '' }}">Transfer{{ '' if pair_accepted(rc) else '?' }}</span></div>{% endif %}
+          {% for e in rc.errors %}<div class="hint" style="color:var(--crit-ink)">{{ e }}</div>{% endfor %}
+          {% for w in rc.warnings %}<div class="hint">{{ w }}</div>{% endfor %}</td>
+        <td data-label="Übernehmen">{% if rc.open and rc.status in ('new', 'duplicate', 'before') %}<select name="dec_{{ rc.idx }}" aria-label="Zeile {{ rc.line }} übernehmen">
+            <option value="" {% if rc.decision is none %}selected{% endif %}>auto: {{ 'ja' if rc.default_include else 'nein' }}</option>
+            <option value="include" {% if rc.decision == 'include' %}selected{% endif %}>ja</option>
+            <option value="skip" {% if rc.decision == 'skip' %}selected{% endif %}>nein</option></select>
+          {% elif rc.open %}–{% else %}✓{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <div class="row" style="margin-top:8px;justify-content:space-between">
+    {% if open and b.status != 'committed' or ov.counts.get('invalid') or ov.counts.get('new') %}<button class="btn sm" type="submit">Eingaben speichern und neu bewerten</button>{% endif %}
+    <p class="hint">{{ offset + 1 }}–{{ offset + rows|length }} von {{ total_sel }}{% if total_sel > offset + page %} · <a href="{{ more_url }}">weitere</a>{% endif %}</p>
+  </div>
+  </form>
+  {% if status in ('duplicate', 'before') %}
+  <form method="post" action="/journal/csv/{{ b.id }}/rows" class="row" style="margin-top:8px">{{ hidden_nav() }}
+    <button class="btn sm ghost" name="bulk" value="{{ status }}:include" type="submit">Alle {{ filters[status] }} übernehmen</button>
+    <button class="btn sm ghost" name="bulk" value="{{ status }}:skip" type="submit">Alle {{ filters[status] }} auslassen</button>
+    <button class="btn sm ghost" name="bulk" value="{{ status }}:" type="submit">Vorschlag wiederherstellen</button></form>{% endif %}
+  {% else %}<p class="hint">Keine Zeilen{% if status %} mit diesem Status{% endif %}.</p>{% endif %}
+</section>
+
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Import verwalten</h2></div>
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    {% if b.status in ('partial', 'committed') %}
+    <form method="post" action="/journal/csv/{{ b.id }}/revert" class="inline" data-confirm="Alle {{ committed_n }} Buchungen dieses Imports zurücknehmen? Abgeglichene Transfers mit anderen Importen werden aufgelöst."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Import rückgängig machen</button></form>
+    {% elif b.status == 'reverted' %}
+    <form method="post" action="/journal/csv/{{ b.id }}/reopen" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Erneut als Vorschau öffnen</button></form>
+    {% endif %}
+    {% if not committed_n %}<form method="post" action="/journal/csv/{{ b.id }}/discard" class="inline" data-confirm="Diesen Import samt Originaldatei verwerfen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Verwerfen</button></form>{% endif %}
+    <a class="btn ghost" href="/journal/csv">Zurück zur Übersicht</a>
+  </div>
+  <p class="hint">Übernommene Buchungen erscheinen unter „Buchungen“ mit der Quelle „CSV“ und lassen sich dort einzeln bearbeiten oder löschen. Der Gesamtexport und die automatischen ZIP-Sicherungen enthalten sie im einheitlichen Format.</p>
+</section>
+<datalist id="dl-accounts">{% for a in accounts %}<option value="{{ a }}"></option>{% endfor %}</datalist>
+<datalist id="dl-assets">{% for a in assets %}<option value="{{ a.asset_id }}">{{ a.name }}</option>{% endfor %}</datalist>
+{% endblock %}

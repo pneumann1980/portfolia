@@ -53,6 +53,9 @@ DEFAULTS: dict[str, Any] = {
     # Betrieb
     "backup.keep": 14,
     "backup.hour": 3,
+    "export.auto": True,  # datierte ZIP-Sicherung (Import-Format) nach Änderungen
+    "export.keep": 30,
+    "export.import_keep": 20,  # Kopien importierter ZIP-Dateien
 }
 
 

@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/pneumann1980/portfolia/issues</Support>
   <Project>https://github.com/pneumann1980/portfolia</Project>
-  <Overview>Selbst gehostetes Portfolio-Dashboard für Aktien, ETFs und Kryptowerte (nur LAN). Liest einen kuratierten Import (ZIP) read-only, bewertet mit Yahoo Finance, CoinGecko und EZB-Kursen, berechnet TTWROR/IRR, Haltefristen und Steueraufstellungen (PDF) und zeigt passende News und YouTube-Videos. Keine Telemetrie, keine Schreibzugriffe auf Broker oder Börsen. Steuerfunktionen sind informativ – keine Steuerberatung.</Overview>
+  <Overview>Selbst gehostetes Portfolio-Dashboard für Aktien, ETFs und Kryptowerte (nur LAN). Liest einen kuratierten Import (ZIP) read-only, übernimmt CSV-Exporte von Börsen und Wallets (ohne Online-Anbindung), sichert alles datiert im Import-Format, bewertet mit Yahoo Finance, CoinGecko und EZB-Kursen, berechnet TTWROR/IRR, Haltefristen und Steueraufstellungen (PDF) und zeigt passende News und YouTube-Videos. Keine Telemetrie, keine Schreibzugriffe auf Broker oder Börsen. Steuerfunktionen sind informativ – keine Steuerberatung.</Overview>
   <Category>Tools: Productivity:</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/pneumann1980/portfolia/main/unraid/portfolia.xml</TemplateURL>
@@ -24,6 +24,8 @@
   <Config Name="Web-Oberfläche" Target="8080" Default="8080" Mode="tcp" Description="Port der Weboberfläche (nur im LAN freigeben)." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
   <Config Name="Daten (appdata)" Target="/data" Default="/mnt/user/appdata/portfolia" Mode="rw" Description="App-Datenbank, Kurs-Cache, Backups, Berichte, sources.yaml, lokale Steuerparameter (tax_rules)." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/portfolia</Config>
   <Config Name="Import (nur lesen)" Target="/import" Default="/mnt/user/appdata/portfolia-import" Mode="ro" Description="Ordner mit den Import-ZIPs (wird alle 5 Minuten geprüft, nur lesend eingebunden). Nicht innerhalb des Datenordners ablegen." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/portfolia-import</Config>
+  <Config Name="ZIP-Sicherungen" Target="/exports" Default="/mnt/user/appdata/portfolia-exports" Mode="rw" Description="Datierte Gesamtexporte im Import-Format (nach jeder Änderung an Buchungen) und Kopien der importierten ZIP-Dateien. Gern auf eine Freigabe mit Sicherung legen." Type="Path" Display="always" Required="false" Mask="false">/mnt/user/appdata/portfolia-exports</Config>
+  <Config Name="Exportverzeichnis" Target="EXPORT_DIR" Default="/exports" Mode="" Description="Verzeichnis im Container für die ZIP-Sicherungen (muss zur Pfad-Zuordnung „ZIP-Sicherungen“ passen; leer = /data/exports)." Type="Variable" Display="advanced" Required="false" Mask="false">/exports</Config>
   <Config Name="Zeitzone" Target="TZ" Default="Europe/Berlin" Mode="" Description="Zeitzone für Tagesgrenzen, Zeitpläne und Anzeige." Type="Variable" Display="always" Required="true" Mask="false">Europe/Berlin</Config>
   <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Benutzer-ID, unter der die App läuft (Unraid: 99 = nobody)." Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Gruppen-ID (Unraid: 100 = users)." Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>

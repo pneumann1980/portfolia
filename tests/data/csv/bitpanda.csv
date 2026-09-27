@@ -1,0 +1,9 @@
+Disclaimer: All data is without guarantee, errors and changes are reserved.
+UserId: 1234
+"Transaction ID",Timestamp,"Transaction Type",In/Out,"Amount Fiat",Fiat,"Amount Asset",Asset,"Asset market price","Asset market price currency","Asset class","Product ID",Fee,"Fee asset",Spread,"Spread Currency","Tax Fiat"
+T-1,2024-02-01T09:32:55+01:00,deposit,incoming,500.00,EUR,-,EUR,-,-,Fiat,-,0.00,EUR,-,-,0.00
+T-2,2024-02-02T10:00:00+01:00,buy,outgoing,250.00,EUR,0.0055,BTC,45454.55,EUR,Cryptocurrency,1,0.25,BEST,-,-,0.00
+T-3,2024-02-03T11:00:00+01:00,buy,outgoing,100.00,EUR,0.5,AAPL,200.00,EUR,"Stock (derivative)",123,-,-,-,-,0.00
+T-4,2024-02-10T12:00:00+01:00,transfer,incoming,1.20,EUR,1.5,BEST,0.80,EUR,Cryptocurrency,33,-,-,-,-,0.00
+T-5,2024-02-11T12:00:00+01:00,sell,incoming,120.00,EUR,0.0025,BTC,48000.00,EUR,Cryptocurrency,1,-,-,-,-,0.00
+T-6,2024-02-12T12:00:00+01:00,withdrawal,outgoing,50.00,EUR,0.001,BTC,50000,EUR,Cryptocurrency,1,0.00005,BTC,-,-,0.00

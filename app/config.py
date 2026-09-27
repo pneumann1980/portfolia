@@ -83,6 +83,7 @@ class Config:
     scheduler_enabled: bool = True
     startup_jobs: bool = True
     secrets: Secrets = field(default_factory=Secrets)
+    export_path: Path | None = None  # EXPORT_DIR; Standard: <DATA_DIR>/exports
     fx_frankfurter_url: str = "https://api.frankfurter.dev/v1"
     fx_frankfurter_fallback_url: str = "https://api.frankfurter.app"
     ecb_hist_url: str = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.zip"
@@ -99,6 +100,11 @@ class Config:
     @property
     def backup_dir(self) -> Path:
         return self.data_dir / "backups"
+
+    @property
+    def export_dir(self) -> Path:
+        """Datierte ZIP-Sicherungen im Import-Format und Archiv der importierten ZIP-Dateien."""
+        return self.export_path or self.data_dir / "exports"
 
     @property
     def cache_dir(self) -> Path:
@@ -150,9 +156,14 @@ class Config:
                 cryptopanic_api_key=_env("CRYPTOPANIC_API_KEY"),
             ),
             fx_frankfurter_url=_env("FX_FRANKFURTER_URL", cls.fx_frankfurter_url) or cls.fx_frankfurter_url,
+            export_path=Path(v) if (v := _env("EXPORT_DIR")) else None,
         )
 
     def ensure_dirs(self) -> None:
         for p in (self.data_dir, self.backup_dir, self.cache_dir, self.reports_dir, self.tax_rules_dir,
                   self.cache_dir / "img", self.cache_dir / "yfinance", self.log_dir):
             p.mkdir(parents=True, exist_ok=True)
+        try:
+            (self.export_dir / "import-archiv").mkdir(parents=True, exist_ok=True)
+        except OSError as e:  # z. B. nicht beschreibbares EXPORT_DIR – Export meldet den Fehler später
+            log.error("Exportverzeichnis %s nicht beschreibbar: %s", self.export_dir, e)

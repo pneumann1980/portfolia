@@ -1,4 +1,4 @@
-"""Journal: in der App erfasste Buchungen und Assets (manuell; später Synchronisation mit Börsen/Wallets).
+"""Journal: in der App erfasste Buchungen und Assets (manuell oder per CSV-Import aus Börsen/Wallets).
 
 Journal-Buchungen sind – anders als Sparplan-Schätzungen – vollwertige Buchungen ohne Markierung. Sie liegen in
 ``journal_tx`` und werden mit dem aktiven Import zu einem Portfolio zusammengeführt (``AppContext.recorded_portfolio``):
@@ -36,8 +36,9 @@ from app.util.timeutil import iso, local_tz, parse_iso, to_local_date, today_loc
 
 log = logging.getLogger(__name__)
 
-SOURCE_LABEL = {"manual": "manuell"}
-TX_PREFIX = {"manual": "PF-M-"}
+SOURCE_LABEL = {"manual": "manuell", "transfer": "Transfer-Abgleich"}
+TX_PREFIX = {"manual": "PF-M-", "csv": "PF-C-", "transfer": "PF-T-"}
+EDITABLE_SOURCES = ("manual", "transfer")
 SEQ_BASE = 2_000_000
 TAX_TYPES = {"share": "Aktie", "etf_equity": "Aktienfonds (≥ 51 % Aktien)", "etf_mixed": "Mischfonds (≥ 25 % Aktien)",
              "etf_other": "sonstiger Fonds", "fund_realestate": "Immobilienfonds",
@@ -48,6 +49,32 @@ _WKN_RE = re.compile(r"^[A-Z0-9]{6}$")
 _CG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 _YAHOO_RE = re.compile(r"^[A-Za-z0-9.^=_-]{1,24}$")
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9-]+: ")
+
+
+def source_label(source: str | None) -> str:
+    """Anzeigename der Herkunft einer Journal-Buchung (manuell, CSV-Profil, Transfer-Abgleich)."""
+    src = source or ""
+    if src in SOURCE_LABEL:
+        return SOURCE_LABEL[src]
+    if src.startswith("csv:"):
+        try:
+            from app.csvimport.profiles import PROFILES
+
+            p = PROFILES.get(src[4:])
+            name = p.label.split(" (", 1)[0] if p else "eigenes Format"
+        except ImportError:  # pragma: no cover
+            name = src[4:]
+        return f"CSV · {name}"
+    return src
+
+
+def tx_prefix(source: str) -> str:
+    return TX_PREFIX["csv"] if source.startswith("csv:") else TX_PREFIX.get(source, "PF-X-")
+
+
+def editable(row: Any) -> bool:
+    src = row["source"] or ""
+    return row["status"] == "active" and not row["group_ref"] and (src in EDITABLE_SOURCES or src.startswith("csv:"))
 
 
 def _d(v: Any) -> Decimal | None:
@@ -190,7 +217,7 @@ class JournalService:
 
     def deleted(self, limit: int = 50) -> list[Any]:
         return self.db.q("SELECT * FROM journal_tx WHERE status='deleted' AND group_ref IS NULL "
-                         "ORDER BY updated_at DESC LIMIT ?", (limit,))
+                         "AND source <> 'transfer' ORDER BY updated_at DESC LIMIT ?", (limit,))
 
     def assets(self) -> list[dict[str, Any]]:
         pf = self.ctx.recorded_portfolio()
@@ -204,7 +231,11 @@ class JournalService:
         return out
 
     def duplicates(self, pf: Portfolio | None = None) -> dict[str, list[str]]:
-        """Journal-Buchungen, die einer Import-Buchung stark ähneln (gleiche Konten/Assets, ±2 Tage, Menge ±1 %)."""
+        """Manuelle Buchungen, die einer Import-Buchung stark ähneln (gleiche Konten/Assets, ±2 Tage, Menge ±1 %).
+
+        CSV-Importe prüfen Dubletten bereits in der Vorschau (strenger: gleicher Zeitpunkt ± Zeitzonenversatz) –
+        die grobe Prüfung hier würde regelmäßige Erträge (z. B. tägliche Staking-Rewards) fälschlich markieren.
+        """
         pf = pf or self.ctx.recorded_portfolio()
         if pf is None:
             return {}
@@ -213,8 +244,10 @@ class JournalService:
             if t.origin == "import":
                 index[(t.type, t.from_asset, t.to_asset)].append(t)
         out: dict[str, list[str]] = {}
+        if not index:
+            return out
         for j in pf.txs:
-            if j.origin != "journal":
+            if j.origin != "journal" or (j.source or "manual") != "manual":
                 continue
             hits = [t.tx_id for t in index.get((j.type, j.from_asset, j.to_asset), []) if _sig_match(j, t)]
             if hits:
@@ -234,6 +267,8 @@ class JournalService:
             if asset and asset not in (t.from_asset, t.to_asset, t.fee_asset, t.related_asset):
                 continue
             kind = "plan_est" if t.flag == "estimated" else ("plan" if t.origin == "plan" else t.origin)
+            if kind == "journal" and ((t.source or "").startswith("csv:") or t.source == "transfer"):
+                kind = "csv"
             if origin and origin != kind and not (origin == "plan" and kind == "plan_est"):
                 continue
             if typ and t.type != typ:
@@ -249,6 +284,18 @@ class JournalService:
                 for t, k in sel[offset:offset + limit]]
         return rows, len(sel)
 
+    def meta(self, tx_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Journal-Eigenschaften (Quelle, Gruppe, CSV-Import) für die Anzeige einer Seite von Buchungen."""
+        out: dict[str, dict[str, Any]] = {}
+        for i in range(0, len(tx_ids), 500):
+            chunk = tx_ids[i:i + 500]
+            ph = ",".join("?" * len(chunk))
+            sql = f"SELECT tx_id, source, group_ref, batch_id, status FROM journal_tx WHERE tx_id IN ({ph})"
+            for r in self.db.q(sql, chunk):
+                out[r["tx_id"]] = {"source": r["source"], "group_ref": r["group_ref"], "batch_id": r["batch_id"],
+                                   "editable": editable(r)}
+        return out
+
     def years(self) -> list[int]:
         pf = self.ctx.portfolio()
         return sorted({t.date.year for t in pf.txs}, reverse=True) if pf else []
@@ -257,8 +304,7 @@ class JournalService:
     def save(self, data: Mapping[str, Any], tx_id: str | None = None) -> SaveResult:
         kind = str(data.get("kind") or "")
         existing = self.get(tx_id) if tx_id else None
-        if tx_id and (existing is None or existing["status"] != "active" or existing["source"] != "manual"
-                      or existing["group_ref"]):
+        if tx_id and (existing is None or not editable(existing)):
             return SaveResult(errors=["Buchung nicht gefunden oder nicht bearbeitbar."])
         if tx_id and self.in_import(tx_id):
             return SaveResult(errors=["Diese Buchung ist inzwischen im Import enthalten (gleiche ID) – Änderungen "
@@ -343,15 +389,21 @@ class JournalService:
         }
 
     def _insert(self, c: Any, p: dict[str, Any], value_source: str | None, form_json: str | None, stamp: str,
-                group_ref: str | None, source: str = "manual") -> str:
+                group_ref: str | None, source: str = "manual", *, external_id: str | None = None,
+                batch_id: int | None = None, status: str = "active", pair_refs: str | None = None,
+                log: bool = True) -> str:
         vals = self._values(p, value_source)
-        tmp = f"{TX_PREFIX[source]}NEU-{datetime.now(UTC).timestamp()}"
-        cols = ["tx_id", "source", "group_ref", "status", *vals, "form_json", "created_at", "updated_at"]
+        prefix = tx_prefix(source)
+        tmp = f"{prefix}NEU-{datetime.now(UTC).timestamp()}-{id(p)}"
+        cols = ["tx_id", "source", "external_id", "group_ref", "status", *vals, "form_json", "created_at",
+                "updated_at", "batch_id", "pair_refs"]
         cur = c.execute(f"INSERT INTO journal_tx({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
-                        (tmp, source, group_ref, "active", *vals.values(), form_json, stamp, stamp))
-        tx_id = f"{TX_PREFIX[source]}{cur.lastrowid:06d}"
+                        (tmp, source, external_id, group_ref, status, *vals.values(), form_json, stamp, stamp,
+                         batch_id, pair_refs))
+        tx_id = f"{prefix}{cur.lastrowid:06d}"
         c.execute("UPDATE journal_tx SET tx_id=? WHERE id=?", (tx_id, cur.lastrowid))
-        self._log(c, "create", tx_id, None, {"tx_id": tx_id, **vals}, stamp)
+        if log:
+            self._log(c, "create", tx_id, None, {"tx_id": tx_id, **vals}, stamp)
         return tx_id
 
     def _update(self, c: Any, row: Any, p: dict[str, Any], value_source: str | None, form_json: str | None,
@@ -370,7 +422,37 @@ class JournalService:
                    json.dumps(after, ensure_ascii=False, default=str) if after else None))
 
     def delete(self, tx_id: str) -> bool:
+        row = self.get(tx_id)
+        if row is not None and row["source"] == "transfer":
+            return self.unpair(tx_id)
         return self._set_status(tx_id, "active", "deleted", "delete")
+
+    def unpair(self, tx_id: str) -> bool:
+        """Abgeglichenen Transfer auflösen: die beiden Einzelbuchungen (Ab- und Zugang) gelten wieder."""
+        row = self.get(tx_id)
+        if row is None or row["source"] != "transfer" or row["status"] not in ("active", "deleted"):
+            return False
+        stamp = _now()
+        with self.db.transaction() as c:
+            self.unpair_in(c, row, stamp)
+        self._after_change()
+        return True
+
+    def unpair_in(self, c: Any, row: Any, stamp: str, keep: frozenset[int] = frozenset()) -> None:
+        """Transfer ``row`` zurücknehmen; Einzelbuchungen (außer aus Stapeln in ``keep``) wieder aktiv."""
+        c.execute("UPDATE journal_tx SET status='reverted', updated_at=? WHERE id=?", (stamp, row["id"]))
+        self._log(c, "unpair", row["tx_id"], None, None, stamp)
+        for ref in (row["pair_refs"] or "").split(","):
+            ref = ref.strip()
+            if not ref:
+                continue
+            side = c.execute("SELECT * FROM journal_tx WHERE tx_id=?", (ref,)).fetchone()
+            if side is None or side["status"] != "merged" or side["batch_id"] in keep:
+                continue
+            c.execute("UPDATE journal_tx SET status='active', merged_into=NULL, updated_at=? WHERE id=?",
+                      (stamp, side["id"]))
+            c.execute("UPDATE csv_row SET status='committed' WHERE tx_id=? AND status='merged'", (side["tx_id"],))
+            self._log(c, "restore", side["tx_id"], None, None, stamp)
 
     def restore(self, tx_id: str) -> bool:
         return self._set_status(tx_id, "deleted", "active", "restore")
@@ -464,6 +546,9 @@ class JournalService:
         return SaveResult(asset_id=aid)
 
     # -- Folgeschritte ----------------------------------------------------------------------------------
+    def after_change(self, new_asset: bool = False) -> None:
+        self._after_change(new_asset)
+
     def _after_change(self, new_asset: bool = False) -> None:
         self.ctx.invalidate_overlay()
         try:  # Sparplan-Schätzungen, die jetzt durch echte Buchungen belegt sind, ersetzen
@@ -492,7 +577,15 @@ class JournalService:
             raise ValueError("Keine Buchungen vorhanden.")
         today = today_local()
         txs = sorted(pf.txs, key=lambda t: (t.ts, t.seq))
-        assets = [asset_row(a) for _, a in sorted(pf.assets.items())]
+        # steuerliche Einstufungen aus den Einstellungen mitnehmen (Import-Spalten tax_type / tax_withholding)
+        tax_types = self.ctx.settings.get("tax.asset_types") or {}
+        withholding = self.ctx.settings.get("tax.account_withholding") or {}
+        assets = []
+        for aid, a in sorted(pf.assets.items()):
+            row = asset_row(a)
+            if tax_types.get(aid) in TAX_TYPES:
+                row["tax_type"] = tax_types[aid]
+            assets.append(row)
         led = run_ledger(pf, self.ctx.engine_options())
         holdings = [{"asset_id": asset, "account": acc, "qty": forms.s(q), "as_of": today.isoformat(),
                      "note": "Export"} for (acc, asset), q in sorted(led.balances.items()) if abs(q) > DUST]
@@ -501,6 +594,11 @@ class JournalService:
         accounts = [{"account": a.account, "broker": a.broker or "", "depot_group": a.depot_group or "",
                      **{k: v for k, v in (a.extra or {}).items() if isinstance(v, str)}}
                     for a in pf.accounts.values()]
+        accounts += [{"account": acc, "broker": "", "depot_group": ""} for acc in pf.all_accounts()
+                     if acc not in pf.accounts]
+        for row in accounts:
+            if withholding.get(row["account"]) in ("domestic", "foreign"):
+                row["tax_withholding"] = withholding[row["account"]]
         with tempfile.TemporaryDirectory() as td:
             path = build_zip(Path(td) / "export.zip", transactions=[tx_row(t) for t in txs], assets=assets,
                              holdings_check=holdings, issues=[], manual_prices=manual, accounts=accounts,

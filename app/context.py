@@ -11,6 +11,7 @@ import dataclasses
 import json
 import logging
 import threading
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -67,6 +68,8 @@ class AppContext:
         self.history_version = 0
         self.scheduler: Any = None  # wird in main gesetzt
         self.started_at = datetime.now(UTC)
+        # Rückrufe nach Datenänderungen (z. B. datierte ZIP-Sicherung); Argument: "data" | "overlay"
+        self.change_listeners: list[Callable[[str], None]] = []
 
     # -- Lebenszyklus ------------------------------------------------------------------------------
     def startup(self) -> None:
@@ -154,6 +157,14 @@ class AppContext:
             self._hist = None
             self.data_version += 1
             self.history_version += 1
+        self._changed("overlay")
+
+    def _changed(self, kind: str) -> None:
+        for fn in list(self.change_listeners):
+            try:
+                fn(kind)
+            except Exception as e:  # ein Rückruf darf die auslösende Änderung nie scheitern lassen
+                log.warning("Rückruf nach Datenänderung fehlgeschlagen: %s", e)
 
     def _seed_demo(self, pf: Portfolio) -> None:
         anchors: dict[str, tuple[date, float]] = {}
@@ -203,6 +214,7 @@ class AppContext:
             self._vals.clear()
             self._hist = None
             self.data_version += 1
+        self._changed("data")
 
     def invalidate_history(self) -> None:
         with self._lock:

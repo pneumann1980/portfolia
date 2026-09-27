@@ -1,0 +1,6 @@
+Date,Type,Label,Sending Wallet,Sent Amount,Sent Currency,Sent Cost Basis,Receiving Wallet,Received Amount,Received Currency,Received Cost Basis,Fee Amount,Fee Currency,Gain (EUR),Net Value (EUR),Fee Value (EUR),TxSrc,TxDest,TxHash,Description
+2023-01-01 10:00:00 UTC,buy,,Kraken,1000,EUR,1000,Kraken,0.05,BTC,1000,1.5,EUR,0,1000,1.5,,,,
+2023-02-01 10:00:00 UTC,transfer,,Kraken,0.02,BTC,400,Ledger,0.0199,BTC,398,0.0001,BTC,0,500,2.5,,,h1,
+2023-03-01 10:00:00 UTC,crypto_deposit,reward,,,,,Kraken,0.3,DOT,1.5,,,0,1.8,,,,,Staking
+2023-04-01 10:00:00 UTC,exchange,,Kraken,0.01,BTC,200,Kraken,0.15,ETH,260,,,60,260,,,,,
+2023-05-01 10:00:00 UTC,crypto_withdrawal,gift,Ledger,0.001,BTC,20,,,,,,,5,25,,,,,

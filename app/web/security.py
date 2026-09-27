@@ -14,6 +14,7 @@ import binascii
 import hashlib
 import hmac
 import logging
+import re
 import secrets
 import threading
 import time
@@ -131,7 +132,22 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                                  headers={"WWW-Authenticate": 'Basic realm="Portfolia", charset="UTF-8"'})
 
 
-MAX_BODY = 1_000_000  # Formulare der App sind klein; Importe laufen über das Importverzeichnis
+MAX_BODY = 1_000_000  # Formulare der App sind klein; der kuratierte Import läuft über das Importverzeichnis
+# Datei-Uploads (CSV-Import) dürfen größer sein – nur auf diesen Pfaden (ohne ROOT_PATH-Präfix)
+UPLOAD_LIMITS = {"/journal/csv": 26 * 1024 * 1024}
+_MULTIPART_TOKEN = re.compile(rb'name="csrf_token"(?:\r\n[^\r\n]+)*\r\n\r\n([^\r\n]{1,200})\r\n')
+
+
+def _app_path(scope: Scope) -> str:
+    path = scope.get("path", "") or "/"
+    root = scope.get("root_path", "") or ""
+    if root and path.startswith(root):
+        path = path[len(root):] or "/"
+    return path
+
+
+def body_limit(scope: Scope) -> int:
+    return UPLOAD_LIMITS.get(_app_path(scope), MAX_BODY)
 
 
 class CsrfMiddleware:
@@ -152,8 +168,9 @@ class CsrfMiddleware:
         scope.setdefault("state", {})["csrf_token"] = token or new_token
         downstream_receive = receive
         if request.method not in self.SAFE:
+            limit = body_limit(scope)
             length = request.headers.get("content-length", "")
-            if length.isdigit() and int(length) > MAX_BODY:
+            if length.isdigit() and int(length) > limit:
                 await PlainTextResponse("Anfrage zu groß", status_code=413)(scope, receive, send)
                 return
             site = request.headers.get("sec-fetch-site")
@@ -161,17 +178,29 @@ class CsrfMiddleware:
                 await PlainTextResponse("Cross-Site-Anfrage abgelehnt", status_code=403)(scope, receive, send)
                 return
             sent = request.headers.get("x-csrf-token")
-            if not sent and request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
-                body = b""
+            ctype = request.headers.get("content-type", "")
+            form_body = ctype.startswith(("application/x-www-form-urlencoded", "multipart/form-data"))
+            if not sent and form_body:
+                chunks: list[bytes] = []
+                size = 0
                 more = True
                 while more:
                     msg = await receive()
-                    body += msg.get("body", b"")
+                    if msg["type"] == "http.disconnect":
+                        return
+                    part = msg.get("body", b"")
+                    chunks.append(part)
+                    size += len(part)
                     more = msg.get("more_body", False)
-                    if len(body) > MAX_BODY:
+                    if size > limit:
                         await PlainTextResponse("Anfrage zu groß", status_code=413)(scope, receive, send)
                         return
-                sent = (parse_qs(body.decode("utf-8", "replace")).get("csrf_token") or [""])[0]
+                body = b"".join(chunks)
+                if ctype.startswith("multipart/form-data"):
+                    m = _MULTIPART_TOKEN.search(body)
+                    sent = m.group(1).decode("ascii", "replace") if m else ""
+                else:
+                    sent = (parse_qs(body.decode("utf-8", "replace")).get("csrf_token") or [""])[0]
                 replayed = False
 
                 async def replay() -> Message:
@@ -182,6 +211,8 @@ class CsrfMiddleware:
                     return await receive()
 
                 downstream_receive = replay
+            else:
+                downstream_receive = _limited(receive, limit)
             if not token or not sent or not hmac.compare_digest(token, sent):
                 await PlainTextResponse("CSRF-Token fehlt oder ist ungültig – Seite neu laden.",
                                         status_code=403)(scope, receive, send)
@@ -195,3 +226,19 @@ class CsrfMiddleware:
             await send(message)
 
         await self.app(scope, downstream_receive, send_wrapper)
+
+
+def _limited(receive: Receive, limit: int) -> Receive:
+    """Body-Größe auch ohne Content-Length begrenzen (z. B. chunked): bei Überschreitung Verbindungsabbruch."""
+    size = 0
+
+    async def wrapped() -> Message:
+        nonlocal size
+        msg = await receive()
+        if msg["type"] == "http.request":
+            size += len(msg.get("body", b""))
+            if size > limit:
+                return {"type": "http.disconnect"}
+        return msg
+
+    return wrapped

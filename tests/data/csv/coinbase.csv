@@ -1,0 +1,9 @@
+Transactions
+User,Max Mustermann,abc
+ID,Timestamp,Transaction Type,Asset,Quantity Transacted,Price Currency,Price at Transaction,Subtotal,Total (inclusive of fees and/or spread),Fees and/or Spread,Notes
+a1,2024-04-01 08:00:00 UTC,Buy,ETH,0.1,EUR,€3000.00,€300.00,€304.50,€4.50,Bought 0.1 ETH for €304.50 EUR
+a2,2024-04-02 08:00:00 UTC,Convert,ETH,0.05,EUR,€3100.00,€155.00,€155.00,€1.20,"Converted 0.05 ETH to 150.123 USDC"
+a3,2024-04-03 08:00:00 UTC,Staking Income,ETH,0.0001,EUR,€3200.00,€0.32,€0.32,€0.00,
+a4,2024-04-04 08:00:00 UTC,Send,ETH,0.02,EUR,€3300.00,€66.00,€66.00,€0.00,Sent 0.02 ETH to 0xabc
+a5,2024-04-05 08:00:00 UTC,Sell,ETH,0.01,EUR,"€3,400.00",€34.00,€33.50,€0.50,
+a6,2024-04-06 08:00:00 UTC,Receive,USDC,5,EUR,€0.92,€4.60,€4.60,€0.00,from Coinbase Earn

@@ -1,0 +1,18 @@
+User_ID,UTC_Time,Account,Operation,Coin,Change,Remark
+12345678,2024-01-05 10:00:00,Spot,Deposit,EUR,1000,
+12345678,2024-01-05 10:05:12,Spot,Transaction Buy,BTC,0.02,
+12345678,2024-01-05 10:05:12,Spot,Transaction Spend,EUR,-800,
+12345678,2024-01-05 10:05:12,Spot,Transaction Fee,BNB,-0.002,
+12345678,2024-01-06 00:00:00,Earn,Simple Earn Flexible Interest,BTC,0.00001,
+12345678,2024-01-06 08:00:00,Spot,Simple Earn Flexible Subscription,BTC,-0.01,
+12345678,2024-01-06 08:00:00,Earn,Simple Earn Flexible Subscription,BTC,0.01,
+12345678,2024-01-07 09:00:00,Spot,Binance Convert,BTC,-0.005,
+12345678,2024-01-07 09:00:00,Spot,Binance Convert,ETH,0.09,
+12345678,2024-01-08 12:00:00,Spot,Withdraw,BTC,-0.0101,Withdraw fee is included
+12345678,2024-01-09 12:00:00,Spot,Commission History,USDT,0.5,
+12345678,2024-01-10 12:00:00,Spot,Small Assets Exchange BNB,DOGE,-10,
+12345678,2024-01-10 12:00:00,Spot,Small Assets Exchange BNB,BNB,0.003,
+12345678,2024-01-10 12:00:00,Spot,Small Assets Exchange BNB,SHIB,-50000,
+12345678,2024-01-10 12:00:00,Spot,Small Assets Exchange BNB,BNB,0.002,
+12345678,2024-01-11 12:00:00,USDT-Futures,Realized Profit and Loss,USDT,3,
+12345678,2024-01-12 12:00:00,Spot,Mystery Operation,BTC,0.1,

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}CSV-Import{% endblock %}
+{% block heading %}CSV-Import{% endblock %}
+{% block content %}
+{% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/csv" aria-current="page">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
+
+<section class="card">
+  <div class="card-head"><h2>Datei einlesen</h2></div>
+  <p class="hint">Exporte von Börsen, Wallets und Steuertools als CSV-Datei hochladen – es gibt <b>keine</b> Online-Verbindung zu
+    Börsen oder Wallets. Nach dem Einlesen zeigt eine Vorschau jede Buchung im einheitlichen Format; erst mit „Übernehmen“
+    werden daraus Buchungen. Bereits importierte Zeilen werden erkannt, Überträge zwischen eigenen Konten abgeglichen,
+    und jeder Import lässt sich als Ganzes rückgängig machen.</p>
+  <form method="post" action="/journal/csv" enctype="multipart/form-data" class="stack" style="gap:10px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="grid-3">
+      <label class="field">CSV-Datei (höchstens {{ max_mb }} MB)<input type="file" name="file" accept=".csv,.txt,text/csv" required></label>
+      <label class="field">Format<select name="profile">
+        <option value="auto">automatisch erkennen</option>
+        {% for g, ps in groups %}<optgroup label="{{ g }}">{% for p in ps %}<option value="{{ p.id }}" {% if form.get('profile') == p.id %}selected{% endif %}>{{ p.label }}</option>{% endfor %}</optgroup>{% endfor %}
+        <option value="mapping:new" {% if form.get('profile') == 'mapping:new' %}selected{% endif %}>Anderes Format – Spalten selbst zuordnen …</option>
+      </select></label>
+      <label class="field">Konto / Wallet<input type="text" name="account" list="dl-accounts" value="{{ form.get('account', '') }}" placeholder="z. B. Binance" autocomplete="off">
+        <span class="hint">leer: Name des Formats; bei Exporten mit mehreren Konten (Koinly, Blockpit, CoinTracking) Ersatz, falls eine Zeile kein Konto nennt</span></label>
+    </div>
+    <details class="box"><summary>Weitere Optionen</summary>
+      <div class="grid-3" style="margin-top:8px">
+        <label class="field">Zeitzone von Zeitangaben ohne Zone<select name="tz">{% for v, l in tz_choices %}<option value="{{ v }}" {% if form.get('tz') == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+        <label class="field">Dezimaltrenner<select name="decimal"><option value="">wie Format</option><option value="." {% if form.get('decimal') == '.' %}selected{% endif %}>Punkt (1234.56)</option><option value="," {% if form.get('decimal') == ',' %}selected{% endif %}>Komma (1234,56)</option></select></label>
+        <label class="field">Datumsformat<select name="dayfirst"><option value="">automatisch</option><option value="1" {% if form.get('dayfirst') == '1' %}selected{% endif %}>Tag zuerst (31.01.2024)</option><option value="0" {% if form.get('dayfirst') == '0' %}selected{% endif %}>Monat zuerst (01/31/2024)</option></select></label>
+        <label class="field">Währung (Wallet-Exporte ohne Währungsspalte)<input type="text" name="default_asset" value="{{ form.get('default_asset', '') }}" placeholder="z. B. BTC" autocomplete="off"></label>
+        <label class="field">Stichtag – nur Buchungen danach<input type="date" name="cutoff" value="{{ form.get('cutoff', cutoff) }}"><input type="hidden" name="cutoff_set" value="1">
+          <span class="hint">{% if cutoff %}Standard: Stand des kuratierten Imports ({{ cutoff|date_de }}) – ältere Zeilen stehen dort schon. Leeren, um alle Zeilen vorzuschlagen.{% else %}leer: alle Zeilen{% endif %}</span></label>
+        <label class="check" style="align-self:end"><input type="checkbox" name="accounts_from_file" value="1" {% if form.get('accounts_from_file') %}checked{% endif %}> Ledger Live: je Ledger-Konto ein eigenes Konto</label>
+      </div>
+    </details>
+    <div class="row"><button class="btn primary" type="submit">Einlesen und Vorschau zeigen</button></div>
+  </form>
+</section>
+
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Importe</h2></div>
+  {% if batches %}
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>Eingelesen</th><th>Datei</th><th>Format / Konto</th><th>Status</th><th class="num">Zeilen</th><th></th></tr></thead>
+    <tbody>{% for x in batches %}{% set b = x.b %}
+      <tr><td class="nowrap" data-label="Eingelesen">{{ b.created_at|datetime_de }}</td>
+        <td data-label="Datei"><a href="/journal/csv/{{ b.id }}">{{ b.filename }}</a><div class="hint">{{ (b.file_size / 1024)|round(1) }} KB</div></td>
+        <td data-label="Format">{{ x.profile }}<div class="hint">{{ b.account }}</div></td>
+        <td data-label="Status"><span class="badge {{ 'good' if b.status == 'committed' else 'warn' if b.status in ('preview', 'partial', 'mapping') else '' }}">{{ x.status }}</span></td>
+        <td class="num" data-label="Zeilen">{{ x.summary.get('rows_read', 0) }}<div class="hint">{{ (x.counts.get('committed', 0) + x.counts.get('merged', 0)) }} übernommen</div></td>
+        <td class="actions nowrap"><a class="btn sm" href="/journal/csv/{{ b.id }}">Öffnen</a> <a class="btn sm ghost" href="/journal/csv/{{ b.id }}/file" download>Datei</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="hint">Noch keine CSV-Datei eingelesen.</p>{% endif %}
+</section>
+
+<details class="box" style="margin-top:16px" id="formate"><summary>Unterstützte Formate und Exportanleitung</summary>
+  {% for g, ps in groups %}<h3 style="margin-top:10px">{{ g }}</h3>
+    <dl class="kv">{% for p in ps %}<dt>{{ p.label }}</dt><dd>{{ p.hint or 'Eigene Spaltenzuordnung' }}{% if p.mid %}
+      <form method="post" action="/journal/csv/mapping/{{ p.mid }}/delete" class="inline" data-confirm="Format „{{ p.label }}“ löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form>{% endif %}</dd>{% endfor %}</dl>
+  {% endfor %}
+  <p class="hint" style="margin-top:10px">Andere Börsen und Wallets: den CSV-Export hochladen und „Anderes Format – Spalten selbst zuordnen“ wählen; die Zuordnung wird gespeichert und beim nächsten Mal automatisch erkannt. Viele Börsen bieten außerdem einen Export im Koinly-Format an.</p>
+</details>
+
+<details class="box" style="margin-top:8px" id="zuordnungen"><summary>Gespeicherte Zuordnungen <span class="badge">{{ symbols|length + account_maps|length }}</span></summary>
+  {% if symbols %}<h3 style="margin-top:10px">Symbole → Assets</h3>
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Symbol laut Datei</th><th>Asset</th><th></th></tr></thead><tbody>
+    {% for sm in symbols %}<tr><td class="mono">{{ sm.symbol }}</td><td>{{ sm.asset_id or 'ignoriert' }}</td>
+      <td class="actions"><form method="post" action="/journal/csv/symbol/delete" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="symbol" value="{{ sm.symbol }}"><button class="icon-btn" type="submit" title="Zuordnung entfernen" aria-label="Zuordnung {{ sm.symbol }} entfernen">×</button></form></td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+  {% if account_maps %}<h3 style="margin-top:10px">Konten laut Datei → Konten</h3>
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Konto laut Datei</th><th>Konto in Portfolia</th><th></th></tr></thead><tbody>
+    {% for am in account_maps %}<tr><td>{{ am.name }}</td><td>{{ am.account }}</td>
+      <td class="actions"><form method="post" action="/journal/csv/account/delete" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="name" value="{{ am.name }}"><button class="icon-btn" type="submit" title="Zuordnung entfernen" aria-label="Zuordnung {{ am.name }} entfernen">×</button></form></td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+  {% if not symbols and not account_maps %}<p class="hint">Noch keine – Zuordnungen entstehen in der Vorschau eines Imports und gelten dann für alle weiteren.</p>{% endif %}
+</details>
+<datalist id="dl-accounts">{% for a in accounts %}<option value="{{ a }}"></option>{% endfor %}</datalist>
+{% endblock %}
