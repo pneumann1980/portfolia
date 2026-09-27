@@ -6,18 +6,20 @@
 #
 #   pack: {reviewed_through: 2027}
 #   per_year:
-#     basiszins: {2026: 0.0320}
+#     basiszins: {2027: 0.0300}        # Beispielwert – amtlichen Wert des BMF eintragen
 #   forms:
 #     2026:
-#       anlage_so: {so_23_gain: {line: "47"}}
+#       anlage_so: {fields: {so_23_gain: {line: "51"}}}
 #
-# Zeilennummern amtlicher Formulare ändern sich jährlich und sind hier bewusst NICHT hinterlegt
-# (line: null) – die Übertragungshilfe nennt dann nur die Feldbezeichnung.
+# Zeilennummern amtlicher Formulare ändern sich jährlich. Hinterlegt sind nur Zeilen, die für das jeweilige
+# Jahr übereinstimmend belegt sind (Stand 27.09.2026 aus Sekundärquellen: Steuersoftware-Feldhilfen,
+# Fachportale – die amtlichen Vordrucke waren nicht direkt abrufbar); alle anderen bleiben line: null und
+# die Übertragungshilfe nennt nur die Feldbezeichnung. Vor der Abgabe mit dem amtlichen Vordruck abgleichen.
 
 pack:
   id: de
-  version: "2026.1"
-  updated: "2026-09-26"
+  version: "2026.2"
+  updated: "2026-09-27"
   reviewed_through: 2026
   sources:
     - "§ 23 Abs. 1 S. 1 Nr. 2, Abs. 3 S. 5 EStG (private Veräußerungsgeschäfte, Freigrenze)"
@@ -69,7 +71,8 @@ per_year:
     2023: 0.0255
     2024: 0.0229
     2025: 0.0253
-    # 2026: bitte nach Veröffentlichung durch das BMF (Januar 2026) im Override eintragen
+    2026: 0.0320   # BMF-Schreiben vom 13.01.2026 (IV C 1 - S 1980/00230/012/001) – Vorabpauschale 2026, Zufluss 2.1.2027
+    # 2027: nach Veröffentlichung durch das BMF (Januar 2027) im Override eintragen
 
 forms:
   default:
@@ -103,6 +106,45 @@ forms:
         fund_realestate_foreign: "Auslands-Immobilienfonds"
         etf_other: "Sonstige Investmentfonds"
       fields:
-        inv_dist: {section: "Investmenterträge ohne inländischen Steuerabzug – Ausschüttungen", label: "Ausschüttungen", line: null}
-        inv_vp: {section: "Investmenterträge ohne inländischen Steuerabzug – Vorabpauschalen", label: "Vorabpauschalen", line: null}
-        inv_gain: {section: "Investmenterträge ohne inländischen Steuerabzug – Veräußerungen", label: "Gewinne / Verluste aus der Veräußerung (vor Teilfreistellung)", line: null}
+        # lines: Zeile je Fondsart (etf_equity, etf_mixed, fund_realestate, fund_realestate_foreign, etf_other)
+        inv_dist: {section: "Investmenterträge ohne inländischen Steuerabzug – Ausschüttungen", label: "Ausschüttungen", line: null, lines: {}}
+        inv_vp: {section: "Investmenterträge ohne inländischen Steuerabzug – Vorabpauschalen", label: "Vorabpauschalen", line: null, lines: {}}
+        inv_gain: {section: "Investmenterträge ohne inländischen Steuerabzug – Veräußerungen", label: "Gewinne / Verluste aus der Veräußerung (vor Teilfreistellung)", line: null, lines: {}}
+
+  # Veranlagungsjahr 2024 – Zeilen laut Anlage SO/KAP/KAP-INV 2024 (übereinstimmend in mehreren Quellen)
+  2024:
+    anlage_so:
+      fields:
+        # Abschnitt „andere Wirtschaftsgüter“; Zeile 41 = Kennzeichen „Kryptowährungen“
+        so_23_desc: {line: "42"}
+        so_23_acq: {line: "43"}
+        so_23_disp: {line: "43"}
+        so_23_price: {line: "44"}
+        so_23_cost: {line: "45"}
+        so_23_wk: {line: "46"}
+        so_23_gain: {line: "47"}
+    anlage_kap:
+      fields:
+        kap_foreign_total: {line: "19"}
+        kap_foreign_share_gains: {line: "20"}
+        kap_foreign_losses_other: {line: "22"}
+        kap_foreign_losses_shares: {line: "23"}
+        kap_wht: {line: "41"}
+    anlage_kap_inv:
+      fields:
+        inv_dist: {lines: {etf_equity: "4", etf_mixed: "5", fund_realestate: "6", fund_realestate_foreign: "7", etf_other: "8"}}
+        inv_vp: {lines: {etf_equity: "9", etf_mixed: "10", fund_realestate: "11", fund_realestate_foreign: "12", etf_other: "13"}}
+
+  # Veranlagungsjahr 2025 – Anlage SO mit eigenem Abschnitt für Kryptowerte (Zeilen 45–51). Anlage KAP und
+  # KAP-INV wurden 2025 umgebaut (u. a. Wegfall der Zeilen zu Termingeschäften); die Quellen zu den neuen
+  # Zeilennummern widersprechen sich – daher bewusst nicht hinterlegt.
+  2025:
+    anlage_so:
+      fields:
+        so_23_desc: {section: "Private Veräußerungsgeschäfte – Kryptowerte"}
+        so_23_acq: {section: "Private Veräußerungsgeschäfte – Kryptowerte"}
+        so_23_disp: {section: "Private Veräußerungsgeschäfte – Kryptowerte"}
+        so_23_price: {section: "Private Veräußerungsgeschäfte – Kryptowerte", line: "48"}
+        so_23_cost: {section: "Private Veräußerungsgeschäfte – Kryptowerte", line: "49"}
+        so_23_wk: {section: "Private Veräußerungsgeschäfte – Kryptowerte", line: "50"}
+        so_23_gain: {section: "Private Veräußerungsgeschäfte – Kryptowerte", line: "51"}

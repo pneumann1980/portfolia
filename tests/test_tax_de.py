@@ -227,6 +227,60 @@ def test_vp_zero_for_negative_basiszins_and_missing_prices_flagged():
     assert any(i.code == "vp_missing" for i in res.issues)
 
 
+def test_negative_foreign_saldo_is_kept_with_note():
+    rows = [buy("a", "2025-01-10", "US2", 10, 1000, acc="IBKR"), sell("b", "2025-06-11", "US2", 10, 500, acc="IBKR"),
+            tx("c", "2025-03-01", "deposit", tag="dividend", to=("IBKR", "EUR", 100), value=100, related="US1")]
+    _, res = run(rows, 2025, kinds={"IBKR": "foreign"})
+    f = {x.field_id: x for x in res.fields}
+    # Saldo inkl. enthaltener Verluste (ELSTER: Saldo ≥ Aktiengewinne − Verluste ohne Aktien − Aktienverluste)
+    assert f["kap_foreign_total"].amount == D("-400.00") and "negativer Saldo" in f["kap_foreign_total"].note
+    assert f["kap_foreign_losses_shares"].amount == D("500.00")
+    assert f["kap_foreign_total"].amount >= -f["kap_foreign_losses_shares"].amount
+
+
+def test_form_lines_by_year():
+    kap24 = [
+        buy("k1", "2024-01-10", "US1", 10, 1000, acc="IBKR"), sell("k2", "2024-06-10", "US1", 10, 2000, acc="IBKR"),
+        buy("k3", "2024-01-10", "US2", 10, 1000, acc="IBKR"), sell("k4", "2024-06-11", "US2", 10, 700, acc="IBKR"),
+        buy("k5", "2024-01-10", "BOND", 1, 1000, acc="IBKR"), sell("k6", "2024-06-12", "BOND", 1, 800, acc="IBKR"),
+        tx("k7", "2024-03-01", "deposit", tag="dividend", to=("IBKR", "EUR", 100), value=100, related="US1"),
+        tx("k8", "2024-03-01", "withdrawal", tag="withholding_tax", frm=("IBKR", "EUR", 15), value=15, related="US1"),
+        buy("f1", "2023-03-10", "FUND", 10, 1000, acc="IBKR"),
+        tx("f2", "2024-02-01", "deposit", tag="dividend", to=("IBKR", "EUR", 50), value=50, related="FUND"),
+        buy("c1", "2024-02-01", "ETH", 1, 1000), sell("c2", "2024-08-01", "ETH", 1, 3000),
+    ]
+    prices = {("FUND", 2023): ((date(2023, 1, 2), D(100)), (date(2023, 12, 29), D(110)))}
+    _, res = run(kap24, 2024, kinds={"IBKR": "foreign"}, year_prices=prices)
+    lines = {(x.field_id, x.label): x.line for x in res.fields}
+    by_id = {x.field_id: x.line for x in res.fields}
+    assert by_id["kap_foreign_total"] == "19" and by_id["kap_foreign_share_gains"] == "20"
+    assert by_id["kap_foreign_losses_other"] == "22" and by_id["kap_foreign_losses_shares"] == "23"
+    assert by_id["kap_wht"] == "41"
+    assert lines[("inv_dist", "Ausschüttungen – Aktienfonds")] == "4"
+    assert lines[("inv_vp", "Vorabpauschalen – Aktienfonds")] == "9"
+    assert by_id["so_23_price"] == "44" and by_id["so_23_gain"] == "47" and by_id["so_23_acq"] == "43"
+    # 2025: Anlage SO mit eigenem Krypto-Abschnitt; KAP/KAP-INV umgebaut → keine Zeilen hinterlegt
+    rows25 = [*_kap_rows(), buy("c1", "2025-02-01", "ETH", 1, 1000), sell("c2", "2025-08-01", "ETH", 1, 3000)]
+    _, res = run(rows25, 2025, kinds={"IBKR": "foreign"})
+    f = {x.field_id: x for x in res.fields}
+    assert f["so_23_gain"].line == "51" and f["so_23_price"].line == "48" and f["so_23_wk"].line == "50"
+    assert f["so_23_gain"].section == "Private Veräußerungsgeschäfte – Kryptowerte" and f["so_23_desc"].line is None
+    assert all(x.line is None for x in res.fields if x.form in ("Anlage KAP", "Anlage KAP-INV"))
+    # 2026: noch keine geprüften Zeilen
+    rows26 = [buy("c1", "2026-02-01", "ETH", 1, 1000), sell("c2", "2026-08-01", "ETH", 1, 3000)]
+    _, res = run(rows26, 2026, today=date(2027, 3, 1))
+    assert all(x.line is None for x in res.fields)
+
+
+def test_vorabpauschale_2026_uses_basiszins_2026():
+    rows = [buy("f1", "2026-01-05", "FUND", 10, 1000, acc="IBKR")]
+    prices = {("FUND", 2026): ((date(2026, 1, 2), D(100)), (date(2026, 12, 30), D(110)))}
+    _, res = run(rows, 2027, kinds={"IBKR": "foreign"}, year_prices=prices, today=date(2028, 3, 1))
+    # 100 × 3,20 % × 0,7 = 2,24 € je Anteil (< Wertzuwachs 10 €), volles Jahr
+    assert res.data["capital"]["B"]["foreign"]["fund_vp"]["etf_equity"] == D("22.4")
+    assert not any(i.code == "vp_missing" for i in res.issues)
+
+
 # -- Parameter & Registry -------------------------------------------------------------------------------
 
 def test_param_override_and_errors(tmp_path: Path):
@@ -234,20 +288,22 @@ def test_param_override_and_errors(tmp_path: Path):
     ps = ParamSet("de", bundled, tmp_path)
     assert ps.for_year(2023)["crypto"]["freigrenze_23"] == 600
     assert ps.for_year(2025)["crypto"]["freigrenze_23"] == 1000
-    assert ps.for_year(2025)["basiszins"] == 0.0253 and ps.for_year(2026)["basiszins"] is None
+    assert ps.for_year(2025)["basiszins"] == 0.0253 and ps.for_year(2026)["basiszins"] == 0.032
+    assert ps.for_year(2027)["basiszins"] is None
     assert ps.for_year(2022)["capital"]["sparer_pauschbetrag_single"] == 801
     (tmp_path / "de.yaml").write_text(
         "pack: {reviewed_through: 2027}\n"
         "rules:\n  2026:\n    crypto: {freigrenze_23: 2000}\n"
-        "per_year:\n  basiszins: {2026: 0.032}\n"
-        "forms:\n  2026:\n    anlage_so: {fields: {so_23_gain: {line: '47'}}}\n", encoding="utf-8")
+        "per_year:\n  basiszins: {2027: 0.03}\n"
+        "forms:\n  2027:\n    anlage_so: {fields: {so_23_gain: {line: '52'}}}\n", encoding="utf-8")
     ps = ParamSet("de", bundled, tmp_path)
     assert ps.override_active and ps.version.endswith("+lokal") and ps.override_error is None
     assert ps.for_year(2026)["crypto"]["freigrenze_23"] == 2000
     assert ps.for_year(2025)["crypto"]["freigrenze_23"] == 1000
-    assert ps.for_year(2026)["basiszins"] == 0.032
-    assert ps.for_year(2026)["forms"]["anlage_so"]["fields"]["so_23_gain"]["line"] == "47"
-    assert ps.for_year(2025)["forms"]["anlage_so"]["fields"]["so_23_gain"]["line"] is None
+    assert ps.for_year(2027)["basiszins"] == 0.03 and ps.for_year(2026)["basiszins"] == 0.032
+    assert ps.for_year(2027)["forms"]["anlage_so"]["fields"]["so_23_gain"]["line"] == "52"
+    assert ps.for_year(2025)["forms"]["anlage_so"]["fields"]["so_23_gain"]["line"] == "51"
+    assert ps.for_year(2026)["forms"]["anlage_so"]["fields"]["so_23_gain"]["line"] is None
     assert 2027 in ps.years()
     (tmp_path / "de.yaml").write_text("rules:\n  2026:\n    crypto: {freigrenze_23: '1.000'}\n", encoding="utf-8")
     ps = ParamSet("de", bundled, tmp_path)

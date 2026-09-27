@@ -42,6 +42,9 @@ app/tax/
   Pauschbeträge, Teilfreistellungen.
 * `per_year`: Werte **nur** für genau ein Jahr (z. B. `basiszins` für die Vorabpauschale).
 * `forms`: Formularfelder mit Bezeichnung und optionaler Zeile (`line`), `default` plus Jahres-Overrides.
+  Felder der Anlage KAP-INV haben je Fondsart eine eigene Zeile (`lines: {etf_equity: "4", …}`).
+  Mitgeliefert sind nur übereinstimmend belegte Zeilen (2024: SO, KAP, KAP-INV; 2025: SO) – siehe Kommentar
+  in `params.yaml`.
 
 Eine Datei `/data/tax_rules/<id>.yaml` mit derselben Struktur wird tief darübergemischt. Beispiel für ein
 neues Jahr:
@@ -49,7 +52,7 @@ neues Jahr:
 ```yaml
 pack: {reviewed_through: 2027}
 per_year:
-  basiszins: {2026: 0.0320}          # amtlichen Wert eintragen (BMF-Schreiben)
+  basiszins: {2027: 0.0300}          # Beispielwert – amtlichen Wert eintragen (BMF-Schreiben)
 rules:
   2027:
     crypto: {freigrenze_23: 1000}    # nur bei Gesetzesänderung
@@ -57,7 +60,10 @@ forms:
   2026:
     anlage_so:
       fields:
-        so_23_gain: {line: "47"}     # nur geprüfte Zeilennummern
+        so_23_gain: {line: "51"}     # nur geprüfte Zeilennummern
+    anlage_kap_inv:
+      fields:
+        inv_vp: {lines: {etf_equity: "9", etf_mixed: "10"}}   # Zeile je Fondsart
 ```
 
 Zahlenfelder werden auf Tippfehler geprüft (z. B. `'1.000'` als Text); ein fehlerhafter Override wird

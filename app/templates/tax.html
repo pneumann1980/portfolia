@@ -135,7 +135,7 @@
       {% if any_line %}<td>{{ f.line or '–' }}</td>{% endif %}
       <td class="{{ 'num nowrap' if f.text is none }}"><b>{{ f.text if f.text is not none else f.amount|tcell('eur') }}</b></td></tr>{% endfor %}</tbody>
   </table></div>
-  <p class="hint">Zeilennummern erscheinen nur, wenn sie in den Steuerparametern hinterlegt sind – sie ändern sich jährlich.</p>
+  <p class="hint">Zeilennummern erscheinen nur, wenn sie für {{ year }} in den Steuerparametern hinterlegt sind – sie ändern sich jährlich. Vor der Abgabe mit dem amtlichen Vordruck bzw. ELSTER abgleichen.</p>
   {% else %}<p class="hint">Für {{ year }} ergeben sich aus den Daten keine Eintragungen.</p>{% endif %}
 
   {% for s in res.sections %}{% for t in s.tables if t.rows %}

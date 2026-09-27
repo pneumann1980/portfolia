@@ -644,10 +644,12 @@ class GermanyPack(RulePack):
                                     kind="freibetrag", note="inkl. bereits genutzter Freistellungsaufträge"))
 
     def _field(self, P: dict[str, Any], form: str, fid: str, amount: Decimal | None, note: str = "",
-               text: str | None = None, label: str | None = None, section: str | None = None) -> FormField:
+               text: str | None = None, label: str | None = None, section: str | None = None,
+               line: str | None = None) -> FormField:
         spec = P.get("forms", {}).get(form, {})
         f = spec.get("fields", {}).get(fid, {})
-        line = f.get("line")
+        if line in (None, ""):
+            line = f.get("line")
         return FormField(form=spec.get("title", form), section=section or f.get("section", ""), field_id=fid,
                          label=label or f.get("label", fid), amount=money(amount) if amount is not None else None,
                          line=str(line) if line not in (None, "") else None, note=note, text=text)
@@ -673,8 +675,12 @@ class GermanyPack(RulePack):
         b = k["B"]["foreign"]
         total = b["dividends"] + b["interest"] + b["share_gain"] + b["share_loss"] + b["other_gain"] + b["other_loss"]
         if any((total, b["share_gain"], b["share_loss"], b["other_loss"], b["wht_credit"])):
-            F.append(self._field(P, "anlage_kap", "kap_foreign_total", total,
-                                 note="Saldo aus Dividenden, Zinsen, Veräußerungsgewinnen und -verlusten"))
+            # Saldo einschließlich der darin enthaltenen Verluste (gesondert in den Verlustfeldern); er darf
+            # negativ sein – ELSTER prüft: Saldo ≥ Aktiengewinne − Verluste ohne Aktien − Aktienverluste
+            note = "Saldo aus Dividenden, Zinsen, Veräußerungsgewinnen und -verlusten"
+            if total < 0:
+                note += "; negativer Saldo – mit Minuszeichen eintragen"
+            F.append(self._field(P, "anlage_kap", "kap_foreign_total", total, note=note))
             if b["share_gain"]:
                 F.append(self._field(P, "anlage_kap", "kap_foreign_share_gains", b["share_gain"]))
             if b["other_loss"]:
@@ -692,7 +698,8 @@ class GermanyPack(RulePack):
                 if v:
                     spec = P.get("forms", {}).get("anlage_kap_inv", {}).get("fields", {}).get(fid, {})
                     F.append(self._field(P, "anlage_kap_inv", fid, v,
-                                         label=f"{spec.get('label', fid)} – {labels.get(t, t)}"))
+                                         label=f"{spec.get('label', fid)} – {labels.get(t, t)}",
+                                         line=(spec.get("lines") or {}).get(t)))
         if o.get("include_domestic"):
             bd = k["B"]["domestic"]
             dom_total = (bd["dividends"] + bd["interest"] + bd["share_gain"] + bd["share_loss"] + bd["other_gain"]

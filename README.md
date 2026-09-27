@@ -341,8 +341,13 @@ Für ein Jahr erzeugt Portfolia:
 Die Aufstellungen sind als **Beleg** gedacht (Einreichung mit der Erklärung bzw. über die
 ELSTER-Belegnachreichung oder auf Anforderung des Finanzamts). Die Erklärung selbst wird in ELSTER bzw. in
 den amtlichen Vordrucken ausgefüllt – dafür nennt die Übertragungshilfe die Beträge je Formularfeld.
-Zeilennummern erscheinen nur, wenn sie in den Steuerparametern hinterlegt und geprüft sind (sie ändern sich
-jährlich). Name, Steuer-ID und Steuernummer für das Deckblatt sind optional und bleiben lokal.
+Zeilennummern erscheinen nur, wenn sie für das Jahr in den Steuerparametern hinterlegt sind (sie ändern sich
+jährlich). Mitgeliefert sind die übereinstimmend belegten Zeilen für **2024** (Anlage SO „andere
+Wirtschaftsgüter“ Z. 42–47, Anlage KAP Z. 19/20/22/23/41, Anlage KAP-INV Z. 4–13) und **2025** (Anlage SO,
+neuer Abschnitt „Kryptowerte“ Z. 48–51). Anlage KAP/KAP-INV 2025 wurden umgebaut; dazu widersprechen sich die
+verfügbaren Quellen, daher dort nur Feldbezeichnungen. Die Zeilen stammen aus Sekundärquellen – vor der Abgabe
+mit dem amtlichen Vordruck abgleichen. Name, Steuer-ID und Steuernummer für das Deckblatt sind optional und
+bleiben lokal.
 
 ### Regelwerk Deutschland (Kurzfassung)
 
@@ -376,10 +381,11 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
   ```yaml
   pack: {reviewed_through: 2027}
   per_year:
-    basiszins: {2026: 0.0320}   # Beispielwert – amtlichen Wert des BMF eintragen
+    basiszins: {2027: 0.0300}   # Beispielwert – amtlichen Wert des BMF eintragen
   forms:
     2026:
-      anlage_so: {fields: {so_23_gain: {line: "47"}}}   # nur geprüfte Zeilennummern eintragen
+      anlage_so: {fields: {so_23_gain: {line: "51"}}}   # nur geprüfte Zeilennummern eintragen
+      anlage_kap_inv: {fields: {inv_vp: {lines: {etf_equity: "9"}}}}   # KAP-INV: Zeile je Fondsart
   ```
 
   Fehlerhafte Overrides werden ignoriert und auf der Steuerseite gemeldet. Jeder Bericht dokumentiert
@@ -475,7 +481,8 @@ Bekannte Grenzen (Auswahl, vollständig in [`docs/MILESTONES.md`](docs/MILESTONE
 
 * Nur Basiswährung EUR; Fremdwährungsgewinne (§ 23 EStG) werden nicht ermittelt.
 * Vorabpauschale mit Börsenschlusskursen statt Rücknahmepreisen; Altanteile vor 2018 nicht berücksichtigt.
-* Formularzeilen werden nicht mitgeliefert (nur Feldbezeichnungen), da sie jährlich wechseln.
+* Formularzeilen nur für 2024 und Anlage SO 2025 hinterlegt (aus Sekundärquellen, ohne Gewähr); für andere
+  Jahre nennt die Übertragungshilfe nur die Feldbezeichnungen.
 * Datenquellen sind inoffiziell (Yahoo) bzw. limitiert (CoinGecko Demo); Ausfälle werden sichtbar markiert.
 
 Drittkomponenten im Image: Apache ECharts (Apache-2.0), htmx (BSD-2-Clause) – Lizenztexte unter
