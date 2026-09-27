@@ -308,7 +308,16 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
     meta_rows = ctx.db.q("SELECT series, history_from, history_to, history_status, history_error, last_history_fetch "
                          "FROM series_meta WHERE history_status IS NOT NULL ORDER BY history_status DESC, series")
     usage = ctx.db.q("SELECT * FROM api_usage ORDER BY period DESC, provider LIMIT 40")
-    return render(request, "quality.html", active="quality", imports=imports, cur=cur,
+    journal: dict[str, Any] | None = None
+    try:
+        from app.journal.service import journal_service
+
+        js = journal_service(ctx)
+        journal = {"count": ctx.db.scalar("SELECT COUNT(*) FROM journal_tx WHERE status='active'", default=0),
+                   "dups": js.duplicates(), "log": js.log(15)}
+    except Exception as e:  # Journal-Modul optional
+        log.debug("Journal nicht verfügbar: %s", e)
+    return render(request, "quality.html", active="quality", imports=imports, cur=cur, journal=journal,
                   active_id=active,
                   report=report, diff=diff, check=check, issues=issues, val=val, ledger_issues=ledger_issues[:300],
                   sources=sources, events=events, jobs=jobs, next_runs=next_runs, cg=ctx.prices.cg_budget(),

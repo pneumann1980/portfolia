@@ -57,6 +57,7 @@ class AppContext:
         self.valuer = FlowValuer(self.store, self.prices.series_for)
         self._lock = threading.RLock()
         self._base_pf: tuple[int, Portfolio] | None = None
+        self._rec: tuple[tuple[int, int], Portfolio | None] | None = None
         self._pf: tuple[tuple[int, int], Portfolio] | None = None
         self.overlay_version = 0
         self._ledgers: dict[tuple, LedgerResult] = {}
@@ -96,27 +97,57 @@ class AppContext:
                 self._seed_demo(pf)
             return pf
 
-    def portfolio(self) -> Portfolio | None:
-        """Import plus Sparplan-Schätzungen (``Tx.flag`` = estimated/confirmed) – Grundlage aller Ansichten."""
+    def recorded_portfolio(self) -> Portfolio | None:
+        """Erfasste Buchungen: Import + in der App erfasste Buchungen (Journal) + freigegebene Sparplan-Ausführungen.
+
+        Funktioniert auch ohne Import (nur Journal). Grundlage der Sparplan-Erkennung und des Gesamtexports.
+        """
         base = self.base_portfolio()
-        if base is None:
+        key = ((base.import_id or 0) if base is not None else 0, self.overlay_version)
+        with self._lock:
+            if self._rec is not None and self._rec[0] == key:
+                return self._rec[1]
+        from app.journal.service import overlay as journal_overlay
+        from app.plans.service import overlay_txs
+
+        j_assets, j_txs = journal_overlay(self.db, base)
+        pf: Portfolio | None
+        if base is None and not j_txs:
+            pf = None
+        else:
+            start = base if base is not None else Portfolio(import_id=None, txs=[], assets={}, accounts={})
+            assets = {**j_assets, **start.assets}
+            confirmed = overlay_txs(self.db, assets, ("confirmed",))
+            pf = start if not (j_txs or j_assets or confirmed) else dataclasses.replace(
+                start, txs=[*start.txs, *j_txs, *confirmed], assets=assets)
+            if self.demo is not None and pf is not start:
+                self._seed_demo(pf)
+        with self._lock:
+            self._rec = (key, pf)
+        return pf
+
+    def portfolio(self) -> Portfolio | None:
+        """Erfasste Buchungen plus Sparplan-Schätzungen (``Tx.flag`` = estimated) – Grundlage aller Ansichten."""
+        rec = self.recorded_portfolio()
+        if rec is None:
             return None
-        key = (base.import_id or 0, self.overlay_version)
+        key = (rec.import_id or 0, self.overlay_version)
         with self._lock:
             if self._pf is not None and self._pf[0] == key:
                 return self._pf[1]
         from app.plans.service import overlay_txs
 
-        extra = overlay_txs(self.db, base)
-        pf = dataclasses.replace(base, txs=[*base.txs, *extra]) if extra else base
+        extra = overlay_txs(self.db, rec.assets, ("estimated",))
+        pf = dataclasses.replace(rec, txs=[*rec.txs, *extra]) if extra else rec
         with self._lock:
             self._pf = (key, pf)
         return pf
 
     def invalidate_overlay(self) -> None:
-        """Sparplan-Schätzungen geändert: Ledger, Bewertung und Historie neu berechnen (Import bleibt gecacht)."""
+        """Journal oder Sparplan-Schätzungen geändert: Ledger, Bewertung und Historie neu (Import bleibt gecacht)."""
         with self._lock:
             self.overlay_version += 1
+            self._rec = None
             self._pf = None
             self._ledgers.clear()
             self._vals.clear()
@@ -166,6 +197,7 @@ class AppContext:
     def invalidate_data(self) -> None:
         with self._lock:
             self._base_pf = None
+            self._rec = None
             self._pf = None
             self._ledgers.clear()
             self._vals.clear()

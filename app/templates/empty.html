@@ -3,7 +3,7 @@
 {% block heading %}Willkommen{% endblock %}
 {% block content %}
 <section class="card empty-state">
-  <h1>Noch kein Portfolio importiert</h1>
+  <h1>Noch keine Buchungen</h1>
   <p class="muted">Lege eine Import-Datei (ZIP gemäß Datenvertrag) im Importverzeichnis ab. Portfolia prüft das Verzeichnis
     beim Start, alle 5 Minuten und auf Knopfdruck.</p>
   <div class="row" style="justify-content:center;margin:16px 0">
@@ -11,6 +11,8 @@
     <span id="imp-spin" class="htmx-indicator spinner"></span>
   </div>
   <div id="import-result"></div>
+  <p style="margin-top:12px">Oder Buchungen direkt in Portfolia erfassen – ganz ohne Import-Datei:
+    <a class="btn" href="/journal/new">Erste Buchung erfassen</a></p>
   <p class="hint">Unraid: Pfad <code>/import</code> (read-only) z. B. auf <code>/mnt/user/appdata/portfolia/import</code> mappen.
     Ein Beispiel liegt unter <code>examples/beispiel-import.zip</code> im Repository.</p>
 </section>

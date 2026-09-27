@@ -197,7 +197,7 @@ def test_price_plausibility_warning(client):
     warn = next(e for e in svc.estimates(("estimated",)) if e["id"] == btc["id"])["price_warn"]
     assert warn is not None and warn["ratio"] > 2 and warn["date"] < TODAY
     page = client.get("/plans").text
-    assert "Kurs prüfen" in page and "letzter Kauf laut Import" in page
+    assert "Kurs prüfen" in page and "letzter erfasster Kauf" in page
     assert 'data-confirm="1 Schätzung hat einen auffälligen Kurs' in page
     # nach Anpassung durch den Nutzer gilt der Kurs als geprüft
     r = client.post(f"/plans/tx/{btc['id']}/edit", data={"date": "2026-09-21", "time": "08:00", "qty": "",
@@ -220,6 +220,18 @@ def test_plan_toggle_and_amount_override(client):
     btc2 = next(e for e in svc.estimates(("estimated",)) if e["id"] == btc["id"])
     assert btc2["value_d"] == D("50.00") and btc2["qty_d"] > btc["qty_d"]
     assert client.post("/plans/plan/amount", data={"key": key, "amount": "-5"}).status_code == 400
+
+
+def test_reconcile_does_not_match_previous_period(client):
+    """Regression: die Ausführung der Vorwoche (7 Tage vorher, gleicher Betrag) ersetzt keine Wochen-Schätzung."""
+    svc = _svc(client)
+    btc = next(e for e in svc.estimates(("estimated",)) if e["asset_id"] == "BTC")
+    prev = date.fromisoformat(btc["due_date"]) - timedelta(days=7)
+    base = client.app.state.ctx.base_portfolio()
+    assert any(t.to_asset == "BTC" and t.date == prev for t in base.txs)  # Vorwochen-Ausführung im Import
+    res = svc.reconcile()
+    assert res["superseded"] == 0
+    assert next(e for e in svc.estimates(("estimated",)) if e["id"] == btc["id"])["status"] == "estimated"
 
 
 def test_reconcile_with_next_import(client, config):

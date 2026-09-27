@@ -43,13 +43,14 @@ def _back(request: Request, target: str = "/plans") -> Response:
 def _page(request: Request, status_code: int = 200, **extra: Any) -> HTMLResponse:
     ctx = get_ctx(request)
     svc = plan_service(ctx)
-    base = ctx.base_portfolio()
+    base = ctx.recorded_portfolio()
     names = dict(base.assets) if base else {}
     return render(
         request, "plans.html", status_code=status_code, active="plans", plans=svc.plans(),
         pending=svc.estimates(("estimated",)), confirmed=svc.estimates(("confirmed",)),
         history=svc.estimates(("superseded", "missing", "dismissed"), limit=60), assets=names,
-        cutoff=cutoff_of(base) if base else None, today=today_local(), **extra,
+        cutoff=cutoff_of(base) if base else None, has_import=bool(base and base.valuation_date),
+        today=today_local(), **extra,
     )
 
 
@@ -59,7 +60,7 @@ def make_router() -> APIRouter:
     @router.get("/plans", response_class=HTMLResponse)
     def plans_page(request: Request, saved: str | None = None) -> HTMLResponse:
         ctx = get_ctx(request)
-        if ctx.base_portfolio() is None:
+        if ctx.recorded_portfolio() is None:
             return render(request, "empty.html", active="plans")
         return _page(request, saved=saved)
 

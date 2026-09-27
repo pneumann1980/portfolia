@@ -119,6 +119,12 @@
     if (trg) { e.preventDefault(); trg.click(); }
   });
 
+  // --- Reiter: aktiven Reiter in horizontal scrollenden Leisten sichtbar machen ---------------------------
+  document.querySelectorAll(".tabs a.active").forEach(function (a) {
+    var bar = a.parentElement;
+    if (bar && bar.scrollWidth > bar.clientWidth) bar.scrollLeft = a.offsetLeft - (bar.clientWidth - a.clientWidth) / 2;
+  });
+
   // --- Formulare: automatisch absenden, Rückfrage vor dem Absenden ------------------------------------
   document.addEventListener("change", function (e) {
     var el = e.target.closest("[data-autosubmit]");

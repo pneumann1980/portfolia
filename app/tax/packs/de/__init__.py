@@ -805,6 +805,11 @@ class GermanyPack(RulePack):
             issues.append(Issue("warning", "estimated_tx",
                                 f"{est} geschätzte Sparplan-Buchungen (noch nicht freigegeben) sind enthalten – "
                                 "Bestände und Haltefristen vorläufig; vor der Abgabe unter „Sparpläne“ prüfen.", est))
+        manual = sum(1 for t in inp.pf.txs if t.origin == "journal" and t.date.year == year)
+        if manual:
+            issues.append(Issue("info", "manual_tx",
+                                f"{manual} Buchungen des Jahres wurden in Portfolia erfasst (nicht aus dem Import) – "
+                                "Belege (Abrechnungen, Kontoauszüge) für Rückfragen bereithalten.", manual))
         conf = sum(1 for t in inp.pf.txs if t.flag == "confirmed" and t.date.year <= year)
         if conf:
             issues.append(Issue("info", "confirmed_tx",

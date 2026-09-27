@@ -45,6 +45,8 @@ class Tx:
     flag: str | None = None
     note: str | None = None
     related_asset: str | None = None
+    # Herkunft: import (kuratierte ZIP) | journal (in der App erfasst/synchronisiert) | plan (Sparplan-Schätzung)
+    origin: str = "import"
 
     @classmethod
     def from_parsed(cls, r: dict[str, Any]) -> Tx:

@@ -4,7 +4,7 @@ Portfolia selbst steht unter der [MIT-Lizenz](LICENSE). Das Docker-Image enthäl
 Komponenten Dritter unter deren eigenen Lizenzen. Alle sind mit der MIT-Lizenz vereinbar (keine
 Copyleft-Pflichten für den Portfolia-Code); die Lizenztexte liegen im Image bei den jeweiligen Komponenten.
 
-Stand: 27.09.2026 (Portfolia 0.6.0).
+Stand: 27.09.2026 (Portfolia 0.7.0).
 
 ## Weboberfläche (`app/static/vendor/`, unverändert eingebunden)
 

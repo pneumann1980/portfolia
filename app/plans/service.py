@@ -5,7 +5,8 @@ unverändert und ist weiterhin die maßgebliche Quelle. Lebenszyklus einer Schä
 
 * ``estimated`` – im Portfolio enthalten und als „geschätzt“ markiert,
 * ``confirmed`` – vom Nutzer geprüft (ggf. angepasst) und freigegeben, ohne Markierung,
-* ``superseded`` – der nächste Import enthält die echte Buchung (Datum ±7 Tage, Betrag/Stück ±20 %),
+* ``superseded`` – der Import oder eine manuell erfasste Buchung enthält die echte Ausführung (Datum je Rhythmus
+  ±3 bis ±7 Tage, Betrag/Stück ±20 %),
 * ``missing`` – der Import deckt den Termin ab, enthält aber keine Ausführung (Schätzung entfällt),
 * ``dismissed`` – vom Nutzer verworfen bzw. Sparplan deaktiviert/pausiert.
 """
@@ -16,6 +17,7 @@ import csv
 import io
 import logging
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
@@ -24,13 +26,16 @@ from app.db import Database
 from app.importer.zipbuilder import TX_COLUMNS
 from app.ledger.models import Portfolio, Tx
 from app.plans.detect import FREQS, GRACE_DAYS, WEEKDAYS, Plan, buy_series, detect_plans
+from app.prices.lookup import price_eur_on
 from app.util.numbers import parse_number
 from app.util.timeutil import fmt_de_date, iso, local_tz, parse_iso, to_local_date, today_local
 
 log = logging.getLogger(__name__)
 ACTIVE = ("estimated", "confirmed")
 MAX_PER_PLAN = 60
-MATCH_DAYS = 7
+# Abgleichfenster (Tage) je Rhythmus: kleiner als der halbe Abstand zweier Termine, damit die Ausführung der
+# Vorperiode eine Schätzung nie „ersetzt“ (z. B. wöchentlich ±3 statt ±7 Tage)
+MATCH_DAYS = {"weekly": 3, "biweekly": 6, "semimonthly": 5, "monthly": 7, "bimonthly": 7, "quarterly": 7}
 MATCH_TOL = Decimal("0.20")
 CENT = Decimal("0.01")
 # Schätzkurs weicht um mehr als diesen Faktor vom letzten Kauf laut Import ab → Hinweis „Kurs prüfen“
@@ -41,10 +46,10 @@ STATUS_LABEL = {"estimated": "geschätzt", "confirmed": "bestätigt", "supersede
 
 
 def cutoff_of(pf: Portfolio) -> date:
-    """Importstand: bis hierhin gilt der Import als vollständig (holdings_check-Stichtag)."""
+    """Datenstand: Stichtag des Imports (holdings_check), ohne Import die letzte erfasste Buchung."""
     if pf.valuation_date:
         return pf.valuation_date
-    dates = [t.date for t in pf.txs if not t.flag]
+    dates = [t.date for t in pf.txs if t.flag != "estimated"]
     return max(dates) if dates else today_local()
 
 
@@ -56,10 +61,13 @@ def _dec(v: Any) -> Decimal:
 # Overlay: Schätzungen als Transaktionen für Ledger und Bewertung
 # ----------------------------------------------------------------------------------------------------
 
-def overlay_txs(db: Database, base: Portfolio) -> list[Tx]:
+def overlay_txs(db: Database, assets: Mapping[str, Any], statuses: tuple[str, ...] = ("estimated", "confirmed")
+                ) -> list[Tx]:
+    """Schätzungen bzw. freigegebene Ausführungen als Buchungen (``origin="plan"``, ``flag`` = Status)."""
     out: list[Tx] = []
-    for r in db.q("SELECT * FROM tx_estimate WHERE status IN ('estimated','confirmed') ORDER BY ts_utc, id"):
-        if r["asset_id"] not in base.assets:
+    ph = ",".join("?" * len(statuses))
+    for r in db.q(f"SELECT * FROM tx_estimate WHERE status IN ({ph}) ORDER BY ts_utc, id", statuses):
+        if r["asset_id"] not in assets:
             continue
         ts = parse_iso(r["ts_utc"])
         if ts is None:
@@ -75,7 +83,7 @@ def overlay_txs(db: Database, base: Portfolio) -> list[Tx]:
             to_account=r["account"], to_asset=r["asset_id"], to_qty=qty,
             fee_asset=None if no_fee_leg else r["funding_asset"], fee_qty=None if no_fee_leg else fee,
             fee_eur=fee or None, value_eur=value, orig_price=r["price_eur"], orig_ccy="EUR", source="sparplan",
-            source_ref=r["plan_key"], flag=r["status"], note=r["price_source"],
+            source_ref=r["plan_key"], flag=r["status"], note=r["price_source"], origin="plan",
         ))
     return out
 
@@ -104,7 +112,7 @@ class PlanService:
         self._refs: tuple[Portfolio, dict[tuple[str, str], tuple[Decimal, date]]] | None = None
 
     def _ref_prices(self, base: Portfolio) -> dict[tuple[str, str], tuple[Decimal, date]]:
-        """Letzter Kaufkurs (EUR) je Konto und Asset laut Import – Referenz für die Plausibilitätsprüfung."""
+        """Letzter erfasster Kaufkurs (EUR) je Konto und Asset – Referenz für die Plausibilitätsprüfung."""
         if self._refs is not None and self._refs[0] is base:
             return self._refs[1]
         out = {k: (ex[-1].amount / ex[-1].qty, ex[-1].date) for k, ex in buy_series(base).items() if ex[-1].qty > 0}
@@ -112,39 +120,9 @@ class PlanService:
         return out
 
     # -- Kurse ------------------------------------------------------------------------------------------
-    def _to_eur(self, price: Decimal, ccy: str | None, d: date) -> Decimal | None:
-        if not ccy or ccy.upper() == "EUR":
-            return price
-        fx = self.ctx.store.fx_on_or_before(ccy, d)
-        if not fx or not fx[0]:
-            return None
-        return price / Decimal(str(fx[0]))
-
     def price_on(self, pf: Portfolio, asset_id: str, d: date, today: date) -> tuple[Decimal, str, bool] | None:
         """(Kurs in EUR, Quelle, endgültig) für den Ausführungstag."""
-        a = pf.asset(asset_id)
-        series = self.ctx.prices.series_for(a)
-        if series:
-            row = self.ctx.store.close_on_or_before(series, d)
-            if row is not None and row["date"] == d.isoformat():
-                p = self._to_eur(_dec(row["close"]), row["ccy"], d)
-                if p:
-                    return p, f"Schlusskurs {fmt_de_date(d)}", True
-            if d >= today - timedelta(days=1):
-                q = self.ctx.store.latest(series)
-                if q is not None and q["price"]:
-                    p = self._to_eur(_dec(q["price"]), q["ccy"], d)
-                    if p:
-                        return p, "aktueller Kurs (vorläufig)", False
-            if row is not None and (d - date.fromisoformat(row["date"])).days <= 5:
-                p = self._to_eur(_dec(row["close"]), row["ccy"], d)
-                if p:
-                    return p, f"Schlusskurs {fmt_de_date(row['date'])} (letzter verfügbarer)", False
-        manual = [x for x in pf.manual_prices.get(asset_id, []) if x[0] <= d]
-        if manual:
-            md, mp = max(manual)
-            return _dec(mp), f"manueller Kurs {fmt_de_date(md)}", False
-        return None
+        return price_eur_on(self.ctx, pf, asset_id, d, today)
 
     # -- Erkennung & Schätzungen ------------------------------------------------------------------------
     def _plan_enabled(self, row: Any) -> bool:
@@ -189,14 +167,23 @@ class PlanService:
         return qty, amount
 
     def update(self, today: date | None = None, now: datetime | None = None) -> dict[str, Any]:
-        base = self.ctx.base_portfolio()
+        base = self.ctx.recorded_portfolio()
         if base is None:
-            return {"skipped": "kein Import"}
+            return {"skipped": "keine Buchungen"}
         tz = local_tz()
         now = now or datetime.now(UTC)
         today = today or now.astimezone(tz).date()
         cut = cutoff_of(base)
         plans = detect_plans(base, cut)
+        if base.valuation_date is None:
+            # Ohne Import gibt es keinen Stichtag, bis zu dem die Daten vollständig sind: noch ungeprüfte Schätzungen
+            # gelten als Ausführung, bis der Nutzer sie verwirft – sonst würde jede spätere manuelle Buchung
+            # laufende Pläne als „ausgesetzt“ erscheinen lassen.
+            pending = {r[0]: date.fromisoformat(r[1]) for r in self.db.q(
+                "SELECT plan_key, MAX(due_date) FROM tx_estimate WHERE status='estimated' GROUP BY plan_key")}
+            for p in plans:
+                if p.key in pending:
+                    p.assess(cut, last_seen=pending[p.key])
         stamp = iso(datetime.now(UTC))
         rows = self._store_plans(plans, stamp)
         created = refreshed = dismissed = 0
@@ -260,14 +247,16 @@ class PlanService:
 
     # -- Abgleich mit neuem Import ----------------------------------------------------------------------
     def reconcile(self) -> dict[str, Any]:
-        base = self.ctx.base_portfolio()
+        """Schätzungen mit erfassten Buchungen (Import oder manuell) abgleichen."""
+        base = self.ctx.recorded_portfolio()
         if base is None:
-            return {"skipped": "kein Import"}
-        cut = cutoff_of(base)
+            return {"skipped": "keine Buchungen"}
+        # „fehlt im Import“ nur mit Import-Stichtag – ohne Import ist unbekannt, bis wann die Daten vollständig sind
+        cut = base.valuation_date
         freq_of = {r["key"]: r["freq"] for r in self.db.q("SELECT key, freq FROM plan")}
         buys: dict[tuple[str, str], list[Tx]] = defaultdict(list)
         for t in base.txs:
-            if not t.flag and t.type == "buy" and t.to_asset and t.to_account and t.to_qty:
+            if t.origin in ("import", "journal") and t.type == "buy" and t.to_asset and t.to_account and t.to_qty:
                 buys[(t.to_account, t.to_asset)].append(t)
         used = {r[0] for r in self.db.q("SELECT matched_tx_id FROM tx_estimate WHERE matched_tx_id IS NOT NULL")}
         stamp = iso(datetime.now(UTC))
@@ -281,7 +270,7 @@ class PlanService:
                 if t.tx_id in used:
                     continue
                 dd = abs((t.date - est_date).days)
-                if dd > MATCH_DAYS:
+                if dd > MATCH_DAYS.get(freq_of.get(r["plan_key"], "monthly"), 7):
                     continue
                 tot_t = (t.value_eur or Decimal(0)) + (t.fee_eur or Decimal(0))
                 tot_e = value + fee
@@ -293,13 +282,14 @@ class PlanService:
                         best = (score, t)
             if best is not None:
                 used.add(best[1].tx_id)
+                what = "Import-Buchung" if best[1].origin == "import" else "erfasste Buchung"
                 self.db.x("UPDATE tx_estimate SET status='superseded', matched_tx_id=?, missing_import_id=NULL, "
                           "note=?, updated_at=? WHERE id=?",
-                          (best[1].tx_id, f"ersetzt durch Import-Buchung {best[1].tx_id}", stamp, r["id"]))
+                          (best[1].tx_id, f"ersetzt durch {what} {best[1].tx_id}", stamp, r["id"]))
                 superseded += 1
                 continue
             grace = GRACE_DAYS.get(freq_of.get(r["plan_key"], "monthly"), 5)
-            if max(est_date, date.fromisoformat(r["due_date"])) <= cut - timedelta(days=grace):
+            if cut is not None and max(est_date, date.fromisoformat(r["due_date"])) <= cut - timedelta(days=grace):
                 if r["status"] == "estimated":
                     self.db.x("UPDATE tx_estimate SET status='missing', note=?, updated_at=? WHERE id=?",
                               (f"Import (Stand {fmt_de_date(cut)}) enthält keine Ausführung – Schätzung entfernt",
@@ -374,14 +364,14 @@ class PlanService:
             errors.append("Stückzahl muss größer als 0 sein.")
         if fee < 0:
             errors.append("Gebühr darf nicht negativ sein.")
-        base = self.ctx.base_portfolio()
-        if d is not None and base is not None:
-            cut = cutoff_of(base)
-            if d > today_local() + timedelta(days=1):
-                errors.append("Datum liegt in der Zukunft.")
+        base = self.ctx.recorded_portfolio()
+        if d is not None and d > today_local() + timedelta(days=1):
+            errors.append("Datum liegt in der Zukunft.")
+        if d is not None and base is not None and base.valuation_date is not None:
+            cut = base.valuation_date
             if d < cut - timedelta(days=10):
                 errors.append(f"Datum liegt vor dem Importstand ({fmt_de_date(cut)}) – solche Buchungen gehören in den "
-                              "Import.")
+                              "Import oder werden unter „Buchungen“ manuell erfasst.")
         if errors:
             return errors
         assert d is not None and t_val is not None and price is not None and qty is not None
@@ -460,7 +450,7 @@ class PlanService:
             d["price_warn"] = None
             if r["status"] in ACTIVE and not r["user_edited"] and d["price_d"] > 0:
                 if refs is None:
-                    base = self.ctx.base_portfolio()
+                    base = self.ctx.recorded_portfolio()
                     refs = self._ref_prices(base) if base is not None else {}
                 ref = refs.get((r["account"], r["asset_id"]))
                 if ref is not None and ref[0] > 0:

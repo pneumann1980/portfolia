@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Buchungen{% endblock %}
+{% block heading %}Buchungen{% endblock %}
+{% macro sym(aid) -%}{{ syms.get(aid, aid) }}{%- endmacro %}
+{% macro leg(acc, asset, q, sign) -%}
+  {%- if asset %}<span class="nowrap">{{ sign }}{{ q|qty }} {{ sym(asset) }}</span>{% if acc %}<div class="hint">{{ acc }}</div>{% endif %}{% else %}–{% endif -%}
+{%- endmacro %}
+{% block content %}
+{% if saved %}<div class="alert good"><span class="icon">✓</span><div>{{ saved }}{% if saved_tx %} <span class="mono">{{ saved_tx }}</span>{% endif %}</div></div>{% endif %}
+{% if warnings %}<div class="alert warn"><span class="icon">!</span><div>{% for w in warnings %}{{ w }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>Buchungen {% if total %}<span class="badge">{{ total }}</span>{% endif %}</h2>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <a class="btn sm primary" href="/journal/new">+ Neue Buchung</a>
+      <a class="btn sm" href="/journal/asset">+ Neues Asset</a>
+      {% if total %}<a class="btn sm" href="/journal/export.zip" download title="Import-, manuelle und freigegebene Sparplan-Buchungen als Import-ZIP (Schema 1.1)">Gesamtexport</a>{% endif %}
+    </div></div>
+  <p class="hint">Alle Buchungen aus {{ 'Import, ' if has_import }}manueller Erfassung und Sparplänen. Manuell erfasste Buchungen zählen
+    wie importierte (ohne Markierung) und werden mit denselben Regeln geprüft. Enthält ein späterer Import dieselbe
+    Buchungs-ID (z. B. nach Übernahme des Gesamtexports), gilt die Import-Buchung.</p>
+  <form method="get" action="/journal" class="filters">
+    <label class="field">Konto<select name="account" data-autosubmit><option value="">alle</option>{% for a in accounts %}<option {% if params.account == a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+    <label class="field">Asset<select name="asset" data-autosubmit><option value="">alle</option>{% for a in assets %}<option value="{{ a.asset_id }}" {% if params.asset == a.asset_id %}selected{% endif %}>{{ a.name }}</option>{% endfor %}</select></label>
+    <label class="field">Quelle<select name="origin" data-autosubmit><option value="">alle</option>{% for k, l in origins.items() %}<option value="{{ k }}" {% if params.origin == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="field">Typ<select name="type" data-autosubmit><option value="">alle</option>{% for k, l in tx_types.items() %}<option value="{{ k }}" {% if params.type == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="field">Jahr<select name="year" data-autosubmit><option value="">alle</option>{% for y in years %}<option {% if params.year == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></label>
+    <label class="field">Suche<input type="search" name="q" value="{{ params.q }}" placeholder="ID oder Notiz"></label>
+    <div class="row" style="gap:6px"><button class="btn sm" type="submit">Filtern</button>{% if has_filter %}<a class="btn sm ghost" href="/journal">Zurücksetzen</a>{% endif %}</div>
+  </form>
+  {% if rows %}
+  <div class="table-wrap cards-wrap"><table class="compact cards journal">
+    <thead><tr><th>Datum</th><th>Vorgang</th><th>Abgang</th><th>Zugang</th><th class="num">Gebühr</th><th class="num">Wert</th><th>Quelle</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}{% set t = r.t %}
+      <tr class="{{ 'is-new' if saved_tx and t.tx_id == saved_tx }}">
+        <td class="nowrap" data-label="Datum">{{ t.date|date_de if t.date_only else t.ts|datetime_de }}<div class="hint mono">{{ t.tx_id }}</div></td>
+        <td data-label="Vorgang">{{ r.label }}{% if t.related_asset %}<div class="hint">zu {{ names.get(t.related_asset, t.related_asset) }}</div>{% endif %}{% if t.note and r.kind != 'plan_est' %}<div class="hint">{{ t.note }}</div>{% endif %}</td>
+        <td data-label="Abgang">{{ leg(t.from_account, t.from_asset, t.from_qty, '−') }}</td>
+        <td data-label="Zugang">{{ leg(t.to_account, t.to_asset, t.to_qty, '+') }}</td>
+        <td class="num" data-label="Gebühr">{% if t.fee_qty %}<span class="nowrap">{{ t.fee_qty|qty }} {{ sym(t.fee_asset) }}</span>{% if t.fee_eur and t.fee_asset != 'EUR' %}<div class="hint">{{ t.fee_eur|eur }}</div>{% endif %}{% elif t.fee_eur %}{{ t.fee_eur|eur }}{% else %}–{% endif %}</td>
+        <td class="num" data-label="Wert">{{ t.value_eur|eur if t.value_eur is not none else '–' }}</td>
+        <td data-label="Quelle">{% if r.kind == 'journal' %}<span class="badge info">{{ source_label.get(t.source, t.source) }}</span>{% elif r.kind == 'plan_est' %}<a class="badge warn" href="/plans">Sparplan · geschätzt</a>{% elif r.kind == 'plan' %}<a class="badge" href="/plans#confirmed">Sparplan · freigegeben</a>{% else %}<span class="hint">Import{% if t.source %} · {{ t.source }}{% endif %}</span>{% endif %}
+          {% if r.dups %}<div><span class="badge warn" title="Ähnliche Import-Buchung: {{ r.dups|join(', ') }}">Dublette?</span></div>{% endif %}</td>
+        <td class="actions nowrap">
+          {% if r.kind == 'journal' and t.source == 'manual' %}
+            <a class="btn sm" href="/journal/{{ t.tx_id }}/edit">Bearbeiten</a>
+            <a class="btn sm ghost" href="/journal/new?copy={{ t.tx_id }}" title="Als Vorlage für eine neue Buchung">Kopieren</a>
+            <form method="post" action="/journal/{{ t.tx_id }}/delete" class="inline" data-confirm="Buchung {{ t.tx_id }} löschen? (lässt sich wiederherstellen)"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="icon-btn" type="submit" title="Löschen" aria-label="Buchung {{ t.tx_id }} löschen">×</button></form>
+          {% elif r.kind == 'import' %}
+            <a class="btn sm ghost" href="/journal/new?copy={{ t.tx_id }}" title="Als Vorlage für eine manuelle Buchung">Kopieren</a>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="hint">{{ offset + 1 }}–{{ offset + rows|length }} von {{ total }}{% if total > offset + page %} · <a href="{{ more_url }}">weitere anzeigen</a>{% endif %}</p>
+  {% elif has_filter %}<p class="hint">Keine Buchungen für diese Filter.</p>
+  {% else %}
+  <div class="empty-state">
+    <p>Noch keine Buchungen. Erfasse die erste Buchung hier{% if not has_import %} oder lege eine Import-Datei (ZIP gemäß Datenvertrag) im Importverzeichnis ab{% endif %}.</p>
+    <p><a class="btn primary" href="/journal/new">Erste Buchung erfassen</a></p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card" id="assets" style="margin-top:16px">
+  <div class="card-head"><h2>In Portfolia angelegte Assets</h2><a class="btn sm" href="/journal/asset">+ Neues Asset</a></div>
+  {% if own_assets %}
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>ID</th><th>Name</th><th>Klasse</th><th>Kursquelle</th><th>Kategorie</th><th></th></tr></thead>
+    <tbody>{% for x in own_assets %}{% set a = x.a %}
+      <tr><td class="mono" data-label="ID">{{ a.asset_id }}</td>
+        <td data-label="Name">{{ a.name }}{% if x.in_import %}<div><span class="badge" title="Der Import definiert dasselbe Asset – dessen Stammdaten gelten">im Import definiert</span></div>{% endif %}{% if not x.used %}<div class="hint">noch ohne Buchung</div>{% endif %}</td>
+        <td data-label="Klasse">{{ {'crypto': 'Krypto', 'security': 'Wertpapier', 'fiat': 'Währung'}.get(a.asset_class, a.asset_class) }}{% if x.tax_type %}<div class="hint">{{ x.tax_type }}</div>{% endif %}</td>
+        <td data-label="Kursquelle">{{ {'coingecko': 'CoinGecko', 'yahoo': 'Yahoo', 'manual': 'manuell', 'none': 'keine'}.get(a.quote_source, a.quote_source) }}{% if a.quote_id %} · <span class="mono">{{ a.quote_id }}</span>{% endif %}</td>
+        <td data-label="Kategorie">{{ a.category or '–' }}</td>
+        <td class="actions"><a class="btn sm" href="/journal/asset?id={{ a.asset_id|urlencode }}">Bearbeiten</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="hint">Assets aus dem Import stehen automatisch zur Verfügung. Für neue Positionen (z. B. eine weitere Kryptowährung oder einen neuen ETF) hier ein Asset mit Kursquelle anlegen.</p>{% endif %}
+</section>
+
+{% if deleted %}
+<details class="box" style="margin-top:16px"><summary>Gelöschte Buchungen <span class="badge">{{ deleted|length }}</span></summary>
+  <div class="table-wrap"><table class="compact">
+    <thead><tr><th>ID</th><th>Datum</th><th>Vorgang</th><th>Gelöscht</th><th></th></tr></thead>
+    <tbody>{% for d in deleted %}
+      <tr><td class="mono">{{ d.tx_id }}</td><td class="nowrap">{{ d.ts_utc|datetime_de }}</td><td>{{ tx_types.get(d.type, d.type) }}{% if d.note %}<div class="hint">{{ d.note }}</div>{% endif %}</td>
+        <td class="nowrap">{{ d.updated_at|datetime_de }}</td>
+        <td class="actions"><form method="post" action="/journal/{{ d.tx_id }}/restore" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Wiederherstellen</button></form></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</details>
+{% endif %}
+{% endblock %}

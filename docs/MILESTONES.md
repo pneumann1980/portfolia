@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 27.09.2026 · Version 0.6.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 27.09.2026 · Version 0.7.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -128,7 +128,8 @@ OpenBLAS ließ sich nicht mehr laden).
 * Eine Schätzung entsteht erst, wenn die übliche Ausführungszeit erreicht ist; Stückzahl aus Sparrate und
   Tages-Schlusskurs (vorläufig: aktueller Kurs), abgerundet auf die im Import beobachtete Genauigkeit.
   Plausibilitätsprüfung gegen den letzten Import-Kauf (Faktor 2) mit Hinweis „Kurs prüfen“.
-* Abgleich beim nächsten Import über Konto, Asset, Datum ±7 Tage und Betrag oder Stückzahl ±20 %;
+* Abgleich mit Import und manuell erfassten Buchungen über Konto, Asset, Datum (wöchentlich ±3, 14-täglich ±6,
+  sonst ±7 Tage – stets weniger als der halbe Terminabstand) und Betrag oder Stückzahl ±20 %;
   jede Import-Buchung ersetzt höchstens eine Schätzung (keine Doppelzählung).
 * Ungeprüfte Schätzungen, deren Termin der neue Import abdeckt, ohne sie zu enthalten, werden entfernt;
   freigegebene bleiben (Nutzerentscheidung) und werden als „fehlt im Import“ gemeldet.
@@ -139,7 +140,33 @@ OpenBLAS ließ sich nicht mehr laden).
 Entnahmepläne, keine dynamischen Raten). Ein nach dem Importstand ausgesetzter Plan erzeugt Schätzungen, bis
 diese verworfen oder vom nächsten Import entfernt werden. Handelstage/Feiertage der Handelsplätze werden nicht
 modelliert (nur Wochenend-Verschiebung auf Montag); die tatsächliche Ausführung kann daher ±1–3 Tage abweichen –
-der Abgleich toleriert ±7 Tage.
+der Abgleich toleriert je nach Rhythmus ±3 bis ±7 Tage.
+
+## M7 – Buchungen in Portfolia erfassen (Erweiterung)
+
+**Entscheidungen**
+
+* Manuell erfasste Buchungen und Assets liegen im **Journal** der App-Datenbank (`journal_tx`,
+  `journal_asset`, `journal_log`, Migration 4); der Import bleibt unverändert. `recorded_portfolio()` =
+  Import + Journal + freigegebene Sparplan-Ausführungen, `portfolio()` zusätzlich die Schätzungen. Die App
+  funktioniert damit auch ohne Import-Datei.
+* Das Journal ist die Grundlage für spätere Quellen (Börsen-/Wallet-Synchronisation): jede Buchung trägt
+  `source` und optional `external_id` (eindeutig je Quelle → idempotente Synchronisation).
+* Formular-Vorlagen erzeugen Zeilen im Format von `transactions.csv`; die Endprüfung übernimmt derselbe
+  Validator wie beim Import. Zusätzliche Hinweise: negativer Bestand, mögliche Dubletten zu Import-Buchungen.
+* Gleiche `tx_id` im Import → Import gilt (Rundreise über den Gesamtexport ohne Doppelzählung). Ähnliche
+  Buchungen mit anderer ID werden nicht automatisch entfernt, nur gemeldet (Nutzerentscheidung).
+* Löschen ist ein Statuswechsel mit Protokoll (umkehrbar), keine physische Löschung.
+* Sparpläne: manuell erfasste Ausführungen zählen für Erkennung und Abgleich. Ohne Import-Stichtag gelten
+  ungeprüfte Schätzungen für den Plan-Status als Ausführung (sonst würde jede spätere manuelle Buchung laufende
+  Pläne „aussetzen“); „fehlt im Import“ gibt es nur mit Import-Stichtag.
+* Abgleichfenster der Sparplan-Schätzungen abhängig vom Rhythmus (wöchentlich ±3 statt ±7 Tage): vorher konnte
+  die Ausführung der Vorwoche eine Wochen-Schätzung fälschlich ersetzen (Regressionstest).
+
+**Grenzen M7:** Import-Buchungen sind nicht in der App änderbar (nur als Vorlage kopierbar) – Korrekturen im
+kuratierten Import oder nach Umstieg über den Gesamtexport. Keine eigene Kontenverwaltung (Broker, Depotgruppe,
+Steuerabzug neuer Konten über *Steuern → Zuordnung* bzw. *Einstellungen*). Der Bestandsabgleich
+(`holdings_check`) bezieht sich weiterhin nur auf den Import. Einzelnutzerbetrieb ohne Konfliktbehandlung.
 
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
@@ -153,11 +180,13 @@ der Abgleich toleriert ±7 Tage.
   abrufbar. Zusätzlich Basiszins 2026 (3,20 %, BMF vom 13.01.2026).
 * **KI-Modell:** Standard `claude-opus-5` bleibt.
 * **Sparpläne** (neue Anforderung): siehe M6.
+* **`related_asset`** ist ab Schema 1.1 offizieller Teil des Datenvertrags (1.0 bleibt gültig).
+* **Buchungen in der App erfassen** (neue Anforderung, mittelfristig alles in Portfolia): siehe M7.
 
 ## Offene Fragen an den Auftraggeber
 
-1. **`related_asset`** (optionale Spalte in `transactions.csv`, verknüpft Dividenden und Quellensteuer mit
-   dem Wertpapier): offiziell in Schema-Version 1.1 aufnehmen? Dateien mit Schema 1.0 bleiben gültig.
+1. **Börsen-/Wallet-Synchronisation** (Binance, Bitpanda, Wallets): Umfang, Datenschutz-Abwägung bei
+   öffentlichen Blockchain-APIs und Freigabe-Modus – siehe Vorschlag in der Antwort vom 27.09.2026.
 2. **Name/Pfade:** Umsetzung als „Portfolia“ (`portfolia.xml`, `/mnt/user/appdata/portfolia`) statt
    „Depotblick“ – so gewünscht?
 3. **Krypto-Historie > 365 Tage** mit CoinGecko-Demo: weitere Yahoo-Paare vorbelegen oder Pro-Schlüssel?

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Asset bearbeiten' if orig_id else 'Neues Asset' }}{% endblock %}
+{% block heading %}{{ 'Asset bearbeiten' if orig_id else 'Neues Asset' }}{% endblock %}
+{% macro field(name, label, hint='', placeholder='', required=False, list='') -%}
+<label class="field">{{ label }}<input type="text" name="{{ name }}" value="{{ data.get(name) or '' }}"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if required %} required{% endif %}{% if list %} list="{{ list }}"{% endif %} autocomplete="off">{% if hint %}<span class="hint">{{ hint }}</span>{% endif %}</label>
+{%- endmacro %}
+{% macro select(name, label, options, hint='', empty='') -%}
+<label class="field">{{ label }}<select name="{{ name }}">{% if empty %}<option value="">{{ empty }}</option>{% endif %}{% for v, l in options.items() %}<option value="{{ v }}" {% if (data.get(name) or '') == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>{% if hint %}<span class="hint">{{ hint }}</span>{% endif %}</label>
+{%- endmacro %}
+{% block content %}
+{% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+<section class="card">
+  <p class="hint">Stammdaten für Positionen, die nicht aus dem Import stammen. Für Kurse wird nur die Kurs-ID an Yahoo bzw.
+    CoinGecko übermittelt – keine Stückzahlen oder Werte.</p>
+  <form method="post" action="/journal/asset">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="orig_id" value="{{ orig_id or '' }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <div class="edit-grid">
+      {% if orig_id %}<label class="field">ID<input type="text" value="{{ orig_id }}" disabled></label>
+      {% else %}{{ field('asset_id', 'Kürzel / ID', required=True, placeholder='z. B. SOL oder ISIN:IE00B4L5Y983', hint='Krypto: Symbol; Wertpapiere: ISIN:… oder WKN:… – nicht mehr änderbar') }}{% endif %}
+      {{ field('name', 'Name', required=True, placeholder='z. B. Solana') }}
+      {{ select('asset_class', 'Klasse', classes) }}
+      {{ select('quote_source', 'Kursquelle', quote_sources) }}
+      {{ field('quote_id', 'Kurs-ID', placeholder='z. B. solana bzw. EUNL.DE', hint='CoinGecko-ID (Adresszeile der Coin-Seite) bzw. Yahoo-Symbol inkl. Börsenkürzel') }}
+      {{ field('isin', 'ISIN (optional)') }}
+      {{ field('wkn', 'WKN (optional)') }}
+      {{ field('category', 'Kategorie (optional)', list='dl-categories', placeholder='z. B. Krypto: Altcoins', hint='gruppiert Positionen und Allokation') }}
+      {{ select('tax_type', 'Steuerart (Wertpapiere)', tax_types, empty='automatisch erkennen') }}
+      {{ field('aliases', 'Aliasse (optional)', placeholder='z. B. SOL;Solana Network', hint=';-getrennt, verbessert die News-Zuordnung') }}
+      {{ field('note', 'Notiz (optional)') }}
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+      <button class="btn primary" type="submit">Speichern</button>
+      <a class="btn ghost" href="{{ next_url or '/journal#assets' }}">Abbrechen</a>
+    </div>
+  </form>
+</section>
+<datalist id="dl-categories">{% for c in categories %}<option value="{{ c }}"></option>{% endfor %}</datalist>
+{% endblock %}

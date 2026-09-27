@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Buchung bearbeiten' if tx_id else 'Neue Buchung' }}{% endblock %}
+{% block heading %}{{ 'Buchung bearbeiten' if tx_id else 'Neue Buchung' }}{% endblock %}
+{% macro field(name, label, type='text', list='', mode='', hint='', placeholder='', required=False) -%}
+<label class="field">{{ label }}<input type="{{ type }}" name="{{ name }}" value="{{ data.get(name) or '' }}"{% if list %} list="{{ list }}"{% endif %}{% if mode %} inputmode="{{ mode }}"{% endif %}{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if required %} required{% endif %} autocomplete="off">{% if hint %}<span class="hint">{{ hint }}</span>{% endif %}</label>
+{%- endmacro %}
+{% macro select(name, label, options, hint='') -%}
+<label class="field">{{ label }}<select name="{{ name }}">{% for v, l in options %}<option value="{{ v }}" {% if (data.get(name) or '') == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>{% if hint %}<span class="hint">{{ hint }}</span>{% endif %}</label>
+{%- endmacro %}
+{% macro num(name, label, hint='', required=False, placeholder='') -%}{{ field(name, label, mode='decimal', hint=hint, required=required, placeholder=placeholder) }}{%- endmacro %}
+{% macro account(name='account', label='Konto / Depot / Wallet') -%}{{ field(name, label, list='dl-accounts', required=True, placeholder='z. B. Depot A') }}{%- endmacro %}
+{% macro asset(name='asset', label='Asset', required=True, hint='') -%}{{ field(name, label, list='dl-assets', required=required, placeholder='ID oder Name', hint=hint) }}{%- endmacro %}
+{% block content %}
+{% if saved_tx %}<div class="alert good"><span class="icon">✓</span><div>Gespeichert: <span class="mono">{{ saved_tx }}</span> – nächste Buchung erfassen.</div></div>{% endif %}
+{% if warnings %}<div class="alert warn"><span class="icon">!</span><div>{% for w in warnings %}{{ w }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+{% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+<section class="card">
+  {% if tx_id %}
+  <p class="hint">{{ kinds[kind] }} · <span class="mono">{{ tx_id }}</span></p>
+  {% else %}
+  <nav class="tabs" aria-label="Vorgang">{% for k, l in kinds_short.items() %}<a class="{{ 'active' if k == kind }}" href="/journal/new?kind={{ k }}{% if data.get('account') %}&account={{ data.get('account')|urlencode }}{% endif %}" title="{{ kinds[k] }}"{% if k == kind %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav>
+  {% endif %}
+  <p class="hint"><b>{{ kinds[kind] }}:</b> {{ hint }}</p>
+  <form method="post" action="{{ action }}" class="journal-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="kind" value="{{ kind }}">
+    <div class="edit-grid">
+      {{ field('date', 'Datum', type='date', required=True) }}
+      {{ field('time', 'Uhrzeit (optional)', type='time', hint='ohne Uhrzeit: 12:00 Uhr') }}
+    {% if kind in ('buy', 'sell') %}
+      {{ account() }}
+      {{ asset(hint='Neue Position? Zuerst unter „Neues Asset“ anlegen.') }}
+      {{ num('qty', 'Stückzahl', required=True) }}
+      {{ num('amount', 'Kaufbetrag ohne Gebühr' if kind == 'buy' else 'Erlös vor Gebühr', hint='oder Kurs je Stück angeben') }}
+      {{ num('price', 'Kurs je Stück (optional)') }}
+      {{ select('ccy', 'Währung', fiat_options) }}
+      {{ num('fee', 'Gebühr (optional)', hint='in der gewählten Währung') }}
+      {{ num('value_eur', 'Gegenwert in EUR (nur bei Fremdwährung)', hint='leer: per Devisenkurs (EZB)') }}
+    {% elif kind == 'trade' %}
+      {{ account() }}
+      {{ asset('from_asset', 'Abgang: Asset') }}
+      {{ num('from_qty', 'Abgang: Menge', required=True) }}
+      {{ asset('to_asset', 'Zugang: Asset') }}
+      {{ num('to_qty', 'Zugang: Menge', required=True) }}
+      {{ num('value_eur', 'Gegenwert in EUR (optional)', hint='leer: Tageskurs × Menge') }}
+      {{ asset('fee_asset', 'Gebühr: Asset (optional)', required=False) }}
+      {{ num('fee_qty', 'Gebühr: Menge (optional)') }}
+    {% elif kind == 'transfer' %}
+      {{ account('from_account', 'Von Konto / Wallet') }}
+      {{ account('to_account', 'Nach Konto / Wallet') }}
+      {{ asset() }}
+      {{ num('qty', 'Menge (ohne Netzwerkgebühr)', required=True) }}
+      {{ num('fee_qty', 'Netzwerkgebühr (optional)', hint='in derselben Einheit, wird zusätzlich abgebucht') }}
+    {% elif kind in ('income', 'deposit', 'withdrawal', 'cost') %}
+      {{ select('tag', 'Art', tags) }}
+      {{ account() }}
+      {{ asset(hint='bei Dividenden und Zinsen die Währung, z. B. EUR' if kind == 'income' else '') }}
+      {{ num('qty', 'Betrag bzw. Menge (brutto)' if kind == 'income' else 'Menge', required=True) }}
+      {{ num('value_eur', 'Wert in EUR (optional)', hint='leer: Tageskurs × Menge bzw. Devisenkurs') }}
+      {% if kind == 'income' %}
+      {{ asset('related_asset', 'Wertpapier (bei Dividenden, optional)', required=False, hint='ordnet den Ertrag der Position zu (Fondsart, Quellensteuer)') }}
+      {{ num('wht', 'davon Quellensteuer (optional)', hint='wird als eigene Buchung angelegt') }}
+      {% endif %}
+    {% elif kind == 'corporate' %}
+      {{ select('tag', 'Art', tags) }}
+      {{ account() }}
+      {{ asset('from_asset', 'Bisheriges Asset') }}
+      {{ num('from_qty', 'Bisherige Menge', required=True) }}
+      {{ asset('to_asset', 'Neues Asset (optional)', required=False, hint='leer: gleiches Asset (z. B. Split)') }}
+      {{ num('to_qty', 'Neue Menge', required=True) }}
+    {% else %}
+      {{ select('type', 'Typ', tx_types.items()|list) }}
+      {{ field('tag', 'Tag (optional)', list='dl-tags') }}
+      {{ field('from_account', 'from_account', list='dl-accounts') }}
+      {{ asset('from_asset', 'from_asset', required=False) }}
+      {{ num('from_qty', 'from_qty') }}
+      {{ field('to_account', 'to_account', list='dl-accounts') }}
+      {{ asset('to_asset', 'to_asset', required=False) }}
+      {{ num('to_qty', 'to_qty') }}
+      {{ asset('fee_asset', 'fee_asset', required=False) }}
+      {{ num('fee_qty', 'fee_qty') }}
+      {{ num('fee_eur', 'fee_eur') }}
+      {{ num('value_eur', 'value_eur') }}
+      {{ asset('related_asset', 'related_asset', required=False) }}
+    {% endif %}
+    </div>
+    {{ field('note', 'Notiz (optional)', placeholder='z. B. Beleg-Nr., Anlass') }}
+    <p class="hint">Asset fehlt in der Liste? <a href="/journal/asset?next={{ ('/journal/new?kind=' ~ kind)|urlencode }}">Neues Asset anlegen</a> – danach geht es hier weiter.</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+      <button class="btn primary" type="submit">Speichern</button>
+      {% if not tx_id %}<button class="btn" type="submit" name="again" value="1">Speichern und nächste erfassen</button>{% endif %}
+      <a class="btn ghost" href="/journal">Abbrechen</a>
+    </div>
+    <p class="hint">Zahlen mit Komma oder Punkt; Tausenderpunkte nur mit Dreiergruppen (5.000 = fünftausend). Die Buchung wird
+      mit denselben Regeln geprüft wie ein Import.</p>
+  </form>
+</section>
+<datalist id="dl-accounts">{% for a in accounts %}<option value="{{ a }}"></option>{% endfor %}</datalist>
+<datalist id="dl-assets">{% for a in assets %}<option value="{{ a.asset_id }}">{{ a.name }}</option>{% endfor %}</datalist>
+{% if kind == 'expert' %}<datalist id="dl-tags">{% for t in known_tags %}<option value="{{ t }}"></option>{% endfor %}</datalist>{% endif %}
+{% endblock %}

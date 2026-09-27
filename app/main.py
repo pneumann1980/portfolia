@@ -20,7 +20,7 @@ log = logging.getLogger("app")
 
 def _load_modules() -> None:
     """Optionale Module registrieren ihre Routen/Jobs beim Import."""
-    for mod in ("app.news.module", "app.tax.module", "app.plans.module", "app.jobs.maintenance"):
+    for mod in ("app.news.module", "app.tax.module", "app.plans.module", "app.journal.module", "app.jobs.maintenance"):
         with contextlib.suppress(ModuleNotFoundError):
             __import__(mod)
 

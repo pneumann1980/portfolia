@@ -27,6 +27,7 @@
   <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   <symbol id="i-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5z"/><path d="M4 19a2 2 0 0 0 2 2h13"/><path d="M9 7.5h6M9 11h6M9 14.5h3.5"/></symbol>
   <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></symbol>
 </svg>
 {% if demo_mode %}<div class="demo-banner">Demo-Modus: synthetische Kurse – nicht für Entscheidungen verwenden.</div>{% endif %}
@@ -66,9 +67,10 @@
   <a href="/positions" class="{% if active == 'positions' %}active{% endif %}"><svg><use href="#i-list"/></svg>Positionen</a>
   <a href="/performance" class="{% if active == 'performance' %}active{% endif %}"><svg><use href="#i-chart"/></svg>Performance</a>
   <a href="/news" class="{% if active == 'news' %}active{% endif %}"><svg><use href="#i-news"/></svg>News</a>
-  <button type="button" data-more-toggle class="{% if active in ('plans','tax','quality','settings') %}active{% endif %}" aria-expanded="false"><svg><use href="#i-more"/></svg>Mehr</button>
+  <button type="button" data-more-toggle class="{% if active in ('journal','plans','tax','quality','settings') %}active{% endif %}" aria-expanded="false"><svg><use href="#i-more"/></svg>Mehr</button>
 </nav>
 <div class="more-menu" id="more-menu">
+  <a href="/journal"><svg><use href="#i-book"/></svg>Buchungen</a>
   <a href="/plans"><svg><use href="#i-repeat"/></svg>Sparpläne</a>
   <a href="/tax"><svg><use href="#i-tax"/></svg>Steuern &amp; Haltefristen</a>
   <a href="/quality"><svg><use href="#i-check"/></svg>Datenqualität</a>

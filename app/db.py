@@ -91,6 +91,58 @@ CREATE TABLE IF NOT EXISTS tx_estimate (
 );
 CREATE INDEX IF NOT EXISTS ix_tx_estimate_status ON tx_estimate(status);
 """),
+    (4, """
+-- In der App erfasste Buchungen (manuell, später Synchronisation mit Börsen/Wallets). Anders als Kurse, News
+-- oder Snapshots sind das Primärdaten: sie gehen nur über die Sicherungen bzw. den Gesamtexport nicht verloren.
+CREATE TABLE IF NOT EXISTS journal_tx (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  tx_id         TEXT NOT NULL UNIQUE,          -- PF-M-000001 (manuell)
+  source        TEXT NOT NULL,                 -- manual | später z. B. binance, bitpanda, wallet
+  external_id   TEXT,                          -- Kennung in der Quelle (idempotente Synchronisation)
+  group_ref     TEXT,                          -- zusammengehörige Buchungen (z. B. Dividende + Quellensteuer)
+  status        TEXT NOT NULL DEFAULT 'active',-- active | deleted | replaced (Teilbuchung per Bearbeiten entfernt)
+  ts_utc        TEXT NOT NULL,
+  date_only     INTEGER NOT NULL DEFAULT 0,
+  type          TEXT NOT NULL,
+  tag           TEXT,
+  from_account  TEXT, from_asset TEXT, from_qty TEXT,
+  to_account    TEXT, to_asset TEXT, to_qty TEXT,
+  fee_asset     TEXT, fee_qty TEXT, fee_eur TEXT,
+  value_eur     TEXT,
+  value_source  TEXT,                          -- Herkunft des EUR-Werts (Eingabe, Schlusskurs, Devisenkurs …)
+  orig_price    TEXT, orig_ccy TEXT,
+  related_asset TEXT,
+  note          TEXT,
+  form_json     TEXT,                          -- Formulareingaben (zum Bearbeiten)
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  UNIQUE(source, external_id)
+);
+CREATE INDEX IF NOT EXISTS ix_journal_tx_status ON journal_tx(status);
+CREATE TABLE IF NOT EXISTS journal_asset (
+  asset_id      TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  asset_class   TEXT NOT NULL,                 -- security | crypto | fiat
+  quote_source  TEXT NOT NULL DEFAULT 'none',  -- yahoo | coingecko | manual | none
+  quote_id      TEXT,
+  wkn           TEXT,
+  isin          TEXT,
+  category      TEXT,
+  aliases       TEXT,
+  note          TEXT,
+  extra_json    TEXT,                          -- z. B. {"tax_type": "etf_equity"}
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS journal_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  at          TEXT NOT NULL,
+  action      TEXT NOT NULL,                   -- create | update | delete | restore | asset_create | asset_update
+  ref         TEXT NOT NULL,                   -- tx_id bzw. asset_id
+  before_json TEXT,
+  after_json  TEXT
+);
+"""),
 ]
 
 

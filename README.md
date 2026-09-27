@@ -6,10 +6,14 @@ die Positionen mit öffentlichen Kursquellen, berechnet Performance (TTWROR/IRR 
 Portfolio Performance), zeigt Haltefristen und erstellt Steueraufstellungen als PDF. Passende News und
 YouTube-Videos werden je Position gefiltert.
 
-* **Read-only:** Transaktionen und Stammdaten stammen ausschließlich aus dem Import. Die App speichert nur
-  abgeleitete Daten (Kurse, Devisenkurse, News, Videos, Snapshots, Berichte) in `/data/app.sqlite`.
-  Laufende Sparpläne werden erkannt und nach dem Importstand als **markierte Schätzung** fortgeführt, bis
-  der nächste Import die echten Buchungen enthält (siehe [Sparpläne](#sparpläne)).
+* **Datenquellen:** Buchungen stammen aus dem kuratierten Import (ZIP, **read-only**, wird nie verändert)
+  und/oder werden direkt in Portfolia erfasst (siehe [Buchungen erfassen](#buchungen-in-portfolia-erfassen)) –
+  auch ganz ohne Import. In der App erfasste Buchungen und Assets liegen neben abgeleiteten Daten (Kurse,
+  News, Snapshots, Berichte) in `/data/app.sqlite`; sie sind in den täglichen Sicherungen und im Gesamtexport
+  (Import-ZIP) enthalten.
+* **Sparpläne:** Laufende Sparpläne werden erkannt und nach dem Datenstand als **markierte Schätzung**
+  fortgeführt, bis der Import oder eine manuell erfasste Buchung die echte Ausführung enthält (siehe
+  [Sparpläne](#sparpläne)).
 * **Keine Schreibzugriffe** auf Broker oder Börsen, **keine Telemetrie**, keine externen Schriften/CDNs.
 * **Datenschutz:** Keine Anfrage an externe Dienste enthält Stückzahlen, Werte oder Kontonamen
   (per Test abgesichert, siehe `tests/test_privacy.py`).
@@ -25,15 +29,16 @@ für Smartphones (≈390 px) optimiert.
 1. [Installation](#installation)
 2. [Erste Schritte](#erste-schritte)
 3. [Datenvertrag (Import-ZIP)](#datenvertrag-import-zip)
-4. [Berechnungen](#berechnungen)
-5. [Sparpläne](#sparpläne)
-6. [Kurse und Datenquellen](#kurse-und-datenquellen)
-7. [News und YouTube](#news-und-youtube)
-8. [Steuern und Haltefristen](#steuern-und-haltefristen)
-9. [Einstellungen, Sicherheit, Backups](#einstellungen-sicherheit-backups)
-10. [Betrieb und Fehlerbehebung](#betrieb-und-fehlerbehebung)
-11. [Entwicklung](#entwicklung)
-12. [Grenzen und Lizenz](#grenzen-und-lizenz)
+4. [Buchungen in Portfolia erfassen](#buchungen-in-portfolia-erfassen)
+5. [Berechnungen](#berechnungen)
+6. [Sparpläne](#sparpläne)
+7. [Kurse und Datenquellen](#kurse-und-datenquellen)
+8. [News und YouTube](#news-und-youtube)
+9. [Steuern und Haltefristen](#steuern-und-haltefristen)
+10. [Einstellungen, Sicherheit, Backups](#einstellungen-sicherheit-backups)
+11. [Betrieb und Fehlerbehebung](#betrieb-und-fehlerbehebung)
+12. [Entwicklung](#entwicklung)
+13. [Grenzen und Lizenz](#grenzen-und-lizenz)
 
 ---
 
@@ -115,6 +120,8 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
    absichtliche Soll-Ist-Abweichung).
 3. Nach dem Import lädt Portfolia im Hintergrund aktuelle Kurse und die Kurshistorie (Fortschritt oben
    eingeblendet) und berechnet tägliche Snapshots für Performance-Kennzahlen.
+4. Alternativ oder ergänzend Buchungen direkt erfassen: *Buchungen → Neue Buchung* (siehe
+   [Buchungen erfassen](#buchungen-in-portfolia-erfassen)).
 
 Ausprobieren ohne Internet: `DEMO_MODE=true` (deutlich gekennzeichnete synthetische Kurse).
 
@@ -211,6 +218,37 @@ Prüfen ohne Import: `docker exec portfolia python -m app validate /import/datei
 
 ---
 
+## Buchungen in Portfolia erfassen
+
+Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Portfolia erfassen
+(*Buchungen* in der Seitenleiste bzw. *Mehr → Buchungen*). Die Seite listet **alle** Buchungen mit Filtern
+(Konto, Asset, Quelle, Typ, Jahr, Suche) und Kennzeichnung der Quelle (Import, manuell, Sparplan).
+
+* **Vorlagen:** Kauf, Verkauf, Tausch, Übertrag zwischen eigenen Konten, Ertrag (Dividende mit
+  Quellensteuer, Zinsen, Staking, Lending, Airdrop …), Ein-/Auszahlung, Kosten/Verlust, Kapitalmaßnahme und
+  „Experte“ (alle Felder des Datenvertrags). Die Vorlage bildet Abgangs-, Zugangs- und Gebührenbein gemäß
+  Datenvertrag; Zahlen mit Komma oder Punkt.
+* **EUR-Werte:** Fremdwährungen per EZB-Devisenkurs des Tages; bei Tausch, Erträgen und Zu-/Abgängen ohne
+  Angabe Tageskurs × Menge (Schlusskurs, am laufenden Tag aktueller Kurs, ersatzweise manueller Kurs oder
+  letzter Transaktionskurs der letzten 31 Tage). Die Herkunft des Werts wird gespeichert.
+* **Prüfung:** derselbe Validator wie beim Import (Pflichtbeine, `value_eur`, Transfers …). Hinweise, wenn
+  ein Abgang den Bestand eines Kontos ins Minus drückt oder eine Buchung einer Import-Buchung stark ähnelt
+  (gleiche Konten und Assets, ±2 Tage, Menge ±1 % → „Dublette?“, auch unter *Datenqualität*).
+* **Bearbeiten, Kopieren, Löschen:** IDs `PF-M-000001` ff.; Import-Buchungen lassen sich als Vorlage kopieren.
+  Löschen ist umkehrbar; jede Änderung steht im Änderungsprotokoll (*Datenqualität*).
+* **Assets:** neue Positionen mit Kursquelle (CoinGecko-ID bzw. Yahoo-Symbol), Kategorie und Steuerart
+  anlegen. Definiert der Import dasselbe Asset, gelten dessen Stammdaten.
+* **Zusammenspiel mit dem Import:** Der Import bleibt unverändert, manuelle Buchungen kommen hinzu. Enthält ein
+  späterer Import dieselbe `tx_id`, gilt die Import-Buchung (keine Doppelzählung); ähnliche Buchungen mit
+  anderer ID werden nur gemeldet. Manuell erfasste Sparplan-Ausführungen ersetzen passende Schätzungen.
+* **Gesamtexport:** Import + manuelle Buchungen + freigegebene Sparplan-Ausführungen als Import-ZIP
+  (Schema 1.1, mit aktuellem Bestand als `holdings_check`) – als Sicherung, zum Umzug oder als neuer
+  kuratierter Import.
+* **Ohne Import:** Alle Ansichten (Positionen, Performance, Steuern, Sparpläne) funktionieren auch nur mit
+  manuell erfassten Buchungen. Steuerberichte weisen manuell erfasste Buchungen des Jahres aus.
+
+---
+
 ## Berechnungen
 
 * **Bestände** je Asset und Konto aus dem Ledger (inkl. Gebühren); `holdings_check` dient nur dem Abgleich.
@@ -266,7 +304,7 @@ im Import und führt sie **geschätzt** fort. Geschätzte Buchungen liegen aussc
 |---|---|---|---|
 | geschätzt | ja | Badge „geschätzt“ (Positionen, Detailansicht), Hinweis im Kopf, Warnung in *Steuern* | *Freigeben*, *Anpassen* (Datum, Uhrzeit, Stück oder Betrag, Kurs, Gebühr) oder *Verwerfen* |
 | freigegeben | ja | keine (Detailansicht: „Sparplan, noch nicht im Import“) | nächster Import; fehlt die Buchung dort, obwohl der Import den Termin abdeckt: „fehlt im Import“ + Warnung, bleibt bis zum Entfernen (×) |
-| durch Import ersetzt | nein | – | Import enthält die Buchung (±7 Tage, Betrag oder Stück ±20 %) |
+| durch Import ersetzt | nein | – | Import oder manuelle Buchung enthält die Ausführung (wöchentlich ±3, 14-täglich ±6, sonst ±7 Tage; Betrag oder Stück ±20 %) |
 | nicht im Import | nein | – | nur ungeprüfte Schätzungen: Import deckt den Termin ab, Buchung fehlt |
 | verworfen | nein | – | vom Nutzer verworfen oder Sparplan deaktiviert/ausgesetzt |
 
@@ -419,8 +457,9 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
   Integritätsprüfung, gzip-komprimiert nach `/data/backups`, Aufbewahrung 14 Stück (einstellbar); manuell
   unter *Einstellungen → Backups* oder per `docker exec -u 99:100 portfolia python -m app backup`.
   **Wiederherstellen:** Container stoppen, Sicherung entpacken (`gunzip`), als `/data/app.sqlite` ablegen,
-  `app.sqlite-wal`/`-shm` entfernen, Container starten. Portfolio-Daten selbst stammen immer aus der
-  Import-Datei.
+  `app.sqlite-wal`/`-shm` entfernen, Container starten. **Wichtig:** In Portfolia erfasste Buchungen und
+  Assets existieren nur in der App-Datenbank – Sicherungen aktiv lassen und zusätzlich regelmäßig den
+  Gesamtexport (*Buchungen → Gesamtexport*) ablegen.
 
 ---
 

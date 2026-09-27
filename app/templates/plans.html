@@ -2,13 +2,14 @@
 {% block title %}Sparpläne{% endblock %}
 {% block heading %}Sparpläne{% endblock %}
 {% macro asset_name(aid) -%}{{ assets[aid].name if aid in assets else aid }}{%- endmacro %}
-{% macro price_warn(e) -%}{% if e.price_warn %}<div class="price-warn"><span class="badge warn" title="Schätzkurs weicht um mehr als Faktor 2 vom letzten Kauf laut Import ab – z. B. falsche Kursreihe, Split oder GBp/GBP. Kurs und Stückzahl prüfen und ggf. anpassen.">Kurs prüfen</span> letzter Kauf laut Import: {{ e.price_warn.ref|price }} ({{ e.price_warn.date|date_de }})</div>{% endif %}{%- endmacro %}
+{% macro price_warn(e) -%}{% if e.price_warn %}<div class="price-warn"><span class="badge warn" title="Schätzkurs weicht um mehr als Faktor 2 vom letzten erfassten Kauf ab – z. B. falsche Kursreihe, Split oder GBp/GBP. Kurs und Stückzahl prüfen und ggf. anpassen.">Kurs prüfen</span> letzter erfasster Kauf: {{ e.price_warn.ref|price }} ({{ e.price_warn.date|date_de }})</div>{% endif %}{%- endmacro %}
 {% block content %}
 <div class="alert"><span class="icon">i</span><div>
-  Portfolia erkennt laufende Sparpläne an regelmäßigen Käufen im Import und ergänzt Ausführungen nach dem Importstand
-  {% if cutoff %}({{ cutoff|date_de }}){% endif %} als <b>Schätzung</b> – Datum, Uhrzeit, Stückzahl und Kurs können leicht
+  Portfolia erkennt laufende Sparpläne an regelmäßigen Käufen (Import und manuell erfasste Buchungen) und ergänzt
+  Ausführungen nach dem {{ 'Importstand' if has_import else 'Datenstand' }} {% if cutoff %}({{ cutoff|date_de }}){% endif %}
+  als <b>Schätzung</b> – Datum, Uhrzeit, Stückzahl und Kurs können leicht
   abweichen. Geschätzte Buchungen sind im Portfolio enthalten und markiert. Nach Prüfung freigeben (ggf. vorher anpassen);
-  enthält ein späterer Import die echte Buchung, ersetzt sie die Schätzung automatisch.</div></div>
+  enthält ein späterer Import die echte Buchung oder wird sie manuell erfasst, ersetzt sie die Schätzung automatisch.</div></div>
 {% if errors %}<div class="alert crit"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
 {% if saved %}<div class="alert good"><span class="icon">✓</span><div>{{ {'confirmed': 'Freigegeben.', 'dismissed': 'Verworfen.', 'edited': 'Gespeichert.', 'plan': 'Sparplan gespeichert.', 'update': 'Sparpläne geprüft.'}.get(saved, 'Gespeichert.') }}</div></div>{% endif %}
 

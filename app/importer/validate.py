@@ -616,6 +616,18 @@ def _parse_manual(rows: list[dict[str, str]], assets: dict[str, Any], rep: Repor
     return out
 
 
+def validate_tx_rows(rows: list[dict[str, str]], assets: dict[str, dict[str, Any]]
+                     ) -> tuple[Report, list[dict[str, Any]]]:
+    """Einzelne Buchungen (Spalten wie transactions.csv, Werte als Text) mit denselben Regeln wie beim Import prüfen.
+
+    ``assets`` bildet asset_id auf mindestens ``{"asset_class": …}`` ab. Genutzt für in der App erfasste Buchungen.
+    """
+    rep = Report()
+    prepared = [{**r, "__line__": str(i + 1)} for i, r in enumerate(rows)]
+    header = list(dict.fromkeys(k for r in rows for k in r))
+    return rep, _parse_transactions(prepared, header, assets, None, None, rep)
+
+
 def validate_zip(path: Path) -> tuple[Report, ParsedImport | None]:
     rep = Report()
     path = Path(path)

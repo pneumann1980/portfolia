@@ -39,7 +39,7 @@ def client(config):
 
 def test_empty_state_then_import_with_csrf(client):
     r = client.get("/")
-    assert r.status_code == 200 and "Noch kein Portfolio importiert" in r.text
+    assert r.status_code == 200 and "Noch keine Buchungen" in r.text and "Erste Buchung erfassen" in r.text
     assert "default-src 'self'" in r.headers["content-security-policy"]
     assert r.headers["x-frame-options"] == "DENY" and r.headers["referrer-policy"] == "no-referrer"
     # ohne CSRF-Token abgelehnt

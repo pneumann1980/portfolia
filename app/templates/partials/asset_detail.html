@@ -147,6 +147,7 @@
 
   <details class="box">
     <summary>Transaktionen ({{ tx_total }})</summary>
+    <p class="hint" style="margin:6px 0"><a href="/journal?asset={{ a.asset_id|urlencode }}">Alle Buchungen dieser Position</a> · <a href="/journal/new?kind=buy">Buchung erfassen</a></p>
     <div class="table-wrap">
     <table>
       <thead><tr><th>Datum</th><th>Typ</th><th>Abgang</th><th>Zugang</th><th class="num">Wert</th><th class="num">Gebühr</th></tr></thead>
@@ -155,7 +156,8 @@
         <tr><td class="nowrap">{{ t.ts|datetime_de if not t.date_only else t.date|date_de }}</td>
           <td>{{ t.type }}{% if t.tag %} <span class="badge">{{ t.tag }}</span>{% endif %}
             {% if t.flag == 'estimated' %} <a class="badge warn" href="/plans" title="{{ t.note or 'Schätzung' }} – unter „Sparpläne“ prüfen und freigeben">geschätzt</a>
-            {% elif t.flag == 'confirmed' %}<br><small class="muted">Sparplan, noch nicht im Import</small>{% endif %}</td>
+            {% elif t.flag == 'confirmed' %}<br><small class="muted">Sparplan, noch nicht im Import</small>
+            {% elif t.origin == 'journal' %} <a class="badge info" href="/journal/{{ t.tx_id }}/edit" title="In Portfolia erfasst ({{ t.tx_id }}) – bearbeiten">manuell</a>{% endif %}</td>
           <td>{% if t.from_asset %}{{ t.from_qty|qty }} {{ t.from_asset }}<br><small class="muted">{{ t.from_account }}</small>{% endif %}</td>
           <td>{% if t.to_asset %}{{ t.to_qty|qty }} {{ t.to_asset }}<br><small class="muted">{{ t.to_account }}</small>{% endif %}</td>
           <td class="num">{{ t.value_eur|eur if t.value_eur is not none else '–' }}{% if t.orig_price %}<br><small class="muted">{{ t.orig_price }} {{ t.orig_ccy or '' }}</small>{% endif %}</td>

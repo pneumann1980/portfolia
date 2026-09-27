@@ -93,6 +93,15 @@ class Plan:
             return f"{FREQS[self.freq]} am " + " und ".join(f"{d}." for d in self.days)
         return FREQS.get(self.freq, self.freq)
 
+    def assess(self, cutoff: date, last_seen: date | None = None) -> None:
+        """Status zum Datenstand: nächster Termin, verpasste Termine (ab letzter Ausführung bzw. ``last_seen``)."""
+        last = max(self.last_date, last_seen) if last_seen else self.last_date
+        due = self.schedule(last, cutoff + timedelta(days=3660), limit=1)
+        self.next_due = due[0] if due else None
+        missed = self.schedule(last, cutoff - timedelta(days=GRACE_DAYS[self.freq]))
+        self.missed = len(missed)
+        self.status = "active" if not missed else ("paused" if len(missed) == 1 else "ended")
+
     def schedule(self, after: date, until: date, limit: int = 120) -> list[date]:
         """Planmäßige Termine > ``after`` und ≤ ``until`` (mit Wochenend-Verschiebung)."""
         return schedule(self.freq, self.days, self.weekday, self.last_date, self.weekend_shift, after, until, limit)
@@ -160,7 +169,7 @@ def buy_series(pf: Portfolio, since: date | None = None) -> dict[tuple[str, str]
     tz = local_tz()
     out: dict[tuple[str, str], list[Execution]] = defaultdict(list)
     for t in pf.txs:
-        if t.flag in ("estimated", "confirmed") or t.type != "buy":
+        if t.flag == "estimated" or t.type != "buy":  # freigegebene Ausführungen zählen als erfasst
             continue
         if not t.to_asset or not t.to_account or not t.to_qty or t.to_qty <= 0:
             continue
@@ -319,12 +328,7 @@ def detect_plans(pf: Portfolio, cutoff: date, lookback_days: int = LOOKBACK_DAYS
             funding="external" if (funding_asset is None or _external_funding(pf, account, run)) else "cash",
             weekend_shift=not any(e.date.weekday() >= 5 for e in run), executions=run, confidence=confidence,
         )
-        grace = GRACE_DAYS[freq]
-        due = plan.schedule(plan.last_date, cutoff + timedelta(days=3660), limit=1)
-        plan.next_due = due[0] if due else None
-        missed = plan.schedule(plan.last_date, cutoff - timedelta(days=grace))
-        plan.missed = len(missed)
-        plan.status = "active" if not missed else ("paused" if len(missed) == 1 else "ended")
+        plan.assess(cutoff)
         plans.append(plan)
     return plans
 
