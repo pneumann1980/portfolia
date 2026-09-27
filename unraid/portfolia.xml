@@ -20,7 +20,7 @@
   <DateInstalled/>
   <DonateText/>
   <DonateLink/>
-  <Requires>Eine Import-Datei (ZIP gemäß Datenvertrag, siehe README) im Importordner. Ohne API-Schlüssel funktionieren Yahoo- und EZB-Kurse; für Krypto-Kurse wird ein kostenloser CoinGecko-Demo-Schlüssel empfohlen.</Requires>
+  <Requires>Optional eine kuratierte Import-Datei (ZIP gemäß Datenvertrag, siehe README) im Importordner – Buchungen lassen sich auch per CSV-Import (Börsen, Wallets, Steuertools) oder manuell erfassen. Ohne API-Schlüssel funktionieren Yahoo- und EZB-Kurse; für Krypto-Kurse wird ein kostenloser CoinGecko-Demo-Schlüssel empfohlen.</Requires>
   <Config Name="Web-Oberfläche" Target="8080" Default="8080" Mode="tcp" Description="Port der Weboberfläche (nur im LAN freigeben)." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
   <Config Name="Daten (appdata)" Target="/data" Default="/mnt/user/appdata/portfolia" Mode="rw" Description="App-Datenbank, Kurs-Cache, Backups, Berichte, sources.yaml, lokale Steuerparameter (tax_rules)." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/portfolia</Config>
   <Config Name="Import (nur lesen)" Target="/import" Default="/mnt/user/appdata/portfolia-import" Mode="ro" Description="Ordner mit den Import-ZIPs (wird alle 5 Minuten geprüft, nur lesend eingebunden). Nicht innerhalb des Datenordners ablegen." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/portfolia-import</Config>
