@@ -119,10 +119,14 @@
     if (trg) { e.preventDefault(); trg.click(); }
   });
 
-  // --- Formulare: automatisch absenden ----------------------------------------------------------------
+  // --- Formulare: automatisch absenden, Rückfrage vor dem Absenden ------------------------------------
   document.addEventListener("change", function (e) {
     var el = e.target.closest("[data-autosubmit]");
     if (el && el.form) el.form.submit();
+  });
+  document.addEventListener("submit", function (e) {
+    var msg = e.target.getAttribute && e.target.getAttribute("data-confirm");
+    if (msg && !window.confirm(msg)) e.preventDefault();
   });
 
   // --- Segment-Schalter (Zeitraum, Darstellung, Allokation) -------------------------------------------

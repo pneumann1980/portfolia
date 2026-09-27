@@ -7,6 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from app.util.numbers import plain_de
 from app.util.timeutil import fmt_de_date, fmt_de_datetime, local_tz
 
 NBSP = " "
@@ -173,5 +174,5 @@ def register(env: Any) -> None:
         "fromjson": fromjson,
         "num": num, "eur": eur, "eur_kpi": eur_kpi, "eur_compact": eur_compact, "pct": pct, "qty": qty, "price": price,
         "tone": tone, "arrow": arrow, "date_de": date_de, "datetime_de": datetime_de, "rel_time": rel_time,
-        "rel_time_iso": rel_time_iso, "duration": duration,
+        "rel_time_iso": rel_time_iso, "duration": duration, "plain": plain_de,
     })

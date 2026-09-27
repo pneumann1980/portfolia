@@ -1,0 +1,21 @@
+<tr id="est-{{ e.id }}" class="edit-row"><td colspan="8">
+  <form method="post" action="/plans/tx/{{ e.id }}/edit" class="plan-edit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="hint">Buchung anpassen · {{ e.asset_id }} · {{ e.account }}{% if e.status == 'estimated' %} · <span class="badge warn">geschätzt</span>{% endif %}</div>
+    {% if errors %}<div class="alert crit" style="margin:8px 0"><span class="icon">!</span><div>{% for err in errors %}{{ err }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+    <div class="edit-grid">
+      <label class="field">Datum<input type="date" name="date" required value="{{ form.date if form and form.date else (e.local.strftime('%Y-%m-%d') if e.local else e.due_date) }}"></label>
+      <label class="field">Uhrzeit<input type="time" name="time" value="{{ form.time if form and form.time else (e.local.strftime('%H:%M') if e.local else '12:00') }}"></label>
+      <label class="field">Stück<input type="text" inputmode="decimal" name="qty" value="{{ form.qty if form and form.qty is not none else e.qty_d|plain }}"></label>
+      <label class="field">Kurs (EUR je Stück)<input type="text" inputmode="decimal" name="price" value="{{ form.price if form and form.price is not none else e.price_d|plain(6) }}"></label>
+      <label class="field">Gebühr (EUR)<input type="text" inputmode="decimal" name="fee" value="{{ form.fee if form and form.fee is not none else e.fee_d|plain(2) }}"></label>
+      <label class="field">oder Betrag (EUR)<input type="text" inputmode="decimal" name="amount" value="" placeholder="Stück leer lassen"></label>
+    </div>
+    <p class="hint">Betrag = Stück × Kurs. Ist nur der Betrag bekannt, Stück leer lassen – die Stückzahl wird aus Betrag und Kurs berechnet.</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <button class="btn primary" type="submit" name="confirm" value="1">Übernehmen und freigeben</button>
+      <button class="btn" type="submit" name="confirm" value="0">Nur speichern</button>
+      <a class="btn ghost" href="/plans">Abbrechen</a>
+    </div>
+  </form>
+</td></tr>

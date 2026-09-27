@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -16,6 +16,7 @@ from app.tax import registry
 from app.tax.base import RulePack, fmt_value
 from app.tax.classify import ACCOUNT_KINDS, ASSET_TYPES, securities_accounts
 from app.tax.service import tax_service
+from app.util.numbers import parse_number
 from app.util.timeutil import today_local
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
@@ -26,18 +27,8 @@ HTML_ROWS = 150
 
 def _num(v: Any) -> str | None:
     """Deutsche oder englische Zahleneingabe → normalisierter Dezimal-String; leer → None."""
-    s = str(v or "").strip().replace(" ", "").replace("€", "").replace("%", "")
-    if not s:
-        return None
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    elif "," in s:
-        s = s.replace(",", ".")
-    try:
-        d = Decimal(s)
-    except InvalidOperation:
-        return None
-    if not d.is_finite() or abs(d) > Decimal("1e12"):
+    d = parse_number(v)
+    if d is None or abs(d) > Decimal("1e12"):
         return None
     return format(d.normalize(), "f")
 

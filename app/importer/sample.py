@@ -8,8 +8,8 @@ Kurse sind plausibel, aber fiktiv gerundet – keine echten Kontodaten.
 
 from __future__ import annotations
 
-from datetime import date
-from decimal import Decimal
+from datetime import date, timedelta
+from decimal import ROUND_DOWN, Decimal
 from pathlib import Path
 from typing import Any
 
@@ -88,7 +88,7 @@ def sample_transactions(until: date | None = None) -> list[dict[str, Any]]:
                      ("2025-01-02", 20, "101.20"), ("2026-01-02", 15, "108.90")):
         v = (Decimal(q) * Decimal(px)).quantize(Decimal("0.01"))
         t.append(_tx(n, d, "buy", frm=("Depot A", "EUR", v), to=("Depot A", "WKN:A0RPWH", q), value=v,
-                     orig=(px, "EUR"), note="Sparplan"))
+                     orig=(px, "EUR"), note="Einmalkauf"))
     t.append(_tx(n, "2023-05-10T14:10:00Z", "buy", frm=("Depot A", "EUR", "2650.00"), to=("Depot A", "WKN:918422", 10),
                  value="2650.00", fee=("EUR", 1, 1), orig=("290.00", "USD")))
     t.append(_tx(n, "2023-06-15", "deposit", tag="dividend", to=("Depot A", "EUR", "3.40"), value="3.40",
@@ -149,6 +149,23 @@ def sample_transactions(until: date | None = None) -> list[dict[str, Any]]:
                  value=900, fee=("BNB", "0.005", "3.20")))
     t.append(_tx(n, "2026-02-03T19:00:00Z", "withdrawal", tag="cost", frm=("Börse X", "SUI", 20), value="45.00",
                  note="Bezahlung einer Dienstleistung mit SUI"))
+    # Laufender ETF-Sparplan: monatlich 150 € am 25. (Wochenende → Montag), Depot A
+    for i in range(24):
+        y, m = 2025 + i // 12, i % 12 + 1
+        d = date(y, m, 25)
+        if d.weekday() >= 5:
+            d += timedelta(days=7 - d.weekday())
+        px = Decimal("96.00") + Decimal("0.9") * i
+        q = (Decimal(150) / px).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
+        t.append(_tx(n, f"{d.isoformat()}T07:30:00Z", "buy", frm=("Depot A", "EUR", "150.00"),
+                     to=("Depot A", "WKN:A0RPWH", q), value="150.00", orig=(str(px), "EUR"), note="Sparplan"))
+    # Laufender Bitcoin-Sparplan: wöchentlich montags 25 € (+0,25 € Gebühr), Börse X
+    for i in range(40):
+        d = date(2026, 3, 2) + timedelta(days=7 * i)
+        px = Decimal(58000 + 400 * i)
+        q = (Decimal(25) / px).quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
+        t.append(_tx(n, f"{d.isoformat()}T06:00:00Z", "buy", frm=("Börse X", "EUR", 25), to=("Börse X", "BTC", q),
+                     value="25.00", fee=("EUR", "0.25", "0.25"), orig=(str(px), "EUR"), note="Sparplan"))
     if until:
         t = [x for x in t if x["datetime"][:10] <= until.isoformat()]
     return t

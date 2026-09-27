@@ -37,7 +37,8 @@
         <td><div class="name"><span class="dot" style="background:{{ p.colors.light }}" data-color-light="{{ p.colors.light }}" data-color-dark="{{ p.colors.dark }}"></span>
           <span class="t"><b>{{ p.asset.name }}</b><small>{{ p.asset.symbol }} · {{ p.category }}
             {% if not p.price.valued %} · <span class="badge crit">unbewertet</span>{% elif p.price.stale %} · <span class="badge warn" title="{{ p.price.note or 'Kurs veraltet' }}">veraltet</span>{% endif %}
-            {% if p.price.kind == 'manual' %} · <span class="badge info" title="{{ p.price.note }}">manuell</span>{% endif %}</small></span></div></td>
+            {% if p.price.kind == 'manual' %} · <span class="badge info" title="{{ p.price.note }}">manuell</span>{% endif %}
+            {% if p.asset_id in estimated_assets %} · <span class="badge warn" title="Enthält geschätzte Sparplan-Käufe seit dem letzten Import – unter „Sparpläne“ prüfen">geschätzt</span>{% endif %}</small></span></div></td>
         <td class="num">{{ p.qty|qty }}</td>
         <td class="num">{{ p.price.price_eur|price if p.price.valued else '–' }}{% if p.price.ccy and p.price.ccy != 'EUR' and p.price.price_native %}<br><small class="muted">{{ p.price.price_native|num(2) }} {{ p.price.ccy }}</small>{% endif %}</td>
         <td class="num"><b>{{ p.value|eur }}</b></td>

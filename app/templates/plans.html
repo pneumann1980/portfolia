@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Sparpläne{% endblock %}
+{% block heading %}Sparpläne{% endblock %}
+{% macro asset_name(aid) -%}{{ assets[aid].name if aid in assets else aid }}{%- endmacro %}
+{% macro price_warn(e) -%}{% if e.price_warn %}<div class="price-warn"><span class="badge warn" title="Schätzkurs weicht um mehr als Faktor 2 vom letzten Kauf laut Import ab – z. B. falsche Kursreihe, Split oder GBp/GBP. Kurs und Stückzahl prüfen und ggf. anpassen.">Kurs prüfen</span> letzter Kauf laut Import: {{ e.price_warn.ref|price }} ({{ e.price_warn.date|date_de }})</div>{% endif %}{%- endmacro %}
+{% block content %}
+<div class="alert"><span class="icon">i</span><div>
+  Portfolia erkennt laufende Sparpläne an regelmäßigen Käufen im Import und ergänzt Ausführungen nach dem Importstand
+  {% if cutoff %}({{ cutoff|date_de }}){% endif %} als <b>Schätzung</b> – Datum, Uhrzeit, Stückzahl und Kurs können leicht
+  abweichen. Geschätzte Buchungen sind im Portfolio enthalten und markiert. Nach Prüfung freigeben (ggf. vorher anpassen);
+  enthält ein späterer Import die echte Buchung, ersetzt sie die Schätzung automatisch.</div></div>
+{% if errors %}<div class="alert crit"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+{% if saved %}<div class="alert good"><span class="icon">✓</span><div>{{ {'confirmed': 'Freigegeben.', 'dismissed': 'Verworfen.', 'edited': 'Gespeichert.', 'plan': 'Sparplan gespeichert.', 'update': 'Sparpläne geprüft.'}.get(saved, 'Gespeichert.') }}</div></div>{% endif %}
+
+<section class="card" id="pending">
+  <div class="card-head"><h2>Zu prüfen {% if pending %}<span class="badge warn">{{ pending|length }}</span>{% endif %}</h2>
+    <div class="row" style="gap:8px">
+      <form method="post" action="/plans/update"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Jetzt prüfen</button></form>
+      {% if pending %}{% set n_warn = pending|selectattr('price_warn')|list|length %}<form method="post" action="/plans/tx/confirm-all"{% if n_warn %} data-confirm="{{ n_warn }} {{ 'Schätzung hat' if n_warn == 1 else 'Schätzungen haben' }} einen auffälligen Kurs. Trotzdem alle freigeben?"{% endif %}><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm primary" type="submit">Alle freigeben</button></form>{% endif %}
+    </div></div>
+  {% if pending %}
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>Ausführung</th><th>Position</th><th class="num">Stück</th><th class="num">Kurs</th><th class="num">Betrag</th><th class="num">Gebühr</th><th>Kursbasis</th><th></th></tr></thead>
+    <tbody>
+    {% for e in pending %}
+      {% if edit_id == e.id %}{% include "partials/plan_edit.html" %}{% else %}
+      <tr id="est-{{ e.id }}">
+        <td class="nowrap" data-label="Ausführung">{{ e.local|datetime_de }}<div><span class="badge warn">geschätzt</span></div></td>
+        <td data-label="Position"><a href="{{ asset_url(e.asset_id) }}">{{ asset_name(e.asset_id) }}</a><div class="hint">{{ e.account }}</div></td>
+        <td class="num nowrap" data-label="Stück">≈ {{ e.qty_d|qty }}</td>
+        <td class="num nowrap" data-label="Kurs">{{ e.price_d|price }}</td>
+        <td class="num nowrap" data-label="Betrag">{{ e.value_d|eur }}</td>
+        <td class="num nowrap" data-label="Gebühr">{{ e.fee_d|eur if e.fee_d else '–' }}</td>
+        <td class="hint wide" data-label="Kursbasis">{{ e.price_source }}{{ price_warn(e) }}</td>
+        <td class="nowrap actions">
+          <form method="post" action="/plans/tx/{{ e.id }}/confirm" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm primary" type="submit">Freigeben</button></form>
+          <a class="btn sm" href="/plans/tx/{{ e.id }}/edit" hx-get="/plans/tx/{{ e.id }}/edit" hx-target="#est-{{ e.id }}" hx-swap="outerHTML">Anpassen</a>
+          <form method="post" action="/plans/tx/{{ e.id }}/dismiss" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="icon-btn" type="submit" title="Schätzung verwerfen (z. B. Ausführung ausgesetzt)" aria-label="Schätzung verwerfen">×</button></form>
+        </td>
+      </tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="hint">Keine offenen Schätzungen. Neue Ausführungen werden morgens und abends ergänzt.</p>{% endif %}
+</section>
+
+<section class="card" id="confirmed" style="margin-top:16px">
+  <div class="card-head"><h2>Freigegeben – noch nicht im Import</h2>
+    {% if confirmed %}<a class="btn sm" href="/plans/export.csv" download>CSV für den Import</a>{% endif %}</div>
+  {% if confirmed %}
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>Ausführung</th><th>Position</th><th class="num">Stück</th><th class="num">Kurs</th><th class="num">Betrag</th><th class="num">Gebühr</th><th>Hinweis</th><th></th></tr></thead>
+    <tbody>
+    {% for e in confirmed %}
+      {% if edit_id == e.id %}{% include "partials/plan_edit.html" %}{% else %}
+      <tr id="est-{{ e.id }}">
+        <td class="nowrap" data-label="Ausführung">{{ e.local|datetime_de }}</td>
+        <td data-label="Position"><a href="{{ asset_url(e.asset_id) }}">{{ asset_name(e.asset_id) }}</a><div class="hint">{{ e.account }}</div></td>
+        <td class="num nowrap" data-label="Stück">{{ e.qty_d|qty }}</td>
+        <td class="num nowrap" data-label="Kurs">{{ e.price_d|price }}</td>
+        <td class="num nowrap" data-label="Betrag">{{ e.value_d|eur }}</td>
+        <td class="num nowrap" data-label="Gebühr">{{ e.fee_d|eur if e.fee_d else '–' }}</td>
+        <td class="wide" data-label="Hinweis">{% if e.missing_import_id %}<span class="badge warn" title="Der Import deckt den Termin ab, enthält die Buchung aber nicht">fehlt im Import</span>{% else %}<span class="hint">{{ e.price_source or '' }}</span>{% endif %}{{ price_warn(e) }}</td>
+        <td class="nowrap actions">
+          <a class="btn sm" href="/plans/tx/{{ e.id }}/edit" hx-get="/plans/tx/{{ e.id }}/edit" hx-target="#est-{{ e.id }}" hx-swap="outerHTML">Anpassen</a>
+          <form method="post" action="/plans/tx/{{ e.id }}/dismiss" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="icon-btn" type="submit" title="Buchung entfernen" aria-label="Buchung entfernen">×</button></form>
+        </td>
+      </tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="hint">Freigegebene Buchungen bleiben im Portfolio, bis ein Import die echte Buchung enthält. Die CSV-Datei hat das Format von <code>transactions.csv</code> und kann in den kuratierten Import übernommen werden.</p>
+  {% else %}<p class="hint">Keine freigegebenen Buchungen außerhalb des Imports.</p>{% endif %}
+</section>
+
+<section class="card" id="plans" style="margin-top:16px">
+  <div class="card-head"><h2>Erkannte Sparpläne</h2><span class="hint">aus den Käufen der letzten 14 Monate je Konto und Position</span></div>
+  {% if plans %}
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>Position</th><th>Rhythmus</th><th class="num">Sparrate</th><th>Letzte Ausführung</th><th>Nächste</th><th>Status</th><th>Schätzen</th></tr></thead>
+    <tbody>
+    {% for p in plans %}
+      <tr class="{{ 'is-ended' if p.status == 'ended' }}">
+        <td class="wide" data-label="Position"><a href="{{ asset_url(p.asset_id) }}">{{ asset_name(p.asset_id) }}</a>
+          <div class="hint">{{ p.account }} · {{ p.executions }} Ausführungen · Sicherheit {{ p.confidence }}</div></td>
+        <td data-label="Rhythmus">{{ p.label }}{% if not p.date_only and p.time_local %}<div class="hint">ca. {{ p.time_local }} Uhr{% if p.funding == 'external' %} · per Lastschrift{% endif %}</div>{% endif %}</td>
+        <td class="num" data-label="Sparrate">
+          <form method="post" action="/plans/plan/amount" class="inline-amount">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="key" value="{{ p.key }}">
+            <input type="text" inputmode="decimal" name="amount" value="{{ p.amount|plain(2) }}" aria-label="Sparrate in Euro">&nbsp;€
+            <button class="icon-btn" type="submit" title="Sparrate speichern" aria-label="Sparrate speichern">✓</button>
+          </form>
+          {% if p.user_amount %}<div class="hint">angepasst · erkannt {{ p.amount_eur|eur }}</div>{% endif %}
+        </td>
+        <td class="nowrap" data-label="Letzte Ausführung">{{ p.last_date|date_de }}</td>
+        <td class="nowrap" data-label="Nächste">{{ p.next_due|date_de if p.status == 'active' else '–' }}</td>
+        <td data-label="Status">{% if p.status == 'active' %}<span class="badge good">läuft</span>{% elif p.status == 'paused' %}<span class="badge warn" title="Eine planmäßige Ausführung fehlt im Import">ausgesetzt?</span>{% else %}<span class="badge">beendet</span>{% endif %}</td>
+        <td class="wide" data-label="Schätzen">
+          <form method="post" action="/plans/plan/enabled">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="key" value="{{ p.key }}">
+            <select name="value" data-autosubmit aria-label="Schätzung für diesen Sparplan">
+              <option value="auto" {% if p.enabled is none %}selected{% endif %}>automatisch ({{ 'an' if p.confidence in ('hoch', 'mittel') else 'aus' }})</option>
+              <option value="on" {% if p.enabled == 1 %}selected{% endif %}>an</option>
+              <option value="off" {% if p.enabled == 0 %}selected{% endif %}>aus</option>
+            </select>
+            <noscript><button class="btn sm" type="submit">OK</button></noscript>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="hint">Erkannt werden wöchentliche, 14-tägliche, 2× monatliche, monatliche, zweimonatliche und vierteljährliche Käufe mit stabiler Sparrate (mind. 3 Ausführungen). Pläne mit geringer Sicherheit werden nur geschätzt, wenn „an“ gewählt ist. Eine geänderte Sparrate gilt für alle noch nicht geprüften Schätzungen.</p>
+  {% else %}<p class="hint">Keine laufenden Sparpläne erkannt.</p>{% endif %}
+</section>
+
+{% if history %}
+<details class="box" style="margin-top:16px"><summary>Verlauf <span class="badge">{{ history|length }}</span></summary>
+  <div class="table-wrap"><table class="compact">
+    <thead><tr><th>Termin</th><th>Position</th><th class="num">Betrag</th><th>Status</th><th>Hinweis</th></tr></thead>
+    <tbody>{% for e in history %}
+      <tr><td class="nowrap">{{ e.due_date|date_de }}</td><td>{{ asset_name(e.asset_id) }}<div class="hint">{{ e.account }}</div></td>
+        <td class="num nowrap">{{ e.value_d|eur }}</td><td><span class="badge {{ 'good' if e.status == 'superseded' else '' }}">{{ e.status_label }}</span></td>
+        <td class="hint">{{ e.note or '' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</details>
+{% endif %}
+{% endblock %}

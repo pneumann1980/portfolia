@@ -793,6 +793,15 @@ class GermanyPack(RulePack):
         if year >= inp.today.year:
             issues.append(Issue("info", "year_open",
                                 f"Das Jahr {year} ist noch nicht abgeschlossen – vorläufige Werte."))
+        est = sum(1 for t in inp.pf.txs if t.flag == "estimated" and t.date.year <= year)
+        if est:
+            issues.append(Issue("warning", "estimated_tx",
+                                f"{est} geschätzte Sparplan-Buchungen (noch nicht freigegeben) sind enthalten – "
+                                "Bestände und Haltefristen vorläufig; vor der Abgabe unter „Sparpläne“ prüfen.", est))
+        conf = sum(1 for t in inp.pf.txs if t.flag == "confirmed" and t.date.year <= year)
+        if conf:
+            issues.append(Issue("info", "confirmed_tx",
+                                f"{conf} freigegebene Sparplan-Buchungen sind noch nicht im Import enthalten.", conf))
         if c["missing"]:
             issues.append(Issue("warning", "missing_basis",
                            f"{c['missing']} Veräußerungsteile ohne Anschaffungsdaten (Fehlbestand) – konservativ als "

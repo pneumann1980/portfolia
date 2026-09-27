@@ -23,6 +23,7 @@ STATIC_DIR = BASE / "static"
 NAV = [
     ("dashboard", "/", "Übersicht", "home"),
     ("positions", "/positions", "Positionen", "list"),
+    ("plans", "/plans", "Sparpläne", "repeat"),
     ("performance", "/performance", "Performance", "chart"),
     ("tax", "/tax", "Steuern", "tax"),
     ("news", "/news", "News & Videos", "news"),

@@ -9,6 +9,7 @@ from typing import Any
 
 from app.context import AppContext
 from app.importer.loader import ImportOutcome, check_import_dir
+from app.plans.service import plan_service
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +34,11 @@ def import_check(ctx: AppContext, trigger: str = "poll", force: bool = False) ->
     out = check_import_dir(ctx.db, ctx.config.import_dir, ctx.engine_options("global"), trigger=trigger, force=force)
     if out.status == "imported":
         ctx.invalidate_data()
+        # Schätzungen sofort mit dem neuen Import abgleichen (keine Doppelzählung echter Sparplan-Buchungen)
+        try:
+            plan_service(ctx).reconcile()
+        except Exception as e:  # Abgleich darf den Import nie blockieren
+            log.warning("Sparplan-Abgleich fehlgeschlagen: %s", e)
         after_import(ctx)
     return out
 
@@ -45,6 +51,7 @@ def after_import(ctx: AppContext) -> None:
         sched.trigger("prices_securities", force=True)
         sched.trigger("history_backfill")
         sched.trigger("news_rematch")
+        sched.trigger("plans_update", 20)
     else:
         refresh_prices(ctx, force=True)
         backfill(ctx)
@@ -76,6 +83,10 @@ def backfill(ctx: AppContext, force: bool = False) -> dict[str, Any]:
     if pf is None or led is None:
         return {"skipped": "kein Import"}
     res = ctx.prices.backfill(pf, led, progress=lambda p: ctx.job_progress("history_backfill", p), force=force)
+    try:  # Kurse für Sparplan-Termine sind jetzt verfügbar
+        res["plans"] = plan_service(ctx).update()
+    except Exception as e:
+        log.warning("Sparplan-Aktualisierung fehlgeschlagen: %s", e)
     hist = ctx.recompute_history(persist=True)
     res["days"] = hist.n if hist else 0
     return res

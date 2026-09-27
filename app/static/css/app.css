@@ -296,7 +296,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 .seg button[aria-pressed="true"], .seg a.active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
 .seg a:hover { text-decoration: none; }
 
-select, input[type="text"], input[type="number"], input[type="date"], input[type="search"], input[type="password"], textarea {
+select, input[type="text"], input[type="number"], input[type="date"], input[type="time"], input[type="search"], input[type="password"], textarea {
   font: inherit; font-size: 0.9rem; color: var(--ink); background: var(--surface);
   border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 9px; min-height: 36px; max-width: 100%;
 }
@@ -440,3 +440,31 @@ label.field.inline { flex-direction: row; align-items: center; justify-content: 
 label.field.inline select { max-width: 62%; }
 #reports .list-item { align-items: flex-start; justify-content: space-between; }
 #reports .list-item form { flex: none; }
+
+/* -- Sparpläne ----------------------------------------------------------------------------------- */
+form.inline { display: inline; }
+td.actions { text-align: right; }
+td.actions > * { vertical-align: middle; }
+td.actions .btn + .btn, td.actions form + .btn, td.actions .btn + form { margin-left: 4px; }
+.inline-amount { display: inline-flex; align-items: center; gap: 4px; justify-content: flex-end; }
+.inline-amount input { width: 88px; text-align: right; padding: 5px 7px; }
+.inline-amount .icon-btn { min-width: 30px; min-height: 30px; }
+tr.edit-row > td { background: var(--surface-2); }
+.plan-edit { display: flex; flex-direction: column; gap: 10px; padding: 6px 2px; }
+.edit-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+tr.is-ended td { color: var(--muted); }
+.price-warn { margin-top: 4px; color: var(--ink-2); white-space: normal; }
+/* Tabellen als Karten auf schmalen Bildschirmen (Sparpläne: Aktionen ohne Querscrollen erreichbar) */
+@media (max-width: 699px) {
+  .table-wrap.cards-wrap { overflow: visible; margin: 0; padding: 0; }
+  table.cards, table.cards tbody { display: block; }
+  table.cards thead { display: none; }
+  table.cards tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  table.cards td { display: block; border: 0; padding: 0; text-align: left; white-space: normal; min-width: 0; }
+  table.cards td[data-label]::before { content: attr(data-label); display: block; font-size: 0.72rem; font-weight: 600; color: var(--ink-2); margin-bottom: 1px; }
+  table.cards td.wide, table.cards td.actions { grid-column: 1 / -1; }
+  table.cards td.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  table.cards td.actions .btn + .btn, table.cards td.actions form + .btn, table.cards td.actions .btn + form { margin-left: 0; }
+  table.cards tr.edit-row { display: block; }
+  table.cards .inline-amount { justify-content: flex-start; }
+}

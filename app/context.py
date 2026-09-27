@@ -7,6 +7,7 @@ geändert, Historie neu berechnet). Alle Methoden sind thread-sicher.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import logging
 import threading
@@ -55,7 +56,9 @@ class AppContext:
         )
         self.valuer = FlowValuer(self.store, self.prices.series_for)
         self._lock = threading.RLock()
-        self._pf: tuple[int, Portfolio] | None = None
+        self._base_pf: tuple[int, Portfolio] | None = None
+        self._pf: tuple[tuple[int, int], Portfolio] | None = None
+        self.overlay_version = 0
         self._ledgers: dict[tuple, LedgerResult] = {}
         self._vals: dict[tuple, Valuation] = {}
         self._hist: tuple[tuple, History | None] | None = None
@@ -79,18 +82,47 @@ class AppContext:
     def active_import_id(self) -> int | None:
         return active_import_id(self.db)
 
-    def portfolio(self) -> Portfolio | None:
+    def base_portfolio(self) -> Portfolio | None:
+        """Nur der Import (maßgebliche Quelle) – ohne geschätzte/bestätigte Sparplan-Buchungen."""
         iid = self.active_import_id()
         if iid is None:
             return None
         with self._lock:
-            if self._pf is not None and self._pf[0] == iid:
-                return self._pf[1]
+            if self._base_pf is not None and self._base_pf[0] == iid:
+                return self._base_pf[1]
             pf = portfolio_from_db(self.db, iid)
-            self._pf = (iid, pf)
+            self._base_pf = (iid, pf)
             if self.demo is not None:
                 self._seed_demo(pf)
             return pf
+
+    def portfolio(self) -> Portfolio | None:
+        """Import plus Sparplan-Schätzungen (``Tx.flag`` = estimated/confirmed) – Grundlage aller Ansichten."""
+        base = self.base_portfolio()
+        if base is None:
+            return None
+        key = (base.import_id or 0, self.overlay_version)
+        with self._lock:
+            if self._pf is not None and self._pf[0] == key:
+                return self._pf[1]
+        from app.plans.service import overlay_txs
+
+        extra = overlay_txs(self.db, base)
+        pf = dataclasses.replace(base, txs=[*base.txs, *extra]) if extra else base
+        with self._lock:
+            self._pf = (key, pf)
+        return pf
+
+    def invalidate_overlay(self) -> None:
+        """Sparplan-Schätzungen geändert: Ledger, Bewertung und Historie neu berechnen (Import bleibt gecacht)."""
+        with self._lock:
+            self.overlay_version += 1
+            self._pf = None
+            self._ledgers.clear()
+            self._vals.clear()
+            self._hist = None
+            self.data_version += 1
+            self.history_version += 1
 
     def _seed_demo(self, pf: Portfolio) -> None:
         anchors: dict[str, tuple[date, float]] = {}
@@ -121,7 +153,7 @@ class AppContext:
         if pf is None:
             return None
         opts = opts or self.engine_options(scope)
-        key = (pf.import_id, opts)
+        key = (pf.import_id, self.overlay_version, opts)
         with self._lock:
             res = self._ledgers.get(key)
             if res is None:
@@ -133,6 +165,7 @@ class AppContext:
 
     def invalidate_data(self) -> None:
         with self._lock:
+            self._base_pf = None
             self._pf = None
             self._ledgers.clear()
             self._vals.clear()
@@ -168,7 +201,8 @@ class AppContext:
         led = self.ledger()
         if pf is None or led is None:
             return None
-        key = (pf.import_id, self.prices.version, self.settings.version, self.history_version, selector)
+        key = (pf.import_id, self.overlay_version, self.prices.version, self.settings.version, self.history_version,
+               selector)
         with self._lock:
             v = self._vals.get(key)
             if v is not None:
@@ -189,7 +223,7 @@ class AppContext:
         led = self.ledger()
         if pf is None or led is None:
             return None
-        key = (pf.import_id, self.history_version, self.settings.version, today_local())
+        key = (pf.import_id, self.overlay_version, self.history_version, self.settings.version, today_local())
         with self._lock:
             if self._hist is not None and self._hist[0] == key:
                 return self._hist[1]

@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 26.09.2026 · Version 0.5.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 27.09.2026 · Version 0.6.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -111,6 +111,33 @@ Rücknahmepreisen; Basiszins 2026 ist noch nicht hinterlegt (erst für den Beric
 **Grenzen M5:** Beim erstmaligen Laden der Historie eines großen Portfolios steigt der Speicher kurzzeitig
 (gemessen 413 MB bei 170 Assets × 7,7 Jahren) – ein Container-Speicherlimit sollte daher nicht unter
 512 MB liegen. `strip` benötigt beim Bauen Zugriff auf die Debian-Paketquellen (sonst 311 MB statt ≈ 274 MB).
+
+## M6 – Sparpläne (Erweiterung)
+
+**Entscheidungen**
+
+* Schätzungen sind ein **Overlay** in der App-Datenbank (`plan`, `tx_estimate`, Migration 3); der Import
+  bleibt unverändert und maßgeblich. Ledger, Bewertung, Historie und Performance rechnen mit Import +
+  Overlay, die Sparplan-Erkennung selbst nur mit dem Import (keine Selbstverstärkung durch Schätzungen).
+* Erkennung rückwärts ab der letzten Ausführung (längste lückenlose Folge, Anker unter den letzten vier
+  Käufen), damit Einmalkäufe und Ratenänderungen den laufenden Plan nicht verdecken. Mindestens drei
+  Ausführungen; Stichtag für „läuft/ausgesetzt/beendet“ ist der Importstand (`holdings_check`-Datum bzw.
+  letzte Buchung), nicht das heutige Datum.
+* Eine Schätzung entsteht erst, wenn die übliche Ausführungszeit erreicht ist; Stückzahl aus Sparrate und
+  Tages-Schlusskurs (vorläufig: aktueller Kurs), abgerundet auf die im Import beobachtete Genauigkeit.
+  Plausibilitätsprüfung gegen den letzten Import-Kauf (Faktor 2) mit Hinweis „Kurs prüfen“.
+* Abgleich beim nächsten Import über Konto, Asset, Datum ±7 Tage und Betrag oder Stückzahl ±20 %;
+  jede Import-Buchung ersetzt höchstens eine Schätzung (keine Doppelzählung).
+* Ungeprüfte Schätzungen, deren Termin der neue Import abdeckt, ohne sie zu enthalten, werden entfernt;
+  freigegebene bleiben (Nutzerentscheidung) und werden als „fehlt im Import“ gemeldet.
+* Eingaben akzeptieren deutsche und englische Zahlenformate; „5.000“ gilt als 5000 (Tausenderpunkt),
+  „5.5“ als 5,5.
+
+**Grenzen M6:** Nur Käufe gegen Fiat bzw. per Lastschrift (keine Krypto-gegen-Krypto-Sparpläne, keine
+Entnahmepläne, keine dynamischen Raten). Ein nach dem Importstand ausgesetzter Plan erzeugt Schätzungen, bis
+diese verworfen oder vom nächsten Import entfernt werden. Handelstage/Feiertage der Handelsplätze werden nicht
+modelliert (nur Wochenend-Verschiebung auf Montag); die tatsächliche Ausführung kann daher ±1–3 Tage abweichen –
+der Abgleich toleriert ±7 Tage.
 
 ## Offene Fragen an den Auftraggeber
 

@@ -8,6 +8,8 @@ YouTube-Videos werden je Position gefiltert.
 
 * **Read-only:** Transaktionen und Stammdaten stammen ausschließlich aus dem Import. Die App speichert nur
   abgeleitete Daten (Kurse, Devisenkurse, News, Videos, Snapshots, Berichte) in `/data/app.sqlite`.
+  Laufende Sparpläne werden erkannt und nach dem Importstand als **markierte Schätzung** fortgeführt, bis
+  der nächste Import die echten Buchungen enthält (siehe [Sparpläne](#sparpläne)).
 * **Keine Schreibzugriffe** auf Broker oder Börsen, **keine Telemetrie**, keine externen Schriften/CDNs.
 * **Datenschutz:** Keine Anfrage an externe Dienste enthält Stückzahlen, Werte oder Kontonamen
   (per Test abgesichert, siehe `tests/test_privacy.py`).
@@ -24,13 +26,14 @@ für Smartphones (≈390 px) optimiert.
 2. [Erste Schritte](#erste-schritte)
 3. [Datenvertrag (Import-ZIP)](#datenvertrag-import-zip)
 4. [Berechnungen](#berechnungen)
-5. [Kurse und Datenquellen](#kurse-und-datenquellen)
-6. [News und YouTube](#news-und-youtube)
-7. [Steuern und Haltefristen](#steuern-und-haltefristen)
-8. [Einstellungen, Sicherheit, Backups](#einstellungen-sicherheit-backups)
-9. [Betrieb und Fehlerbehebung](#betrieb-und-fehlerbehebung)
-10. [Entwicklung](#entwicklung)
-11. [Grenzen und Lizenzen](#grenzen-und-lizenzen)
+5. [Sparpläne](#sparpläne)
+6. [Kurse und Datenquellen](#kurse-und-datenquellen)
+7. [News und YouTube](#news-und-youtube)
+8. [Steuern und Haltefristen](#steuern-und-haltefristen)
+9. [Einstellungen, Sicherheit, Backups](#einstellungen-sicherheit-backups)
+10. [Betrieb und Fehlerbehebung](#betrieb-und-fehlerbehebung)
+11. [Entwicklung](#entwicklung)
+12. [Grenzen und Lizenz](#grenzen-und-lizenz)
 
 ---
 
@@ -215,6 +218,58 @@ Prüfen ohne Import: `docker exec portfolia python -m app validate /import/datei
   Position; Beitrag je Position (Wasserfall), Drawdown, Benchmarks.
 * Historische Snapshots werden im Hintergrund aus der Kurshistorie aufgebaut; fehlende historische Kurse
   werden mit Transaktionskursen geschätzt und als „geschätzt“ gekennzeichnet.
+
+---
+
+## Sparpläne
+
+Zwischen zwei Importen fehlen regelmäßige Käufe im Portfolio. Portfolia erkennt deshalb laufende Sparpläne
+im Import und führt sie **geschätzt** fort. Geschätzte Buchungen liegen ausschließlich in der App-Datenbank
+(Tabelle `tx_estimate`); der Import wird nie verändert und bleibt maßgeblich.
+
+**Erkennung** (je Konto und Position, Käufe gegen Fiat bzw. per Lastschrift der letzten 14 Monate):
+
+* Rhythmen: wöchentlich, 14-täglich, 2× monatlich, monatlich, zweimonatlich, vierteljährlich; mindestens
+  3 Ausführungen in Folge. Einzelkäufe dazwischen stören nicht.
+* Toleranzen: Ausführungstag ±2 (wöchentlich), ±3 (14-täglich) bzw. ±5 Tage (monatlich); Wochenend-Termine
+  werden auf Montag verschoben. Sparrate: letzte Ausführungen weichen ≤ 25 % ab, eine einmalige Änderung
+  der Rate (z. B. 100 → 150 €) wird erkannt.
+* Übernommen werden typische Uhrzeit, Sparrate, Gebühr, Stückzahl-Genauigkeit (Nachkommastellen) und
+  Finanzierung (Verrechnungskonto oder externe Lastschrift).
+* Sicherheit **hoch** (≥ 6 Ausführungen, Rate ±2 %), **mittel** (≥ 4, ±10 %) oder **niedrig**. Automatisch
+  geschätzt werden Pläne mit hoher/mittlerer Sicherheit; je Plan übersteuerbar (*an/aus/automatisch*).
+* Status bezogen auf den Importstand: **läuft**, **ausgesetzt?** (ein Termin fehlt) oder **beendet**
+  (≥ 2 Termine fehlen) – nur laufende Pläne werden fortgeführt.
+
+**Schätzung** (morgens 06:40, abends 23:45, beim Start, nach jedem Import und per *Jetzt prüfen*):
+
+* Für jeden Termin nach dem Importstand, dessen übliche Ausführungszeit erreicht ist, entsteht eine
+  Buchung: Stück = Sparrate ÷ Kurs (abgerundet auf die übliche Genauigkeit). Kurs = Schlusskurs des Tages,
+  am laufenden Tag vorläufig der aktuelle Kurs; vorläufige Kurse werden bis zum Schlusskurs aktualisiert.
+* **Plausibilität:** weicht der Kurs um mehr als Faktor 2 vom letzten Kauf laut Import ab (falsche
+  Kursreihe, Split, GBp/GBP), erscheint „Kurs prüfen“; „Alle freigeben“ fragt dann nach.
+* Datum, Uhrzeit, Stückzahl und Kurs können von der echten Ausführung abweichen.
+
+**Markierung und Freigabe** (*Mehr → Sparpläne*):
+
+| Status | Im Portfolio | Markierung | Übergang |
+|---|---|---|---|
+| geschätzt | ja | Badge „geschätzt“ (Positionen, Detailansicht), Hinweis im Kopf, Warnung in *Steuern* | *Freigeben*, *Anpassen* (Datum, Uhrzeit, Stück oder Betrag, Kurs, Gebühr) oder *Verwerfen* |
+| freigegeben | ja | keine (Detailansicht: „Sparplan, noch nicht im Import“) | nächster Import; fehlt die Buchung dort, obwohl der Import den Termin abdeckt: „fehlt im Import“ + Warnung, bleibt bis zum Entfernen (×) |
+| durch Import ersetzt | nein | – | Import enthält die Buchung (±7 Tage, Betrag oder Stück ±20 %) |
+| nicht im Import | nein | – | nur ungeprüfte Schätzungen: Import deckt den Termin ab, Buchung fehlt |
+| verworfen | nein | – | vom Nutzer verworfen oder Sparplan deaktiviert/ausgesetzt |
+
+* Eine geänderte Sparrate gilt für alle noch nicht geprüften Schätzungen; spätere Termine nutzen sie ebenfalls.
+* Freigegebene Buchungen lassen sich als CSV im Format von `transactions.csv` exportieren
+  (`source=portfolia-sparplan`), z. B. zur Übernahme in den kuratierten Import.
+* Steuern: Schätzungen bis einschließlich Berichtsjahr erzeugen im Steuerbericht eine Warnung, freigegebene
+  Buchungen außerhalb des Imports einen Hinweis – für die Steuererklärung den Import mit den echten
+  Abrechnungen verwenden.
+
+**Grenzen:** Sparpläne gegen Krypto (z. B. USDC → BTC), Entnahmepläne und Sparpläne mit dynamischer Rate
+werden nicht erkannt. Wird ein Sparplan nach dem Importstand ausgesetzt, entstehen Schätzungen, bis sie
+verworfen oder durch den nächsten Import als „nicht im Import“ entfernt werden.
 
 ---
 

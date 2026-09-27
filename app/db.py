@@ -32,6 +32,65 @@ CREATE TABLE IF NOT EXISTS yt_channel (
 CREATE INDEX IF NOT EXISTS ix_news_channel ON news_item(channel_id);
 CREATE INDEX IF NOT EXISTS ix_news_video ON news_item(video_id);
 """),
+    (3, """
+-- Erkannte Sparpläne (abgeleitet aus dem Import) und geschätzte Ausführungen seit dem Importstand.
+CREATE TABLE IF NOT EXISTS plan (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  key           TEXT NOT NULL UNIQUE,       -- Konto|Asset
+  account       TEXT NOT NULL,
+  asset_id      TEXT NOT NULL,
+  freq          TEXT NOT NULL,              -- weekly | biweekly | semimonthly | monthly | bimonthly | quarterly
+  days_json     TEXT,                       -- Ausführungstag(e) im Monat
+  weekday       INTEGER,                    -- 0 = Montag (wöchentlich/zweiwöchentlich)
+  time_local    TEXT,
+  date_only     INTEGER NOT NULL DEFAULT 0,
+  amount_eur    TEXT NOT NULL,
+  fee_eur       TEXT NOT NULL DEFAULT '0',
+  qty_decimals  INTEGER NOT NULL DEFAULT 6,
+  funding_asset TEXT,
+  funding       TEXT NOT NULL DEFAULT 'cash', -- cash (vom Kontoguthaben) | external (Lastschrift)
+  weekend_shift INTEGER NOT NULL DEFAULT 1,
+  executions    INTEGER NOT NULL DEFAULT 0,
+  first_date    TEXT,
+  last_date     TEXT,
+  next_due      TEXT,
+  confidence    TEXT NOT NULL,              -- hoch | mittel | niedrig
+  status        TEXT NOT NULL,              -- active | paused | ended
+  enabled       INTEGER,                    -- NULL = automatisch nach Sicherheit, 1/0 = Wahl des Nutzers
+  user_amount   TEXT,                       -- vom Nutzer geänderte Sparrate
+  detected_at   TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tx_estimate (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_key          TEXT NOT NULL,
+  tx_id             TEXT NOT NULL UNIQUE,
+  due_date          TEXT NOT NULL,          -- planmäßiger Termin (Idempotenz)
+  ts_utc            TEXT NOT NULL,
+  date_only         INTEGER NOT NULL DEFAULT 0,
+  account           TEXT NOT NULL,
+  asset_id          TEXT NOT NULL,
+  qty               TEXT NOT NULL,
+  price_eur         TEXT NOT NULL,
+  value_eur         TEXT NOT NULL,
+  fee_eur           TEXT NOT NULL DEFAULT '0',
+  funding_asset     TEXT,
+  funding           TEXT NOT NULL DEFAULT 'cash',
+  price_source      TEXT,
+  price_final       INTEGER NOT NULL DEFAULT 0,
+  status            TEXT NOT NULL,          -- estimated | confirmed | superseded | missing | dismissed
+  user_edited       INTEGER NOT NULL DEFAULT 0,
+  matched_tx_id     TEXT,
+  missing_import_id INTEGER,
+  import_id         INTEGER,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL,
+  confirmed_at      TEXT,
+  note              TEXT,
+  UNIQUE(plan_key, due_date)
+);
+CREATE INDEX IF NOT EXISTS ix_tx_estimate_status ON tx_estimate(status);
+"""),
 ]
 
 
