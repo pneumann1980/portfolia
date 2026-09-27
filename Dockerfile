@@ -4,9 +4,9 @@ ARG PYTHON_VERSION=3.12
 
 FROM python:${PYTHON_VERSION}-slim-bookworm AS builder
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONDONTWRITEBYTECODE=1
-# binutils (strip) spart ~35 MB bei nativen Bibliotheken; ohne Paketquellen-Zugriff wird der Schritt übersprungen.
-RUN (apt-get update -o Acquire::Retries=1 && apt-get install -y --no-install-recommends binutils \
-     && rm -rf /var/lib/apt/lists/*) || echo "WARNUNG: binutils nicht installierbar – native Bibliotheken bleiben ungestrippt"
+# Native Bibliotheken werden bewusst NICHT mit strip verkleinert: binutils 2.40 (bookworm) beschädigt die von
+# auditwheel/patchelf angepassten Bibliotheken der Wheels (z. B. OpenBLAS in numpy: „ELF load command
+# address/offset not page-aligned“) – die App startet dann nicht.
 WORKDIR /build
 COPY requirements.txt .
 # Optional: CA-Zertifikat eines TLS-inspizierenden Proxys als Build-Secret (docker build --secret id=pip_ca,src=ca.crt)
@@ -26,8 +26,7 @@ RUN --mount=type=secret,id=pip_ca,required=false \
  && find /install -name "*.c" -path "*site-packages*" -delete \
  && find /install -name "*.h" -path "*site-packages*" -delete \
  && rm -f /install/lib/python3*/site-packages/PIL/_avif*.so /install/lib/python3*/site-packages/pillow.libs/libavif* \
-          /install/lib/python3*/site-packages/PIL/_imagingtk*.so \
- && if command -v strip >/dev/null 2>&1; then find /install -name "*.so*" -type f -exec strip --strip-unneeded {} + ; fi
+          /install/lib/python3*/site-packages/PIL/_imagingtk*.so
 # Kein vorkompilierter Bytecode im Image (spart ~45 MB): Python legt ihn beim ersten Start unter
 # /data/cache/pyc ab (PYTHONPYCACHEPREFIX) – inklusive Standardbibliothek, danach startet die App schneller.
 

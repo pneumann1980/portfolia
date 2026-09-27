@@ -104,13 +104,15 @@ Rücknahmepreisen; Basiszins 2026 ist noch nicht hinterlegt (erst für den Beric
 | CoinGecko | < 8.000 Aufrufe/Monat | 1 Sammelaufruf je 10 min ≈ 4.400/Monat + einmalig 1 Historienabruf je Coin; laufende Tageshistorie aus den 23:30-Schlusskursen; Drosselung ab 80 % |
 | Datenschutz | keine Stückzahlen/Werte/Konten in externen Anfragen | per Test geprüft |
 | Leerlauf-RAM | < 250 MB | Beispiel-Import 98 MB; Großimport 177 MB (Spitze 413 MB während der erstmaligen Historienberechnung) |
-| Image | < 350 MB | ≈ 274 MB (regulärer Build mit `strip`, 37,5 MB Symbole laut ELF-Analyse), 311 MB ohne `strip` |
+| Image | < 350 MB | ≈ 285–311 MB (ohne `strip`, siehe unten) |
 
 ---
 
 **Grenzen M5:** Beim erstmaligen Laden der Historie eines großen Portfolios steigt der Speicher kurzzeitig
 (gemessen 413 MB bei 170 Assets × 7,7 Jahren) – ein Container-Speicherlimit sollte daher nicht unter
-512 MB liegen. `strip` benötigt beim Bauen Zugriff auf die Debian-Paketquellen (sonst 311 MB statt ≈ 274 MB).
+512 MB liegen. Das ursprünglich geplante `strip` der nativen Bibliotheken (−35 MB) wurde nach dem ersten
+CI-Smoke-Test entfernt: binutils 2.40 beschädigt die per patchelf angepassten Wheel-Bibliotheken (numpy/
+OpenBLAS ließ sich nicht mehr laden).
 
 ## M6 – Sparpläne (Erweiterung)
 

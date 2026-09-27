@@ -77,6 +77,9 @@ jobs:
           size=$(docker image inspect portfolia:ci --format '{{.Size}}')
           echo "Image-Größe: $((size / 1024 / 1024)) MB"
           test "$size" -lt 367001600
+          # native Erweiterungen laden (fängt beschädigte Bibliotheken ab, auch wenn die App sie erst später braucht)
+          docker run --rm --entrypoint python portfolia:ci -c \
+            "import numpy, pandas, lxml.etree, PIL.Image, curl_cffi, bcrypt, reportlab.pdfgen.canvas, yfinance; print('native ok')"
           mkdir -p ci-data ci-import && cp examples/beispiel-import.zip ci-import/ && touch -d '1 hour ago' ci-import/beispiel-import.zip
           # Containernamen brauchen mindestens zwei Zeichen
           docker run -d --name portfolia-ci -e DEMO_MODE=true -e PUID=$(id -u) -e PGID=$(id -g) -p 8080:8080 \
