@@ -78,9 +78,10 @@ jobs:
           echo "Image-Größe: $((size / 1024 / 1024)) MB"
           test "$size" -lt 367001600
           mkdir -p ci-data ci-import && cp examples/beispiel-import.zip ci-import/ && touch -d '1 hour ago' ci-import/beispiel-import.zip
-          docker run -d --name p -e DEMO_MODE=true -e PUID=$(id -u) -e PGID=$(id -g) -p 8080:8080 \
+          # Containernamen brauchen mindestens zwei Zeichen
+          docker run -d --name portfolia-ci -e DEMO_MODE=true -e PUID=$(id -u) -e PGID=$(id -g) -p 8080:8080 \
             -v "$PWD/ci-data:/data" -v "$PWD/ci-import:/import:ro" portfolia:ci
+          trap 'docker logs portfolia-ci 2>&1 | tail -30; docker rm -f portfolia-ci >/dev/null' EXIT
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/healthz && break; sleep 2; done
           curl -fsS http://127.0.0.1:8080/ | grep -q Portfolia
-          docker logs p | tail -20
-          docker rm -f p
+          curl -fsS -o /dev/null http://127.0.0.1:8080/plans
