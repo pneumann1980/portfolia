@@ -34,7 +34,8 @@ RUN --mount=type=secret,id=pip_ca,required=false \
 FROM python:${PYTHON_VERSION}-slim-bookworm
 LABEL org.opencontainers.image.title="Portfolia" \
       org.opencontainers.image.description="Self-hosted Portfolio-Dashboard (Aktien & Krypto), nur lesend" \
-      org.opencontainers.image.source="https://github.com/pneumann1980/portfolia"
+      org.opencontainers.image.source="https://github.com/pneumann1980/portfolia" \
+      org.opencontainers.image.licenses="MIT"
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPYCACHEPREFIX=/data/cache/pyc \
     PYTHONHASHSEED=0 \
@@ -50,6 +51,7 @@ ENV PYTHONUNBUFFERED=1 \
 COPY --from=builder /install /usr/local
 WORKDIR /opt/portfolia
 COPY app ./app
+COPY LICENSE THIRD_PARTY_NOTICES.md ./
 COPY examples/sources.yaml ./examples/sources.yaml
 COPY examples/beispiel-import.zip ./examples/beispiel-import.zip
 COPY docker/entrypoint.sh docker/healthcheck.py /usr/local/bin/

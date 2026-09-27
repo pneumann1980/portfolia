@@ -475,7 +475,7 @@ CI (GitHub Actions): Lint und Tests bei jedem Push/PR; Image-Build und Veröffen
 
 ---
 
-## Grenzen und Lizenzen
+## Grenzen und Lizenz
 
 Bekannte Grenzen (Auswahl, vollständig in [`docs/MILESTONES.md`](docs/MILESTONES.md)):
 
@@ -485,6 +485,10 @@ Bekannte Grenzen (Auswahl, vollständig in [`docs/MILESTONES.md`](docs/MILESTONE
   Jahre nennt die Übertragungshilfe nur die Feldbezeichnungen.
 * Datenquellen sind inoffiziell (Yahoo) bzw. limitiert (CoinGecko Demo); Ausfälle werden sichtbar markiert.
 
-Drittkomponenten im Image: Apache ECharts (Apache-2.0), htmx (BSD-2-Clause) – Lizenztexte unter
-`app/static/vendor/`; Bitstream Vera Fonts (über ReportLab, Bitstream-Vera-Lizenz) für PDFs; Python-Pakete
-laut `requirements.txt` mit ihren jeweiligen Lizenzen.
+**Lizenz:** Portfolia steht unter der [MIT-Lizenz](LICENSE) – Nutzung, Änderung und Weitergabe (auch
+kommerziell) sind erlaubt, solange Copyright- und Lizenzhinweis erhalten bleiben; keine Gewährleistung.
+
+Drittkomponenten im Image (Details und vollständige Paketliste: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)):
+Apache ECharts 6.1 (Apache-2.0, inkl. NOTICE; enthaltene d3-Teile BSD-3-Clause) und htmx 2.0 (0BSD) –
+Lizenztexte unter `app/static/vendor/`; Bitstream Vera Fonts (über ReportLab) für PDFs; Python-Pakete u. a.
+unter MIT, BSD, Apache-2.0, PSF-2.0 und MPL-2.0 (certifi, unverändert). Alle sind mit der MIT-Lizenz vereinbar.

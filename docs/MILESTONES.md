@@ -139,17 +139,23 @@ diese verworfen oder vom nächsten Import entfernt werden. Handelstage/Feiertage
 modelliert (nur Wochenend-Verschiebung auf Montag); die tatsächliche Ausführung kann daher ±1–3 Tage abweichen –
 der Abgleich toleriert ±7 Tage.
 
+## Entscheidungen des Auftraggebers (27.09.2026)
+
+* **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
+  d3-Lizenz unter `app/static/vendor/`, OCI-Label `org.opencontainers.image.licenses=MIT`.
+* **Voreinstellungen Steuer** bestätigt: Gebühren beim Handel als Veräußerung, Transfergebühren nicht
+  steuerbar, Airdrops/Mining als § 22 Nr. 3, Wertpapierdepots standardmäßig „Inland“.
+* **Formularzeilen** „sofern bekannt“ hinterlegt: 2024 (Anlage SO, KAP, KAP-INV) und Anlage SO 2025
+  (neuer Abschnitt „Kryptowerte“). Anlage KAP/KAP-INV 2025 und § 22 Nr. 3 ohne Zeilen, da die verfügbaren
+  (Sekundär-)Quellen widersprüchlich sind; die amtlichen Vordrucke waren aus der Build-Umgebung nicht
+  abrufbar. Zusätzlich Basiszins 2026 (3,20 %, BMF vom 13.01.2026).
+* **KI-Modell:** Standard `claude-opus-5` bleibt.
+* **Sparpläne** (neue Anforderung): siehe M6.
+
 ## Offene Fragen an den Auftraggeber
 
-1. **Lizenz** des Projekts (derzeit keine LICENSE-Datei).
+1. **`related_asset`** (optionale Spalte in `transactions.csv`, verknüpft Dividenden und Quellensteuer mit
+   dem Wertpapier): offiziell in Schema-Version 1.1 aufnehmen? Dateien mit Schema 1.0 bleiben gültig.
 2. **Name/Pfade:** Umsetzung als „Portfolia“ (`portfolia.xml`, `/mnt/user/appdata/portfolia`) statt
    „Depotblick“ – so gewünscht?
-3. **Steuer-PDFs:** Ausgabe als Aufstellung/Beleg plus Übertragungshilfe (nicht als ausgefülltes amtliches
-   Formular). Sollen verifizierte Zeilennummern für bestimmte Jahre fest hinterlegt werden?
-4. **Voreinstellungen Steuer:** Gebühren beim Handel als Veräußerung, Transfergebühren nicht steuerbar,
-   Airdrops/Mining als § 22 Nr. 3, Wertpapierdepots standardmäßig „Inland“ – passt das?
-5. **`related_asset`** ist eine optionale Zusatzspalte in `transactions.csv` (für Dividenden und
-   Quellensteuer). Soll sie in Schema 1.1 offiziell aufgenommen werden?
-6. **KI-Modell:** Standard `claude-opus-5` mit serverseitigem Fallback – beibehalten oder ein
-   kostengünstigeres Modell voreinstellen?
-7. **Krypto-Historie > 365 Tage** mit CoinGecko-Demo: weitere Yahoo-Paare vorbelegen oder Pro-Schlüssel?
+3. **Krypto-Historie > 365 Tage** mit CoinGecko-Demo: weitere Yahoo-Paare vorbelegen oder Pro-Schlüssel?
