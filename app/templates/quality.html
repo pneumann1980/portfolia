@@ -82,9 +82,10 @@
     <ul class="small">{% for x in check.not_in_check %}<li>{{ x.name }}: {{ x.actual|qty }}</li>{% endfor %}</ul></details>{% endif %}
 </section>
 
-{% if journal and (journal.count or journal.log) %}
+{% if journal and (journal.count or journal.csv_count or journal.log) %}
 <section class="card" id="journal">
-  <div class="card-head"><h2>In Portfolia erfasste Buchungen</h2><a class="btn sm" href="/journal?origin=journal">{{ journal.count }} Buchungen</a></div>
+  <div class="card-head"><h2>In Portfolia erfasste Buchungen</h2>
+    <div class="row"><a class="btn sm" href="/journal?origin=journal">{{ journal.count }} manuell</a>{% if journal.csv_count %}<a class="btn sm" href="/journal?origin=csv">{{ journal.csv_count }} aus CSV-Importen</a>{% endif %}</div></div>
   {% if journal.dups %}
   <div class="alert warn"><span class="icon">!</span><div>{{ journal.dups|length }} manuelle Buchung{{ 'en ähneln' if journal.dups|length != 1 else ' ähnelt' }} einer Import-Buchung (gleiche Konten und Assets, ±2 Tage, Menge ±1 %) – möglicherweise doppelt erfasst:
     {% for tid, hits in journal.dups.items() %}<a class="mono" href="/journal?q={{ tid }}">{{ tid }}</a> ↔ {{ hits|join(', ') }}{% if not loop.last %}; {% endif %}{% endfor %}</div></div>
@@ -92,7 +93,7 @@
   {% if journal.log %}
   <details><summary>Änderungsprotokoll (letzte {{ journal.log|length }})</summary>
     <div class="table-wrap"><table class="compact"><thead><tr><th>Zeit</th><th>Aktion</th><th>Bezug</th></tr></thead><tbody>
-      {% for e in journal.log %}<tr><td class="nowrap">{{ e.at|datetime_de }}</td><td>{{ {'create': 'angelegt', 'update': 'geändert', 'delete': 'gelöscht', 'restore': 'wiederhergestellt', 'asset_create': 'Asset angelegt', 'asset_update': 'Asset geändert'}.get(e.action, e.action) }}</td><td class="mono">{{ e.ref }}</td></tr>{% endfor %}
+      {% for e in journal.log %}<tr><td class="nowrap">{{ e.at|datetime_de }}</td><td>{{ {'create': 'angelegt', 'update': 'geändert', 'delete': 'gelöscht', 'restore': 'wiederhergestellt', 'asset_create': 'Asset angelegt', 'asset_update': 'Asset geändert', 'unpair': 'Transfer aufgelöst', 'csv_commit': 'CSV-Import übernommen', 'csv_revert': 'CSV-Import rückgängig'}.get(e.action, e.action) }}</td><td class="mono">{{ e.ref }}</td></tr>{% endfor %}
     </tbody></table></div>
   </details>
   {% endif %}

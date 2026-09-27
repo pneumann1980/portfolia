@@ -313,7 +313,10 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
         from app.journal.service import journal_service
 
         js = journal_service(ctx)
-        journal = {"count": ctx.db.scalar("SELECT COUNT(*) FROM journal_tx WHERE status='active'", default=0),
+        journal = {"count": ctx.db.scalar("SELECT COUNT(*) FROM journal_tx WHERE status='active' AND source='manual'",
+                                          default=0),
+                   "csv_count": ctx.db.scalar("SELECT COUNT(*) FROM journal_tx WHERE status='active' AND "
+                                              "source<>'manual'", default=0),
                    "dups": js.duplicates(), "log": js.log(15)}
     except Exception as e:  # Journal-Modul optional
         log.debug("Journal nicht verfügbar: %s", e)
