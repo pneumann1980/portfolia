@@ -215,6 +215,6 @@ def write_sample_zip(path: Path, until: date | None = date(2026, 9, 19)) -> Path
         holdings.append({"asset_id": asset, "account": acc, "qty": format(q.normalize(), "f"),
                          "as_of": "2026-09-19", "note": ""})
     return build_zip(path, transactions=rows, assets=ASSETS, holdings_check=holdings, issues=ISSUES,
-                     manual_prices=MANUAL_PRICES, accounts=ACCOUNTS, extra_tx_columns=["related_asset"],
+                     manual_prices=MANUAL_PRICES, accounts=ACCOUNTS,
                      generated_at="2026-09-20T08:00:00Z", valuation_date="2026-09-19",
                      notes="Beispieldaten (anonymisiert) für Portfolia")

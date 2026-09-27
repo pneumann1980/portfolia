@@ -217,9 +217,9 @@ def _check_manifest(members: dict[str, bytes], rep: Report) -> dict[str, Any] | 
         if major != C.SUPPORTED_SCHEMA_MAJOR:
             rep.error("schema_version", f"schema_version {sv} wird nicht unterstützt (erwartet 1.x)",
                       file="manifest.json")
-        elif minor > 0:
-            rep.warn("schema_version", f"schema_version {sv}: neuere Minor-Version, unbekannte Felder werden ignoriert",
-                     file="manifest.json")
+        elif minor > C.SUPPORTED_SCHEMA_MINOR:
+            rep.warn("schema_version", f"schema_version {sv}: neuere Minor-Version als {C.CURRENT_SCHEMA_VERSION}, "
+                                       "unbekannte Felder werden ignoriert", file="manifest.json")
     try:
         parse_iso(str(manifest["generated_at"]))
     except ValueError:

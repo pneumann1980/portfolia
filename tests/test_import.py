@@ -74,6 +74,20 @@ def test_missing_file_and_schema_version(tmp_path):
     assert "schema_version" in codes(rep2)
 
 
+def test_schema_minor_versions_and_related_asset(tmp_path):
+    for sv, warns in (("1.0", False), ("1.1", False), ("1.2", True)):
+        p = build_zip(tmp_path / f"v{sv}.zip", transactions=ROWS, assets=ASSETS, schema_version=sv)
+        rep, parsed = validate_zip(p)
+        assert parsed is not None
+        assert ("schema_version" in {m.code for m in rep.warnings}) is warns
+    assert "related_asset" in TX_COLUMNS  # Schema 1.1: Spalte gehört zum Standardformat
+    rows = [*ROWS, {**tx("d1", "2023-05-02", "deposit", tag="dividend", to=("Depot", "EUR", 5), value=5),
+                    "related_asset": "WKN:A0B1C2"}]
+    rep, parsed = validate_zip(build_zip(tmp_path / "rel.zip", transactions=rows, assets=ASSETS))
+    assert parsed is not None and parsed.manifest["schema_version"] == "1.1"
+    assert next(t for t in parsed.transactions if t["tx_id"] == "d1")["related_asset"] == "WKN:A0B1C2"
+
+
 def test_unknown_asset_reference_and_bad_numbers(tmp_path):
     rows = [*ROWS, tx("t9", "2023-04-01", "buy", frm=("Depot", "EUR", 10), to=("Depot", "WKN:XXXX", 1), value=10)]
     rows.append({**tx("t10", "2023-04-02", "buy", frm=("Depot", "EUR", 10), to=("Depot", "BTC", 1), value=10),

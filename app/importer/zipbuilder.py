@@ -14,7 +14,7 @@ from typing import Any
 from app.importer import contract as C
 
 TX_COLUMNS = [*C.TX_REQUIRED[:3], "tag", *C.TX_REQUIRED[3:],
-              "orig_price", "orig_ccy", "source", "source_ref", "flag", "note"]
+              "orig_price", "orig_ccy", "source", "source_ref", "flag", "note", "related_asset"]
 ASSET_COLUMNS = ["asset_id", "name", "asset_class", "wkn", "isin", "koinly_id", "quote_source", "quote_id", "status",
                  "note", "aliases", "category"]
 HOLDINGS_COLUMNS = ["asset_id", "account", "qty", "as_of", "note"]
@@ -36,7 +36,7 @@ def build_zip(path: Path, *, transactions: list[dict[str, Any]], assets: list[di
               holdings_check: list[dict[str, Any]] | None = None, issues: list[dict[str, Any]] | None = None,
               manual_prices: list[dict[str, Any]] | None = None, accounts: list[dict[str, Any]] | None = None,
               generated_at: str = "2026-09-20T10:00:00Z", valuation_date: str = "2026-09-19",
-              schema_version: str = "1.0", notes: str = "", tx_columns: list[str] | None = None,
+              schema_version: str = C.CURRENT_SCHEMA_VERSION, notes: str = "", tx_columns: list[str] | None = None,
               extra_tx_columns: list[str] | None = None, mutate: dict[str, Any] | None = None) -> Path:
     """Baut eine ZIP-Datei. ``mutate`` erlaubt gezielte Defekte für Tests:
 
@@ -47,7 +47,7 @@ def build_zip(path: Path, *, transactions: list[dict[str, Any]], assets: list[di
     mutate = mutate or {}
     cols = tx_columns or TX_COLUMNS
     if extra_tx_columns:
-        cols = cols + extra_tx_columns
+        cols = cols + [c for c in extra_tx_columns if c not in cols]
     files: dict[str, bytes] = {
         "transactions.csv": to_csv(transactions, cols),
         "assets.csv": to_csv(assets, ASSET_COLUMNS + sorted({k for a in assets for k in a} - set(ASSET_COLUMNS))),

@@ -126,7 +126,7 @@ Ein Import ist eine ZIP-Datei mit folgendem Inhalt (optional in genau einem Unte
 
 | Datei | Pflicht | Inhalt |
 |---|---|---|
-| `manifest.json` | ja | `schema_version` (1.x), `generated_at` (ISO 8601), `valuation_date` (YYYY-MM-DD), `files` (`{dateiname: sha256}`), `notes` |
+| `manifest.json` | ja | `schema_version` (1.0 oder 1.1), `generated_at` (ISO 8601), `valuation_date` (YYYY-MM-DD), `files` (`{dateiname: sha256}`), `notes` |
 | `transactions.csv` | ja | alle Buchungen |
 | `assets.csv` | ja | Stammdaten der Assets |
 | `holdings_check.csv` | ja | erwartete Bestände (nur zum Abgleich, nicht zur Berechnung) |
@@ -136,6 +136,16 @@ Ein Import ist eine ZIP-Datei mit folgendem Inhalt (optional in genau einem Unte
 
 CSV: UTF-8, Komma als Trenner, **Punkt als Dezimaltrenner**, erste Zeile Spaltennamen. Unbekannte Spalten
 werden mitgespeichert (z. B. `tax_type` in `assets.csv`, `tax_withholding` in `accounts.csv`).
+
+**Schema-Versionen** (`schema_version` im Manifest; Minor-Versionen sind abwärtskompatibel):
+
+| Version | Änderung |
+|---|---|
+| 1.0 | Grundformat |
+| 1.1 (aktuell) | `related_asset` in `transactions.csv` offiziell: verknüpft Dividenden, Ausschüttungen und Quellensteuer mit dem Wertpapier. Optional – ohne die Spalte bleiben Dividenden unzugeordnete Konto-Erträge (keine Fondsart/Teilfreistellung, kein Quellensteuer-Abgleich). |
+
+Dateien mit 1.0 werden weiterhin ohne Hinweis angenommen; höhere Minor-Versionen (z. B. 1.2) mit Warnung,
+unbekannte Felder werden dann ignoriert. Exporte von Portfolia (Sparplan-CSV, Gesamtexport) schreiben 1.1.
 
 ### Validierung
 

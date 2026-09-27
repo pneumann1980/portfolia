@@ -1,11 +1,19 @@
 """Datenvertrag der Import-Datei (Schema-Version 1.x).
 
 Die Tabellen sind bewusst deklarativ gehalten – README und Validierung beziehen sich darauf.
+
+Versionen (Minor-Versionen sind abwärtskompatibel, neue Spalten sind stets optional):
+
+* **1.0** – Grundformat.
+* **1.1** – ``related_asset`` in ``transactions.csv`` offiziell: verknüpft Dividenden, Ausschüttungen und
+  Quellensteuer mit dem auslösenden Wertpapier (Zuordnung zur Position, Fondsart, Quellensteuer-Abgleich).
 """
 
 from __future__ import annotations
 
 SUPPORTED_SCHEMA_MAJOR = 1
+SUPPORTED_SCHEMA_MINOR = 1
+CURRENT_SCHEMA_VERSION = f"{SUPPORTED_SCHEMA_MAJOR}.{SUPPORTED_SCHEMA_MINOR}"
 
 REQUIRED_FILES = ("transactions.csv", "assets.csv", "holdings_check.csv", "issues.csv")
 OPTIONAL_FILES = ("manual_prices.csv", "accounts.csv")

@@ -472,7 +472,7 @@ class PlanService:
 
     def export_csv(self, statuses: tuple[str, ...] = ("confirmed",)) -> str:
         """Buchungen im Format von transactions.csv (zur Übernahme in den kuratierten Import)."""
-        cols = [*TX_COLUMNS, "related_asset"]
+        cols = TX_COLUMNS
         buf = io.StringIO(newline="")
         w = csv.DictWriter(buf, fieldnames=cols, lineterminator="\n")
         w.writeheader()
