@@ -48,11 +48,19 @@ für Smartphones (≈390 px) optimiert.
 
 ## Installation
 
-### Unraid (Community Applications / Template)
+### Unraid (Template)
 
-1. Template hinzufügen: *Docker → Add Container → Template* mit der URL
-   `https://raw.githubusercontent.com/pneumann1980/portfolia/main/unraid/portfolia.xml`
-   (oder die Datei `unraid/portfolia.xml` nach `/boot/config/plugins/dockerMan/templates-user/` kopieren).
+Das Image wird von der CI als `ghcr.io/pneumann1980/portfolia:latest` (amd64/arm64) veröffentlicht. Damit Unraid es
+ohne Anmeldung laden kann, muss das Paket auf GitHub **öffentlich** sein (einmalig: *GitHub → Packages → portfolia →
+Package settings → Change visibility → Public*; es enthält nur den öffentlichen Programmcode, keine Daten).
+
+1. Template in den Unraid-Vorlagenordner laden (Unraid-Terminal):
+   ```sh
+   mkdir -p /boot/config/plugins/dockerMan/templates-user
+   wget -O /boot/config/plugins/dockerMan/templates-user/my-Portfolia.xml \
+     https://raw.githubusercontent.com/pneumann1980/portfolia/HEAD/unraid/portfolia.xml
+   ```
+   Danach *Docker → Add Container → Template: Portfolia* (unter „User templates“).
 2. Pfade prüfen:
 
    | Container | Host (Vorschlag) | Modus | Inhalt |

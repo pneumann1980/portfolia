@@ -12,8 +12,8 @@
   <Overview>Selbst gehostetes Portfolio-Dashboard für Aktien, ETFs und Kryptowerte (nur LAN). Liest einen kuratierten Import (ZIP) read-only, übernimmt CSV-Exporte von Börsen und Wallets (ohne Online-Anbindung), sichert alles datiert im Import-Format, bewertet mit Yahoo Finance, CoinGecko und EZB-Kursen, berechnet TTWROR/IRR, Haltefristen und Steueraufstellungen (PDF) und zeigt passende News und YouTube-Videos. Keine Telemetrie, keine Schreibzugriffe auf Broker oder Börsen. Steuerfunktionen sind informativ – keine Steuerberatung.</Overview>
   <Category>Tools: Productivity:</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/pneumann1980/portfolia/main/unraid/portfolia.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/pneumann1980/portfolia/main/app/static/img/icon-256.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/pneumann1980/portfolia/HEAD/unraid/portfolia.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/pneumann1980/portfolia/HEAD/app/static/img/icon-256.png</Icon>
   <ExtraParams>--init</ExtraParams>
   <PostArgs/>
   <CPUset/>
