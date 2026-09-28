@@ -72,6 +72,11 @@ Package settings → Change visibility → Public*; es enthält nur den öffentl
 3. Optional API-Schlüssel eintragen (werden nur aus Umgebungsvariablen gelesen, nie angezeigt oder geloggt).
 4. Container starten, Weboberfläche über *WebUI* öffnen (Port 8080).
 
+**Aktualisieren:** *Docker → portfolia → Update* (bzw. *Check for Updates*). Zeigt Unraid „not available“, hilft
+*Advanced View* → *force update* oder *Edit → Apply* (lädt `latest` neu und erstellt den Container neu; Daten in
+`/data` und `/exports` bleiben erhalten). Images ab 0.9.0 werden als Docker-Manifestliste veröffentlicht, damit die
+Update-Prüfung von Unraid funktioniert (OCI-Indizes mit Attestierungen erkennt sie nicht).
+
 Das Image läuft als Nicht-Root-Benutzer mit `PUID`/`PGID` (Unraid-Standard 99/100), hat einen
 `HEALTHCHECK` (`/healthz`) und schreibt strukturierte Logs (JSON) auf stdout.
 
@@ -651,7 +656,8 @@ tests/        pytest (inkl. synthetischer Großimport)
 ```
 
 CI (GitHub Actions): Lint und Tests bei jedem Push/PR; Image-Build und Veröffentlichung nach GHCR
-(`ghcr.io/pneumann1980/portfolia`) für `main` und Versions-Tags.
+(`ghcr.io/pneumann1980/portfolia`) für den Standard-Branch und Versions-Tags – als Docker-Manifestliste ohne
+Attestierungen (Unraid-Update-Prüfung), was ein eigener CI-Schritt prüft.
 
 ---
 
