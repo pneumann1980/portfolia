@@ -13,7 +13,7 @@
       <a class="btn" href="/settings/datasources/new?kind=wallet">+ Wallet-Adresse</a>
     </div></div>
   <p class="hint">Datenquellen liefern Buchungen über denselben Weg wie der CSV-Import: Prüfung, Dubletten- und
-    Transfer-Abgleich, Übernahme erst nach Durchsicht (oder automatisch nur für eindeutig neue Buchungen). Für Wallets
+    Transfer-Abgleich, Übernahme erst nach Durchsicht (oder automatisch für Abrufe ohne Überschneidung). Für Wallets
     genügt die öffentliche Adresse; Zugangsdaten von Börsen werden nie in Portfolia gespeichert, sondern als
     Umgebungsvariable des Containers hinterlegt.</p>
   <details class="box"><summary>Status</summary>
@@ -46,7 +46,7 @@
   {% endif %}
   <div class="facts">
     <div class="fact"><div class="k">Konto in Portfolia</div><div class="v">{{ ds.account }}</div></div>
-    <div class="fact"><div class="k">Synchronisierung</div><div class="v">{{ ds.interval_label if ds.supported else 'manuell' }}{% if ds.auto_commit and ds.supported %}<div class="hint">neue Buchungen automatisch</div>{% endif %}</div></div>
+    <div class="fact"><div class="k">Synchronisierung</div><div class="v">{{ ds.interval_label if ds.supported else 'manuell' }}{% if ds.auto_commit and ds.supported %}<div class="hint">automatische Übernahme (ohne Überschneidung)</div>{% endif %}</div></div>
     <div class="fact"><div class="k">Letzter erfolgreicher Lauf</div><div class="v">{{ ds.last_success_at|datetime_de if ds.last_success_at else '–' }}</div></div>
     <div class="fact"><div class="k">Nächster Lauf</div><div class="v">{% if ds.next_run_at and not pb %}{{ ds.next_run_at|datetime_de }}{% else %}–<div class="hint">{{ 'wartet auf Prüfung' if pb and ds.enabled and ds.supported else ('deaktiviert' if not ds.enabled else ('keine automatische Anbindung' if not ds.supported else 'nur manuell')) }}</div>{% endif %}</div></div>
     {% if ds.address %}<div class="fact" style="grid-column:1/-1"><div class="k">Adresse</div><div class="v mono" style="font-weight:500">{{ ds.address }}</div></div>{% endif %}
