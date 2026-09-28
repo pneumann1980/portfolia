@@ -27,7 +27,7 @@ from app.csvimport.service import (
 )
 from app.jobs.scheduler import Scheduler, extra_jobs
 from app.journal import forms
-from app.journal.service import TAX_TYPES, journal_service
+from app.journal.service import TAX_TYPES, journal_service, source_label
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -68,7 +68,8 @@ def _index(request: Request, errors: list[str] | None = None, status_code: int =
         counts = {r["status"]: r["n"] for r in ctx.db.q("SELECT status, COUNT(*) n FROM csv_row WHERE batch_id=? "
                                                         "GROUP BY status", (b["id"],))}
         prof = svc.profile(b["profile"])
-        batches.append({"b": b, "summary": summ, "counts": counts, "profile": prof.label if prof else "unbekannt",
+        label = prof.label if prof else source_label(b["source"]) if b["kind"] == "sync" else "unbekannt"
+        batches.append({"b": b, "summary": summ, "counts": counts, "profile": label,
                         "status": BATCH_STATUS.get(b["status"], b["status"])})
     base = ctx.base_portfolio()
     return render(request, "csv_import.html", status_code=status_code, active="journal", errors=errors or [],
@@ -114,7 +115,9 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         acc_map=acc_rows, pair_accepted=pair_accepted, tax_types=TAX_TYPES, groups=_profiles_grouped(svc),
         tx_types=forms.TYPE_LABEL, tag_label=forms.TAG_LABEL,
         more_url=f"/journal/csv/{bid}?" + urlencode({"status": status, "offset": offset + PAGE}),
-        kind_label=M.KIND_LABEL,
+        kind_label=M.KIND_LABEL, source_label=source_label,
+        ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
+                                                              (b["datasource_id"],))),
     )
 
 
@@ -226,10 +229,11 @@ def make_router() -> APIRouter:
         b = svc.batch(bid)
         if b is None:
             raise HTTPException(404)
-        name = b["filename"]
+        sync = b["kind"] == "sync"
+        name = b["filename"] + (".json" if sync else "")
         ascii_name = re.sub(r"[^A-Za-z0-9._-]", "_", name) or "import.csv"
         disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name, safe='')}"
-        return Response(svc.raw(b), media_type="text/csv; charset=utf-8",
+        return Response(svc.raw(b), media_type="application/json" if sync else "text/csv; charset=utf-8",
                         headers={"Content-Disposition": disposition, "Cache-Control": "private, no-store"})
 
     async def _form(request: Request) -> dict[str, Any]:

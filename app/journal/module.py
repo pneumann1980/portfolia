@@ -22,7 +22,7 @@ from app.web.deps import get_ctx, render
 log = logging.getLogger(__name__)
 
 PAGE = 200
-ORIGINS = {"import": "Import", "journal": "manuell", "csv": "CSV-Import", "plan": "Sparplan"}
+ORIGINS = {"import": "Import", "journal": "manuell", "csv": "CSV-Import", "sync": "Datenquelle", "plan": "Sparplan"}
 SAVED = {"created": "Buchung gespeichert.", "updated": "Änderung gespeichert.", "deleted": "Buchung gelöscht.",
          "restored": "Buchung wiederhergestellt.", "asset": "Asset gespeichert.",
          "unpaired": "Transfer aufgelöst – Ab- und Zugang gelten wieder einzeln."}
@@ -130,7 +130,7 @@ def make_router() -> APIRouter:
             names={aid: a.name for aid, a in pf.assets.items()} if pf else {},
             syms={aid: a.symbol for aid, a in pf.assets.items()} if pf else {},
             years=svc.years(), origins=ORIGINS, tx_types=forms.TYPE_LABEL, source_label=source_label,
-            jmeta=svc.meta([r["t"].tx_id for r in rows if r["kind"] in ("journal", "csv")]),
+            jmeta=svc.meta([r["t"].tx_id for r in rows if r["kind"] in ("journal", "csv", "sync")]),
             saved=SAVED.get(saved), saved_tx=tx, warnings=warnings, own_assets=svc.assets(),
             deleted=svc.deleted(), has_import=ctx.active_import_id() is not None,
         )

@@ -9,7 +9,8 @@ YouTube-Videos werden je Position gefiltert.
 * **Datenquellen:** Buchungen stammen aus dem kuratierten Import (ZIP, **read-only**, wird nie verändert),
   werden direkt in Portfolia erfasst (siehe [Buchungen erfassen](#buchungen-in-portfolia-erfassen)) oder aus
   **CSV-Exporten von Börsen, Wallets und Steuertools** übernommen (siehe [CSV-Import](#csv-import-aus-börsen-und-wallets))
-  – auch ganz ohne Import. Es gibt **keine Online-Anbindung** an Börsen oder Wallets. In der App erfasste
+  – auch ganz ohne Import. Börsen und öffentliche Wallet-Adressen lassen sich als [Datenquellen](#datenquellen-börsen-und-wallet-adressen)
+  anlegen; eine Online-Anbindung ist vorbereitet, aber noch für keinen Anbieter umgesetzt. In der App erfasste
   Buchungen und Assets liegen neben abgeleiteten Daten (Kurse, News, Snapshots, Berichte) in `/data/app.sqlite`.
 * **Export und Sicherung:** Alles lässt sich jederzeit im einheitlichen Import-Format (Datenvertrag, Schema 1.1)
   exportieren; nach jeder Änderung entsteht automatisch eine **datierte ZIP-Sicherung**, importierte ZIP-Dateien
@@ -34,15 +35,16 @@ für Smartphones (≈390 px) optimiert.
 3. [Datenvertrag (Import-ZIP)](#datenvertrag-import-zip)
 4. [Buchungen in Portfolia erfassen](#buchungen-in-portfolia-erfassen)
 5. [CSV-Import aus Börsen und Wallets](#csv-import-aus-börsen-und-wallets)
-6. [Berechnungen](#berechnungen)
-7. [Sparpläne](#sparpläne)
-8. [Kurse und Datenquellen](#kurse-und-datenquellen)
-9. [News und YouTube](#news-und-youtube)
-10. [Steuern und Haltefristen](#steuern-und-haltefristen)
-11. [Einstellungen, Sicherheit, Backups](#einstellungen-sicherheit-backups)
-12. [Betrieb und Fehlerbehebung](#betrieb-und-fehlerbehebung)
-13. [Entwicklung](#entwicklung)
-14. [Grenzen und Lizenz](#grenzen-und-lizenz)
+6. [Datenquellen: Börsen und Wallet-Adressen](#datenquellen-börsen-und-wallet-adressen)
+7. [Berechnungen](#berechnungen)
+8. [Sparpläne](#sparpläne)
+9. [Kurse und Datenquellen](#kurse-und-datenquellen)
+10. [News und YouTube](#news-und-youtube)
+11. [Steuern und Haltefristen](#steuern-und-haltefristen)
+12. [Einstellungen, Sicherheit, Backups](#einstellungen-sicherheit-backups)
+13. [Betrieb und Fehlerbehebung](#betrieb-und-fehlerbehebung)
+14. [Entwicklung](#entwicklung)
+15. [Grenzen und Lizenz](#grenzen-und-lizenz)
 
 ---
 
@@ -127,6 +129,7 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 | `ROOT_PATH` | – | Betrieb unter Unterpfad hinter einem Proxy (z. B. `/portfolia`) |
 | `DEMO_MODE` | `false` | synthetische Kurse ohne Internetzugriff (zum Ausprobieren) |
 | `EXPORT_DIR` | `/data/exports` | datierte ZIP-Sicherungen im Import-Format und Archiv der importierten ZIP-Dateien |
+| `PORTFOLIA_DS_<NAME>` | – | Zugangsdaten einer [Datenquelle](#datenquellen-börsen-und-wallet-adressen) (API-Schlüssel mit Leserechten); alternativ `PORTFOLIA_DS_<NAME>_FILE` = Pfad einer Secret-Datei. In Portfolia wird nur der Variablenname eingetragen. |
 
 ---
 
@@ -293,8 +296,9 @@ bucht den **gesamten Bestand** eines Kontos als Abgang ohne Gegenwert – einzel
 ## CSV-Import aus Börsen und Wallets
 
 *Buchungen → CSV importieren* liest CSV-Exporte ein und übersetzt sie in das einheitliche Buchungsformat des
-Datenvertrags. Es gibt bewusst **keine Online-Anbindung** (keine API-Schlüssel von Börsen, kein Wallet-Sync) –
-nur Dateien, die du selbst exportierst.
+Datenvertrags – aus Dateien, die du selbst exportierst. Automatische Abrufe von Börsen und Wallets laufen später
+über [Datenquellen](#datenquellen-börsen-und-wallet-adressen) auf demselben Weg (bisher nur die Grundlage, noch
+keine Anbindung).
 
 **Unterstützte Formate** (automatisch erkannt; unbekannte Vorgänge werden mit Zeilennummer gemeldet, nie geraten):
 
@@ -346,9 +350,13 @@ Börsen und Wallets abgedeckt, die diese Tools unterstützen; Koinly-Wallets wer
   Historie – für ältere Krypto-Zeiträume ein Yahoo-Symbol hinterlegen (*Einstellungen → Kurse*) oder Werte
   eingeben.
 * **Doppelte Zeilen:** Wiederholte oder überlappende Exporte derselben Quelle werden über die Kennung der Zeile
-  erkannt (ID der Börse bzw. Prüfsumme). Gegen Import und andere Quellen wird auf gleichen Zeitpunkt (± Zeitzonen-
-  versatz in ganzen Stunden, ± 10 Minuten) und gleiche Mengen (± 0,5 %) geprüft; auf demselben Konto werden solche
-  Zeilen standardmäßig ausgelassen, auf anderen Konten nur markiert.
+  erkannt (ID der Börse bzw. Prüfsumme). **Dasselbe Ereignis aus einer anderen Quelle** (z. B. CSV-Import und
+  Datenquelle derselben Börse) wird exakt über die Ereignis-ID erkannt – Kraken `refid` (Trades) bzw. Ledger-ID,
+  Coinbase-ID, Bitpanda-Transaktions-ID; Wallet-Exporte (Ledger Live, Trezor, Electrum, Exodus) über den
+  Transaktions-Hash –, sofern Art und Buchungsseite (Abgangs-/Zugangs-Asset) übereinstimmen. Gegen Import und
+  andere Quellen wird zusätzlich auf gleichen Zeitpunkt (± Zeitzonenversatz in ganzen Stunden, ± 10 Minuten) und
+  gleiche Mengen (± 0,5 %) geprüft; auf demselben Konto werden solche Zeilen standardmäßig ausgelassen, auf
+  anderen Konten nur markiert.
 * **Stichtag:** Mit kuratiertem Import werden standardmäßig nur Zeilen **nach** dessen Stand (`valuation_date`)
   vorgeschlagen – ältere stehen dort bereits. Der Stichtag lässt sich je Import ändern oder leeren.
 * **Interne Umbuchungen** eines Anbieters (Spot ↔ Earn/Staking/Funding, Kraken-Staking-Varianten wie `DOT.S`)
@@ -358,6 +366,68 @@ Börsen und Wallets abgedeckt, die diese Tools unterstützen; Koinly-Wallets wer
 * Exportformate ändern sich gelegentlich; unbekannte Vorgänge erscheinen als „nicht lesbar“ mit Zeilennummer
   und können über „Eigenes Format“ oder manuell erfasst werden. Rückfragen zu Formaten bitte mit einer
   anonymisierten Beispielzeile.
+
+---
+
+## Datenquellen: Börsen und Wallet-Adressen
+
+*Einstellungen → Datenquellen* verwaltet Börsenkonten und öffentliche Wallet-Adressen als Quellen für Buchungen:
+anlegen, ansehen, bearbeiten, deaktivieren und entfernen – auch auf dem Smartphone.
+
+> **Stand 0.10:** Grundlage ohne Anbindung. Noch keine Börse und keine Chain wird automatisch abgerufen; jede
+> Quelle zeigt ehrlich **„Manuell / noch nicht unterstützt“** und verweist auf den CSV-Import. Anbindungen kommen
+> einzeln als Connector hinzu, ohne weiteren Dienst und ohne zusätzliche Datenbank.
+
+**Datensatz:** Art (Börse oder Wallet-Adresse), Anbieter bzw. Chain, frei wählbarer Name, Konto in Portfolia (auf
+das gebucht wird – bei vorhandenen CSV-Buchungen dasselbe Konto wählen), öffentliche Adresse bzw. xpub (formal
+geprüft; private Schlüssel und Seed-Phrasen werden abgelehnt, weder gespeichert noch zurückgespielt),
+Zugangsdaten als Name einer Umgebungsvariable (Börsen), Synchronisierungsintervall (nur manuell, stündlich, alle
+6/12 Stunden, täglich), automatische Übernahme (Standard: aus), Status, letzter Lauf, letzter erfolgreicher Lauf,
+letzter Fehler, nächster Lauf und Laufhistorie.
+
+**Status:** *angelegt* · *verbunden* (Verbindungsprüfung erfolgreich, noch nicht synchronisiert) ·
+*synchronisiert* · *teilweise synchronisiert* (Anbieter lieferte nicht alle Daten, z. B. Abruflimit; der nächste
+Lauf setzt fort) · *Fehler* mit verständlicher Meldung, z. B. „Zugangsdaten abgelehnt (HTTP 401) – Schlüssel und
+Leserechte prüfen“, „Anbieter drosselt Anfragen (HTTP 429)“, „Umgebungsvariable … fehlt“. *Deaktiviert* stoppt
+nur den Zeitplan.
+
+**Zugangsdaten** speichert Portfolia nie: API-Schlüssel (nur Leserechte, keine Handels- oder Auszahlungsrechte)
+als Umgebungsvariable `PORTFOLIA_DS_<NAME>` des Containers setzen (Unraid: *Edit → Add another Path, Port,
+Variable…*) oder als Secret-Datei über `PORTFOLIA_DS_<NAME>_FILE`; in der Datenquelle steht nur der Name. Die
+Anzeige meldet „gesetzt“/„fehlt“. Fehlermeldungen werden vor Anzeige, Laufhistorie und Protokoll bereinigt
+(Schlüsselwerte, `key=…`/`signature=…`, URL-Parameter).
+
+**Synchronisieren** (sobald ein Connector existiert):
+
+1. Der Connector liefert Vorgänge mit **stabiler Ereignis-ID** `<anbieter>:<ID>` (z. B. `kraken:<refid>`); ein
+   Vorgang darf **mehrere Buchungszeilen** haben (z. B. Trade + Gebühr in einem dritten Asset), jede Zeile erhält
+   die Kennung `<ereignis-id>#<zeile>`.
+2. Die Zeilen durchlaufen **denselben Weg wie der CSV-Import**: Symbole zuordnen, EUR-Werte, Validierung,
+   Dubletten, Stichtag, Transfer-Abgleich – nichts umgeht Portfolio- oder Steuerlogik.
+3. **Prüfen und übernehmen** wie beim CSV-Import (*Synchronisierung prüfen*). Übernommene Buchungen heißen
+   `PF-S-…`, tragen Quelle „Datenquelle · <Anbieter>“, Ereignis-ID, Zeile und Datenquelle und sind unter
+   *Buchungen* bearbeitbar.
+
+Regeln:
+
+* **Idempotent:** Bereits übernommene Kennungen gelten als „bereits importiert“ – auch gelöschte Buchungen werden
+  nicht wieder angelegt; ein Abruf ohne Neues hinterlässt keinen Stapel. Ein Abrufstand (Cursor) begrenzt
+  folgende Abrufe auf Neues; überlappende Abrufe sind unschädlich.
+* **Überschneidung mit CSV-Importen:** Dasselbe Ereignis aus einem früheren CSV-Import erscheint vor der
+  Übernahme als „mögliche Dublette“ mit Verweis auf die vorhandene Buchung und wird standardmäßig nicht
+  übernommen – umgekehrt (erst Datenquelle, dann CSV) ebenso. Gegen den kuratierten Import gelten Stichtag und
+  unscharfe Dublettenprüfung.
+* **Automatisch übernehmen** (optional) nur für Abrufe, die ausschließlich neue Buchungen enthalten; mit einer
+  Überschneidung oder unvollständigen Zeile geht der ganze Abruf zur Prüfung. Solange ein Abruf auf Prüfung
+  wartet, ruft die Quelle nichts Neues ab („wartet auf Prüfung“).
+* **Verwerfen** eines Prüf-Stapels: Dessen Vorgänge liefert die Quelle erst nach *Abrufstand zurücksetzen*
+  erneut (bereits übernommene werden dann erkannt).
+* **Entfernen** löscht Konfiguration, Laufhistorie und offene Prüf-Stapel; übernommene Buchungen bleiben und werden
+  von einer neu angelegten Quelle desselben Anbieters wiedererkannt. Ändern von Anbieter, Adresse oder Konto setzt
+  Status und Abrufstand zurück.
+* **Zeitplan:** Ein Hintergrundjob prüft alle 5 Minuten fällige Quellen (aktiv, mit Anbindung und Intervall).
+* **Datenschutz:** Ein Connector überträgt nur, was für den Abruf nötig ist (Adresse bzw. API-Schlüssel an den
+  jeweiligen Anbieter) – keine Bestände, Werte oder Kontonamen.
 
 ---
 
@@ -657,6 +727,8 @@ Struktur:
 ```
 app/
   importer/   Datenvertrag, Validierung, atomarer Import, Diff, Beispiel-ZIP
+  csvimport/  CSV-Profile, Vorschau, Dubletten (inkl. Ereignis-IDs), Transfer-Abgleich, Übernahme
+  datasources/ Datenquellen: Anbieterkatalog, Connector-Schnittstelle, Synchronisierung, Einstellungen
   ledger/     Engine: Bestände, Lots (FIFO/LIFO/HIFO), Veräußerungen, Erträge, Zahlungsströme
   prices/     Yahoo, CoinGecko, EZB, Demo; Kurs-Store und Veraltungslogik
   analytics/  Bewertung, Allokation, Historie, TTWROR/IRR, Zeiträume, Farben
@@ -670,6 +742,12 @@ examples/     Beispiel-Import, sources.yaml
 docs/         Meilensteine, Steuer-Regelwerke, Farbpalette
 tests/        pytest (inkl. synthetischer Großimport)
 ```
+
+**Neuer Connector:** Klasse von `app.datasources.connector.Connector` ableiten (`provider` = ID aus
+`app/datasources/providers.py`, `check()` und `fetch()`), mit `@register` anmelden und das Modul in
+`app/main.py` laden. Der Vertrag (Ereignis-ID im Format des CSV-Profils, feste Zeilenreihenfolge, Cursor,
+`ConnectorError` mit Text ohne Geheimnisse) steht im Modul-Docstring; `tests/test_datasources.py` zeigt einen
+Test-Connector.
 
 CI (GitHub Actions): Lint und Tests bei jedem Push/PR; Image-Build und Veröffentlichung nach GHCR
 (`ghcr.io/pneumann1980/portfolia`) für den Standard-Branch und Versions-Tags – als Docker-Manifestliste ohne

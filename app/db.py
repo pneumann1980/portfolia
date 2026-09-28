@@ -254,6 +254,63 @@ CREATE TABLE IF NOT EXISTS asset_source (
 );
 CREATE INDEX IF NOT EXISTS ix_asset_source_status ON asset_source(status);
 """),
+    (7, """
+-- Datenquellen: Börsenkonten und öffentliche Wallet-Adressen, synchronisiert über Connectoren. Zugangsdaten
+-- werden nie gespeichert – nur der Name einer Umgebungsvariable (credential_ref).
+CREATE TABLE IF NOT EXISTS data_source (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind              TEXT NOT NULL,                  -- exchange | wallet
+  provider          TEXT NOT NULL,                  -- Börse (kraken, …) bzw. Chain (bitcoin, ethereum, …)
+  name              TEXT NOT NULL,                  -- frei wählbar
+  account           TEXT NOT NULL,                  -- Konto in Portfolia, auf das gebucht wird
+  address           TEXT,                           -- öffentliche Adresse / xpub (nur Wallets, normalisiert)
+  credential_ref    TEXT,                           -- Umgebungsvariable mit Zugangsdaten (nur der Name)
+  enabled           INTEGER NOT NULL DEFAULT 1,
+  status            TEXT NOT NULL DEFAULT 'created',-- created | connected | synced | partial | error
+  sync_interval_min INTEGER NOT NULL DEFAULT 0,     -- 0 = nur manuell
+  auto_commit       INTEGER NOT NULL DEFAULT 0,     -- Abrufe ohne Überschneidung/unvollständige Zeile übernehmen
+  last_run_at       TEXT,
+  last_success_at   TEXT,
+  last_error        TEXT,                           -- bereinigt (ohne Geheimnisse)
+  last_error_at     TEXT,
+  next_run_at       TEXT,
+  cursor_json       TEXT,                           -- Fortsetzungspunkt des Connectors
+  note              TEXT,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL,
+  UNIQUE(kind, provider, address)
+);
+CREATE INDEX IF NOT EXISTS ix_data_source_due ON data_source(enabled, next_run_at);
+CREATE TABLE IF NOT EXISTS data_source_run (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id      INTEGER NOT NULL REFERENCES data_source(id) ON DELETE CASCADE,
+  trigger        TEXT NOT NULL,                     -- manual | schedule | check
+  started_at     TEXT NOT NULL,
+  finished_at    TEXT,
+  status         TEXT NOT NULL,                     -- running | ok | partial | error
+  events         INTEGER NOT NULL DEFAULT 0,
+  rows_new       INTEGER NOT NULL DEFAULT 0,
+  rows_known     INTEGER NOT NULL DEFAULT 0,
+  rows_overlap   INTEGER NOT NULL DEFAULT 0,
+  rows_committed INTEGER NOT NULL DEFAULT 0,
+  batch_id       INTEGER,
+  message        TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_data_source_run ON data_source_run(source_id, id);
+-- Herkunft je Buchung: stabile externe Ereignis-ID (anbieter:id), Zeile im Ereignis, Blockchain-Hash, Datenquelle.
+ALTER TABLE journal_tx ADD COLUMN event_key TEXT;
+ALTER TABLE journal_tx ADD COLUMN event_line INTEGER;
+ALTER TABLE journal_tx ADD COLUMN tx_hash TEXT;
+ALTER TABLE journal_tx ADD COLUMN datasource_id INTEGER;
+CREATE INDEX IF NOT EXISTS ix_journal_tx_event ON journal_tx(event_key);
+CREATE INDEX IF NOT EXISTS ix_journal_tx_hash ON journal_tx(tx_hash);
+-- Stapel: csv (Datei) | sync (Datenquelle); Quelle der Buchungen (NULL = csv:<profil>).
+ALTER TABLE csv_batch ADD COLUMN kind TEXT NOT NULL DEFAULT 'csv';
+ALTER TABLE csv_batch ADD COLUMN source TEXT;
+ALTER TABLE csv_batch ADD COLUMN datasource_id INTEGER;
+ALTER TABLE csv_row ADD COLUMN event_key TEXT;
+ALTER TABLE csv_row ADD COLUMN event_line INTEGER;
+"""),
 ]
 
 
@@ -291,12 +348,13 @@ class Database:
             self._local.conn = None
 
     # -- Migration ---------------------------------------------------------------------------
-    def migrate(self) -> None:
+    def migrate(self, target: int | None = None) -> None:
+        """Schema auf den neuesten Stand (bzw. bis ``target`` – für Migrationstests) bringen."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         c = self.conn
         current = c.execute("PRAGMA user_version").fetchone()[0]
         for version, sql in MIGRATIONS:
-            if version <= current:
+            if version <= current or (target is not None and version > target):
                 continue
             script = SCHEMA_FILE.read_text(encoding="utf-8") if sql == "__schema__" else sql
             log.info("DB-Migration auf Version %s", version)

@@ -4,7 +4,13 @@
 {% macro save(section) %}<input type="hidden" name="section" value="{{ section }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="row" style="margin-top:12px"><button class="btn primary" type="submit">Speichern</button>{% if saved == section %}<span class="badge good">✓ gespeichert</span>{% endif %}</div>{% endmacro %}
 {% block content %}
+<nav class="tabs" aria-label="Einstellungen"><a class="active" href="/settings">Einstellungen</a><a href="/settings/datasources">Datenquellen</a></nav>
 <div class="stack">
+<section class="card" id="datasources">
+  <div class="card-head"><h2>Datenquellen</h2><a class="btn" href="/settings/datasources">Verwalten</a></div>
+  <p class="hint">Börsen und öffentliche Wallet-Adressen als Quelle für Buchungen:
+    {% if ds_summary.total %}{{ ds_summary.exchange }} Börse{{ 'n' if ds_summary.exchange != 1 }}, {{ ds_summary.wallet }} Wallet{{ 's' if ds_summary.wallet != 1 }}{% if ds_summary.error %} · <span class="badge crit">{{ ds_summary.error }} mit Fehler</span>{% endif %}{% else %}noch keine angelegt{% endif %}.</p>
+</section>
 <section class="card" id="general">
   <div class="card-head"><h2>Darstellung</h2></div>
   <form method="post" action="/settings/save" class="grid-2">

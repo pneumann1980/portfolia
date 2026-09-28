@@ -42,10 +42,10 @@
         <td data-label="Zugang">{{ leg(t.to_account, t.to_asset, t.to_qty, '+') }}</td>
         <td class="num" data-label="Gebühr">{% if t.fee_qty %}<span class="nowrap">{{ t.fee_qty|qty }} {{ sym(t.fee_asset) }}</span>{% if t.fee_eur and t.fee_asset != 'EUR' %}<div class="hint">{{ t.fee_eur|eur }}</div>{% endif %}{% elif t.fee_eur %}{{ t.fee_eur|eur }}{% else %}–{% endif %}</td>
         <td class="num" data-label="Wert">{{ t.value_eur|eur if t.value_eur is not none else '–' }}</td>
-        <td data-label="Quelle">{% set m = jmeta.get(t.tx_id) %}{% if r.kind in ('journal', 'csv') %}{% if m and m.batch_id %}<a class="badge info" href="/journal/csv/{{ m.batch_id }}">{{ source_label(t.source) }}</a>{% else %}<span class="badge info">{{ source_label(t.source) }}</span>{% endif %}{% elif r.kind == 'plan_est' %}<a class="badge warn" href="/plans">Sparplan · geschätzt</a>{% elif r.kind == 'plan' %}<a class="badge" href="/plans#confirmed">Sparplan · freigegeben</a>{% else %}<span class="hint">Import{% if t.source %} · {{ t.source }}{% endif %}</span>{% endif %}
+        <td data-label="Quelle">{% set m = jmeta.get(t.tx_id) %}{% if r.kind in ('journal', 'csv', 'sync') %}{% if m and m.batch_id %}<a class="badge info" href="/journal/csv/{{ m.batch_id }}">{{ source_label(t.source) }}</a>{% else %}<span class="badge info">{{ source_label(t.source) }}</span>{% endif %}{% elif r.kind == 'plan_est' %}<a class="badge warn" href="/plans">Sparplan · geschätzt</a>{% elif r.kind == 'plan' %}<a class="badge" href="/plans#confirmed">Sparplan · freigegeben</a>{% else %}<span class="hint">Import{% if t.source %} · {{ t.source }}{% endif %}</span>{% endif %}
           {% if r.dups %}<div><span class="badge warn" title="Ähnliche Import-Buchung: {{ r.dups|join(', ') }}">Dublette?</span></div>{% endif %}</td>
         <td class="actions nowrap">
-          {% if r.kind in ('journal', 'csv') and m and m.editable %}
+          {% if r.kind in ('journal', 'csv', 'sync') and m and m.editable %}
             <a class="btn sm" href="/journal/{{ t.tx_id }}/edit">Bearbeiten</a>
             <a class="btn sm ghost" href="/journal/new?copy={{ t.tx_id }}" title="Als Vorlage für eine neue Buchung">Kopieren</a>
             {% if m.source == 'transfer' %}

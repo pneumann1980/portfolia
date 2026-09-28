@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Datenquelle bearbeiten' if ds else 'Datenquelle anlegen' }}{% endblock %}
+{% block heading %}Datenquellen{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a class="active" href="/settings/datasources">Datenquellen</a></nav>
+{% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>{{ ds.name if ds else ('Börse anlegen' if kind == 'exchange' else 'Wallet-Adresse anlegen') }}</h2>
+    <a class="btn ghost" href="/settings/datasources">Zurück</a></div>
+  {% if not ds %}
+  <div class="seg" role="group" aria-label="Art" style="margin-bottom:12px">
+    <a href="/settings/datasources/new?kind=exchange" class="{{ 'active' if kind == 'exchange' }}">Börse</a>
+    <a href="/settings/datasources/new?kind=wallet" class="{{ 'active' if kind == 'wallet' }}">Wallet-Adresse</a>
+  </div>{% endif %}
+  <form method="post" action="{{ '/settings/datasources/' ~ ds.id if ds else '/settings/datasources' }}" class="stack" style="gap:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if not ds %}<input type="hidden" name="kind" value="{{ kind }}">{% endif %}
+    <div class="grid-2">
+      <label class="field">{{ 'Börse' if kind == 'exchange' else 'Chain' }}
+        <select name="provider" required>
+          <option value="">– bitte wählen –</option>
+          {% for p in providers %}<option value="{{ p.id }}" {% if data.get('provider') == p.id %}selected{% endif %}>{{ p.label }}</option>{% endfor %}
+        </select></label>
+      <label class="field">Name (frei wählbar)
+        <input type="text" name="name" maxlength="60" required value="{{ data.get('name', '') }}" placeholder="{{ 'z. B. Kraken Hauptkonto' if kind == 'exchange' else 'z. B. Ledger BTC' }}" autocomplete="off"></label>
+      {% if kind == 'wallet' %}
+      <label class="field" style="grid-column:1/-1">Öffentliche Adresse
+        <input type="text" name="address" required value="{{ data.get('address', '') }}" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="text" class="mono">
+        <span class="hint">Nur die öffentliche Adresse (bzw. xpub). <b>Niemals</b> privaten Schlüssel oder Seed-Phrase eingeben – solche Eingaben werden abgelehnt.</span></label>
+      {% endif %}
+      <label class="field">Konto in Portfolia
+        <input type="text" name="account" maxlength="60" list="dl-accounts" value="{{ data.get('account', '') }}" placeholder="wie Name" autocomplete="off">
+        <span class="hint">Auf dieses Konto wird gebucht (wie beim CSV-Import). Ein bestehendes Konto wählen, wenn schon Buchungen per Import/CSV vorhanden sind.</span></label>
+      <label class="field">Synchronisierung
+        <select name="sync_interval_min">{% for m, l in intervals.items() %}<option value="{{ m }}" {% if data.get('sync_interval_min', '0')|string == m|string %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+        <span class="hint">Greift erst, wenn es für den Anbieter eine automatische Anbindung gibt.</span></label>
+      {% if kind == 'exchange' %}
+      <label class="field">Zugangsdaten: Name der Umgebungsvariable (optional)
+        <input type="text" name="credential_ref" maxlength="64" value="{{ data.get('credential_ref', '') }}" placeholder="PORTFOLIA_DS_KRAKEN" autocomplete="off" autocapitalize="characters" spellcheck="false" class="mono">
+        <span class="hint">Den API-Schlüssel (nur Leserechte) als Umgebungsvariable des Containers setzen, z. B. im Unraid-Template; hier nur deren Namen eintragen. Portfolia speichert und zeigt keine Schlüssel.</span></label>
+      {% endif %}
+      <label class="field" style="grid-column:1/-1">Notiz (optional)
+        <input type="text" name="note" maxlength="300" value="{{ data.get('note', '') }}"></label>
+    </div>
+    <label class="check"><input type="checkbox" name="auto_commit" value="1" {% if data.get('auto_commit') in ('1', 'on') %}checked{% endif %}>
+      Abrufe ohne Überschneidung automatisch übernehmen – enthält ein Abruf mögliche Dubletten, Buchungen vor dem
+      Import-Stichtag oder unvollständige Zeilen, geht er vollständig zur Prüfung</label>
+    <div class="row"><button class="btn primary" type="submit">{{ 'Speichern' if ds else 'Anlegen' }}</button><a class="btn ghost" href="/settings/datasources">Abbrechen</a></div>
+  </form>
+  <datalist id="dl-accounts">{% for a in accounts %}<option value="{{ a }}">{% endfor %}</datalist>
+</section>
+
+{% if ds %}
+<section class="card">
+  <div class="card-head"><h2>Status</h2><span class="badge {{ ds.status_badge }}">{{ ds.status_label }}</span></div>
+  {% if not ds.supported %}<p class="hint"><b>Manuell / noch nicht unterstützt</b> – Buchungen per <a href="/journal/csv">CSV-Import</a>.</p>{% endif %}
+  <div class="facts">
+    <div class="fact"><div class="k">Angelegt</div><div class="v">{{ ds.created_at|datetime_de }}</div></div>
+    <div class="fact"><div class="k">Letzter Lauf</div><div class="v">{{ ds.last_run_at|datetime_de if ds.last_run_at else '–' }}</div></div>
+    <div class="fact"><div class="k">Letzter erfolgreicher Lauf</div><div class="v">{{ ds.last_success_at|datetime_de if ds.last_success_at else '–' }}</div></div>
+    <div class="fact"><div class="k">Nächster Lauf</div><div class="v">{% if pending and ds.enabled and ds.supported %}–<div class="hint">wartet auf Prüfung</div>{% else %}{{ ds.next_run_at|datetime_de if ds.next_run_at else '–' }}{% endif %}</div></div>
+    {% if ds.last_error %}<div class="fact" style="grid-column:1/-1"><div class="k">Letzter Fehler</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
+  </div>
+  <div class="row" style="margin-top:10px">
+    {% if pending %}<a class="btn" href="/journal/csv/{{ pending.id }}">Buchungen zur Prüfung öffnen</a>{% endif %}
+    {% if ds.supported and ds.cursor_json %}<form method="post" action="/settings/datasources/{{ ds.id }}/reset" class="inline" data-confirm="Abrufstand zurücksetzen? Der nächste Lauf holt alle Vorgänge erneut; bereits übernommene werden erkannt, Überschneidungen mit CSV-Importen erscheinen erneut zur Prüfung."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Abrufstand zurücksetzen</button></form>{% endif %}
+  </div>
+  {% if runs %}
+  <h3 style="margin-top:14px">Letzte Läufe</h3>
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>Zeit</th><th>Anlass</th><th>Ergebnis</th><th>Meldung</th></tr></thead>
+    <tbody>{% for r in runs %}<tr>
+      <td class="nowrap" data-label="Zeit">{{ r.started_at|datetime_de }}</td>
+      <td data-label="Anlass">{{ {'manual': 'manuell', 'schedule': 'Zeitplan', 'check': 'Prüfung'}.get(r.trigger, r.trigger) }}</td>
+      <td data-label="Ergebnis"><span class="badge {{ {'ok': 'good', 'partial': 'warn', 'error': 'crit'}.get(r.status, '') }}">{{ run_status.get(r.status, r.status) }}</span>{% if r.batch_id %} <a href="/journal/csv/{{ r.batch_id }}">Stapel</a>{% endif %}</td>
+      <td class="wide" data-label="Meldung">{{ r.message or '' }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>{% endif %}
+</section>
+{% endif %}
+{% endblock %}

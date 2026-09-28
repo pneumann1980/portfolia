@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Datenquellen{% endblock %}
+{% block heading %}Datenquellen{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a class="active" href="/settings/datasources">Datenquellen</a></nav>
+{% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+{% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>Börsen und Wallets</h2>
+    <div class="row">
+      <a class="btn primary" href="/settings/datasources/new?kind=exchange">+ Börse</a>
+      <a class="btn" href="/settings/datasources/new?kind=wallet">+ Wallet-Adresse</a>
+    </div></div>
+  <p class="hint">Datenquellen liefern Buchungen über denselben Weg wie der CSV-Import: Prüfung, Dubletten- und
+    Transfer-Abgleich, Übernahme erst nach Durchsicht (oder automatisch nur für eindeutig neue Buchungen). Für Wallets
+    genügt die öffentliche Adresse; Zugangsdaten von Börsen werden nie in Portfolia gespeichert, sondern als
+    Umgebungsvariable des Containers hinterlegt.</p>
+  <details class="box"><summary>Status</summary>
+    <ul class="small">
+      <li><b>angelegt</b> – gespeichert, noch nicht verbunden (ohne automatische Anbindung: Buchungen per CSV-Import)</li>
+      <li><b>verbunden</b> – Verbindungsprüfung erfolgreich, noch nicht synchronisiert</li>
+      <li><b>synchronisiert</b> – letzter Lauf vollständig</li>
+      <li><b>teilweise synchronisiert</b> – Anbieter lieferte nicht alle Daten (z. B. Abruflimit, einzelne Bereiche
+        gestört); der nächste Lauf holt den Rest</li>
+      <li><b>Fehler</b> – letzter Lauf fehlgeschlagen (Meldung an der Quelle)</li>
+    </ul></details>
+</section>
+
+{% for ds in items %}
+<section class="card ds-card" id="ds-{{ ds.id }}">
+  {% set pb = pending.get(ds.id) %}
+  <div class="card-head">
+    <div style="min-width:0">
+      <h2 style="overflow-wrap:anywhere">{{ ds.name }}</h2>
+      <div class="hint">{{ ds.kind_label }} · {{ ds.provider_label }}</div>
+    </div>
+    <div class="row">
+      <span class="badge {{ ds.status_badge }}">{{ ds.status_label }}</span>
+      {% if not ds.enabled %}<span class="badge">deaktiviert</span>{% endif %}
+    </div>
+  </div>
+  {% if not ds.supported %}
+  <div class="alert"><span class="icon">i</span><div><b>Manuell / noch nicht unterstützt:</b> Für {{ ds.provider_label }} gibt es noch
+    keine automatische Anbindung. Buchungen bitte per <a href="/journal/csv">CSV-Import</a> erfassen{% if ds.provider_obj and ds.provider_obj.csv_profile %} (Format „{{ ds.provider_label }}“ wird erkannt){% endif %}.</div></div>
+  {% endif %}
+  <div class="facts">
+    <div class="fact"><div class="k">Konto in Portfolia</div><div class="v">{{ ds.account }}</div></div>
+    <div class="fact"><div class="k">Synchronisierung</div><div class="v">{{ ds.interval_label if ds.supported else 'manuell' }}{% if ds.auto_commit and ds.supported %}<div class="hint">neue Buchungen automatisch</div>{% endif %}</div></div>
+    <div class="fact"><div class="k">Letzter erfolgreicher Lauf</div><div class="v">{{ ds.last_success_at|datetime_de if ds.last_success_at else '–' }}</div></div>
+    <div class="fact"><div class="k">Nächster Lauf</div><div class="v">{% if ds.next_run_at and not pb %}{{ ds.next_run_at|datetime_de }}{% else %}–<div class="hint">{{ 'wartet auf Prüfung' if pb and ds.enabled and ds.supported else ('deaktiviert' if not ds.enabled else ('keine automatische Anbindung' if not ds.supported else 'nur manuell')) }}</div>{% endif %}</div></div>
+    {% if ds.address %}<div class="fact" style="grid-column:1/-1"><div class="k">Adresse</div><div class="v mono" style="font-weight:500">{{ ds.address }}</div></div>{% endif %}
+    {% if ds.credential_ref %}<div class="fact" style="grid-column:1/-1"><div class="k">Zugangsdaten (Umgebungsvariable)</div><div class="v"><span class="mono">{{ ds.credential_ref }}</span> <span class="badge {{ 'good' if ds.credential_state == 'gesetzt' else 'warn' }}">{{ ds.credential_state }}</span></div></div>{% endif %}
+    {% if ds.last_error %}<div class="fact" style="grid-column:1/-1"><div class="k">Letzter Fehler{% if ds.last_error_at %} · {{ ds.last_error_at|datetime_de }}{% endif %}</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
+  </div>
+  {% if pb %}<div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div>Buchungen warten auf Prüfung – bis dahin ruft die Quelle nichts Neues ab. <a href="/journal/csv/{{ pb.id }}">Jetzt prüfen und übernehmen</a></div></div>{% endif %}
+  <div class="row" style="margin-top:12px">
+    {% if ds.supported and ds.enabled %}
+      <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit">Jetzt synchronisieren</button></form>
+      <form method="post" action="/settings/datasources/{{ ds.id }}/check" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Verbindung prüfen</button></form>
+    {% endif %}
+    <a class="btn" href="/settings/datasources/{{ ds.id }}">Bearbeiten</a>
+    <form method="post" action="/settings/datasources/{{ ds.id }}/toggle" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">{{ 'Deaktivieren' if ds.enabled else 'Aktivieren' }}</button></form>
+    <form method="post" action="/settings/datasources/{{ ds.id }}/delete" class="inline" data-confirm="„{{ ds.name }}“ entfernen? Übernommene Buchungen bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Entfernen</button></form>
+  </div>
+</section>
+{% else %}
+<section class="card"><p class="hint">Noch keine Datenquelle. Lege eine Börse oder eine öffentliche Wallet-Adresse an –
+  Buchungen kommen dann, sobald eine Anbindung verfügbar ist, automatisch zur Prüfung; bis dahin per
+  <a href="/journal/csv">CSV-Import</a>.</p></section>
+{% endfor %}
+{% endblock %}

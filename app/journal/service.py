@@ -37,7 +37,7 @@ from app.util.timeutil import iso, local_tz, parse_iso, to_local_date, today_loc
 log = logging.getLogger(__name__)
 
 SOURCE_LABEL = {"manual": "manuell", "transfer": "Transfer-Abgleich"}
-TX_PREFIX = {"manual": "PF-M-", "csv": "PF-C-", "transfer": "PF-T-"}
+TX_PREFIX = {"manual": "PF-M-", "csv": "PF-C-", "transfer": "PF-T-", "sync": "PF-S-"}
 EDITABLE_SOURCES = ("manual", "transfer")
 SEQ_BASE = 2_000_000
 TAX_TYPES = {"share": "Aktie", "etf_equity": "Aktienfonds (≥ 51 % Aktien)", "etf_mixed": "Mischfonds (≥ 25 % Aktien)",
@@ -65,16 +65,29 @@ def source_label(source: str | None) -> str:
         except ImportError:  # pragma: no cover
             name = src[4:]
         return f"CSV · {name}"
+    if src.startswith("sync:"):
+        try:
+            from app.datasources.providers import provider_label
+
+            name = provider_label(src[5:])
+        except ImportError:  # pragma: no cover
+            name = src[5:]
+        return f"Datenquelle · {name}"
     return src
 
 
 def tx_prefix(source: str) -> str:
-    return TX_PREFIX["csv"] if source.startswith("csv:") else TX_PREFIX.get(source, "PF-X-")
+    if source.startswith("csv:"):
+        return TX_PREFIX["csv"]
+    if source.startswith("sync:"):
+        return TX_PREFIX["sync"]
+    return TX_PREFIX.get(source, "PF-X-")
 
 
 def editable(row: Any) -> bool:
     src = row["source"] or ""
-    return row["status"] == "active" and not row["group_ref"] and (src in EDITABLE_SOURCES or src.startswith("csv:"))
+    return row["status"] == "active" and not row["group_ref"] and (src in EDITABLE_SOURCES
+                                                                   or src.startswith(("csv:", "sync:")))
 
 
 def _d(v: Any) -> Decimal | None:
@@ -269,6 +282,8 @@ class JournalService:
             kind = "plan_est" if t.flag == "estimated" else ("plan" if t.origin == "plan" else t.origin)
             if kind == "journal" and ((t.source or "").startswith("csv:") or t.source == "transfer"):
                 kind = "csv"
+            elif kind == "journal" and (t.source or "").startswith("sync:"):
+                kind = "sync"
             if origin and origin != kind and not (origin == "plan" and kind == "plan_est"):
                 continue
             if typ and t.type != typ:
@@ -391,15 +406,16 @@ class JournalService:
     def _insert(self, c: Any, p: dict[str, Any], value_source: str | None, form_json: str | None, stamp: str,
                 group_ref: str | None, source: str = "manual", *, external_id: str | None = None,
                 batch_id: int | None = None, status: str = "active", pair_refs: str | None = None,
-                log: bool = True) -> str:
+                log: bool = True, event_key: str | None = None, event_line: int | None = None,
+                tx_hash: str | None = None, datasource_id: int | None = None) -> str:
         vals = self._values(p, value_source)
         prefix = tx_prefix(source)
         tmp = f"{prefix}NEU-{datetime.now(UTC).timestamp()}-{id(p)}"
         cols = ["tx_id", "source", "external_id", "group_ref", "status", *vals, "form_json", "created_at",
-                "updated_at", "batch_id", "pair_refs"]
+                "updated_at", "batch_id", "pair_refs", "event_key", "event_line", "tx_hash", "datasource_id"]
         cur = c.execute(f"INSERT INTO journal_tx({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                         (tmp, source, external_id, group_ref, status, *vals.values(), form_json, stamp, stamp,
-                         batch_id, pair_refs))
+                         batch_id, pair_refs, event_key, event_line, tx_hash, datasource_id))
         tx_id = f"{prefix}{cur.lastrowid:06d}"
         c.execute("UPDATE journal_tx SET tx_id=? WHERE id=?", (tx_id, cur.lastrowid))
         if log:

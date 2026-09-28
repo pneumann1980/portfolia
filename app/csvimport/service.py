@@ -14,6 +14,11 @@ Ablauf
 4. **Rückgängig**: alle Buchungen des Stapels werden zurückgenommen; Transfers mit Buchungen anderer Stapel werden
    aufgelöst, deren Einzelbuchungen gelten wieder.
 
+Datenquellen (Connectoren) nutzen denselben Weg: :meth:`CsvImportService.ingest` legt ihre normalisierten Vorgänge als
+Stapel der Art „sync“ an (Quelle ``sync:<anbieter>``, Kennung ``<ereignis>#<zeile>``). Gleiche Ereignisse aus
+anderen Quellen – etwa ein früherer CSV-Import derselben Börse – werden über Ereignis-ID bzw. Transaktions-Hash exakt
+erkannt (:mod:`app.csvimport.events`), sonst über die unscharfe Dublettenprüfung, und vor dem Übernehmen angezeigt.
+
 EUR-Werte (Reihenfolge): Eingabe → Wert aus der Datei (Journal-Format) → Fiat-Seite des Handels (Devisenkurs der EZB
 bzw. Yahoo für Fremdwährungen) → Gegenwert laut Datei → Stablecoin-Seite (Marktkurs, sonst 1 USD bzw. 1 EUR) →
 gespeicherter Tageskurs des erhaltenen bzw. abgegebenen Assets → Transaktionskurs aus Import/Journal oder aus der
@@ -39,6 +44,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.csvimport import model as M
+from app.csvimport.events import derive_event_key, derive_tx_hash, match_keys, normalize_hash
 from app.csvimport.model import ParseOptions, Rec
 from app.csvimport.profiles import BUILTIN, PROFILES, MappingProfile, Profile, detect, header_matcher
 from app.csvimport.reader import CsvError, read_table, zone
@@ -406,9 +412,15 @@ class CsvImportService:
         self.db.x("DELETE FROM csv_mapping WHERE id=?", (mid,))
 
     # -- Stapel -------------------------------------------------------------------------------------------
+    @staticmethod
+    def source_of(batch: Any) -> str:
+        """Journal-Quelle der Buchungen eines Stapels: ``csv:<profil>`` bzw. ``sync:<anbieter>``."""
+        return batch["source"] or f"csv:{batch['profile']}"
+
     def batches(self, limit: int = 50) -> list[Any]:
         return self.db.q("SELECT id, filename, file_size, profile, account, status, summary_json, created_at, "
-                         "committed_at, reverted_at FROM csv_batch ORDER BY id DESC LIMIT ?", (limit,))
+                         "committed_at, reverted_at, kind, source, datasource_id FROM csv_batch ORDER BY id DESC "
+                         "LIMIT ?", (limit,))
 
     def batch(self, bid: int) -> Any:
         return self.db.q1("SELECT * FROM csv_batch WHERE id=?", (bid,))
@@ -448,6 +460,36 @@ class CsvImportService:
         log.info("CSV-Datei hochgeladen: %s (Stapel %s, Profil %s)", name, bid, prof.id if prof else "unbekannt")
         return bid, []
 
+    @_locked
+    def ingest(self, recs: list[Rec], *, source: str, profile: str, account: str, label: str,
+               datasource_id: int | None, payload: bytes, options: Mapping[str, Any] | None = None) -> int:
+        """Normalisierte Vorgänge einer Datenquelle als Stapel (Art „sync“) anlegen und auswerten.
+
+        ``payload`` (normalisierte Rohdaten) wird wie eine CSV-Datei komprimiert aufbewahrt – nachvollziehbar, ohne
+        Zugangsdaten. Ohne Stichtag gilt wie beim CSV-Import das ``valuation_date`` des kuratierten Imports."""
+        opts = {k: str(v).strip() for k, v in (options or {}).items() if v is not None}
+        base = self.ctx.base_portfolio()
+        if "cutoff" not in opts and base is not None and base.valuation_date is not None:
+            opts["cutoff"] = base.valuation_date.isoformat()
+        recs = sorted(recs, key=lambda r: (r.ts, r.event_key or "", r.event_line or 0))
+        stamp = _now()
+        summary = {"rows_read": len(recs), "recs": len(recs), "events": len({r.event_key or r.ext_id for r in recs}),
+                   "skipped": {}, "errors": [], "error_count": 0, "notes": []}
+        with self.db.transaction() as c:
+            cur = c.execute(
+                "INSERT INTO csv_batch(filename, file_sha256, file_size, raw_gz, profile, account, options_json, "
+                "status, summary_json, created_at, updated_at, kind, source, datasource_id) "
+                "VALUES (?,?,?,?,?,?,?, 'preview', ?,?,?, 'sync', ?,?)",
+                (label[:120], hashlib.sha256(payload).hexdigest(), len(payload), gzip.compress(payload, 6), profile,
+                 account, json.dumps(opts, ensure_ascii=False), json.dumps(summary), stamp, stamp, source,
+                 datasource_id))
+            bid = int(cur.lastrowid)  # type: ignore[arg-type]
+            c.executemany("INSERT INTO csv_row(batch_id, idx, line, rec_json, status, event_key, event_line) "
+                          "VALUES (?,?,?,?, 'new', ?,?)",
+                          [(bid, i, r.line, rec_to_json(r), r.event_key, r.event_line) for i, r in enumerate(recs)])
+        self.evaluate(bid)
+        return bid
+
     def table(self, batch: Any) -> Any:
         return read_table(self.raw(batch), header_matcher(self.mapping_profiles()))
 
@@ -464,6 +506,8 @@ class CsvImportService:
         batch = self.batch(bid)
         if batch is None or batch["status"] not in ("mapping", "preview"):
             return ["Stapel nicht gefunden oder bereits übernommen."]
+        if batch["kind"] == "sync":
+            return ["Stapel einer Datenquelle haben kein Dateiformat."]
         prof = self.profile(pid)
         if prof is None:
             return ["Unbekanntes Format."]
@@ -479,6 +523,8 @@ class CsvImportService:
         if batch is None or batch["status"] in ("reverted",):
             return ["Stapel nicht gefunden."]
         opts = self.options(batch)
+        if batch["kind"] == "sync":  # Datenquelle: nur der Stichtag ist einstellbar (Konto kommt aus der Quelle)
+            form = {k: v for k, v in form.items() if k == "cutoff"}
         for k in ("tz", "decimal", "dayfirst", "default_asset", "cutoff", "accounts_from_file"):
             if k in form:
                 v = str(form.get(k) or "").strip()
@@ -490,7 +536,8 @@ class CsvImportService:
                 if k == "default_asset":
                     v = v.upper()[:20]
                 opts[k] = v
-        account = str(form.get("account") or batch["account"]).strip()[:80] or batch["account"]
+        account = (str(form.get("account") or batch["account"]).strip()[:80] or batch["account"]) \
+            if batch["kind"] != "sync" else batch["account"]
         committed = self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status IN ('committed','merged')",
                                    (bid,), default=0)
         reparse = any(opts.get(k) != self.options(batch).get(k) for k in ("tz", "decimal", "dayfirst",
@@ -525,6 +572,9 @@ class CsvImportService:
         """Datei mit dem Profil des Stapels (neu) lesen und die Vorschauzeilen ersetzen."""
         batch = self.batch(bid)
         if batch is None:
+            return
+        if batch["kind"] == "sync":  # keine Datei – Vorgänge stehen bereits im Stapel
+            self.evaluate(bid)
             return
         prof = self.profile(batch["profile"])
         if prof is None:
@@ -600,7 +650,7 @@ class CsvImportService:
         if batch is None or batch["status"] == "mapping":
             return {}
         prof = self.profile(batch["profile"])
-        source = f"csv:{batch['profile']}"
+        source = self.source_of(batch)
         opts = self.options(batch)
         rows = self._load(bid)
         assets = self.known_assets()
@@ -662,6 +712,7 @@ class CsvImportService:
                 rc.status = "new"
             if ext:
                 seen_ext.setdefault(ext, rc.line or 0)
+        self._same_events([rc for rc in open_rows if rc.status == "new"], source)
         self._duplicates([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._transfers(bid, rows, pf, valuer)
         self._save(rows)
@@ -784,6 +835,8 @@ class CsvImportService:
                     hit, implied = V.fx(fq, fa, d), True
                 elif ta and tq and V.is_fiat(ta):
                     hit, implied = V.fx(tq, ta, d), True
+            elif (ta or fa) and V.is_fiat(ta or fa) and (tq or fq):
+                hit = V.fx(tq or fq, ta or fa, d)  # Fiat-Ertrag/-Gebühr: Wert = Betrag (umgerechnet)
             rv, rvc = (r.value, r.value_ccy) if r.value is not None else \
                 (r.fee_value, r.fee_value_ccy) if r.kind == M.FEE else (None, None)
             if hit is None and rv is not None and rvc:
@@ -854,6 +907,41 @@ class CsvImportService:
             rc.warnings.append(f"Gebühr {fee_q.normalize():f} {fee_a} ohne EUR-Wert (wird mit 0 € angesetzt)")
 
     # -- Dubletten ----------------------------------------------------------------------------------------
+    def _same_events(self, rows: list[RowCtx], source: str) -> None:
+        """Gleiches Ereignis aus einer anderen Quelle (z. B. CSV-Import ↔ Datenquelle): exakter Treffer über
+        Ereignis-ID bzw. Transaktions-Hash bei gleicher Buchungsseite (Art, Abgangs-/Zugangs-Asset)."""
+        wanted = {}
+        for rc in rows:
+            if rc.row is None:
+                continue
+            keys = match_keys(rc.rec.event_key or derive_event_key(rc.rec.ext_id),
+                              rc.rec.txhash or derive_tx_hash(rc.rec.ext_id))
+            if keys:
+                wanted[rc.idx] = keys
+        if not wanted:
+            return
+        index: dict[str, list[Any]] = defaultdict(list)
+        for r in self.db.q("SELECT tx_id, source, external_id, event_key, tx_hash, type, from_asset, to_asset "
+                           "FROM journal_tx WHERE status IN ('active', 'merged', 'deleted') AND source <> 'transfer' "
+                           "AND source <> ?", (source,)):
+            for k in match_keys(r["event_key"] or derive_event_key(r["external_id"]),
+                                r["tx_hash"] or derive_tx_hash(r["external_id"])):
+                index[k].append(r)
+        for rc in rows:
+            keys = wanted.get(rc.idx)
+            row = rc.row
+            if not keys or row is None:
+                continue
+            hits = list(dict.fromkeys(
+                r["tx_id"] for k in keys for r in index.get(k, ())
+                if (r["type"], r["from_asset"] or "", r["to_asset"] or "") == (row["type"], row["from_asset"],
+                                                                                 row["to_asset"])))
+            if hits:
+                rc.status = "duplicate"
+                rc.dup_of = hits
+                rc.dup_same_account = True
+                rc.warnings.insert(0, f"gleiches Ereignis bereits vorhanden: {', '.join(hits[:3])}")
+
     def _duplicates(self, rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
         if pf is None or not rows:
             return
@@ -1126,7 +1214,7 @@ class CsvImportService:
         if rep.errors:
             return {"errors": [m.message for m in rep.errors[:10]]}
         p_by_idx = {rc.idx: p for rc, p in zip(chosen, parsed, strict=True)}
-        source = f"csv:{batch['profile']}"
+        source = self.source_of(batch)
         stamp = _now()
         js = self.journal
         created = merged = transfers = 0
@@ -1141,7 +1229,11 @@ class CsvImportService:
                         pair_other = None
                 status = "merged" if pair_other else "active"
                 tx_id = js._insert(c, p, rc.value_src, None, stamp, None, source,
-                                   external_id=rc.rec.ext_id, batch_id=bid, status=status, log=False)
+                                   external_id=rc.rec.ext_id, batch_id=bid, status=status, log=False,
+                                   event_key=rc.rec.event_key or derive_event_key(rc.rec.ext_id),
+                                   event_line=rc.rec.event_line,
+                                   tx_hash=normalize_hash(rc.rec.txhash) or derive_tx_hash(rc.rec.ext_id),
+                                   datasource_id=batch["datasource_id"])
                 rc.tx_id = tx_id
                 rc.status = "merged" if pair_other else "committed"
                 c.execute("UPDATE csv_row SET status=?, tx_id=? WHERE id=?", (rc.status, tx_id, rc.id))

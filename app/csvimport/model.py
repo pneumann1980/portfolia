@@ -45,8 +45,10 @@ class Rec:
     fee_value_ccy: str | None = None
     account: str | None = None  # Konto laut Datei (Mehrkonten-Exporte)
     to_account: str | None = None  # Zielkonto (nur TRANSFER)
-    ext_id: str | None = None  # Kennung in der Quelle
+    ext_id: str | None = None  # Kennung in der Quelle (idempotent je Quelle)
     txhash: str | None = None  # Blockchain-Transaktion (Transfer-Abgleich)
+    event_key: str | None = None  # stabile Ereignis-ID „anbieter:id“ (Datenquellen; ein Ereignis → n Zeilen)
+    event_line: int | None = None  # Zeile innerhalb des Ereignisses
     note: str | None = None
     label: str | None = None  # Vorgangsbezeichnung der Quelle (Anzeige)
     date_only: bool = False

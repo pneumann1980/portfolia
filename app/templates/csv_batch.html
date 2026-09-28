@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}CSV-Import · {{ b.filename }}{% endblock %}
-{% block heading %}CSV-Import{% endblock %}
+{% block title %}{{ 'Datenquelle' if b.kind == 'sync' else 'CSV-Import' }} · {{ b.filename }}{% endblock %}
+{% block heading %}{{ 'Synchronisierung prüfen' if b.kind == 'sync' else 'CSV-Import' }}{% endblock %}
 {% macro leg(acc, asset, q, sign) -%}
   {%- if asset %}<span class="nowrap">{{ sign }}{{ q|qty }} {{ asset }}</span>{% if acc %}<div class="hint">{{ acc }}</div>{% endif %}{% else %}–{% endif -%}
 {%- endmacro %}
@@ -18,11 +18,13 @@
 <section class="card">
   <div class="card-head"><h2>{{ b.filename }}</h2>
     <div class="row"><span class="badge {{ 'good' if b.status == 'committed' else 'warn' if b.status in ('preview', 'partial') else '' }}">{{ batch_status.get(b.status, b.status) }}</span>
-      <a class="btn sm ghost" href="/journal/csv/{{ b.id }}/file" download>Originaldatei</a></div></div>
+      <a class="btn sm ghost" href="/journal/csv/{{ b.id }}/file" download>{{ 'Rohdaten' if b.kind == 'sync' else 'Originaldatei' }}</a></div></div>
   <dl class="kv">
-    <dt>Format</dt><dd>{{ prof.label if prof else b.profile }}{% if prof and prof.id.startswith('mapping:') %} · <a href="/journal/csv/{{ b.id }}/mapping">Zuordnung bearbeiten</a>{% endif %}</dd>
+    {% if b.kind == 'sync' %}<dt>Datenquelle</dt><dd>{{ source_label(b.source) }}{% if ds_exists %} · <a href="/settings/datasources/{{ b.datasource_id }}">Einstellungen</a>{% else %} <span class="hint">(Datenquelle entfernt)</span>{% endif %}</dd>
+    {% else %}<dt>Format</dt><dd>{{ prof.label if prof else b.profile }}{% if prof and prof.id.startswith('mapping:') %} · <a href="/journal/csv/{{ b.id }}/mapping">Zuordnung bearbeiten</a>{% endif %}</dd>{% endif %}
     <dt>Konto</dt><dd>{{ b.account }}{% if prof and prof.multi_account %} <span class="hint">(Ersatz für Zeilen ohne Konto)</span>{% endif %}</dd>
-    <dt>Gelesen</dt><dd>{{ summary.get('rows_read', 0) }} Zeilen → {{ ov.total }} Vorgänge{% if summary.get('skipped') %}, {{ summary.skipped.values()|sum }} übersprungen{% endif %}{% if summary.get('error_count') %}, <b>{{ summary.error_count }} nicht lesbar</b>{% endif %}</dd>
+    {% if b.kind == 'sync' %}<dt>Abgerufen</dt><dd>{{ summary.get('events', ov.total) }} Vorgänge → {{ ov.total }} Buchungszeilen</dd>
+    {% else %}<dt>Gelesen</dt><dd>{{ summary.get('rows_read', 0) }} Zeilen → {{ ov.total }} Vorgänge{% if summary.get('skipped') %}, {{ summary.skipped.values()|sum }} übersprungen{% endif %}{% if summary.get('error_count') %}, <b>{{ summary.error_count }} nicht lesbar</b>{% endif %}</dd>{% endif %}
     <dt>Status der Zeilen</dt><dd>{% for k, n in ov.counts.items() %}<a class="badge {{ status_badge.get(k, '') }}" href="/journal/csv/{{ b.id }}?status={{ 'committed' if k == 'merged' else k }}">{{ status_label.get(k, k) }}: {{ n }}</a> {% endfor %}</dd>
     {% if options.get('cutoff') %}<dt>Stichtag</dt><dd>nur Buchungen nach dem {{ options.cutoff|date_de }} werden vorgeschlagen</dd>{% endif %}
     <dt>Eingelesen</dt><dd>{{ b.created_at|datetime_de }}{% if b.committed_at %} · übernommen {{ b.committed_at|datetime_de }}{% endif %}{% if b.reverted_at %} · rückgängig {{ b.reverted_at|datetime_de }}{% endif %}</dd>
@@ -35,7 +37,14 @@
       {% if summary.error_count > 200 %}<p class="hint">… und {{ summary.error_count - 200 }} weitere.</p>{% endif %}
       <p class="hint">Nicht lesbare Zeilen werden nicht übernommen – bei Bedarf manuell erfassen oder das Format über „Eigenes Format“ zuordnen.</p>{% endif %}
   </details>{% endif %}
-  {% if b.status in ('preview', 'partial') %}
+  {% if b.status in ('preview', 'partial') and b.kind == 'sync' %}
+  <details class="box" style="margin-top:8px"><summary>Stichtag</summary>
+    <form method="post" action="/journal/csv/{{ b.id }}/options" class="row" style="margin-top:8px">{{ hidden_nav() }}
+      <label class="field">Nur Buchungen nach<input type="date" name="cutoff" value="{{ options.get('cutoff', '') }}"></label>
+      <button class="btn sm" type="submit">Neu auswerten</button></form>
+    <p class="hint">Buchungen bis zum Stichtag des kuratierten Imports sind dort bereits enthalten und werden nur auf Wunsch übernommen.</p>
+  </details>
+  {% elif b.status in ('preview', 'partial') %}
   <details class="box" style="margin-top:8px"><summary>Optionen (Konto, Stichtag, Zeitzone, Zahlenformat)</summary>
     <form method="post" action="/journal/csv/{{ b.id }}/options" class="stack" style="gap:10px;margin-top:8px">{{ hidden_nav() }}
       <div class="grid-3">
@@ -188,10 +197,10 @@
     {% elif b.status == 'reverted' %}
     <form method="post" action="/journal/csv/{{ b.id }}/reopen" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Erneut als Vorschau öffnen</button></form>
     {% endif %}
-    {% if not committed_n %}<form method="post" action="/journal/csv/{{ b.id }}/discard" class="inline" data-confirm="Diesen Import samt Originaldatei verwerfen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Verwerfen</button></form>{% endif %}
+    {% if not committed_n %}<form method="post" action="/journal/csv/{{ b.id }}/discard" class="inline" data-confirm="{{ 'Diesen Abruf verwerfen? Seine Vorgänge liefert die Datenquelle erst nach „Abrufstand zurücksetzen“ erneut.' if b.kind == 'sync' else 'Diesen Import samt Originaldatei verwerfen?' }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Verwerfen</button></form>{% endif %}
     <a class="btn ghost" href="/journal/csv">Zurück zur Übersicht</a>
   </div>
-  <p class="hint">Übernommene Buchungen erscheinen unter „Buchungen“ mit der Quelle „CSV“ und lassen sich dort einzeln bearbeiten oder löschen. Der Gesamtexport und die automatischen ZIP-Sicherungen enthalten sie im einheitlichen Format.</p>
+  <p class="hint">Übernommene Buchungen erscheinen unter „Buchungen“ mit der Quelle „{{ 'Datenquelle' if b.kind == 'sync' else 'CSV' }}“ und lassen sich dort einzeln bearbeiten oder löschen. Der Gesamtexport und die automatischen ZIP-Sicherungen enthalten sie im einheitlichen Format.</p>
 </section>
 <datalist id="dl-accounts">{% for a in accounts %}<option value="{{ a }}"></option>{% endfor %}</datalist>
 <datalist id="dl-assets">{% for a in assets %}<option value="{{ a.asset_id }}">{{ a.name }}</option>{% endfor %}</datalist>
