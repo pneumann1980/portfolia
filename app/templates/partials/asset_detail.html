@@ -16,12 +16,15 @@
           {% if pi.prev_close_eur %}<span class="delta {{ (pi.price_eur - pi.prev_close_eur)|tone }}">{{ (pi.price_eur - pi.prev_close_eur)|arrow }} {{ (pi.price_eur / pi.prev_close_eur - 1)|pct }}</span> · {% endif %}
           {{ pi.ts|datetime_de }}
           {% if pi.stale %}<span class="badge warn">veraltet</span>{% endif %}
-          {% if pi.kind == 'manual' %}<span class="badge info">manuell</span>{% endif %}
+          {% if pi.kind == 'manual' %}<span class="badge info" title="{{ pi.note or '' }}">manuell</span>{% endif %}
+          {% if pi.kind == 'tx' %}<span class="badge info" title="{{ pi.note or '' }}">Transaktionskurs</span>{% endif %}
           {% if pi.kind == 'daily' %}<span class="badge warn">Schlusskurs</span>{% endif %}
         </div>
       {% else %}
-        <div class="price muted">–</div><span class="badge crit">unbewertet</span>
+        <div class="price muted">–</div><span class="badge crit" title="{{ pi.note if pi and pi.note else 'kein Kurs' }}">unbewertet</span>
+        {% if pi and pi.note %}<div class="hint">{{ pi.note }}</div>{% endif %}
       {% endif %}
+      {% if pos and not a.is_fiat %}<div style="margin-top:6px"><a class="btn sm ghost" href="/journal/writeoff?asset={{ aid_q }}" title="Bestand als Verlust (Totalverlust) ausbuchen">Ausbuchen …</a></div>{% endif %}
     </div>
   </div>
 

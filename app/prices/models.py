@@ -56,8 +56,8 @@ class PriceInfo:
     price_native: float | None
     ccy: str | None
     ts: datetime | None
-    source: str  # yahoo | coingecko | manual | daily | fiat | demo | none
-    kind: str  # quote | daily | manual | fiat | unvalued
+    source: str  # yahoo | coingecko | manual | tx | daily | fiat | demo | none
+    kind: str  # quote | daily | manual | tx (Transaktionskurs) | fiat | unvalued
     stale: bool
     prev_close_eur: float | None = None
     fx_rate: float | None = None

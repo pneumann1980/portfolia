@@ -227,8 +227,10 @@ quote_id` · optional: `wkn, isin, koinly_id, status, note, aliases (;-getrennt)
 
 * `holdings_check.csv`: `asset_id, qty` (+ optional `account, as_of, source, note`); Toleranz
   max(1e-8; 1e-6 × |Soll|). Abweichungen erscheinen unter *Datenqualität*.
-* `manual_prices.csv`: `asset_id, date, price_eur` (+ `source`); ohne Kurs bleibt ein Asset sichtbar
-  „unbewertet“ mit 0 €, nie still ignoriert.
+* `manual_prices.csv`: `asset_id, date, price_eur` (+ `source`) für Assets ohne Marktkurse. Ein manueller Kurs
+  gilt bis zum nächsten Kurs, nach dem letzten höchstens 30 Tage (Krypto) bzw. 365 Tage (Wertpapiere) – siehe
+  [Ersatzkurse](#kurse-und-datenquellen). Ohne gültigen Kurs bleibt ein Asset sichtbar „unbewertet“ mit 0 €,
+  nie still ignoriert.
 * `accounts.csv`: `account` (+ `broker, depot_group`, optional `tax_withholding` = `domestic|foreign`).
 
 Prüfen ohne Import: `docker exec portfolia python -m app validate /import/datei.zip`
@@ -264,6 +266,22 @@ Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Port
   entsteht nach jeder Änderung automatisch eine datierte Kopie (siehe [Backups](#einstellungen-sicherheit-backups)).
 * **Ohne Import:** Alle Ansichten (Positionen, Performance, Steuern, Sparpläne) funktionieren auch nur mit
   manuell erfassten Buchungen. Steuerberichte weisen manuell erfasste Buchungen des Jahres aus.
+
+### Positionen ausbuchen (Verlust, Diebstahl)
+
+*Buchungen → Ausbuchen* (auch aus der Übersicht, der Performance-Seite und der Detailansicht einer Position)
+bucht den **gesamten Bestand** eines Kontos als Abgang ohne Gegenwert – einzeln oder gesammelt:
+
+* Standardansicht: alle gehaltenen Bestände **ohne gültigen Kurs** mit Grund (z. B. „manueller Kurs vom 30.10.2025
+  ist älter als 30 Tage“), Einstand und letzter Buchung; umschaltbar auf alle Bestände und je Konto filterbar.
+* Art: Verlust/Totalverlust (`lost`), Diebstahl (`stolen`) oder Burn (`burn`); Datum frei wählbar, aber nicht vor
+  der letzten Buchung der Position (sonst stimmte die Menge nicht). Gebucht wird um 23:59 Uhr des Tages.
+* Wirkung: Der Einstand wird als realisierter Verlust erfasst, die Position verschwindet aus Bestand, Übersicht
+  und Warnungen; in der Historie fällt ihr Wert am Buchungstag auf 0 €.
+* Jede Ausbuchung ist eine normale Buchung (`PF-M-…`, Wert 0 €): im Journal bearbeit- und löschbar, im
+  ZIP-Export enthalten. Sammel-Ausbuchungen lassen sich auf derselben Seite ganz oder teilweise zurücknehmen.
+* Steuer: Kryptowerte nach der Einstellung „Verlust/Diebstahl von Kryptowerten“ (Standard: keine Veräußerung),
+  Wertpapiere erscheinen als „Ausbuchung/Verlust“; maßgeblich bleibt der Beleg der Bank. Keine Steuerberatung.
 
 ---
 
@@ -354,7 +372,10 @@ Börsen und Wallets abgedeckt, die diese Tools unterstützen; Koinly-Wallets wer
 * Zeiträume 1M, 3M, 6M, YTD, 1J, 3J, 5J, Max und frei wählbar; je Gesamtportfolio, Segment, Kategorie oder
   Position; Beitrag je Position (Wasserfall), Drawdown, Benchmarks.
 * Historische Snapshots werden im Hintergrund aus der Kurshistorie aufgebaut; fehlende historische Kurse
-  werden mit Transaktionskursen geschätzt und als „geschätzt“ gekennzeichnet.
+  werden mit Transaktionskursen geschätzt und als „geschätzt“ gekennzeichnet. Positionen ohne Marktkurse – auch
+  längst verkaufte – werden mit [Ersatzkursen](#kurse-und-datenquellen) bewertet statt mit 0 € (sonst
+  entstünden Scheinverluste bis hin zu −100 % TTWROR). Hinweise auf unbewertete Positionen betreffen nur heute
+  gehaltene; frühere stehen unter *Datenqualität → Historie*.
 
 ---
 
@@ -417,7 +438,7 @@ verworfen oder durch den nächsten Import als „nicht im Import“ entfernt wer
 | Yahoo Finance (yfinance) | Aktien/ETFs aktuell, intraday, Historie, Stammdaten | gebündelt, ≤ 1 Anfrage/s |
 | CoinGecko (Demo/Pro) | Krypto aktuell (alle Coins in **einem** `/simple/price`-Aufruf), Historie `market_chart` | Monatsbudget (Standard 10.000) sichtbar, Drosselung ab 80 %; Demo-API: Historie max. 365 Tage, davor Yahoo-Paare (z. B. BTC-EUR) laut Einstellung |
 | EZB (Frankfurter, EZB-ZIP als Fallback) | Devisenkurse für EUR-Umrechnung | täglich |
-| `manual_prices.csv` | Assets ohne Kursquelle | letzter Kurs ≤ Stichtag |
+| `manual_prices.csv` + Transaktionskurse | Ersatzkurse für Assets ohne Marktkurse | siehe unten |
 
 * Jeder Kurs trägt Zeitstempel und Quelle. **Veraltet** gilt ein Kurs nach > 24 h (Aktien, nur an
   Handelstagen) bzw. > 1 h (Krypto) – deutlich markiert, nie still durch 0 ersetzt.
@@ -425,6 +446,19 @@ verworfen oder durch den nächsten Import als „nicht im Import“ entfernt wer
   Backoff erneut versucht.
 * Zeitplan: Krypto alle 10 min, Aktien alle 15 min zu EU/US-Handelszeiten, EZB 16:35, Snapshot 23:30,
   Historien-Nachladen 06:10.
+
+**Ersatzkurse** (Assets ohne Marktkurse, z. B. Kursquelle `none`/`manual`, nicht mehr gehandelte Token, lange
+verkaufte Aktien ohne Symbol) – eine Regel für aktuelle Bewertung, Historie und Zahlungsströme:
+
+* Kurspunkte: manuelle Kurse (`manual_prices.csv`) und Transaktionskurse (EUR-Wert ÷ Menge aus Käufen, Verkäufen,
+  Tauschen, Erträgen und bewerteten Zu-/Abgängen, je Tag mengengewichtet; Buchungen unter 1 € zählen nicht).
+  Am selben Tag hat der manuelle Kurs Vorrang; Splits werden berücksichtigt.
+* Zwischen zwei Kurspunkten gilt der letzte. Nach dem **letzten** Kurspunkt gilt er höchstens **30 Tage (Krypto)**
+  bzw. **365 Tage (Wertpapiere)** – einstellbar unter *Einstellungen → Kurse*, 0 = unbegrenzt. Danach ist die
+  Position unbewertet (0 €); der Grund steht an der Position. Hintergrund: Ein Transaktionskurs von vor Monaten
+  ist bei illiquiden Token keine Bewertung – typischer Fall sind Token, die nicht mehr gehandelt werden.
+* Anzeige: Badge „manuell“ bzw. „Transaktionskurs“ mit Datum; abgelaufene Positionen lassen sich
+  [ausbuchen](#positionen-ausbuchen-verlust-diebstahl).
 
 ---
 
@@ -576,7 +610,7 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
 | Problem | Ursache / Lösung |
 |---|---|
 | Import wird nicht übernommen | *Datenqualität → Import*: Fehlerbericht mit Datei, Zeile, Spalte. Der alte Stand bleibt aktiv. |
-| Asset „unbewertet“ | Keine Kursquelle/ID oder Quelle nicht erreichbar → `quote_id` prüfen oder `manual_prices.csv` nutzen. |
+| Asset „unbewertet“ | Keine Kursquelle/ID, Quelle nicht erreichbar oder Ersatzkurs abgelaufen (Grund an der Position) → `quote_id` prüfen, aktuellen Kurs in `manual_prices.csv` liefern oder unter *Buchungen → Ausbuchen* als Verlust ausbuchen. |
 | Kurs „veraltet“ | Quelle nicht erreichbar oder Budget gedrosselt → *Datenqualität → Datenquellen & Kontingente*. |
 | Krypto-Historie vor 365 Tagen fehlt | CoinGecko-Demo-Grenze → Yahoo-Paar unter *Einstellungen → Kurse* zuordnen (nur eindeutige Paare). |
 | News-Quelle deaktiviert | *News → Quellen*: Grund und letzter Fehler; URL in `sources.yaml` korrigieren und reaktivieren. |

@@ -135,6 +135,30 @@
     if (msg && !window.confirm(msg)) e.preventDefault();
   });
 
+  // --- Mehrfachauswahl: „alle“-Kästchen und Zähler (data-check-all / data-check-count = Feldname) -------
+  function syncChecks(form, name) {
+    var boxes = form.querySelectorAll('input[type="checkbox"][name="' + name + '"]');
+    var n = 0;
+    boxes.forEach(function (b) { if (b.checked) n++; });
+    form.querySelectorAll('[data-check-count="' + name + '"]').forEach(function (el) { el.textContent = String(n); });
+    var all = form.querySelector('[data-check-all="' + name + '"]');
+    if (all) { all.checked = n > 0 && n === boxes.length; all.indeterminate = n > 0 && n < boxes.length; }
+  }
+  document.addEventListener("change", function (e) {
+    var t = e.target;
+    if (!t || !t.form || t.type !== "checkbox") return;
+    var name = t.getAttribute("data-check-all");
+    if (name) {
+      t.form.querySelectorAll('input[type="checkbox"][name="' + name + '"]').forEach(function (b) { b.checked = t.checked; });
+      syncChecks(t.form, name);
+    } else if (t.name && t.form.querySelector('[data-check-all="' + t.name + '"]')) {
+      syncChecks(t.form, t.name);
+    }
+  });
+  document.querySelectorAll("[data-check-all]").forEach(function (el) {
+    if (el.form) syncChecks(el.form, el.getAttribute("data-check-all"));
+  });
+
   // --- Segment-Schalter (Zeitraum, Darstellung, Allokation) -------------------------------------------
   function pressIn(group, btn) {
     group.querySelectorAll("button").forEach(function (b) { b.setAttribute("aria-pressed", b === btn ? "true" : "false"); });

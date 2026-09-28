@@ -15,6 +15,7 @@ from app.prices.store import PriceStore
 from app.prices.yahoo import YahooProvider
 from app.settings_store import Settings
 from app.util.http import Quota, RateLimiter
+from app.util.timeutil import today_local
 
 
 def test_yahoo_bars_undo_split_adjustment():
@@ -121,14 +122,44 @@ def test_latest_eur_fallback_chain_and_fx(db):
     store.upsert_quotes([Quote("yahoo:USC", 110.0, "USD", datetime.now(UTC), "yahoo", prev_close=100.0),
                          Quote("fx:yahoo:USD", 1.10, None, datetime.now(UTC), "yahoo")])
     store.upsert_daily("yahoo:OLD.DE", [Bar(date(2026, 9, 1), 50.0)], "yahoo", "EUR")
+    recent = today_local() - timedelta(days=3)
     pf = Portfolio(None, [], {a.asset_id: a for a in (usd, eur_daily, manual, none)}, {},
-                   manual_prices={"M#1": [(date(2026, 1, 1), 2.0)]})
+                   manual_prices={"M#1": [(recent, 2.0)]})
     out = svc.latest_eur_many([usd, eur_daily, manual, none], pf)
     assert out["WKN:1"].price_eur == pytest.approx(100.0)
     assert out["WKN:1"].prev_close_eur == pytest.approx(90.909, rel=1e-3)
     assert out["WKN:2"].kind == "daily" and out["WKN:2"].stale and out["WKN:2"].price_eur == 50.0
     assert out["M#1"].kind == "manual" and out["M#1"].price_eur == 2.0
     assert out["N#1"].kind == "unvalued" and out["N#1"].price_eur == 0.0 and not out["N#1"].valued
+
+
+def test_fallback_prices_expire_after_max_age(db):
+    """Manuelle und Transaktionskurse gelten nach dem letzten Kurspunkt nur begrenzt (Krypto 30 Tage)."""
+    from tests.helpers import ASSETS, portfolio, tx
+    svc = _service(db)
+    today = today_local()
+    extra = [{"asset_id": a, "name": a, "asset_class": "crypto", "quote_source": "none"} for a in ("OLD", "NEW")]
+    extra.append({"asset_id": "WARR", "name": "Optionsschein", "asset_class": "security", "quote_source": "manual"})
+    pf = portfolio([
+        tx("t1", (today - timedelta(days=10)).isoformat(), "trade", frm=("Ex", "EUR", 50), to=("Ex", "NEW", 1000),
+           value=50),
+        tx("t2", (today - timedelta(days=10)).isoformat(), "trade", frm=("Ex", "EUR", 150), to=("Ex", "NEW", 1000),
+           value=150),
+        tx("t3", "2024-11-01", "trade", frm=("Ex", "EUR", 100), to=("Ex", "OLD", 1000), value=100),
+        tx("t4", (today - timedelta(days=9)).isoformat(), "trade", frm=("Ex", "EUR", "0.5"), to=("Ex", "OLD", 1),
+           value="0.5"),  # Staub unter 1 €: kein Kurspunkt
+    ], assets=ASSETS + extra)
+    pf.manual_prices = {"OLD": [(date(2025, 10, 30), 0.5)], "WARR": [(today - timedelta(days=200), 1.35)]}
+    by_id = {a: pf.asset(a) for a in ("OLD", "NEW", "WARR")}
+    out = svc.latest_eur_many(by_id.values(), pf)
+    assert out["NEW"].kind == "tx" and out["NEW"].price_eur == pytest.approx(0.1)  # Tagesmittel 200 € / 2000
+    assert "Transaktionskurs" in out["NEW"].note
+    assert out["OLD"].kind == "unvalued" and not out["OLD"].valued
+    assert "30.10.2025" in out["OLD"].note and "älter als 30 Tage" in out["OLD"].note
+    assert out["WARR"].kind == "manual" and out["WARR"].price_eur == pytest.approx(1.35)  # Wertpapier: 365 Tage
+    svc.settings.set("prices.fallback_max_age_crypto_days", 0)  # 0 = unbegrenzt
+    out = svc.latest_eur_many(by_id.values(), pf)
+    assert out["OLD"].kind == "manual" and out["OLD"].price_eur == pytest.approx(0.5)
 
 
 def test_coingecko_budget_throttle(db):

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Ausbuchen{% endblock %}
+{% block heading %}Positionen ausbuchen{% endblock %}
+{% block content %}
+{% if done %}<div class="alert good"><span class="icon">✓</span><div>{{ done }} Position{{ 'en' if done != 1 }} ausgebucht. Bestände, Rendite und Historie werden neu berechnet.</div></div>{% endif %}
+{% if undone %}<div class="alert good"><span class="icon">✓</span><div>{{ undone }} Ausbuchung{{ 'en' if undone != 1 }} zurückgenommen (im Journal unter „Gelöscht“ wiederherstellbar).</div></div>{% endif %}
+{% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>Bestände als Verlust ausbuchen</h2>
+    <a class="btn sm ghost" href="/journal">Zu den Buchungen</a></div>
+  <p class="hint">Bucht den gesamten Bestand eines Kontos als Abgang ohne Gegenwert (0 €): Der Einstand wird als realisierter
+    Verlust erfasst, die Position verschwindet aus Bestand, Übersicht und Warnungen. Jede Ausbuchung ist eine normale Buchung
+    im Journal – bearbeit-, lösch- und exportierbar. Typische Fälle: Token ohne Handel, Totalverlust (Insolvenz), Diebstahl.</p>
+
+  <form method="get" action="/journal/writeoff" class="filters">
+    <label class="field">Anzeigen<select name="show" data-autosubmit>
+      <option value="unvalued" {% if show == 'unvalued' %}selected{% endif %}>ohne gültigen Kurs ({{ n_unvalued }})</option>
+      <option value="all" {% if show == 'all' %}selected{% endif %}>alle Bestände ({{ n_all }})</option></select></label>
+    <label class="field">Konto<select name="account" data-autosubmit><option value="">alle</option>
+      {% for a in accounts %}<option {% if account == a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+    {% if asset %}<input type="hidden" name="asset" value="{{ asset }}">
+    <div class="row" style="gap:6px"><a class="btn sm ghost" href="/journal/writeoff?show=all">Alle Assets zeigen</a></div>{% endif %}
+  </form>
+
+  {% if rows %}
+  <form method="post" action="/journal/writeoff" data-confirm="Ausgewählte Positionen ausbuchen? Das lässt sich unten wieder zurücknehmen.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="show" value="{{ show }}"><input type="hidden" name="asset" value="{{ asset }}"><input type="hidden" name="account" value="{{ account }}">
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr>
+        <th><input type="checkbox" data-check-all="sel" aria-label="Alle auswählen"></th>
+        <th>Position</th><th>Konto</th><th class="num">Menge</th><th>Kurs</th><th class="num">Wert</th><th class="num">Einstand</th><th>Letzte Buchung</th>
+      </tr></thead>
+      <tbody>
+      {% for c in rows %}
+        <tr>
+          <td data-label="Auswahl"><input type="checkbox" name="sel" value="{{ c.key }}" {% if c.key in selected %}checked{% endif %} aria-label="{{ c.asset.name }} ({{ c.account }}) auswählen"></td>
+          <td data-label="Position"><b>{{ c.asset.name }}</b><div class="hint">{{ c.asset.symbol }} · {{ c.asset.category_label }}</div></td>
+          <td data-label="Konto">{{ c.account }}</td>
+          <td class="num" data-label="Menge">{{ c.qty|qty }}</td>
+          <td data-label="Kurs">{% if c.unvalued %}<span class="badge crit">unbewertet</span>{% if c.price and c.price.note %}<div class="hint wrap">{{ c.price.note }}</div>{% endif %}
+            {% else %}{{ c.price.price_eur|price }}{% if c.price.kind in ('manual', 'tx') %} <span class="badge info" title="{{ c.price.note or '' }}">{{ 'manuell' if c.price.kind == 'manual' else 'Transaktionskurs' }}</span>{% elif c.price.stale %} <span class="badge warn">veraltet</span>{% endif %}{% endif %}</td>
+          <td class="num" data-label="Wert">{{ c.value|eur }}</td>
+          <td class="num" data-label="Einstand">{{ c.cost|eur }}</td>
+          <td class="nowrap" data-label="Letzte Buchung">{{ c.last_date|date_de if c.last_date else '–' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="grid-3" style="margin-top:12px">
+      <label class="field">Datum der Ausbuchung<input type="date" name="date" value="{{ form.date }}" max="{{ today.isoformat() }}" required></label>
+      <label class="field">Art<select name="tag">{% for k, l in tags.items() %}<option value="{{ k }}" {% if form.tag == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+      <label class="field">Notiz<input type="text" name="note" maxlength="200" value="{{ form.note }}"></label>
+    </div>
+    <div class="row" style="gap:10px;margin-top:12px;align-items:center">
+      <button class="btn primary" type="submit">Ausgewählte ausbuchen</button>
+      <span class="hint"><span data-check-count="sel">0</span> ausgewählt · gebucht wird um 23:59 Uhr des gewählten Tages, nicht vor der letzten Buchung der Position</span>
+    </div>
+  </form>
+  {% else %}
+  <p class="hint">{% if show == 'unvalued' %}Keine gehaltene Position ohne gültigen Kurs. <a href="/journal/writeoff?show=all">Alle Bestände anzeigen</a>{% else %}Keine Bestände für diese Auswahl.{% endif %}</p>
+  {% endif %}
+
+  <details class="box" style="margin-top:14px"><summary>Steuerliche Behandlung</summary>
+    <ul class="small">
+      <li><b>Kryptowerte:</b> Behandlung nach der Steuer-Einstellung „Verlust/Diebstahl von Kryptowerten“{% if loss_option %} – derzeit: <i>{{ loss_option }}</i>{% endif %} (<a href="/tax#options">ändern</a>). Ob ein Verlust anerkannt wird, hängt vom Einzelfall und vom Nachweis ab; bei noch handelbaren Token ist ein Verkauf der übliche Weg, den Verlust zu realisieren.</li>
+      <li><b>Wertpapiere:</b> Die Ausbuchung erscheint in der Steueransicht als „Ausbuchung/Verlust“. Maßgeblich ist der Ausbuchungsbeleg bzw. die Verlustbescheinigung der Bank.</li>
+    </ul>
+    <p class="hint">Nur informativ, keine Steuerberatung.</p>
+  </details>
+</section>
+
+<section class="card" id="recent">
+  <div class="card-head"><h2>In Portfolia erfasste Ausbuchungen {% if recent %}<span class="badge">{{ recent|length }}</span>{% endif %}</h2></div>
+  {% if recent %}
+  <form method="post" action="/journal/writeoff/undo" data-confirm="Ausgewählte Ausbuchungen zurücknehmen?">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th><input type="checkbox" data-check-all="tx" aria-label="Alle auswählen"></th><th>Datum</th><th>Position</th><th>Konto</th><th class="num">Menge</th><th>Art</th><th>Buchung</th></tr></thead>
+      <tbody>
+      {% for r in recent %}
+        <tr>
+          <td data-label="Auswahl"><input type="checkbox" name="tx" value="{{ r.tx_id }}" aria-label="{{ r.asset }} ({{ r.account }}) auswählen"></td>
+          <td class="nowrap" data-label="Datum">{{ r.date|date_de if r.date else '–' }}</td>
+          <td data-label="Position">{{ r.asset }}{% if r.note %}<div class="hint">{{ r.note }}</div>{% endif %}</td>
+          <td data-label="Konto">{{ r.account }}</td>
+          <td class="num" data-label="Menge">{{ r.qty|qty }}</td>
+          <td data-label="Art">{{ r.tag }}{% if r.mark %} <span class="badge" title="Sammel-Ausbuchung vom {{ r.mark|datetime_de }}">gesammelt</span>{% endif %}</td>
+          <td data-label="Buchung"><a class="mono" href="/journal/{{ r.tx_id }}/edit">{{ r.tx_id }}</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="row" style="gap:10px;margin-top:12px;align-items:center">
+      <button class="btn" type="submit">Ausgewählte zurücknehmen</button>
+      <span class="hint"><span data-check-count="tx">0</span> ausgewählt</span>
+    </div>
+  </form>
+  {% else %}<p class="hint">Noch keine. Ausbuchungen aus dem Import stehen unter <a href="/journal?type=withdrawal">Buchungen</a>.</p>{% endif %}
+</section>
+{% endblock %}

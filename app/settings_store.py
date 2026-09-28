@@ -28,6 +28,9 @@ DEFAULTS: dict[str, Any] = {
     # Kurse
     "prices.stale_crypto_minutes": 60,
     "prices.stale_security_hours": 24,
+    # Ersatzkurse (manuell/Transaktionskurs) ohne Marktkurse: Gültigkeit nach dem letzten Kurs, 0 = unbegrenzt
+    "prices.fallback_max_age_crypto_days": 30,
+    "prices.fallback_max_age_security_days": 365,
     "prices.crypto_interval_min": 10,
     "prices.crypto_throttled_interval_min": 30,
     "prices.stock_interval_min": 15,

@@ -1,7 +1,9 @@
 """Kursdienst: Zuordnung Asset→Kursreihe, Aktualisierung, Historie (Backfill), Bewertung in EUR, Veraltung.
 
 Grundsatz: Bei Ausfall einer Quelle wird der letzte bekannte Kurs weiterverwendet und als *veraltet*
-markiert – niemals still auf 0 gesetzt. Assets ohne jede Kursquelle gelten als „unbewertet“ (0 €).
+markiert – niemals still auf 0 gesetzt. Assets ohne Marktkurs werden mit Ersatzkursen (manuell bzw.
+Transaktionskurs, begrenzte Gültigkeit, siehe ``app.prices.fallback``) bewertet, sonst gelten sie als
+„unbewertet“ (0 €).
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from app.ledger.models import AssetInfo, Portfolio
 from app.prices.coingecko import BudgetExceeded, CoinGeckoProvider
 from app.prices.demo import DemoProvider
 from app.prices.ecb import EcbProvider
+from app.prices.fallback import KIND_LABEL, FallbackPrices
 from app.prices.market_hours import exchange_group, in_window, trading_days_between
 from app.prices.models import Bar, IntradayBar, PriceInfo, Quote
 from app.prices.store import PriceStore
@@ -123,6 +126,7 @@ class PriceService:
             return fx_cache[key]
 
         out: dict[str, PriceInfo] = {}
+        pending: list[AssetInfo] = []  # ohne Marktkurs → Ersatzkurs
         today = today_local()
         for a in assets:
             if a.is_fiat:
@@ -162,21 +166,37 @@ class PriceService:
                                                     "daily", True, None, fx_rate=f,
                                                     note="kein aktueller Kurs – letzter Schlusskurs")
                         continue
-            mp = pf.manual_prices.get(a.asset_id)
-            if mp:
-                cand = [x for x in mp if x[0] <= today] or mp[:1]
-                d, p = cand[-1]
-                # Tagesveränderung nur, wenn der Vorwert vom Vortag stammt (sonst irreführend)
-                prev = [x for x in mp if x[0] < d]
-                prev_close = prev[-1][1] if prev and (d - prev[-1][0]).days <= 3 and d >= today - timedelta(days=1) \
-                    else None
-                out[a.asset_id] = PriceInfo(p, p, "EUR", datetime(d.year, d.month, d.day, 12, tzinfo=UTC), "manual",
-                                            "manual", False, prev_close,
-                                            note=f"manueller Kurs vom {d.strftime('%d.%m.%Y')}")
-                continue
-            note = "keine Kursquelle" if not s else "noch kein Kurs abgerufen"
-            out[a.asset_id] = PriceInfo(0.0, None, None, None, "none", "unvalued", False, None, note=note)
+            pending.append(a)
+        if not pending:
+            return out
+        fb = FallbackPrices(pf, self.settings, only={a.asset_id for a in pending})
+        for a in pending:
+            out[a.asset_id] = self._fallback_info(a, pf, fb, today, has_series=bool(series_map.get(a.asset_id)))
         return out
+
+    @staticmethod
+    def _fallback_info(a: AssetInfo, pf: Portfolio, fb: FallbackPrices, today: date, has_series: bool) -> PriceInfo:
+        """Ersatzkurs (manuell/Transaktion) innerhalb seiner Gültigkeit, sonst „unbewertet“ mit Begründung."""
+        res = fb.latest(a, today)
+        p = res.point
+        if p is not None:
+            ts = datetime(p.date.year, p.date.month, p.date.day, 12, tzinfo=UTC)
+            label = f"{KIND_LABEL[p.kind]} vom {p.date.strftime('%d.%m.%Y')}"
+            if p.kind == "manual":
+                # Tagesveränderung nur, wenn der Vorwert vom Vortag stammt (sonst irreführend)
+                prev = [x for x in pf.manual_prices.get(a.asset_id, []) if x[0] < p.date]
+                prev_close = prev[-1][1] if prev and (p.date - prev[-1][0]).days <= 3 \
+                    and p.date >= today - timedelta(days=1) else None
+                return PriceInfo(p.price, p.price, "EUR", ts, "manual", "manual", False, prev_close, note=label)
+            return PriceInfo(p.price, p.price, "EUR", ts, "tx", "tx", False, None,
+                             note=f"{label} (keine Marktkurse)")
+        if res.expired is not None:
+            e = res.expired
+            note = (f"{KIND_LABEL[e.kind]} vom {e.date.strftime('%d.%m.%Y')} ist älter als {res.max_age} Tage – "
+                    "nicht mehr verwendet")
+        else:
+            note = "keine Kursquelle" if not has_series else "noch kein Kurs abgerufen"
+        return PriceInfo(0.0, None, None, None, "none", "unvalued", False, None, note=note)
 
     def _prev_close_eur(self, series: str, today: date, f: float) -> float | None:
         row = self.store.last_daily(series, before=today)

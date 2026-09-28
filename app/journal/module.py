@@ -13,6 +13,8 @@ from starlette.concurrency import run_in_threadpool
 from app.importer import contract as C
 from app.journal import forms
 from app.journal.service import TAX_TYPES, editable, journal_service, source_label, tx_form_data
+from app.journal.writeoff import TAGS as WRITE_OFF_TAGS
+from app.journal.writeoff import writeoff_service
 from app.util.timeutil import today_local
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
@@ -64,6 +66,44 @@ def _asset_page(request: Request, data: dict[str, Any], errors: list[str], orig_
                            "fiat": "Währung"},
                   quote_sources={"coingecko": "CoinGecko (Krypto)", "yahoo": "Yahoo Finance (Wertpapiere)",
                                  "manual": "manuelle Kurse", "none": "keine Kursquelle"})
+
+
+def _crypto_loss_option(ctx: Any) -> str | None:
+    """Aktuelle Steuer-Einstellung „Verlust/Diebstahl von Kryptowerten“ (falls das Regelwerk sie kennt)."""
+    try:
+        from app.tax.service import tax_service
+
+        svc = tax_service(ctx)
+        pack = svc.pack()
+        spec = next((o for o in pack.option_specs() if o.key == "lost"), None)
+        if spec is None:
+            return None
+        val = svc.options(pack, today_local().year).get("lost", spec.default)
+        return dict(spec.choices).get(val, str(val))
+    except Exception as e:  # Steuer-Modul optional
+        log.debug("Steuer-Einstellung nicht lesbar: %s", e)
+        return None
+
+
+def _writeoff_page(request: Request, *, show: str = "", asset: str = "", account: str = "", done: int = 0,
+                   undone: int = 0, errors: list[str] | None = None, selected: set[str] | None = None,
+                   form: dict[str, str] | None = None, status_code: int = 200) -> HTMLResponse:
+    ctx = get_ctx(request)
+    svc = writeoff_service(ctx)
+    cands = svc.candidates()
+    n_unvalued = sum(1 for c in cands if c.unvalued)
+    if show not in ("unvalued", "all"):
+        show = "all" if asset or not n_unvalued else "unvalued"
+    rows = [c for c in cands if (show == "all" or c.unvalued) and (not asset or c.asset.asset_id == asset)
+            and (not account or c.account == account)]
+    if selected is None:
+        selected = {c.key for c in rows} if asset else set()
+    return render(request, "journal_writeoff.html", status_code=status_code, active="journal", rows=rows,
+                  show=show, asset=asset, account=account, n_all=len(cands), n_unvalued=n_unvalued,
+                  accounts=sorted({c.account for c in cands}, key=str.lower), selected=selected,
+                  form=form or {"date": today_local().isoformat(), "tag": "lost", "note": "Ausbuchung (Totalverlust)"},
+                  tags=WRITE_OFF_TAGS, errors=errors or [], done=done, undone=undone, recent=svc.recent(),
+                  loss_option=_crypto_loss_option(ctx), today=today_local())
 
 
 def make_router() -> APIRouter:
@@ -161,6 +201,33 @@ def make_router() -> APIRouter:
         if nxt.startswith("/journal/new"):
             return _back(request, nxt)
         return _back(request, "/journal?" + urlencode({"saved": "asset"}) + "#assets")
+
+    @router.get("/journal/writeoff", response_class=HTMLResponse)
+    def writeoff_page(request: Request, show: str = "", asset: str = "", account: str = "", done: int = 0,
+                      undone: int = 0) -> HTMLResponse:
+        return _writeoff_page(request, show=show, asset=asset, account=account, done=done, undone=undone)
+
+    @router.post("/journal/writeoff")
+    async def writeoff_book(request: Request) -> Response:
+        ctx = get_ctx(request)
+        f = await request.form()
+        keys = [str(k) for k in f.getlist("sel")]
+        day = str(f.get("date") or "")
+        tag = str(f.get("tag") or "lost")
+        note = str(f.get("note") or "").strip()[:200]
+        res = await run_in_threadpool(writeoff_service(ctx).book, keys, day, tag, note)
+        if res.errors:
+            return _writeoff_page(request, show=str(f.get("show") or ""), asset=str(f.get("asset") or ""),
+                                  account=str(f.get("account") or ""), errors=res.errors, selected=set(keys),
+                                  form={"date": day, "tag": tag, "note": note}, status_code=400)
+        return _back(request, "/journal/writeoff?" + urlencode({"done": len(res.tx_ids)}))
+
+    @router.post("/journal/writeoff/undo")
+    async def writeoff_undo(request: Request) -> Response:
+        ctx = get_ctx(request)
+        f = await request.form()
+        n = await run_in_threadpool(writeoff_service(ctx).undo, [str(t) for t in f.getlist("tx")])
+        return _back(request, "/journal/writeoff?" + urlencode({"undone": n}))
 
     @router.get("/journal/export.zip")
     def export(request: Request) -> Response:

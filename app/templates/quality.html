@@ -120,9 +120,12 @@
     </tbody></table></div>
     {% else %}<p><span class="badge good">✓</span> Alle Positionen aktuell bewertet.</p>{% endif %}
   {% endif %}
-  {% if hist and (hist.estimated_days or hist.unvalued_assets) %}
-  <details class="box"><summary>Historie: geschätzte Kurse</summary>
-    <ul class="small">{% for k, v in hist.estimated_days.items() if v %}<li>{{ k }}: {{ v }} Tage mit Transaktionskurs statt Marktkurs</li>{% endfor %}</ul>
+  {% if hist and (hist.estimated_days or hist.fallback_days or hist.unvalued_past) %}
+  <details class="box"><summary>Historie: geschätzte Kurse und Ersatzkurse</summary>
+    <ul class="small">{% for k, v in hist.estimated_days.items() if v %}<li>{{ asset_name(k) }}: {{ v }} Tage vor dem ersten Marktkurs mit Transaktionskurs geschätzt</li>{% endfor %}</ul>
+    {% if hist.fallback_days %}<p class="small">Ohne Marktkurse, mit manuellen bzw. Transaktionskursen bewertet (gültig bis zum nächsten Kurs, danach Krypto {{ s_age.crypto }}, Wertpapiere {{ s_age.security }}):</p>
+    <ul class="small">{% for k, v in hist.fallback_days|dictsort(by='value', reverse=true) %}<li>{{ asset_name(k) }}: {{ v }} Tage</li>{% endfor %}</ul>{% endif %}
+    {% if hist.unvalued_past %}<p class="small">Früher zeitweise ohne gültigen Kurs (dort mit 0 € angesetzt): {% for k in hist.unvalued_past %}{{ asset_name(k) }}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
   </details>{% endif %}
   {% if meta_rows %}
   <details class="box"><summary>Historische Kursreihen ({{ meta_rows|length }})</summary><div class="table-wrap"><table>

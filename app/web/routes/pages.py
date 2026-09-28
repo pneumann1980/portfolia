@@ -14,6 +14,8 @@ from fastapi.responses import HTMLResponse
 from app.analytics import periods as P
 from app.analytics.colors import asset_colors
 from app.ledger.engine import DUST, REALIZED_KINDS
+from app.prices.fallback import DEFAULT_MAX_AGE as FB_DEFAULT
+from app.prices.fallback import SETTING_KEYS as FB_KEYS
 from app.util.timeutil import add_years, local_tz, parse_iso, today_local
 from app.web.deps import get_ctx, render
 from app.web.svg import sparkline
@@ -273,7 +275,9 @@ def performance(request: Request, period: str = "1J", scope: str = "total", star
         sel = P.metrics(hist, s, a, b, inc)
         sel_label = P.PERIOD_LABELS.get(period.upper(), period)
     est = {k: v for k, v in hist.estimated_days.items() if v and (assets is None or k in assets)}
-    unvalued = [x for x in hist.unvalued_assets if assets is None or x in assets]
+    val = ctx.valuation()
+    # nur heute gehaltene Positionen ohne gültigen Kurs (wie Übersicht); verkaufte stehen unter Datenqualität
+    unvalued = [p.asset_id for p in (val.unvalued if val else []) if assets is None or p.asset_id in assets]
     pf = ctx.portfolio()
     return render(request, "performance.html", active="performance", rows=rows, sel=sel, sel_label=sel_label,
                   period=period.upper(), scope=scope, scopes=scope_options(ctx), start=start, end=end,
@@ -305,6 +309,7 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
     jobs = ctx.job_status()
     next_runs = ctx.scheduler.next_runs() if ctx.scheduler else {}
     hist = ctx.history()
+    pf = ctx.portfolio()
     meta_rows = ctx.db.q("SELECT series, history_from, history_to, history_status, history_error, last_history_fetch "
                          "FROM series_meta WHERE history_status IS NOT NULL ORDER BY history_status DESC, series")
     usage = ctx.db.q("SELECT * FROM api_usage ORDER BY period DESC, provider LIMIT 40")
@@ -325,7 +330,16 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
                   report=report, diff=diff, check=check, issues=issues, val=val, ledger_issues=ledger_issues[:300],
                   sources=sources, events=events, jobs=jobs, next_runs=next_runs, cg=ctx.prices.cg_budget(),
                   hist=hist, meta_rows=meta_rows, usage=usage, secrets=ctx.config.secrets.status(),
-                  cash_tracked=(led.cash_tracked if led else {}))
+                  cash_tracked=(led.cash_tracked if led else {}),
+                  asset_name=lambda aid: pf.asset(aid).name if pf else aid,
+                  s_age={k: _age_label(ctx.settings.get(FB_KEYS[k], FB_DEFAULT[k])) for k in FB_KEYS})
+
+
+def _age_label(v: Any) -> str:
+    try:
+        return f"{int(v)} Tage" if int(v) > 0 else "unbegrenzt"
+    except (TypeError, ValueError):
+        return "–"
 
 
 # -- Einstellungen ---------------------------------------------------------------------------------------

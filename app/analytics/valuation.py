@@ -6,10 +6,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 
 from app.analytics.colors import asset_colors
 from app.ledger.engine import DUST, REALIZED_KINDS, Flow, LedgerResult
 from app.ledger.models import AssetInfo, Portfolio
+from app.prices.fallback import FallbackPrices
 from app.prices.models import PriceInfo
 from app.prices.store import PriceStore
 
@@ -83,11 +85,23 @@ class Valuation:
 
 
 class FlowValuer:
-    """Bewertet Zahlungsströme ohne EUR-Betrag (z. B. USD-Einzahlung) mit dem Kurs am Flussdatum."""
+    """Bewertet Zahlungsströme ohne EUR-Betrag (z. B. USD-Einzahlung) mit dem Kurs am Flussdatum.
 
-    def __init__(self, store: PriceStore, series_for) -> None:
+    Assets ohne Kursquelle: Ersatzkurs nach derselben Regel wie Historie und aktuelle Bewertung – sonst
+    entstünde bei Token-Zugängen ohne Wert ein Scheingewinn (Wert > 0, Zufluss 0 €)."""
+
+    def __init__(self, store: PriceStore, series_for, settings: Any = None) -> None:
         self.store = store
         self.series_for = series_for
+        self.settings = settings
+        self._fb: tuple[Portfolio, FallbackPrices] | None = None
+
+    def _fallback(self, pf: Portfolio) -> FallbackPrices:
+        cur = self._fb
+        if cur is None or cur[0] is not pf:
+            cur = (pf, FallbackPrices(pf, self.settings))
+            self._fb = cur
+        return cur[1]
 
     def amount(self, f: Flow, pf: Portfolio) -> float:
         if f.amount is not None:
@@ -108,7 +122,9 @@ class FlowValuer:
                     fx = self.store.fx_on_or_before(row["ccy"], f.date)
                     rate = 1.0 / fx[0] if fx and fx[0] else 0.0
                 return q * row["close"] * rate
-        return 0.0
+            return 0.0
+        p = self._fallback(pf).on(a, f.date)
+        return q * p if p is not None else 0.0
 
 
 def value_positions(pf: Portfolio, ledger: LedgerResult, prices: dict[str, PriceInfo], invested: float,

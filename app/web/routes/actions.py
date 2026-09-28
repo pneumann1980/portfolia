@@ -102,6 +102,8 @@ async def save_settings(request: Request) -> Response:
         s.set("prices.stale_security_hours", _int(f.get("stale_security_hours"), 24, 1, 240))
         s.set("prices.coingecko_monthly_limit", _int(f.get("coingecko_monthly_limit"), 10000, 100, 10_000_000))
         s.set("prices.coingecko_throttle_pct", _int(f.get("coingecko_throttle_pct"), 80, 10, 100))
+        s.set("prices.fallback_max_age_crypto_days", _int(f.get("fallback_max_age_crypto_days"), 30, 0, 3650))
+        s.set("prices.fallback_max_age_security_days", _int(f.get("fallback_max_age_security_days"), 365, 0, 3650))
         mapping = {}
         for line in str(f.get("crypto_history_fallback") or "").splitlines():
             if "=" in line:

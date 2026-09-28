@@ -10,8 +10,9 @@
 {% set stale_n = val.stale|length %}{% set unval_n = val.unvalued|length %}
 {% if stale_n %}<div class="alert warn"><span class="icon">!</span><div>{{ stale_n }} Kurs{{ 'e' if stale_n != 1 }} veraltet – es wird der letzte bekannte Wert verwendet.
   <a href="/quality#prices">Details</a></div></div>{% endif %}
-{% if unval_n %}<div class="alert"><span class="icon">i</span><div>{{ unval_n }} Position{{ 'en' if unval_n != 1 }} ohne Kurs (mit 0 € angesetzt):
-  {% for p in val.unvalued[:6] %}{{ p.asset.name }}{{ ', ' if not loop.last }}{% endfor %}{% if unval_n > 6 %} …{% endif %}</div></div>{% endif %}
+{% if unval_n %}<div class="alert"><span class="icon">i</span><div>{{ unval_n }} Position{{ 'en' if unval_n != 1 }} ohne gültigen Kurs (mit 0 € angesetzt):
+  {% for p in val.unvalued[:6] %}{{ p.asset.name }}{{ ', ' if not loop.last }}{% endfor %}{% if unval_n > 6 %} …{% endif %}
+  · <a href="/quality#prices">Gründe</a> · <a href="/journal/writeoff">als Verlust ausbuchen</a></div></div>{% endif %}
 
 <section class="kpis" aria-label="Kennzahlen">
   <div class="kpi hero">

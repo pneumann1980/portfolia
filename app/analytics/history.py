@@ -2,9 +2,11 @@
 
 Bewertungsregeln für Lücken:
 * Zwischen zwei Kursen: letzter bekannter Schlusskurs (Wochenende/Feiertag).
-* Vor dem ersten verfügbaren Kurs: Transaktionskurs (value_eur/Menge) als Schätzung, sonst erster Kurs;
-  solche Tage werden als „geschätzt“ gezählt und im UI ausgewiesen.
-* Assets ohne jede Kursquelle: 0 € (konsistent mit der aktuellen Bewertung „unbewertet“).
+* Vor dem ersten verfügbaren Kurs: Ersatzkurs (manuell bzw. Transaktionskurs value_eur/Menge) als Schätzung,
+  sonst erster Kurs; solche Tage werden als „geschätzt“ gezählt und im UI ausgewiesen.
+* Assets ohne Marktkurse: Ersatzkurse nach derselben Regel wie die aktuelle Bewertung (``app.prices.fallback``:
+  zwischen zwei Kurspunkten fortgeschrieben, nach dem letzten höchstens N Tage), sonst 0 € („unbewertet“).
+  So werden auch längst verkaufte Positionen ohne Kursquelle mit ihren Kauf-/Verkaufskursen bewertet.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from app.analytics.valuation import FlowValuer
 from app.db import Database
 from app.ledger.engine import LedgerResult
 from app.ledger.models import AssetInfo, Portfolio
+from app.prices.fallback import FallbackPrices
 from app.prices.store import PriceStore
 from app.util.timeutil import iso, today_local
 
@@ -43,8 +46,10 @@ class History:
     asset_value: np.ndarray  # (M, N)
     asset_in: np.ndarray  # (M, N) Zuflüsse in die Position ≥ 0
     asset_out: np.ndarray  # (M, N) Abflüsse aus der Position ≥ 0
-    estimated_days: dict[str, int] = field(default_factory=dict)
-    unvalued_assets: list[str] = field(default_factory=list)
+    estimated_days: dict[str, int] = field(default_factory=dict)  # Tage vor dem ersten Marktkurs (geschätzt)
+    fallback_days: dict[str, int] = field(default_factory=dict)  # Tage mit Ersatzkurs (ohne Marktkurse)
+    unvalued_assets: list[str] = field(default_factory=list)  # heute gehalten, ohne gültigen Kurs (0 €)
+    unvalued_past: list[str] = field(default_factory=list)  # nur früher zeitweise ohne gültigen Kurs
     computed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
@@ -71,25 +76,6 @@ class History:
             return z, z, z
         return (self.asset_value[rows].sum(axis=0), self.asset_in[rows].sum(axis=0),
                 self.asset_out[rows].sum(axis=0))
-
-
-def _implied_prices(pf: Portfolio, ledger: LedgerResult) -> dict[str, list[tuple[date, float]]]:
-    """Transaktionskurse (EUR je Einheit) aus Käufen, Verkäufen, Tauschen, Erträgen und Zu-/Abgängen."""
-    out: dict[str, list[tuple[date, float]]] = defaultdict(list)
-    for t in pf.txs:
-        v = t.value_eur
-        if v is None or v <= 0 or t.type in ("transfer", "corporate_action"):
-            continue
-        for asset, qty in ((t.to_asset, t.to_qty), (t.from_asset, t.from_qty)):
-            if not asset or not qty or qty <= 0:
-                continue
-            a = pf.assets.get(asset)
-            if a is None or a.is_fiat:
-                continue
-            out[asset].append((t.date, float(v / qty)))
-    for lst in out.values():
-        lst.sort()
-    return out
 
 
 def _ffill(n: int, start: date, points: list[tuple[date, float]]) -> tuple[np.ndarray, int]:
@@ -123,7 +109,7 @@ def _ffill(n: int, start: date, points: list[tuple[date, float]]) -> tuple[np.nd
 
 
 def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, series_for: Any,
-                    valuer: FlowValuer, end: date | None = None) -> History | None:
+                    valuer: FlowValuer, end: date | None = None, settings: Any = None) -> History | None:
     if ledger.first_date is None:
         return None
     start = ledger.first_date
@@ -153,7 +139,7 @@ def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, seri
         qty[k] = q
 
     # -- Kurse je Asset (EUR) --------------------------------------------------------------------
-    implied = _implied_prices(pf, ledger)
+    fb = FallbackPrices(pf, settings)
     fx_cache: dict[str, np.ndarray] = {}
 
     def fx_arr(ccy: str) -> np.ndarray:
@@ -170,7 +156,10 @@ def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, seri
 
     price = np.zeros((m, n))
     estimated: dict[str, int] = {}
+    fallback_days: dict[str, int] = {}
     unvalued: list[str] = []
+    unvalued_past: list[str] = []
+    days = np.arange(n)
     for k, aid in enumerate(asset_ids):
         a: AssetInfo = pf.asset(aid)
         if a.is_fiat:
@@ -188,27 +177,27 @@ def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, seri
                 a_arr, f = _ffill(n, start, pts)
                 arr = np.where(np.isnan(arr), a_arr * fx_arr(ccy), arr)
                 first = min(first, f)
-        manual = pf.manual_prices.get(aid)
-        if manual:
-            man, mf = _ffill(n, start, manual)
-            arr = np.where(np.isnan(arr), man, arr)
-            first = min(first, mf)
-        if first >= n and not s and not manual:
-            unvalued.append(aid)  # keine Kursquelle: 0 € (wie aktuelle Bewertung)
-            continue
         held = qty[k] != 0
-        if first > 0:
-            imp = implied.get(aid, [])
-            imp_arr = _ffill(n, start, imp)[0] if imp else np.full(n, np.nan)
-            gap = np.arange(n) < first
-            fallback = arr[first] if first < n else (imp[0][1] if imp else np.nan)
-            fill = np.where(np.isnan(imp_arr), fallback, imp_arr)
-            arr = np.where(gap, fill, arr)
-            estimated[aid] = int(np.sum(gap & held))
-        arr = np.where(np.isnan(arr), 0.0, arr)
-        if not np.any(arr):
+        if first < n:
+            if first > 0:
+                # vor dem ersten Marktkurs: Ersatzkurs (ohne Ablauf – der Marktkurs folgt), sonst erster Marktkurs
+                est, _ = fb.daily(a, n, start, expire=False)
+                gap = days < first
+                arr = np.where(gap, np.where(np.isnan(est), arr[first], est), arr)
+                estimated[aid] = int(np.sum(gap & held))
+        else:
+            # keine Marktkurse: Ersatzkurse mit begrenzter Gültigkeit (wie die aktuelle Bewertung); vor dem
+            # ersten Kurspunkt gilt dieser als Schätzung
+            arr, _ = fb.daily(a, n, start, backfill=True)
+            n_fb = int(np.sum(held & ~np.isnan(arr)))
+            if n_fb:
+                fallback_days[aid] = n_fb
+        valid = ~np.isnan(arr)
+        if held[-1] and not valid[-1]:
             unvalued.append(aid)
-        price[k] = arr
+        elif np.any(held & ~valid):
+            unvalued_past.append(aid)
+        price[k] = np.where(valid, arr, 0.0)
 
     value_a = qty * price
 
@@ -254,7 +243,8 @@ def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, seri
     return History(start=start, dates=dates, value=value_a.sum(axis=0), inflow=inflow, outflow=outflow,
                    invested=invested, income=income, fees=fees, asset_ids=asset_ids, asset_qty=qty,
                    asset_price=price, asset_value=value_a, asset_in=a_in, asset_out=a_out,
-                   estimated_days=estimated, unvalued_assets=unvalued)
+                   estimated_days=estimated, fallback_days=fallback_days, unvalued_assets=unvalued,
+                   unvalued_past=unvalued_past)
 
 
 def persist_snapshots(db: Database, hist: History, import_id: int | None, kind: str = "backfill",

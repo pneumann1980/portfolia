@@ -55,7 +55,7 @@ class AppContext:
                                                           config.fx_frankfurter_fallback_url, config.ecb_hist_url),
             demo=self.demo, guard=self.guard, cg_quota=self.cg_quota,
         )
-        self.valuer = FlowValuer(self.store, self.prices.series_for)
+        self.valuer = FlowValuer(self.store, self.prices.series_for, self.settings)
         self._lock = threading.RLock()
         self._base_pf: tuple[int, Portfolio] | None = None
         self._rec: tuple[tuple[int, int], Portfolio | None] | None = None
@@ -271,7 +271,7 @@ class AppContext:
         with self._lock:
             if self._hist is not None and self._hist[0] == key:
                 return self._hist[1]
-        hist = compute_history(pf, led, self.store, self.prices.series_for, self.valuer)
+        hist = compute_history(pf, led, self.store, self.prices.series_for, self.valuer, settings=self.settings)
         with self._lock:
             self._hist = (key, hist)
         return hist
