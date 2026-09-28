@@ -45,6 +45,7 @@
   </nav>
   <div class="main">
     <header class="topbar">
+      <a class="brand-m" href="/" aria-label="{{ app_name }} – Übersicht"><img src="/static/img/icon.svg" alt=""><span>{{ app_name }}</span></a>
       <span class="title">{% block heading %}{{ app_name }}{% endblock %}</span>
       {% block topbar_actions %}{% endblock %}
       <button class="icon-btn brand-mobile" type="button" data-theme-toggle aria-label="Hell/Dunkel umschalten"><svg><use href="#i-moon"/></svg></button>

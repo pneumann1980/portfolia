@@ -465,6 +465,21 @@ verkaufte Aktien ohne Symbol) – eine Regel für aktuelle Bewertung, Historie u
 * Anzeige: Badge „manuell“ bzw. „Transaktionskurs“ mit Datum; abgelaufene Positionen lassen sich
   [ausbuchen](#positionen-ausbuchen-verlust-diebstahl).
 
+**Kursquellen automatisch zuordnen** (*Datenqualität → Kursquellen*): Kryptowerte ohne Kursquelle werden nach jedem
+Import, täglich um 06:40 und auf Knopfdruck im CoinGecko-Katalog gesucht.
+
+* Katalog `/coins/list` inkl. Chains, wöchentlich geladen und lokal durchsucht – an CoinGecko gehen keine Symbole,
+  Mengen oder Konten, danach nur die IDs der Kandidaten (`/coins/markets`).
+* Kandidaten mit gleichem Symbol; die Konten liefern die Chain („MetaMask (BNB)“ → BNB Smart Chain, „Kaspa (KAS)“ →
+  Kaspa, Börsenkonten keine). Coins nur auf anderen Chains entfallen, ebenso Coins, deren Kursspanne (Allzeittief ÷ 3 bis
+  Allzeithoch × 3) die eigenen Transaktionskurse nicht enthält – z. B. LUNA zu Kursen von LUNA Classic.
+* Sicherheit „hoch“ (genau ein passender Coin, Chain und Kurse passen) wird automatisch übernommen, „mittel“/„niedrig“
+  erscheinen als Vorschlag mit *Übernehmen*/*Ablehnen*; jede ID lässt sich auch per Eingabe oder Link von coingecko.com
+  setzen. Stufe unter *Einstellungen → Kurse* („nur eindeutige“, „auch wahrscheinliche“, „nie“). Spam-Token (Status
+  `spam`) werden übersprungen.
+* Zuordnungen gelten über dem Import, fließen in den Gesamtexport (`assets.csv`) ein und lassen sich jederzeit
+  zurücknehmen; danach werden Kurse und Historie neu geladen.
+
 ---
 
 ## News und YouTube
@@ -615,7 +630,8 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
 | Problem | Ursache / Lösung |
 |---|---|
 | Import wird nicht übernommen | *Datenqualität → Import*: Fehlerbericht mit Datei, Zeile, Spalte. Der alte Stand bleibt aktiv. |
-| Asset „unbewertet“ | Keine Kursquelle/ID, Quelle nicht erreichbar oder Ersatzkurs abgelaufen (Grund an der Position) → `quote_id` prüfen, aktuellen Kurs in `manual_prices.csv` liefern oder unter *Buchungen → Ausbuchen* als Verlust ausbuchen. |
+| Asset „unbewertet“ | Keine Kursquelle/ID, Quelle nicht erreichbar oder Ersatzkurs abgelaufen (Grund an der Position) → *Datenqualität → Kursquellen* (CoinGecko-Suche bzw. ID eintragen), `quote_id` prüfen, aktuellen Kurs in `manual_prices.csv` liefern oder unter *Buchungen → Ausbuchen* als Verlust ausbuchen. |
+| Mobil: Leiste unten verschwindet / Seite seitlich verschiebbar | Behoben ab 0.9.1 (kein Element breiter als der Bildschirm, `overflow-x: clip`). Nach dem Update Seite einmal neu laden. |
 | Kurs „veraltet“ | Quelle nicht erreichbar oder Budget gedrosselt → *Datenqualität → Datenquellen & Kontingente*. |
 | Krypto-Historie vor 365 Tagen fehlt | CoinGecko-Demo-Grenze → Yahoo-Paar unter *Einstellungen → Kurse* zuordnen (nur eindeutige Paare). |
 | News-Quelle deaktiviert | *News → Quellen*: Grund und letzter Fehler; URL in `sources.yaml` korrigieren und reaktivieren. |

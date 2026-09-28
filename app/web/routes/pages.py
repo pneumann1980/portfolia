@@ -332,6 +332,7 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
                   hist=hist, meta_rows=meta_rows, usage=usage, secrets=ctx.config.secrets.status(),
                   cash_tracked=(led.cash_tracked if led else {}),
                   asset_name=lambda aid: pf.asset(aid).name if pf else aid,
+                  src_suggested=ctx.db.scalar("SELECT COUNT(*) FROM asset_source WHERE status='suggested'", default=0),
                   s_age={k: _age_label(ctx.settings.get(FB_KEYS[k], FB_DEFAULT[k])) for k in FB_KEYS})
 
 

@@ -238,6 +238,22 @@ CREATE INDEX IF NOT EXISTS ix_journal_tx_batch ON journal_tx(batch_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_journal_tx_ext ON journal_tx(source, external_id)
   WHERE external_id IS NOT NULL AND status <> 'reverted';
 """),
+    (6, """
+-- Kursquellen-Zuordnung für Assets ohne Kursquelle (z. B. Token laut Import „none“): gilt über dem Import.
+CREATE TABLE IF NOT EXISTS asset_source (
+  asset_id        TEXT PRIMARY KEY,
+  quote_source    TEXT NOT NULL DEFAULT 'coingecko',
+  quote_id        TEXT,                          -- zugeordnete ID (active) bzw. bester Vorschlag
+  status          TEXT NOT NULL,                 -- active | suggested | none | rejected
+  origin          TEXT NOT NULL,                 -- auto | user
+  confidence      TEXT,                          -- hoch | mittel | niedrig
+  reason          TEXT,
+  candidates_json TEXT,
+  checked_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_asset_source_status ON asset_source(status);
+"""),
 ]
 
 

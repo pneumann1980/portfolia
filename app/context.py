@@ -118,10 +118,13 @@ class AppContext:
         if base is None and not j_txs:
             pf = None
         else:
+            from app.prices.sources import apply_sources
+
             start = base if base is not None else Portfolio(import_id=None, txs=[], assets={}, accounts={})
-            assets = {**j_assets, **start.assets}
+            merged = {**j_assets, **start.assets}
+            assets = apply_sources(self.db, merged)  # zugeordnete Kursquellen (über dem Import)
             confirmed = overlay_txs(self.db, assets, ("confirmed",))
-            pf = start if not (j_txs or j_assets or confirmed) else dataclasses.replace(
+            pf = start if not (j_txs or j_assets or confirmed or assets is not merged) else dataclasses.replace(
                 start, txs=[*start.txs, *j_txs, *confirmed], assets=assets)
             if self.demo is not None and pf is not start:
                 self._seed_demo(pf)

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Kursquellen{% endblock %}
+{% block heading %}Kursquellen{% endblock %}
+{% macro cg_link(cid) -%}<a class="mono" href="https://www.coingecko.com/en/coins/{{ cid }}" target="_blank" rel="noopener noreferrer">{{ cid }}</a>{%- endmacro %}
+{% block content %}
+{% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+{% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>Kursquellen für Kryptowerte</h2>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <a class="btn sm ghost" href="/quality#prices">Zur Datenqualität</a>
+      {% if not demo %}<form method="post" action="/quality/sources/run" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn sm primary" type="submit">Jetzt auf CoinGecko suchen</button></form>{% endif %}
+    </div></div>
+  <p class="hint">Kryptowerte ohne Kursquelle werden nach jedem Import und täglich im CoinGecko-Katalog gesucht.
+    Automatisch übernommen: <b>{{ auto_label }}</b> (<a href="/settings#prices">ändern</a>) – alles andere erscheint hier als Vorschlag.</p>
+  <details class="box"><summary>Wie wird gesucht?</summary>
+    <ul class="small">
+      <li>Kandidaten: Coins mit gleichem Symbol. Konten liefern die Chain (z. B. „MetaMask (BNB)“ → BNB Smart Chain);
+        Coins, die nur auf anderen Chains existieren, entfallen.</li>
+      <li>Ein Treffer muss zu den eigenen Transaktionskursen passen (Spanne Allzeittief ÷ 3 bis Allzeithoch × 3) –
+        sonst ist es ein anderer Token mit gleichem Symbol.</li>
+      <li>„hoch“: genau ein passender Coin; „mittel“: klarer Marktführer oder Chain bzw. Kurse nicht prüfbar; sonst „niedrig“.</li>
+      <li>Gesucht wird lokal im Katalog (wöchentlich aktualisiert); an CoinGecko gehen nur die IDs der Kandidaten.
+        Spam-Token werden übersprungen.</li>
+    </ul></details>
+  {% if demo %}<div class="alert"><span class="icon">i</span><div>Im Demo-Modus ist CoinGecko nicht angebunden.</div></div>{% endif %}
+  <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0">
+    <span class="badge warn">{{ ov.counts.suggested }} Vorschläge</span>
+    <span class="badge">{{ ov.counts.open }} noch nicht gesucht</span>
+    <span class="badge">{{ ov.counts.none }} ohne Treffer</span>
+    <span class="badge good">{{ ov.counts.active }} zugeordnet</span>
+    <span class="badge">{{ ov.counts.rejected }} abgelehnt</span>
+    <span class="hint">{% if ov.catalog_at %}Katalog vom {{ ov.catalog_at|datetime_de }}{% endif %}{% if job and job.last_end %} · letzter Suchlauf {{ job.last_end|datetime_de }}{% endif %}</span>
+  </div>
+
+  {% if ov['items'] %}
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>Asset</th><th>Konten</th><th>Status</th><th>Treffer</th><th>Sicherheit</th><th>Aktion</th></tr></thead>
+    <tbody>
+    {% for it in ov['items'] %}{% set a = it.asset %}{% set r = it.row %}
+      <tr id="a-{{ a.asset_id }}">
+        <td data-label="Asset"><b>{{ a.name }}</b><div class="hint">{{ a.symbol }}{% if it.held %} · im Bestand{% else %} · nicht mehr im Bestand{% endif %}</div></td>
+        <td data-label="Konten">{{ it.accounts|join(', ') or '–' }}{% if it.hints %}<div class="hint">Chain: {{ it.hints|join(', ') }}</div>{% endif %}</td>
+        <td data-label="Status">
+          {% if it.status == 'active' %}<span class="badge good">zugeordnet</span>{% if r.origin == 'auto' %} <span class="hint">automatisch</span>{% endif %}
+          {% elif it.status == 'suggested' %}<span class="badge warn">Vorschlag</span>
+          {% elif it.status == 'none' %}<span class="badge">kein Treffer</span>
+          {% elif it.status == 'rejected' %}<span class="badge">abgelehnt</span>
+          {% else %}<span class="badge">noch nicht gesucht</span>{% endif %}
+        </td>
+        <td data-label="Treffer">{% if r and r.quote_id and it.status in ('active', 'suggested') %}{{ cg_link(r.quote_id) }}
+            {% for c in it.candidates if c.id == r.quote_id %}<div class="hint">{{ c.name }} · {{ c.price|price if c.price else 'kein Kurs' }}{% if c.market_cap %} · Marktkap. {{ c.market_cap|eur_compact }}{% endif %}</div>{% endfor %}
+          {% else %}–{% endif %}
+          {% if it.candidates|length > (1 if r and r.quote_id else 0) %}
+          <details style="margin-top:4px"><summary class="hint">{{ it.candidates|length }} Coin{{ 's' if it.candidates|length != 1 }} mit diesem Symbol</summary>
+            <ul class="small" style="margin:4px 0 0;padding-left:16px">
+            {% for c in it.candidates %}<li>{{ cg_link(c.id) }} – {{ c.name }} · {{ c.price|price if c.price else 'kein Kurs' }}{% if c.market_cap %} · {{ c.market_cap|eur_compact }}{% endif %}
+              {% if c.platforms %}<br><span class="hint">{{ c.platforms[:4]|join(', ') }}{% if c.platforms|length > 4 %} …{% endif %}</span>{% endif %}
+              {% if c.chain_match %} <span class="badge good">Chain passt</span>{% elif c.other_chain %} <span class="badge">andere Chain</span>{% endif %}
+              {% if c.plausible == false %} <span class="badge crit">Kurse passen nicht</span>{% endif %}
+              {% if c.price and (not r or c.id != r.quote_id or it.status != 'active') %}
+              <form method="post" action="/quality/sources/accept" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="asset_id" value="{{ a.asset_id }}"><input type="hidden" name="coin_id" value="{{ c.id }}"><button class="btn sm ghost" type="submit">diesen übernehmen</button></form>{% endif %}
+            </li>{% endfor %}
+            </ul></details>{% endif %}
+        </td>
+        <td data-label="Sicherheit">{% if r and r.confidence %}<span class="badge {{ 'good' if r.confidence == 'hoch' else ('warn' if r.confidence == 'mittel' else '') }}">{{ r.confidence }}</span>{% endif %}{% if r and r.reason %}<div class="hint">{{ r.reason }}</div>{% endif %}</td>
+        <td class="actions" data-label="Aktion">
+          {% if it.status == 'suggested' %}
+            <form method="post" action="/quality/sources/accept" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="asset_id" value="{{ a.asset_id }}"><input type="hidden" name="coin_id" value="{{ r.quote_id }}"><button class="btn sm primary" type="submit">Übernehmen</button></form>
+            <form method="post" action="/quality/sources/reject" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="asset_id" value="{{ a.asset_id }}"><button class="btn sm ghost" type="submit">Ablehnen</button></form>
+          {% elif it.status in ('active', 'rejected', 'none') %}
+            <form method="post" action="/quality/sources/reset" class="inline" {% if it.status == 'active' %}data-confirm="Zuordnung für {{ a.name }} entfernen?"{% endif %}><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="asset_id" value="{{ a.asset_id }}"><button class="btn sm ghost" type="submit">{{ 'Zuordnung entfernen' if it.status == 'active' else 'Neu suchen' }}</button></form>
+          {% endif %}
+          <form method="post" action="/quality/sources/accept" class="inline-amount"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="asset_id" value="{{ a.asset_id }}">
+            <input type="text" name="manual" placeholder="ID oder Link" title="CoinGecko-ID (z. B. xen-crypto) oder Link von coingecko.com" aria-label="CoinGecko-ID oder Link für {{ a.name }}" style="min-width:120px;max-width:190px"><button class="btn sm" type="submit">Speichern</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p><span class="badge good">✓</span> Alle Kryptowerte haben eine Kursquelle.</p>{% endif %}
+</section>
+{% endblock %}

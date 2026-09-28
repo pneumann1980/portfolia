@@ -52,7 +52,11 @@
       <label class="field">Drosseln ab (% des Limits)<input type="number" name="coingecko_throttle_pct" min="10" max="100" value="{{ s['prices.coingecko_throttle_pct'] }}"></label>
       <label class="field">Ersatzkurs Krypto gültig (Tage)<input type="number" name="fallback_max_age_crypto_days" min="0" max="3650" value="{{ s['prices.fallback_max_age_crypto_days'] }}"></label>
       <label class="field">Ersatzkurs Wertpapiere gültig (Tage)<input type="number" name="fallback_max_age_security_days" min="0" max="3650" value="{{ s['prices.fallback_max_age_security_days'] }}"></label>
+      <label class="field">Kursquellen automatisch zuordnen<select name="auto_map">
+        {% for k, l in {'hoch': 'nur eindeutige Treffer (empfohlen)', 'mittel': 'auch wahrscheinliche Treffer', 'aus': 'nie – nur Vorschläge'}.items() %}<option value="{{ k }}" {% if s['prices.auto_map'] == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
     </div>
+    <p class="hint">Kryptowerte ohne Kursquelle werden im CoinGecko-Katalog gesucht; Vorschläge und Zuordnungen unter
+      <a href="/quality/sources">Datenqualität → Kursquellen</a>.</p>
     <p class="hint">Ersatzkurse gelten für Positionen ohne Marktkurse (Kursquelle „none“/„manual“): manuelle Kurse aus dem Import und Transaktionskurse (Wert ÷ Menge). Zwischen zwei Kursen wird fortgeschrieben, nach dem letzten höchstens die angegebene Zahl Tage – danach ist die Position unbewertet (0 €). 0 = unbegrenzt.</p>
     <label class="field" style="margin-top:10px"><span>Benchmarks (eine Zeile je Benchmark: <code>Name | Quelle:Symbol</code>, z. B. <code>MSCI World | yahoo:EUNL.DE</code>)</span>
       <textarea name="benchmarks">{% for b in s['performance.benchmarks'] %}{{ b.name }} | {{ b.series }}

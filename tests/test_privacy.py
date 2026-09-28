@@ -30,6 +30,11 @@ def test_outgoing_requests_contain_no_portfolio_data(config, monkeypatch):
         captured.append(str(request.url) + " " + request.content.decode("utf-8", "replace"))
         if request.url.host.endswith("coingecko.com") and "simple/price" in request.url.path:
             return httpx.Response(200, json={"bitcoin": {"eur": 60000.0}, "ethereum": {"eur": 3000.0}})
+        if request.url.host.endswith("coingecko.com") and request.url.path.endswith("/coins/list"):
+            return httpx.Response(200, json=[{"id": "solana", "symbol": "sol", "name": "Solana", "platforms": {}},
+                                             {"id": "cardano", "symbol": "ada", "name": "Cardano", "platforms": {}}])
+        if request.url.host.endswith("coingecko.com") and request.url.path.endswith("/coins/markets"):
+            return httpx.Response(200, json=[])
         if request.url.host.endswith("coingecko.com"):
             return httpx.Response(200, json={"prices": []})
         return httpx.Response(404, text="not found")
@@ -64,6 +69,9 @@ def test_outgoing_requests_contain_no_portfolio_data(config, monkeypatch):
         from app.news.module import news_service
 
         news_service(ctx).run()
+        from app.prices.sources import source_service
+
+        source_service(ctx).run(force=True)  # Kursquellen-Suche: nur Katalog und Kandidaten-IDs
         c.get("/asset/BTC")  # löst ggf. Info-Abruf aus
         pf = ctx.portfolio()
         led = ctx.ledger()

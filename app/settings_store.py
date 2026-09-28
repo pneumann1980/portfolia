@@ -31,6 +31,8 @@ DEFAULTS: dict[str, Any] = {
     # Ersatzkurse (manuell/Transaktionskurs) ohne Marktkurse: Gültigkeit nach dem letzten Kurs, 0 = unbegrenzt
     "prices.fallback_max_age_crypto_days": 30,
     "prices.fallback_max_age_security_days": 365,
+    # Kursquellen-Suche (CoinGecko) für Kryptowerte ohne Quelle: automatisch übernehmen bis Sicherheit hoch|mittel|aus
+    "prices.auto_map": "hoch",
     "prices.crypto_interval_min": 10,
     "prices.crypto_throttled_interval_min": 30,
     "prices.stock_interval_min": 15,

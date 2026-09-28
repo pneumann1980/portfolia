@@ -104,6 +104,8 @@ async def save_settings(request: Request) -> Response:
         s.set("prices.coingecko_throttle_pct", _int(f.get("coingecko_throttle_pct"), 80, 10, 100))
         s.set("prices.fallback_max_age_crypto_days", _int(f.get("fallback_max_age_crypto_days"), 30, 0, 3650))
         s.set("prices.fallback_max_age_security_days", _int(f.get("fallback_max_age_security_days"), 365, 0, 3650))
+        am = str(f.get("auto_map") or "hoch")
+        s.set("prices.auto_map", am if am in ("hoch", "mittel", "aus") else "hoch")
         mapping = {}
         for line in str(f.get("crypto_history_fallback") or "").splitlines():
             if "=" in line:

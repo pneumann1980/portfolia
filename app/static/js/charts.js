@@ -426,6 +426,20 @@
     });
   }
 
+  // Zeilen einer ECharts-Legende (Symbol 14 px + 5 px Abstand + Text + 10 px Lücke, Schrift 12 px)
+  var LEGEND_FONT = "system-ui, -apple-system, Segoe UI, sans-serif";
+  function legendLines(names, width) {
+    var c = legendLines.ctx || (legendLines.ctx = document.createElement("canvas").getContext("2d"));
+    c.font = "12px " + LEGEND_FONT;
+    var lines = 1, x = 0;
+    names.forEach(function (n) {
+      var w = 14 + 5 + c.measureText(n).width + 10;
+      if (x > 0 && x + w > width) { lines += 1; x = 0; }
+      x += w;
+    });
+    return lines;
+  }
+
   // ------------------------------------------------------------------------------------------------
   // Performance: kumulierte Rendite vs. Benchmark
   function perf(el, d) {
@@ -440,8 +454,9 @@
     inst.setOption({
       animation: false,
       color: colors,
-      legend: { top: 0, left: 0, textStyle: { color: t.ink2, fontSize: 12 }, icon: "path://M0,4 L14,4 L14,6 L0,6 Z", itemWidth: 14, itemHeight: 4 },
-      grid: { left: 8, right: 16, top: 34, bottom: 8, containLabel: true },
+      legend: { top: 0, left: 0, textStyle: { color: t.ink2, fontSize: 12, fontFamily: LEGEND_FONT }, icon: "path://M0,4 L14,4 L14,6 L0,6 Z", itemWidth: 14, itemHeight: 4 },
+      // Platz für die (auf schmalen Bildschirmen umbrechende) Legende, sonst überdeckt sie die Achse
+      grid: { left: 8, right: 16, top: 12 + 22 * legendLines(series.map(function (x) { return x.name; }), el.clientWidth - 10), bottom: 8, containLabel: true },
       tooltip: Object.assign(tooltipBase(t), {
         trigger: "axis",
         formatter: function (ps) {
