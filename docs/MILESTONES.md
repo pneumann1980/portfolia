@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.09.2026 · Version 0.11.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.09.2026 · Version 0.11.1 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -422,6 +422,31 @@ Metalle, Indizes und Korrekturen nur als „ungeklärt“; Bestandsprüfung nur 
 Hinweis; die exakte Import-Abdeckung setzt `source_ref` mit Bitpanda-ID im kuratierten Import voraus (Koinly-Exporte
 tragen sie nicht → Entscheidung auf der Abgleichseite); das Fenster der unscharfen Prüfung (± 2 Tage, ± 1 %) kann
 bei Sparplänen mit gleichen Beträgen mehrere Kandidaten zeigen.
+
+## M13 – Abrufrate der Kursquellen einstellbar (Erweiterung)
+
+Anlass (29.09.2026): Die Aktualisierungsrate soll einstellbar sein, mit Empfehlung, damit das Kontingent reicht.
+
+**Entscheidungen**
+
+* Auswahl aus festen Stufen statt freier Eingabe (Krypto 2 min–4 h, gedrosselt 10 min–12 h, Wertpapiere 5 min–2 h);
+  ungültige Werte fallen auf die nächstliegende Stufe bzw. den Standard. Gedrosselt nie häufiger als normal.
+* Neue Intervalle gelten sofort (`Scheduler.reschedule_prices`), `crypto_due` nutzt dieselben Stufen.
+* Hochrechnung je Stufe für das eigene Portfolio (`app/prices/budget.py`): Kurse = Aufrufe je Aktualisierung ×
+  Aktualisierungen je Monat; Historie = nicht mehr gehaltene Coins und CoinGecko-Benchmarks × ≈ 15/Monat (gehaltene
+  Coins erhalten den Tagesschluss aus dem Kurs, siehe `write_eod_closes`); Reserve 5 % des Limits.
+* Empfehlung: kürzeste Stufe ab 5 min unter der Drosselschwelle; gedrosselt die kürzeste Stufe (≥ doppeltes
+  Normalintervall, ≥ 30 min), mit der das Rest-Kontingent einen Monat reicht – reicht schon die Historie allein
+  nicht, 60 min (längere Intervalle brächten kaum etwas). Yahoo: feste Empfehlung 15 min.
+* Hinweis, wenn die „veraltet“-Grenze kürzer ist als das doppelte (gedrosselte) Intervall; Hinweis ohne
+  CoinGecko-Schlüssel. Datenqualität zeigt die tatsächliche Drosselschwelle statt fest „80 %“.
+
+**Tests:** `tests/test_price_budget.py` (8 Fälle) – Stufen, Hochrechnung und Empfehlung (Demo, Pro, viele Coins,
+viel Historie), Drosselbetrieb, Yahoo, Kennzahlen aus dem Ledger (gehalten/verkauft), `crypto_due` mit Stufen,
+Einstellungsseite und Speichern inkl. Validierung, Umplanung ohne Neustart.
+
+**Grenzen M13:** Hochrechnung, keine Messung: Neustarts, manuelle Aktualisierungen und neue Coins stecken pauschal in
+der Reserve; Yahoo-Werte sind Obergrenzen ohne Feiertagskalender; der Zähler kennt nur Portfolias eigene Aufrufe.
 
 ## Entscheidungen des Auftraggebers (27.09.2026)
 

@@ -19,6 +19,7 @@ from typing import Any
 from app.db import Database
 from app.ledger.engine import LedgerResult
 from app.ledger.models import AssetInfo, Portfolio
+from app.prices.budget import CRYPTO_PRESETS, THROTTLED_PRESETS, snap
 from app.prices.coingecko import BudgetExceeded, CoinGeckoProvider
 from app.prices.demo import DemoProvider
 from app.prices.ecb import EcbProvider
@@ -218,16 +219,44 @@ class PriceService:
         pct = used / limit * 100 if limit else 0
         throttle = float(self.settings.get("prices.coingecko_throttle_pct", 80))
         return {"used": used, "limit": limit, "pct": pct, "projected": projected, "throttled": pct >= throttle,
-                "exhausted": used >= limit}
+                "exhausted": used >= limit, "throttle_pct": throttle}
+
+    def budget_inputs(self, pf: Portfolio | None, ledger: LedgerResult | None) -> dict[str, Any]:
+        """Kennzahlen für die Hochrechnung der Abrufe (nur Anzahlen, unabhängig vom Demo-Modus)."""
+        out: dict[str, Any] = {"cg_calls": 0, "cg_held": 0, "cg_history": 0, "cg_sold": 0, "cg_bench": 0,
+                               "yahoo_symbols": 0, "fx": False}
+        if pf is None or ledger is None:
+            return out
+
+        def cg_id(a: AssetInfo) -> str | None:
+            return a.quote_id if a.quote_source == "coingecko" and a.quote_id and not a.is_fiat else None
+
+        held = self.held_assets(pf, ledger)
+        held_ids = {a.asset_id for a in held}
+        ids = sorted({i for a in held if a.is_crypto and (i := cg_id(a))})
+        out["cg_held"] = len(ids)
+        out["cg_calls"] = len(CoinGeckoProvider.id_chunks(ids)) if ids else 0
+        # Gehaltene Coins bekommen ihren Tagesschluss aus dem Kurs (write_eod_closes) – laufende Historien-Abrufe
+        # entstehen nur für nicht mehr gehaltene Coins und CoinGecko-Benchmarks.
+        ever = [aid for aid in self.first_dates(pf, ledger) if cg_id(pf.asset(aid))]
+        bench = [b for b in self.settings.get("performance.benchmarks") or [] if str(b.get("series", "")).startswith(
+            "cg:")]
+        out["cg_sold"] = sum(1 for aid in ever if aid not in held_ids)
+        out["cg_bench"] = len(bench)
+        out["cg_history"] = out["cg_sold"] + out["cg_bench"]
+        out["yahoo_symbols"] = sum(1 for a in held if a.is_security and a.quote_source == "yahoo" and a.quote_id)
+        out["fx"] = bool(self.fx_currencies(pf, ledger))
+        return out
 
     def crypto_due(self, now: datetime | None = None) -> tuple[bool, str | None]:
         now = now or datetime.now(UTC)
         b = self.cg_budget()
         if b["exhausted"]:
             return False, "Monatskontingent erschöpft"
-        interval = float(self.settings.get("prices.crypto_interval_min", 10))
+        interval = snap(self.settings.get("prices.crypto_interval_min", 10), CRYPTO_PRESETS, 10)
         if b["throttled"]:
-            interval = float(self.settings.get("prices.crypto_throttled_interval_min", 30))
+            interval = max(interval, snap(self.settings.get("prices.crypto_throttled_interval_min", 30),
+                                          THROTTLED_PRESETS, 30))
         last = parse_iso(self.db.get_state("last_crypto_update"))
         if last and now - last < timedelta(minutes=interval - 0.75):
             return False, "Intervall" + (" (gedrosselt)" if b["throttled"] else "")

@@ -144,7 +144,8 @@
       <h3>CoinGecko (Monat)</h3>
       <div class="meter {{ 'crit' if cg.exhausted else ('warn' if cg.throttled else '') }}" style="margin:6px 0" role="meter" aria-valuenow="{{ cg.used }}" aria-valuemax="{{ cg.limit }}"><div style="width:{{ [cg.pct, 100]|min }}%"></div></div>
       <p class="small">{{ cg.used }} / {{ cg.limit }} Aufrufe ({{ cg.pct|num(1) }} %){% if cg.projected %} · Prognose Monatsende ≈ {{ cg.projected }}{% endif %}
-        {% if cg.throttled %}<span class="badge warn">gedrosselt ab {{ '80' }} %</span>{% endif %}</p>
+        {% if cg.throttled %}<span class="badge warn">gedrosselt ab {{ cg.throttle_pct|num(0) }} %</span>{% endif %}
+        · Abrufrate: <a href="/settings#prices">Einstellungen → Kurse</a></p>
     </div>
     <div>
       <h3>API-Keys</h3>

@@ -674,7 +674,7 @@ verworfen oder durch den nächsten Import als „nicht im Import“ entfernt wer
 | Quelle | Verwendung | Grenzen/Verhalten |
 |---|---|---|
 | Yahoo Finance (yfinance) | Aktien/ETFs aktuell, intraday, Historie, Stammdaten | gebündelt, ≤ 1 Anfrage/s |
-| CoinGecko (Demo/Pro) | Krypto aktuell (alle Coins in **einem** `/simple/price`-Aufruf), Historie `market_chart` | Monatsbudget (Standard 10.000) sichtbar, Drosselung ab 80 %; Demo-API: Historie max. 365 Tage, davor Yahoo-Paare (z. B. BTC-EUR) laut Einstellung |
+| CoinGecko (Demo/Pro) | Krypto aktuell (alle Coins in **einem** `/simple/price`-Aufruf), Historie `market_chart` | Monatsbudget (Standard 10.000) mit Hochrechnung und Empfehlung, Drosselung ab 80 %; Demo-API: Historie max. 365 Tage, davor Yahoo-Paare (z. B. BTC-EUR) laut Einstellung |
 | EZB (Frankfurter, EZB-ZIP als Fallback) | Devisenkurse für EUR-Umrechnung | täglich |
 | `manual_prices.csv` + Transaktionskurse | Ersatzkurse für Assets ohne Marktkurse | siehe unten |
 
@@ -682,8 +682,30 @@ verworfen oder durch den nächsten Import als „nicht im Import“ entfernt wer
   Handelstagen) bzw. > 1 h (Krypto) – deutlich markiert, nie still durch 0 ersetzt.
 * Fällt eine Quelle aus, bleibt der letzte Wert mit Warnung stehen; die Quelle wird mit exponentiellem
   Backoff erneut versucht.
-* Zeitplan: Krypto alle 10 min, Aktien alle 15 min zu EU/US-Handelszeiten, EZB 16:35, Snapshot 23:30,
-  Historien-Nachladen 06:10.
+* Zeitplan (Standard): Krypto alle 10 min, Aktien/ETFs und Devisen alle 15 min zu EU/US-Handelszeiten
+  (Devisen werktags ganztägig), EZB 16:35, Snapshot 23:30, Historien-Nachladen 06:10.
+
+**Abrufrate einstellen** (*Einstellungen → Kurse → Aktualisierung*, gilt sofort ohne Neustart): Krypto 2 min bis
+4 h, Krypto im Drosselbetrieb, Wertpapiere/Devisen 5 min bis 2 h. Jede Auswahl zeigt die hochgerechneten Aufrufe je
+Monat für das eigene Portfolio und markiert die Empfehlung:
+
+| CoinGecko-Verbraucher | Aufrufe | Hinweis |
+|---|---|---|
+| Kurse | 1 je Aktualisierung für alle gehaltenen Coins (mehr erst bei sehr vielen IDs) | alle 10 min ≈ 4.400/Monat, alle 5 min ≈ 8.800/Monat |
+| Kurshistorie | ≈ 15/Monat je **nicht mehr gehaltenem** Coin (bzw. CoinGecko-Benchmark) | gehaltene Coins erhalten den Tagesschluss aus dem Kurs |
+| Reserve | 5 % des Limits | Neustarts, „Kurse aktualisieren“, CSV-„Kurse laden“, Kursquellen-Suche, neue Coins |
+
+* **Empfehlung Krypto:** das kürzeste Intervall ab 5 min, bei dem die Hochrechnung unter der Drosselschwelle
+  (Standard 80 % des Limits) bleibt. Mit Demo-Schlüssel (10.000/Monat) ist das praktisch immer **10 min** – 5 min
+  ergäbe über 90 % und würde im Laufe des Monats gedrosselt.
+* **Drosselbetrieb:** ab der Schwelle wird automatisch seltener abgerufen (Standard 30 min, nie häufiger als normal);
+  empfohlen ist das kürzeste Intervall, mit dem das Rest-Kontingent bis Monatsende reicht. Bei 100 % stoppt der Abruf
+  bis zum Monatswechsel, Kurse bleiben mit „veraltet“-Markierung stehen.
+* **Yahoo** hat kein veröffentlichtes Kontingent (inoffizielle Schnittstelle), sperrt aber bei zu vielen Anfragen je
+  IP zeitweise; empfohlen sind **15 min** (bis 40 Symbole je Abruf, außerhalb der Handelszeiten keine Abrufe).
+* Das Monatslimit zählt Portfolia selbst. Wird derselbe CoinGecko-Schlüssel auch anderswo genutzt, das Limit unter
+  *Einstellungen → Kurse* entsprechend kleiner setzen. Die „veraltet“-Grenze für Krypto sollte mindestens das Doppelte
+  des (gedrosselten) Intervalls betragen – die Seite weist darauf hin.
 
 **Ersatzkurse** (Assets ohne Marktkurse, z. B. Kursquelle `none`/`manual`, nicht mehr gehandelte Token, lange
 verkaufte Aktien ohne Symbol) – eine Regel für aktuelle Bewertung, Historie und Zahlungsströme:

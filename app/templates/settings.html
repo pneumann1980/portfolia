@@ -52,6 +52,38 @@
 <section class="card" id="prices">
   <div class="card-head"><h2>Kurse &amp; Benchmarks</h2></div>
   <form method="post" action="/settings/save">
+    {% set est = pp.estimate %}{% set inp = pp.inputs %}
+    <h3>Aktualisierung</h3>
+    <div class="grid-3">
+      <label class="field">Krypto-Kurse (CoinGecko)
+        <select name="crypto_interval_min">{% for m, label, e in pp.crypto %}<option value="{{ m }}" {% if m == pp.crypto_now %}selected{% endif %}>{{ label }} · {{ e.pct|num(0) }} %{% if m == pp.rec_crypto %} – empfohlen{% elif e.level == 'over' %} – über Limit{% elif e.level == 'tight' %} – gedrosselt{% endif %}</option>{% endfor %}</select></label>
+      <label class="field">Krypto gedrosselt (ab {{ pp.throttle_pct|num(0) }} % des Limits)
+        <select name="crypto_throttled_interval_min">{% for m, label, days in pp.throttled %}<option value="{{ m }}" {% if m == pp.throttled_now %}selected{% endif %}>{{ label }}{% if days is not none %} · {{ days|num(0) }} Tage{% endif %}{% if m == pp.rec_throttled %} – empfohlen{% endif %}</option>{% endfor %}</select>
+        <span class="hint">Tage: so lange reicht das Rest-Kontingent im Drosselbetrieb</span></label>
+      <label class="field">Wertpapiere &amp; Devisen (Yahoo, nur zu Handelszeiten)
+        <select name="stock_interval_min">{% for m, label, calls in pp.stock %}<option value="{{ m }}" {% if m == pp.stock_now %}selected{% endif %}>{{ label }}{% if m == pp.rec_stock %} – empfohlen{% endif %}</option>{% endfor %}</select></label>
+    </div>
+    <div class="box" style="margin-top:10px">
+      <div class="row" style="justify-content:space-between;gap:8px"><b>CoinGecko-Hochrechnung · {{ pp.every(pp.crypto_now) }}</b>
+        <span class="badge {{ {'ok': 'good', 'tight': 'warn', 'over': 'crit'}[est.level] }}">{{ {'ok': 'passt', 'tight': 'knapp – wird gedrosselt', 'over': 'reicht nicht'}[est.level] }}</span></div>
+      <ul class="small" style="margin:6px 0 0 16px">
+        <li>Kurse: ≈ {{ est.quotes|num(0) }} ({{ inp.cg_held }} gehaltene Kryptowerte, {{ [inp.cg_calls, 1]|max }} Aufruf je Aktualisierung)</li>
+        <li>Kurshistorie: ≈ {{ est.history|num(0) }}{% if inp.cg_history %} ({{ inp.cg_sold }} nicht mehr gehaltene Kryptowerte{% if inp.cg_bench %} und {{ inp.cg_bench }} Benchmark(s){% endif %}, je etwa jeden 2. Tag){% endif %} – gehaltene erhalten den Tagesschluss aus dem Kurs</li>
+        <li>Reserve für Neustarts, „Kurse aktualisieren“, CSV-„Kurse laden“, Kursquellen-Suche: ≈ {{ est.reserve|num(0) }}</li>
+        <li><b>Summe ≈ {{ est.total|num(0) }} von {{ pp.limit|num(0) }} ({{ est.pct|num(0) }} %)</b> · Drosselung ab {{ pp.throttle_pct|num(0) }} %, Stopp bei 100 % bis zum Monatswechsel</li>
+        <li>Yahoo {{ pp.every(pp.stock_now) }}: ≈ {{ pp.stock_calls|num(0) }} Abrufe/Monat ({{ inp.yahoo_symbols }} Wertpapiere{% if inp.fx %} + Devisen{% endif %}, nur zu Handelszeiten; kein festes Kontingent)</li>
+        <li>Dieser Monat: {{ pp.used.used|num(0) }} verbraucht ({{ pp.used.pct|num(1) }} %){% if pp.used.projected %} · Prognose Monatsende ≈ {{ pp.used.projected|num(0) }}{% endif %}{% if pp.used.throttled %} <span class="badge warn">gedrosselt</span>{% endif %}</li>
+      </ul>
+      <p class="hint" style="margin-top:6px">Empfohlen ist das kürzeste Intervall (ab 5 Min.), bei dem die Hochrechnung unter der
+        Drosselschwelle bleibt: hier <b>{{ pp.every(pp.rec_crypto) }}</b>; gedrosselt <b>{{ pp.every(pp.rec_throttled) }}</b>
+        (das Rest-Kontingent soll bis Monatsende reichen). Yahoo hat kein veröffentlichtes Kontingent, sperrt aber bei
+        zu vielen Anfragen je IP zeitweise – <b>{{ pp.every(pp.rec_stock) }}</b> genügt, außerhalb der Handelszeiten wird nichts
+        abgerufen. Nutzt du den CoinGecko-Schlüssel auch anderswo, das Monatslimit hier entsprechend kleiner setzen.
+        {% if next_runs.get('prices_crypto') %}Nächster Krypto-Abruf: {{ next_runs.get('prices_crypto')|datetime_de }}.{% endif %}</p>
+    </div>
+    {% if not pp.has_key %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div>Kein CoinGecko-Schlüssel gesetzt – die öffentliche API hat deutlich engere Grenzen. Kostenlosen Demo-Schlüssel als <span class="mono">COINGECKO_API_KEY</span> eintragen.</div></div>{% endif %}
+    {% if pp.stale_hint %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div>{{ pp.stale_hint }}</div></div>{% endif %}
+    <h3 style="margin-top:14px">Bewertung</h3>
     <div class="grid-3">
       <label class="field">Krypto veraltet nach (Minuten)<input type="number" name="stale_crypto_minutes" min="5" value="{{ s['prices.stale_crypto_minutes'] }}"></label>
       <label class="field">Aktien veraltet nach (Stunden, an Handelstagen)<input type="number" name="stale_security_hours" min="1" value="{{ s['prices.stale_security_hours'] }}"></label>

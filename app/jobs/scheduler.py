@@ -60,9 +60,9 @@ class Scheduler:
         self.register("import_poll", lambda ctx: _outcome(tasks.import_check(ctx, "poll")),
                       IntervalTrigger(minutes=5))
         self.register("prices_crypto", lambda ctx, force=False: tasks.refresh_prices(ctx, force, "crypto"),
-                      IntervalTrigger(minutes=int(s.get("prices.crypto_interval_min", 10))))
+                      price_trigger(s, "crypto"))
         self.register("prices_securities", lambda ctx, force=False: tasks.refresh_prices(ctx, force, "securities"),
-                      IntervalTrigger(minutes=int(s.get("prices.stock_interval_min", 15))))
+                      price_trigger(s, "securities"))
         self.register("fx_ecb", tasks.fx_ecb, CronTrigger(hour=16, minute=35))
         self.register("history_backfill", lambda ctx, force=False: tasks.backfill(ctx, force),
                       CronTrigger(hour=6, minute=10))
@@ -70,6 +70,12 @@ class Scheduler:
         self.register("cleanup", tasks.cleanup, CronTrigger(hour=4, minute=20))
         for extra in _EXTRA_JOBS:
             extra(self)
+
+    def reschedule_prices(self) -> None:
+        """Neue Kurs-Intervalle sofort übernehmen (ohne Neustart); der nächste Lauf folgt nach einem Intervall."""
+        for name, kind in (("prices_crypto", "crypto"), ("prices_securities", "securities")):
+            if name in self.jobs and self.sched.get_job(name) is not None:
+                self.sched.reschedule_job(name, trigger=price_trigger(self.ctx.settings, kind))
 
     def start(self, run_startup: bool = True) -> None:
         self.sched.start()
@@ -94,6 +100,16 @@ class Scheduler:
                 continue
             out[j.id] = j.next_run_time.isoformat() if j.next_run_time else None
         return out
+
+
+def price_trigger(settings: Any, kind: str) -> IntervalTrigger:
+    """Takt der Kursabrufe. Krypto: der Job läuft im normalen Intervall, ``PriceService.crypto_due`` überspringt
+    Läufe im Drosselbetrieb bzw. bei erschöpftem Kontingent."""
+    from app.prices.budget import CRYPTO_PRESETS, SECURITY_PRESETS, snap
+
+    if kind == "crypto":
+        return IntervalTrigger(minutes=snap(settings.get("prices.crypto_interval_min", 10), CRYPTO_PRESETS, 10))
+    return IntervalTrigger(minutes=snap(settings.get("prices.stock_interval_min", 15), SECURITY_PRESETS, 15))
 
 
 def _outcome(o: Any) -> dict[str, Any]:

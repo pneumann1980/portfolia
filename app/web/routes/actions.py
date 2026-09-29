@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 
 from app.jobs import tasks
+from app.prices.budget import CRYPTO_PRESETS, SECURITY_PRESETS, THROTTLED_PRESETS, snap
 from app.settings_store import DEFAULTS
 from app.util.timeutil import iso, parse_iso
 from app.web.deps import get_ctx, render
@@ -98,6 +99,11 @@ async def save_settings(request: Request) -> Response:
         s.set("ledger.cash_overrides", overrides)
         ctx.invalidate_data()
     elif section == "prices":
+        crypto = snap(f.get("crypto_interval_min"), CRYPTO_PRESETS, 10)
+        s.set("prices.crypto_interval_min", crypto)
+        throttled = snap(f.get("crypto_throttled_interval_min"), THROTTLED_PRESETS, 30)
+        s.set("prices.crypto_throttled_interval_min", max(throttled, crypto))  # gedrosselt nie häufiger
+        s.set("prices.stock_interval_min", snap(f.get("stock_interval_min"), SECURITY_PRESETS, 15))
         s.set("prices.stale_crypto_minutes", _int(f.get("stale_crypto_minutes"), 60, 5, 1440))
         s.set("prices.stale_security_hours", _int(f.get("stale_security_hours"), 24, 1, 240))
         s.set("prices.coingecko_monthly_limit", _int(f.get("coingecko_monthly_limit"), 10000, 100, 10_000_000))
@@ -124,6 +130,7 @@ async def save_settings(request: Request) -> Response:
         if ctx.prices.cg is not None:
             ctx.prices.cg.monthly_limit = int(s.get("prices.coingecko_monthly_limit", 10000))
         if ctx.scheduler is not None:
+            ctx.scheduler.reschedule_prices()
             ctx.scheduler.trigger("history_backfill", 1)
     elif section == "news":
         s.set("news.min_relevance", _float(f.get("min_relevance"), 0.2, 0.0, 5.0))

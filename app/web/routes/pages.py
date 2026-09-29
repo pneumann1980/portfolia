@@ -374,10 +374,15 @@ def settings_page(request: Request, saved: str = "") -> HTMLResponse:
                   "exchange": sum(1 for r in ds_rows if r["kind"] == "exchange"),
                   "wallet": sum(1 for r in ds_rows if r["kind"] == "wallet"),
                   "error": sum(1 for r in ds_rows if r["status"] == "error" and r["enabled"])}
+    from app.prices.budget import plan_view
+
+    price_plan = plan_view(ctx.settings, ctx.prices.budget_inputs(pf, led), ctx.prices.cg_budget(),
+                           ctx.config.coingecko_plan, bool(ctx.config.secrets.coingecko_api_key))
+    next_runs = ctx.scheduler.next_runs() if ctx.scheduler else {}
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,
                   detected_cash=(led.cash_tracked if led else {}), secrets=ctx.config.secrets.status(),
                   config=ctx.config, saved=saved, backups=backups, exports=exports, archive=archive,
-                  export_job=job, ds_summary=ds_summary)
+                  export_job=job, ds_summary=ds_summary, pp=price_plan, next_runs=next_runs)
 
 
 def fmt_ts(ts: str | None) -> str:
