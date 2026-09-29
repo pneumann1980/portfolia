@@ -35,9 +35,11 @@ provide_key() {
   fi
   rm -f "/run/portfolia/$2" "/dev/shm/portfolia/$2"
   if [ -f "$src" ] && [ -r "$src" ]; then
-    install -d -m 0700 -o "$PUID" -g "$PGID" "$dir"
-    install -m 0400 -o "$PUID" -g "$PGID" "$src" "$dir/$2"
-    export "$var=$dir/$2"
+    if install -d -m 0700 -o "$PUID" -g "$PGID" "$dir" && install -m 0400 -o "$PUID" -g "$PGID" "$src" "$dir/$2"; then
+      export "$var=$dir/$2"
+    else
+      echo "portfolia: $var konnte nicht bereitgestellt werden – die App liest die Datei direkt" >&2
+    fi
   fi
 }
 
