@@ -368,7 +368,10 @@ def settings_page(request: Request, saved: str = "") -> HTMLResponse:
         log.debug("Exporte nicht lesbar: %s", e)
     job = ctx.db.q1("SELECT last_end, last_ok, last_error FROM job_status WHERE job='auto_export'")
     ds_rows = ctx.db.q("SELECT kind, status, enabled FROM data_source")
-    ds_summary = {"total": len(ds_rows), "exchange": sum(1 for r in ds_rows if r["kind"] == "exchange"),
+    from app.datasources.vault import Vault
+
+    ds_summary = {"total": len(ds_rows), "vault": Vault.load().status(),
+                  "exchange": sum(1 for r in ds_rows if r["kind"] == "exchange"),
                   "wallet": sum(1 for r in ds_rows if r["kind"] == "wallet"),
                   "error": sum(1 for r in ds_rows if r["status"] == "error" and r["enabled"])}
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,

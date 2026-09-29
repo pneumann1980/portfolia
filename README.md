@@ -10,7 +10,8 @@ YouTube-Videos werden je Position gefiltert.
   werden direkt in Portfolia erfasst (siehe [Buchungen erfassen](#buchungen-in-portfolia-erfassen)) oder aus
   **CSV-Exporten von Börsen, Wallets und Steuertools** übernommen (siehe [CSV-Import](#csv-import-aus-börsen-und-wallets))
   – auch ganz ohne Import. Börsen und öffentliche Wallet-Adressen lassen sich als [Datenquellen](#datenquellen-börsen-und-wallet-adressen)
-  anlegen; eine Online-Anbindung ist vorbereitet, aber noch für keinen Anbieter umgesetzt. In der App erfasste
+  anlegen; **Bitpanda** wird read-only per API-Key synchronisiert (Schlüssel in der App eingegeben, verschlüsselt
+  gespeichert, jede Buchung vor der Übernahme prüfbar). In der App erfasste
   Buchungen und Assets liegen neben abgeleiteten Daten (Kurse, News, Snapshots, Berichte) in `/data/app.sqlite`.
 * **Export und Sicherung:** Alles lässt sich jederzeit im einheitlichen Import-Format (Datenvertrag, Schema 1.1)
   exportieren; nach jeder Änderung entsteht automatisch eine **datierte ZIP-Sicherung**, importierte ZIP-Dateien
@@ -70,9 +71,16 @@ Package settings → Change visibility → Public*; es enthält nur den öffentl
    | `/data` | `/mnt/user/appdata/portfolia` | rw | Datenbank, Cache, Backups, Berichte, `sources.yaml`, `tax_rules/` |
    | `/import` | `/mnt/user/appdata/portfolia-import` | **ro** | Import-ZIPs (nicht innerhalb von `/data` ablegen) |
    | `/exports` | `/mnt/user/appdata/portfolia-exports` | rw | datierte ZIP-Sicherungen und Import-Archiv (`EXPORT_DIR=/exports`); gern auf eine gesicherte Freigabe legen |
+   | `/run/secrets/portfolia` | `/boot/config/portfolia` | **ro** | Master-Key (`master.key`) für in der App gespeicherte API-Keys von Datenquellen – bewusst außerhalb von appdata (siehe [Master-Key](#master-key-für-api-keys)) |
 
-3. Optional API-Schlüssel eintragen (werden nur aus Umgebungsvariablen gelesen, nie angezeigt oder geloggt).
-4. Container starten, Weboberfläche über *WebUI* öffnen (Port 8080).
+3. Optional API-Schlüssel für Kurse und News eintragen (Umgebungsvariablen, nie angezeigt oder geloggt).
+4. Nur für Datenquellen mit API-Key (Bitpanda): einmalig den Master-Key anlegen (Unraid-Terminal), danach bleibt
+   er unverändert – Einzelheiten, Backup und Rotation unter [Master-Key](#master-key-für-api-keys):
+   ```sh
+   mkdir -p /boot/config/portfolia
+   openssl rand -base64 32 > /boot/config/portfolia/master.key
+   ```
+5. Container starten, Weboberfläche über *WebUI* öffnen (Port 8080).
 
 **Aktualisieren:** *Docker → portfolia → Update* (bzw. *Check for Updates*). Zeigt Unraid „not available“, hilft
 *Advanced View* → *force update* oder *Edit → Apply* (lädt `latest` neu und erstellt den Container neu; Daten in
@@ -97,11 +105,17 @@ services:
       PGID: "1000"
       COINGECKO_API_KEY: ""      # empfohlen (kostenloser Demo-Schlüssel)
       EXPORT_DIR: /exports       # datierte ZIP-Sicherungen (optional, sonst /data/exports)
+      PORTFOLIA_MASTER_KEY_FILE: /run/secrets/portfolia_master_key   # nur für API-Keys von Datenquellen
+    secrets: [portfolia_master_key]
     volumes:
       - ./data:/data
       - ./import:/import:ro
       - ./exports:/exports
     restart: unless-stopped
+
+secrets:
+  portfolia_master_key:
+    file: ./secrets/master.key   # einmalig: umask 077; openssl rand -base64 32 > secrets/master.key
 ```
 
 Lokal bauen: `docker compose up --build` (siehe `docker-compose.yml`). Hinter einem Proxy mit eigener
@@ -129,7 +143,10 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 | `ROOT_PATH` | – | Betrieb unter Unterpfad hinter einem Proxy (z. B. `/portfolia`) |
 | `DEMO_MODE` | `false` | synthetische Kurse ohne Internetzugriff (zum Ausprobieren) |
 | `EXPORT_DIR` | `/data/exports` | datierte ZIP-Sicherungen im Import-Format und Archiv der importierten ZIP-Dateien |
-| `PORTFOLIA_DS_<NAME>` | – | Zugangsdaten einer [Datenquelle](#datenquellen-börsen-und-wallet-adressen) (API-Schlüssel mit Leserechten); alternativ `PORTFOLIA_DS_<NAME>_FILE` = Pfad einer Secret-Datei. In Portfolia wird nur der Variablenname eingetragen. |
+| `PORTFOLIA_MASTER_KEY_FILE` | – | Datei mit dem [Master-Key](#master-key-für-api-keys) (32 zufällige Bytes, Base64 oder Hex) für in der App gespeicherte API-Keys; Unraid-Template: `/run/secrets/portfolia/master.key` |
+| `PORTFOLIA_MASTER_KEY` | – | alternativ der Master-Key selbst (sichtbar in `docker inspect` – Datei bevorzugen) |
+| `PORTFOLIA_MASTER_KEY_OLD_FILE` / `_OLD` | – | nur während einer Rotation: der bisherige Master-Key |
+| `PORTFOLIA_DS_<NAME>` | – | bisheriger Weg für Zugangsdaten einer [Datenquelle](#datenquellen-börsen-und-wallet-adressen) (API-Schlüssel mit Leserechten), alternativ `PORTFOLIA_DS_<NAME>_FILE` = Pfad einer Secret-Datei; in Portfolia steht nur der Variablenname. Funktioniert weiter, ein in der App gespeicherter Schlüssel hat Vorrang. |
 
 ---
 
@@ -266,8 +283,10 @@ Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Port
 * **Assets:** neue Positionen mit Kursquelle (CoinGecko-ID bzw. Yahoo-Symbol), Kategorie und Steuerart
   anlegen. Definiert der Import dasselbe Asset, gelten dessen Stammdaten.
 * **Zusammenspiel mit dem Import:** Der Import bleibt unverändert, manuelle Buchungen kommen hinzu. Enthält ein
-  späterer Import dieselbe `tx_id`, gilt die Import-Buchung (keine Doppelzählung); ähnliche Buchungen mit
-  anderer ID werden nur gemeldet. Manuell erfasste Sparplan-Ausführungen ersetzen passende Schätzungen.
+  späterer Import dieselbe `tx_id` oder dieselbe Anbieter-ID (`source_ref`, siehe
+  [Abgleich](#doppelzählung-zwischen-kuratiertem-import-und-app-buchungen)), gilt die Import-Buchung (keine
+  Doppelzählung); ähnliche Buchungen mit anderer ID landen unter *Buchungen → Abgleich mit dem Import* zur
+  Entscheidung. Manuell erfasste Sparplan-Ausführungen ersetzen passende Schätzungen.
 * **Gesamtexport:** Import + manuelle und per CSV importierte Buchungen + freigegebene Sparplan-Ausführungen als
   Import-ZIP (Schema 1.1, mit aktuellem Bestand als `holdings_check`, steuerlichen Einstufungen als `tax_type` bzw.
   `tax_withholding` und allen Konten) – als Sicherung, zum Umzug oder als neuer kuratierter Import. Zusätzlich
@@ -296,9 +315,8 @@ bucht den **gesamten Bestand** eines Kontos als Abgang ohne Gegenwert – einzel
 ## CSV-Import aus Börsen und Wallets
 
 *Buchungen → CSV importieren* liest CSV-Exporte ein und übersetzt sie in das einheitliche Buchungsformat des
-Datenvertrags – aus Dateien, die du selbst exportierst. Automatische Abrufe von Börsen und Wallets laufen später
-über [Datenquellen](#datenquellen-börsen-und-wallet-adressen) auf demselben Weg (bisher nur die Grundlage, noch
-keine Anbindung).
+Datenvertrags – aus Dateien, die du selbst exportierst. Automatische Abrufe (derzeit Bitpanda) laufen über
+[Datenquellen](#datenquellen-börsen-und-wallet-adressen) auf demselben Weg.
 
 **Unterstützte Formate** (automatisch erkannt; unbekannte Vorgänge werden mit Zeilennummer gemeldet, nie geraten):
 
@@ -351,12 +369,14 @@ Börsen und Wallets abgedeckt, die diese Tools unterstützen; Koinly-Wallets wer
   eingeben.
 * **Doppelte Zeilen:** Wiederholte oder überlappende Exporte derselben Quelle werden über die Kennung der Zeile
   erkannt (ID der Börse bzw. Prüfsumme). **Dasselbe Ereignis aus einer anderen Quelle** (z. B. CSV-Import und
-  Datenquelle derselben Börse) wird exakt über die Ereignis-ID erkannt – Kraken `refid` (Trades) bzw. Ledger-ID,
-  Coinbase-ID, Bitpanda-Transaktions-ID; Wallet-Exporte (Ledger Live, Trezor, Electrum, Exodus) über den
-  Transaktions-Hash –, sofern Art und Buchungsseite (Abgangs-/Zugangs-Asset) übereinstimmen. Gegen Import und
-  andere Quellen wird zusätzlich auf gleichen Zeitpunkt (± Zeitzonenversatz in ganzen Stunden, ± 10 Minuten) und
-  gleiche Mengen (± 0,5 %) geprüft; auf demselben Konto werden solche Zeilen standardmäßig ausgelassen, auf
-  anderen Konten nur markiert.
+  Datenquelle derselben Börse) wird exakt über die **Anbieter-ID** erkannt – Kraken `refid` bzw. Ledger-ID,
+  Coinbase-ID, Bitpanda-Transaktions-, Trade- bzw. Vorgangs-ID – und gilt als *bereits vorhanden*: Es geht nicht
+  erneut in Bewertung und Lots ein, die vorhandene Buchung behält ihre Herkunft. Wallet-Exporte (Ledger Live,
+  Trezor, Electrum, Exodus) werden über den Transaktions-Hash nur als *mögliche Dublette* markiert, sofern Art und
+  Buchungsseite übereinstimmen (ein Hash kann mehrere Buchungen betreffen). Gegen Import und andere Quellen wird
+  zusätzlich auf gleichen Zeitpunkt (± Zeitzonenversatz in ganzen Stunden, ± 10 Minuten) und gleiche Mengen
+  (± 0,5 %) geprüft; auf demselben Konto werden solche Zeilen standardmäßig ausgelassen, auf anderen Konten nur
+  markiert – zusammengeführt wird nie allein wegen Ähnlichkeit.
 * **Stichtag:** Mit kuratiertem Import werden standardmäßig nur Zeilen **nach** dessen Stand (`valuation_date`)
   vorgeschlagen – ältere stehen dort bereits. Der Stichtag lässt sich je Import ändern oder leeren.
 * **Interne Umbuchungen** eines Anbieters (Spot ↔ Earn/Staking/Funding, Kraken-Staking-Varianten wie `DOT.S`)
@@ -374,60 +394,203 @@ Börsen und Wallets abgedeckt, die diese Tools unterstützen; Koinly-Wallets wer
 *Einstellungen → Datenquellen* verwaltet Börsenkonten und öffentliche Wallet-Adressen als Quellen für Buchungen:
 anlegen, ansehen, bearbeiten, deaktivieren und entfernen – auch auf dem Smartphone.
 
-> **Stand 0.10:** Grundlage ohne Anbindung. Noch keine Börse und keine Chain wird automatisch abgerufen; jede
-> Quelle zeigt ehrlich **„Manuell / noch nicht unterstützt“** und verweist auf den CSV-Import. Anbindungen kommen
-> einzeln als Connector hinzu, ohne weiteren Dienst und ohne zusätzliche Datenbank.
+> **Stand 0.11:** Automatische Anbindung für **Bitpanda** (Public API, ausschließlich lesend). Sie ist mit
+> anonymisierten Testdaten (Fixtures) geprüft, **noch nicht mit einem echten Bitpanda-Konto** – siehe
+> [Grenzen der Bitpanda-Anbindung](#grenzen-der-bitpanda-anbindung). Alle anderen Börsen und Chains zeigen
+> ehrlich **„Manuell / noch nicht unterstützt“** und verweisen auf den CSV-Import.
 
 **Datensatz:** Art (Börse oder Wallet-Adresse), Anbieter bzw. Chain, frei wählbarer Name, Konto in Portfolia (auf
-das gebucht wird – bei vorhandenen CSV-Buchungen dasselbe Konto wählen), öffentliche Adresse bzw. xpub (formal
-geprüft; private Schlüssel und Seed-Phrasen werden abgelehnt, weder gespeichert noch zurückgespielt),
-Zugangsdaten als Name einer Umgebungsvariable (Börsen), Synchronisierungsintervall (nur manuell, stündlich, alle
-6/12 Stunden, täglich), automatische Übernahme (Standard: aus), Status, letzter Lauf, letzter erfolgreicher Lauf,
-letzter Fehler, nächster Lauf und Laufhistorie.
+das gebucht wird – bei vorhandenen Buchungen aus Import oder CSV dasselbe Konto wählen), öffentliche Adresse bzw.
+xpub (formal geprüft; private Schlüssel und Seed-Phrasen werden abgelehnt, weder gespeichert noch zurückgespielt),
+API-Key (verschlüsselt, siehe unten) mit optionalem Ablaufdatum, Synchronisierungsintervall (nur manuell,
+stündlich, alle 6/12 Stunden, täglich), automatische Übernahme (Standard: aus), Status, letzter Lauf, letzter
+erfolgreicher Lauf, letzter Fehler, nächster Lauf, Abdeckung des letzten Abrufs und Laufhistorie.
 
 **Status:** *angelegt* · *verbunden* (Verbindungsprüfung erfolgreich, noch nicht synchronisiert) ·
-*synchronisiert* · *teilweise synchronisiert* (Anbieter lieferte nicht alle Daten, z. B. Abruflimit; der nächste
-Lauf setzt fort) · *Fehler* mit verständlicher Meldung, z. B. „Zugangsdaten abgelehnt (HTTP 401) – Schlüssel und
-Leserechte prüfen“, „Anbieter drosselt Anfragen (HTTP 429)“, „Umgebungsvariable … fehlt“. *Deaktiviert* stoppt
-nur den Zeitplan.
+*synchronisiert* (letzter Abruf nachweislich vollständig) · *teilweise synchronisiert* (Seitenende oder Abdeckung
+unklar, Drosselung, Teilfehler – eine erfolgreiche HTTP-Antwort allein genügt nicht; der nächste Lauf holt erneut
+ab) · *Fehler* mit verständlicher Meldung, z. B. „API-Key abgelaufen“, „Berechtigung fehlt“, „Anbieter drosselt
+Anfragen (HTTP 429)“, „Anbieter vorübergehend nicht erreichbar“. *Deaktiviert* stoppt nur den Zeitplan.
 
-**Zugangsdaten** speichert Portfolia nie: API-Schlüssel (nur Leserechte, keine Handels- oder Auszahlungsrechte)
-als Umgebungsvariable `PORTFOLIA_DS_<NAME>` des Containers setzen (Unraid: *Edit → Add another Path, Port,
-Variable…*) oder als Secret-Datei über `PORTFOLIA_DS_<NAME>_FILE`; in der Datenquelle steht nur der Name. Die
-Anzeige meldet „gesetzt“/„fehlt“. Fehlermeldungen werden vor Anzeige, Laufhistorie und Protokoll bereinigt
-(Schlüsselwerte, `key=…`/`signature=…`, URL-Parameter).
+### Bitpanda einrichten
 
-**Synchronisieren** (sobald ein Connector existiert):
+Alles geschieht in der App; einmalige Voraussetzung ist der [Master-Key](#master-key-für-api-keys).
 
-1. Der Connector liefert Vorgänge mit **stabiler Ereignis-ID** `<anbieter>:<ID>` (z. B. `kraken:<refid>`); ein
-   Vorgang darf **mehrere Buchungszeilen** haben (z. B. Trade + Gebühr in einem dritten Asset), jede Zeile erhält
-   die Kennung `<ereignis-id>#<zeile>`.
+1. **API-Key bei Bitpanda erstellen** (*Profil → API-Key*, app.bitpanda.com/my-account/apikey, Reiter „Bitpanda“) –
+   nur Leserechte:
+
+   | Recht bei Bitpanda | Bedarf | Wofür |
+   |---|---|---|
+   | **Transaction** (lesen) | **erforderlich** | Vorgänge (`GET /operations`) |
+   | **Balance** (lesen) | optional | Bestandsprüfung (`GET /portfolio/holdings`) – nur Hinweis, nie Buchung |
+   | Trade (Read) | nicht angefordert | Asset-Stammdaten (`GET /assets`, `/currencies`) – ob sie ohne weiteres Recht lesbar sind, zeigt „Verbindung testen“ |
+   | **Trade (Write) / Trading, Earn (Write)** | **nie aktivieren** | Portfolia handelt nie und ruft keine schreibenden Endpunkte auf |
+
+   Ein Ablaufdatum setzen (z. B. 12 Monate) und in Portfolia eintragen: Die App warnt 14 Tage vorher und ruft
+   nach Ablauf nicht mehr ab.
+2. *Einstellungen → Datenquellen → + Börse*: Anbieter **Bitpanda**, Name, Konto, API-Key einfügen, optional
+   Ablaufdatum → **Anlegen**. Synchronisierung zunächst auf „nur manuell“ lassen.
+3. **Verbindung testen** prüft Vorgänge, Bestände und Asset-Stammdaten einzeln und unterscheidet – soweit Bitpanda
+   es erkennen lässt – ungültigen bzw. widerrufenen Schlüssel (401), fehlendes Leserecht (403 bzw. 401 bei
+   lesbaren Beständen), abgelaufenen Schlüssel (Datum bzw. Meldung), Drosselung (429) und vorübergehende
+   Störungen (5xx, Zeitüberschreitung). Der Test geht ausschließlich an die dokumentierte Bitpanda-API.
+4. **Historischen Abgleich starten**: holt die gesamte Historie und legt einen Prüf-Stapel an. Jeder Vorgang
+   erscheint als *neu*, *bereits vorhanden* (gleiche Anbieter-ID, z. B. aus einem Bitpanda-CSV-Import),
+   *mögliche Dublette*, *vor Stichtag* (mit kuratiertem Import: bis zu dessen Stand – dort bereits enthalten),
+   *unvollständig* (z. B. EUR-Wert fehlt), *ungeklärt* (mit Grund) oder *ignoriert*.
+5. **Prüfen und übernehmen** – einzeln oder alle gültigen. Ungeklärte Vorgänge manuell erfassen, per CSV
+   nachziehen oder **dauerhaft ignorieren**; eine offene Zeile hält die übrigen nicht auf.
+6. Danach auf **stündlich** stellen. Optional „eindeutige neue Vorgänge automatisch übernehmen“.
+
+**Abbildung der Bitpanda-Vorgänge** – nur eindeutige Fälle werden gebucht:
+
+| Bitpanda | Portfolia | Bedingung |
+|---|---|---|
+| Kauf Krypto gegen Fiat, auch Sparplan | Kauf, Wert = Fiat-Betrag | genau ein Fiat-Ausgang und ein Krypto-Eingang |
+| Verkauf Krypto gegen Fiat | Verkauf, Wert = Fiat-Betrag | genau ein Krypto-Ausgang und ein Fiat-Eingang |
+| Einzahlung Fiat oder Krypto | Zugang | ein Eingang, Vorgangsart „deposit“ |
+| Auszahlung Fiat oder Krypto | Abgang inkl. Gebühr | ein Ausgang, Vorgangsart „withdraw…“ |
+| Reward, Staking-Reward | Zugang mit Ertrags-Tag `reward` bzw. `staking` | ein Krypto-Eingang, Vorgangsart genau „reward“/„staking reward“ |
+| eigener Gebühren-Teil (z. B. in BEST) | Gebührenzeile desselben Vorgangs | Transaktionsart „fee“ |
+| Gebühr an einem Haupt-Teil | Gebühr an der Buchung, **als prüfbedürftig markiert** | ob der Betrag die Gebühr enthält, ist nicht dokumentiert |
+| interne Umbuchung (gleiches Asset und gleicher Betrag ein und aus) | keine Buchung, im Lauf gezählt | – |
+
+**Bewusst nicht automatisch – „ungeklärt“ mit Grund:** Korrekturen und Stornos (`compensates`) samt dem
+stornierten Vorgang, Tausch Krypto → Krypto (kein EUR-Gegenwert in den API-Daten), Fiat → Fiat, Aktien und ETFs
+(Bitpanda Stocks), Edelmetalle, Kryptoindizes, unbekannte Assets oder Vorgangsarten sowie Vorgänge ohne Zeitpunkt
+oder Richtung. Sie werden weder still verworfen noch als Kauf oder Verkauf geraten.
+
+**Technik und Aufwand:** nur `GET` an `https://api.public.bitpanda.com/v1` mit Header `x-api-key` – keine
+schreibenden Aufrufe, kein stiller Rückgriff auf die ältere API `api.bitpanda.com`, Umleitungen werden nicht
+verfolgt. Cursor-Pagination (100 je Seite) mit Schutz gegen Schleifen und unklares Seitenende; Folgeläufe fragen
+nur ab dem letzten vollständigen Stand (minus 2 Tage Überlappung) ab, Asset-Stammdaten werden 30 Tage
+zwischengespeichert – ein stündlicher Lauf braucht meist ein bis zwei Aufrufe. Timeouts 20 s, bei 429 Warten nach
+`Retry-After` (höchstens 60 s je Wartezeit, 120 s je Lauf), bei 5xx drei Versuche. Beträge exakt als Dezimalzahl,
+Zeitpunkte in UTC; Originalbeträge, Währungen, Gebühren, Bitpanda-IDs und Rohdaten bleiben je Zeile als Herkunft
+gespeichert. Ereignis-ID `bitpanda:<Vorgangs-UUID>`, jede Zeile `…#1`, `…#2` (fest), dazu Aliase für Transaktions-
+und Trade-IDs – so wird dieselbe Buchung aus dem Bitpanda-CSV-Export (Transaktions-ID `T…`) erkannt. Die
+Bestandsprüfung läuft nur beim vollständigen historischen Abgleich (mit Leserecht „Balance“).
+
+### Master-Key für API-Keys
+
+In der App eingegebene API-Keys speichert Portfolia **nur verschlüsselt** (AES-256-GCM aus der Bibliothek
+`cryptography`, Datenschlüssel per HKDF aus dem Master-Key, jeder Datensatz an seine Datenquelle gebunden). Der
+Browser sieht nach dem Speichern nur die letzten vier Zeichen; der Schlüssel erscheint nicht in URLs, Logs,
+Fehlermeldungen, Exporten oder Browser-Speichern und wird nur als Header an die API des Anbieters gesendet. Der
+**Master-Key** liegt nie in der Datenbank, wird nie protokolliert und **nie automatisch erzeugt**. Fehlt er, ist
+die Eingabe gesperrt, es wird nichts (auch nicht im Klartext) gespeichert und kein Abruf mit gespeichertem
+Schlüssel gestartet; alles andere funktioniert.
+
+**Einrichtung auf Unraid** (einmalig):
+
+```sh
+mkdir -p /boot/config/portfolia
+openssl rand -base64 32 > /boot/config/portfolia/master.key
+```
+
+Im Template: Pfad **„Master-Key (Ordner, nur lesen)“** `/boot/config/portfolia` → `/run/secrets/portfolia` (ro) und
+Variable `PORTFOLIA_MASTER_KEY_FILE=/run/secrets/portfolia/master.key` (im Template ab Portfolia 0.11 enthalten; fehlen
+sie im bestehenden Container, über *Edit → Add another Path, Port, Variable…* ergänzen), dann neu starten. *Einstellungen →
+Datenquellen* zeigt „Master-Key vorhanden“ mit einer Key-ID. Die Datei auf dem USB-Stick gehört root (FAT,
+nur root-lesbar); der Container liest sie beim Start als root und stellt sie nur dem App-Benutzer im RAM
+(`/dev/shm`) bereit – nach dem Anlegen oder Austauschen der Datei deshalb neu starten. Ohne `openssl`:
+`docker exec Portfolia python -m app master-key > /boot/config/portfolia/master.key`.
+
+**Andere Docker-Umgebungen:** Docker-Secret oder Datei mit Rechten 600/400 über `PORTFOLIA_MASTER_KEY_FILE`
+(siehe [Docker Compose](#docker-compose--docker-run)); notfalls `PORTFOLIA_MASTER_KEY` (sichtbar in
+`docker inspect`). Format: 32 zufällige Bytes als Base64 oder 64 Hex-Zeichen.
+
+**Backup:** Die Datenbank-Sicherungen (`/data/backups`, appdata-Backups) enthalten API-Keys nur verschlüsselt. Den
+Master-Key **getrennt** davon sichern – Inhalt von `master.key` im Passwortmanager; ein Flash-Backup des
+USB-Sticks kann die Datei ebenfalls enthalten. Wer beides zusammen aufbewahrt, hebt die Trennung auf.
+
+**Restore:** Datenbank wie gewohnt zurückspielen und **denselben** `master.key` wieder ablegen, neu starten. Die
+Key-ID unter *Einstellungen → Datenquellen* muss zu der an den gespeicherten Schlüsseln passen. Ist der Master-Key
+verloren: neuen anlegen und je Datenquelle „API-Key ersetzen“ – Buchungen, Abrufstand und Entscheidungen bleiben
+erhalten, nur die Schlüssel sind neu einzugeben.
+
+**Rotation** (z. B. nach Verdacht auf Offenlegung):
+
+```sh
+cd /boot/config/portfolia
+mv master.key master-old.key
+openssl rand -base64 32 > master.key
+```
+
+1. Im Template `PORTFOLIA_MASTER_KEY_OLD_FILE=/run/secrets/portfolia/master-old.key` setzen → *Apply* (Neustart).
+2. *Einstellungen → Datenquellen → „Mit aktuellem Master-Key neu verschlüsseln“* (oder
+   `docker exec Portfolia python -m app credentials rotate`); `python -m app credentials status` zeigt den Stand.
+3. Sobald „0 mit früherem Master-Key“ angezeigt wird: Variable wieder leeren, *Apply*, `master-old.key` löschen und
+   den neuen Key im Passwortmanager hinterlegen.
+
+Wurde ein **API-Key** selbst offengelegt, hilft nur ein neuer Schlüssel bei Bitpanda: dort widerrufen, neu
+erstellen und in Portfolia „API-Key ersetzen“.
+
+**Bisheriger Weg per Umgebungsvariable** (bestehende Einrichtungen): `PORTFOLIA_DS_<NAME>` bzw.
+`PORTFOLIA_DS_<NAME>_FILE` als Container-Variable, in der Datenquelle (*Fortgeschritten*) nur der Name. Das
+funktioniert unverändert und braucht keinen Master-Key; ein in der App gespeicherter Schlüssel hat Vorrang.
+
+### Synchronisieren, Abrufstand und Prüfung
+
+1. Der Connector liefert Vorgänge mit **stabiler Ereignis-ID** `<anbieter>:<ID>`; ein Vorgang darf **mehrere
+   Buchungszeilen** haben (z. B. Kauf + Gebühr in einem dritten Asset), jede Zeile erhält die feste Kennung
+   `<ereignis-id>#<zeile>` – bei erneutem Abruf verschwindet und verdoppelt sich keine.
 2. Die Zeilen durchlaufen **denselben Weg wie der CSV-Import**: Symbole zuordnen, EUR-Werte, Validierung,
    Dubletten, Stichtag, Transfer-Abgleich – nichts umgeht Portfolio- oder Steuerlogik.
-3. **Prüfen und übernehmen** wie beim CSV-Import (*Synchronisierung prüfen*). Übernommene Buchungen heißen
-   `PF-S-…`, tragen Quelle „Datenquelle · <Anbieter>“, Ereignis-ID, Zeile und Datenquelle und sind unter
-   *Buchungen* bearbeitbar.
+3. **Prüfen und übernehmen** (*Synchronisierung prüfen*). Übernommene Buchungen heißen `PF-S-…`, tragen Quelle
+   „Datenquelle · <Anbieter>“, Ereignis-ID, Zeile und Datenquelle und sind unter *Buchungen* bearbeitbar.
 
 Regeln:
 
-* **Idempotent:** Bereits übernommene Kennungen gelten als „bereits importiert“ – auch gelöschte Buchungen werden
-  nicht wieder angelegt; ein Abruf ohne Neues hinterlässt keinen Stapel. Ein Abrufstand (Cursor) begrenzt
-  folgende Abrufe auf Neues; überlappende Abrufe sind unschädlich.
-* **Überschneidung mit CSV-Importen:** Dasselbe Ereignis aus einem früheren CSV-Import erscheint vor der
-  Übernahme als „mögliche Dublette“ mit Verweis auf die vorhandene Buchung und wird standardmäßig nicht
-  übernommen – umgekehrt (erst Datenquelle, dann CSV) ebenso. Gegen den kuratierten Import gelten Stichtag und
-  unscharfe Dublettenprüfung.
-* **Automatisch übernehmen** (optional) nur für Abrufe, die ausschließlich neue Buchungen enthalten; mit einer
-  Überschneidung oder unvollständigen Zeile geht der ganze Abruf zur Prüfung. Solange ein Abruf auf Prüfung
-  wartet, ruft die Quelle nichts Neues ab („wartet auf Prüfung“).
-* **Verwerfen** eines Prüf-Stapels: Dessen Vorgänge liefert die Quelle erst nach *Abrufstand zurücksetzen*
-  erneut (bereits übernommene werden dann erkannt).
-* **Entfernen** löscht Konfiguration, Laufhistorie und offene Prüf-Stapel; übernommene Buchungen bleiben und werden
-  von einer neu angelegten Quelle desselben Anbieters wiedererkannt. Ändern von Anbieter, Adresse oder Konto setzt
-  Status und Abrufstand zurück.
+* **Abrufstand (Cursor):** rückt nur nach nachweislich vollständigem Abruf vor und wird erst gespeichert, wenn die
+  Vorgänge im Prüf-Stapel stehen. Bei Abbruch, API- oder Datenbankfehler geht nichts verloren – der nächste Lauf
+  holt dieselben Vorgänge erneut; bereits bekannte werden erkannt.
+* **Idempotent:** Übernommene Kennungen gelten als „bereits vorhanden“ – auch gelöschte Buchungen werden nicht
+  wieder angelegt. Vorgänge, die schon in einem offenen Prüf-Stapel warten, werden nicht noch einmal aufgenommen;
+  neue werden an einen noch unbearbeiteten Stapel angehängt. Ein Lauf ohne Neues hinterlässt keinen Stapel.
+* **Verwerfen** eines Prüf-Stapels setzt den Abrufstand vor dessen ältesten offenen Vorgang zurück: Der nächste
+  Lauf liefert diese Vorgänge erneut.
+* **Dauerhaft ignorieren** wird je Anbieter-Ereignis gespeichert und gilt für alle künftigen Läufe (auch nach
+  Verwerfen oder Zurücksetzen); „Ignorieren aufheben“ macht es rückgängig.
+* **Automatisch übernehmen** (Standard: aus): je Vorgang nur vollständig neue, eindeutig zugeordnete Vorgänge ohne
+  Prüfhinweis; ungeklärte, möglicherweise doppelte und unvollständige bleiben zur Prüfung, ohne die sicheren
+  aufzuhalten. Offene Prüfungen blockieren den Zeitplan nicht.
+* **Nie parallel:** Zeitplan und „Jetzt synchronisieren“ teilen sich eine Sperre.
+* **API-Key ersetzen oder entfernen** ändert keine Buchungen. **Entfernen** der Datenquelle löscht Konfiguration,
+  verschlüsselten Schlüssel (SQLite `secure_delete`, WAL wird geleert), Laufhistorie und offene Prüf-Stapel;
+  übernommene Buchungen bleiben und werden von einer neu angelegten Quelle desselben Anbieters erkannt (kein
+  Doppelimport). Ändern von Anbieter, Adresse oder Konto setzt Status und Abrufstand zurück.
 * **Zeitplan:** Ein Hintergrundjob prüft alle 5 Minuten fällige Quellen (aktiv, mit Anbindung und Intervall).
-* **Datenschutz:** Ein Connector überträgt nur, was für den Abruf nötig ist (Adresse bzw. API-Schlüssel an den
+* **Datenschutz:** Ein Connector überträgt nur, was für den Abruf nötig ist (Adresse bzw. API-Key an den
   jeweiligen Anbieter) – keine Bestände, Werte oder Kontonamen.
+
+### Doppelzählung zwischen kuratiertem Import und App-Buchungen
+
+Wird nach einer Synchronisierung ein **neuer kuratierter Import** eingespielt, der dieselben Börsenbuchungen
+enthält, dürfen sie nicht doppelt zählen:
+
+* **Exakt und automatisch:** Trägt die Import-Buchung die Anbieter-ID – `source_ref = bitpanda:<ID>` (oder
+  `source = bitpanda` und `source_ref = <ID>`; Portfolia-Exporte enthalten das bereits) –, gilt die Import-Buchung.
+  Die App-Buchung zählt nicht mehr, bleibt aber mit Herkunft erhalten und zählt wieder, sobald ein späterer Import
+  sie nicht mehr enthält.
+* **Unsicher, nur Vorschlag:** gleiche Art und Assets, Menge ± 1 %, Datum ± 2 Tage, App-Buchung nicht nach dem
+  Stand des Imports → *Buchungen → Abgleich mit dem Import*: „Import-Buchung gilt“ oder „keine Dublette“. Die
+  Entscheidung speichert beide IDs und lässt sich aufheben; nichts wird still zusammengeführt. Das betrifft vor
+  allem Importe aus Steuertools (z. B. Koinly), deren IDs keine Bitpanda-IDs enthalten.
+
+### Grenzen der Bitpanda-Anbindung
+
+* **Nicht live verifiziert:** Die gehostete Bitpanda-Entwicklerdokumentation war beim Bau nicht erreichbar;
+  Endpunkte, Feldnamen, Pagination und Fehlercodes stützen sich auf die offiziell veröffentlichte API-Beschreibung
+  von Bitpanda auf GitHub und öffentliche Beispiele. Der Parser ist deshalb tolerant (mehrere Feldnamen,
+  Pagination-Varianten, Rückfall ohne Seitengröße/Zeitfilter bei HTTP 400) und meldet Unklares als „ungeklärt“ bzw.
+  „teilweise“ statt zu raten. Beim ersten echten Abgleich bitte die Prüf-Liste und die Bestandsprüfung ansehen.
+* **Scope-Fehler:** Ob Bitpanda ein fehlendes Leserecht mit 401 oder 403 beantwortet, ist nicht dokumentiert – die
+  Unterscheidung „fehlendes Recht“ vs. „ungültiger Schlüssel“ stützt sich zusätzlich auf den Bestände-Test.
+* **Gebühren:** Ob ein Betrag die Gebühr bereits enthält, ist nicht dokumentiert – betroffene Buchungen sind als
+  prüfbedürftig markiert.
+* **Nicht abgebildet:** Tausch Krypto → Krypto, Stocks/ETFs, Edelmetalle, Indizes, Korrekturen (siehe oben); für
+  diese Fälle bleibt der CSV-Import bzw. die manuelle Erfassung.
 
 ---
 
@@ -667,11 +830,15 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
   zwischengespeichert), `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, begrenzte Anfragegröße
   (Formulare 1 MB, CSV-Upload 25 MB – auch ohne `Content-Length`),
   PDF-Downloads mit `Cache-Control: no-store`, Container ohne Root-Rechte und ohne Capabilities.
+* **API-Keys von Datenquellen:** nur verschlüsselt in der Datenbank (Master-Key außerhalb, siehe
+  [Master-Key](#master-key-für-api-keys)); alle Formulare und Aktionen (Schlüssel speichern, ersetzen, entfernen,
+  testen, synchronisieren, neu verschlüsseln) sind POST mit CSRF-Schutz und unterliegen der Anmeldung.
 * **Backups:** täglich (Uhrzeit einstellbar, Standard 03:15) über die SQLite-Online-Backup-API mit
   Integritätsprüfung, gzip-komprimiert nach `/data/backups`, Aufbewahrung 14 Stück (einstellbar); manuell
   unter *Einstellungen → Backups* oder per `docker exec -u 99:100 portfolia python -m app backup`.
   **Wiederherstellen:** Container stoppen, Sicherung entpacken (`gunzip`), als `/data/app.sqlite` ablegen,
-  `app.sqlite-wal`/`-shm` entfernen, Container starten. **Wichtig:** In Portfolia erfasste und per CSV
+  `app.sqlite-wal`/`-shm` entfernen, Container starten. Gespeicherte API-Keys sind darin nur verschlüsselt
+  enthalten und brauchen nach einem Restore denselben Master-Key. **Wichtig:** In Portfolia erfasste und per CSV
   importierte Buchungen und Assets existieren nur in der App-Datenbank – deshalb zusätzlich:
 * **ZIP-Sicherungen im Import-Format:** Nach jeder Änderung an Buchungen (manuell, CSV-Import, Sparplan-
   Freigabe, neuer Import, Assets) schreibt Portfolia – gebündelt nach zwei Minuten ohne weitere Änderung – eine
@@ -708,6 +875,10 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
 | YouTube-Handle nicht auflösbar | Handle prüfen (mit `@`), ggf. `YOUTUBE_API_KEY` setzen; nicht auflösbare Kanäle bleiben deaktiviert. |
 | Vorabpauschale „Kurse fehlen“ | Kurshistorie des Fonds laden (*Datenqualität → Historie nachladen*) oder Basiszins im Override ergänzen. |
 | Zugriff verweigert (403) | CSRF-Schutz: Seite neu laden; Cross-Site-Formulare werden abgelehnt. |
+| „Master-Key fehlt“ / „Datei … nicht lesbar“ | Datei fehlt oder Container nach dem Anlegen nicht neu gestartet → [Master-Key](#master-key-für-api-keys). |
+| „mit einem anderen Master-Key verschlüsselt (Key-ID …)“ | Falscher Master-Key nach Restore/Rotation: richtigen Key ablegen bzw. alten als `PORTFOLIA_MASTER_KEY_OLD_FILE` bereitstellen, sonst API-Key neu eingeben. |
+| Bitpanda „teilweise synchronisiert“ | Abruf unvollständig (Drosselung, Seitenende unklar) – der nächste Lauf holt erneut ab; Details unter „Abdeckung“ der Datenquelle. |
+| Bitpanda „Berechtigung fehlt“ / „abgelehnt“ | API-Key mit Leserecht „Transaction“ neu erstellen und unter „API-Key ersetzen“ eintragen. |
 
 ---
 
@@ -728,7 +899,8 @@ Struktur:
 app/
   importer/   Datenvertrag, Validierung, atomarer Import, Diff, Beispiel-ZIP
   csvimport/  CSV-Profile, Vorschau, Dubletten (inkl. Ereignis-IDs), Transfer-Abgleich, Übernahme
-  datasources/ Datenquellen: Anbieterkatalog, Connector-Schnittstelle, Synchronisierung, Einstellungen
+  datasources/ Datenquellen: Anbieterkatalog, Connector-Schnittstelle, Synchronisierung, Einstellungen,
+              verschlüsselte Zugangsdaten (vault.py), Bitpanda-Connector (bitpanda.py)
   ledger/     Engine: Bestände, Lots (FIFO/LIFO/HIFO), Veräußerungen, Erträge, Zahlungsströme
   prices/     Yahoo, CoinGecko, EZB, Demo; Kurs-Store und Veraltungslogik
   analytics/  Bewertung, Allokation, Historie, TTWROR/IRR, Zeiträume, Farben
@@ -745,9 +917,11 @@ tests/        pytest (inkl. synthetischer Großimport)
 
 **Neuer Connector:** Klasse von `app.datasources.connector.Connector` ableiten (`provider` = ID aus
 `app/datasources/providers.py`, `check()` und `fetch()`), mit `@register` anmelden und das Modul in
-`app/main.py` laden. Der Vertrag (Ereignis-ID im Format des CSV-Profils, feste Zeilenreihenfolge, Cursor,
-`ConnectorError` mit Text ohne Geheimnisse) steht im Modul-Docstring; `tests/test_datasources.py` zeigt einen
-Test-Connector.
+`app/main.py` laden. Der Vertrag (Ereignis-ID im Format des CSV-Profils, feste Zeilenreihenfolge, Aliase,
+Cursor nur bei vollständigem Abruf, `rewind()`, Zeilenart „review“ für Ungeklärtes, `ConnectorError` mit Text ohne
+Geheimnisse) steht im Modul-Docstring; `tests/test_datasources.py` zeigt einen Test-Connector,
+`app/datasources/bitpanda.py` mit `tests/test_bitpanda.py` (anonymisierte Fixtures unter `tests/data/bitpanda/`)
+einen produktiven.
 
 CI (GitHub Actions): Lint und Tests bei jedem Push/PR; Image-Build und Veröffentlichung nach GHCR
 (`ghcr.io/pneumann1980/portfolia`) für den Standard-Branch und Versions-Tags – als Docker-Manifestliste ohne
@@ -764,6 +938,9 @@ Bekannte Grenzen (Auswahl, vollständig in [`docs/MILESTONES.md`](docs/MILESTONE
 * Formularzeilen nur für 2024 und Anlage SO 2025 hinterlegt (aus Sekundärquellen, ohne Gewähr); für andere
   Jahre nennt die Übertragungshilfe nur die Feldbezeichnungen.
 * Datenquellen sind inoffiziell (Yahoo) bzw. limitiert (CoinGecko Demo); Ausfälle werden sichtbar markiert.
+* Bitpanda-Anbindung mit Fixtures getestet, nicht mit einem echten Konto; nicht abgebildete Vorgänge (Tausch,
+  Stocks, Metalle, Indizes, Korrekturen) bleiben zur Prüfung – siehe
+  [Grenzen der Bitpanda-Anbindung](#grenzen-der-bitpanda-anbindung).
 
 **Lizenz:** Portfolia steht unter der [MIT-Lizenz](LICENSE) – Nutzung, Änderung und Weitergabe (auch
 kommerziell) sind erlaubt, solange Copyright- und Lizenzhinweis erhalten bleiben; keine Gewährleistung.

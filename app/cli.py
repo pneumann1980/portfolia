@@ -5,6 +5,10 @@ Befehle:
   validate <datei.zip>     Import-Datei prüfen, ohne zu importieren
   sample-zip <ziel.zip>    Beispiel-Import mit anonymisierten Testdaten erzeugen
   backup                   Sicherung der App-Datenbank nach /data/backups erstellen
+  master-key               Neuen Master-Key für verschlüsselte API-Keys ausgeben (nur Ausgabe, nichts wird gespeichert)
+  credentials status       Master-Key und gespeicherte API-Keys prüfen (ohne Schlüssel anzuzeigen)
+  credentials rotate       Gespeicherte API-Keys mit dem aktuellen Master-Key neu verschlüsseln
+                           (früheren Key als PORTFOLIA_MASTER_KEY_OLD_FILE bereitstellen)
 """
 
 from __future__ import annotations
@@ -50,6 +54,37 @@ def main(argv: list[str]) -> None:
         ctx.startup()
         res = backup_now(ctx, "cli")
         print(f"Sicherung erstellt: {res['file']} ({res['bytes'] // 1024} KB)")
+    elif cmd == "master-key":
+        from app.datasources.vault import generate_master_key
+
+        print(generate_master_key())
+        print("\nDirekt in eine Datei umleiten, z. B. auf Unraid: docker exec Portfolia python -m app master-key > "
+              "/boot/config/portfolia/master.key – Ordner per Pfad-Zuordnung nur lesend als /run/secrets/portfolia "
+              "einbinden, PORTFOLIA_MASTER_KEY_FILE=/run/secrets/portfolia/master.key setzen, Container neu starten. "
+              "Den Key getrennt von den Datenbank-Sicherungen aufbewahren (README → Master-Key).", file=sys.stderr)
+    elif cmd == "credentials" and args and args[0] in ("status", "rotate"):
+        from app.config import Config
+        from app.context import AppContext
+        from app.datasources.service import datasource_service
+
+        ctx = AppContext(Config.from_env())
+        ctx.startup()
+        svc = datasource_service(ctx)
+        if args[0] == "rotate":
+            res = svc.rotate_keys()
+            print(f"Neu verschlüsselt: {res['rotated']}")
+            for e in res["errors"]:
+                print(f"Fehler: {e}", file=sys.stderr)
+            sys.exit(1 if res["errors"] else 0)
+        st = svc.key_stats()
+        v = st["vault"]
+        state = f"vorhanden (ID {v['key_id']}, {v['source']})" if v["available"] else "fehlt"
+        print(f"Master-Key: {state}")
+        if v["old_key_id"]:
+            print(f"Früherer Master-Key: ID {v['old_key_id']}")
+        if v["error"]:
+            print(f"Fehler: {v['error']}")
+        print(f"Gespeicherte API-Keys: {st['total']} (mit anderem Master-Key: {st['stale']})")
     else:
         print(__doc__)
         sys.exit(1)

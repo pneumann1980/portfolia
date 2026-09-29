@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 28.09.2026 · Version 0.10.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.09.2026 · Version 0.11.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -337,7 +337,91 @@ Coinbase, Bitpanda) und Wallet-Exporte mit Hash; Binance-Kontoauszug, Crypto.com
 passenden IDs → unscharfe Prüfung. Der kuratierte Import wird nur über Stichtag und unscharfe Prüfung abgeglichen
 (`source_ref` wird nicht ausgewertet). Ein Kontowechsel verschiebt bereits übernommene Buchungen nicht.
 
-**Offene Entscheidungen** (vor der ersten Anbindung zu klären) – siehe unten, Fragen 4–9.
+**Offene Entscheidungen** von M11 (Zugangsdaten, Automatik, Doppelzählung mit dem Import, Verwerfen) sind in M12
+entschieden; offen bleiben die Wallet-Regeln (unten, Frage 4).
+
+## M12 – Bitpanda-Anbindung, verschlüsselte API-Keys, Abgleich Import ↔ App (Erweiterung)
+
+Anlass (29.09.2026): erster produktiver Connector (Bitpanda, nur lesend); die Einrichtung einschließlich API-Key
+soll vollständig in der App möglich sein. Binance- und Wallet-Anbindungen bleiben unverändert (keine).
+
+**Entscheidungen**
+
+* **API:** Bitpanda Public API `https://api.public.bitpanda.com/v1`, nur `GET` mit Header `x-api-key`:
+  `/operations` (Vorgänge, Cursor-Pagination, Zeitfilter `from`), `/assets?id=` (Stammdaten, Rückfall
+  `/assets/{id}`), `/currencies`, `/portfolio/holdings` (nur Plausibilität). Kein stiller Rückgriff auf die ältere
+  API `api.bitpanda.com`, Umleitungen werden nicht verfolgt, keine schreibenden Aufrufe. Leserechte: „Transaction“
+  erforderlich, „Balance“ optional; „Trade (Read)“ wird nicht verlangt – „Verbindung testen“ prüft Vorgänge,
+  Bestände und Stammdaten einzeln; ohne lesbare Stammdaten werden betroffene Vorgänge „ungeklärt“.
+* **Quellenlage:** Die gehostete Entwicklerdokumentation war aus der Build-Umgebung nicht erreichbar (Egress-Sperre);
+  Grundlage sind die von Bitpanda auf GitHub veröffentlichte API-Beschreibung und öffentliche Beispiele. Daher
+  toleranter Parser (snake/camelCase, Cursor über `cursor`/`next_cursor`/`has_next_page`, Rückfall ohne
+  `pageSize` bzw. `from` bei HTTP 400) und eine konservative Vollständigkeitsregel: volle Seite ohne Cursor,
+  wiederholter Cursor, mehr als 2000 Seiten, abgebrochene Folgeseite oder unlesbarer Eintrag → „teilweise“, der
+  Abrufstand bleibt stehen.
+* **Verschlüsselung** (`app/datasources/vault.py`): AES-256-GCM aus `cryptography` 50, Datenschlüssel per
+  HKDF-SHA256, Associated Data `portfolia:ds:<id>:api_key` (Chiffrate nicht zwischen Datensätzen vertauschbar),
+  Format `PFC1 ‖ Key-ID ‖ Nonce ‖ Chiffrat`. Master-Key aus `PORTFOLIA_MASTER_KEY_FILE` bzw.
+  `PORTFOLIA_MASTER_KEY`, nie in der Datenbank, nie automatisch erzeugt; Rotation über `…_OLD(_FILE)` und „Neu
+  verschlüsseln“ (Oberfläche oder `python -m app credentials rotate`). Ohne Master-Key: Eingabe gesperrt, nichts
+  gespeichert, kein Abruf mit gespeichertem Schlüssel. `PORTFOLIA_DS_*` funktioniert unverändert (ein gespeicherter
+  Schlüssel hat Vorrang). Der Entrypoint stellt root-eigene Key-Dateien (Unraid-USB-Stick, FAT nur root-lesbar) dem
+  App-Benutzer nur im RAM (`/dev/shm`) bereit. Entfernen mit `PRAGMA secure_delete` und WAL-Checkpoint.
+* **Geheimnisschutz:** Der Browser erhält den Schlüssel nie zurück (nur die letzten 4 Zeichen; Formular-Echo ohne
+  `api_key`; maskiertes Eingabefeld ohne Autovervollständigung). Der Log-Redactor maskiert während eines Laufs den
+  Klartext-Schlüssel (temporär registriert) sowie `x-api-key`-/`Authorization`-Muster; Anbieterfehler werden vor
+  Speichern und Anzeige bereinigt. Alle neuen Endpunkte sind POST mit CSRF-Schutz hinter der Anmeldung. Keine
+  Validierung über Dritte: der Verbindungstest geht nur an die Bitpanda-API.
+* **Abbildung** nur eindeutiger Fälle: Kauf/Verkauf Fiat ↔ Krypto (auch Sparplan), Ein- und Auszahlung,
+  Reward/Staking-Reward (Vorgangsart exakt), eigene Gebühren-Teile. Alles andere wird die neue Zeilenart
+  **„ungeklärt“** (`review`) mit Grund – nie verworfen, nie geraten: Korrekturen/Stornos (`compensates`, auch der
+  stornierte Vorgang), Tausch Krypto → Krypto, Fiat → Fiat, Aktien/ETFs, Edelmetalle, Indizes, unbekannte Assets
+  und Vorgangsarten, fehlende Richtung oder Zeit. Gebühren an Haupt-Teilen werden übernommen, aber als
+  prüfbedürftig markiert (Brutto/Netto nicht dokumentiert) und deshalb nie automatisch übernommen. Interne
+  Umbuchungen werden gezählt, nicht gebucht. Bestände nur als Hinweis (vollständiger Abgleich, Leserecht Balance).
+* **Identität:** Ereignis `bitpanda:<Vorgangs-UUID>` (ohne ID: Hash der Rohdaten), Zeilen `#1…n` in fester
+  Reihenfolge; Aliase aus Transaktions- und Trade-UUIDs (`journal_event_alias`), damit Bitpanda-CSV (`T<uuid>`)
+  und API einander exakt erkennen. Gleiche Anbieter-ID → **„bereits vorhanden“** (revidiert M11: vorher „mögliche
+  Dublette“) – geht nicht erneut in Bewertung und Lots ein, beide Herkünfte bleiben; ein Transaktions-Hash führt
+  weiterhin nur zu „mögliche Dublette“.
+* **Abrufstand:** Der Connector liefert einen neuen Stand nur bei vollständigem Abruf (`from` = Laufbeginn − 2 Tage);
+  gespeichert wird er erst nach der Aufnahme in den Prüf-Stapel. Verwerfen setzt ihn per `rewind()` vor den ältesten
+  offenen Vorgang zurück (revidiert M11, Frage 9). „Dauerhaft ignorieren“ wird je Ereignis in `event_decision`
+  gespeichert. Wartende Vorgänge werden nicht erneut aufgenommen, neue an einen unberührten Stapel angehängt –
+  offene Prüfungen blockieren den Zeitplan nicht mehr (revidiert M11).
+* **Automatische Übernahme je Ereignis** (revidiert M11, Frage 6): nur vollständig neue Ereignisse, deren Zeilen
+  alle gültig sind und keinen Hinweis tragen; die übrigen bleiben zur Prüfung (`commit(only_idx=…)`), ohne die
+  sicheren aufzuhalten. Standard weiterhin aus.
+* **Import ↔ App** (`app/journal/reconcile.py`, Seite *Buchungen → Abgleich mit dem Import*): exakte Abdeckung über
+  `source`/`source_ref` des kuratierten Imports – dynamisch, die App-Buchung zählt wieder, sobald ein Import sie
+  nicht mehr enthält; unscharfe Kandidaten (Art, Assets, Menge ± 1 %, ± 2 Tage, bis zum Stand des Imports) nur mit
+  Entscheidung (`journal_import_link`). Behebt die in M11 dokumentierte Doppelzählung (Frage 7).
+* **Migration 8** (nur additiv): Tabellen `data_source_secret`, `event_decision`, `journal_event_alias`,
+  `journal_import_link`, `ds_asset_cache`; Spalten `key_expires_on`, `last_check_json`, `coverage_json`
+  (`data_source`) sowie `rows_unclear`, `rows_ignored`, `detail_json` (`data_source_run`).
+* **Unraid:** Pfad „Master-Key (Ordner, nur lesen)“ `/boot/config/portfolia` → `/run/secrets/portfolia`, Variablen
+  `PORTFOLIA_MASTER_KEY_FILE` (vorbelegt) und `PORTFOLIA_MASTER_KEY_OLD_FILE` (nur Rotation). Ordner statt Datei
+  eingebunden, damit Docker bei fehlender Datei kein Verzeichnis `master.key` anlegt.
+
+**Tests:** `tests/test_bitpanda.py` (27 Fälle, anonymisierte Fixtures unter `tests/data/bitpanda/`) –
+Verschlüsselung (Roundtrip, Bindung an den Datensatz, falscher/fehlender Key, Formate, Dateirechte), kein Speichern
+ohne Master-Key, Schlüssel nie im HTML, Redirect oder DB-Klartext, CSRF, Basic-Auth, Ersetzen/Entfernen ohne
+Buchungsverlust, Rotation, Umgebungsvariable weiter nutzbar, Entfernen und Neuanlegen ohne Doppelimport,
+Pagination und Abbildung (mehrzeilige Vorgänge, Gebühren, Rewards, Korrektur/Storno, interne Umbuchung, Tausch,
+Stocks, unbekannte Vorgangsart), Dezimalgenauigkeit, inkrementeller Abruf mit Überlappung, 429 (Warten, Abbruch,
+lange `Retry-After`), unklare Pagination und Cursor-Schleifen, 400-Rückfall, Fehlerklassen (401, 403, abgelaufen,
+5xx, Zeitüberschreitung, Umleitung), Verbindungsprüfung je Endpunkt, historisch und inkrementell, Verwerfen und
+erneutes Abrufen, Ignorieren über Läufe, automatische Übernahme je Ereignis, Teilfehler mit stehendem Abrufstand,
+abgelaufenes Datum blockiert Aufrufe, Zeitplan trotz offener Prüfung, CSV „bereits vorhanden“ bzw. Kandidat in
+beide Richtungen, Abdeckung durch den kuratierten Import (exakt, Entscheidung, aufheben), Migration 7 → 8 mit
+Bestandsdaten. `tests/test_datasources.py` (46 Fälle) an die revidierten Regeln angepasst.
+
+**Grenzen M12:** keine Live-Verifikation (kein Testschlüssel bereitgestellt) – Feldnamen, Form der Pagination,
+Fehlercodes bei fehlendem Recht und Gebührenkonvention sind unbestätigt; Tausch Krypto → Krypto, Stocks/ETFs,
+Metalle, Indizes und Korrekturen nur als „ungeklärt“; Bestandsprüfung nur beim vollständigen Abgleich und nur als
+Hinweis; die exakte Import-Abdeckung setzt `source_ref` mit Bitpanda-ID im kuratierten Import voraus (Koinly-Exporte
+tragen sie nicht → Entscheidung auf der Abgleichseite); das Fenster der unscharfen Prüfung (± 2 Tage, ± 1 %) kann
+bei Sparplänen mit gleichen Beträgen mehrere Kandidaten zeigen.
 
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
@@ -360,6 +444,10 @@ passenden IDs → unscharfe Prüfung. Der kuratierte Import wird nur über Stich
 * **Positionen als Verlust ausbuchen** (28.09.2026, neue Anforderung) und verkaufte Aktien nicht als
   „unbewertet“ melden – siehe M9.
 * **Kursquellen automatisch suchen** (CoinGecko) und mobiles Layout korrigieren (28.09.2026) – siehe M10.
+* **Bitpanda als erster Connector** (29.09.2026): Einrichtung inkl. API-Key in der App, Schlüssel verschlüsselt
+  mit externem Master-Key, nur Leserechte, automatische Übernahme standardmäßig aus und nur je eindeutigem
+  Ereignis, Doppelzählung Import ↔ App beheben, verworfene Vorgänge wieder abrufbar – siehe M12 (beantwortet die
+  Fragen 4–7 und 9 für Bitpanda).
 
 ## Offene Fragen an den Auftraggeber
 
@@ -369,18 +457,14 @@ passenden IDs → unscharfe Prüfung. Der kuratierte Import wird nur über Stich
 2. **Name/Pfade:** Umsetzung als „Portfolia“ (`portfolia.xml`, `/mnt/user/appdata/portfolia`) statt
    „Depotblick“ – so gewünscht?
 3. **Krypto-Historie > 365 Tage** mit CoinGecko-Demo: weitere Yahoo-Paare vorbelegen oder Pro-Schlüssel?
-4. **Erste Anbindungen (M11):** Welche Börsen und Chains zuerst? Vorschlag: Kraken (Ledgers-API, Kennungen
-   identisch mit dem CSV-Profil) und Bitcoin per xpub bzw. eine EVM-Chain. Explorer-APIs verlangen teils eigene
-   Schlüssel und erfahren die Adresse – akzeptabel?
-5. **Zugangsdaten:** Umgebungsvariable (jetzt: nichts Geheimes in Datenbank und Backups, aber Container-Neustart
-   je neuem Schlüssel) oder verschlüsselt in der Datenbank mit Hauptschlüssel aus der Umgebung?
-6. **Automatische Übernahme:** Standard „aus“ beibehalten? Soll eine Überschneidung den ganzen Abruf zur Prüfung
-   schicken (jetzt) oder nur die betroffenen Zeilen?
-7. **Kuratierter Import und Datenquelle für dieselbe Börse:** Enthält ein neuer kuratierter Import Buchungen, die
-   bereits per Datenquelle übernommen wurden, zählen sie doppelt (Dublettenwarnung greift, verhindert es aber
-   nicht). Börse künftig nur an einer Stelle führen – oder darf `source_ref` im Datenvertrag die Ereignis-ID
-   (`kraken:<refid>`) tragen, damit exakt abgeglichen und ausgeblendet werden kann?
-8. **Wallet-Regeln je Chain** vor der ersten Wallet-Anbindung: eigene Adressen untereinander als Transfer,
+4. **Wallet-Regeln je Chain** vor der ersten Wallet-Anbindung: eigene Adressen untereinander als Transfer,
    Gas-Gebühren fehlgeschlagener Transaktionen, Spam-Token, interne Transaktionen/Contract-Aufrufe.
-9. **Verwerfen eines Prüf-Stapels:** Abrufstand automatisch zurücksetzen (Vorgänge kommen beim nächsten Lauf
-   wieder, auch reine Dubletten) oder wie jetzt nur auf Knopfdruck?
+5. **Bitpanda live prüfen:** Ein eigens dafür erstellter, rein lesender Test-Schlüssel (Transaction + Balance,
+   kurzes Ablaufdatum) würde Feldnamen, Pagination, Fehlercodes und die Gebührenkonvention bestätigen – nur auf
+   ausdrücklichen Wunsch, nie im Chat.
+6. **Tausch Krypto → Krypto bei Bitpanda:** als Tausch mit EUR-Wert aus dem Tageskurs buchen (steuerlich eine
+   Veräußerung) oder – wie jetzt – immer zur Prüfung?
+7. **Bitpanda Stocks/ETFs und Edelmetalle:** als Wertpapiere bzw. Metalle abbilden (braucht ISIN-/Asset-Zuordnung
+   und Steuerart) oder weiter per CSV bzw. manuell?
+8. **Gebühren an Haupt-Teilen:** Nach Klärung der Brutto/Netto-Konvention automatisch übernehmen statt als
+   prüfbedürftig zu markieren?

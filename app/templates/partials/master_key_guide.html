@@ -1,0 +1,20 @@
+{# Einrichtung des Master-Keys (einmalig, außerhalb der App). Erwartet optional: open (bool). #}
+<details class="box" style="margin-top:8px"{% if open %} open{% endif %}><summary>Master-Key einrichten (einmalig)</summary>
+  <p class="small" style="margin:8px 0 4px">Portfolia speichert API-Keys nur verschlüsselt. Der Schlüssel dafür liegt bewusst
+    <b>nicht</b> in der Datenbank, sondern als Datei außerhalb von appdata – deshalb dieser eine Schritt im Unraid-Terminal
+    (<b>&gt;_</b> oben rechts):</p>
+  <pre class="mono small" style="white-space:pre-wrap;overflow-wrap:anywhere;margin:0">mkdir -p /boot/config/portfolia
+openssl rand -base64 32 &gt; /boot/config/portfolia/master.key</pre>
+  <ol class="small" style="margin:8px 0 0 18px">
+    <li>Im Container-Template muss die Pfad-Zuordnung <b>„Master-Key (Ordner, nur lesen)“</b>
+      <span class="mono">/boot/config/portfolia → /run/secrets/portfolia</span> (nur lesen) und die Variable
+      <span class="mono">PORTFOLIA_MASTER_KEY_FILE=/run/secrets/portfolia/master.key</span> stehen – bei älteren
+      Installationen über „Add another Path, Port, Variable…“ ergänzen.</li>
+    <li>Container neu starten – hier erscheint dann „Master-Key vorhanden“ mit einer Key-ID.</li>
+    <li>Den Inhalt von <span class="mono">master.key</span> zusätzlich im Passwortmanager sichern, getrennt von
+      appdata-Backups. <b>Nie neu erzeugen</b>, solange gespeicherte API-Keys ihn brauchen – sonst müssen sie neu
+      eingegeben werden (Buchungen bleiben erhalten).</li>
+  </ol>
+  <p class="hint">Andere Docker-Umgebungen: Docker-Secret oder Datei über <span class="mono">PORTFOLIA_MASTER_KEY_FILE</span>,
+    alternativ <span class="mono">PORTFOLIA_MASTER_KEY</span>. Backup, Restore und Rotation: README → „Master-Key“.</p>
+</details>

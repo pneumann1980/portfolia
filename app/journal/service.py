@@ -138,12 +138,16 @@ def row_to_tx(r: Any) -> Tx:
 
 
 def overlay(db: Any, base: Portfolio | None) -> tuple[dict[str, AssetInfo], list[Tx]]:
-    """Journal-Assets (sofern nicht im Import definiert) und aktive Journal-Buchungen (sofern nicht im Import)."""
+    """Journal-Assets (sofern nicht im Import definiert) und aktive Journal-Buchungen (sofern nicht im Import:
+    gleiche ``tx_id``, gleiche Anbieter-ID oder vom Nutzer als Dublette bestätigt – siehe :mod:`reconcile`)."""
+    from app.journal.reconcile import coverage
+
     base_assets = base.assets if base is not None else {}
     base_ids = {t.tx_id for t in base.txs} if base is not None else set()
+    covered = coverage(db, base)
     assets = {aid: a for aid, a in journal_asset_infos(db).items() if aid not in base_assets}
     txs = [row_to_tx(r) for r in db.q("SELECT * FROM journal_tx WHERE status='active' ORDER BY ts_utc, id")
-           if r["tx_id"] not in base_ids]
+           if r["tx_id"] not in base_ids and r["tx_id"] not in covered]
     known = set(base_assets) | set(assets)
     for t in txs:
         for aid in (t.from_asset, t.to_asset, t.fee_asset):

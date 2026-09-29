@@ -229,6 +229,41 @@ def make_router() -> APIRouter:
         n = await run_in_threadpool(writeoff_service(ctx).undo, [str(t) for t in f.getlist("tx")])
         return _back(request, "/journal/writeoff?" + urlencode({"undone": n}))
 
+    @router.get("/journal/abgleich", response_class=HTMLResponse)
+    def reconcile_page(request: Request, msg: str = "") -> HTMLResponse:
+        """Abgleich kuratierter Import ↔ App-Buchungen: exakte Treffer (automatisch) und Kandidaten (Entscheidung)."""
+        from app.journal.reconcile import candidates, coverage
+
+        ctx = get_ctx(request)
+        base = ctx.base_portfolio()
+        cov = coverage(ctx.db, base)
+        rows = {r["tx_id"]: r for r in ctx.db.q(
+            f"SELECT * FROM journal_tx WHERE tx_id IN ({','.join('?' * len(cov))})", list(cov))} if cov else {}
+        imports = {t.tx_id: t for t in base.txs} if base is not None else {}
+        return render(request, "journal_reconcile.html", active="journal", msg=msg,
+                      covered=[(c, rows.get(c.journal_tx_id), imports.get(c.import_tx_id)) for c in cov.values()],
+                      cands=candidates(ctx.db, ctx.recorded_portfolio(), base), base=base,
+                      source_label=source_label, tx_types=forms.TYPE_LABEL)
+
+    @router.post("/journal/abgleich")
+    async def reconcile_decide(request: Request) -> Response:
+        from datetime import UTC, datetime
+
+        from app.journal.reconcile import decide
+
+        ctx = get_ctx(request)
+        f = await request.form()
+        jid, iid = str(f.get("journal_tx_id") or ""), str(f.get("import_tx_id") or "")
+        dec = str(f.get("decision") or "")
+        if not jid or not iid or dec not in ("covered", "distinct", "undo"):
+            raise HTTPException(400)
+        await run_in_threadpool(decide, ctx.db, jid, iid, dec, datetime.now(UTC))
+        journal_service(ctx).after_change()
+        text = {"covered": f"{jid} zählt nicht mehr – die Import-Buchung {iid} gilt.",
+                "distinct": f"{jid} und {iid} sind verschiedene Buchungen – beide zählen.",
+                "undo": "Entscheidung aufgehoben."}[dec]
+        return _back(request, "/journal/abgleich?" + urlencode({"msg": text}))
+
     @router.get("/journal/export.zip")
     def export(request: Request) -> Response:
         svc = journal_service(get_ctx(request))

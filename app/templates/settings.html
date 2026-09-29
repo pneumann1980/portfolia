@@ -9,7 +9,8 @@
 <section class="card" id="datasources">
   <div class="card-head"><h2>Datenquellen</h2><a class="btn" href="/settings/datasources">Verwalten</a></div>
   <p class="hint">Börsen und öffentliche Wallet-Adressen als Quelle für Buchungen:
-    {% if ds_summary.total %}{{ ds_summary.exchange }} Börse{{ 'n' if ds_summary.exchange != 1 }}, {{ ds_summary.wallet }} Wallet{{ 's' if ds_summary.wallet != 1 }}{% if ds_summary.error %} · <span class="badge crit">{{ ds_summary.error }} mit Fehler</span>{% endif %}{% else %}noch keine angelegt{% endif %}.</p>
+    {% if ds_summary.total %}{{ ds_summary.exchange }} Börse{{ 'n' if ds_summary.exchange != 1 }}, {{ ds_summary.wallet }} Wallet{{ 's' if ds_summary.wallet != 1 }}{% if ds_summary.error %} · <span class="badge crit">{{ ds_summary.error }} mit Fehler</span>{% endif %}{% else %}noch keine angelegt{% endif %}.
+    Automatische Anbindung: Bitpanda (nur lesend).</p>
 </section>
 <section class="card" id="general">
   <div class="card-head"><h2>Darstellung</h2></div>
@@ -152,6 +153,7 @@
     <dt>Zeitzone</dt><dd>{{ config.tz }}</dd>
     <dt>Authentifizierung</dt><dd>{{ 'Basic-Auth' if config.auth_mode == 'basic' else 'keine (nur LAN / Reverse-Proxy)' }}</dd>
     <dt>API-Keys</dt><dd>{% for k, v in secrets.items() %}<span class="badge {{ 'good' if v else '' }}">{{ k }}: {{ 'gesetzt' if v else '–' }}</span> {% endfor %}</dd>
+    <dt>Master-Key</dt><dd>{% if ds_summary.vault.available %}<span class="badge good">gesetzt</span> <span class="hint">ID {{ ds_summary.vault.key_id }} · {{ ds_summary.vault.source }}</span>{% else %}<span class="badge">–</span> <span class="hint">nötig, um API-Keys von Datenquellen verschlüsselt zu speichern</span>{% endif %}</dd>
   </dl>
 </section>
 </div>

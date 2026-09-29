@@ -44,13 +44,13 @@ from decimal import Decimal
 from typing import Any
 
 from app.csvimport import model as M
-from app.csvimport.events import derive_event_key, derive_tx_hash, match_keys, normalize_hash
+from app.csvimport.events import derive_event_key, derive_tx_hash, identity_keys, normalize_hash
 from app.csvimport.model import ParseOptions, Rec
 from app.csvimport.profiles import BUILTIN, PROFILES, MappingProfile, Profile, detect, header_matcher
 from app.csvimport.reader import CsvError, read_table, zone
 from app.importer import contract as C
 from app.importer.validate import validate_tx_rows
-from app.journal.service import JournalService, _now, journal_service
+from app.journal.service import JournalService, _now, journal_service, source_label
 from app.ledger.engine import run_ledger
 from app.ledger.models import AssetInfo, Portfolio, Tx
 from app.util.numbers import parse_number
@@ -78,10 +78,11 @@ def _locked(fn: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 STATUS_LABEL = {"new": "neu", "known": "bereits importiert", "duplicate": "mögliche Dublette", "before": "vor Stichtag",
-                "ignored": "ignoriert", "invalid": "unvollständig", "committed": "übernommen",
+                "ignored": "ignoriert", "invalid": "unvollständig", "unclear": "ungeklärt", "committed": "übernommen",
                 "merged": "als Transfer übernommen"}
 STATUS_BADGE = {"new": "good", "known": "", "duplicate": "warn", "before": "", "ignored": "", "invalid": "crit",
-                "committed": "info", "merged": "info"}
+                "unclear": "warn", "committed": "info", "merged": "info"}
+DONE = ("known", "ignored", "committed", "merged")  # Zeilen ohne offene Entscheidung
 BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial": "teilweise übernommen",
                 "committed": "übernommen", "reverted": "rückgängig gemacht"}
 NEED_VALUE_TAGS = frozenset(C.INCOME_TAGS) | frozenset(C.LOSS_TAGS) | frozenset(C.GIFT_OUT_TAGS) | \
@@ -119,7 +120,7 @@ def rec_to_json(r: Rec) -> str:
     for k, v in list(d.items()):
         if isinstance(v, Decimal):
             d[k] = s(v)
-    return json.dumps({k: v for k, v in d.items() if v not in (None, {}, "")}, ensure_ascii=False)
+    return json.dumps({k: v for k, v in d.items() if v not in (None, {}, "", [])}, ensure_ascii=False)
 
 
 def rec_from_json(raw: str) -> Rec:
@@ -460,13 +461,27 @@ class CsvImportService:
         log.info("CSV-Datei hochgeladen: %s (Stapel %s, Profil %s)", name, bid, prof.id if prof else "unbekannt")
         return bid, []
 
+    def untouched(self, bid: int) -> bool:
+        """Sync-Stapel ohne Eingriff des Nutzers (Vorschau, keine Entscheidung, keine Eingabe, keine Übernahme) –
+        neue Vorgänge eines späteren Laufs dürfen angehängt werden, statt einen weiteren Stapel anzulegen."""
+        b = self.batch(bid)
+        if b is None or b["kind"] != "sync" or b["status"] != "preview":
+            return False
+        return not self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND (decision IS NOT NULL OR "
+                                  "value_in IS NOT NULL OR fee_in IS NOT NULL OR pair_ok IS NOT NULL OR tx_id IS NOT "
+                                  "NULL)", (bid,), default=0)
+
     @_locked
     def ingest(self, recs: list[Rec], *, source: str, profile: str, account: str, label: str,
-               datasource_id: int | None, payload: bytes, options: Mapping[str, Any] | None = None) -> int:
+               datasource_id: int | None, payload: bytes, options: Mapping[str, Any] | None = None,
+               append_to: int | None = None, skipped: Mapping[str, int] | None = None) -> int:
         """Normalisierte Vorgänge einer Datenquelle als Stapel (Art „sync“) anlegen und auswerten.
 
         ``payload`` (normalisierte Rohdaten) wird wie eine CSV-Datei komprimiert aufbewahrt – nachvollziehbar, ohne
-        Zugangsdaten. Ohne Stichtag gilt wie beim CSV-Import das ``valuation_date`` des kuratierten Imports."""
+        Zugangsdaten. Ohne Stichtag gilt wie beim CSV-Import das ``valuation_date`` des kuratierten Imports.
+        ``append_to``: an einen unberührten Prüf-Stapel derselben Quelle anhängen (siehe :meth:`untouched`)."""
+        if append_to is not None and self.untouched(append_to):
+            return self._append(append_to, recs, payload, skipped or {})
         opts = {k: str(v).strip() for k, v in (options or {}).items() if v is not None}
         base = self.ctx.base_portfolio()
         if "cutoff" not in opts and base is not None and base.valuation_date is not None:
@@ -474,7 +489,7 @@ class CsvImportService:
         recs = sorted(recs, key=lambda r: (r.ts, r.event_key or "", r.event_line or 0))
         stamp = _now()
         summary = {"rows_read": len(recs), "recs": len(recs), "events": len({r.event_key or r.ext_id for r in recs}),
-                   "skipped": {}, "errors": [], "error_count": 0, "notes": []}
+                   "skipped": dict(skipped or {}), "errors": [], "error_count": 0, "notes": []}
         with self.db.transaction() as c:
             cur = c.execute(
                 "INSERT INTO csv_batch(filename, file_sha256, file_size, raw_gz, profile, account, options_json, "
@@ -487,6 +502,37 @@ class CsvImportService:
             c.executemany("INSERT INTO csv_row(batch_id, idx, line, rec_json, status, event_key, event_line) "
                           "VALUES (?,?,?,?, 'new', ?,?)",
                           [(bid, i, r.line, rec_to_json(r), r.event_key, r.event_line) for i, r in enumerate(recs)])
+        self.evaluate(bid)
+        return bid
+
+    def _append(self, bid: int, recs: list[Rec], payload: bytes, skipped: Mapping[str, int]) -> int:
+        batch = self.batch(bid)
+        assert batch is not None
+        old = json.loads(self.raw(batch) or b"[]")
+        new = json.loads(payload or b"[]")
+        merged = json.dumps([*old, *new], ensure_ascii=False).encode()
+        summary = json.loads(batch["summary_json"] or "{}")
+        first = int(self.db.scalar("SELECT COALESCE(MAX(idx), -1) + 1 FROM csv_row WHERE batch_id=?", (bid,),
+                                   default=0))
+        line0 = int(self.db.scalar("SELECT COALESCE(MAX(line), 0) FROM csv_row WHERE batch_id=?", (bid,), default=0))
+        recs = sorted(recs, key=lambda r: (r.ts, r.event_key or "", r.event_line or 0))
+        for r in recs:
+            r.line = (r.line or 0) + line0
+        summary["rows_read"] = int(summary.get("rows_read", 0)) + len(recs)
+        summary["recs"] = int(summary.get("recs", 0)) + len(recs)
+        summary["events"] = int(summary.get("events", 0)) + len({r.event_key or r.ext_id for r in recs})
+        sk = dict(summary.get("skipped") or {})
+        for k, n in skipped.items():
+            sk[k] = int(sk.get(k, 0)) + int(n)
+        summary["skipped"] = sk
+        with self.db.transaction() as c:
+            c.execute("UPDATE csv_batch SET raw_gz=?, file_size=?, file_sha256=?, summary_json=?, updated_at=? "
+                      "WHERE id=?", (gzip.compress(merged, 6), len(merged), hashlib.sha256(merged).hexdigest(),
+                                     json.dumps(summary), _now(), bid))
+            c.executemany("INSERT INTO csv_row(batch_id, idx, line, rec_json, status, event_key, event_line) "
+                          "VALUES (?,?,?,?, 'new', ?,?)",
+                          [(bid, first + i, r.line, rec_to_json(r), r.event_key, r.event_line)
+                           for i, r in enumerate(recs)])
         self.evaluate(bid)
         return bid
 
@@ -556,6 +602,8 @@ class CsvImportService:
 
     @_locked
     def discard(self, bid: int) -> bool:
+        """Stapel ohne Übernahmen verwerfen. Bei Datenquellen wird der Abrufstand vor den ältesten offenen Vorgang
+        zurückgesetzt – verworfene Vorgänge kommen beim nächsten Lauf wieder (bekannte werden erkannt)."""
         batch = self.batch(bid)
         if batch is None:
             return False
@@ -563,8 +611,53 @@ class CsvImportService:
                            default=0)
         if n:
             return False
+        open_ts = [rc.ts for rc in self._load(bid) if rc.status not in DONE] if batch["kind"] == "sync" else []
         self.db.x("DELETE FROM csv_batch WHERE id=?", (bid,))
+        if open_ts and batch["datasource_id"]:
+            from app.datasources.service import datasource_service
+
+            datasource_service(self.ctx).rewind(int(batch["datasource_id"]), min(open_ts))
         return True
+
+    # -- Entscheidungen je Ereignis (Datenquellen) ------------------------------------------------------
+    def decisions(self, keys: set[str]) -> dict[str, Any]:
+        if not keys:
+            return {}
+        out: dict[str, Any] = {}
+        ks = sorted(keys)
+        for i in range(0, len(ks), 500):
+            part = ks[i:i + 500]
+            for r in self.db.q(f"SELECT event_key, decision, reason FROM event_decision WHERE decision='ignore' AND "
+                               f"event_key IN ({','.join('?' * len(part))})", part):
+                out[r["event_key"]] = r
+        return out
+
+    def set_ignored(self, bid: int, event_key: str, ignore: bool, reason: str = "") -> bool:
+        """Vorgang dauerhaft ignorieren (bzw. wieder freigeben) – gespeichert je Anbieter-Ereignis, gilt für alle
+        künftigen Abrufe und Stapel; die Herkunfts-ID bleibt nachvollziehbar."""
+        batch = self.batch(bid)
+        if batch is None or not event_key or not self.db.scalar(
+                "SELECT 1 FROM csv_row WHERE batch_id=? AND event_key=?", (bid, event_key)):
+            return False
+        if ignore:
+            self.db.x("INSERT INTO event_decision(event_key, decision, reason, batch_id, decided_at) "
+                      "VALUES (?, 'ignore', ?, ?, ?) ON CONFLICT(event_key) DO UPDATE SET decision='ignore', "
+                      "reason=excluded.reason, batch_id=excluded.batch_id, decided_at=excluded.decided_at",
+                      (event_key, reason.strip()[:200] or None, bid, _now()))
+        else:
+            self.db.x("DELETE FROM event_decision WHERE event_key=?", (event_key,))
+        self.evaluate(bid)
+        self.refresh_status(bid)
+        return True
+
+    def refresh_status(self, bid: int) -> None:
+        """Sync-Stapel: „teilweise übernommen“ → „übernommen“, sobald nichts mehr zu entscheiden ist."""
+        batch = self.batch(bid)
+        if batch is None or batch["kind"] != "sync" or batch["status"] != "partial":
+            return
+        if not self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND (status IN ('invalid', 'unclear') OR "
+                              "(status IN ('new', 'duplicate', 'before') AND decision IS NULL))", (bid,), default=0):
+            self.db.x("UPDATE csv_batch SET status='committed', updated_at=? WHERE id=?", (_now(), bid))
 
     # -- Einlesen -----------------------------------------------------------------------------------------
     @_locked
@@ -669,7 +762,8 @@ class CsvImportService:
         for rc in open_rows:
             rc.errors, rc.warnings, rc.dup_of, rc.dup_same_account = [], [], [], False
             rc.value_src = rc.fee_src = None
-            rc.row = self._build(rc, resolver, acc_map, batch, source, prof)
+            # ungeklärte Vorgänge einer Datenquelle werden nie zu Buchungen – nur angezeigt und entschieden
+            rc.row = None if rc.rec.kind == M.REVIEW else self._build(rc, resolver, acc_map, batch, source, prof)
         # Werte: zuerst Zeilen mit Fiat-Seite/Dateiwert (liefern Kurse für die übrigen), dann Kursabfragen
         for rc in open_rows:
             if rc.row is not None and not rc.errors:
@@ -692,8 +786,10 @@ class CsvImportService:
             if rc is not None and m.code not in ("fee_eur", "value_eur"):
                 rc.warnings.append(_strip_prefix(m.message))
         # Status
+        decisions = self.decisions({rc.rec.event_key for rc in open_rows if rc.rec.event_key})
         for rc in open_rows:
             ext = rc.rec.ext_id or ""
+            dec = decisions.get(rc.rec.event_key or "")
             if rc.symbols and any(v == "ignored" for v in rc.symbols.values()):
                 rc.status = "ignored"
             elif ext and ext in known:
@@ -701,6 +797,12 @@ class CsvImportService:
                 rc.status = "known"
                 rc.warnings.insert(0, f"bereits importiert als {k['tx_id']}" + (" (gelöscht)" if k["status"] ==
                                                                                  "deleted" else ""))
+            elif dec is not None:
+                rc.status = "ignored"
+                rc.warnings.insert(0, "dauerhaft ignoriert" + (f": {dec['reason']}" if dec["reason"] else ""))
+            elif rc.rec.kind == M.REVIEW:
+                rc.status = "unclear"
+                rc.warnings.insert(0, rc.rec.note or "Deutung nicht eindeutig – bitte prüfen")
             elif ext and ext in seen_ext:
                 rc.status = "known"
                 rc.warnings.insert(0, f"doppelte Zeile in der Datei (wie Zeile {seen_ext[ext]})")
@@ -710,9 +812,11 @@ class CsvImportService:
                 rc.status = "before"
             else:
                 rc.status = "new"
+            if rc.rec.review and rc.status == "new":
+                rc.warnings.insert(0, f"Bitte prüfen: {rc.rec.review}")
             if ext:
                 seen_ext.setdefault(ext, rc.line or 0)
-        self._same_events([rc for rc in open_rows if rc.status == "new"], source)
+        self._same_events([rc for rc in open_rows if rc.status in ("new", "invalid", "unclear", "before")], source)
         self._duplicates([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._transfers(bid, rows, pf, valuer)
         self._save(rows)
@@ -908,39 +1012,57 @@ class CsvImportService:
 
     # -- Dubletten ----------------------------------------------------------------------------------------
     def _same_events(self, rows: list[RowCtx], source: str) -> None:
-        """Gleiches Ereignis aus einer anderen Quelle (z. B. CSV-Import ↔ Datenquelle): exakter Treffer über
-        Ereignis-ID bzw. Transaktions-Hash bei gleicher Buchungsseite (Art, Abgangs-/Zugangs-Asset)."""
-        wanted = {}
+        """Dasselbe Ereignis aus einer anderen Quelle (CSV-Import ↔ Datenquelle): Treffer über Anbieter-ID bzw.
+        Alias (Bitpanda-UUIDs) → „bekannt“ (geht nicht erneut in Bewertung und Lots ein); Treffer über den
+        Transaktions-Hash nur bei gleicher Buchungsseite → „mögliche Dublette“ (Entscheidung beim Nutzer)."""
+        wanted: dict[int, tuple[set[str], str | None]] = {}
         for rc in rows:
-            if rc.row is None:
-                continue
-            keys = match_keys(rc.rec.event_key or derive_event_key(rc.rec.ext_id),
-                              rc.rec.txhash or derive_tx_hash(rc.rec.ext_id))
-            if keys:
-                wanted[rc.idx] = keys
+            ids = identity_keys(rc.rec.event_key, rc.rec.aliases, rc.rec.ext_id)
+            h = normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id))
+            if ids or h:
+                wanted[rc.idx] = (ids, h)
         if not wanted:
             return
-        index: dict[str, list[Any]] = defaultdict(list)
-        for r in self.db.q("SELECT tx_id, source, external_id, event_key, tx_hash, type, from_asset, to_asset "
+        aliases: dict[str, set[str]] = defaultdict(set)
+        for a in self.db.q("SELECT key, tx_id FROM journal_event_alias"):
+            aliases[a["tx_id"]].add(a["key"])
+        by_id: dict[str, list[Any]] = defaultdict(list)
+        by_hash: dict[str, list[Any]] = defaultdict(list)
+        for r in self.db.q("SELECT tx_id, source, status, external_id, event_key, tx_hash, type, from_asset, to_asset "
                            "FROM journal_tx WHERE status IN ('active', 'merged', 'deleted') AND source <> 'transfer' "
                            "AND source <> ?", (source,)):
-            for k in match_keys(r["event_key"] or derive_event_key(r["external_id"]),
-                                r["tx_hash"] or derive_tx_hash(r["external_id"])):
-                index[k].append(r)
+            for k in identity_keys(r["event_key"], aliases.get(r["tx_id"], set()), r["external_id"]):
+                by_id[k].append(r)
+            h = normalize_hash(r["tx_hash"] or derive_tx_hash(r["external_id"]))
+            if h:
+                by_hash[h].append(r)
         for rc in rows:
-            keys = wanted.get(rc.idx)
+            ids, h = wanted.get(rc.idx, (set(), None))
+            hit: dict[str, Any] = {}
+            for k in sorted(ids):
+                for r in by_id.get(k, ()):
+                    hit.setdefault(r["tx_id"], r)
+            if hit:
+                first = next(iter(hit.values()))
+                rc.status = "known"
+                rc.dup_of = list(hit)
+                rc.warnings.insert(0, f"bereits vorhanden als {', '.join(list(hit)[:3])} "
+                                      f"({source_label(first['source'])}"
+                                      + (", gelöscht" if first["status"] == "deleted" else "") + ") – gleiche "
+                                      "Anbieter-ID")
+                continue
             row = rc.row
-            if not keys or row is None:
+            if not h or rc.status != "new" or row is None:
                 continue
             hits = list(dict.fromkeys(
-                r["tx_id"] for k in keys for r in index.get(k, ())
+                r["tx_id"] for r in by_hash.get(h, ())
                 if (r["type"], r["from_asset"] or "", r["to_asset"] or "") == (row["type"], row["from_asset"],
                                                                                  row["to_asset"])))
             if hits:
                 rc.status = "duplicate"
                 rc.dup_of = hits
                 rc.dup_same_account = True
-                rc.warnings.insert(0, f"gleiches Ereignis bereits vorhanden: {', '.join(hits[:3])}")
+                rc.warnings.insert(0, f"gleiche Blockchain-Transaktion bereits vorhanden: {', '.join(hits[:3])}")
 
     def _duplicates(self, rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
         if pf is None or not rows:
@@ -1196,14 +1318,17 @@ class CsvImportService:
 
     # -- Übernehmen ---------------------------------------------------------------------------------------
     @_locked
-    def commit(self, bid: int) -> dict[str, Any]:
+    def commit(self, bid: int, only_idx: set[int] | None = None) -> dict[str, Any]:
+        """Ausgewählte Zeilen übernehmen. ``only_idx``: nur diese Zeilen (automatische Übernahme einer Datenquelle
+        je eindeutigem Ereignis) – alle übrigen bleiben zur Prüfung offen. Validierung wie immer."""
         batch = self.batch(bid)
         if batch is None or batch["status"] in ("mapping", "reverted"):
             return {"errors": ["Stapel nicht übernehmbar."]}
         self.evaluate(bid)
         rows = self._load(bid)
         by_idx = {rc.idx: rc for rc in rows}
-        chosen = [rc for rc in rows if rc.open and rc.include() and rc.row is not None and not rc.errors]
+        chosen = [rc for rc in rows if rc.open and rc.include() and rc.row is not None and not rc.errors
+                  and (only_idx is None or rc.idx in only_idx)]
         if not chosen:
             return {"errors": ["Keine übernehmbaren Zeilen (Status „neu“ bzw. ausgewählt, ohne Fehler)."]}
         assets = self.known_assets()
@@ -1234,6 +1359,9 @@ class CsvImportService:
                                    event_line=rc.rec.event_line,
                                    tx_hash=normalize_hash(rc.rec.txhash) or derive_tx_hash(rc.rec.ext_id),
                                    datasource_id=batch["datasource_id"])
+                if rc.rec.aliases:
+                    c.executemany("INSERT OR IGNORE INTO journal_event_alias(key, tx_id) VALUES (?,?)",
+                                  [(a, tx_id) for a in rc.rec.aliases])
                 rc.tx_id = tx_id
                 rc.status = "merged" if pair_other else "committed"
                 c.execute("UPDATE csv_row SET status=?, tx_id=? WHERE id=?", (rc.status, tx_id, rc.id))
@@ -1265,7 +1393,11 @@ class CsvImportService:
                     transfers += 1
                 done.update((rc.tx_id or "", other_tx))
             chosen_ids = {rc.id for rc in chosen}
-            left = sum(1 for rc in rows if rc.open and rc.id not in chosen_ids and rc.status == "invalid")
+            if batch["kind"] == "sync":  # offen bleibt, was noch eine Entscheidung braucht
+                left = sum(1 for rc in rows if rc.open and rc.id not in chosen_ids and (
+                    rc.status in ("invalid", "unclear") or (only_idx is not None and rc.status not in DONE)))
+            else:
+                left = sum(1 for rc in rows if rc.open and rc.id not in chosen_ids and rc.status == "invalid")
             c.execute("UPDATE csv_batch SET status=?, committed_at=?, updated_at=? WHERE id=?",
                       ("partial" if left else "committed", stamp, stamp, bid))
             js._log(c, "csv_commit", f"csv:{bid}", None, {"created": created, "merged": merged,

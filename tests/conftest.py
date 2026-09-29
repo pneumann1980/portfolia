@@ -30,5 +30,5 @@ def config(tmp_path: Path) -> Config:
 @pytest.fixture(autouse=True)
 def _no_env_leak(monkeypatch: pytest.MonkeyPatch) -> None:
     for k in list(os.environ):
-        if k.endswith("_API_KEY") or k.startswith("AUTH_"):
+        if k.endswith("_API_KEY") or k.startswith(("AUTH_", "PORTFOLIA_MASTER_KEY", "PORTFOLIA_DS_")):
             monkeypatch.delenv(k, raising=False)

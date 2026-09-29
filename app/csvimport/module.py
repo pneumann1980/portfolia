@@ -35,8 +35,8 @@ log = logging.getLogger(__name__)
 
 GROUPS = ("Börse", "Wallet", "Steuertool", "Portfolia")
 TZ_CHOICES = [("", "wie Format (Standard)"), ("UTC", "UTC"), ("Europe/Berlin", "Europe/Berlin (Ortszeit)")]
-FILTERS = {"": "alle", "new": "neu", "duplicate": "Dubletten", "invalid": "unvollständig", "before": "vor Stichtag",
-           "known": "bereits importiert", "ignored": "ignoriert", "committed": "übernommen"}
+FILTERS = {"": "alle", "new": "neu", "unclear": "ungeklärt", "duplicate": "Dubletten", "invalid": "unvollständig",
+           "before": "vor Stichtag", "known": "bereits importiert", "ignored": "ignoriert", "committed": "übernommen"}
 MAPPING_KINDS = {"trade": "Handel/Tausch", "deposit": "Zugang ohne Ertrag", "withdrawal": "Abgang ohne Kosten",
                  "conversion": "Umstellung (ohne Veräußerung)", "skip": "überspringen",
                  **{f"deposit:{t}": f"Ertrag: {t}" for t in ("staking", "reward", "interest", "lending", "airdrop",
@@ -324,6 +324,20 @@ def make_router() -> APIRouter:
                 svc.set_account(name, target if target != name else "")
         await run_in_threadpool(svc.evaluate, bid)
         return _back(request, _redir(bid, f, "accounts"))
+
+    @router.post("/journal/csv/{bid}/ignore")
+    async def ignore(request: Request, bid: int) -> Response:
+        """Vorgang einer Datenquelle dauerhaft ignorieren bzw. freigeben (Entscheidung je Anbieter-Ereignis)."""
+        svc = csv_service(get_ctx(request))
+        if svc.batch(bid) is None:
+            raise HTTPException(404)
+        f = await _form(request)
+        key = str(f.get("ignore") or f.get("release") or "")
+        await run_in_threadpool(svc.set_rows, bid, f)  # übrige Eingaben der Seite nicht verlieren
+        if not await run_in_threadpool(svc.set_ignored, bid, key, bool(f.get("ignore")),
+                                       str(f.get("reason") or "vom Nutzer entschieden")):
+            return _batch_page(request, bid, errors=["Vorgang nicht gefunden."])
+        return _back(request, _redir(bid, f, "rows"))
 
     @router.post("/journal/csv/{bid}/rows")
     async def rows(request: Request, bid: int) -> Response:

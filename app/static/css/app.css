@@ -488,3 +488,6 @@ td.num .hint.wrap { white-space: normal; max-width: 13em; margin-left: auto; }
 table.journal select { max-width: 9em; }
 .journal-form .edit-grid { margin-bottom: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); align-items: start; }
 .empty-state p { margin: 8px 0; }
+
+/* API-Keys: Eingabe maskieren (kein Passwortfeld – Browser sollen nichts speichern oder vorschlagen) */
+.secret-input { -webkit-text-security: disc; text-security: disc; }

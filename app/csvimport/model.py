@@ -22,9 +22,10 @@ TRANSFER = "transfer"  # zwischen zwei Konten der Datei (z. B. Koinly-Wallets)
 FEE = "fee"  # nur Gebühr (fehlgeschlagene Transaktion, Staking-Aktion)
 CONVERSION = "conversion"  # Token-Umstellung ohne Veräußerung (Rebranding, Migration)
 DIRECT = "direct"  # Zeile bereits im einheitlichen Format (Portfolia-CSV)
+REVIEW = "review"  # Vorgang einer Datenquelle ohne eindeutige Abbildung („ungeklärt“, Grund in ``note``)
 
 KIND_LABEL = {TRADE: "Handel", DEPOSIT: "Zugang", WITHDRAWAL: "Abgang", TRANSFER: "Übertrag", FEE: "Gebühr",
-              CONVERSION: "Umstellung", DIRECT: "Buchung"}
+              CONVERSION: "Umstellung", DIRECT: "Buchung", REVIEW: "ungeklärt"}
 
 
 @dataclass
@@ -49,6 +50,9 @@ class Rec:
     txhash: str | None = None  # Blockchain-Transaktion (Transfer-Abgleich)
     event_key: str | None = None  # stabile Ereignis-ID „anbieter:id“ (Datenquellen; ein Ereignis → n Zeilen)
     event_line: int | None = None  # Zeile innerhalb des Ereignisses
+    aliases: list[str] = field(default_factory=list)  # weitere Anbieter-IDs desselben Ereignisses („anbieter:id“)
+    review: str | None = None  # abbildbar, aber prüfbedürftig – nie automatisch übernehmen (Grund)
+    raw: dict[str, Any] | None = None  # Originaldaten des Anbieters (Beträge als Text, IDs) zur Nachprüfung
     note: str | None = None
     label: str | None = None  # Vorgangsbezeichnung der Quelle (Anzeige)
     date_only: bool = False

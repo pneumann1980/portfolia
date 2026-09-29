@@ -311,6 +311,58 @@ ALTER TABLE csv_batch ADD COLUMN datasource_id INTEGER;
 ALTER TABLE csv_row ADD COLUMN event_key TEXT;
 ALTER TABLE csv_row ADD COLUMN event_line INTEGER;
 """),
+    (8, """
+-- Zugangsdaten einer Datenquelle, verschlüsselt (AES-256-GCM); der Master-Key liegt nie in der Datenbank.
+CREATE TABLE IF NOT EXISTS data_source_secret (
+  source_id   INTEGER PRIMARY KEY REFERENCES data_source(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL DEFAULT 'api_key',
+  ciphertext  BLOB NOT NULL,                      -- PFC1 ‖ Key-ID ‖ Nonce ‖ Chiffrat+Tag
+  key_id      TEXT NOT NULL,                      -- Kennung des Master-Keys (kein Rückschluss auf ihn)
+  hint        TEXT,                               -- letzte 4 Zeichen zur Wiedererkennung
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+ALTER TABLE data_source ADD COLUMN key_expires_on TEXT;   -- Ablaufdatum laut Anbieter (Angabe des Nutzers)
+ALTER TABLE data_source ADD COLUMN last_check_json TEXT;  -- Ergebnis der letzten Verbindungsprüfung je Recht
+ALTER TABLE data_source ADD COLUMN coverage_json TEXT;    -- Abdeckung des letzten Abrufs (Zeitraum, Seiten, Grenzen)
+ALTER TABLE data_source_run ADD COLUMN rows_unclear INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE data_source_run ADD COLUMN rows_ignored INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE data_source_run ADD COLUMN detail_json TEXT;
+-- Entscheidungen je Anbieter-Ereignis (z. B. „dauerhaft ignorieren“) – unabhängig von Stapel und Datenquelle.
+CREATE TABLE IF NOT EXISTS event_decision (
+  event_key  TEXT PRIMARY KEY,
+  decision   TEXT NOT NULL,                       -- ignore
+  reason     TEXT,
+  batch_id   INTEGER,
+  decided_at TEXT NOT NULL
+);
+-- Weitere Anbieter-IDs je Buchung (Bitpanda: Operation, Trade, Transaktionen) für den exakten Abgleich.
+CREATE TABLE IF NOT EXISTS journal_event_alias (
+  key    TEXT NOT NULL,
+  tx_id  TEXT NOT NULL,
+  PRIMARY KEY (key, tx_id)
+);
+-- Abgleich kuratierter Import ↔ Journal: Entscheidung je Paar (covered = Import-Buchung gilt | distinct).
+CREATE TABLE IF NOT EXISTS journal_import_link (
+  journal_tx_id TEXT NOT NULL,
+  import_tx_id  TEXT NOT NULL,
+  decision      TEXT NOT NULL,
+  decided_at    TEXT NOT NULL,
+  PRIMARY KEY (journal_tx_id, import_tx_id)
+);
+-- Stammdaten entfernter Assets/Währungen (z. B. Bitpanda-UUID → Symbol) – spart wiederholte Abrufe.
+CREATE TABLE IF NOT EXISTS ds_asset_cache (
+  provider   TEXT NOT NULL,
+  remote_id  TEXT NOT NULL,
+  kind       TEXT NOT NULL,                       -- asset | currency
+  symbol     TEXT,
+  name       TEXT,
+  asset_type TEXT,
+  isin       TEXT,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (provider, remote_id)
+);
+"""),
 ]
 
 

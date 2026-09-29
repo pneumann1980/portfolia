@@ -4,7 +4,7 @@ Portfolia selbst steht unter der [MIT-Lizenz](LICENSE). Das Docker-Image enthäl
 Komponenten Dritter unter deren eigenen Lizenzen. Alle sind mit der MIT-Lizenz vereinbar (keine
 Copyleft-Pflichten für den Portfolia-Code); die Lizenztexte liegen im Image bei den jeweiligen Komponenten.
 
-Stand: 27.09.2026 (Portfolia 0.7.0).
+Stand: 29.09.2026 (Portfolia 0.11.0).
 
 ## Weboberfläche (`app/static/vendor/`, unverändert eingebunden)
 
@@ -38,7 +38,8 @@ Erzeugt mit `python scripts/third_party.py` aus `requirements.txt` (Versionen de
 Stand oben; der Image-Build installiert die gepinnten direkten Abhängigkeiten, transitive können abweichen).
 Die Lizenztexte liegen im Image unter `/usr/local/lib/python3.12/site-packages/<paket>.dist-info/licenses/`.
 Einige Wheels enthalten native Bibliotheken: numpy (u. a. OpenBLAS), Pillow (u. a. libjpeg-turbo, zlib),
-lxml (libxml2, libxslt) – deren Lizenzen sind in den Lizenzdateien dieser Pakete aufgeführt; curl_cffi
+lxml (libxml2, libxslt), cryptography (OpenSSL, Apache-2.0) – deren Lizenzen sind in den Lizenzdateien dieser
+Pakete aufgeführt; curl_cffi
 enthält curl-impersonate (libcurl mit BoringSSL), dessen Lizenzhinweise die Projektseite von curl_cffi nennt.
 
 | Paket | Version | Lizenz |
@@ -54,6 +55,7 @@ enthält curl-impersonate (libcurl mit BoringSSL), dessen Lizenzhinweise die Pro
 | cffi | 2.1.1 | MIT-0 |
 | charset-normalizer | 3.5.1 | MIT |
 | click | 8.5.0 | BSD-3-Clause |
+| cryptography | 50.0.1 | Apache-2.0 OR BSD-3-Clause |
 | curl_cffi | 0.16.3 | MIT |
 | defusedxml | 0.7.1 | PSF-2.0 |
 | docstring_parser | 0.18.0 | MIT |

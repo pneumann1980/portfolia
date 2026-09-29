@@ -21,6 +21,11 @@ Vertrag für Connectoren
   Etappen (``complete=False`` + Cursor).
 * Drosselung: ``ConnectorError("rate_limit", …, retry_after_s=…)`` verschiebt den nächsten geplanten Lauf
   entsprechend.
+* Der Abrufstand gilt erst als verarbeitet, wenn alle Vorgänge bis dorthin im Prüf-Stapel stehen, übernommen oder
+  entschieden sind: ``complete=False`` → ``cursor=None`` (nicht vorrücken, nächster Lauf holt erneut ab);
+  :meth:`Connector.rewind` setzt ihn zurück, wenn ein Prüf-Stapel verworfen wird.
+* Nicht eindeutig abbildbare Vorgänge nie raten: eine Zeile ``Rec(kind=REVIEW, note=<Grund>)`` („ungeklärt“) bzw.
+  bei zwar abbildbaren, aber prüfbedürftigen Vorgängen ``Rec.review`` (keine automatische Übernahme).
 * Fehler als :class:`ConnectorError` mit deutschem, geheimnisfreiem Text. Andere Ausnahmen werden vom Aufrufer
   in eine allgemeine Meldung übersetzt und bereinigt.
 * Übertragen werden nur die für den Abruf nötigen Daten (Adresse bzw. API-Schlüssel an den jeweiligen Anbieter) –
@@ -43,9 +48,10 @@ EVENT_KEY_RE = re.compile(r"^[a-z0-9_]+:[^\s#]{1,200}$")
 CREDENTIAL_RE = re.compile(r"^PORTFOLIA_DS_[A-Z0-9_]{1,50}$")
 
 # Fehlerarten → Anzeige (ergänzt die Meldung des Connectors)
-ERROR_KINDS = {"auth": "Zugangsdaten abgelehnt", "rate_limit": "Anbieter drosselt Anfragen",
-               "unavailable": "Anbieter nicht erreichbar", "config": "Einstellung unvollständig",
-               "data": "Unerwartete Antwort des Anbieters", "unsupported": "Nicht unterstützt"}
+ERROR_KINDS = {"auth": "Zugangsdaten abgelehnt", "scope": "Berechtigung fehlt", "expired": "API-Key abgelaufen",
+               "rate_limit": "Anbieter drosselt Anfragen", "unavailable": "Anbieter vorübergehend nicht erreichbar",
+               "config": "Einstellung unvollständig", "data": "Unerwartete Antwort des Anbieters",
+               "unsupported": "Nicht unterstützt"}
 
 
 class ConnectorError(Exception):
@@ -71,13 +77,17 @@ class SourceConfig:
 
 
 class Secret:
-    """Zugangsdaten aus einer Umgebungsvariable (oder ``<NAME>_FILE`` für Docker-Secrets); nie im Klartext
-    ausgegeben (``repr``/``str`` maskiert)."""
+    """Zugangsdaten – aus dem verschlüsselten Speicher der App (``value``) oder aus einer Umgebungsvariable bzw.
+    ``<NAME>_FILE`` (Docker-Secret). Nie im Klartext ausgegeben (``repr``/``str`` maskiert)."""
 
-    def __init__(self, ref: str | None) -> None:
+    def __init__(self, ref: str | None = None, *, value: str | None = None) -> None:
         self.ref = ref
+        self.origin: str | None = None  # app | env
         self._value: str | None = None
-        if ref and CREDENTIAL_RE.match(ref):
+        if value is not None:
+            self._value = value.strip() or None
+            self.origin = "app" if self._value else None
+        elif ref and CREDENTIAL_RE.match(ref):
             val = os.environ.get(ref)
             file = os.environ.get(f"{ref}_FILE")
             if (val is None or not val.strip()) and file:
@@ -86,6 +96,7 @@ class Secret:
                 except OSError:
                     val = None
             self._value = val.strip() if val and val.strip() else None
+            self.origin = "env" if self._value else None
 
     @property
     def present(self) -> bool:
@@ -93,8 +104,8 @@ class Secret:
 
     def reveal(self) -> str:
         if self._value is None:
-            raise ConnectorError("config", f"Zugangsdaten fehlen: Umgebungsvariable {self.ref or '(nicht angegeben)'} "
-                                           "ist nicht gesetzt.")
+            where = f"Umgebungsvariable {self.ref}" if self.ref else "API-Key"
+            raise ConnectorError("config", f"Zugangsdaten fehlen: {where} ist nicht gesetzt.")
         return self._value
 
     def values(self) -> list[str]:
@@ -105,7 +116,7 @@ class Secret:
         return [p for p in parts if len(p) >= 6]
 
     def __repr__(self) -> str:
-        return f"Secret({self.ref!r}, {'gesetzt' if self.present else 'fehlt'})"
+        return f"Secret({self.ref or self.origin!r}, {'gesetzt' if self.present else 'fehlt'})"
 
     __str__ = __repr__
 
@@ -121,21 +132,26 @@ class SourceEvent:
 @dataclass
 class FetchResult:
     events: list[SourceEvent] = field(default_factory=list)
-    cursor: dict[str, Any] | None = None
+    cursor: dict[str, Any] | None = None  # None: Abrufstand nicht vorrücken
     complete: bool = True  # False: nur ein Teil abrufbar (z. B. Limit, einzelne Endpunkte gestört)
     warnings: list[str] = field(default_factory=list)
+    skipped: dict[str, int] = field(default_factory=dict)  # bewusst ohne Buchung (Grund → Anzahl), sichtbar
+    coverage: dict[str, Any] = field(default_factory=dict)  # Zeitraum, Seiten, Grenzen – für die Anzeige
 
 
 @dataclass
 class CheckResult:
     ok: bool
     message: str = ""
+    details: dict[str, Any] = field(default_factory=dict)  # je Recht/Endpunkt: {"ok": bool, "text": str}
 
 
 class Connector(ABC):
     provider: ClassVar[str]  # ID aus app.datasources.providers.PROVIDERS
     label: ClassVar[str]
     needs_credentials: ClassVar[bool] = False
+    # vom Dienst gesetzt: Zwischenspeicher für Stammdaten des Anbieters (z. B. Asset-ID → Symbol), spart Abrufe
+    catalog: Any = None
 
     @abstractmethod
     def check(self, cfg: SourceConfig, secret: Secret) -> CheckResult:
@@ -144,6 +160,11 @@ class Connector(ABC):
     @abstractmethod
     def fetch(self, cfg: SourceConfig, secret: Secret, cursor: dict[str, Any] | None) -> FetchResult:
         """Vorgänge seit ``cursor`` (bzw. vollständig) abrufen und normalisiert liefern."""
+
+    def rewind(self, cursor: dict[str, Any] | None, before: datetime) -> dict[str, Any] | None:
+        """Abrufstand so zurücksetzen, dass Vorgänge ab ``before`` erneut geliefert werden (verworfener Prüf-Stapel).
+        Standard: vollständig neu abrufen – sicher, weil bekannte Vorgänge erkannt werden."""
+        return None
 
 
 _REGISTRY: dict[str, type[Connector]] = {}

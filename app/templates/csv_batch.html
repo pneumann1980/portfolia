@@ -173,7 +173,11 @@
             <option value="" {% if rc.decision is none %}selected{% endif %}>auto: {{ 'ja' if rc.default_include else 'nein' }}</option>
             <option value="include" {% if rc.decision == 'include' %}selected{% endif %}>ja</option>
             <option value="skip" {% if rc.decision == 'skip' %}selected{% endif %}>nein</option></select>
-          {% elif rc.open %}–{% else %}✓{% endif %}</td></tr>
+          {% elif rc.open %}–{% else %}✓{% endif %}
+          {% if b.kind == 'sync' and rc.open and rc.rec.event_key %}
+            {% if rc.status in ('unclear', 'duplicate', 'new', 'invalid', 'before') %}<div><button class="btn sm ghost" type="submit" formaction="/journal/csv/{{ b.id }}/ignore" name="ignore" value="{{ rc.rec.event_key }}" title="Dieser Vorgang wird bei keinem Abruf mehr zur Prüfung vorgelegt (Entscheidung gespeichert, jederzeit aufhebbar).">dauerhaft ignorieren</button></div>
+            {% elif rc.status == 'ignored' and rc.warnings and rc.warnings[0].startswith('dauerhaft ignoriert') %}<div><button class="btn sm ghost" type="submit" formaction="/journal/csv/{{ b.id }}/ignore" name="release" value="{{ rc.rec.event_key }}">Ignorieren aufheben</button></div>{% endif %}
+          {% endif %}</td></tr>
     {% endfor %}</tbody>
   </table></div>
   <div class="row" style="margin-top:8px;justify-content:space-between">

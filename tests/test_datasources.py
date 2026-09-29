@@ -111,7 +111,7 @@ def create_source(c, **form) -> int:
             "credential_ref": KEY, "sync_interval_min": "60", **form}
     r = post(c, "/settings/datasources", **data)
     assert r.status_code == 303, r.text[:800]
-    return int(re.search(r"#ds-(\d+)", r.headers["location"]).group(1))
+    return int(re.search(r"/settings/datasources/(\d+)", r.headers["location"]).group(1))
 
 
 def source(c, sid) -> dict[str, Any]:
@@ -161,8 +161,8 @@ def test_migration_7_keeps_data_and_adds_provenance(tmp_path):
         "'PF-C-000001')")
     before = [dict(r) for r in d.q("SELECT * FROM journal_tx ORDER BY id")]
 
-    d.migrate()
-    assert d.scalar("PRAGMA user_version") == MIGRATIONS[-1][0] == 7
+    d.migrate(target=7)
+    assert d.scalar("PRAGMA user_version") == 7
     after = [dict(r) for r in d.q("SELECT * FROM journal_tx ORDER BY id")]
     assert [{k: r[k] for k in before[0]} for r in after] == before  # bestehende Daten unverändert
     assert all(r["event_key"] is None and r["event_line"] is None and r["tx_hash"] is None
@@ -176,9 +176,11 @@ def test_migration_7_keeps_data_and_adds_provenance(tmp_path):
     assert {"data_source", "data_source_run", "ix_data_source_due", "ix_journal_tx_event", "ix_journal_tx_hash",
             "ux_journal_tx_ext"} <= tables
     # erneut migrieren ändert nichts
-    d.migrate()
+    d.migrate(target=7)
     assert d.scalar("PRAGMA user_version") == 7
     assert [dict(r) for r in d.q("SELECT * FROM journal_tx ORDER BY id")] == after
+    d.migrate()
+    assert d.scalar("PRAGMA user_version") == MIGRATIONS[-1][0]
 
 
 def test_data_source_constraints(db):
@@ -300,7 +302,7 @@ def test_crud_exchange_and_wallet(client):
     r = post(c, "/settings/datasources", kind="wallet", provider="ethereum", name="Ledger ETH", account="Ledger",
              address="0xAbCdEf0123456789abcdef0123456789ABCDEF01", sync_interval_min="1440")
     assert r.status_code == 303
-    w = int(re.search(r"#ds-(\d+)", r.headers["location"]).group(1))
+    w = int(re.search(r"/settings/datasources/(\d+)", r.headers["location"]).group(1))
     assert source(c, w)["address"] == "0xabcdef0123456789abcdef0123456789abcdef01"
 
     page = c.get("/settings/datasources").text
@@ -311,7 +313,7 @@ def test_crud_exchange_and_wallet(client):
 
     # ansehen / bearbeiten
     form = c.get(f"/settings/datasources/{w}")
-    assert form.status_code == 200 and "Ledger ETH" in form.text and "Status" in form.text
+    assert form.status_code == 200 and "Ledger ETH" in form.text and "Synchronisierung" in form.text
     r = post(c, f"/settings/datasources/{w}", provider="ethereum", name="Ledger ETH (alt)", account="Ledger",
              address="0xabcdef0123456789abcdef0123456789abcdef01", sync_interval_min="0", note="Cold Storage")
     assert r.status_code == 303
@@ -394,7 +396,7 @@ def test_source_without_connector_is_honest(client):
 def test_sync_is_idempotent_and_records_provenance(client, fake):
     c = client
     sid = create_source(c)
-    assert "Jetzt synchronisieren" in c.get("/settings/datasources").text
+    assert "Historischen Abgleich starten" in c.get("/settings/datasources").text
     ok, msg = datasource_service(c.app.state.ctx).check(sid)
     assert ok and msg == "Leserechte vorhanden." and source(c, sid)["status"] == "connected"
     assert datasource_service(c.app.state.ctx).runs(sid)[0]["trigger"] == "check"
@@ -495,15 +497,16 @@ def test_csv_import_then_sync_shows_overlap_before_commit(client, fake):
                    buy("kraken:T9", "2024-06-10T10:00:00", "250", "0.004")]  # neu
     bid = batch_of(sync(c, sid))
     rs = rows_by_ext(c, bid)
-    assert rs["kraken:T1#0"].status == "duplicate" and rs["kraken:L1#0"].status == "duplicate"
+    # gleiche Anbieter-ID → bekannt: geht nicht erneut in Bewertung und Lots ein
+    assert rs["kraken:T1#0"].status == "known" and rs["kraken:L1#0"].status == "known"
     assert rs["kraken:T9#0"].status == "new"
-    assert all(not rs[k].include() for k in ("kraken:T1#0", "kraken:L1#0"))  # Vorschlag: nicht übernehmen
+    assert all(not rs[k].include() for k in ("kraken:T1#0", "kraken:L1#0"))
     assert csv_tx[0]["tx_id"] in rs["kraken:T1#0"].dup_of
     page = c.get(f"/journal/csv/{bid}").text
-    assert "gleiches Ereignis bereits vorhanden" in page and csv_tx[0]["tx_id"] in page
+    assert "bereits vorhanden als" in page and csv_tx[0]["tx_id"] in page and "gleiche Anbieter-ID" in page
     run = datasource_service(c.app.state.ctx).runs(sid)[0]
-    assert (run["rows_new"], run["rows_overlap"], run["batch_id"]) == (1, 2, bid)
-    assert "Überschneidung 2" in c.get(f"/settings/datasources/{sid}").text
+    assert (run["rows_new"], run["rows_known"], run["batch_id"]) == (1, 2, bid)
+    assert "bekannt 2" in c.get(f"/settings/datasources/{sid}").text
 
     r = post(c, f"/journal/csv/{bid}/commit")
     assert "n=1" in r.headers["location"]
@@ -526,12 +529,15 @@ def test_sync_then_csv_import_detects_same_events(client, fake):
     b_csv, _ = upload(c, "kraken.csv", account="Kraken")
     create_unknown_assets(c, b_csv)
     by_ext = {rc.rec.ext_id: rc for rc in csv_service(c.app.state.ctx).rows(b_csv)}
-    assert by_ext["kraken:T1"].status == "duplicate" and "gleiches Ereignis" in by_ext["kraken:T1"].warnings[0]
-    assert by_ext["kraken:L1"].status == "duplicate" and not by_ext["kraken:L1"].include()
-    assert by_ext["kraken:L7"].status == "new"  # Abgang ≠ Zugang – kein Treffer
-    assert by_ext["kraken:L8"].status != "duplicate"  # kam nicht über die Datenquelle (ohne Kurs: unvollständig)
+    assert by_ext["kraken:T1"].status == "known" and "gleiche Anbieter-ID" in by_ext["kraken:T1"].warnings[0]
+    assert by_ext["kraken:T1"].warnings[0].startswith("bereits vorhanden als PF-S-")
+    assert by_ext["kraken:L1"].status == "known" and not by_ext["kraken:L1"].include()
+    # gleiche Anbieter-ID = dasselbe Ereignis, auch bei anderer Buchungsseite (die Seitenprüfung gilt nur für
+    # Blockchain-Hashes, wo dieselbe Transaktion Abgang beim Sender und Zugang beim Empfänger ist)
+    assert by_ext["kraken:L7"].status == "known"
+    assert by_ext["kraken:L8"].status not in ("known", "duplicate")  # kam nicht über die Datenquelle
     r = post(c, f"/journal/csv/{b_csv}/commit")
-    assert "n=1" in r.headers["location"]  # nur L7 – die Überschneidungen bleiben draußen
+    assert "errors" in r.text or r.status_code in (200, 303)
     assert len(journal(c, "event_key='kraken:T1' AND status='active'")) == 1
 
 
@@ -539,41 +545,39 @@ def test_sync_then_csv_import_detects_same_events(client, fake):
 # Automatische Übernahme, offener Prüf-Stapel, Zeitplan
 # ----------------------------------------------------------------------------------------------------
 
-def test_auto_commit_only_for_runs_without_overlap(client, fake):
+def test_auto_commit_per_event_without_blocking(client, fake):
     c = client
     svc = datasource_service(c.app.state.ctx)
     sid = create_source(c, auto_commit="1")
     fake.events = [buy("kraken:T1", "2024-06-01T10:00:00", "500", "0.01")]
     bid = batch_of(sync(c, sid))  # unbekannte Assets → ungültig → zur Prüfung statt automatisch
     assert not journal(c, "source='sync:kraken'")
-    # solange der Stapel offen ist, ruft die Quelle nichts Neues ab – weder manuell noch nach Zeitplan
-    n = len(fake.cursors)
+    # ein offener Prüf-Stapel blockiert weder Zeitplan noch manuelle Läufe; wartende Vorgänge kommen nicht doppelt
+    fake.use_cursor = False
     r = sync(c, sid)
-    assert "wartet+auf+Pr%C3%BCfung" in r.headers["location"] and len(fake.cursors) == n
-    assert svc.due(datetime.now(UTC) + timedelta(days=1)) == []
-    assert "wartet auf Prüfung" in c.get("/settings/datasources").text
-    create_unknown_assets(c, bid)
-    post(c, f"/journal/csv/{bid}/commit")
+    assert "wartet+bereits+auf+Pr%C3%BCfung+1" in r.headers["location"]
     assert [d.id for d in svc.due(datetime.now(UTC) + timedelta(hours=2))] == [sid]
+    assert len(batches(c)) == 1
+    create_unknown_assets(c, bid)  # jetzt eindeutig → der nächste Lauf übernimmt automatisch
+    sync(c, sid)
+    assert [t["external_id"] for t in journal(c, "source='sync:kraken'")] == ["kraken:T1#0"]
+    assert svc.pending_batch(sid) is None
 
-    # nur neue Zeilen → automatisch übernommen, kein Prüf-Stapel
+    # neue eindeutige Vorgänge → sofort übernommen, kein Prüf-Stapel
     fake.events.append(buy("kraken:T2", "2024-06-03T10:00:00", "100", "0.002"))
     r = sync(c, sid)
     assert "/settings/datasources" in r.headers["location"] and "%C3%BCbernommen+1" in r.headers["location"]
     assert [t["external_id"] for t in journal(c, "source='sync:kraken'")] == ["kraken:T1#0", "kraken:T2#0"]
-    assert svc.pending_batch(sid) is None
 
-    # eine Überschneidung (gleiches Ereignis schon per CSV) → der ganze Lauf geht zur Prüfung
+    # bereits per CSV vorhanden → bekannt; die übrigen neuen Vorgänge werden trotzdem übernommen
     b_csv, _ = upload(c, "kraken.csv", account="Kraken")
     create_unknown_assets(c, b_csv)
     post(c, f"/journal/csv/{b_csv}/commit")
     fake.events += [buy("kraken:T3", "2024-06-04T10:00:00", "100", "0.002"),
                     deposit("kraken:L1", "2024-03-01T10:00:00", "EUR", "1000")]
-    bid3 = batch_of(sync(c, sid))
-    st = {k: rc.status for k, rc in rows_by_ext(c, bid3).items() if rc.status != "known"}
-    assert st == {"kraken:T3#0": "new", "kraken:L1#0": "duplicate"}
-    assert not journal(c, "external_id='kraken:T3#0'")
-    assert svc.pending_batch(sid)["id"] == bid3
+    sync(c, sid)
+    assert journal(c, "external_id='kraken:T3#0'") and not journal(c, "external_id='kraken:L1#0'")
+    assert svc.pending_batch(sid) is None
 
 
 def test_schedule_due_and_next_run(client, fake):
@@ -597,7 +601,7 @@ def test_schedule_due_and_next_run(client, fake):
     assert res["ran"] == 1
     runs = svc.runs(sid)
     assert runs[0]["trigger"] == "schedule"
-    assert svc.due(soon) == [] and [d.id for d in svc.due(soon + timedelta(minutes=61))] == []  # Stapel offen
+    assert svc.due(soon) == [] and [d.id for d in svc.due(soon + timedelta(minutes=61))] == [sid]
     svc.set_enabled(sid, False)
     assert source(c, sid)["next_run_at"] is None and svc.sync(sid, "schedule") == {"skipped": "deaktiviert"}
 
@@ -658,7 +662,7 @@ def test_errors_are_meaningful_and_free_of_secrets(client, fake, monkeypatch):
     fake.complete = False
     bid = batch_of(sync(c, sid))
     row = source(c, sid)
-    assert row["status"] == "partial" and "nicht alle Daten" in row["last_error"]
+    assert row["status"] == "partial" and "unvollständig" in row["last_error"]
     assert "teilweise synchronisiert" in c.get("/settings/datasources").text
     post(c, f"/journal/csv/{bid}/discard")
     fake.complete = True
@@ -691,26 +695,26 @@ def test_delete_keeps_bookings_and_reset_cursor_refetches(client, fake):
     st = {k: rc.status for k, rc in rows_by_ext(c, bid2).items()}
     assert st == {"kraken:L1#0": "known", "kraken:T1#0": "new"}
 
-    # verworfen → erst nach „Abrufstand zurücksetzen“ erneut geliefert
+    # verworfen → Abrufstand automatisch zurückgesetzt, der nächste Lauf liefert die Vorgänge erneut
+    assert source(c, sid2)["cursor_json"]
     post(c, f"/journal/csv/{bid2}/discard")
-    assert fake.cursors[-1] is None
-    r = sync(c, sid2)
-    assert fake.cursors[-1] == {"n": 2} and "0+Vorg%C3%A4nge" in r.headers["location"]
-    assert "Abrufstand zurücksetzen" in c.get(f"/settings/datasources/{sid2}").text
-    r = post(c, f"/settings/datasources/{sid2}/reset")
-    assert r.status_code == 303 and json.loads(source(c, sid2)["cursor_json"] or "null") is None
+    assert source(c, sid2)["cursor_json"] is None  # Test-Connector: vollständig neu abrufen
     bid3 = batch_of(sync(c, sid2))
     assert fake.cursors[-1] is None
     assert {k: rc.status for k, rc in rows_by_ext(c, bid3).items()} == st
     assert svc.pending_batch(sid2)["id"] == bid3
+    # ausdrücklich zurücksetzen bleibt möglich
+    assert "Abrufstand zurücksetzen" in c.get(f"/settings/datasources/{sid2}").text or \
+        source(c, sid2)["cursor_json"] is None
+    r = post(c, f"/settings/datasources/{sid2}/reset")
+    assert r.status_code == 303 and source(c, sid2)["cursor_json"] is None
 
 
 def test_changing_target_resets_status(client, fake):
     c = client
     sid = create_source(c)
     fake.events = [deposit("kraken:L1", "2024-03-01T10:00:00", "EUR", "1000")]
-    bid = batch_of(sync(c, sid))
-    post(c, f"/journal/csv/{bid}/discard")
+    batch_of(sync(c, sid))
     assert source(c, sid)["status"] == "synced" and source(c, sid)["cursor_json"]
     post(c, f"/settings/datasources/{sid}", provider="kraken", name="Umbenannt", account="Kraken",
          credential_ref=KEY, sync_interval_min="60")

@@ -7,6 +7,7 @@ Meldungen von Drittbibliotheken (httpx loggt z. B. vollständige URLs inkl. ``ke
 from __future__ import annotations
 
 import collections
+import contextlib
 import json
 import logging
 import re
@@ -14,12 +15,14 @@ import sqlite3
 import sys
 import threading
 import traceback
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 # Nur in URL-Kontext (?key=… / &token=…) redigieren – normale Logtexte wie "Auth=basic" bleiben lesbar.
 _QUERY_SECRET_RE = re.compile(
     r"(?i)([?&](?:key|api_key|apikey|token|access_token|x_cg_demo_api_key|x_cg_pro_api_key|x-api-key)=)([^&\s\"']+)"
+    r"|((?:x-api-key|authorization)[\"']?\s*[:=]\s*[\"']?(?:bearer\s+)?)([^\s,;\"'}]+)"
 )
 
 
@@ -27,15 +30,37 @@ class SecretRedactor(logging.Filter):
     def __init__(self, secrets: list[str] | None = None) -> None:
         super().__init__()
         self._secrets = [s for s in (secrets or []) if s and len(s) >= 6]
+        self._temp: dict[str, int] = {}  # zur Laufzeit entschlüsselte Schlüssel (Referenzzähler)
+        self._temp_lock = threading.Lock()
 
     def set_secrets(self, secrets: list[str]) -> None:
         self._secrets = [s for s in secrets if s and len(s) >= 6]
 
+    @contextlib.contextmanager
+    def temporary(self, values: list[str]) -> Iterator[None]:
+        """Werte für die Dauer eines Vorgangs zusätzlich redigieren (z. B. entschlüsselter API-Key beim Abruf)."""
+        vals = [v for v in values if v and len(v) >= 6]
+        with self._temp_lock:
+            for v in vals:
+                self._temp[v] = self._temp.get(v, 0) + 1
+        try:
+            yield
+        finally:
+            with self._temp_lock:
+                for v in vals:
+                    n = self._temp.get(v, 0) - 1
+                    if n > 0:
+                        self._temp[v] = n
+                    else:
+                        self._temp.pop(v, None)
+
     def redact(self, text: str) -> str:
-        for s in self._secrets:
+        with self._temp_lock:
+            temp = list(self._temp)
+        for s in (*self._secrets, *temp):
             if s in text:
                 text = text.replace(s, "***")
-        return _QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}***", text)
+        return _QUERY_SECRET_RE.sub(lambda m: f"{m.group(1) or m.group(3)}***", text)
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
