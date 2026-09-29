@@ -383,6 +383,7 @@ body.panel-open { overflow: hidden; }
 .fact .k { font-size: 0.78rem; color: var(--ink-2); }
 .fact .v { font-weight: 580; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .fact .v .delta { white-space: normal; }
+.fact .v .hint { font-weight: 400; }
 .target-bar { position: relative; height: 34px; margin: 10px 4px 22px; }
 .target-bar .track { position: absolute; top: 14px; left: 0; right: 0; height: 6px; border-radius: 3px; background: var(--surface-3); }
 .target-bar .range { position: absolute; top: 14px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--accent) 35%, transparent); }
@@ -491,3 +492,4 @@ table.journal select { max-width: 9em; }
 
 /* API-Keys: Eingabe maskieren (kein Passwortfeld – Browser sollen nichts speichern oder vorschlagen) */
 .secret-input { -webkit-text-security: disc; text-security: disc; }
+.wrap-any, .wrap-any .mono { overflow-wrap: anywhere; }

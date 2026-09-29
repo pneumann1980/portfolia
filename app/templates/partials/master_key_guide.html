@@ -1,5 +1,5 @@
 {# Einrichtung des Master-Keys (einmalig, außerhalb der App). Erwartet optional: open (bool). #}
-<details class="box" style="margin-top:8px"{% if open %} open{% endif %}><summary>Master-Key einrichten (einmalig)</summary>
+<details class="box wrap-any" style="margin-top:8px"{% if open %} open{% endif %}><summary>Master-Key einrichten (einmalig)</summary>
   <p class="small" style="margin:8px 0 4px">Portfolia speichert API-Keys nur verschlüsselt. Der Schlüssel dafür liegt bewusst
     <b>nicht</b> in der Datenbank, sondern als Datei außerhalb von appdata – deshalb dieser eine Schritt im Unraid-Terminal
     (<b>&gt;_</b> oben rechts):</p>
