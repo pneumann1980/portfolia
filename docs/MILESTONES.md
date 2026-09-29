@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.09.2026 · Version 0.11.1 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.09.2026 · Version 0.11.2 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -444,6 +444,13 @@ Anlass (29.09.2026): Die Aktualisierungsrate soll einstellbar sein, mit Empfehlu
 **Tests:** `tests/test_price_budget.py` (8 Fälle) – Stufen, Hochrechnung und Empfehlung (Demo, Pro, viele Coins,
 viel Historie), Drosselbetrieb, Yahoo, Kennzahlen aus dem Ledger (gehalten/verkauft), `crypto_due` mit Stufen,
 Einstellungsseite und Speichern inkl. Validierung, Umplanung ohne Neustart.
+
+**Nachtrag 0.11.2 – Krypto „veraltet“:** Die Warnung erschien regelmäßig, weil das Alter des Kurses aus
+CoinGeckos `last_updated_at` (letzte Kursänderung) berechnet wurde – bei wenig gehandelten Coins oft über 60 min,
+obwohl gerade abgerufen. Jetzt zählt das Alter des letzten erfolgreichen Abrufs (`quote_latest.fetched_at`, Grenze
+`prices.stale_crypto_minutes`); eine lange unveränderte Kursangabe wird erst ab `prices.stale_crypto_market_hours`
+(Standard 24 h) gewarnt. Jede Warnung nennt den Grund (Kontingent, Pause nach Fehlern mit Fehlertext, keine Daten
+für die ID, Abruf ausstehend); die Übersicht fasst gleiche Gründe zusammen. Tests: `tests/test_price_freshness.py`.
 
 **Grenzen M13:** Hochrechnung, keine Messung: Neustarts, manuelle Aktualisierungen und neue Coins stecken pauschal in
 der Reserve; Yahoo-Werte sind Obergrenzen ohne Feiertagskalender; der Zähler kennt nur Portfolias eigene Aufrufe.

@@ -26,7 +26,8 @@ DEFAULTS: dict[str, Any] = {
         {"id": "btc", "name": "Bitcoin (EUR)", "series": "yahoo:BTC-EUR"},
     ],
     # Kurse
-    "prices.stale_crypto_minutes": 60,
+    "prices.stale_crypto_minutes": 60,  # Krypto: Alter des letzten erfolgreichen Abrufs
+    "prices.stale_crypto_market_hours": 24,  # Krypto: letzte Kursänderung laut Quelle (wenig Handel)
     "prices.stale_security_hours": 24,
     # Ersatzkurse (manuell/Transaktionskurs) ohne Marktkurse: Gültigkeit nach dem letzten Kurs, 0 = unbegrenzt
     "prices.fallback_max_age_crypto_days": 30,

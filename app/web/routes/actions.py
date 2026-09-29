@@ -105,6 +105,7 @@ async def save_settings(request: Request) -> Response:
         s.set("prices.crypto_throttled_interval_min", max(throttled, crypto))  # gedrosselt nie häufiger
         s.set("prices.stock_interval_min", snap(f.get("stock_interval_min"), SECURITY_PRESETS, 15))
         s.set("prices.stale_crypto_minutes", _int(f.get("stale_crypto_minutes"), 60, 5, 1440))
+        s.set("prices.stale_crypto_market_hours", _int(f.get("stale_crypto_market_hours"), 24, 1, 720))
         s.set("prices.stale_security_hours", _int(f.get("stale_security_hours"), 24, 1, 240))
         s.set("prices.coingecko_monthly_limit", _int(f.get("coingecko_monthly_limit"), 10000, 100, 10_000_000))
         s.set("prices.coingecko_throttle_pct", _int(f.get("coingecko_throttle_pct"), 80, 10, 100))

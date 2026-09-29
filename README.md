@@ -678,8 +678,13 @@ verworfen oder durch den nächsten Import als „nicht im Import“ entfernt wer
 | EZB (Frankfurter, EZB-ZIP als Fallback) | Devisenkurse für EUR-Umrechnung | täglich |
 | `manual_prices.csv` + Transaktionskurse | Ersatzkurse für Assets ohne Marktkurse | siehe unten |
 
-* Jeder Kurs trägt Zeitstempel und Quelle. **Veraltet** gilt ein Kurs nach > 24 h (Aktien, nur an
-  Handelstagen) bzw. > 1 h (Krypto) – deutlich markiert, nie still durch 0 ersetzt.
+* Jeder Kurs trägt Zeitstempel und Quelle. **Veraltet** gilt ein Kurs – deutlich markiert, nie still durch 0
+  ersetzt, mit Grund in Übersicht, Positionsliste und Datenqualität:
+  * Aktien/ETFs: Kursstand älter als 24 h, gezählt nur an Handelstagen.
+  * Krypto: letzter **erfolgreicher Abruf** älter als 60 min (Grund z. B. „CoinGecko nach Fehlern pausiert bis
+    15:30 (HTTP 429)“, „Monatskontingent erschöpft“, „für diese ID kein Kurs“) **oder** CoinGecko meldet seit mehr
+    als 24 h keine Kursänderung (wenig oder kein Handel). Dass kleine Coins ihren Kurs bei CoinGecko oft
+    stundenlang nicht ändern, ist allein kein Grund zur Warnung. Beide Grenzen unter *Einstellungen → Kurse*.
 * Fällt eine Quelle aus, bleibt der letzte Wert mit Warnung stehen; die Quelle wird mit exponentiellem
   Backoff erneut versucht.
 * Zeitplan (Standard): Krypto alle 10 min, Aktien/ETFs und Devisen alle 15 min zu EU/US-Handelszeiten

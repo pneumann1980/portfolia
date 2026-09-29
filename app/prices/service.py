@@ -47,6 +47,16 @@ class UpdateResult:
                 "errors": (self.errors or [])[:20]}
 
 
+def _age_text(d: timedelta) -> str:
+    minutes = int(d.total_seconds() // 60)
+    if minutes < 90:
+        return f"{minutes} Min."
+    hours = minutes / 60
+    if hours < 48:
+        return f"{hours:.0f} Std."
+    return f"{hours / 24:.0f} Tagen"
+
+
 class PriceService:
     def __init__(self, db: Database, settings: Settings, store: PriceStore, *, yahoo: YahooProvider | None,
                  coingecko: CoinGeckoProvider | None, ecb: EcbProvider | None, demo: DemoProvider | None = None,
@@ -102,6 +112,45 @@ class PriceService:
             days -= 1  # heutiger Handel hat noch nicht (sicher) begonnen
         return days >= 1
 
+    def _crypto_fetch_reason(self, now: datetime) -> str:
+        """Warum Krypto-Kurse nicht aktualisiert wurden (für die Anzeige, ohne Geheimnisse)."""
+        b = self.cg_budget()
+        if b["exhausted"]:
+            return "CoinGecko-Monatskontingent erschöpft – Abruf wieder ab Monatswechsel"
+        row = self.db.q1("SELECT next_allowed, last_error FROM source_status WHERE source_id='price:coingecko'")
+        nxt = parse_iso(row["next_allowed"]) if row is not None and row["next_allowed"] else None
+        if nxt is not None and nxt > now:
+            err = f" ({row['last_error'][:80]})" if row["last_error"] else ""
+            return f"CoinGecko nach Fehlern pausiert bis {nxt.astimezone(local_tz()).strftime('%H:%M')}{err}"
+        if self.cg is None and not self.demo:
+            return "CoinGecko nicht konfiguriert"
+        if b["throttled"]:
+            return "CoinGecko gedrosselt (Kontingent) – Abruf seltener"
+        return "letzter Abruf liegt zurück (Container aus oder Abruf fehlgeschlagen)"
+
+    def _crypto_quote_state(self, market: datetime | None, fetched: datetime | None, now: datetime,
+                            reason: Callable[[], str]) -> tuple[bool, str | None]:
+        """Krypto: „veraltet“ heißt, der letzte erfolgreiche Abruf ist älter als die Grenze. Liefert CoinGecko
+        frisch einen Kurs, dessen letzte Änderung lange zurückliegt (wenig Handel), ist er nur veraltet, wenn die
+        Änderung länger als ``prices.stale_crypto_market_hours`` her ist – sonst stünden kleine Coins ständig in der
+        Warnung, obwohl es keinen neueren Kurs gibt."""
+        limit = timedelta(minutes=float(self.settings.get("prices.stale_crypto_minutes", 60)))
+        fetched = fetched or market
+        if fetched is None:
+            return True, "noch kein Kurs abgerufen"
+        if now - fetched > limit:
+            last = parse_iso(self.db.get_state("last_crypto_update"))
+            if last is not None and last - fetched > timedelta(minutes=5) and now - last <= limit:
+                why = "CoinGecko liefert für diese ID derzeit keinen Kurs – Zuordnung unter Datenqualität prüfen"
+            else:
+                why = reason()
+            return True, f"letzter Abruf vor {_age_text(now - fetched)}: {why}"
+        market_limit = timedelta(hours=float(self.settings.get("prices.stale_crypto_market_hours", 24)))
+        if market is not None and now - market > market_limit:
+            return True, (f"CoinGecko meldet seit {_age_text(now - market)} keine Kursänderung – wenig oder kein "
+                          "Handel")
+        return False, None
+
     # -- Bewertung ----------------------------------------------------------------------------------
     def fx_to_eur(self, ccy: str | None) -> tuple[float | None, str | None]:
         """Faktor für Umrechnung in EUR (Preis_EUR = Preis × Faktor)."""
@@ -129,6 +178,13 @@ class PriceService:
         out: dict[str, PriceInfo] = {}
         pending: list[AssetInfo] = []  # ohne Marktkurs → Ersatzkurs
         today = today_local()
+        reason_cache: list[str] = []
+
+        def reason() -> str:
+            if not reason_cache:
+                reason_cache.append(self._crypto_fetch_reason(now))
+            return reason_cache[0]
+
         for a in assets:
             if a.is_fiat:
                 if a.asset_id.upper() == "EUR":
@@ -155,8 +211,13 @@ class PriceService:
                         prev = q["prev_close"] * f if q["prev_close"] else None
                         if prev is None:
                             prev = self._prev_close_eur(s, today, f)
+                        if a.is_crypto:
+                            stale, note = self._crypto_quote_state(parse_iso(q["market_time"]),
+                                                                   parse_iso(q["fetched_at"]), now, reason)
+                        else:
+                            stale, note = self.is_stale(a, ts, now), None
                         out[a.asset_id] = PriceInfo(q["price"] * f, q["price"], q["ccy"], ts, q["source"], "quote",
-                                                    self.is_stale(a, ts, now), prev, fx_rate=f)
+                                                    stale, prev, fx_rate=f, note=note)
                         continue
                 row = self.store.last_daily(s)
                 if row is not None:

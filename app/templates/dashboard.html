@@ -8,7 +8,9 @@
 {% block content %}
 <div id="refresh-msg" class="row" style="margin-bottom:8px"></div>
 {% set stale_n = val.stale|length %}{% set unval_n = val.unvalued|length %}
-{% if stale_n %}<div class="alert warn"><span class="icon">!</span><div>{{ stale_n }} Kurs{{ 'e' if stale_n != 1 }} veraltet – es wird der letzte bekannte Wert verwendet.
+{% if stale_n %}{% set reasons = val.stale|map(attribute='price.note')|select|unique|list %}
+<div class="alert warn"><span class="icon">!</span><div>{{ stale_n }} Kurs{{ 'e' if stale_n != 1 }} veraltet – es wird der letzte bekannte Wert verwendet{% if reasons|length == 1 %}: {{ reasons[0] }}{% elif reasons %} ({{ reasons|length }} Gründe){% endif %}.
+  {% if stale_n <= 4 %}<span class="hint">{% for p in val.stale %}{{ p.asset.name }}{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}
   <a href="/quality#prices">Details</a></div></div>{% endif %}
 {% if unval_n %}<div class="alert"><span class="icon">i</span><div>{{ unval_n }} Position{{ 'en' if unval_n != 1 }} ohne gültigen Kurs (mit 0 € angesetzt):
   {% for p in val.unvalued[:6] %}{{ p.asset.name }}{{ ', ' if not loop.last }}{% endfor %}{% if unval_n > 6 %} …{% endif %}

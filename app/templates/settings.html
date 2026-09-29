@@ -85,7 +85,9 @@
     {% if pp.stale_hint %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div>{{ pp.stale_hint }}</div></div>{% endif %}
     <h3 style="margin-top:14px">Bewertung</h3>
     <div class="grid-3">
-      <label class="field">Krypto veraltet nach (Minuten)<input type="number" name="stale_crypto_minutes" min="5" value="{{ s['prices.stale_crypto_minutes'] }}"></label>
+      <label class="field">Krypto veraltet nach (Minuten ohne erfolgreichen Abruf)<input type="number" name="stale_crypto_minutes" min="5" value="{{ s['prices.stale_crypto_minutes'] }}"></label>
+      <label class="field">Krypto ohne Kursänderung veraltet nach (Stunden)<input type="number" name="stale_crypto_market_hours" min="1" max="720" value="{{ s['prices.stale_crypto_market_hours'] }}">
+        <span class="hint">Wenig gehandelte Coins ändern ihren Kurs bei CoinGecko teils stundenlang nicht – das ist erst ab dieser Dauer eine Warnung wert.</span></label>
       <label class="field">Aktien veraltet nach (Stunden, an Handelstagen)<input type="number" name="stale_security_hours" min="1" value="{{ s['prices.stale_security_hours'] }}"></label>
       <label class="field">CoinGecko-Monatslimit<input type="number" name="coingecko_monthly_limit" min="100" value="{{ s['prices.coingecko_monthly_limit'] }}"></label>
       <label class="field">Drosseln ab (% des Limits)<input type="number" name="coingecko_throttle_pct" min="10" max="100" value="{{ s['prices.coingecko_throttle_pct'] }}"></label>
