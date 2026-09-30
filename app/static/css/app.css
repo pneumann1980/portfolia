@@ -295,7 +295,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 .btn.ghost { background: transparent; }
 .btn.sm { padding: 6px 9px; min-height: 30px; font-size: 0.8rem; }
 .btn[disabled] { opacity: 0.55; cursor: not-allowed; }
-.icon-btn { background: none; border: 0; padding: 6px; border-radius: var(--radius-sm); color: var(--ink-2); cursor: pointer; display: inline-flex; }
+.icon-btn { background: none; border: 0; padding: 6px; border-radius: var(--radius-sm); color: var(--ink-2); cursor: pointer; display: inline-flex; text-decoration: none; line-height: 1.2; }
 .icon-btn:hover { background: var(--surface-2); color: var(--ink); }
 .icon-btn svg { width: 20px; height: 20px; }
 
@@ -493,3 +493,5 @@ table.journal select { max-width: 9em; }
 /* API-Keys: Eingabe maskieren (kein Passwortfeld – Browser sollen nichts speichern oder vorschlagen) */
 .secret-input { -webkit-text-security: disc; text-security: disc; }
 .wrap-any, .wrap-any .mono { overflow-wrap: anywhere; }
+/* Buchungsliste: Aktionen dürfen umbrechen (Symbole unter „Bearbeiten“), statt die Tabelle zu verbreitern */
+table.journal td.actions { white-space: normal; min-width: 7.5rem; }

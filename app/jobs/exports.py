@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.context import AppContext
@@ -44,7 +44,8 @@ DELAY_S = 120
 EXPORT_RE = re.compile(r"^portfolia-export-(\d{4}-\d{2}-\d{2}_\d{6})\.zip$")
 ARCHIVE_RE = re.compile(r"^import-(\d{4}-\d{2}-\d{2}_\d{6})-([0-9a-f]{12})-[A-Za-z0-9._-]{1,100}\.zip$")
 ARCHIVE_DIR = "import-archiv"
-HASHED = ("transactions.csv", "assets.csv", "accounts.csv", "manual_prices.csv")
+# Inhalt, der eine neue Sicherung rechtfertigt (ohne Stichtags-Bestände, API-Verbrauch und Kurshistorie)
+HASHED = ("transactions.csv", "assets.csv", "accounts.csv", "manual_prices.csv", "portfolia/state.json")
 
 
 def content_hash(zip_bytes: bytes) -> str:
@@ -219,6 +220,29 @@ def make_router() -> APIRouter:
         if "file" not in res:
             return HTMLResponse(f'<span class="badge">Kein Export: {res.get("skipped", "")}</span>')
         return HTMLResponse(f'<span class="badge good">Gesichert: {res["file"]} ({res["bytes"] // 1024} KB)</span>')
+
+    @router.post("/actions/restore/{action}")
+    async def restore_action(request: Request, action: str) -> Response:
+        """Zusatzdaten eines importierten Portfolia-Exports übernehmen oder die Rückfrage verwerfen."""
+        from app import fullexport
+
+        ctx = get_ctx(request)
+        f = await request.form()
+        st = fullexport.status(ctx)
+        try:
+            iid = int(str(f.get("import_id") or "0"))
+        except ValueError:
+            iid = 0
+        if st is None or st["import_id"] != iid or action not in ("apply", "dismiss"):
+            raise HTTPException(404)
+        if action == "apply":
+            await run_in_threadpool(fullexport.apply, ctx, iid)
+        else:
+            fullexport.dismiss(ctx, iid)
+        target = f"/settings?saved=restore_{action}#export"
+        if request.headers.get("hx-request") == "true":
+            return Response(status_code=204, headers={"HX-Redirect": target})
+        return Response(status_code=303, headers={"Location": target})
 
     @router.get("/exports/{name}")
     def download(request: Request, name: str) -> FileResponse:

@@ -14,8 +14,10 @@ YouTube-Videos werden je Position gefiltert.
   gespeichert, jede Buchung vor der Übernahme prüfbar). In der App erfasste
   Buchungen und Assets liegen neben abgeleiteten Daten (Kurse, News, Snapshots, Berichte) in `/data/app.sqlite`.
 * **Export und Sicherung:** Alles lässt sich jederzeit im einheitlichen Import-Format (Datenvertrag, Schema 1.1)
-  exportieren; nach jeder Änderung entsteht automatisch eine **datierte ZIP-Sicherung**, importierte ZIP-Dateien
-  werden mit Datum archiviert (siehe [Backups](#einstellungen-sicherheit-backups)).
+  exportieren – **vollständig**, inklusive aller Änderungen in der App, Kursquellen, Einstellungen und Kurshistorie,
+  sodass eine neue Installation mit einer Datei denselben Stand erreicht (siehe [Neu einrichten](#neu-einrichten-und-umziehen));
+  nach jeder Änderung entsteht automatisch eine **datierte ZIP-Sicherung**, importierte ZIP-Dateien werden mit Datum
+  archiviert (siehe [Backups](#einstellungen-sicherheit-backups)).
 * **Sparpläne:** Laufende Sparpläne werden erkannt und nach dem Datenstand als **markierte Schätzung**
   fortgeführt, bis der Import oder eine manuell erfasste Buchung die echte Ausführung enthält (siehe
   [Sparpläne](#sparpläne)).
@@ -182,6 +184,7 @@ Ein Import ist eine ZIP-Datei mit folgendem Inhalt (optional in genau einem Unte
 | `issues.csv` | ja | bekannte Datenprobleme (Anzeige unter Datenqualität) |
 | `manual_prices.csv` | nein | Kurse für Assets ohne Kursquelle |
 | `accounts.csv` | nein | Konten/Depots mit Broker, Depotgruppe und optional Steuerabzug |
+| `portfolia/…` | nein | nur Portfolia-Gesamtexporte: App-Zustand für die [Neueinrichtung](#neu-einrichten-und-umziehen), Prüfsummen im Manifest unter `extra_files`; kein Teil des Datenvertrags, andere Werkzeuge ignorieren den Ordner |
 
 CSV: UTF-8, Komma als Trenner, **Punkt als Dezimaltrenner**, erste Zeile Spaltennamen. Unbekannte Spalten
 werden mitgespeichert (z. B. `tax_type` in `assets.csv`, `tax_withholding` in `accounts.csv`).
@@ -278,8 +281,14 @@ Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Port
 * **Prüfung:** derselbe Validator wie beim Import (Pflichtbeine, `value_eur`, Transfers …). Hinweise, wenn
   ein Abgang den Bestand eines Kontos ins Minus drückt oder eine manuelle Buchung einer Import-Buchung stark
   ähnelt (gleiche Konten und Assets, ±2 Tage, Menge ±1 % → „Dublette?“, auch unter *Datenqualität*).
-* **Bearbeiten, Kopieren, Löschen:** IDs `PF-M-000001` ff.; Import-Buchungen lassen sich als Vorlage kopieren.
-  Löschen ist umkehrbar; jede Änderung steht im Änderungsprotokoll (*Datenqualität*).
+* **Bearbeiten, Kopieren, Löschen – für alle Buchungen:** in der App erfasste (IDs `PF-M-000001` ff.), per CSV
+  oder Datenquelle übernommene und **Buchungen des kuratierten Imports**. Import-Buchungen werden im Expertenmodus
+  (alle Felder des Datenvertrags) bearbeitet; die Import-Datei bleibt unverändert, die Änderung gilt als
+  Überlagerung – in allen Berechnungen, im Gesamtexport und auch für spätere Importe mit derselben `tx_id`.
+  Liefert ein neuer Import eine andere Fassung oder fehlt die Buchung dort, erscheint ein Hinweis („Import
+  geändert“ bzw. „ohne Wirkung“). „Verwerfen“ stellt die Import-Fassung wieder her. Freigegebene und geschätzte
+  Sparplan-Ausführungen lassen sich aus der Liste heraus bearbeiten oder verwerfen. Löschen ist immer umkehrbar
+  (*Gelöschte Buchungen*); jede Änderung steht im Änderungsprotokoll (*Datenqualität*).
 * **Assets:** neue Positionen mit Kursquelle (CoinGecko-ID bzw. Yahoo-Symbol), Kategorie und Steuerart
   anlegen. Definiert der Import dasselbe Asset, gelten dessen Stammdaten.
 * **Zusammenspiel mit dem Import:** Der Import bleibt unverändert, manuelle Buchungen kommen hinzu. Enthält ein
@@ -287,10 +296,12 @@ Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Port
   [Abgleich](#doppelzählung-zwischen-kuratiertem-import-und-app-buchungen)), gilt die Import-Buchung (keine
   Doppelzählung); ähnliche Buchungen mit anderer ID landen unter *Buchungen → Abgleich mit dem Import* zur
   Entscheidung. Manuell erfasste Sparplan-Ausführungen ersetzen passende Schätzungen.
-* **Gesamtexport:** Import + manuelle und per CSV importierte Buchungen + freigegebene Sparplan-Ausführungen als
-  Import-ZIP (Schema 1.1, mit aktuellem Bestand als `holdings_check`, steuerlichen Einstufungen als `tax_type` bzw.
-  `tax_withholding` und allen Konten) – als Sicherung, zum Umzug oder als neuer kuratierter Import. Zusätzlich
-  entsteht nach jeder Änderung automatisch eine datierte Kopie (siehe [Backups](#einstellungen-sicherheit-backups)).
+* **Gesamtexport:** alle Buchungen in ihrer wirksamen Fassung (Import mit Änderungen und Löschungen, manuell, per CSV
+  und Datenquelle erfasst, freigegebene Sparplan-Ausführungen) als Import-ZIP (Schema 1.1, mit aktuellem Bestand als
+  `holdings_check`, steuerlichen Einstufungen als `tax_type` bzw. `tax_withholding`, allen Konten und allen Assets
+  samt **Kursquelle** – auch in der App zugeordnete CoinGecko-IDs). Dazu der App-Zustand im Ordner `portfolia/`
+  (siehe [Neu einrichten](#neu-einrichten-und-umziehen)). Zusätzlich entsteht nach jeder Änderung automatisch eine
+  datierte Kopie (siehe [Backups](#einstellungen-sicherheit-backups)).
 * **Ohne Import:** Alle Ansichten (Positionen, Performance, Steuern, Sparpläne) funktionieren auch nur mit
   manuell erfassten Buchungen. Steuerberichte weisen manuell erfasste Buchungen des Jahres aus.
 
@@ -867,14 +878,42 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
   `app.sqlite-wal`/`-shm` entfernen, Container starten. Gespeicherte API-Keys sind darin nur verschlüsselt
   enthalten und brauchen nach einem Restore denselben Master-Key. **Wichtig:** In Portfolia erfasste und per CSV
   importierte Buchungen und Assets existieren nur in der App-Datenbank – deshalb zusätzlich:
-* **ZIP-Sicherungen im Import-Format:** Nach jeder Änderung an Buchungen (manuell, CSV-Import, Sparplan-
-  Freigabe, neuer Import, Assets) schreibt Portfolia – gebündelt nach zwei Minuten ohne weitere Änderung – eine
-  datierte Datei `portfolia-export-JJJJ-MM-TT_HHMMSS.zip` nach `EXPORT_DIR` (Standard `/data/exports`), nur wenn
-  sich der Inhalt geändert hat. Jede Datei ist ein vollständiger kuratierter Import (Schema 1.1) und lässt sich
-  direkt in den Importordner legen; Journal-Buchungen werden dabei über ihre `tx_id` erkannt (keine Doppelzählung).
-  Jede erfolgreich importierte ZIP-Datei wird zusätzlich mit Datum unter `EXPORT_DIR/import-archiv/` abgelegt.
-  Aufbewahrung (Standard 30 Sicherungen, 20 Import-Kopien), manuelles Sichern und Download unter
-  *Einstellungen → ZIP-Sicherungen*. Empfehlung: `EXPORT_DIR` auf eine Freigabe mit eigener Sicherung legen.
+* **ZIP-Sicherungen im Import-Format:** Nach jeder Änderung an Buchungen oder Einstellungen (manuell, CSV-Import,
+  Sparplan-Freigabe, neuer Import, Assets, Kursquellen) schreibt Portfolia – gebündelt nach zwei Minuten ohne weitere
+  Änderung – eine datierte Datei `portfolia-export-JJJJ-MM-TT_HHMMSS.zip` nach `EXPORT_DIR` (Standard
+  `/data/exports`), nur wenn sich der Inhalt geändert hat. Jede Datei ist ein vollständiger Gesamtexport (siehe
+  [Neu einrichten](#neu-einrichten-und-umziehen)) und zugleich ein gültiger kuratierter Import; Journal-Buchungen
+  werden über ihre `tx_id` erkannt (keine Doppelzählung). Jede erfolgreich importierte ZIP-Datei wird zusätzlich mit
+  Datum unter `EXPORT_DIR/import-archiv/` abgelegt. Aufbewahrung (Standard 30 Sicherungen, 20 Import-Kopien),
+  manuelles Sichern und Download unter *Einstellungen → ZIP-Sicherungen*. Empfehlung: `EXPORT_DIR` auf eine
+  Freigabe mit eigener Sicherung legen.
+
+### Neu einrichten und umziehen
+
+Der Gesamtexport enthält alles, was eine neue Installation für denselben Stand braucht:
+
+| Teil | Inhalt |
+|---|---|
+| Datenvertrag (`transactions.csv` …) | alle Buchungen in ihrer wirksamen Fassung (inkl. Änderungen/Löschungen an Import-Buchungen), Assets mit Kursquellen, Konten mit Steuereinstellung, aktueller Bestand, manuelle Kurse |
+| `portfolia/state.json` | alle Einstellungen, Kursquellen-Zuordnungen samt Status (auch abgelehnte Vorschläge), Sparplan-Wahl und verworfene Ausführungen, Datenquellen (**ohne** API-Keys), „dauerhaft ignoriert“, Anbieter-IDs, CSV-Zuordnungen (Symbole, Konten, eigene Formate), Kennungen gelöschter CSV-/Sync-Buchungen |
+| `portfolia/price_daily.csv`, `series_meta.csv` | Kurshistorie – wichtig, weil die CoinGecko-Demo-API nur 365 Tage nachliefert |
+| `portfolia/usage.json` | API-Verbrauch des Monats (das CoinGecko-Kontingent läuft weiter) |
+| `portfolia/files/` | `sources.yaml` (News-Quellen) und lokale Steuerregeln (`tax_rules/`) |
+
+Nie enthalten sind API-Keys, Master-Key, Passwörter und Protokolle. Andere Werkzeuge ignorieren den Ordner
+`portfolia/`; die Prüfsummen stehen im Manifest unter `extra_files`.
+
+**Ablauf:** Export-ZIP (Download unter *Einstellungen → ZIP-Sicherungen* bzw. *Buchungen → Gesamtexport*, oder eine
+Datei aus `EXPORT_DIR`) in den **Importordner** der neuen Installation legen. Auf einer neuen Installation (noch
+keine Buchungen, Einstellungen oder Datenquellen) übernimmt Portfolia die Zusatzdaten automatisch, sonst erscheint in
+Übersicht und Einstellungen die Rückfrage „Übernehmen / Nicht übernehmen“. Übernehmen löscht nichts: Einstellungen
+werden überschrieben, Zuordnungen, Entscheidungen und Kurshistorie ergänzt, gleichnamige Datenquellen übersprungen,
+ersetzte Dateien als `.bak-…` gesichert. Danach nur noch API-Keys der Datenquellen neu eingeben (und ggf. den
+[Master-Key](#master-key-für-api-keys) einrichten). Ein erneuter CSV-Import oder Abgleich einer Datenquelle erkennt
+die übernommenen Buchungen an ihrer Kennung bzw. Anbieter-ID („bereits vorhanden“).
+
+Für eine byte-genaue Wiederherstellung derselben Installation (inkl. CSV-Stapel, Laufhistorie, News) bleibt die
+SQLite-Sicherung unter *Backups* der richtige Weg.
 
 ---
 

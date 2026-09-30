@@ -363,6 +363,26 @@ CREATE TABLE IF NOT EXISTS ds_asset_cache (
   PRIMARY KEY (provider, remote_id)
 );
 """),
+    (9, """
+-- Änderungen und Löschungen an Buchungen des kuratierten Imports (Overlay – die Import-Datei bleibt unverändert).
+CREATE TABLE IF NOT EXISTS tx_override (
+  tx_id       TEXT PRIMARY KEY,
+  action      TEXT NOT NULL,                      -- edit | delete
+  row_json    TEXT,                               -- bearbeitete Buchung (Spalten wie transactions.csv)
+  form_json   TEXT,                               -- Formularwerte (Expertenmodus) zum erneuten Bearbeiten
+  base_json   TEXT NOT NULL,                      -- Import-Fassung beim Ändern (Hinweis, wenn ein Import sie ändert)
+  import_id   INTEGER,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+-- Zusatzdaten eines Portfolia-Exports (Ordner portfolia/ der Import-ZIP): Einstellungen, Zuordnungen, Kurshistorie.
+CREATE TABLE IF NOT EXISTS import_extra (
+  import_id  INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  data       BLOB NOT NULL,
+  PRIMARY KEY (import_id, name)
+);
+"""),
 ]
 
 

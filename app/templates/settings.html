@@ -150,11 +150,16 @@
     <div class="row"><a class="btn sm" href="/journal/export.zip" download>Gesamtexport herunterladen</a>
       <button class="btn sm" hx-post="/actions/export" hx-target="#export-msg" hx-indicator="#ex-spin">Jetzt sichern</button>
       <span id="ex-spin" class="htmx-indicator spinner"></span><span id="export-msg"></span></div></div>
-  <p class="hint">Nach jeder Änderung an Buchungen (manuell, CSV-Import, Sparplan-Freigabe, neuer Import) entsteht – gebündelt nach zwei
-    Minuten Ruhe – eine datierte Datei <code>portfolia-export-JJJJ-MM-TT_HHMMSS.zip</code> im einheitlichen Import-Format (Datenvertrag,
-    Schema 1.1). Sie enthält Import, in der App erfasste und per CSV importierte Buchungen, Assets, Konten und manuelle Kurse
-    und kann jederzeit als kuratierter Import verwendet werden. Unveränderte Stände werden nicht erneut gesichert.
-    Importierte ZIP-Dateien werden zusätzlich mit Datum archiviert.</p>
+  {% if saved == 'restore_apply' %}<div class="alert good"><span class="icon">✓</span><div>Zusatzdaten aus dem Export übernommen{% if restore and restore.counts %}: {{ restore.counts.settings }} Einstellungen, {{ restore.counts.asset_sources }} Kursquellen, {{ restore.counts.prices|num(0) }} Tageskurse, {{ restore.counts.datasources }} Datenquellen{% endif %}. API-Keys unter Datenquellen neu eingeben.</div></div>{% endif %}
+  {% if restore and restore.state == 'pending' %}{% include "partials/restore_notice.html" %}{% endif %}
+  <p class="hint">Nach jeder Änderung an Buchungen oder Einstellungen entsteht – gebündelt nach zwei Minuten Ruhe – eine datierte Datei
+    <code>portfolia-export-JJJJ-MM-TT_HHMMSS.zip</code> im einheitlichen Import-Format (Datenvertrag, Schema 1.1). Sie enthält
+    <b>alles für eine Neueinrichtung</b>: alle Buchungen in ihrer wirksamen Fassung (Import mit Änderungen und Löschungen in der App,
+    manuell, per CSV und Datenquelle erfasst, freigegebene Sparplan-Ausführungen), Assets mit ihren <b>Kursquellen</b>, Konten, Bestände
+    und manuelle Kurse – und im Ordner <code>portfolia/</code> Einstellungen, Kursquellen-Status, Sparplan-Entscheidungen,
+    Datenquellen (ohne API-Keys), Entscheidungen, CSV-Zuordnungen, Kurshistorie, <code>sources.yaml</code> und lokale Steuerregeln.
+    <b>Neu einrichten:</b> Datei in den Importordner legen – auf einer neuen Installation wird alles automatisch übernommen, sonst
+    nach Rückfrage. Unveränderte Stände werden nicht erneut gesichert; importierte ZIP-Dateien werden zusätzlich mit Datum archiviert.</p>
   <form method="post" action="/settings/save" class="grid-3">
     <label class="check" style="align-self:end"><input type="checkbox" name="auto" value="1" {% if s['export.auto'] %}checked{% endif %}> Nach Änderungen automatisch sichern</label>
     <label class="field">Anzahl ZIP-Sicherungen<input type="number" min="1" max="1000" name="keep" value="{{ s['export.keep'] }}"></label>

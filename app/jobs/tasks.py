@@ -31,7 +31,17 @@ def run_job(ctx: AppContext, name: str, fn: Callable[[], dict[str, Any] | None])
 
 
 def import_check(ctx: AppContext, trigger: str = "poll", force: bool = False) -> ImportOutcome:
+    from app import fullexport
+
+    fresh = fullexport.is_fresh(ctx.db)
     out = check_import_dir(ctx.db, ctx.config.import_dir, ctx.engine_options("global"), trigger=trigger, force=force)
+    if out.status == "imported" and fresh and out.import_id is not None:
+        # Neue Installation + Portfolia-Export: Einstellungen, Zuordnungen und Kurshistorie gleich mit übernehmen
+        try:
+            if fullexport.summary(fullexport.extras_for(ctx.db, out.import_id)) is not None:
+                fullexport.apply(ctx, out.import_id)
+        except Exception as e:  # Übernahme darf den Import nie scheitern lassen – Rückfrage bleibt möglich
+            log.warning("Zusatzdaten des Exports nicht übernommen: %s", e)
     if out.status == "imported":
         if out.filename:
             try:  # datierte Kopie der importierten ZIP-Datei (Archiv neben den ZIP-Sicherungen)

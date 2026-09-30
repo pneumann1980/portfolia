@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.09.2026 · Version 0.11.2 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 30.09.2026 · Version 0.12.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -454,6 +454,53 @@ für die ID, Abruf ausstehend); die Übersicht fasst gleiche Gründe zusammen. T
 
 **Grenzen M13:** Hochrechnung, keine Messung: Neustarts, manuelle Aktualisierungen und neue Coins stecken pauschal in
 der Reserve; Yahoo-Werte sind Obergrenzen ohne Feiertagskalender; der Zähler kennt nur Portfolias eigene Aufrufe.
+
+## M14 – Alle Buchungen bearbeitbar, vollständiger Export und Neueinrichtung (Erweiterung)
+
+Anlass (30.09.2026): Alle Buchungen sollen bearbeitet und gelöscht werden können; der Datenexport soll alles
+enthalten, um Portfolia mit demselben Stand neu einzurichten – inklusive aller lokalen Änderungen und der Kursquellen.
+
+**Entscheidungen**
+
+* **Import-Buchungen als Überlagerung** (`app/journal/overrides.py`, Tabelle `tx_override`): Bearbeiten
+  (Expertenmodus, gleiche Prüfung wie beim Import; Herkunft `source`/`source_ref`/`flag`/`orig_*` bleibt) und Löschen
+  (umkehrbar, eine bearbeitete Fassung bleibt dabei erhalten). Die Import-Datei wird nie verändert. Schlüssel ist die
+  `tx_id`, die Änderung gilt über spätere Importe hinweg; geänderte Import-Fassung → Hinweis „Import geändert“, fehlende
+  Buchung → „ohne Wirkung“, nicht mehr anwendbare Fassung → Import-Fassung gilt, Hinweis „nicht anwendbar“ – nie still.
+  Unveränderte Speicherung legt keine Überlagerung an (Sekunden im Zeitstempel bleiben erhalten).
+* Wirksamer Import (`ctx.effective_base()`) ist Grundlage für Journal-Überlagerung, Abgleich, Export und alle
+  Berechnungen; eine in der App gelöschte Import-Buchung lässt eine gleichnamige Journal-Buchung nicht aufleben
+  (IDs des Imports bleiben „belegt“).
+* Sparplan-Ausführungen (freigegeben/geschätzt) aus der Buchungsliste heraus bearbeitbar bzw. verwerfbar (vorhandene
+  Sparplan-Funktionen).
+* **Vollständiger Export** (`app/fullexport.py`): Datenvertrag unverändert (wirksame Buchungen, Assets mit
+  Kursquellen, Konten, Bestände, manuelle Kurse) plus Ordner `portfolia/` mit `state.json` (Einstellungen,
+  Kursquellen-Status, Sparplan-Wahl/verworfene Ausführungen, Datenquellen ohne Zugangsdaten, Entscheidungen,
+  Anbieter-IDs, CSV-Zuordnungen, Kennungen gelöschter CSV-/Sync-Buchungen), `usage.json`, Kurshistorie
+  (`price_daily.csv`, `series_meta.csv`) und `files/` (`sources.yaml`, `tax_rules/`). Prüfsummen im Manifest unter
+  `extra_files`; ältere Portfolia-Versionen und andere Werkzeuge ignorieren den Ordner. Nie enthalten: API-Keys,
+  Master-Key, Passwörter, Protokolle.
+* **Neueinrichtung:** Export-ZIP in den Importordner. Neue Installation (keine Buchungen, Einstellungen, Datenquellen,
+  Importe) → automatische Übernahme; sonst Rückfrage in Übersicht und Einstellungen. Übernahme idempotent und
+  nicht-destruktiv (Einstellungen überschreiben, Rest ergänzen, gleichnamige Datenquellen überspringen, Dateien mit
+  `.bak-…` sichern). Beschädigte Zusatzdaten (Prüfsumme) werden ignoriert, der Import selbst bleibt gültig.
+* **Wiedererkennung nach der Neueinrichtung:** Import-Buchungen mit Anbieter-ID (auch aus App-Buchungen, Quelle
+  `portfolia:csv:…`/`portfolia:sync:…`) und übernommene Aliase gelten bei CSV-Import und Datenquelle als „bereits
+  vorhanden“; bei Kennungen ohne Anbieter-ID (Prüfsummen) nur innerhalb derselben Quelle.
+* Automatische ZIP-Sicherung auch nach Änderungen an Einstellungen; die Prüfsumme für „unverändert“ umfasst den
+  App-Zustand (ohne Kurshistorie und API-Verbrauch).
+* **Migration 9** (nur additiv): `tx_override`, `import_extra`.
+
+**Tests:** `tests/test_import_edit.py` (7 Fälle: Bearbeiten ohne Änderung, Bearbeiten mit Wirkung auf Bestand und
+Export, ungültige Eingabe, Löschen/Wiederherstellen mit erhaltener Fassung, neuer Import mit geänderter bzw. fehlender
+Buchung, gleichnamige Journal-Buchung, Migration 9) und `tests/test_full_export.py` (5 Fälle: Inhalt ohne Geheimnisse,
+automatische Neueinrichtung mit identischen Beständen, Rückfrage auf bestehender Installation inkl. Idempotenz,
+Verwerfen und manipulierte Prüfsumme, Wiedererkennung derselben CSV-Kennung).
+
+**Grenzen M14:** Nach der Neueinrichtung sind frühere App-Buchungen Import-Buchungen (Herkunft bleibt in `source`,
+bearbeitbar als Überlagerung). Nicht übertragen werden CSV-Stapel mit Originaldateien, Laufhistorien, News und
+erzeugte Steuer-PDFs (regenerierbar) – für eine byte-genaue Kopie bleibt die SQLite-Sicherung. API-Keys sind nach
+der Neueinrichtung neu einzugeben.
 
 ## Entscheidungen des Auftraggebers (27.09.2026)
 

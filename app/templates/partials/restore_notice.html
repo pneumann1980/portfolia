@@ -1,0 +1,13 @@
+{# Rückfrage: Zusatzdaten eines importierten Portfolia-Exports übernehmen. Erwartet: restore (fullexport.status). #}
+{% set sm = restore.summary %}
+<div class="alert warn" id="restore" style="margin:8px 0"><span class="icon">!</span><div>
+  <b>Die aktive Import-Datei ist ein Portfolia-Export</b>{% if sm.app_version %} (Version {{ sm.app_version }}){% endif %} mit
+  Zusatzdaten: {{ sm.settings }} Einstellungen, {{ sm.asset_sources }} Kursquellen-Zuordnungen, {{ sm.plans }} Sparplan-Angaben,
+  {{ sm.datasources }} Datenquellen (ohne API-Keys), {{ sm.decisions }} Entscheidungen, {{ sm.csv }} CSV-Zuordnungen,
+  {{ sm.prices|num(0) }} Tageskurse{% if sm.files %}, Dateien: {{ sm.files|join(', ') }}{% endif %}.
+  <div class="hint">Übernehmen ergänzt Zuordnungen und Kurshistorie und überschreibt Einstellungen; nichts wird gelöscht, ersetzte
+    Dateien werden als <code>.bak-…</code> gesichert. API-Keys danach unter Datenquellen neu eingeben.</div>
+  <div class="row" style="margin-top:6px;gap:8px">
+    <form method="post" action="/actions/restore/apply" class="inline" data-confirm="Einstellungen, Zuordnungen und Kurshistorie aus dem Export übernehmen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="import_id" value="{{ restore.import_id }}"><button class="btn sm primary" type="submit">Übernehmen</button></form>
+    <form method="post" action="/actions/restore/dismiss" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="import_id" value="{{ restore.import_id }}"><button class="btn sm ghost" type="submit">Nicht übernehmen</button></form>
+  </div></div></div>

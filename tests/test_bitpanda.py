@@ -770,7 +770,7 @@ def test_migration_8_keeps_data(tmp_path):
     d.x("INSERT INTO csv_batch(filename, file_sha256, file_size, raw_gz, profile, account, status, created_at, "
         "updated_at) VALUES ('x', 'x', 1, ?, 'bitpanda', 'B', 'committed', ?, ?)", (gzip.compress(b"x"), stamp, stamp))
     before = [dict(r) for r in d.q("SELECT * FROM data_source")]
-    d.migrate()
+    d.migrate(target=8)
     assert d.scalar("PRAGMA user_version") == 8
     row = dict(d.q1("SELECT * FROM data_source"))
     assert {k: row[k] for k in before[0]} == before[0]
@@ -780,5 +780,5 @@ def test_migration_8_keeps_data(tmp_path):
     tables = {r["name"] for r in d.q("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"data_source_secret", "event_decision", "journal_event_alias", "journal_import_link",
             "ds_asset_cache"} <= tables
-    d.migrate()
+    d.migrate(target=8)  # erneut: nichts zu tun
     assert d.scalar("PRAGMA user_version") == 8

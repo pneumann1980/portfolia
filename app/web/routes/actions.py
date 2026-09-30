@@ -156,6 +156,12 @@ async def save_settings(request: Request) -> Response:
         if handler is not None:
             await handler(ctx, f)
     log.info("Einstellungen gespeichert (%s)", section)
+    try:  # Einstellungen gehören zum Gesamtexport → datierte Sicherung wie nach Buchungsänderungen
+        from app.jobs.exports import schedule as schedule_export
+
+        schedule_export(ctx)
+    except Exception as e:  # pragma: no cover – Sicherung darf das Speichern nie verhindern
+        log.debug("Sicherung nicht eingeplant: %s", e)
     target = f"/settings?saved={section}#{section}"
     if request.headers.get("hx-request") == "true":
         return Response(status_code=204, headers={"HX-Redirect": target})

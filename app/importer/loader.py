@@ -246,6 +246,8 @@ def _store(db: Database, path: Path, parsed: ParsedImport, report: Report, diff:
             "INSERT INTO manual_prices(import_id, asset_id, date, price_eur, source) VALUES (?,?,?,?,?)",
             [(iid, m["asset_id"], m["date"], _dec_str(m["price_eur"]), m["source"]) for m in parsed.manual_prices],
         )
+        c.executemany("INSERT INTO import_extra(import_id, name, data) VALUES (?,?,?)",
+                      [(iid, name, data) for name, data in sorted(parsed.extras.items())])
         # Umschalten
         c.execute("UPDATE imports SET status='archived' WHERE status='active'")
         c.execute("UPDATE imports SET status='active' WHERE id=?", (iid,))
@@ -255,7 +257,7 @@ def _store(db: Database, path: Path, parsed: ParsedImport, report: Report, diff:
         keep = [r[0] for r in c.execute(
             "SELECT id FROM imports WHERE status IN ('active','archived') ORDER BY id DESC LIMIT ?", (KEEP_IMPORTS,))]
         placeholders = ",".join("?" * len(keep))
-        for table in ("tx", "assets", "accounts", "holdings_check", "issues", "manual_prices"):
+        for table in ("tx", "assets", "accounts", "holdings_check", "issues", "manual_prices", "import_extra"):
             c.execute(f"DELETE FROM {table} WHERE import_id NOT IN ({placeholders})", keep)
         c.execute(f"UPDATE imports SET data_retained=0 WHERE id NOT IN ({placeholders}) AND data_retained=1", keep)
     return int(iid)  # type: ignore[arg-type]

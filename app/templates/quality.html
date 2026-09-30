@@ -93,7 +93,7 @@
   {% if journal.log %}
   <details><summary>Änderungsprotokoll (letzte {{ journal.log|length }})</summary>
     <div class="table-wrap"><table class="compact"><thead><tr><th>Zeit</th><th>Aktion</th><th>Bezug</th></tr></thead><tbody>
-      {% for e in journal.log %}<tr><td class="nowrap">{{ e.at|datetime_de }}</td><td>{{ {'create': 'angelegt', 'update': 'geändert', 'delete': 'gelöscht', 'restore': 'wiederhergestellt', 'asset_create': 'Asset angelegt', 'asset_update': 'Asset geändert', 'unpair': 'Transfer aufgelöst', 'csv_commit': 'CSV-Import übernommen', 'csv_revert': 'CSV-Import rückgängig'}.get(e.action, e.action) }}</td><td class="mono">{{ e.ref }}</td></tr>{% endfor %}
+      {% for e in journal.log %}<tr><td class="nowrap">{{ e.at|datetime_de }}</td><td>{{ {'create': 'angelegt', 'update': 'geändert', 'delete': 'gelöscht', 'restore': 'wiederhergestellt', 'asset_create': 'Asset angelegt', 'asset_update': 'Asset geändert', 'unpair': 'Transfer aufgelöst', 'csv_commit': 'CSV-Import übernommen', 'csv_revert': 'CSV-Import rückgängig', 'import_edit': 'Import-Buchung geändert', 'import_delete': 'Import-Buchung gelöscht', 'import_restore': 'Import-Buchung wiederhergestellt', 'import_revert': 'Änderung an Import-Buchung verworfen', 'restore_apply': 'Export-Zusatzdaten übernommen'}.get(e.action, e.action) }}</td><td class="mono">{{ e.ref }}</td></tr>{% endfor %}
     </tbody></table></div>
   </details>
   {% endif %}

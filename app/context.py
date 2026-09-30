@@ -59,6 +59,7 @@ class AppContext:
         self._lock = threading.RLock()
         self._base_pf: tuple[int, Portfolio] | None = None
         self._rec: tuple[tuple[int, int], Portfolio | None] | None = None
+        self._eff: tuple[tuple[int, int], tuple[Portfolio | None, dict[str, Any]]] | None = None
         self._pf: tuple[tuple[int, int], Portfolio] | None = None
         self.overlay_version = 0
         self._ledgers: dict[tuple, LedgerResult] = {}
@@ -100,20 +101,38 @@ class AppContext:
                 self._seed_demo(pf)
             return pf
 
+    def effective_base(self) -> tuple[Portfolio | None, dict[str, Any]]:
+        """Import mit den in der App vorgenommenen Änderungen/Löschungen (siehe :mod:`app.journal.overrides`) und
+        dem Zustand je Änderung."""
+        base = self.base_portfolio()
+        key = ((base.import_id or 0) if base is not None else 0, self.overlay_version)
+        with self._lock:
+            if self._eff is not None and self._eff[0] == key:
+                return self._eff[1]
+        from app.journal.overrides import apply as apply_overrides
+        from app.journal.service import journal_asset_infos
+
+        res = apply_overrides(self.db, base, journal_asset_infos(self.db))
+        with self._lock:
+            self._eff = (key, res)
+        return res
+
     def recorded_portfolio(self) -> Portfolio | None:
         """Erfasste Buchungen: Import + in der App erfasste Buchungen (Journal) + freigegebene Sparplan-Ausführungen.
 
         Funktioniert auch ohne Import (nur Journal). Grundlage der Sparplan-Erkennung und des Gesamtexports.
         """
-        base = self.base_portfolio()
-        key = ((base.import_id or 0) if base is not None else 0, self.overlay_version)
+        raw = self.base_portfolio()
+        key = ((raw.import_id or 0) if raw is not None else 0, self.overlay_version)
         with self._lock:
             if self._rec is not None and self._rec[0] == key:
                 return self._rec[1]
         from app.journal.service import overlay as journal_overlay
         from app.plans.service import overlay_txs
 
-        j_assets, j_txs = journal_overlay(self.db, base)
+        base, _ = self.effective_base()
+        # IDs aus dem Import bleiben belegt, auch wenn die Import-Buchung in der App gelöscht wurde
+        j_assets, j_txs = journal_overlay(self.db, base, claimed={t.tx_id for t in raw.txs} if raw else None)
         pf: Portfolio | None
         if base is None and not j_txs:
             pf = None
@@ -154,6 +173,7 @@ class AppContext:
         with self._lock:
             self.overlay_version += 1
             self._rec = None
+            self._eff = None
             self._pf = None
             self._ledgers.clear()
             self._vals.clear()
@@ -212,6 +232,7 @@ class AppContext:
         with self._lock:
             self._base_pf = None
             self._rec = None
+            self._eff = None
             self._pf = None
             self._ledgers.clear()
             self._vals.clear()

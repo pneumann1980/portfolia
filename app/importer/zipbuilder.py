@@ -37,7 +37,8 @@ def build_zip(path: Path, *, transactions: list[dict[str, Any]], assets: list[di
               manual_prices: list[dict[str, Any]] | None = None, accounts: list[dict[str, Any]] | None = None,
               generated_at: str = "2026-09-20T10:00:00Z", valuation_date: str = "2026-09-19",
               schema_version: str = C.CURRENT_SCHEMA_VERSION, notes: str = "", tx_columns: list[str] | None = None,
-              extra_tx_columns: list[str] | None = None, mutate: dict[str, Any] | None = None) -> Path:
+              extra_tx_columns: list[str] | None = None, mutate: dict[str, Any] | None = None,
+              extras: dict[str, bytes] | None = None) -> Path:
     """Baut eine ZIP-Datei. ``mutate`` erlaubt gezielte Defekte für Tests:
 
     * ``{"bad_checksum": "transactions.csv"}``
@@ -71,6 +72,8 @@ def build_zip(path: Path, *, transactions: list[dict[str, Any]], assets: list[di
         "files": checksums,
         "notes": notes,
     }
+    if extras:  # Portfolia-Zusatzdaten (Ordner portfolia/), eigene Prüfsummen – für andere Werkzeuge unsichtbar
+        manifest["extra_files"] = {f"{C.SIDECAR_DIR}{n}": hashlib.sha256(d).hexdigest() for n, d in extras.items()}
     manifest.update(mutate.get("manifest", {}))
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,4 +81,6 @@ def build_zip(path: Path, *, transactions: list[dict[str, Any]], assets: list[di
         zf.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
         for name, data in files.items():
             zf.writestr(name, data)
+        for name, data in (extras or {}).items():
+            zf.writestr(f"{C.SIDECAR_DIR}{name}", data)
     return path

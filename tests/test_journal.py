@@ -243,11 +243,22 @@ def test_export_roundtrip_via_import(sample_client, config):
     assert out.status == "imported", out.message
     pf = ctx.portfolio()
     assert [t.origin for t in pf.txs if t.tx_id == "PF-M-000001"] == ["import"]  # nicht doppelt gezählt
+    assert out.check["deviations"] == []
+    # Jetzt eine Import-Buchung: Bearbeiten wirkt als Überlagerung (Expertenmodus), die Import-Datei bleibt gleich
+    page = c.get("/journal/PF-M-000001/edit").text
+    assert "kuratierten Import" in page and 'value="expert"' in page
     r = post(c, "/journal/PF-M-000001/edit", kind="buy", date="2026-09-20", account="Börse X", asset="ADA",
              qty="301", amount="150")
-    assert r.status_code == 400 and "inzwischen im Import enthalten" in r.text
+    assert r.status_code == 400  # Formular der Vorlage passt nicht – Import-Buchungen im Expertenmodus
     assert recorded_balances() == before
-    assert out.check["deviations"] == []
+    r = post(c, "/journal/PF-M-000001/edit", kind="expert", type="buy", date="2026-09-20", time="12:00",
+             from_account="Börse X", from_asset="EUR", from_qty="150", to_account="Börse X", to_asset="ADA",
+             to_qty="301", value_eur="150")
+    assert r.status_code == 303, r.text[:400]
+    after = recorded_balances()
+    assert after[("Börse X", "ADA")] == before[("Börse X", "ADA")] + 1
+    post(c, "/journal/PF-M-000001/revert")
+    assert recorded_balances() == before
 
 
 def test_manual_only_savings_plan_keeps_pending_estimates(client):

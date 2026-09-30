@@ -78,9 +78,11 @@ def dashboard(request: Request) -> HTMLResponse:
     gainers = sorted([p for p in movers if p.day_change_pct > 0], key=lambda p: -p.day_change_pct)[:5]
     losers = sorted([p for p in movers if p.day_change_pct < 0], key=lambda p: p.day_change_pct)[:5]
     news = _latest_news(ctx, int(ctx.settings.get("news.dashboard_count", 5)))
+    from app.fullexport import status as restore_status
+
     return render(request, "dashboard.html", active="dashboard", val=val, kpi=_kpis(ctx, val, hist), gainers=gainers,
                   losers=losers, news=news, threshold=ctx.settings.get("allocation.other_threshold_pct", 1.0),
-                  default_range=ctx.settings.get("ui.default_range", "1J"))
+                  default_range=ctx.settings.get("ui.default_range", "1J"), restore=restore_status(ctx))
 
 
 def _latest_news(ctx: Any, n: int) -> list[Any]:
@@ -374,6 +376,7 @@ def settings_page(request: Request, saved: str = "") -> HTMLResponse:
                   "exchange": sum(1 for r in ds_rows if r["kind"] == "exchange"),
                   "wallet": sum(1 for r in ds_rows if r["kind"] == "wallet"),
                   "error": sum(1 for r in ds_rows if r["status"] == "error" and r["enabled"])}
+    from app.fullexport import status as restore_status
     from app.prices.budget import plan_view
 
     price_plan = plan_view(ctx.settings, ctx.prices.budget_inputs(pf, led), ctx.prices.cg_budget(),
@@ -382,7 +385,8 @@ def settings_page(request: Request, saved: str = "") -> HTMLResponse:
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,
                   detected_cash=(led.cash_tracked if led else {}), secrets=ctx.config.secrets.status(),
                   config=ctx.config, saved=saved, backups=backups, exports=exports, archive=archive,
-                  export_job=job, ds_summary=ds_summary, pp=price_plan, next_runs=next_runs)
+                  export_job=job, ds_summary=ds_summary, pp=price_plan, next_runs=next_runs,
+                  restore=restore_status(ctx))
 
 
 def fmt_ts(ts: str | None) -> str:

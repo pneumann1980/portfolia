@@ -93,6 +93,8 @@ class ParsedImport:
     holdings_check: list[dict[str, Any]]
     issues: list[dict[str, Any]]
     manual_prices: list[dict[str, Any]]
+    # Zusatzdaten eines Portfolia-Exports (Ordner portfolia/, Prüfsummen geprüft) – Name ohne Ordner → Inhalt
+    extras: dict[str, bytes] = field(default_factory=dict)
 
     @property
     def counts(self) -> dict[str, int]:
@@ -142,7 +144,8 @@ def _clean(v: str | None) -> str | None:
 # ZIP-Ebene
 # ----------------------------------------------------------------------------------------------
 
-def _read_members(zf: zipfile.ZipFile, rep: Report) -> dict[str, bytes] | None:
+def _read_members(zf: zipfile.ZipFile, rep: Report, extras: dict[str, bytes] | None = None
+                  ) -> dict[str, bytes] | None:
     infos = [i for i in zf.infolist() if not i.is_dir()]
     names = [i.filename for i in infos]
     # Unsichere Pfade
@@ -161,6 +164,19 @@ def _read_members(zf: zipfile.ZipFile, rep: Report) -> dict[str, bytes] | None:
     members: dict[str, bytes] = {}
     for info in infos:
         name = info.filename[len(prefix):] if prefix else info.filename
+        if "/" in name and name.startswith(C.SIDECAR_DIR) and extras is not None:
+            if info.file_size > C.MAX_MEMBER_BYTES or (
+                    info.compress_size and info.file_size / max(info.compress_size, 1) > C.MAX_COMPRESSION_RATIO
+                    and info.file_size > 10 * 1024 * 1024):
+                rep.warn("zip_extra", f"Zusatzdatei zu groß oder verdächtig komprimiert, ignoriert: {name}")
+                continue
+            total += info.file_size
+            if total > C.MAX_ZIP_BYTES:
+                rep.error("zip_size", "Entpackte Gesamtgröße überschreitet das Limit")
+                return None
+            with zf.open(info) as f:
+                extras[name[len(C.SIDECAR_DIR):]] = f.read(C.MAX_MEMBER_BYTES + 1)
+            continue
         if "/" in name:
             rep.warn("zip_extra", f"Unerwartete Datei im Unterordner ignoriert: {info.filename}")
             continue
@@ -257,6 +273,25 @@ def _check_manifest(members: dict[str, bytes], rep: Report) -> dict[str, Any] | 
         if name not in members:
             rep.error("file_missing", f"Pflichtdatei fehlt: {name}", file=name)
     return manifest
+
+
+def _check_extras(extras: dict[str, bytes], manifest: dict[str, Any], rep: Report) -> dict[str, bytes]:
+    """Zusatzdaten nur mit passenden Prüfsummen übernehmen – sonst ignorieren (der Import selbst bleibt gültig)."""
+    if not extras:
+        return {}
+    listed = manifest.get("extra_files")
+    if not isinstance(listed, dict):
+        rep.warn("extra_checksum", "Portfolia-Zusatzdaten ohne Prüfsummen im Manifest – werden ignoriert.")
+        return {}
+    for name, data in extras.items():
+        expected = str(listed.get(f"{C.SIDECAR_DIR}{name}", "")).lower().removeprefix("sha256:")
+        if hashlib.sha256(data).hexdigest() != expected:
+            rep.warn("extra_checksum", f"Prüfsumme der Zusatzdatei {name} stimmt nicht – Zusatzdaten werden "
+                                       "ignoriert.")
+            return {}
+    rep.info("portfolia_extras", f"Enthält Portfolia-Zusatzdaten ({len(extras)} Dateien: Einstellungen, Zuordnungen, "
+                                 "Kurshistorie) – Übernahme unter Einstellungen → ZIP-Sicherungen.")
+    return extras
 
 
 def _read_csv(members: dict[str, bytes], name: str, required: tuple[str, ...], optional: tuple[str, ...],
@@ -640,9 +675,10 @@ def validate_zip(path: Path) -> tuple[Report, ParsedImport | None]:
         rep.error("zip_size", f"ZIP zu groß ({size} Bytes)")
         return rep, None
     file_sha = sha256_file(path)
+    extras: dict[str, bytes] = {}
     try:
         with zipfile.ZipFile(path) as zf:
-            members = _read_members(zf, rep)
+            members = _read_members(zf, rep, extras)
     except zipfile.BadZipFile as e:
         rep.error("zip_invalid", f"Keine gültige ZIP-Datei: {e}")
         return rep, None
@@ -651,6 +687,7 @@ def validate_zip(path: Path) -> tuple[Report, ParsedImport | None]:
     manifest = _check_manifest(members, rep)
     if manifest is None or not rep.ok:
         return rep, None
+    extras = _check_extras(extras, manifest, rep)
 
     gen_at = parse_iso(str(manifest["generated_at"]))
 
@@ -702,4 +739,5 @@ def validate_zip(path: Path) -> tuple[Report, ParsedImport | None]:
         holdings_check=holdings,
         issues=issues,
         manual_prices=manual,
+        extras=extras,
     )

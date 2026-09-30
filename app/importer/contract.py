@@ -19,6 +19,10 @@ REQUIRED_FILES = ("transactions.csv", "assets.csv", "holdings_check.csv", "issue
 OPTIONAL_FILES = ("manual_prices.csv", "accounts.csv")
 ALL_FILES = ("manifest.json", *REQUIRED_FILES, *OPTIONAL_FILES)
 
+# Zusatzdaten eines Portfolia-Exports (Einstellungen, Zuordnungen, Kurshistorie) – nicht Teil des Datenvertrags,
+# andere Werkzeuge ignorieren den Ordner; Prüfsummen stehen im Manifest unter "extra_files".
+SIDECAR_DIR = "portfolia/"
+
 MAX_ZIP_BYTES = 200 * 1024 * 1024
 MAX_MEMBER_BYTES = 150 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 200

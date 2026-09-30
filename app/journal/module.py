@@ -25,7 +25,8 @@ PAGE = 200
 ORIGINS = {"import": "Import", "journal": "manuell", "csv": "CSV-Import", "sync": "Datenquelle", "plan": "Sparplan"}
 SAVED = {"created": "Buchung gespeichert.", "updated": "Änderung gespeichert.", "deleted": "Buchung gelöscht.",
          "restored": "Buchung wiederhergestellt.", "asset": "Asset gespeichert.",
-         "unpaired": "Transfer aufgelöst – Ab- und Zugang gelten wieder einzeln."}
+         "unpaired": "Transfer aufgelöst – Ab- und Zugang gelten wieder einzeln.",
+         "reverted": "Änderung verworfen – es gilt wieder die Fassung aus dem Import."}
 ASSET_FIELDS = ("asset_id", "name", "asset_class", "quote_source", "quote_id", "isin", "wkn", "category", "tax_type",
                 "aliases", "note")
 
@@ -37,8 +38,11 @@ def _back(request: Request, target: str) -> Response:
 
 
 def _form_page(request: Request, data: dict[str, Any], errors: list[str], tx_id: str | None = None,
-               status_code: int = 200, saved_tx: str = "", warnings: list[str] | None = None) -> HTMLResponse:
+               status_code: int = 200, saved_tx: str = "", warnings: list[str] | None = None,
+               import_source: str | None = None) -> HTMLResponse:
     svc = journal_service(get_ctx(request))
+    if import_source is not None:
+        data = {**data, "kind": "expert"}  # Import-Buchungen: alle Felder des Datenvertrags
     kind = data.get("kind") or "buy"
     if kind not in forms.KINDS:
         kind = "buy"
@@ -51,6 +55,7 @@ def _form_page(request: Request, data: dict[str, Any], errors: list[str], tx_id:
         assets=assets, fiat_options=[(c, c) for c in fiat], tags=forms.TAG_CHOICES.get(kind, []),
         tx_types=forms.TYPE_LABEL, known_tags=sorted(C.KNOWN_TAGS),
         action=f"/journal/{tx_id}/edit" if tx_id else "/journal/new", saved_tx=saved_tx, warnings=warnings or [],
+        import_edit=import_source is not None, import_source=import_source,
     )
 
 
@@ -132,7 +137,8 @@ def make_router() -> APIRouter:
             years=svc.years(), origins=ORIGINS, tx_types=forms.TYPE_LABEL, source_label=source_label,
             jmeta=svc.meta([r["t"].tx_id for r in rows if r["kind"] in ("journal", "csv", "sync")]),
             saved=SAVED.get(saved), saved_tx=tx, warnings=warnings, own_assets=svc.assets(),
-            deleted=svc.deleted(), has_import=ctx.active_import_id() is not None,
+            deleted=[*svc.deleted_imports(), *svc.deleted()], has_import=ctx.active_import_id() is not None,
+            ov=svc.override_states(),
         )
 
     @router.get("/journal/new", response_class=HTMLResponse)
@@ -235,7 +241,7 @@ def make_router() -> APIRouter:
         from app.journal.reconcile import candidates, coverage
 
         ctx = get_ctx(request)
-        base = ctx.base_portfolio()
+        base, _ = ctx.effective_base()  # Import mit Änderungen/Löschungen in der App
         cov = coverage(ctx.db, base)
         rows = {r["tx_id"]: r for r in ctx.db.q(
             f"SELECT * FROM journal_tx WHERE tx_id IN ({','.join('?' * len(cov))})", list(cov))} if cov else {}
@@ -279,6 +285,10 @@ def make_router() -> APIRouter:
     @router.get("/journal/{tx_id}/edit", response_class=HTMLResponse)
     def edit_form(request: Request, tx_id: str) -> HTMLResponse:
         svc = journal_service(get_ctx(request))
+        orig = svc.import_tx(tx_id)
+        if orig is not None:  # Import-Buchung: Bearbeiten als Überlagerung
+            return _form_page(request, svc.import_form_data(tx_id) or {}, [], tx_id=tx_id,
+                              import_source=orig.source or "")
         row = svc.get(tx_id)
         if row is None or not editable(row):
             raise HTTPException(404)
@@ -291,7 +301,14 @@ def make_router() -> APIRouter:
         svc = journal_service(get_ctx(request))
         f = await request.form()
         data = {k: f.get(k) for k in forms.FORM_FIELDS}
-        res = await run_in_threadpool(svc.save, data, tx_id)
+        orig = svc.import_tx(tx_id)
+        if orig is not None:
+            res = await run_in_threadpool(svc.save_import, tx_id, data)
+            if res.errors:
+                return _form_page(request, data, res.errors, tx_id=tx_id, status_code=400,
+                                  import_source=orig.source or "")
+        else:
+            res = await run_in_threadpool(svc.save, data, tx_id)
         if res.errors:
             return _form_page(request, data, res.errors, tx_id=tx_id, status_code=400)
         warn = [("w", w) for w in res.warnings[:5]]
@@ -300,6 +317,11 @@ def make_router() -> APIRouter:
     @router.post("/journal/{tx_id}/delete")
     async def delete(request: Request, tx_id: str) -> Response:
         svc = journal_service(get_ctx(request))
+        if svc.import_tx(tx_id) is not None:
+            if not await run_in_threadpool(svc.delete_import, tx_id):
+                raise HTTPException(404)
+            log.info("Import-Buchung gelöscht (Überlagerung): %s", tx_id)
+            return _back(request, "/journal?saved=deleted")
         row = svc.get(tx_id)
         if not await run_in_threadpool(svc.delete, tx_id):
             raise HTTPException(404)
@@ -312,9 +334,19 @@ def make_router() -> APIRouter:
     @router.post("/journal/{tx_id}/restore")
     async def restore(request: Request, tx_id: str) -> Response:
         svc = journal_service(get_ctx(request))
-        if not await run_in_threadpool(svc.restore, tx_id):
+        ov = svc.override(tx_id)
+        fn = svc.restore_import if ov is not None and ov["action"] == "delete" else svc.restore
+        if not await run_in_threadpool(fn, tx_id):
             raise HTTPException(404)
         return _back(request, "/journal?" + urlencode({"saved": "restored", "tx": tx_id}))
+
+    @router.post("/journal/{tx_id}/revert")
+    async def revert(request: Request, tx_id: str) -> Response:
+        """Änderung an einer Import-Buchung verwerfen (auch wirkungslose Änderungen entfernen)."""
+        svc = journal_service(get_ctx(request))
+        if not await run_in_threadpool(svc.revert_import, tx_id):
+            raise HTTPException(404)
+        return _back(request, "/journal?" + urlencode({"saved": "reverted", "tx": tx_id}))
 
     return router
 

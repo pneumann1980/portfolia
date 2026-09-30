@@ -137,13 +137,17 @@ def row_to_tx(r: Any) -> Tx:
               related_asset=r["related_asset"], origin="journal")
 
 
-def overlay(db: Any, base: Portfolio | None) -> tuple[dict[str, AssetInfo], list[Tx]]:
+def overlay(db: Any, base: Portfolio | None, claimed: set[str] | None = None
+            ) -> tuple[dict[str, AssetInfo], list[Tx]]:
     """Journal-Assets (sofern nicht im Import definiert) und aktive Journal-Buchungen (sofern nicht im Import:
-    gleiche ``tx_id``, gleiche Anbieter-ID oder vom Nutzer als Dublette bestätigt – siehe :mod:`reconcile`)."""
+    gleiche ``tx_id``, gleiche Anbieter-ID oder vom Nutzer als Dublette bestätigt – siehe :mod:`reconcile`).
+
+    ``claimed`` sind die IDs des Imports vor Änderungen in der App: eine dort gelöschte Import-Buchung lässt eine
+    gleichnamige Journal-Buchung nicht wieder aufleben."""
     from app.journal.reconcile import coverage
 
     base_assets = base.assets if base is not None else {}
-    base_ids = {t.tx_id for t in base.txs} if base is not None else set()
+    base_ids = ({t.tx_id for t in base.txs} if base is not None else set()) | (claimed or set())
     covered = coverage(db, base)
     assets = {aid: a for aid, a in journal_asset_infos(db).items() if aid not in base_assets}
     txs = [row_to_tx(r) for r in db.q("SELECT * FROM journal_tx WHERE status='active' ORDER BY ts_utc, id")
@@ -489,6 +493,140 @@ class JournalService:
         self._after_change()
         return True
 
+    # -- Buchungen des kuratierten Imports (Überlagerung, siehe app.journal.overrides) -------------------
+    def import_tx(self, tx_id: str) -> Tx | None:
+        """Import-Fassung (ohne Änderungen in der App)."""
+        base = self.ctx.base_portfolio()
+        return next((t for t in base.txs if t.tx_id == tx_id), None) if base is not None else None
+
+    def override(self, tx_id: str) -> Any:
+        return self.db.q1("SELECT * FROM tx_override WHERE tx_id=?", (tx_id,))
+
+    def override_states(self) -> dict[str, Any]:
+        return self.ctx.effective_base()[1]
+
+    def import_form_data(self, tx_id: str) -> dict[str, str] | None:
+        orig = self.import_tx(tx_id)
+        if orig is None:
+            return None
+        ov = self.override(tx_id)
+        if ov is not None and ov["form_json"]:
+            data = json.loads(ov["form_json"])
+        else:
+            eff = self.ctx.effective_base()[0]
+            cur = next((t for t in eff.txs if t.tx_id == tx_id), orig) if eff is not None else orig
+            data = tx_form_data(cur)
+        return {k: str(v) for k, v in data.items() if v is not None}
+
+    def save_import(self, tx_id: str, data: Mapping[str, Any]) -> SaveResult:
+        """Import-Buchung bearbeiten: geprüfte Fassung als Überlagerung speichern (Import-Datei bleibt unverändert)."""
+        from app.journal.overrides import asset_classes, import_row, to_tx
+
+        orig = self.import_tx(tx_id)
+        if orig is None:
+            return SaveResult(errors=["Buchung ist im aktiven Import nicht enthalten."])
+        assets = self.known_assets()
+        price, fx = self._valuers()
+        draft = forms.build("expert", data, assets, price, fx, today_local())
+        if draft.errors:
+            return SaveResult(errors=draft.errors)
+        if len(draft.rows) != 1:
+            return SaveResult(errors=["Eine Import-Buchung wird als genau eine Buchung bearbeitet."])
+        base = import_row(orig)
+        row = {**draft.rows[0], "tx_id": tx_id}
+        for k in ("source", "source_ref", "flag", "orig_price", "orig_ccy"):  # Herkunft bleibt erhalten
+            row[k] = base.get(k, "")
+        classes = asset_classes(assets)
+        for col in ("from_asset", "to_asset", "fee_asset", "related_asset"):
+            code = row.get(col)
+            if code and code not in classes and code in C.ISO_CURRENCIES:
+                classes[code] = {"asset_class": "fiat"}
+        new, warnings = to_tx(row, orig.seq, classes)
+        if new is None:
+            rep, _ = validate_tx_rows([row], classes)
+            return SaveResult(errors=list(dict.fromkeys(_strip(m.message) for m in rep.errors)))
+        res = SaveResult(warnings=draft.warnings + [_strip(w) for w in warnings], tx_ids=[tx_id])
+        stamp = _now()
+        prev = self.override(tx_id)
+        with self.db.transaction() as c:
+            if tx_row(new) == base:  # keine Abweichung mehr vom Import → Änderung entfernen
+                if prev is not None:
+                    c.execute("DELETE FROM tx_override WHERE tx_id=?", (tx_id,))
+                    self._log(c, "import_revert", tx_id, None, None, stamp)
+            else:
+                form_json = json.dumps({k: str(data.get(k)).strip() for k in forms.FORM_FIELDS
+                                        if data.get(k) not in (None, "")}, ensure_ascii=False)
+                c.execute("INSERT INTO tx_override(tx_id, action, row_json, form_json, base_json, import_id, "
+                          "created_at, updated_at) VALUES (?, 'edit', ?, ?, ?, ?, ?, ?) ON CONFLICT(tx_id) DO UPDATE "
+                          "SET action='edit', row_json=excluded.row_json, form_json=excluded.form_json, "
+                          "base_json=excluded.base_json, import_id=excluded.import_id, updated_at=excluded.updated_at",
+                          (tx_id, json.dumps(tx_row(new), ensure_ascii=False), form_json,
+                           json.dumps(base, ensure_ascii=False), self.ctx.active_import_id(), stamp, stamp))
+                self._log(c, "import_edit", tx_id, base, tx_row(new), stamp)
+        self._after_change()
+        res.warnings += self._negative_balances([tx_row(new)], assets)
+        return res
+
+    def delete_import(self, tx_id: str) -> bool:
+        """Import-Buchung löschen (zählt nicht mehr, umkehrbar); eine bearbeitete Fassung bleibt gespeichert."""
+        from app.journal.overrides import import_row
+
+        orig = self.import_tx(tx_id)
+        if orig is None:
+            return False
+        prev = self.override(tx_id)
+        stamp = _now()
+        with self.db.transaction() as c:
+            if prev is not None:
+                c.execute("UPDATE tx_override SET action='delete', updated_at=? WHERE tx_id=?", (stamp, tx_id))
+            else:
+                c.execute("INSERT INTO tx_override(tx_id, action, base_json, import_id, created_at, updated_at) "
+                          "VALUES (?, 'delete', ?, ?, ?, ?)",
+                          (tx_id, json.dumps(import_row(orig), ensure_ascii=False), self.ctx.active_import_id(),
+                           stamp, stamp))
+            self._log(c, "import_delete", tx_id, import_row(orig), None, stamp)
+        self._after_change()
+        return True
+
+    def restore_import(self, tx_id: str) -> bool:
+        """Gelöschte Import-Buchung wiederherstellen (mit ihrer bearbeiteten Fassung, falls vorhanden)."""
+        prev = self.override(tx_id)
+        if prev is None or prev["action"] != "delete":
+            return False
+        stamp = _now()
+        with self.db.transaction() as c:
+            if prev["row_json"]:
+                c.execute("UPDATE tx_override SET action='edit', updated_at=? WHERE tx_id=?", (stamp, tx_id))
+            else:
+                c.execute("DELETE FROM tx_override WHERE tx_id=?", (tx_id,))
+            self._log(c, "import_restore", tx_id, None, None, stamp)
+        self._after_change()
+        return True
+
+    def revert_import(self, tx_id: str) -> bool:
+        """Änderung verwerfen – es gilt wieder die Import-Fassung (auch für wirkungslose Änderungen)."""
+        prev = self.override(tx_id)
+        if prev is None:
+            return False
+        stamp = _now()
+        with self.db.transaction() as c:
+            c.execute("DELETE FROM tx_override WHERE tx_id=?", (tx_id,))
+            self._log(c, "import_revert", tx_id, json.loads(prev["row_json"]) if prev["row_json"] else None, None,
+                      stamp)
+        self._after_change()
+        return True
+
+    def deleted_imports(self) -> list[dict[str, Any]]:
+        """Gelöschte Import-Buchungen für die Liste „Gelöschte Buchungen“."""
+        out = []
+        for r in self.db.q("SELECT * FROM tx_override WHERE action='delete' ORDER BY updated_at DESC"):
+            t = self.import_tx(r["tx_id"])
+            base = json.loads(r["base_json"])
+            out.append({"tx_id": r["tx_id"], "ts_utc": iso(t.ts) if t else base.get("datetime"),
+                        "type": t.type if t else base.get("type"), "note": (t.note if t else base.get("note")) or "",
+                        "updated_at": r["updated_at"], "origin": "import", "orphan": t is None})
+        return out
+
     def log(self, limit: int = 100) -> list[Any]:
         return self.db.q("SELECT * FROM journal_log ORDER BY id DESC LIMIT ?", (limit,))
 
@@ -587,10 +725,12 @@ class JournalService:
 
     # -- Gesamtexport -----------------------------------------------------------------------------------
     def export_zip(self) -> bytes:
-        """Aktueller Datenstand (Import + Journal + freigegebene Sparplan-Ausführungen) als Import-ZIP (Schema 1.1).
+        """Aktueller Datenstand als Import-ZIP (Schema 1.1) plus App-Zustand im Ordner ``portfolia/``.
 
-        Der Export eignet sich als Sicherung, zum Wechsel des Werkzeugs und als neuer kuratierter Import – dabei
-        werden Journal-Buchungen über ihre tx_id erkannt und nicht doppelt gezählt.
+        Buchungen: Import mit Änderungen/Löschungen in der App, Journal, freigegebene Sparplan-Ausführungen.
+        Der Export eignet sich als Sicherung, zum Wechsel des Werkzeugs, als neuer kuratierter Import (Journal-
+        Buchungen werden über ihre tx_id erkannt und nicht doppelt gezählt) und zur vollständigen Neueinrichtung
+        (siehe :mod:`app.fullexport`).
         """
         pf = self.ctx.recorded_portfolio()
         if pf is None:
@@ -619,12 +759,17 @@ class JournalService:
         for row in accounts:
             if withholding.get(row["account"]) in ("domestic", "foreign"):
                 row["tax_withholding"] = withholding[row["account"]]
+        from app.fullexport import collect
+
+        extras = collect(self.ctx, {t.tx_id for t in txs})
         with tempfile.TemporaryDirectory() as td:
             path = build_zip(Path(td) / "export.zip", transactions=[tx_row(t) for t in txs], assets=assets,
                              holdings_check=holdings, issues=[], manual_prices=manual, accounts=accounts,
                              generated_at=iso(datetime.now(UTC)) or "", valuation_date=today.isoformat(),
-                             notes=f"Gesamtexport aus Portfolia {__version__} (Import + in der App erfasste "
-                                   "Buchungen + freigegebene Sparplan-Ausführungen)")
+                             notes=f"Gesamtexport aus Portfolia {__version__}: Import mit Änderungen in der App, "
+                                   "in der App erfasste Buchungen, freigegebene Sparplan-Ausführungen; im Ordner "
+                                   "portfolia/ Einstellungen, Zuordnungen und Kurshistorie (ohne API-Keys)",
+                             extras=extras)
             return path.read_bytes()
 
 
@@ -664,7 +809,8 @@ def tx_form_data(t: Tx) -> dict[str, str]:
     """Buchung → Formularwerte im Expertenmodus (Kopieren, synchronisierte Buchungen bearbeiten)."""
     local = t.ts.astimezone(local_tz())
     data = {"kind": "expert", "type": t.type, "tag": t.tag or "", "date": local.date().isoformat(),
-            "time": "" if t.date_only else local.strftime("%H:%M"), "note": t.note or "",
+            "time": "" if t.date_only else local.strftime("%H:%M:%S" if local.second else "%H:%M"),
+            "note": t.note or "",
             "related_asset": t.related_asset or "", "fee_asset": t.fee_asset or "",
             "fee_qty": forms.s(t.fee_qty), "fee_eur": forms.s(t.fee_eur), "value_eur": forms.s(t.value_eur)}
     for side in ("from", "to"):

@@ -44,7 +44,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.csvimport import model as M
-from app.csvimport.events import derive_event_key, derive_tx_hash, identity_keys, normalize_hash
+from app.csvimport.events import derive_event_key, derive_tx_hash, identity_keys, normalize_hash, source_ref_keys
 from app.csvimport.model import ParseOptions, Rec
 from app.csvimport.profiles import BUILTIN, PROFILES, MappingProfile, Profile, detect, header_matcher
 from app.csvimport.reader import CsvError, read_table, zone
@@ -1012,22 +1012,39 @@ class CsvImportService:
 
     # -- Dubletten ----------------------------------------------------------------------------------------
     def _same_events(self, rows: list[RowCtx], source: str) -> None:
-        """Dasselbe Ereignis aus einer anderen Quelle (CSV-Import ↔ Datenquelle): Treffer über Anbieter-ID bzw.
-        Alias (Bitpanda-UUIDs) → „bekannt“ (geht nicht erneut in Bewertung und Lots ein); Treffer über den
-        Transaktions-Hash nur bei gleicher Buchungsseite → „mögliche Dublette“ (Entscheidung beim Nutzer)."""
+        """Dasselbe Ereignis aus einer anderen Quelle (CSV-Import ↔ Datenquelle ↔ kuratierter Import): Treffer über
+        Anbieter-ID bzw. Alias (Bitpanda-UUIDs) oder dieselbe Kennung derselben Quelle in einer Import-Buchung →
+        „bekannt“ (geht nicht erneut in Bewertung und Lots ein); Treffer über den Transaktions-Hash nur bei gleicher
+        Buchungsseite → „mögliche Dublette“ (Entscheidung beim Nutzer)."""
+        aliases: dict[str, set[str]] = defaultdict(set)
+        for a in self.db.q("SELECT key, tx_id FROM journal_event_alias"):
+            aliases[a["tx_id"]].add(a["key"])
+        by_id: dict[str, list[Any]] = defaultdict(list)
+        by_hash: dict[str, list[Any]] = defaultdict(list)
+        # Import-Buchungen – auch aus einem Portfolia-Export übernommene App-Buchungen (source „portfolia:csv:…“ bzw.
+        # „portfolia:sync:…“, source_ref = Kennung), z. B. erneuter CSV-Import nach einer Neueinrichtung
+        same_src: dict[str, str] = {}
+        base, _ = self.ctx.effective_base()
+        for t in base.txs if base is not None else []:
+            row = {"tx_id": t.tx_id, "source": "Import", "status": "active"}
+            for k in source_ref_keys(t.source, t.source_ref) | aliases.get(t.tx_id, set()):
+                by_id[k].append(row)
+            if t.source_ref and (t.source or "").removeprefix("portfolia:") == source:
+                same_src[t.source_ref] = t.tx_id
         wanted: dict[int, tuple[set[str], str | None]] = {}
         for rc in rows:
+            tid = same_src.get(rc.rec.ext_id or "")
+            if tid is not None:
+                rc.status = "known"
+                rc.dup_of = [tid]
+                rc.warnings.insert(0, f"bereits im Import enthalten als {tid} – gleiche Kennung")
+                continue
             ids = identity_keys(rc.rec.event_key, rc.rec.aliases, rc.rec.ext_id)
             h = normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id))
             if ids or h:
                 wanted[rc.idx] = (ids, h)
         if not wanted:
             return
-        aliases: dict[str, set[str]] = defaultdict(set)
-        for a in self.db.q("SELECT key, tx_id FROM journal_event_alias"):
-            aliases[a["tx_id"]].add(a["key"])
-        by_id: dict[str, list[Any]] = defaultdict(list)
-        by_hash: dict[str, list[Any]] = defaultdict(list)
         for r in self.db.q("SELECT tx_id, source, status, external_id, event_key, tx_hash, type, from_asset, to_asset "
                            "FROM journal_tx WHERE status IN ('active', 'merged', 'deleted') AND source <> 'transfer' "
                            "AND source <> ?", (source,)):
@@ -1037,7 +1054,9 @@ class CsvImportService:
             if h:
                 by_hash[h].append(r)
         for rc in rows:
-            ids, h = wanted.get(rc.idx, (set(), None))
+            if rc.idx not in wanted:
+                continue
+            ids, h = wanted[rc.idx]
             hit: dict[str, Any] = {}
             for k in sorted(ids):
                 for r in by_id.get(k, ()):

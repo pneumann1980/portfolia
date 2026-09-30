@@ -103,6 +103,12 @@ class Settings:
             self._cache = None
             self.version += 1
 
+    def reload(self) -> None:
+        """Zwischenspeicher verwerfen (nach direktem Schreiben in die Tabelle, z. B. Neueinrichtung aus Export)."""
+        with self._lock:
+            self._cache = None
+            self.version += 1
+
     def reset(self, key: str) -> None:
         self.db.x("DELETE FROM settings WHERE key=?", (key,))
         with self._lock:

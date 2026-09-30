@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Buchung bearbeiten' if tx_id else 'Neue Buchung' }}{% endblock %}
 {% block heading %}{{ 'Buchung bearbeiten' if tx_id else 'Neue Buchung' }}{% endblock %}
-{% macro field(name, label, type='text', list='', mode='', hint='', placeholder='', required=False) -%}
-<label class="field">{{ label }}<input type="{{ type }}" name="{{ name }}" value="{{ data.get(name) or '' }}"{% if list %} list="{{ list }}"{% endif %}{% if mode %} inputmode="{{ mode }}"{% endif %}{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if required %} required{% endif %} autocomplete="off">{% if hint %}<span class="hint">{{ hint }}</span>{% endif %}</label>
+{% macro field(name, label, type='text', list='', mode='', hint='', placeholder='', required=False, step='') -%}
+<label class="field">{{ label }}<input type="{{ type }}" name="{{ name }}" value="{{ data.get(name) or '' }}"{% if list %} list="{{ list }}"{% endif %}{% if mode %} inputmode="{{ mode }}"{% endif %}{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if required %} required{% endif %} autocomplete="off">{% if hint %}<span class="hint">{{ hint }}</span>{% endif %}</label>
 {%- endmacro %}
 {% macro select(name, label, options, hint='') -%}
 <label class="field">{{ label }}<select name="{{ name }}">{% for v, l in options %}<option value="{{ v }}" {% if (data.get(name) or '') == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>{% if hint %}<span class="hint">{{ hint }}</span>{% endif %}</label>
@@ -17,6 +17,9 @@
 <section class="card">
   {% if tx_id %}
   <p class="hint">{{ kinds[kind] }} · <span class="mono">{{ tx_id }}</span></p>
+  {% if import_edit %}<div class="alert"><span class="icon">i</span><div>Buchung aus dem <b>kuratierten Import</b>. Die Import-Datei
+    bleibt unverändert – die Änderung gilt als Überlagerung, zählt in allen Berechnungen und ist im Gesamtexport enthalten.
+    Herkunft ({{ import_source or 'Import' }}) und Buchungs-ID bleiben erhalten; „Änderung verwerfen“ stellt die Import-Fassung wieder her.</div></div>{% endif %}
   {% else %}
   <nav class="tabs" aria-label="Vorgang">{% for k, l in kinds_short.items() %}<a class="{{ 'active' if k == kind }}" href="/journal/new?kind={{ k }}{% if data.get('account') %}&account={{ data.get('account')|urlencode }}{% endif %}" title="{{ kinds[k] }}"{% if k == kind %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav>
   {% endif %}
@@ -25,7 +28,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="kind" value="{{ kind }}">
     <div class="edit-grid">
       {{ field('date', 'Datum', type='date', required=True) }}
-      {{ field('time', 'Uhrzeit (optional)', type='time', hint='ohne Uhrzeit: 12:00 Uhr') }}
+      {{ field('time', 'Uhrzeit (optional)', type='time', hint='ohne Uhrzeit: 12:00 Uhr', step='1' if (data.get('time') or '')|length > 5 else '') }}
     {% if kind in ('buy', 'sell') %}
       {{ account() }}
       {{ asset(hint='Neue Position? Zuerst unter „Neues Asset“ anlegen.') }}

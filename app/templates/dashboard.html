@@ -7,6 +7,7 @@
 {% endblock %}
 {% block content %}
 <div id="refresh-msg" class="row" style="margin-bottom:8px"></div>
+{% if restore and restore.state == 'pending' %}{% include "partials/restore_notice.html" %}{% endif %}
 {% set stale_n = val.stale|length %}{% set unval_n = val.unvalued|length %}
 {% if stale_n %}{% set reasons = val.stale|map(attribute='price.note')|select|unique|list %}
 <div class="alert warn"><span class="icon">!</span><div>{{ stale_n }} Kurs{{ 'e' if stale_n != 1 }} veraltet – es wird der letzte bekannte Wert verwendet{% if reasons|length == 1 %}: {{ reasons[0] }}{% elif reasons %} ({{ reasons|length }} Gründe){% endif %}.

@@ -185,7 +185,8 @@ class _Form:
         if not tm:
             self.d.errors.append("Uhrzeit ungültig (HH:MM).")
             return None
-        local = datetime.combine(d, time(int(tm.group(1)), int(tm.group(2))), tzinfo=local_tz())
+        sec = int(tm.group(3)[1:]) if tm.group(3) else 0
+        local = datetime.combine(d, time(int(tm.group(1)), int(tm.group(2)), sec), tzinfo=local_tz())
         return local.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
