@@ -1,0 +1,162 @@
+"""Testhilfen für Wallet-Anbindungen: nachgebildete Anbieter-APIs (ohne Netz) und App-Helfer.
+
+Die Nachbildungen filtern und blättern wie die Originale (Etherscan: Blockbereich, Seite × Einträge, sortiert;
+Esplora: 25 je Seite ab ``last_seen_txid``; Solana: Signaturen absteigend mit ``before``/``until``; Kaspa:
+Blockzeit-Cursor), damit Paginierung, Abbruch und Fortsetzung realistisch geprüft werden. Alle Daten sind
+anonymisiert bzw. synthetisch.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import re
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import httpx
+from fastapi.testclient import TestClient
+
+from app.config import Config
+from app.csvimport.service import csv_service
+from app.main import build_app
+
+DATA = Path(__file__).resolve().parent / "data" / "wallets"
+MASTER = base64.b64encode(bytes(range(32))).decode()
+ETHERSCAN_KEY = "ES_test_key_0123456789ABCDEFGHIJ"
+NO_TX = {"status": "0", "message": "No transactions found", "result": []}
+
+
+def load(name: str) -> dict[str, Any]:
+    return json.loads((DATA / name).read_text())
+
+
+class Recorder:
+    """Gemeinsame Basis: Anfragen aufzeichnen, einmalige Störungen einspeisen."""
+
+    def __init__(self) -> None:
+        self.calls: list[httpx.Request] = []
+        self.inject: list[tuple[Callable[[httpx.Request], bool], httpx.Response]] = []
+
+    def injected(self, req: httpx.Request) -> httpx.Response | None:
+        for i, (pred, resp) in enumerate(self.inject):
+            if pred(req):
+                del self.inject[i]
+                return resp
+        return None
+
+    def fail_next(self, resp: httpx.Response, pred: Callable[[httpx.Request], bool] = lambda r: True) -> None:
+        self.inject.append((pred, resp))
+
+
+class FakeEvm(Recorder):
+    """Etherscan API V2 und Routescan (Etherscan-kompatibel) für mehrere Chains."""
+
+    def __init__(self, chains: dict[int, dict[str, Any]], *, free_chains: tuple[int, ...] = (1,),
+                 key: str = ETHERSCAN_KEY, paid: bool = False) -> None:
+        super().__init__()
+        self.chains = chains
+        self.free_chains = free_chains
+        self.key = key
+        self.paid = paid
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        self.calls.append(req)
+        assert req.method == "GET", "nur lesende Aufrufe"
+        p = req.url.params
+        if req.url.host == "api.etherscan.io":
+            assert req.url.path == "/v2/api"
+            chain = int(p["chainid"])
+            if p.get("apikey") != self.key:
+                return httpx.Response(200, json={"status": "0", "message": "NOTOK", "result": "Invalid API Key"})
+            if chain not in self.free_chains and not self.paid:
+                return httpx.Response(200, json={"status": "0", "message": "NOTOK", "result":
+                                                 "Free API access is not supported for this chain. Please upgrade "
+                                                 "your api plan for full chain coverage. https://etherscan.io/apis"})
+        elif req.url.host == "api.routescan.io":
+            m = re.match(r"^/v2/network/mainnet/evm/(\d+)/etherscan/api$", req.url.path)
+            assert m, req.url.path
+            assert "chainid" not in p
+            chain = int(m.group(1))
+        else:  # pragma: no cover - darf nie passieren
+            raise AssertionError(f"unerwarteter Host {req.url.host}")
+        inj = self.injected(req)
+        if inj is not None:
+            return inj
+        d = self.chains[chain]
+        mod, act = p["module"], p["action"]
+        if mod == "proxy" and act == "eth_blockNumber":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 83, "result": hex(d["tip"])})
+        if act == "balance":
+            return httpx.Response(200, json={"status": "1", "message": "OK", "result": d.get("balance", "0")})
+        if act == "tokenbalance":
+            res = d.get("tokenbalance", {}).get(p["contractaddress"].lower(), "0")
+            return httpx.Response(200, json={"status": "1", "message": "OK", "result": res})
+        if act in ("tokennfttx", "token1155tx"):
+            rows = d.get(act, [])
+            return httpx.Response(200, json={"status": "1", "message": "OK", "result": rows[:1]} if rows else NO_TX)
+        if act in ("txlist", "txlistinternal", "tokentx"):
+            addr = p["address"].lower()
+            start, end = int(p["startblock"]), int(p["endblock"])
+            page, off = int(p["page"]), int(p["offset"])
+            if off > 1000 or page * off > 10000:
+                return httpx.Response(200, json={"status": "0", "message": "NOTOK",
+                                                 "result": "Result window is too large"})
+            rows = [r for r in d.get(act, []) if start <= int(r["blockNumber"]) <= end
+                    and addr in (r["from"].lower(), r["to"].lower())]
+            rows.sort(key=lambda r: int(r["blockNumber"]), reverse=p.get("sort") == "desc")
+            chunk = rows[(page - 1) * off: page * off]
+            return httpx.Response(200, json={"status": "1", "message": "OK", "result": chunk} if chunk else NO_TX)
+        return httpx.Response(200, json={"status": "0", "message": "NOTOK", "result": "Error! Invalid action"})
+
+    def requests(self, action: str) -> list[httpx.Request]:
+        return [c for c in self.calls if c.url.params.get("action") == action]
+
+
+def make_client(config: Config) -> TestClient:
+    return TestClient(build_app(config, start_scheduler=False))
+
+
+def post(c: TestClient, url: str, **data: Any) -> httpx.Response:
+    return c.post(url, data={"csrf_token": c.token, **data}, follow_redirects=False)  # type: ignore[attr-defined]
+
+
+def ctx(c: TestClient) -> Any:
+    return c.app.state.ctx  # type: ignore[attr-defined]
+
+
+def create_wallet(c: TestClient, provider: str, address: str, *, name: str | None = None, group: str = "Ledger",
+                  account: str | None = None, **form: Any) -> int:
+    data = {"kind": "wallet", "provider": provider, "name": name or f"{group} {provider}", "address": address,
+            "account": account or name or f"{group} {provider}", "wallet_group": group, "sync_interval_min": "0",
+            **form}
+    r = post(c, "/settings/datasources", **data)
+    assert r.status_code == 303, r.text[:1500]
+    return int(re.search(r"/settings/datasources/(\d+)", r.headers["location"]).group(1))
+
+
+def set_provider_key(c: TestClient, provider: str, key: str) -> None:
+    r = post(c, f"/settings/datasources/provider-keys/{provider}", api_key=key)
+    assert r.status_code == 303 and "error=" not in r.headers["location"], r.headers["location"]
+
+
+def source(c: TestClient, sid: int) -> dict[str, Any]:
+    r = ctx(c).db.q1("SELECT * FROM data_source WHERE id=?", (sid,))
+    return dict(r) if r else {}
+
+
+def rows_by_ext(c: TestClient, bid: int) -> dict[str, Any]:
+    return {rc.rec.ext_id: rc for rc in csv_service(ctx(c)).rows(bid)}
+
+
+def all_rows(c: TestClient, sid: int) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for b in ctx(c).db.q("SELECT id FROM csv_batch WHERE datasource_id=? ORDER BY id", (sid,)):
+        out.update(rows_by_ext(c, int(b["id"])))
+    return out
+
+
+def balances(c: TestClient, sid: int) -> dict[str, str]:
+    return {r["asset_key"]: r["qty"] for r in ctx(c).db.q("SELECT asset_key, qty FROM ds_balance WHERE source_id=?",
+                                                          (sid,))}
