@@ -77,6 +77,7 @@ TRANSFER_AFTER = timedelta(hours=72)  # … und höchstens so lange danach
 TRANSFER_MIN_RATIO = Decimal("0.5")  # Zugang ≥ 50 % des Abgangs (Netzwerkgebühren bei kleinen Beträgen)
 DUP_QTY_TOL = Decimal("0.005")
 SAME_QTY_WINDOW = timedelta(hours=36)  # gleiche exakte Menge auf demselben Konto: mögliche Doppelerfassung
+RECONSTRUCTED_WINDOW = timedelta(days=7)  # Vorgang nahe einer rekonstruierten Buchung: ersetzt er sie?
 REF_ID_SOURCES = ("koinly",)  # Import-Quellen, deren source_ref die ID des CSV-Exports derselben Quelle ist
 _LOCK = threading.RLock()  # Auswerten/Übernehmen/Rückgängig nacheinander (Doppelklick, parallele Tabs)
 
@@ -924,6 +925,7 @@ class CsvImportService:
         self._same_events([rc for rc in open_rows if rc.status in ("new", "invalid", "unclear", "before")], source)
         self._duplicates([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._same_qty([rc for rc in open_rows if rc.status == "new"], pf, source)
+        self._reconstructed([rc for rc in open_rows if rc.status == "new"], pf)
         self._transfers(bid, rows, pf, valuer)
         self._save(rows)
         self._save_recon(batch, rows, recon)
@@ -1366,6 +1368,42 @@ class CsvImportService:
                 rc.warnings.insert(0, f"gleiche Menge wie {t.tx_id} ({fmt_de_date(to_local_date(t.ts))}, "
                                       f"{_span_abs(t.ts - rc.ts)} Abstand) auf demselben Konto – möglicherweise "
                                       "doppelt erfasst; bitte prüfen")
+
+    @staticmethod
+    def _reconstructed(rows: list[RowCtx], pf: Portfolio | None) -> None:
+        """Vorgang auf Konto und Asset einer rekonstruierten Buchung des kuratierten Imports (Quelle „reconstructed“
+        bzw. Kennzeichen ``RECONSTRUCTED_*``) innerhalb von 7 Tagen: Die echte Abrechnung ersetzt womöglich die
+        Schätzung (abweichende Menge, z. B. Durchschnittskurs) – nie still zusätzlich buchen, sondern prüfen. Die
+        rekonstruierte Buchung bleibt unverändert; ersetzt wird sie nur im kuratierten Import."""
+        if pf is None or not rows:
+            return
+        index: dict[tuple[str, str], list[Tx]] = defaultdict(list)
+        for t in pf.txs:
+            if t.origin != "import":
+                continue
+            if (t.source or "") != "reconstructed" and "RECONSTRUCTED" not in (t.flag or "").upper():
+                continue
+            for acc, aid in ((t.to_account, t.to_asset), (t.from_account, t.from_asset)):
+                if acc and aid and aid not in C.ISO_CURRENCIES:
+                    index[(acc, aid)].append(t)
+        if not index:
+            return
+        for rc in rows:
+            row = rc.row
+            if row is None or rc.status != "new":
+                continue
+            keys = {(row["to_account"], row["to_asset"]), (row["from_account"], row["from_asset"])}
+            hits = sorted({t.tx_id: t for k in keys if k[0] and k[1] for t in index.get(k, ())
+                           if abs(t.ts - rc.ts) <= RECONSTRUCTED_WINDOW}.values(),
+                          key=lambda t: (abs(t.ts - rc.ts), t.tx_id))
+            if hits:
+                t = hits[0]
+                rc.status = "duplicate"
+                rc.dup_same_account = True
+                rc.dup_of = list(dict.fromkeys([*rc.dup_of, *(x.tx_id for x in hits)]))
+                rc.warnings.insert(0, f"rekonstruierte Buchung {t.tx_id} ({fmt_de_date(to_local_date(t.ts))}) im "
+                                      "kuratierten Import – ersetzt dieser Vorgang sie? Dann dort ersetzen statt "
+                                      "zusätzlich übernehmen")
 
     @staticmethod
     def _covered_by_transfer(rc: RowCtx, transfers: Mapping[str, list[Tx]], used: set[str]) -> bool:

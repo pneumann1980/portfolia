@@ -444,6 +444,24 @@ def test_import_with_same_quantity_on_same_account_goes_to_review(cfg):
         c.__exit__(None, None, None)
 
 
+def test_import_near_reconstructed_booking_goes_to_review(cfg):
+    """Echte Abrechnung nahe einer rekonstruierten Sparplan-Buchung (andere Menge) → Prüfung, keine Doppelzählung."""
+    rec = tx("RB1", "2025-03-03", "buy", to=("Depot D", "WKN:A0B1C2", "4.0225"), value="50")
+    rec["source"], rec["source_ref"], rec["flag"] = "reconstructed", "sparplan|WKN:A0B1C2|2025-03-03", \
+        "RECONSTRUCTED_PLAN;SAVINGS_PLAN;AVG_PRICE"
+    c = client_with_import(cfg, [rec], ASSETS)
+    try:
+        data = PF_HEADER + "A1,2025-03-04T10:00:00Z,buy,,Depot D,EUR,50,Depot D,WKN:A0B1C2,3.95,,,,50,Abrechnung\n" \
+                           "A2,2025-04-20T10:00:00Z,buy,,Depot D,EUR,50,Depot D,WKN:A0B1C2,3.9,,,,50,Abrechnung\n"
+        near, later = rows_of(c, upload(c, "dkb.csv", data))
+        assert near.status == "duplicate" and near.dup_of == ["RB1"] and not near.include()
+        assert near.warnings[0].startswith("rekonstruierte Buchung RB1 (03.03.2025)")
+        assert later.status == "new"
+        assert c.app.state.ctx.db.scalar("SELECT COUNT(*) FROM journal_tx") == 0
+    finally:
+        c.__exit__(None, None, None)
+
+
 def test_same_hash_two_legitimate_events_from_same_source_are_both_new(cfg):
     """Zweite Bewegung derselben Transaktion (anderer Ereignisindex) wird nicht als „vorhanden“ verschluckt."""
     from app.csvimport import model as M

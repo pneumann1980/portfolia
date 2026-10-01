@@ -658,7 +658,8 @@ nichts löschen, zusammenführen, umklassifizieren, ausschließen oder neu berec
   (`app/csvimport/identity.py`, Bitpanda „TH“ = Threshold Network): Auflösung nur über `TH@BITPANDA` bzw. eine
   bestätigende Kursquelle, sonst offen; Vorschlag „eigenes Asset“; die automatische Kursquellen-Suche ordnet solche
   Kürzel nie über das Symbol zu. Kennungen des kuratierten Imports beim CSV-/Sync-Abgleich: Koinly-ID, Bitpanda-UUID
-  in der Notiz. Gleiche exakte Menge auf demselben Konto ≤ 36 h → „mögliche Dublette“. Hash-Abgleich ohne Buchungen
+  in der Notiz. Gleiche exakte Menge auf demselben Konto ≤ 36 h → „mögliche Dublette“; ebenso Vorgänge auf Konto und
+  Asset einer rekonstruierten Import-Buchung (± 7 Tage – echte Abrechnung statt Schätzung). Hash-Abgleich ohne Buchungen
   derselben Quelle (zweite Bewegung derselben Transaktion bleibt ein eigener Vorgang). Mögliche Transfers ohne
   Entscheidung werden nie automatisch übernommen. Auswertungsversion 3: offene Prüf-Stapel werden beim Öffnen neu
   bewertet; übernommene Buchungen bleiben unberührt.
@@ -666,13 +667,14 @@ nichts löschen, zusammenführen, umklassifizieren, ausschließen oder neu berec
   bereits übernommene App-Buchungen still aus den Berechnungen. Bestehende Zuordnungen (Kursquellen, Symbole)
   werden nicht neu bewertet.
 
-**Tests:** `tests/test_diagnosis.py` (18, synthetisch und anonymisiert): doppelte Gutschrift manuell + Transfer,
+**Tests:** `tests/test_diagnosis.py` (19, synthetisch und anonymisiert): doppelte Gutschrift manuell + Transfer,
 drei Hash-Paare ohne Index mit Netto-Szenario, zwei legitime Bewegungen mit verschiedenem Ereignisindex, Anbieter-ID
 in Import und App, Anbieter-Kürzel mit Kursquelle eines anderen Coins, Migration 10^6 mit Spam-Status,
 rekonstruierte Buchungen mit Ausgleichsbuchung (FIFO-Verbrauch je Jahr), alter manueller Kurs bzw. kein Kurs,
 Transfer-Kandidaten (Hash bzw. Zeit/Menge), externer Bestand (abgestimmt, Differenz, veraltet, nur intern); Seite und
 erneute Prüfung ändern nichts (Prüfsumme über alle Tabellen, Bestände und Lots), Diagnose deterministisch, keine
-Formulare; Schutzregeln im Prüf-Stapel (gleiche Menge → Prüfung, zweite Bewegung derselben Transaktion bleibt neu,
+Formulare; Schutzregeln im Prüf-Stapel (gleiche Menge → Prüfung, Abrechnung nahe einer rekonstruierten Buchung →
+Prüfung, zweite Bewegung derselben Transaktion bleibt neu,
 Anbieter-Kürzel → Zuordnung nur für Bitpanda, Koinly-ID und Bitpanda-UUID aus dem Import → vorhanden, unklare
 Transfers nie automatisch, Kursquellen-Suche).
 

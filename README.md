@@ -431,7 +431,9 @@ bekommen keinen Kurs-Vorschlag; KRC-20 wird nur gefunden, wenn der Katalog den T
   Bitpanda-UUIDs, die Koinly in der Notiz führt (`txhash=<uuid>` auf einem Bitpanda-Konto) – Treffer sind *bereits
   vorhanden*. Ein Zu- bzw. Abgang mit **exakt derselben Menge** desselben Assets auf demselben Konto innerhalb von
   36 Stunden (z. B. einmal manuell nachgetragen, einmal als Transfer erfasst) wird *mögliche Dublette* und nie
-  automatisch übernommen – außer bei zwei verschiedenen Blockchain-Transaktionen, Erträgen und Fiat.
+  automatisch übernommen – außer bei zwei verschiedenen Blockchain-Transaktionen, Erträgen und Fiat. Ebenso ein
+  Vorgang auf Konto und Asset einer **rekonstruierten Buchung** des Imports (± 7 Tage): Die echte Abrechnung ersetzt
+  womöglich die Schätzung – dann dort ersetzen, nicht zusätzlich übernehmen.
 * **Stichtag:** Mit kuratiertem Import werden standardmäßig nur Zeilen **nach** dessen Stand (`valuation_date`)
   vorgeschlagen – ältere stehen dort bereits. Zeilen bis zum Stichtag gelten als *vor Stichtag*, auch wenn ihr Asset
   unbekannt ist, ein EUR-Wert fehlt oder die Art ungeklärt ist: Für sie ist keine Zuordnung und keine Entscheidung
@@ -1161,6 +1163,7 @@ SQLite-Sicherung unter *Backups* der richtige Weg.
 | „mit einem anderen Master-Key verschlüsselt (Key-ID …)“ | Falscher Master-Key nach Restore/Rotation: richtigen Key ablegen bzw. alten als `PORTFOLIA_MASTER_KEY_OLD_FILE` bereitstellen, sonst API-Key neu eingeben. |
 | Bitpanda „teilweise synchronisiert“ | Abruf unvollständig (Drosselung, Seitenende unklar) – der nächste Lauf holt erneut ab; Details unter „Abdeckung“ der Datenquelle. |
 | Bitpanda „Berechtigung fehlt“ / „abgelehnt“ | API-Key mit Leserecht „Transaction“ neu erstellen und unter „API-Key ersetzen“ eintragen. |
+| Prüf-Stapel: „rekonstruierte Buchung … im kuratierten Import – ersetzt dieser Vorgang sie?“ | Echte Abrechnung zu einer geschätzten Buchung: im kuratierten Import die rekonstruierte Buchung ersetzen und den Vorgang auslassen – oder übernehmen, wenn es ein zusätzlicher Vorgang ist. |
 | Prüf-Stapel: „gleiche Menge wie … – möglicherweise doppelt erfasst“ | Eine vorhandene Buchung auf demselben Konto hat exakt dieselbe Menge (≤ 36 h). Beim Anbieter bzw. im Explorer prüfen; nur bei zwei echten Vorgängen übernehmen. |
 | Prüf-Stapel: „„TH“ bei Bitpanda ist Threshold Network – Asset zuordnen“ | Anbieter-Kürzel ohne bestätigte Kursquelle: Vorschlag „neu anlegen“ (eigenes Asset mit CoinGecko-ID des Anbieter-Coins) übernehmen oder ein passendes Asset zuordnen; gilt nur für diesen Anbieter. |
 | Diagnose zeigt „intern konsistent“ trotz Dublettenverdacht | Kein Widerspruch: Der Soll-Bestand stammt aus denselben Buchungen. Klären über Explorer bzw. Anbieter – siehe [Diagnose](#diagnose-datenqualität-und-bestandsabgleich). |
