@@ -482,6 +482,26 @@ tr.is-ended td { color: var(--muted); }
   table.cards tr.edit-row { display: block; }
   table.cards .inline-amount { justify-content: flex-start; }
 }
+/* Prüf-Stapel: Assets zuordnen (Vorschläge, Eingaben ohne Überlaufen auf schmalen Bildschirmen) */
+.sugg-sum { font-size: 0.85rem; color: var(--ink-2); margin: 0 0 10px; overflow-wrap: anywhere; }
+.sugg-sum > .badge:first-child { margin-right: 4px; }
+.sugg { margin-top: 6px; font-size: 0.82rem; line-height: 1.4; color: var(--ink-2); overflow-wrap: anywhere; }
+.sugg .badge { margin-right: 4px; }
+.sugg-warn { margin-top: 3px; color: var(--warn-ink); }
+.sugg-src { margin-top: 6px; font-size: 0.82rem; }
+.map-pair { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.map-pair > input, .map-pair > select { min-width: 0; }
+.map-table .w-asset { width: 11em; }
+.map-table .w-id { width: 8em; }
+.map-table .w-name { width: 12em; }
+.map-table .w-qid { width: 11em; }
+.map-table td.wrap-any { min-width: 17em; max-width: 28em; }
+@media (max-width: 699px) {
+  table.cards.map-table td.wrap-any { min-width: 0; max-width: none; }
+  table.cards.map-table input[type="text"], table.cards.map-table select { width: 100%; max-width: 100%; }
+  table.cards.map-table .map-pair > input, table.cards.map-table .map-pair > select { flex: 1 1 9em; width: auto; }
+}
+
 /* Buchungen */
 tr.is-new > td { background: var(--good-bg); }
 table.journal td { vertical-align: top; }

@@ -4,9 +4,11 @@ Ablauf (nach einem Import, täglich und auf Knopfdruck):
 
 1. **Katalog** ``/coins/list`` inkl. Plattformen – ein Aufruf, 7 Tage zwischengespeichert. Gesucht wird lokal:
    An CoinGecko gehen weder Symbole noch Mengen oder Konten, nur danach die IDs der Kandidaten.
-2. **Kandidaten** je Asset: Coins mit gleichem Symbol. Konten, auf denen das Asset gebucht ist, liefern
-   Chain-Hinweise („MetaMask (BNB)“ → BNB Smart Chain, „Kaspa (KAS)“ → Kaspa). Coins, die nachweislich nur auf
-   anderen Chains existieren, entfallen; Coins auf der Chain werden bevorzugt.
+2. **Kandidaten** je Asset: Ist das Asset Tokens einer Wallet-Anbindung zugeordnet (``SYMBOL@CHAIN:Contract``),
+   entscheidet der Contract im Katalog – eindeutig, „hoch“, ohne Marktdaten. Sonst Coins mit gleichem Symbol;
+   Konten, auf denen das Asset gebucht ist, liefern Chain-Hinweise („MetaMask (BNB)“ → BNB Smart Chain,
+   „Kaspa (KAS)“ → Kaspa). Coins, die nachweislich nur auf anderen Chains existieren, entfallen; Coins auf der
+   Chain werden bevorzugt.
 3. **Marktdaten** der Kandidaten (``/coins/markets``: Kurs, Marktkapitalisierung, Allzeithoch/-tief in EUR).
    Kandidaten ohne aktuellen Kurs entfallen, ebenso solche, deren Spanne (Allzeittief ÷ 3 … Allzeithoch × 3)
    die eigenen Transaktionskurse nicht enthält – dann ist es ein anderer Token mit gleichem Symbol
@@ -29,6 +31,7 @@ import logging
 import re
 import statistics
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -50,6 +53,13 @@ AUTO_LEVELS = {"hoch": "nur eindeutige Treffer (empfohlen)", "mittel": "auch wah
 STATUS_LABEL = {"active": "zugeordnet", "suggested": "Vorschlag", "none": "kein Treffer", "rejected": "abgelehnt"}
 OWN_SOURCES = ("coingecko", "yahoo")
 _RUN_LOCK = threading.Lock()  # Job und Knopf „Jetzt suchen“ nicht gleichzeitig
+CATALOG_FILE = "coingecko-coins.json.gz"
+CATALOG_RETRY = timedelta(minutes=30)  # Katalog-Abruf höchstens so oft anstoßen (nie je Seitenaufruf)
+
+# Chain-Kürzel der Wallet-Anbindungen (Token-Kennung ``SYMBOL@CHAIN:Contract``) → CoinGecko-Plattform
+CHAIN_PLATFORMS: dict[str, tuple[str, ...]] = {"ETH": ("ethereum",), "BSC": ("binance-smart-chain",),
+                                               "AVAX": ("avalanche",), "SOL": ("solana",)}
+_KASPA_PLATFORM = re.compile(r"kaspa|krc", re.I)  # KRC-20: Plattform-Bezeichnung bei CoinGecko nicht festgelegt
 
 # Kontoname → CoinGecko-Plattform(en). Börsenkonten liefern bewusst keinen Hinweis.
 CHAIN_PATTERNS: list[tuple[re.Pattern[str], tuple[str, ...]]] = [
@@ -100,6 +110,15 @@ def needs_source(a: AssetInfo) -> bool:
     return a.is_crypto and not (a.quote_source in OWN_SOURCES and a.quote_id)
 
 
+def split_token(key: str | None) -> tuple[str, str, str] | None:
+    """Token-Kennung ``SYMBOL@CHAIN:Contract`` → (Symbol, CHAIN, Contract); sonst None."""
+    sym, at, rest = (key or "").strip().partition("@")
+    chain, colon, contract = rest.partition(":")
+    if not at or not colon or not chain or not contract.strip():
+        return None
+    return sym, chain.upper(), contract.strip()
+
+
 # -- Katalog --------------------------------------------------------------------------------------------
 
 class Catalog:
@@ -109,6 +128,7 @@ class Catalog:
         self.fetched_at = fetched_at
         self.by_id: dict[str, dict[str, Any]] = {}
         self.by_symbol: dict[str, list[dict[str, Any]]] = {}
+        self._contracts: dict[str, list[tuple[str, str, dict[str, Any]]]] | None = None
         for c in coins:
             cid = str(c.get("id") or "").strip()
             sym = str(c.get("symbol") or "").strip().lower()
@@ -131,6 +151,37 @@ class Catalog:
     @staticmethod
     def platforms(coin: dict[str, Any]) -> list[str]:
         return sorted(k for k, v in (coin.get("platforms") or {}).items() if k)
+
+    def by_contract(self, platform: Callable[[str], bool], contract: str,
+                    case_sensitive: bool = False) -> list[dict[str, Any]]:
+        """Coins mit dieser Contract-Adresse auf einer passenden Plattform.
+
+        Verglichen wird ohne Groß-/Kleinschreibung (EVM-Adressen, gespeicherte Zuordnungen in Großschreibung);
+        ``case_sensitive`` (Solana-Mints) entscheidet nur, falls dabei mehrere Coins übrig bleiben.
+        """
+        if self._contracts is None:
+            idx: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
+            for c in self.by_id.values():
+                for plat, addr in (c.get("platforms") or {}).items():
+                    a = str(addr or "").strip()
+                    if plat and a:
+                        idx.setdefault(a.lower(), []).append((str(plat).lower(), a, c))
+            self._contracts = idx
+        want = contract.strip()
+        hits = [(addr, c) for plat, addr, c in self._contracts.get(want.lower(), []) if platform(plat)]
+        if case_sensitive and len({c["id"] for _, c in hits}) > 1:
+            hits = [(addr, c) for addr, c in hits if addr == want]
+        return list({c["id"]: c for _, c in hits}.values())
+
+    def for_token(self, chain: str, contract: str) -> list[dict[str, Any]]:
+        """Coins zu einem Token einer Wallet-Anbindung (Chain-Kürzel wie in ``SYMBOL@CHAIN:Contract``)."""
+        chain = chain.upper()
+        if chain == "KAS":
+            return self.by_contract(lambda p: bool(_KASPA_PLATFORM.search(p)), contract)
+        plats = CHAIN_PLATFORMS.get(chain)
+        if not plats:
+            return []
+        return self.by_contract(lambda p: p in plats, contract, case_sensitive=chain == "SOL")
 
     @classmethod
     def load(cls, path: Path, fetch: Any, force: bool = False) -> Catalog:
@@ -159,6 +210,70 @@ class Catalog:
         tmp.write_bytes(gzip.compress(json.dumps({"fetched_at": iso(now), "coins": coins}).encode()))
         tmp.replace(path)
         return cls(coins, now)
+
+
+_CACHED: dict[str, Any] = {}
+_CACHED_LOCK = threading.Lock()
+_TRIGGERED: dict[str, datetime] = {}  # Katalogpfad → Zeitpunkt des letzten Anstoßes
+
+
+def catalog_path(ctx: Any) -> Path:
+    return Path(ctx.config.cache_dir) / CATALOG_FILE
+
+
+def cached_catalog(path: Path) -> Catalog | None:
+    """Katalog aus dem Datei-Cache, ohne Abruf; im Speicher gehalten, solange die Datei unverändert bleibt."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    with _CACHED_LOCK:
+        if _CACHED.get("key") == key:
+            return _CACHED["catalog"]  # type: ignore[no-any-return]
+    try:
+        raw = json.loads(gzip.decompress(path.read_bytes()))
+        cat = Catalog(list(raw["coins"]), parse_iso(raw["fetched_at"]) or datetime.fromtimestamp(st.st_mtime, UTC))
+    except (OSError, ValueError, KeyError, TypeError, EOFError) as e:
+        log.warning("CoinGecko-Katalog im Cache unlesbar: %s", e)
+        return None
+    with _CACHED_LOCK:
+        _CACHED.clear()
+        _CACHED.update(key=key, catalog=cat)
+    return cat
+
+
+def refresh_catalog(ctx: Any, force: bool = False) -> dict[str, Any]:
+    """Coin-Katalog laden bzw. nach 7 Tagen erneuern – ein Aufruf ohne Bezug zum Portfolio."""
+    cg = getattr(ctx.prices, "cg", None)
+    if cg is None:
+        return {"skipped": "CoinGecko nicht verfügbar (Demo-Modus)"}
+    cat = Catalog.load(catalog_path(ctx), cg.coins_list, force=force)
+    return {"coins": len(cat), "fetched_at": iso(cat.fetched_at)}
+
+
+def catalog_state(ctx: Any, start: bool = False) -> dict[str, Any]:
+    """Lokaler Katalog für Vorschläge samt Zustand; ``start`` lädt einen fehlenden oder veralteten Katalog im
+    Hintergrund (Job „coingecko_catalog“), nach einem Fehler frühestens nach ``CATALOG_RETRY`` erneut."""
+    path = catalog_path(ctx)
+    cat = cached_catalog(path)
+    cg = getattr(getattr(ctx, "prices", None), "cg", None)
+    job = ctx.db.q1("SELECT running, last_end, last_ok, last_error FROM job_status WHERE job='coingecko_catalog'")
+    now = datetime.now(UTC)
+    running = bool(job and job["running"])
+    ended = parse_iso(job["last_end"]) if job and job["last_end"] else None
+    failed = bool(ended and job and not job["last_ok"] and not running)
+    stale = cat is None or now - cat.fetched_at > CATALOG_TTL
+    # höchstens ein Versuch je ``CATALOG_RETRY`` – auch wenn ein Abruf „erfolgreich“ auf den alten Stand zurückfiel
+    due = start and stale and cg is not None and not running and not (ended and now - ended < CATALOG_RETRY)
+    if due and getattr(ctx, "scheduler", None) is not None and ctx.scheduler.trigger("coingecko_catalog", 0.2):
+        _TRIGGERED[str(path)] = now
+    # angestoßen, aber noch nicht gestartet (Warteschlange des Schedulers) – ebenfalls „wird geladen“
+    trig = _TRIGGERED.get(str(path))  # job_status speichert sekundengenau
+    queued = bool(trig and now - trig < timedelta(minutes=2) and not (ended and ended >= trig.replace(microsecond=0)))
+    return {"catalog": cat, "fetched_at": cat.fetched_at if cat else None, "stale": stale,
+            "available": cg is not None, "loading": running or queued,
+            "error": (job["last_error"] or "Abruf fehlgeschlagen") if failed and job and not queued else None}
 
 
 # -- Entscheidung --------------------------------------------------------------------------------------
@@ -261,7 +376,7 @@ class SourceService:
 
     @property
     def cache_path(self) -> Path:
-        return self.ctx.config.cache_dir / "coingecko-coins.json.gz"
+        return catalog_path(self.ctx)
 
     def rows(self) -> dict[str, Any]:
         return {r["asset_id"]: r for r in self.db.q("SELECT * FROM asset_source")}
@@ -316,7 +431,8 @@ class SourceService:
                 if acc and aid:
                     accounts.setdefault(aid, set()).add(acc)
         fb = FallbackPrices(pf, None, only={a.asset_id for a in targets})
-        per_asset = {a.asset_id: catalog.candidates(a.symbol) for a in targets}
+        exact = {a.asset_id: d for a in targets if (d := self._by_contract(catalog, a.asset_id)) is not None}
+        per_asset = {a.asset_id: catalog.candidates(a.symbol) for a in targets if a.asset_id not in exact}
         ids = sorted({c["id"] for cs in per_asset.values() for c in cs})
         try:
             markets = cg.markets(ids) if ids else {}
@@ -327,9 +443,13 @@ class SourceService:
         applied, suggested, none = [], [], []
         with self.db.transaction() as c:
             for a in targets:
-                pts = [p.price for p in fb.points(a.asset_id)]
-                ref = statistics.median(pts) if pts else None
-                d = decide(per_asset[a.asset_id], markets, chain_hints(sorted(accounts.get(a.asset_id, ()))), ref)
+                if a.asset_id in exact:
+                    d = exact[a.asset_id]
+                else:
+                    pts = [p.price for p in fb.points(a.asset_id)]
+                    ref = statistics.median(pts) if pts else None
+                    d = decide(per_asset[a.asset_id], markets, chain_hints(sorted(accounts.get(a.asset_id, ()))),
+                               ref)
                 if d.coin_id is None:
                     status = "none"
                     none.append(a.asset_id)
@@ -354,16 +474,32 @@ class SourceService:
         return {"checked": len(targets), "applied": applied, "suggested": len(suggested), "none": len(none),
                 "catalog": len(catalog)}
 
+    def _by_contract(self, catalog: Catalog, asset_id: str) -> Decision | None:
+        """Eindeutiger Coin über die Contracts der Tokens, die einem Asset zugeordnet sind (Wallet-Anbindungen,
+        Tabelle ``csv_symbol``) – genauer als jede Suche über das Symbol."""
+        coins: dict[str, dict[str, Any]] = {}
+        chains = set()
+        for r in self.db.q("SELECT symbol FROM csv_symbol WHERE asset_id=?", (asset_id,)):
+            tok = split_token(r["symbol"])
+            if tok is not None:
+                chains.add(tok[1])
+                coins.update((c["id"], c) for c in catalog.for_token(tok[1], tok[2]))
+        if len(coins) != 1:
+            return None
+        coin = next(iter(coins.values()))
+        cand = Candidate(coin["id"], str(coin.get("name") or coin["id"]), Catalog.platforms(coin), chain_match=True)
+        return Decision(coin["id"], "hoch", f"Contract laut CoinGecko-Katalog ({', '.join(sorted(chains))})", [cand])
+
     # -- Entscheidungen des Nutzers ---------------------------------------------------------------------
     def _known(self, coin_id: str) -> bool:
-        try:
-            raw = json.loads(gzip.decompress(self.cache_path.read_bytes()))
-        except (OSError, ValueError):
-            return True  # ohne Katalog nicht prüfbar – Format ist geprüft
-        return any(c.get("id") == coin_id for c in raw.get("coins", []))
+        cat = cached_catalog(self.cache_path)
+        return cat is None or coin_id in cat.by_id  # ohne Katalog nicht prüfbar – Format ist geprüft
 
-    def accept(self, asset_id: str, raw_id: str) -> str | None:
-        """Zuordnung übernehmen (Vorschlag oder eigene Eingabe). Rückgabe: Fehlertext oder None."""
+    def accept(self, asset_id: str, raw_id: str, reason: str = "vom Nutzer bestätigt",
+               notify: bool = True) -> str | None:
+        """Zuordnung übernehmen (Vorschlag oder eigene Eingabe). Rückgabe: Fehlertext oder None.
+
+        ``notify=False``: Kursabruf erst mit :meth:`changed` anstoßen (mehrere Zuordnungen in einem Schritt)."""
         pf = self.ctx.recorded_portfolio()
         a = pf.assets.get(asset_id) if pf else None
         if a is None or not a.is_crypto:
@@ -379,9 +515,10 @@ class SourceService:
                    checked_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(asset_id) DO UPDATE SET quote_id=excluded.quote_id, status='active', origin='user',
                    reason=excluded.reason, updated_at=excluded.updated_at""",
-            (asset_id, "coingecko", coin_id, "active", "user", None, "vom Nutzer bestätigt", now, now))
+            (asset_id, "coingecko", coin_id, "active", "user", None, reason[:200], now, now))
         log.info("Kursquelle zugeordnet: %s → CoinGecko %s", asset_id, coin_id)
-        self._changed()
+        if notify:
+            self._changed()
         return None
 
     def reject(self, asset_id: str) -> None:
@@ -392,6 +529,9 @@ class SourceService:
     def reset(self, asset_id: str) -> None:
         """Zuordnung bzw. Ablehnung entfernen – das Asset wird beim nächsten Lauf neu gesucht."""
         self.db.x("DELETE FROM asset_source WHERE asset_id=?", (asset_id,))
+        self._changed()
+
+    def changed(self) -> None:
         self._changed()
 
     def _changed(self) -> None:

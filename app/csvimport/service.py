@@ -184,6 +184,14 @@ class SymbolResolver:
         return None, "unknown"
 
 
+def _direction(r: Rec, raw: str) -> str:
+    """Rolle eines Symbols im Vorgang: in (Zugang), out (Abgang), fee (Gebühr) oder other."""
+    if r.row is not None:
+        cols = (("to_asset", "in"), ("from_asset", "out"), ("fee_asset", "fee"))
+        return next((d for col, d in cols if r.row.get(col) == raw), "other")
+    return "in" if raw == r.in_sym else "out" if raw == r.out_sym else "fee" if raw == r.fee_sym else "other"
+
+
 # ----------------------------------------------------------------------------------------------------
 # Bewertung in EUR (nur gespeicherte Kurse; keine Online-Abfrage)
 # ----------------------------------------------------------------------------------------------------
@@ -1326,9 +1334,12 @@ class CsvImportService:
                 if v in ("unknown", "ambiguous"):
                     u = unknown.setdefault(raw.upper(), {"symbol": raw.upper(), "display": raw, "count": 0,
                                                          "ambiguous": v == "ambiguous",
-                                                         "hint": rc.rec.class_hint.get(raw), "spam": False})
+                                                         "hint": rc.rec.class_hint.get(raw), "spam": False,
+                                                         "dirs": set(), "kinds": set()})
                     u["count"] += 1
                     u["spam"] = u["spam"] or bool(rc.rec.review and "Spam" in rc.rec.review)
+                    u["dirs"].add(_direction(rc.rec, raw))
+                    u["kinds"].add(rc.rec.kind)
             for a in (rc.rec.account, rc.rec.to_account):
                 if a:
                     accounts[a] += 1

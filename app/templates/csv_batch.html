@@ -73,23 +73,38 @@
   <div class="card-head"><h2>1 · Assets zuordnen <span class="badge warn">{{ ov.unknown|length }}</span></h2></div>
   <p class="hint">Diese Symbole kennt Portfolia noch nicht. Einem vorhandenen Asset zuordnen oder neu anlegen (mit Kursquelle für
     Bewertung und Historie); „ignorieren“ überspringt alle Zeilen mit dem Symbol. Zuordnungen gelten auch für künftige Importe.</p>
+  {% if catalog %}<div class="sugg-sum">
+    <span class="badge {{ 'good' if catalog.prefilled else 'info' }}">{{ catalog.prefilled }} von {{ ov.unknown|length }} vorbelegt</span>
+    Abgleich mit vorhandenen Assets, Kursquellen und früheren Zuordnungen{% if catalog.catalog %} sowie dem CoinGecko-Katalog
+    (Stand {{ catalog.fetched_at|date_de }}, lokal durchsucht – an CoinGecko gehen weder Symbole noch Contracts){% endif %}.
+    Tokens nur über Chain und Contract, nie über das Symbol allein. Vorschläge prüfen, dann speichern.
+    {% if catalog.loading and not catalog.catalog %}<div style="margin-top:6px"><span id="catalog-status" hx-get="/journal/csv/{{ b.id }}/catalog" hx-trigger="every 3s" hx-swap="outerHTML"><span class="badge info">CoinGecko-Katalog wird geladen …</span></span></div>
+    {% elif catalog.error and not catalog.catalog %}<div style="margin-top:6px"><span class="badge warn">CoinGecko-Katalog nicht geladen</span> {{ catalog.error }} – Vorschläge nur aus der vorhandenen Datenbasis.</div>
+    {% elif not catalog.available and not catalog.catalog %}<div style="margin-top:6px" class="hint">Im Demo-Modus kein CoinGecko-Katalog – Vorschläge nur aus der vorhandenen Datenbasis.</div>{% endif %}
+  </div>{% endif %}
   <form method="post" action="/journal/csv/{{ b.id }}/symbols">{{ hidden_nav() }}
-  <div class="table-wrap cards-wrap"><table class="compact cards">
-    <thead><tr><th>Symbol</th><th class="num">Zeilen</th><th>Aktion</th><th>Vorhandenes Asset</th><th>Neu: ID / Name</th><th>Neu: Klasse / Kurs-ID</th></tr></thead>
-    <tbody>{% for u in ov.unknown %}{% set token = '@' in u.symbol %}{% set base = u.symbol.split('@')[0].split(';')[0] %}{% set kc = known_coins.get(base) %}{% set i = loop.index0 %}
-      <tr><td class="wrap-any" data-label="Symbol"><span class="mono">{{ (u.display or u.symbol)|asset_label if token else u.symbol }}</span><input type="hidden" name="sym_{{ i }}" value="{{ u.symbol }}">{% if u.ambiguous %}<div class="hint">mehrdeutig</div>{% endif %}
-          {% if u.spam %}<div><span class="badge warn">möglicher Spam</span></div>{% endif %}
-          {% if token %}<div class="hint">Token über Chain und Contract erkannt – das Symbol kann gefälscht sein.{% set link = (u.display or u.symbol)|token_link %}{% if link %} <a href="{{ link }}" target="_blank" rel="noopener noreferrer">Contract prüfen</a>{% endif %}</div>{% endif %}</td>
+  <div class="table-wrap cards-wrap"><table class="compact cards map-table">
+    <thead><tr><th>Symbol / Vorschlag</th><th class="num">Zeilen</th><th>Aktion</th><th>Vorhandenes Asset</th><th>Neu: ID / Name</th><th>Neu: Klasse / Kurs-ID</th></tr></thead>
+    <tbody>{% for u in ov.unknown %}{% set token = '@' in u.symbol %}{% set base = u.symbol.split('@')[0].split(';')[0] %}{% set kc = known_coins.get(base) if not token else none %}{% set i = loop.index0 %}{% set s = sugg.get(u.symbol) %}{% set security = u.hint == 'security' %}
+      {% set act = s.action if s and s.prefill else ('ignore' if u.spam else 'map' if u.ambiguous else '' if token else 'new') %}
+      <tr><td class="wrap-any wide" data-label="Symbol"><span class="mono">{{ (u.display or u.symbol)|asset_label if token else u.symbol }}</span><input type="hidden" name="sym_{{ i }}" value="{{ u.symbol }}">{% if u.ambiguous %} <span class="hint">mehrdeutig</span>{% endif %}
+          {% if u.spam %}<span class="badge warn">möglicher Spam</span>{% endif %}
+          {% if token %}{% set link = (u.display or u.symbol)|token_link %}<div class="hint">{% if not (s and s.verified) %}Token über Chain und Contract erkannt – das Symbol kann gefälscht sein.{% endif %}{% if link %} <a href="{{ link }}" target="_blank" rel="noopener noreferrer">Contract prüfen</a>{% endif %}</div>{% endif %}
+          {% if s and s.reason %}<div class="sugg"><span class="badge {{ conf_badge.get(s.confidence, '') }}">{{ 'Vorschlag · ' ~ s.confidence if s.confidence else 'Hinweis' }}</span> {{ s.reason }}
+            {% if s.warning %}<div class="sugg-warn">⚠ {{ s.warning }}</div>{% endif %}</div>{% endif %}</td>
         <td class="num" data-label="Zeilen">{{ u.count }}</td>
-        <td data-label="Aktion"><select name="act_{{ i }}"><option value="">später</option><option value="new" {% if not u.ambiguous and not token %}selected{% endif %}>neu anlegen</option><option value="map" {% if u.ambiguous %}selected{% endif %}>zuordnen</option><option value="ignore" {% if u.spam %}selected{% endif %}>ignorieren</option></select></td>
-        <td data-label="Vorhanden"><input type="text" name="asset_{{ i }}" list="dl-assets" placeholder="ID oder Name" autocomplete="off"></td>
-        <td data-label="Neu"><input type="text" name="id_{{ i }}" value="{{ base }}" aria-label="ID für {{ u.symbol }}" style="max-width:9em"> <input type="text" name="name_{{ i }}" value="{{ kc[0] if kc else base }}" aria-label="Name für {{ u.symbol }}"></td>
-        <td data-label="Klasse"><select name="class_{{ i }}" aria-label="Klasse für {{ u.symbol }}"><option value="crypto" {% if u.hint != 'security' %}selected{% endif %}>Krypto</option><option value="security" {% if u.hint == 'security' %}selected{% endif %}>Wertpapier</option><option value="fiat">Währung</option></select>
-          <input type="text" name="qid_{{ i }}" value="{{ kc[1] if kc and u.hint != 'security' else '' }}" placeholder="{{ 'Yahoo-Symbol' if u.hint == 'security' else 'CoinGecko-ID' }}" aria-label="Kurs-ID für {{ u.symbol }}" style="max-width:12em">
-          {% if kc and u.hint != 'security' %}<div class="hint">Vorschlag – bitte prüfen</div>{% endif %}</td></tr>
+        <td data-label="Aktion"><select name="act_{{ i }}" aria-label="Aktion für {{ u.symbol }}"><option value="" {% if act == '' %}selected{% endif %}>später</option><option value="new" {% if act == 'new' %}selected{% endif %}>neu anlegen</option><option value="map" {% if act == 'map' %}selected{% endif %}>zuordnen</option><option value="ignore" {% if act == 'ignore' %}selected{% endif %}>ignorieren</option></select></td>
+        <td class="wide" data-label="Vorhandenes Asset"><input type="text" name="asset_{{ i }}" value="{{ s.asset_id if s and s.asset_id else '' }}" list="dl-assets" placeholder="ID oder Name" autocomplete="off" aria-label="Vorhandenes Asset für {{ u.symbol }}" class="w-asset">
+          {% if s and s.source_id %}<label class="check sugg-src"><input type="checkbox" name="src_{{ i }}" value="{{ s.source_id }}" checked> Kursquelle CoinGecko „{{ s.source_id }}“ für {{ s.asset_id }} übernehmen</label>{% endif %}</td>
+        <td class="wide" data-label="Neu: ID / Name"><div class="map-pair"><input type="text" name="id_{{ i }}" value="{{ s.new_id if s and s.new_id else base }}" aria-label="ID für {{ u.symbol }}" class="w-id"><input type="text" name="name_{{ i }}" value="{{ s.name if s and s.name else kc[0] if kc else base }}" aria-label="Name für {{ u.symbol }}" class="w-name"></div></td>
+        <td class="wide" data-label="Neu: Klasse / Kurs-ID"><div class="map-pair"><select name="class_{{ i }}" aria-label="Klasse für {{ u.symbol }}"><option value="crypto" {% if not security %}selected{% endif %}>Krypto</option><option value="security" {% if security %}selected{% endif %}>Wertpapier</option><option value="fiat">Währung</option></select>
+          <input type="text" name="qid_{{ i }}" value="{{ s.qid if s and s.qid else kc[1] if kc and not security else '' }}" placeholder="{{ 'Yahoo-Symbol' if security else 'CoinGecko-ID' }}" aria-label="Kurs-ID für {{ u.symbol }}" class="w-qid" autocomplete="off"{% if s and s.options %} list="dl-cg-{{ i }}"{% endif %}></div>
+          {% if s and s.options %}<datalist id="dl-cg-{{ i }}">{% for cid, label in s.options %}<option value="{{ cid }}">{{ label }}</option>{% endfor %}</datalist><div class="hint">{{ s.options|length }} Kandidaten in der Auswahlliste</div>
+          {% elif kc and not security and not (s and s.qid) %}<div class="hint">Vorschlag – bitte prüfen</div>{% endif %}</td></tr>
     {% endfor %}</tbody>
   </table></div>
-  <p class="hint">CoinGecko-ID: Teil der Adresse auf coingecko.com (z. B. „bitcoin“, „solana“). Wertpapiere: Yahoo-Symbol (z. B. „AAPL“, „EUNL.DE“) oder leer für manuelle Kurse.</p>
+  <p class="hint">CoinGecko-ID: Teil der Adresse auf coingecko.com (z. B. „bitcoin“, „solana“). Wertpapiere: Yahoo-Symbol (z. B. „AAPL“, „EUNL.DE“) oder leer für manuelle Kurse.
+    Neue Krypto-Assets ohne Kurs-ID sucht die automatische Kursquellen-Suche nach der Übernahme (<a href="/quality/sources">Datenqualität → Kursquellen</a>).</p>
   <div class="row" style="margin-top:8px"><button class="btn primary" type="submit">Zuordnungen speichern</button></div>
   </form>
 </section>{% endif %}

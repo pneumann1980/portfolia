@@ -522,7 +522,7 @@ def test_token_mapping_in_review_batch_uses_contract(client, evm):
         elif sym.upper() == f"USDC@ETH:{FAKE}".upper():
             form |= {f"sym_{i}": sym, f"act_{i}": "ignore"}
             # Standard für Tokens: „später“ (kein Asset aus einem womöglich gefälschten Symbol)
-            sel = _re.search(rf'<select name="act_{i}">(.*?)</select>', page, _re.S).group(1)
+            sel = _re.search(rf'<select name="act_{i}"[^>]*>(.*?)</select>', page, _re.S).group(1)
             assert 'value="new" selected' not in sel and 'value="ignore" selected' in sel  # Spam: ignorieren
     r = post(client, f"/journal/csv/{res['batch_id']}/symbols", **form)
     assert r.status_code == 303

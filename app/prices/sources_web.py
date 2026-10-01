@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.jobs.scheduler import Scheduler, extra_jobs, startup_job
-from app.prices.sources import AUTO_LEVELS, STATUS_LABEL, chain_hints, source_service
+from app.prices.sources import AUTO_LEVELS, STATUS_LABEL, chain_hints, refresh_catalog, source_service
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -26,6 +26,8 @@ def _register(s: Scheduler) -> None:
 
     s.register("resolve_sources", lambda ctx, force=False: source_service(ctx).run(force),
                CronTrigger(hour=6, minute=40))
+    # Coin-Katalog für Vorschläge im Prüf-Stapel (nur bei Bedarf angestoßen, siehe ``catalog_state``)
+    s.register("coingecko_catalog", lambda ctx, force=False: refresh_catalog(ctx, force), None)
     ctx = s.ctx
     if not any(getattr(fn, "_portfolia_sources", False) for fn in ctx.change_listeners):
         def on_change(kind: str) -> None:

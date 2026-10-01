@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -25,15 +26,18 @@ from app.csvimport.service import (
     csv_service,
     pair_accepted,
 )
+from app.csvimport.suggest import batch_suggestions
 from app.jobs.scheduler import Scheduler, extra_jobs
 from app.journal import forms
 from app.journal.service import TAX_TYPES, journal_service, source_label
+from app.prices.sources import catalog_state, source_service
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
 log = logging.getLogger(__name__)
 
 GROUPS = ("Börse", "Wallet", "Steuertool", "Portfolia")
+CONF_BADGE = {"hoch": "good", "mittel": "info", "niedrig": "warn"}
 TZ_CHOICES = [("", "wie Format (Standard)"), ("UTC", "UTC"), ("Europe/Berlin", "Europe/Berlin (Ortszeit)")]
 FILTERS = {"": "alle", "new": "neu", "unclear": "ungeklärt", "duplicate": "Dubletten", "invalid": "unvollständig",
            "before": "vor Stichtag", "known": "bereits importiert", "ignored": "ignoriert", "committed": "übernommen"}
@@ -102,7 +106,12 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
     offset = max(0, offset)
     page = sel[offset:offset + PAGE]
     js = journal_service(ctx)
-    assets = sorted(js.known_assets().values(), key=lambda a: (a.is_fiat, a.name.lower()))
+    known = js.known_assets()
+    assets = sorted(known.values(), key=lambda a: (a.is_fiat, a.name.lower()))
+    sugg: dict[str, Any] = {}
+    catalog: dict[str, Any] = {}
+    if ov["unknown"] and b["status"] in ("preview", "partial", "committed"):
+        sugg, catalog = batch_suggestions(ctx, b, ov, known)
     job = ctx.db.q1("SELECT running, progress_json, last_end, last_ok, last_error FROM job_status WHERE "
                     "job='csv_prices'")
     acc_rows = svc.saved_accounts()
@@ -118,6 +127,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         kind_label=M.KIND_LABEL, source_label=source_label,
         ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
                                                               (b["datasource_id"],))),
+        sugg=sugg, catalog=catalog, conf_badge=CONF_BADGE,
     )
 
 
@@ -274,8 +284,12 @@ def make_router() -> APIRouter:
         f = await _form(request)
         errors: list[str] = []
         known = js.known_assets()
+        created: set[str] = set()  # in diesem Formular angelegt – für spätere Zeilen „zuordnen“ verfügbar
+        sources: list[tuple[str, str, str]] = []
         n = 0
-        for key in [k for k in f if k.startswith("sym_")]:
+        # neue Assets zuerst anlegen: Zeilen weiter oben dürfen auf ein weiter unten angelegtes Asset verweisen
+        keys = sorted((k for k in f if k.startswith("sym_")), key=lambda k: str(f.get(f"act_{k[4:]}")) != "new")
+        for key in keys:
             symbol = str(f.get(key) or "").strip().upper()
             i = key[4:]
             action = str(f.get(f"act_{i}") or "")
@@ -283,13 +297,16 @@ def make_router() -> APIRouter:
                 continue
             if action == "map":
                 aid = str(f.get(f"asset_{i}") or "").strip()
-                if aid not in known:
+                if aid not in known and aid not in created:
                     match = [a for a in known.values() if a.name.lower() == aid.lower()]
                     aid = match[0].asset_id if len(match) == 1 else aid
-                if aid not in known:
+                if aid not in known and aid not in created:
                     errors.append(f"{symbol}: Asset „{aid}“ nicht gefunden.")
                     continue
                 svc.set_symbol(symbol, aid)
+                src = str(f.get(f"src_{i}") or "").strip()
+                if src and aid in known:
+                    sources.append((symbol, aid, src))
             elif action == "ignore":
                 svc.set_symbol(symbol, None)
             elif action == "new":
@@ -305,13 +322,38 @@ def make_router() -> APIRouter:
                     errors.extend(f"{symbol}: {e}" for e in res.errors)
                     continue
                 svc.set_symbol(symbol, res.asset_id)
+                created.add(res.asset_id)
             else:
                 continue
             n += 1
+        if sources:
+            src_svc = source_service(ctx)
+            done = 0
+            for symbol, aid, coin in sources:
+                err = await run_in_threadpool(src_svc.accept, aid, coin,
+                                              f"Contract laut CoinGecko-Katalog (Symbol {symbol})", False)
+                if err:
+                    errors.append(f"{symbol}: Kursquelle für {aid} nicht übernommen – {err}")
+                else:
+                    done += 1
+            if done:
+                src_svc.changed()
         await run_in_threadpool(svc.evaluate, bid)
         if errors:
             return _batch_page(request, bid, errors=errors)
         return _back(request, _redir(bid, f, "symbols" if n else ""))
+
+    @router.get("/journal/csv/{bid}/catalog", response_class=HTMLResponse)
+    def catalog_status(request: Request, bid: int) -> Response:
+        """Fortschritt beim Laden des CoinGecko-Katalogs; danach Seite mit Vorschlägen neu laden."""
+        ctx = get_ctx(request)
+        state = catalog_state(ctx)
+        if state["loading"]:
+            return HTMLResponse(_catalog_status_html(bid))
+        if state["catalog"] is not None:
+            return Response(status_code=204, headers={"HX-Redirect": f"/journal/csv/{bid}#assets"})
+        return HTMLResponse(f'<span class="badge warn">CoinGecko-Katalog nicht geladen: '
+                            f'{html.escape(state["error"] or "unbekannter Fehler")}</span>')
 
     @router.post("/journal/csv/{bid}/accounts")
     async def accounts(request: Request, bid: int) -> Response:
@@ -466,6 +508,11 @@ def make_router() -> APIRouter:
         return _back(request, "/journal/csv#formate")
 
     return router
+
+
+def _catalog_status_html(bid: int) -> str:
+    return (f'<span id="catalog-status" hx-get="/journal/csv/{bid}/catalog" hx-trigger="every 3s" '
+            f'hx-swap="outerHTML"><span class="badge info">CoinGecko-Katalog wird geladen …</span></span>')
 
 
 def _price_status_html(bid: int, running: bool, done: int = 0, total: int = 0) -> str:
