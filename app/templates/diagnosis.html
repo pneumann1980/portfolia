@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Diagnose{% endblock %}
+{% block heading %}Datenqualität · Diagnose{% endblock %}
+{% macro qurl(k=None, s=None) -%}
+/quality/diagnose?{% if k %}kind={{ k }}{% endif %}{% if k and s %}&amp;{% endif %}{% if s %}status={{ s }}{% endif %}
+{%- endmacro %}
+{% macro txref(t) %}
+<div class="txref">
+  <div class="row"><span class="mono">{{ t.tx_id }}</span><span class="badge">{{ type_label.get(t.type, t.type) }}{% if t.tag %} · {{ t.tag }}{% endif %}</span><span class="badge">{{ origin_label.get(t.origin, t.origin) }}</span></div>
+  <div>{{ t.ts|datetime_de }} <span class="hint">· {{ utc_fmt(t.ts) }}</span></div>
+  {% if t.out %}<div>−{{ t.out[2]|qty_exact }} {{ t.out[1] }}{% if t.out[0] %} <span class="hint">von {{ t.out[0] }}</span>{% endif %}</div>{% endif %}
+  {% if t.inn %}<div>+{{ t.inn[2]|qty_exact }} {{ t.inn[1] }}{% if t.inn[0] %} <span class="hint">auf {{ t.inn[0] }}</span>{% endif %}</div>{% endif %}
+  {% if t.fee %}<div class="hint">Gebühr {{ t.fee[1]|qty_exact }} {{ t.fee[0] }}</div>{% endif %}
+  {% if t.value_eur is not none %}<div class="hint">Wert {{ t.value_eur|eur }}</div>{% endif %}
+  <div class="hint">{{ t.source }}{% if t.source_ref %} · Quellkennung <span class="mono">{{ t.source_ref }}</span>{% endif %}</div>
+  {% for h in t.hashes %}<div class="hint">Hash <span class="mono">{{ h }}</span></div>{% endfor %}
+  <div class="hint">Ereignisindex: {% if t.event_index is not none %}<span class="mono">{{ t.event_index }}</span>{% else %}fehlt{% endif %}</div>
+  {% if t.flags %}<div class="row">{% for fl in t.flags %}<span class="badge">{{ fl }}</span>{% endfor %}</div>{% endif %}
+  {% if t.note %}<div class="hint">Notiz: {{ t.note }}</div>{% endif %}
+  <div class="hint"><a href="/journal?q={{ t.tx_id|urlencode }}">in den Buchungen anzeigen</a></div>
+</div>
+{% endmacro %}
+{% block content %}
+<div class="stack diag">
+
+<section class="card">
+  <div class="card-head"><h2>Diagnose: Datenqualität und Bestandsabgleich</h2>
+    <div class="row"><a class="btn sm" href="/quality">Datenqualität</a><a class="btn sm" href="{{ qurl(kind, status) }}" title="Diagnose neu berechnen (ändert keine Daten)">Erneut prüfen</a></div>
+  </div>
+  <div class="alert"><span class="icon">i</span><div><strong>Nur lesend.</strong> Die Diagnose ändert keine Buchung, Zuordnung, Lots, Kurse oder Bestände und schließt nichts aus Berechnungen aus. Auswirkungen stehen ausschließlich in Kästen <em>„Szenario (hypothetisch)“</em>. Auch bei starkem Verdacht bereinigt Portfolia nichts automatisch.</div></div>
+  <p class="hint">Stand {{ generated|datetime_de }} · {{ report.stats.get('txs', 0) }} Buchungen geprüft · {{ report.findings|length }} Befunde{% if report.stats.get('same_hash_distinct_index') %} · {{ report.stats.same_hash_distinct_index }} Hash-Gruppen mit unterschiedlichem Ereignisindex gelten als legitim{% endif %}</p>
+  <ul class="diag-counts">
+    {% for k, label in kinds.items() %}<li><a href="{{ qurl(k) }}">{{ label }}</a>
+      <span class="row">{% for s in statuses %}{% set n = counts[k].get(s, 0) %}{% if n %}<a class="badge {{ status_badge[s] }}" href="{{ qurl(k, s) }}">{{ n }} {{ s }}</a>{% endif %}{% endfor %}{% if not counts[k] %}<span class="muted">keine</span>{% endif %}</span></li>{% endfor %}
+  </ul>
+  <details class="box" style="margin-top:10px"><summary>Was bedeuten die Status?</summary>
+    <dl class="kv" style="margin-top:8px">
+      {% for s, text in statuses.items() %}<dt><span class="badge {{ status_badge[s] }}">{{ s }}</span></dt><dd>{{ text }}</dd>{% endfor %}
+    </dl>
+    <p class="hint">Bestandsabgleich:</p>
+    <dl class="kv">
+      {% for key, (label, badge, text) in holding_status.items() %}<dt><span class="badge {{ badge }}">{{ label }}</span></dt><dd>{{ text }}</dd>{% endfor %}
+    </dl>
+  </details>
+</section>
+
+<section class="card" id="findings">
+  <div class="card-head"><h2>Befunde ({{ shown|length }}{% if kind or status %} von {{ report.findings|length }}{% endif %})</h2></div>
+  <div class="filters">
+    <div class="seg" role="group" aria-label="Befundart">
+      <a href="{{ qurl(None, status) }}" class="{% if not kind %}active{% endif %}">Alle</a>
+      {% for k, label in kinds.items() if by_kind[k] or kind == k %}<a href="{{ qurl(k, status) }}" class="{% if kind == k %}active{% endif %}">{{ label }} ({{ by_kind[k] }})</a>{% endfor %}
+    </div>
+    <div class="seg" role="group" aria-label="Status">
+      <a href="{{ qurl(kind, None) }}" class="{% if not status %}active{% endif %}">jeder Status</a>
+      {% for s in statuses if by_status[s] or status == s %}<a href="{{ qurl(kind, s) }}" class="{% if status == s %}active{% endif %}">{{ s }} ({{ by_status[s] }})</a>{% endfor %}
+    </div>
+  </div>
+  {% if not shown %}<p class="hint">Keine Befunde{% if kind or status %} für diese Auswahl{% endif %}.</p>{% endif %}
+  <div class="stack" style="gap:10px">
+  {% for f in shown %}
+  <details class="finding" id="{{ f.id }}" {% if open_id == f.id %}open{% endif %}>
+    <summary>
+      <div class="row"><span class="badge {{ status_badge[f.status] }}">{{ f.status }}</span><span class="badge">{{ f.kind_label }}</span>{% if f.priority == 1 %}<span class="badge warn">zuerst ansehen</span>{% endif %}</div>
+      <div class="f-title">{{ f.title }}</div>
+      <div class="f-meta">{% if f.accounts %}{{ f.accounts[:4]|join(', ') }}{% if f.accounts|length > 4 %} …{% endif %}{% endif %}{% if f.assets %}{% if f.accounts %} · {% endif %}{{ f.assets[:6]|join(', ') }}{% if f.assets|length > 6 %} …{% endif %}{% endif %}{% if f.txs %} · {{ f.txs|length }} Buchung{{ 'en' if f.txs|length != 1 }}{% endif %}</div>
+    </summary>
+    <div class="finding-body">
+      {% if f.known %}<div><h4>Was Portfolia aus den Daten weiß</h4><ul>{% for x in f.known %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+      {% if f.suspected %}<div><h4>Was Portfolia nur vermutet</h4><ul>{% for x in f.suspected %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+      {% if f.evidence %}<div><h4>Belege</h4><ul>{% for x in f.evidence %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+      {% if f.uncertainty %}<div><h4>Unsicherheiten</h4><ul>{% for x in f.uncertainty %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+      {% if f.pairs %}
+      <div><h4>Gegenüberstellung</h4>
+        <div class="stack" style="gap:10px">{% for a, b, why in f.pairs %}<div class="pair">{{ txref(a) }}{{ txref(b) }}<div class="pair-why">Begründung: {{ why }}</div></div>{% endfor %}</div>
+      </div>
+      {% elif f.txs %}
+      <div><h4>Betroffene Buchungen ({{ f.txs|length }})</h4><div class="tx-grid">{% for t in f.txs %}{{ txref(t) }}{% endfor %}</div></div>
+      {% endif %}
+      {% if f.scenario %}
+      <div class="scenario" role="note">
+        <div class="scenario-label">Szenario (hypothetisch) – nicht gebucht</div>
+        <p>{{ f.scenario.text }}</p>
+        {% if f.scenario.rows %}<div class="scen-rows">
+          <div class="scen-row scen-head"><span>Größe</span><span>aktuell (unverändert)</span><span>im Szenario</span></div>
+          {% for label, cur, alt in f.scenario.rows %}<div class="scen-row"><span class="scen-label">{{ label }}</span><span><em class="scen-k">aktuell: </em>{{ cur }}</span><span><em class="scen-k">im Szenario: </em>{{ alt }}</span></div>{% endfor %}
+        </div>{% endif %}
+      </div>
+      {% endif %}
+      {% if f.decision %}<div class="decision"><h4>Für eine spätere Korrektur nötig – Entscheidung des Nutzers</h4>{{ f.decision }}</div>{% endif %}
+      <div class="f-meta">
+        {% if f.accounts %}Konten: {{ f.accounts|join(', ') }} · {% endif %}{% if f.sources %}Quellen: {{ f.sources|join(', ') }} · {% endif %}Befund-ID <span class="mono">{{ f.id }}</span>
+        {% if f.identifiers %}<div>Kennungen: <span class="mono">{{ f.identifiers[:24]|join(' · ') }}{% if f.identifiers|length > 24 %} …{% endif %}</span></div>{% endif %}
+      </div>
+    </div>
+  </details>
+  {% endfor %}
+  </div>
+</section>
+
+<section class="card" id="holdings">
+  <div class="card-head"><h2>Bestandsabgleich je Konto und Asset</h2></div>
+  <p class="hint">„intern konsistent“ heißt nur: Die Buchungen ergeben den Soll-Bestand des kuratierten Imports. Mit der Börse bzw. Blockchain abgestimmt ist ein Bestand erst bei „mit externer Quelle abgestimmt“ – das setzt einen aktuellen (≤ 48 h), vollständigen Abruf voraus. Portfolia speichert oder ersetzt hier keine Bestände.</p>
+  <div class="row" style="margin:6px 0 10px">{% for key, (label, badge, _t) in holding_status.items() if holding_counts[key] %}<span class="badge {{ badge }}">{{ holding_counts[key] }} {{ label }}</span>{% endfor %}</div>
+  {% if not accounts %}<p class="hint">Keine Bestände.</p>{% endif %}
+  {% for acc, rows in accounts.items() %}
+  {% set attention = rows|selectattr('status', 'in', ['extern_diff', 'extern_unsicher', 'intern_diff'])|list %}
+  {% set explained = rows|selectattr('explanations')|list %}
+  <details class="box hold-acc" {% if attention %}open{% endif %}>
+    <summary><strong>{{ acc }}</strong> <span class="hint">· {{ rows|length }} Position{{ 'en' if rows|length != 1 }}</span>
+      {% for key, (label, badge, _t) in holding_status.items() %}{% set n = rows|selectattr('status', 'equalto', key)|list|length %}{% if n %} <span class="badge {{ badge }}">{{ n }} {{ label }}</span>{% endif %}{% endfor %}
+      {% if explained %} <span class="badge">{{ explained|length }} mit Hinweis</span>{% endif %}</summary>
+    <div class="table-wrap cards-wrap"><table class="cards hold-table">
+      <thead><tr><th>Asset</th><th class="num">berechnet (Buchungen)</th><th class="num">beobachtet (extern)</th><th class="num">Soll (Import)</th><th class="num">Differenz</th><th>Status</th><th>mögliche Erklärungen</th></tr></thead>
+      <tbody>{% for h in rows %}{% set st = holding_status[h.status] %}<tr>
+        <td data-label="Asset">{{ h.asset }}{% if h.name and h.name != h.asset %}<div class="hint">{{ h.name }}</div>{% endif %}</td>
+        <td class="num" data-label="berechnet">{{ h.computed|qty_exact }}</td>
+        <td class="num" data-label="beobachtet">{% if h.observed is not none %}{{ h.observed|qty_exact }}<div class="hint">{{ h.observed_by }}{% if h.observed_at %} · {{ h.observed_at|datetime_de }}{% endif %}</div>{% if h.observed_state %}<div class="hint">{{ h.observed_state }}</div>{% endif %}{% elif h.observed_by %}<span class="hint">nicht gemeldet ({{ h.observed_by }})</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+        <td class="num" data-label="Soll (Import)">{% if h.expected is not none %}{{ h.expected|qty_exact }}{% if h.expected_as_of %}<div class="hint">{{ h.expected_as_of|date_de }}</div>{% endif %}{% else %}<span class="muted">–</span>{% endif %}</td>
+        <td class="num" data-label="Differenz">{% if h.diff is not none %}{{ h.diff|qty_exact }} <span class="hint">zur Quelle</span>{% elif h.internal_diff is not none %}{{ h.internal_diff|qty_exact }} <span class="hint">zum Soll</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+        <td data-label="Status"><span class="badge {{ st[1] }}" title="{{ st[2] }}">{{ st[0] }}</span></td>
+        <td class="wide" data-label="mögliche Erklärungen">{% if h.explanations %}<ul class="plain-list">{% for e in h.explanations %}<li>{{ e }}</li>{% endfor %}</ul>{% else %}<span class="muted">–</span>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+  </details>
+  {% endfor %}
+</section>
+
+<section class="card">
+  <h2>Grenzen der Erkennung</h2>
+  <ul class="plain-list hint">
+    <li>Ohne Ereignisindex (Output-/Log-Index) sind zwei gleiche Bewegungen in derselben Blockchain-Transaktion nicht von einer Doppelbuchung zu unterscheiden – solche Fälle bleiben „verdacht“.</li>
+    <li>Gleiche Menge und gleiche Zeit allein beweisen keine Dublette; Portfolia nennt sie nur zusammen mit weiteren Belegen (manuell erfasst, ohne Hash, Platzhalter-Uhrzeit).</li>
+    <li>Transfers zwischen eigenen Konten werden über Hash, Zeit, Menge und Gebühr vermutet; Adressen der Gegenseite fehlen in den meisten Buchungen.</li>
+    <li>Kurse fragt die Diagnose nicht ab; Bewertungen in Szenarien nutzen nur gespeicherte Kurse bzw. Kaufkurse und sind keine Marktbewertung.</li>
+    <li>Ein externer Bestand gilt nur bei aktuellem, vollständigem Abruf als Abgleich – sonst „extern nicht bestätigt“.</li>
+  </ul>
+</section>
+</div>
+{% endblock %}

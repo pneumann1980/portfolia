@@ -1268,9 +1268,12 @@ class DataSourceService:
             by_event[rc.rec.event_key or f"#{rc.idx}"].append(rc)
         out: set[int] = set()
         for lines in by_event.values():
-            # Transfer-Vorschläge mit bereits übernommenen Buchungen (j:…) verändern deren Lots – nie automatisch
+            # Transfer-Vorschläge mit bereits übernommenen Buchungen (j:…) verändern deren Lots – nie automatisch;
+            # ebenso unklare Transfers (mittlere Sicherheit, Gegenbuchung nur im kuratierten Import): sie brauchen eine
+            # Entscheidung, als einfacher Zu-/Abgang gebucht gingen Einstand und Haltedauer verloren
             if all(rc.status == "new" and not rc.errors and rc.row is not None and not rc.rec.review
-                   and rc.include() and not (rc.pair_ref or "").startswith("j:") for rc in lines):
+                   and rc.include() and not (rc.pair_ref or "").startswith("j:") and not rc.transfer_unclear
+                   for rc in lines):
                 out |= {rc.idx for rc in lines}
         return out
 

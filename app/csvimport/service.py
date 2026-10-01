@@ -46,6 +46,15 @@ from typing import Any
 from app.csvimport import model as M
 from app.csvimport import reconcile as R
 from app.csvimport.events import derive_event_key, derive_tx_hash, identity_keys, normalize_hash, source_ref_keys
+from app.csvimport.identity import (
+    PROVIDER_LABEL,
+    confirms,
+    identity,
+    note_identity_keys,
+    provider_key,
+    provider_of,
+    split_provider_key,
+)
 from app.csvimport.model import ParseOptions, Rec
 from app.csvimport.profiles import BUILTIN, PROFILES, MappingProfile, Profile, detect, header_matcher
 from app.csvimport.reader import CsvError, read_table, zone
@@ -67,6 +76,8 @@ TRANSFER_BEFORE = timedelta(hours=2)  # Zugang höchstens so lange vor dem Abgan
 TRANSFER_AFTER = timedelta(hours=72)  # … und höchstens so lange danach
 TRANSFER_MIN_RATIO = Decimal("0.5")  # Zugang ≥ 50 % des Abgangs (Netzwerkgebühren bei kleinen Beträgen)
 DUP_QTY_TOL = Decimal("0.005")
+SAME_QTY_WINDOW = timedelta(hours=36)  # gleiche exakte Menge auf demselben Konto: mögliche Doppelerfassung
+REF_ID_SOURCES = ("koinly",)  # Import-Quellen, deren source_ref die ID des CSV-Exports derselben Quelle ist
 _LOCK = threading.RLock()  # Auswerten/Übernehmen/Rückgängig nacheinander (Doppelklick, parallele Tabs)
 
 
@@ -84,7 +95,7 @@ STATUS_LABEL = {"new": "neu", "known": "bereits vorhanden", "duplicate": "mögli
 STATUS_BADGE = {"new": "good", "known": "", "duplicate": "warn", "before": "", "ignored": "", "invalid": "crit",
                 "unclear": "warn", "committed": "info", "merged": "info"}
 DONE = ("known", "ignored", "committed", "merged")  # Zeilen ohne offene Entscheidung
-EVAL_VERSION = 2  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
+EVAL_VERSION = 3  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
 RELEVANT = ("new", "invalid", "unclear", "duplicate")  # zu übernehmen bzw. zu entscheiden
 BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial": "teilweise übernommen",
                 "committed": "übernommen", "reverted": "rückgängig gemacht"}
@@ -167,6 +178,27 @@ class SymbolResolver:
             hit = self._resolve(key)
             self._cache[key] = hit
         return hit
+
+    def resolve_for(self, raw: str, provider: str | None) -> tuple[str | None, str, str]:
+        """Wie :meth:`resolve`, beachtet aber die Anbieter-Identität von Kürzeln (``identity.PROVIDER_SYMBOLS``):
+        Zuordnung nur über eine Zuordnung genau für diesen Anbieter (``TH@BITPANDA``) oder ein Asset, dessen
+        Kursquelle den Anbieter-Coin bestätigt – sonst „mehrdeutig“, nie still über das Symbol.
+        Rückgabe: (Asset, Art, Schlüssel der Zuordnung)."""
+        pa = identity(provider, raw)
+        if pa is None or provider is None:
+            aid, how = self.resolve(raw)
+            return aid, how, raw.strip().upper()
+        key = provider_key(raw, provider)
+        if key in self.saved:
+            aid = self.saved[key]
+            return (aid, "saved", key) if aid else (None, "ignored", key)
+        aid, how = self.resolve(raw)
+        if aid is not None and how != "ignored" and confirms(pa, self.assets.get(aid)):
+            return aid, how, key
+        confirmed = sorted(x for x, a in self.assets.items() if confirms(pa, a))
+        if len(confirmed) == 1:
+            return confirmed[0], "provider", key
+        return None, "ambiguous", key
 
     def _resolve(self, key: str) -> tuple[str | None, str]:
         if key in self.saved:
@@ -349,6 +381,7 @@ class RowCtx:
     prev_ref: str | None = None
     pair_why: str | None = None  # Begründung des Transfer-Vorschlags (Anzeige)
     recon: dict[str, Any] | None = None  # Abgleich über den Transaktions-Hash (siehe reconcile.py)
+    counterpart: str | None = None  # passende Gegenbuchung im kuratierten Import (möglicher Transfer)
 
     @property
     def ts(self) -> datetime:
@@ -370,6 +403,15 @@ class RowCtx:
     def default_include(self) -> bool:
         """Vorschlag ohne Wahl des Nutzers: neu → ja; Dublette auf anderem Konto → ja; sonst nein."""
         return self.status == "new" or (self.status == "duplicate" and not self.dup_same_account)
+
+    @property
+    def transfer_unclear(self) -> bool:
+        """Möglicher Transfer, über den noch niemand entschieden hat: Vorschlag mittlerer Sicherheit ohne Bestätigung
+        oder passende Gegenbuchung im kuratierten Import. Solche Zeilen gehen nie automatisch in die Buchungen –
+        als einfacher Zu-/Abgang verbucht, gingen Einstand und Haltedauer verloren."""
+        if self.pair_ref and self.pair_ok is None and self.pair_conf != "hoch":
+            return True
+        return self.counterpart is not None and not (self.pair_ref and self.pair_ok == 1)
 
     def include(self) -> bool:
         if self.status == "new":
@@ -775,6 +817,7 @@ class CsvImportService:
             rc.symbols = msgs.get("symbols", {})
             rc.pair_why = msgs.get("pair_why")
             rc.recon = msgs.get("recon")
+            rc.counterpart = msgs.get("counterpart")
             out.append(rc)
         return out
 
@@ -880,6 +923,7 @@ class CsvImportService:
                 seen_ext.setdefault(ext, rc.line or 0)
         self._same_events([rc for rc in open_rows if rc.status in ("new", "invalid", "unclear", "before")], source)
         self._duplicates([rc for rc in open_rows if rc.status == "new"], pf, source)
+        self._same_qty([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._transfers(bid, rows, pf, valuer)
         self._save(rows)
         self._save_recon(batch, rows, recon)
@@ -896,10 +940,14 @@ class CsvImportService:
         if not any(R.row_hash(rc.rec) for rc in rows):
             return R.Result()
         base, _ = self.ctx.effective_base()
+        # Buchungen derselben Quelle nicht: dort gilt die Ereigniskennung (zwei Bewegungen derselben Transaktion mit
+        # verschiedenem Ereignisindex sind zwei Vorgänge – der Hash allein darf sie nicht zusammenlegen)
+        source = self.source_of(self.batch(bid))
         journal = self.db.q(
             "SELECT tx_id, type, tag, from_account, from_asset, from_qty, to_account, to_asset, to_qty, fee_asset, "
             "fee_qty, tx_hash FROM journal_tx WHERE status IN ('active', 'merged') AND tx_hash IS NOT NULL AND "
-            "tx_hash <> '' AND source <> 'transfer' AND (batch_id IS NULL OR batch_id <> ?)", (bid,))
+            "tx_hash <> '' AND source <> 'transfer' AND source <> ? AND (batch_id IS NULL OR batch_id <> ?)",
+            (source, bid))
         index = R.HashIndex(base.txs if base is not None else [], journal)
         if not len(index):
             return R.Result()
@@ -942,18 +990,28 @@ class CsvImportService:
         r = rc.rec
         syms: dict[str, str | None] = {}
 
-        def res(raw: str | None) -> str | None:
-            if not raw:
-                return None
-            aid, how = resolver.resolve(raw)
-            syms[raw] = aid if aid else how
-            if how in ("unknown", "ambiguous"):
-                rc.errors.append(f"Asset für „{raw}“ zuordnen" + (" (mehrdeutig)" if how == "ambiguous" else ""))
-            return aid
-
         def acc(name: str | None) -> str:
             n = (name or "").strip() or batch["account"]
             return acc_map.get(n, n)
+
+        # Anbieter des Vorgangs (Datenquelle, Profil, sonst Konto – z. B. Koinly-Wallet „Bitpanda“)
+        provider = provider_of(source, batch["profile"], None) or provider_of(
+            None, None, acc(r.account) if r.kind != M.DIRECT or r.row is None
+            else (r.row.get("to_account") or r.row.get("from_account") or batch["account"]))
+
+        def res(raw: str | None) -> str | None:
+            if not raw:
+                return None
+            aid, how, key = resolver.resolve_for(raw, provider)
+            syms[key if key != raw.strip().upper() else raw] = aid if aid else how
+            if how in ("unknown", "ambiguous"):
+                pa = identity(provider, raw) if key != raw.strip().upper() else None
+                if pa is not None:
+                    rc.errors.append(f"„{raw}“ bei {PROVIDER_LABEL.get(pa.provider, pa.provider)} ist {pa.name} – "
+                                     f"Asset zuordnen (Zuordnung {key} gilt nur für diesen Anbieter)")
+                else:
+                    rc.errors.append(f"Asset für „{raw}“ zuordnen" + (" (mehrdeutig)" if how == "ambiguous" else ""))
+            return aid
 
         base = dict.fromkeys(ROW_COLS, "")
         base["datetime"] = to_local_date(r.ts).isoformat() if r.date_only else r.ts.astimezone(UTC).strftime(
@@ -1136,20 +1194,31 @@ class CsvImportService:
         # Import-Buchungen – auch aus einem Portfolia-Export übernommene App-Buchungen (source „portfolia:csv:…“ bzw.
         # „portfolia:sync:…“, source_ref = Kennung), z. B. erneuter CSV-Import nach einer Neueinrichtung
         same_src: dict[str, str] = {}
+        ref_ids: dict[str, str] = {}  # „koinly:<ID>“ → Import-Buchung (Steuertool-Export mit derselben ID)
         base, _ = self.ctx.effective_base()
         for t in base.txs if base is not None else []:
             row = {"tx_id": t.tx_id, "source": "Import", "status": "active"}
-            for k in source_ref_keys(t.source, t.source_ref) | aliases.get(t.tx_id, set()):
+            # Anbieter-IDs laut source_ref sowie UUIDs in der Notiz (Koinly führt Bitpanda-UUIDs als „txhash“)
+            keys = source_ref_keys(t.source, t.source_ref) | aliases.get(t.tx_id, set()) | note_identity_keys(
+                t.source, t.to_account or t.from_account, t.note)
+            for k in keys:
                 by_id[k].append(row)
             if t.source_ref and (t.source or "").removeprefix("portfolia:") == source:
                 same_src[t.source_ref] = t.tx_id
+            src = (t.source or "").strip().lower()
+            if t.source_ref and src in REF_ID_SOURCES:
+                ref_ids.setdefault(f"{src}:{t.source_ref.strip().upper()}", t.tx_id)
         wanted: dict[int, tuple[set[str], str | None]] = {}
         for rc in rows:
             tid = same_src.get(rc.rec.ext_id or "")
-            if tid is not None:
+            ext = rc.rec.ext_id or ""
+            prefix, _, native = ext.partition(":")
+            ref_tid = ref_ids.get(f"{prefix.lower()}:{native.strip().upper()}") if native else None
+            if tid is not None or ref_tid is not None:
                 rc.status = "known"
-                rc.dup_of = [tid]
-                rc.warnings.insert(0, f"bereits im Import enthalten als {tid} – gleiche Kennung")
+                rc.dup_of = [tid or ref_tid]  # type: ignore[list-item]
+                rc.warnings.insert(0, f"bereits im Import enthalten als {tid or ref_tid} – gleiche Kennung"
+                                      + ("" if tid else f" ({prefix}-ID)"))
                 continue
             ids = identity_keys(rc.rec.event_key, rc.rec.aliases, rc.rec.ext_id)
             h = normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id))
@@ -1245,6 +1314,60 @@ class CsvImportService:
                                                                                 rc.dup_same_account else ""))
 
     @staticmethod
+    def _same_qty(rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
+        """Gleiche exakte Menge desselben Assets auf demselben Konto und derselben Seite (Zu- bzw. Abgang) innerhalb
+        von 36 Stunden – Muster „einmal manuell nachgetragen, einmal importiert bzw. als Transfer erfasst“. Gleiche
+        Menge und Zeit beweisen keine Dublette; der Vorgang geht deshalb in die Prüfung (nie automatisch übernommen),
+        die vorhandene Buchung bleibt unverändert. Ausgenommen: zwei verschiedene Blockchain-Transaktionen,
+        wiederkehrende Erträge (Staking, Zinsen …) und Fiat."""
+        if pf is None or not rows:
+            return
+        index: dict[tuple[str, str, str, Decimal], list[Tx]] = defaultdict(list)
+        for t in pf.txs:
+            if t.origin == "journal" and (t.source or "") == source:
+                continue  # gleiche Quelle: Erkennung über die Quellkennung
+            if t.origin == "plan":
+                continue
+            if t.to_account and t.to_asset and t.to_qty and t.type in ("deposit", "transfer"):
+                index[("in", t.to_account, t.to_asset, t.to_qty)].append(t)
+            if t.from_account and t.from_asset and t.from_qty and t.type in ("withdrawal", "transfer"):
+                index[("out", t.from_account, t.from_asset, t.from_qty)].append(t)
+        if not index:
+            return
+        for rc in rows:
+            row = rc.row
+            if row is None or row["type"] not in ("deposit", "withdrawal", "transfer") or rc.status != "new":
+                continue
+            if (row["tag"] or "") in C.INCOME_TAGS:
+                continue
+            h = normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id))
+            legs = []
+            if row["to_asset"] and row["to_qty"] and row["type"] in ("deposit", "transfer"):
+                legs.append(("in", row["to_account"], row["to_asset"], Decimal(row["to_qty"])))
+            if row["from_asset"] and row["from_qty"] and row["type"] in ("withdrawal", "transfer"):
+                legs.append(("out", row["from_account"], row["from_asset"], Decimal(row["from_qty"])))
+            hits: list[Tx] = []
+            for key in legs:
+                if key[2] in C.ISO_CURRENCIES:
+                    continue
+                for t in index.get(key, ()):
+                    if abs(t.ts - rc.ts) > SAME_QTY_WINDOW or t.tx_id in rc.dup_of:
+                        continue
+                    t_hashes = R.hashes_in(t.note, t.source_ref)
+                    if h and t_hashes and h not in t_hashes:
+                        continue  # zwei verschiedene Blockchain-Transaktionen
+                    hits.append(t)
+            if hits:
+                hits.sort(key=lambda t: (abs(t.ts - rc.ts), t.tx_id))
+                rc.status = "duplicate"
+                rc.dup_same_account = True
+                rc.dup_of = list(dict.fromkeys([*rc.dup_of, *(t.tx_id for t in hits)]))
+                t = hits[0]
+                rc.warnings.insert(0, f"gleiche Menge wie {t.tx_id} ({fmt_de_date(to_local_date(t.ts))}, "
+                                      f"{_span_abs(t.ts - rc.ts)} Abstand) auf demselben Konto – möglicherweise "
+                                      "doppelt erfasst; bitte prüfen")
+
+    @staticmethod
     def _covered_by_transfer(rc: RowCtx, transfers: Mapping[str, list[Tx]], used: set[str]) -> bool:
         """Zu- bzw. Abgang, der bereits Teil eines erfassten Transfers ist (z. B. Börsen-Auszahlung → Wallet, im
         kuratierten Import oder im Journal als Transfer gebucht) → mögliche Dublette auf demselben Konto: ohne
@@ -1306,6 +1429,7 @@ class CsvImportService:
                 continue
             prev = (rc.pair_ref, rc.pair_ok)
             rc.pair_ref = rc.pair_conf = None
+            rc.counterpart = None
             if eligible(rc, "withdrawal"):
                 assert rc.row is not None
                 outs.append(Side(f"b:{rc.idx}", rc.row["from_account"], rc.row["from_asset"],
@@ -1399,8 +1523,9 @@ class CsvImportService:
                 if not (o_ts - TRANSFER_BEFORE <= i_ts <= o_ts + TRANSFER_AFTER):
                     continue
                 if TRANSFER_MIN_RATIO <= i_q / o_q <= Decimal("1.001"):
+                    rc.counterpart = t.tx_id
                     rc.warnings.append(f"passt zu {t.tx_id} im kuratierten Import ({acc}) – Transfer dort erfassen, "
-                                       "sonst zählt der Vorgang als Zu-/Abgang")
+                                       "sonst zählt der Vorgang als Zu-/Abgang; wird nicht automatisch übernommen")
                     break
 
     def _save(self, rows: list[RowCtx]) -> None:
@@ -1410,7 +1535,8 @@ class CsvImportService:
                 continue
             msgs = {"errors": rc.errors[:10], "warnings": rc.warnings[:10], "value_src": rc.value_src,
                     "fee_src": rc.fee_src, "dup_of": rc.dup_of[:5], "dup_same": rc.dup_same_account,
-                    "symbols": rc.symbols, "pair_why": rc.pair_why if rc.pair_ref else None, "recon": rc.recon}
+                    "symbols": rc.symbols, "pair_why": rc.pair_why if rc.pair_ref else None, "recon": rc.recon,
+                    "counterpart": rc.counterpart}
             data.append((json.dumps(rc.row, ensure_ascii=False) if rc.row is not None else None, rc.status,
                          json.dumps(msgs, ensure_ascii=False), rc.pair_ref, rc.pair_conf, rc.pair_ok, rc.id))
         if data:
@@ -1437,13 +1563,16 @@ class CsvImportService:
             target = unknown if rc.status in RELEVANT else unknown_old if rc.status == "before" else None
             for raw, v in rc.symbols.items() if target is not None else ():
                 if v in ("unknown", "ambiguous"):
+                    pk = split_provider_key(raw)  # Kürzel mit Anbieter-Identität, z. B. TH@BITPANDA
+                    plain = pk[0] if pk else raw
                     u = target.setdefault(raw.upper(), {"symbol": raw.upper(), "display": raw, "count": 0,
                                                         "ambiguous": v == "ambiguous",
-                                                        "hint": rc.rec.class_hint.get(raw), "spam": False,
-                                                        "dirs": set(), "kinds": set(), "old": target is unknown_old})
+                                                        "hint": rc.rec.class_hint.get(plain), "spam": False,
+                                                        "dirs": set(), "kinds": set(), "old": target is unknown_old,
+                                                        "provider": pk[1] if pk else None})
                     u["count"] += 1
                     u["spam"] = u["spam"] or bool(rc.rec.review and "Spam" in rc.rec.review)
-                    u["dirs"].add(_direction(rc.rec, raw))
+                    u["dirs"].add(_direction(rc.rec, plain))
                     u["kinds"].add(rc.rec.kind)
             for a in (rc.rec.account, rc.rec.to_account):
                 if a:
@@ -1734,6 +1863,15 @@ def _span(d: timedelta) -> str:
     if secs < 7200:
         return f"{int(secs // 60)} min {when}"
     return f"{secs / 3600:.1f} h {when}".replace(".", ",")
+
+
+def _span_abs(d: timedelta) -> str:
+    secs = abs(d.total_seconds())
+    if secs < 120:
+        return f"{int(secs)} s"
+    if secs < 7200:
+        return f"{int(secs // 60)} min"
+    return f"{secs / 3600:.1f} h".replace(".", ",")
 
 
 def pair_accepted(rc: RowCtx) -> bool:

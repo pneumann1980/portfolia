@@ -102,9 +102,15 @@ def qty_exact(v: Any) -> str:
 
 
 def asset_label(key: Any) -> str:
-    """Token-Kennung ``SYMBOL@CHAIN:Contract`` lesbar kürzen (Symbol · Chain · Contract gekürzt)."""
+    """Token-Kennung ``SYMBOL@CHAIN:Contract`` lesbar kürzen (Symbol · Chain · Contract gekürzt); Anbieter-Kürzel
+    ``SYMBOL@ANBIETER`` als „Symbol · Anbieter“."""
     k = str(key or "")
     sym, at, rest = k.partition("@")
+    if at and ":" not in rest:
+        from app.csvimport.identity import PROVIDER_LABEL, split_provider_key
+
+        pk = split_provider_key(k)
+        return f"{pk[0]} · {PROVIDER_LABEL.get(pk[1], pk[1])}" if pk else k
     if not at or ":" not in rest:
         return k
     chain, _, contract = rest.partition(":")

@@ -81,6 +81,7 @@ class DisposalPart:
     acq_date: date | None
     origin: str
     missing_basis: bool = False
+    acq_tx: str | None = None  # anschaffende Buchung des Lots (Rückverfolgung, z. B. für die Diagnose)
 
     @property
     def gain(self) -> Decimal:
@@ -387,7 +388,7 @@ class _Engine:
             take = min(lot.qty, remaining)
             cost = self._take(lot, take)
             parts.append(DisposalPart(lot.id, lot.root_id, lot.account, take, cost, ZERO, lot.acq_ts, lot.acq_date,
-                                      lot.origin))
+                                      lot.origin, acq_tx=lot.acq_tx))
             remaining -= take
         if remaining > DUST:
             parts.append(DisposalPart(0, 0, account, remaining, ZERO, ZERO, None, None, "phantom", True))

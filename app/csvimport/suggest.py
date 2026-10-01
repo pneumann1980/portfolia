@@ -22,6 +22,9 @@ tragen gern bekannte Symbole):
 3. Contract nicht im Katalog: als möglicher Spam erkannt → ignorieren; nur erhalten, nie bewegt → ignorieren
    („mittel“, typisch für unaufgefordert zugesandte Werbe-Token); sonst offen lassen mit Hinweis.
 
+Kürzel mit Anbieter-Identität (``SYMBOL@ANBIETER``, z. B. ``TH@BITPANDA`` – siehe :mod:`app.csvimport.identity`):
+Asset mit der CoinGecko-ID des Anbieter-Coins zuordnen, sonst ein eigenes Asset dafür anlegen – nie über das Symbol.
+
 Symbole ohne Contract (Börsen- und Steuertool-Dateien):
 
 4. Mehrdeutig (mehrere Assets mit dem Symbol) → das einzige ohne Spam-Markierung bzw. mit Kursquelle.
@@ -40,6 +43,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.csvimport import model as M
+from app.csvimport.identity import PROVIDER_LABEL, identity, split_provider_key
 from app.importer import contract as C
 from app.ledger.models import AssetInfo
 from app.prices.sources import Catalog, chain_hints, is_spam, split_token
@@ -157,7 +161,10 @@ class Suggester:
         out: dict[str, Suggestion] = {}
         for u in unknown:
             tok = split_token(str(u.get("display") or u["symbol"]))
-            if tok is not None:
+            pk = split_provider_key(str(u["symbol"]))
+            if pk is not None and identity(pk[1], pk[0]) is not None:
+                out[u["symbol"]] = self.provider(pk[0], pk[1])
+            elif tok is not None:
                 out[u["symbol"]] = self.token(u, *tok)
             elif u.get("hint") in ("security", "fiat"):
                 out[u["symbol"]] = Suggestion()
@@ -252,6 +259,34 @@ class Suggester:
                        f"({', '.join(a.asset_id for a in free[:4])}) – gegebenenfalls stattdessen zuordnen.")
         return Suggestion("new", new_id=new_id, name=cname, qid=cid, confidence="hoch",
                           reason=f"{what}.", warning=warning)
+
+    # -- Kürzel mit Anbieter-Identität (z. B. Bitpanda „TH“ = Threshold Network) ------------------------
+    def provider(self, sym: str, prov: str) -> Suggestion:
+        """Bestimmt über die Anbieter-Identität, nie über das Symbol: Asset mit der CoinGecko-ID des Anbieter-Coins
+        zuordnen, sonst ein eigenes Asset dafür anlegen. Ein vorhandenes Asset gleichen Symbols mit anderer
+        Kursquelle bleibt unberührt (Warnhinweis)."""
+        pa = identity(prov, sym)
+        assert pa is not None
+        b = self.basis
+        who = f"{PROVIDER_LABEL.get(prov, prov)} führt „{pa.symbol}“ für {pa.name} (CoinGecko {pa.coingecko})"
+        users = b.by_cg.get(pa.coingecko or "", [])
+        if users:
+            a = _pick(users, pa.ticker or sym)
+            return Suggestion("map", asset_id=a.asset_id, confidence="hoch", verified=True,
+                              reason=f"{who}; vorhandenes Asset {_label(a)} nutzt diese Kursquelle.")
+        if pa.coingecko and pa.coingecko in self.planned:
+            return Suggestion("map", asset_id=self.planned[pa.coingecko], confidence="hoch",
+                              reason=f"{who}; wird weiter oben als neues Asset angelegt.")
+        new_id = b.free_id(pa.ticker or sym)
+        if pa.coingecko:
+            self.planned[pa.coingecko] = new_id
+        same = [a for a in b.crypto_by_symbol.get(sym.upper(), []) if not (a.quote_source == "coingecko"
+                                                                          and a.quote_id == pa.coingecko)]
+        warning = (f"Vorhandenes Asset {_label(same[0])} mit Symbol {sym.upper()} ist ein anderer Coin bzw. anders "
+                   "bewertet – nicht dorthin zuordnen." if same else "")
+        return Suggestion("new", new_id=new_id, name=pa.name, qid=pa.coingecko or "", confidence="hoch",
+                          verified=True, reason=f"{who} – eigenes Asset statt Zuordnung über das Symbol.",
+                          warning=warning)
 
     # -- Symbole ohne Contract ------------------------------------------------------------------------
     def plain(self, u: Mapping[str, Any]) -> Suggestion:

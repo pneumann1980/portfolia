@@ -70,9 +70,10 @@
 </section>
 
 {% macro map_row(u) -%}
-{% set token = '@' in u.symbol %}{% set base = u.symbol.split('@')[0].split(';')[0] %}{% set kc = known_coins.get(base) if not token else none %}{% set i = u.i %}{% set s = sugg.get(u.symbol) %}{% set security = u.hint == 'security' %}
+{% set token = '@' in u.symbol and not u.provider %}{% set base = u.symbol.split('@')[0].split(';')[0] %}{% set kc = known_coins.get(base) if not token else none %}{% set i = u.i %}{% set s = sugg.get(u.symbol) %}{% set security = u.hint == 'security' %}
       {% set act = '' if u.old else s.action if s and s.prefill else ('ignore' if u.spam else 'map' if u.ambiguous else '' if token else 'new') %}
-      <tr><td class="wrap-any wide" data-label="Symbol"><span class="mono">{{ (u.display or u.symbol)|asset_label if token else u.symbol }}</span><input type="hidden" name="sym_{{ i }}" value="{{ u.symbol }}">{% if u.ambiguous %} <span class="hint">mehrdeutig</span>{% endif %}
+      <tr><td class="wrap-any wide" data-label="Symbol"><span class="mono">{{ (u.display or u.symbol)|asset_label if token or u.provider else u.symbol }}</span><input type="hidden" name="sym_{{ i }}" value="{{ u.symbol }}">{% if u.ambiguous %} <span class="hint">mehrdeutig</span>{% endif %}
+          {% if u.provider %}<div class="hint">Kürzel des Anbieters – dieselbe Abkürzung bezeichnet anderswo einen anderen Coin. Die Zuordnung gilt nur für diesen Anbieter.</div>{% endif %}
           {% if u.spam %}<span class="badge warn">möglicher Spam</span>{% endif %}
           {% if token %}{% set link = (u.display or u.symbol)|token_link %}<div class="hint">{% if not (s and s.verified) %}Token über Chain und Contract erkannt – das Symbol kann gefälscht sein.{% endif %}{% if link %} <a href="{{ link }}" target="_blank" rel="noopener noreferrer">Contract prüfen</a>{% endif %}</div>{% endif %}
           {% if s and s.reason %}<div class="sugg"><span class="badge {{ conf_badge.get(s.confidence, '') }}">{{ 'Vorschlag · ' ~ s.confidence if s.confidence else 'Hinweis' }}</span> {{ s.reason }}

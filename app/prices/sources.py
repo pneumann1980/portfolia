@@ -443,7 +443,10 @@ class SourceService:
         applied, suggested, none = [], [], []
         with self.db.transaction() as c:
             for a in targets:
-                if a.asset_id in exact:
+                prov = self._provider_identity(a, accounts.get(a.asset_id, set()))
+                if prov is not None:  # Anbieter-Kürzel (z. B. Bitpanda „TH“): nie über das Symbol zuordnen
+                    d = prov
+                elif a.asset_id in exact:
                     d = exact[a.asset_id]
                 else:
                     pts = [p.price for p in fb.points(a.asset_id)]
@@ -473,6 +476,35 @@ class SourceService:
             self._changed()
         return {"checked": len(targets), "applied": applied, "suggested": len(suggested), "none": len(none),
                 "catalog": len(catalog)}
+
+    @staticmethod
+    def _provider_identity(a: AssetInfo, accounts: set[str]) -> Decision | None:
+        """Kürzel mit Anbieter-Identität (:mod:`app.csvimport.identity`): Nur auf Konten dieses Anbieters gebucht →
+        dessen Coin („hoch“); auch auf anderen Konten gebucht → nur ein Vorschlag („niedrig“), denn dort kann das
+        Kürzel einen anderen Coin bezeichnen. Bestehende Zuordnungen prüft die Suche ohnehin nicht erneut."""
+        from app.csvimport.identity import PROVIDER_LABEL, identity, provider_of
+
+        hits = {}
+        other = False
+        for acc in sorted(accounts):
+            p = provider_of(None, None, acc)
+            pa = identity(p, a.symbol) if p else None
+            if pa is not None:
+                hits[pa.coingecko] = pa
+            else:
+                other = True
+        if not hits:
+            return None
+        if len(hits) > 1 or None in hits:
+            return Decision(None, None, "Kürzel bezeichnet bei mehreren Anbietern verschiedene Coins – bitte zuordnen")
+        pa = next(iter(hits.values()))
+        cand = Candidate(str(pa.coingecko), pa.name, [])
+        label = PROVIDER_LABEL.get(pa.provider, pa.provider)
+        if other:
+            return Decision(pa.coingecko, "niedrig", f"{label} führt {pa.symbol} als {pa.name}; auf anderen Konten "
+                                                     f"kann {pa.symbol} ein anderer Coin sein – bitte prüfen", [cand])
+        return Decision(pa.coingecko, "hoch", f"{label} führt {pa.symbol} als {pa.name} (Anbieter-Identität, nicht "
+                                              "über das Symbol)", [cand])
 
     def _by_contract(self, catalog: Catalog, asset_id: str) -> Decision | None:
         """Eindeutiger Coin über die Contracts der Tokens, die einem Asset zugeordnet sind (Wallet-Anbindungen,
