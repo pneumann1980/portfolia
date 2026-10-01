@@ -193,3 +193,12 @@ def test_check_suggests_script_type_and_rejects_private_keys(client, esplora):
              sync_interval_min="0")
     assert r.status_code == 400 and "privaten Schlüssel" in r.text and xprv not in r.text
     assert ok in (True, False)
+
+
+def test_seed_phrase_in_address_field_is_rejected_and_not_echoed(client, esplora):
+    seed = "abandon ability able about above absent absorb abstract absurd abuse access accident"
+    for raw in (seed, f"{R[0]}\n{seed}"):
+        r = post(client, "/settings/datasources", kind="wallet", provider="bitcoin", name="X", address=raw,
+                 sync_interval_min="0")
+        assert r.status_code == 400 and "Seed-Phrase" in r.text and "absurd" not in r.text
+    assert not ctx(client).db.scalar("SELECT COUNT(*) FROM data_source")

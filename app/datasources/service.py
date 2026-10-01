@@ -56,7 +56,15 @@ import httpx
 from app.datasources import connector as K
 from app.datasources.catalog import Catalog
 from app.datasources.chainhttp import ENDPOINTS
-from app.datasources.providers import EXCHANGE, INTERVALS, KIND_LABEL, PROVIDERS, WALLET, normalize_address
+from app.datasources.providers import (
+    EXCHANGE,
+    INTERVALS,
+    KIND_LABEL,
+    PROVIDERS,
+    WALLET,
+    contains_secret,
+    normalize_address,
+)
 from app.datasources.vault import Vault, VaultError
 from app.datasources.wallet import GAP_DEFAULT, GAP_MAX, MAX_ADDRESSES, SCRIPT_TYPES, WatchConfig, new_watch_id, short
 from app.logging_setup import get_redactor
@@ -495,7 +503,12 @@ class DataSourceService:
         Gap-Limit. Andere Chains: genau eine Adresse. Fehlertexte wiederholen die Eingabe nie."""
         errors: list[str] = []
         prev = current.watch if current is not None else None
-        raw_lines = [x for x in re.split(r"[\s,;]+", str(data.get("address") or "")) if x]
+        raw_text = str(data.get("address") or "")
+        if contains_secret(raw_text):
+            return None, None, ["Das sieht nach einem privaten Schlüssel oder einer Seed-Phrase aus – bitte niemals "
+                                "eingeben. Benötigt werden nur öffentliche Adressen bzw. der öffentliche "
+                                "Kontoschlüssel (xpub/ypub/zpub)."]
+        raw_lines = [x for x in re.split(r"[\s,;]+", raw_text) if x]
         if len(raw_lines) > 1 and prov.id != "bitcoin":
             errors.append("Bitte genau eine Adresse eingeben – für weitere Adressen ein eigenes Konto anlegen.")
         if len(raw_lines) > MAX_ADDRESSES:
@@ -1135,7 +1148,8 @@ class DataSourceService:
             parts.append("ohne Buchung " + ", ".join(f"{n}× {k}" for k, n in sorted(res.skipped.items())))
         msg = " · ".join(parts) + ("; " + "; ".join(notes) if notes else "")
         resume = more
-        coverage = {**res.coverage, "complete": res.complete, "at": stamp, "gaps": res.gaps, "resume": resume}
+        coverage = {**res.coverage, "complete": res.complete, "at": stamp, "resume": resume,
+                    "gaps": [sanitize_error(g, secret.values()) for g in res.gaps[:20]]}
         if conn.wallet:
             coverage["limits"] = conn.coverage_limits(ds.config())  # type: ignore[attr-defined]
         if resume and ds.enabled:  # Erstabruf in Etappen: bald fortsetzen, unabhängig vom Intervall

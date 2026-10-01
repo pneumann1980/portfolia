@@ -104,6 +104,12 @@ def looks_secret(value: str) -> bool:
                 or _SOLANA_SECRET.match(v))
 
 
+def contains_secret(text: str) -> bool:
+    """Enthält eine (mehrzeilige) Eingabe irgendwo einen privaten Schlüssel oder eine Seed-Phrase?"""
+    t = text or ""
+    return looks_secret(t) or any(looks_secret(part) for part in [*t.splitlines(), *t.split()] if part.strip())
+
+
 def normalize_address(provider: Provider, raw: str) -> tuple[str | None, str | None]:
     """(normalisierte Adresse, Fehlertext). Der Fehlertext wiederholt die Eingabe nie."""
     v = re.sub(r"\s+", "", raw or "")

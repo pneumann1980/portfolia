@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.datasources.chainhttp import ENDPOINTS
 from app.datasources.connector import CREDENTIAL_RE, connector_for, supported
-from app.datasources.providers import EXCHANGE, INTERVALS, KIND_LABEL, WALLET, looks_secret, providers
+from app.datasources.providers import EXCHANGE, INTERVALS, KIND_LABEL, WALLET, contains_secret, providers
 from app.datasources.service import PROVIDER_KEYS, RUN_STATUS_LABEL, STATUS_LABEL, datasource_service
 from app.datasources.wallet import GAP_DEFAULT, SCRIPT_TYPES
 from app.jobs.scheduler import Scheduler, extra_jobs
@@ -58,7 +58,7 @@ def _safe_echo(data: dict[str, Any]) -> dict[str, Any]:
     """Formular nach Fehlern erneut füllen – ohne mögliche Geheimnisse (Schlüssel, Seed) zurückzuspielen."""
     out = {k: v for k, v in data.items() if k != "api_key"}
     addr = out.get("address") or ""
-    if looks_secret(addr) or any(looks_secret(x) for x in addr.split()) or "prv" in addr:
+    if contains_secret(addr) or "prv" in addr:
         out["address"] = ""
     ref = (out.get("credential_ref") or "").strip().upper()
     if ref and not CREDENTIAL_RE.match(ref):
