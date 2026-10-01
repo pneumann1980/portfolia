@@ -209,3 +209,61 @@ class FakeEsplora(Recorder):
                 mine = mine[idx + 1:]
             return httpx.Response(200, json=mine[:25])
         return httpx.Response(404, text="not found")
+
+
+class FakeSolana(Recorder):
+    """Solana JSON-RPC (öffentlicher RPC bzw. Helius): Signaturen je Adresse absteigend nach Slot mit
+    ``before``/``until``/``limit``, Transaktionen jsonParsed, Token-Konten je Programm."""
+
+    def __init__(self, txs: list[dict[str, Any]], token_accounts: list[dict[str, Any]], balance: int) -> None:
+        super().__init__()
+        self.txs = {t["transaction"]["signatures"][0]: t for t in txs}
+        self.token_accounts = token_accounts
+        self.balance = balance
+        self.missing: set[str] = set()
+
+    @staticmethod
+    def keys(t: dict[str, Any]) -> list[str]:
+        return [k["pubkey"] for k in t["transaction"]["message"]["accountKeys"]]
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        self.calls.append(req)
+        assert req.method == "POST" and req.url.host in ("api.mainnet-beta.solana.com", "mainnet.helius-rpc.com")
+        inj = self.injected(req)
+        if inj is not None:
+            return inj
+        body = json.loads(req.content)
+        m, p = body["method"], body["params"]
+
+        def ok(result: Any) -> httpx.Response:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+
+        if m == "getSlot":
+            return ok(300_000_000)
+        if m == "getBalance":
+            return ok({"context": {"slot": 1}, "value": self.balance})
+        if m == "getTokenAccountsByOwner":
+            prog = p[1]["programId"]
+            return ok({"context": {"slot": 1}, "value": [
+                {"pubkey": t["pubkey"], "account": {"lamports": t["lamports"], "owner": prog, "data": {
+                    "program": "spl-token", "parsed": {"type": "account", "info": {
+                        "mint": t["mint"], "owner": p[0], "tokenAmount": {
+                            "amount": t["amount"], "decimals": t["decimals"], "uiAmountString": "x"}}}}}}
+                for t in self.token_accounts
+                if t.get("program", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA") == prog]})
+        if m == "getSignaturesForAddress":
+            addr, opts = p[0], p[1]
+            rows = sorted(((t["slot"], s) for s, t in self.txs.items() if addr in self.keys(t)), reverse=True)
+            sigs = [s for _, s in rows]
+            if opts.get("before"):
+                sigs = sigs[sigs.index(opts["before"]) + 1:]
+            if opts.get("until"):
+                sigs = sigs[:sigs.index(opts["until"])] if opts["until"] in sigs else sigs
+            sigs = sigs[:opts.get("limit", 1000)]
+            return ok([{"signature": s, "slot": self.txs[s]["slot"], "err": self.txs[s]["meta"]["err"], "memo": None,
+                        "blockTime": self.txs[s]["blockTime"], "confirmationStatus": "finalized"} for s in sigs])
+        if m == "getTransaction":
+            assert p[1]["encoding"] == "jsonParsed" and p[1]["commitment"] == "finalized"
+            return ok(None if p[0] in self.missing else self.txs.get(p[0]))
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"],
+                                         "error": {"code": -32601, "message": "Method not found"}})

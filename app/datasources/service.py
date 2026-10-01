@@ -1130,6 +1130,8 @@ class DataSourceService:
             parts.append("ohne Buchung " + ", ".join(f"{n}× {k}" for k, n in sorted(res.skipped.items())))
         msg = " · ".join(parts) + ("; " + "; ".join(notes) if notes else "")
         resume = bool(res.resume and not res.complete and res.cursor is not None)
+        if res.more is not None:
+            resume = resume and bool(res.more)
         coverage = {**res.coverage, "complete": res.complete, "at": stamp, "gaps": res.gaps, "resume": resume}
         if conn.wallet:
             coverage["limits"] = conn.coverage_limits(ds.config())  # type: ignore[attr-defined]

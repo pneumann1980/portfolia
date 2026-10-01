@@ -148,6 +148,7 @@ class FetchResult:
     skipped: dict[str, int] = field(default_factory=dict)  # bewusst ohne Buchung (Grund → Anzahl), sichtbar
     coverage: dict[str, Any] = field(default_factory=dict)  # Zeitraum, Seiten, Grenzen – für die Anzeige
     resume: bool = False  # complete=False, aber ``cursor`` ist ein sicherer Fortsetzungspunkt (Etappen)
+    more: bool | None = None  # weitere Etappen ausstehend → bald fortsetzen (Standard: wie ``resume``)
     gaps: list[str] = field(default_factory=list)  # erkannte Lücken dieses Abrufs (→ nie „vollständig“)
     balances: list[Balance] | None = None  # beobachtete Bestände (Plausibilitätsprüfung), None = nicht abgefragt
 
