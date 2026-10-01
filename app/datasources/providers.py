@@ -33,7 +33,7 @@ def _p(rx: str) -> re.Pattern[str]:
     return re.compile(rx)
 
 
-_EVM = _p(r"^0x[0-9a-f]{40}$")
+_EVM = _p(r"^0x[0-9a-fA-F]{40}$")
 _EVM_EX = "0x0000000000000000000000000000000000000000 (42 Zeichen, beginnt mit 0x)"
 
 PROVIDERS: dict[str, Provider] = {p.id: p for p in (
@@ -57,19 +57,19 @@ PROVIDERS: dict[str, Provider] = {p.id: p for p in (
     # Chains (öffentliche Adressen)
     Provider("bitcoin", "Bitcoin", WALLET,
              _p(rf"^(bc1[0-9a-z]{{25,87}}|[13][{_B58}]{{25,34}}|[xyz]pub[{_B58}]{{100,112}})$"),
-             "bc1q… , 1… , 3… oder xpub/ypub/zpub (Konto-Schlüssel, öffentlich)", bech32=("bc1",)),
-    Provider("ethereum", "Ethereum", WALLET, _EVM, _EVM_EX, lower=True),
-    Provider("bsc", "BNB Smart Chain", WALLET, _EVM, _EVM_EX, lower=True),
+             "bc1q…, bc1p…, 1…, 3… oder xpub/ypub/zpub (öffentlicher Kontoschlüssel)", bech32=("bc1",)),
+    Provider("ethereum", "Ethereum", WALLET, _EVM, _EVM_EX),
+    Provider("bsc", "BNB Smart Chain", WALLET, _EVM, _EVM_EX),
     Provider("polygon", "Polygon", WALLET, _EVM, _EVM_EX, lower=True),
     Provider("arbitrum", "Arbitrum One", WALLET, _EVM, _EVM_EX, lower=True),
     Provider("optimism", "Optimism", WALLET, _EVM, _EVM_EX, lower=True),
     Provider("base", "Base", WALLET, _EVM, _EVM_EX, lower=True),
-    Provider("avalanche", "Avalanche C-Chain", WALLET, _EVM, _EVM_EX, lower=True),
+    Provider("avalanche", "Avalanche C-Chain", WALLET, _EVM, _EVM_EX),
     Provider("pulsechain", "PulseChain", WALLET, _EVM, _EVM_EX, lower=True),
     Provider("solana", "Solana", WALLET, _p(rf"^[{_B58}]{{32,44}}$"), "Base58, 32–44 Zeichen"),
     Provider("cardano", "Cardano", WALLET, _p(r"^(addr1[0-9a-z]{50,120}|stake1[0-9a-z]{50,60})$"),
              "addr1… oder stake1…", lower=True),
-    Provider("kaspa", "Kaspa", WALLET, _p(r"^kaspa:[0-9a-z]{61,63}$"), "kaspa:q…", lower=True),
+    Provider("kaspa", "Kaspa", WALLET, _p(r"^kaspa:[0-9a-z]{61,63}$"), "kaspa:q… (mit Präfix kaspa:)", lower=True),
     Provider("xrp", "XRP Ledger", WALLET, _p(rf"^r[{_B58}]{{24,34}}$"), "r…"),
     Provider("polkadot", "Polkadot", WALLET, _p(rf"^1[{_B58}]{{46,47}}$"), "1… (48 Zeichen)"),
     Provider("tron", "TRON", WALLET, _p(rf"^T[{_B58}]{{33}}$"), "T… (34 Zeichen)"),
@@ -116,4 +116,9 @@ def normalize_address(provider: Provider, raw: str) -> tuple[str | None, str | N
         v = v.lower()
     if provider.pattern is not None and not provider.pattern.match(v):
         return None, f"Keine gültige {provider.label}-Adresse (erwartet: {provider.example})."
+    from app.datasources.chains.addresses import VALIDATORS
+
+    check = VALIDATORS.get(provider.id)
+    if check is not None:
+        return check(re.sub(r"\s+", "", raw or ""))
     return v, None

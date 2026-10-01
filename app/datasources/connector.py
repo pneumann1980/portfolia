@@ -14,11 +14,17 @@ Vertrag für Connectoren
   ``Rec.txhash``; die ID enthält die eigene Adresse (dieselbe Transaktion erscheint in Sender- und Empfänger-Wallet).
 * Die Zeilen eines Ereignisses (z. B. Trade + Gebühr in drittem Asset) kommen in **fester Reihenfolge** – die
   Position ist Teil der Kennung (``<event_key>#<zeile>``) und macht wiederholtes Synchronisieren idempotent.
+  Wallet-Connectoren vergeben stattdessen je Bewegung eine **stabile Unterkennung** in ``Rec.ext_id`` (z. B.
+  ``native``, ``fee``, ``t:<kurzhash>#0`` für den ersten von mehreren gleichartigen Token-Transfers) – die Kennung
+  ``<event_key>#<unterkennung>`` bleibt dann auch gleich, wenn der Anbieter später eine weitere Bewegung desselben
+  Hashes liefert.
 * ``cursor`` ist ein kleines JSON-Objekt (z. B. letzter Zeitstempel/Block) für inkrementelle Abrufe; er wird nur
   nach einem erfolgreichen Lauf gespeichert. Überlappende Abrufe sind unschädlich (bekannte IDs werden erkannt).
   Bei ``complete=False`` (Limit, einzelne Endpunkte gestört) zeigt er nur bis dorthin, wo die Daten lückenlos sind –
   der nächste Lauf setzt dort fort. Höchstens ``MAX_EVENTS`` (50.000) Vorgänge je Lauf; längere Historien in
-  Etappen (``complete=False`` + Cursor).
+  Etappen (``complete=False`` + ``resume=True`` + Cursor): Ein Fortsetzungspunkt darf nur so weit zeigen, wie alle
+  Vorgänge davor in *diesem* Ergebnis enthalten oder früher geliefert sind – er wird erst gespeichert, nachdem die
+  Vorgänge im Prüf-Stapel stehen.
 * Drosselung: ``ConnectorError("rate_limit", …, retry_after_s=…)`` verschiebt den nächsten geplanten Lauf
   entsprechend.
 * Der Abrufstand gilt erst als verarbeitet, wenn alle Vorgänge bis dorthin im Prüf-Stapel stehen, übernommen oder
@@ -37,14 +43,17 @@ from __future__ import annotations
 import os
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, ClassVar
 
 from app.csvimport.model import Rec
 
 EVENT_KEY_RE = re.compile(r"^[a-z0-9_]+:[^\s#]{1,200}$")
+SUB_ID_RE = re.compile(r"^[A-Za-z0-9:._\-]{1,100}(#\d{1,4})?$")  # stabile Unterkennung einer Bewegung
 CREDENTIAL_RE = re.compile(r"^PORTFOLIA_DS_[A-Z0-9_]{1,50}$")
 
 # Fehlerarten → Anzeige (ergänzt die Meldung des Connectors)
@@ -74,6 +83,7 @@ class SourceConfig:
     name: str
     account: str
     address: str | None = None
+    watch: Mapping[str, Any] = field(default_factory=dict)  # Wallets: Adressen, Kontoschlüssel, Anbieter, …
 
 
 class Secret:
@@ -137,6 +147,19 @@ class FetchResult:
     warnings: list[str] = field(default_factory=list)
     skipped: dict[str, int] = field(default_factory=dict)  # bewusst ohne Buchung (Grund → Anzahl), sichtbar
     coverage: dict[str, Any] = field(default_factory=dict)  # Zeitraum, Seiten, Grenzen – für die Anzeige
+    resume: bool = False  # complete=False, aber ``cursor`` ist ein sicherer Fortsetzungspunkt (Etappen)
+    gaps: list[str] = field(default_factory=list)  # erkannte Lücken dieses Abrufs (→ nie „vollständig“)
+    balances: list[Balance] | None = None  # beobachtete Bestände (Plausibilitätsprüfung), None = nicht abgefragt
+
+
+@dataclass(frozen=True)
+class Balance:
+    """Beobachteter Bestand eines Assets laut Anbieter (Kennung wie in ``Rec`` – Symbol bzw. Token-Schlüssel)."""
+
+    asset_key: str
+    qty: Decimal
+    name: str | None = None
+    note: str | None = None  # z. B. „inkl. unbestätigter Eingänge“
 
 
 @dataclass
@@ -144,14 +167,18 @@ class CheckResult:
     ok: bool
     message: str = ""
     details: dict[str, Any] = field(default_factory=dict)  # je Recht/Endpunkt: {"ok": bool, "text": str}
+    balances: list[Balance] | None = None
 
 
 class Connector(ABC):
     provider: ClassVar[str]  # ID aus app.datasources.providers.PROVIDERS
     label: ClassVar[str]
     needs_credentials: ClassVar[bool] = False
+    wallet: ClassVar[bool] = False  # Wallet-Connector (öffentliche Adressen, Schlüssel je Anbieter statt je Quelle)
     # vom Dienst gesetzt: Zwischenspeicher für Stammdaten des Anbieters (z. B. Asset-ID → Symbol), spart Abrufe
     catalog: Any = None
+    # vom Dienst gesetzt: Fortschritt melden (Phase, erledigt, gesamt bzw. None, Text)
+    progress: Callable[[str, int, int | None, str], None] | None = None
 
     @abstractmethod
     def check(self, cfg: SourceConfig, secret: Secret) -> CheckResult:
@@ -160,6 +187,10 @@ class Connector(ABC):
     @abstractmethod
     def fetch(self, cfg: SourceConfig, secret: Secret, cursor: dict[str, Any] | None) -> FetchResult:
         """Vorgänge seit ``cursor`` (bzw. vollständig) abrufen und normalisiert liefern."""
+
+    def report(self, stage: str, done: int = 0, total: int | None = None, text: str = "") -> None:
+        if self.progress is not None:
+            self.progress(stage, done, total, text)
 
     def rewind(self, cursor: dict[str, Any] | None, before: datetime) -> dict[str, Any] | None:
         """Abrufstand so zurücksetzen, dass Vorgänge ab ``before`` erneut geliefert werden (verworfener Prüf-Stapel).

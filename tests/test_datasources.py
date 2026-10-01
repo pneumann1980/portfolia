@@ -227,7 +227,8 @@ def test_tx_hash_from_wallet_exports():
 
 
 @pytest.mark.parametrize(("provider", "raw", "expected"), [
-    ("ethereum", " 0xAbCdEf0123456789abcdef0123456789ABCDEF01 ", "0xabcdef0123456789abcdef0123456789abcdef01"),
+    ("ethereum", " 0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed ", "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"),
+    ("ethereum", "0xabcdef0123456789abcdef0123456789abcdef01", "0xabcdef0123456789abcdef0123456789abcdef01"),
     ("bitcoin", "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"),
     ("bitcoin", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"),
     ("solana", "7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFLtV", "7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFLtV"),
@@ -249,6 +250,16 @@ def test_private_keys_and_seeds_are_rejected_without_echo(secret):
     assert looks_secret(secret)
     addr, err = normalize_address(PROVIDERS["ethereum"], secret)
     assert addr is None and "privaten Schlüssel" in err and secret not in err
+
+
+def test_checksums_catch_typos():
+    for pid, raw in [("ethereum", "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"),
+                     ("bitcoin", "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdp"),
+                     ("bitcoin", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN3"),
+                     ("kaspa", "kaspa:qqkqkzjvr7zwxxmjxjkmxxdwju9kjs6e9u82uh59z07vgaks6gg62v8707g74"),
+                     ("solana", "7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFL")]:
+        addr, err = normalize_address(PROVIDERS[pid], raw)
+        assert addr is None and err, (pid, raw)
 
 
 def test_invalid_address_error_does_not_repeat_input():
@@ -300,20 +311,24 @@ def test_crud_exchange_and_wallet(client):
     assert (row["status"], row["enabled"], row["sync_interval_min"], row["next_run_at"]) == ("created", 1, 60, None)
 
     r = post(c, "/settings/datasources", kind="wallet", provider="ethereum", name="Ledger ETH", account="Ledger",
-             address="0xAbCdEf0123456789abcdef0123456789ABCDEF01", sync_interval_min="1440")
+             address="0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", sync_interval_min="1440")
     assert r.status_code == 303
     w = int(re.search(r"/settings/datasources/(\d+)", r.headers["location"]).group(1))
-    assert source(c, w)["address"] == "0xabcdef0123456789abcdef0123456789abcdef01"
+    assert source(c, w)["address"] == "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"
 
+    r = post(c, "/settings/datasources", kind="wallet", provider="cardano", name="Yoroi ADA", account="Yoroi",
+             address="addr1" + "q" * 98, sync_interval_min="0", wallet_group="Yoroi")
+    assert r.status_code == 303, r.text[:500]
     page = c.get("/settings/datasources").text
     for s in ("Kraken Hauptkonto", "Ledger ETH", "angelegt", "Manuell / noch nicht unterstützt", KEY, "fehlt",
-              "0xabcdef0123456789abcdef0123456789abcdef01"):
+              "0x5aaeb6", "Ohne Gruppe", "Yoroi ADA", "Anbieter-Schlüssel"):
         assert s in page, s
-    assert "Jetzt synchronisieren" not in page  # ohne Connector keine Synchronisierung anbieten
+    assert "Jetzt synchronisieren" not in page  # ohne Connector bzw. ohne Lauf keine Synchronisierung anbieten
 
     # ansehen / bearbeiten
     form = c.get(f"/settings/datasources/{w}")
     assert form.status_code == 200 and "Ledger ETH" in form.text and "Synchronisierung" in form.text
+    assert "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" in form.text
     r = post(c, f"/settings/datasources/{w}", provider="ethereum", name="Ledger ETH (alt)", account="Ledger",
              address="0xabcdef0123456789abcdef0123456789abcdef01", sync_interval_min="0", note="Cold Storage")
     assert r.status_code == 303

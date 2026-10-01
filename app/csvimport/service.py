@@ -330,6 +330,7 @@ class RowCtx:
     dup_of: list[str] = field(default_factory=list)
     dup_same_account: bool = False
     prev_ref: str | None = None
+    pair_why: str | None = None  # Begründung des Transfer-Vorschlags (Anzeige)
 
     @property
     def ts(self) -> datetime:
@@ -734,6 +735,7 @@ class CsvImportService:
             rc.value_src, rc.fee_src = msgs.get("value_src"), msgs.get("fee_src")
             rc.dup_of, rc.dup_same_account = msgs.get("dup_of", []), bool(msgs.get("dup_same"))
             rc.symbols = msgs.get("symbols", {})
+            rc.pair_why = msgs.get("pair_why")
             out.append(rc)
         return out
 
@@ -1087,15 +1089,24 @@ class CsvImportService:
         if pf is None or not rows:
             return
         index: dict[tuple[str, str], list[Tx]] = defaultdict(list)
+        transfers: dict[str, list[Tx]] = defaultdict(list)
         for t in pf.txs:
             if t.origin == "journal" and (t.source or "") == source:
                 continue  # gleiche Quelle: Erkennung über die Quellkennung
             index[(t.from_asset or "", t.to_asset or "")].append(t)
+            # erfasste Transfers (Import, Journal) – nicht die aus abgeglichenen Paaren entstandenen (PF-T): deren
+            # Zu-/Abgänge sind über ihre Kennungen bekannt, ein neuer Vorgang ist ein anderer
+            if t.type == "transfer" and t.from_asset and t.from_asset == t.to_asset and \
+                    not (t.origin == "journal" and t.source == "transfer"):
+                transfers[t.from_asset].append(t)
         for lst in index.values():
             lst.sort(key=lambda t: t.ts)
+        used: set[str] = set()
         for rc in rows:
             row = rc.row
             if row is None:
+                continue
+            if self._covered_by_transfer(rc, transfers, used):
                 continue
             key = (row["from_asset"], row["to_asset"])
             cands = index.get(key)
@@ -1122,6 +1133,40 @@ class CsvImportService:
                 rc.status = "duplicate"
                 rc.warnings.insert(0, f"ähnelt {', '.join(rc.dup_of[:3])}" + (" (gleiches Konto)" if
                                                                                 rc.dup_same_account else ""))
+
+    @staticmethod
+    def _covered_by_transfer(rc: RowCtx, transfers: Mapping[str, list[Tx]], used: set[str]) -> bool:
+        """Zu- bzw. Abgang, der bereits Teil eines erfassten Transfers ist (z. B. Börsen-Auszahlung → Wallet, im
+        kuratierten Import oder im Journal als Transfer gebucht) → mögliche Dublette auf demselben Konto: ohne
+        Abwahl zählte die Menge doppelt."""
+        row = rc.row
+        assert row is not None
+        if row["type"] == "deposit" and not row["tag"] and row["to_asset"]:
+            asset, acc, qty, side = row["to_asset"], row["to_account"], _row_d(row["to_qty"]), "to"
+        elif row["type"] == "withdrawal" and not row["tag"] and row["from_asset"]:
+            asset, acc, qty, side = row["from_asset"], row["from_account"], _row_d(row["from_qty"]), "from"
+        else:
+            return False
+        if not qty:
+            return False
+        for t in sorted(transfers.get(asset, ()), key=lambda t: abs((t.ts - rc.ts).total_seconds())):
+            t_acc = t.to_account if side == "to" else t.from_account
+            t_qty = t.to_qty if side == "to" else t.from_qty
+            if t_acc != acc or not t_qty or t.tx_id in used:
+                continue
+            if side == "to":  # Eingang kommt nach dem Abgang (Netzwerkgebühr: Zugang ≤ Abgang)
+                ok_time = t.ts - TRANSFER_BEFORE <= rc.ts <= t.ts + TRANSFER_AFTER
+            else:
+                ok_time = abs((t.ts - rc.ts).total_seconds()) <= TRANSFER_BEFORE.total_seconds()
+            if ok_time and (_qty_eq(qty, t_qty) or (side == "to" and t.from_qty and _qty_eq(qty, t.from_qty))):
+                used.add(t.tx_id)
+                rc.status = "duplicate"
+                rc.dup_of = [t.tx_id]
+                rc.dup_same_account = True
+                rc.warnings.insert(0, f"bereits als Transfer erfasst: {t.tx_id} ({t.from_account} → {t.to_account})"
+                                      " – nicht erneut übernehmen")
+                return True
+        return False
 
     # -- Transfers ----------------------------------------------------------------------------------------
     def _transfers(self, bid: int, rows: list[RowCtx], pf: Portfolio | None, V: Valuer) -> None:
@@ -1164,24 +1209,25 @@ class CsvImportService:
         if not outs and not ins:
             return
         for jr in self.db.q(
-                "SELECT tx_id, type, from_account, from_asset, from_qty, to_account, to_asset, to_qty, ts_utc "
-                "FROM journal_tx WHERE status='active' AND (batch_id IS NULL OR batch_id<>?) AND type IN "
+                "SELECT tx_id, type, from_account, from_asset, from_qty, to_account, to_asset, to_qty, ts_utc, "
+                "tx_hash FROM journal_tx WHERE status='active' AND (batch_id IS NULL OR batch_id<>?) AND type IN "
                 "('deposit','withdrawal') AND (tag IS NULL OR tag='')", (bid,)):
             ts = parse_iso(jr["ts_utc"])
             if ts is None:
                 continue
+            h = normalize_hash(jr["tx_hash"])
             if jr["type"] == "withdrawal" and jr["from_asset"] and not V.is_fiat(jr["from_asset"]):
                 outs.append(Side(f"j:{jr['tx_id']}", jr["from_account"], jr["from_asset"], Decimal(jr["from_qty"]), ts,
-                                 None, None))
+                                 h, None))
             elif jr["type"] == "deposit" and jr["to_asset"] and not V.is_fiat(jr["to_asset"]):
-                ins.append(Side(f"j:{jr['tx_id']}", jr["to_account"], jr["to_asset"], Decimal(jr["to_qty"]), ts, None,
+                ins.append(Side(f"j:{jr['tx_id']}", jr["to_account"], jr["to_asset"], Decimal(jr["to_qty"]), ts, h,
                                 None))
         ins_by: dict[str, list[Side]] = defaultdict(list)
         for i in ins:
             ins_by[i.asset].append(i)
         for lst in ins_by.values():
             lst.sort(key=lambda x: x.ts)
-        cands: list[tuple[tuple[int, Decimal, float], Side, Side, str]] = []
+        cands: list[tuple[tuple[int, Decimal, float], Side, Side, str, str]] = []
         for o in outs:
             lst = ins_by.get(o.asset)
             if not lst:
@@ -1192,22 +1238,24 @@ class CsvImportService:
                     break
                 if i.account == o.account or (o.rc is None and i.rc is None):
                     continue
-                hash_eq = bool(o.txhash and i.txhash and o.txhash.lower() == i.txhash.lower())
+                hash_eq = bool(o.txhash and i.txhash and normalize_hash(o.txhash) == normalize_hash(i.txhash))
                 ratio = i.qty / o.qty if o.qty else Decimal(0)
                 if not hash_eq and not (TRANSFER_MIN_RATIO <= ratio <= Decimal("1.001")):
                     continue
                 dt = abs((i.ts - o.ts).total_seconds())
                 conf = "hoch" if hash_eq or (ratio >= Decimal("0.98") and dt <= 86400) else "mittel"
-                cands.append(((0 if hash_eq else 1, abs(1 - ratio), dt), o, i, conf))
+                why = ("gleiche Blockchain-Transaktion" if hash_eq else
+                       f"Menge {ratio * 100:.1f} % des Abgangs, {_span(i.ts - o.ts)}")
+                cands.append(((0 if hash_eq else 1, abs(1 - ratio), dt), o, i, conf, why))
         cands.sort(key=lambda x: x[0])
         used: set[str] = set()
-        for _score, o, i, conf in cands:
+        for _score, o, i, conf, why in cands:
             if o.ref in used or i.ref in used:
                 continue
             used.update((o.ref, i.ref))
             for me, other in ((o, i), (i, o)):
                 if me.rc is not None:
-                    me.rc.pair_ref, me.rc.pair_conf = other.ref, conf
+                    me.rc.pair_ref, me.rc.pair_conf, me.rc.pair_why = other.ref, conf, why
                     if me.rc.prev_ref != other.ref:
                         me.rc.pair_ok = None
         for rc in rows:
@@ -1252,7 +1300,7 @@ class CsvImportService:
                 continue
             msgs = {"errors": rc.errors[:10], "warnings": rc.warnings[:10], "value_src": rc.value_src,
                     "fee_src": rc.fee_src, "dup_of": rc.dup_of[:5], "dup_same": rc.dup_same_account,
-                    "symbols": rc.symbols}
+                    "symbols": rc.symbols, "pair_why": rc.pair_why if rc.pair_ref else None}
             data.append((json.dumps(rc.row, ensure_ascii=False) if rc.row is not None else None, rc.status,
                          json.dumps(msgs, ensure_ascii=False), rc.pair_ref, rc.pair_conf, rc.pair_ok, rc.id))
         if data:
@@ -1534,6 +1582,17 @@ class CsvImportService:
 
     def account_rows(self) -> list[Any]:
         return self.db.q("SELECT * FROM csv_account ORDER BY name")
+
+
+def _span(d: timedelta) -> str:
+    secs = d.total_seconds()
+    when = "nach dem Abgang" if secs >= 0 else "vor dem Abgang"
+    secs = abs(secs)
+    if secs < 120:
+        return f"{int(secs)} s {when}"
+    if secs < 7200:
+        return f"{int(secs // 60)} min {when}"
+    return f"{secs / 3600:.1f} h {when}".replace(".", ",")
 
 
 def pair_accepted(rc: RowCtx) -> bool:

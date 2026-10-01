@@ -383,6 +383,32 @@ CREATE TABLE IF NOT EXISTS import_extra (
   PRIMARY KEY (import_id, name)
 );
 """),
+    (10, """
+-- Wallets (nur lesend): Gruppe (z. B. „Ledger“), Beobachtungsdaten (öffentliche Adressen bzw. Kontoschlüssel, Anbieter,
+-- stabile Kontokennung – nie private Schlüssel), Fortschritt des laufenden/letzten Abrufs.
+ALTER TABLE data_source ADD COLUMN wallet_group TEXT;
+ALTER TABLE data_source ADD COLUMN watch_json TEXT;
+ALTER TABLE data_source ADD COLUMN progress_json TEXT;
+-- Beobachtete Bestände laut Anbieter (Plausibilitätsprüfung gegen die Portfolia-Buchungen des Kontos).
+CREATE TABLE IF NOT EXISTS ds_balance (
+  source_id   INTEGER NOT NULL REFERENCES data_source(id) ON DELETE CASCADE,
+  asset_key   TEXT NOT NULL,                      -- Symbol bzw. Token-Schlüssel wie in den Vorgängen (USDC@ETH:0x…)
+  qty         TEXT NOT NULL,                      -- exakt (Decimal als Text)
+  name        TEXT,
+  note        TEXT,
+  observed_at TEXT NOT NULL,
+  PRIMARY KEY (source_id, asset_key)
+);
+-- API-Keys je Anbieter (Etherscan, Routescan, Helius …), verschlüsselt wie data_source_secret.
+CREATE TABLE IF NOT EXISTS provider_secret (
+  provider    TEXT PRIMARY KEY,
+  ciphertext  BLOB NOT NULL,
+  key_id      TEXT NOT NULL,
+  hint        TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+"""),
 ]
 
 

@@ -24,10 +24,19 @@ Synchronisieren
 
 Abrufstand
     Der Connector rückt den Abrufstand nur nach vollständigem Abruf vor (sonst ``None`` → der nächste Lauf holt
-    erneut ab); gespeichert wird er erst, nachdem die Vorgänge im Prüf-Stapel stehen – ein Abbruch, API- oder
+    erneut ab) bzw. – bei langen Historien in Etappen – nur bis zu einem sicheren Fortsetzungspunkt (``resume``);
+    gespeichert wird er erst, nachdem die Vorgänge im Prüf-Stapel stehen – ein Abbruch, API- oder
     Datenbankfehler verliert nichts. Wird ein Prüf-Stapel verworfen, setzt :meth:`DataSourceService.rewind` den
     Abrufstand vor den ältesten offenen Vorgang zurück. „Dauerhaft ignorieren“ ist je Anbieter-Ereignis gespeichert
     (``event_decision``) und gilt für alle künftigen Läufe.
+
+Wallets
+    Öffentliche Adressen bzw. Kontoschlüssel je Chain (:mod:`app.datasources.wallet`), gruppiert (z. B. „Ledger“).
+    API-Keys gelten je Anbieter (Etherscan, Routescan, Helius) und liegen verschlüsselt in ``provider_secret``. Ein
+    Abruf läuft im Hintergrund mit Fortschrittsanzeige; der historische Erstabruf erfolgt in Etappen mit sicherem
+    Fortsetzungspunkt und setzt sich selbst fort. Beobachtete Bestände (``ds_balance``) werden den Buchungen des
+    Kontos gegenübergestellt („beobachtet“ vs. „durch Portfolia-Buchungen erklärt“). „Synchronisiert“ heißt: die
+    unterstützten Daten sind ohne erkannte Lücke abgerufen; Abdeckungsgrenzen werden immer angezeigt.
 """
 
 from __future__ import annotations
@@ -46,9 +55,12 @@ import httpx
 
 from app.datasources import connector as K
 from app.datasources.catalog import Catalog
+from app.datasources.chainhttp import ENDPOINTS
 from app.datasources.providers import EXCHANGE, INTERVALS, KIND_LABEL, PROVIDERS, WALLET, normalize_address
 from app.datasources.vault import Vault, VaultError
+from app.datasources.wallet import GAP_DEFAULT, GAP_MAX, MAX_ADDRESSES, SCRIPT_TYPES, WatchConfig, new_watch_id, short
 from app.logging_setup import get_redactor
+from app.util.http import Quota
 from app.util.timeutil import iso, local_tz, parse_iso
 
 log = logging.getLogger(__name__)
@@ -63,6 +75,12 @@ DONE = ("known", "ignored", "committed", "merged")
 _SYNC_LOCK = threading.Lock()  # ein Lauf zur Zeit (Zeitplan und „Jetzt synchronisieren“ nicht parallel)
 _NAME_RE = re.compile(r"^[^\x00-\x1f<>]{1,60}$")
 _KEY_RE = re.compile(r"^[\x21-\x7e]{16,1024}$")  # druckbare ASCII-Zeichen ohne Leerzeichen
+_GROUP_RE = re.compile(r"^[^\x00-\x1f<>]{1,40}$")
+PROGRESS_STALE_S = 600  # ohne Lebenszeichen gilt ein Lauf als abgebrochen (Neustart des Containers)
+BACKFILL_NEXT_S = 90  # Etappen des Erstabrufs: nächster Lauf nach so vielen Sekunden
+MAX_ROUNDS = 40  # Etappen je manuell gestartetem Hintergrundlauf
+# Anbieter-Schlüssel (je Anbieter, nicht je Datenquelle) – nur Anbieter aus dem geprüften Katalog
+PROVIDER_KEYS = {e.key_provider: e for e in ENDPOINTS.values() if e.key_provider}
 _SECRETISH = re.compile(r"(?i)\b(authorization|x-api-key|api[-_ ]?key|apikey|secret|signature|passphrase|token|"
                         r"bearer)(\s*[:=]\s*|\s+)([^\s,;]+)")
 _URL_QUERY = re.compile(r"(https?://[^\s?#]+)\?[^\s]*")
@@ -210,7 +228,105 @@ class DataSource:
 
     def config(self) -> K.SourceConfig:
         r = self.row
-        return K.SourceConfig(r["id"], r["kind"], r["provider"], r["name"], r["account"], r["address"])
+        return K.SourceConfig(r["id"], r["kind"], r["provider"], r["name"], r["account"], r["address"],
+                              watch=self.watch.as_dict() if self.is_wallet else {})
+
+    # -- Wallets ------------------------------------------------------------------------------------------
+    @property
+    def is_wallet(self) -> bool:
+        return self.row["kind"] == WALLET
+
+    @property
+    def watch(self) -> WatchConfig:
+        try:
+            return WatchConfig.load(self._get("watch_json"))
+        except (ValueError, TypeError):
+            return WatchConfig()
+
+    @property
+    def group(self) -> str:
+        return (self._get("wallet_group") or "").strip()
+
+    @property
+    def addresses(self) -> list[str]:
+        """Öffentliche Kennungen des Kontos (Kontoschlüssel zuerst, dann Adressen)."""
+        w = self.watch
+        out = [*w.xpubs, *w.addresses]
+        return out or ([self.row["address"]] if self.row["address"] else [])
+
+    @property
+    def short_address(self) -> str:
+        a = self.addresses
+        if not a:
+            return ""
+        return short(a[0], 8) + (f" (+{len(a) - 1})" if len(a) > 1 else "")
+
+    @property
+    def connector(self) -> K.Connector | None:
+        return K.connector_for(self.row["provider"])
+
+    @property
+    def endpoint(self) -> Any:
+        c = self.connector
+        if c is None or not getattr(c, "wallet", False):
+            return None
+        return c.endpoint(self.config())  # type: ignore[attr-defined]
+
+    @property
+    def endpoint_options(self) -> list[Any]:
+        c = self.connector
+        return [ENDPOINTS[e] for e in getattr(c, "endpoints", ())] if c is not None else []
+
+    @property
+    def limits(self) -> list[str]:
+        cov = self.coverage
+        if cov.get("limits"):
+            return list(cov["limits"])
+        c = self.connector
+        if c is not None and getattr(c, "wallet", False):
+            return c.coverage_limits(self.config())  # type: ignore[attr-defined]
+        return []
+
+    @property
+    def gaps(self) -> list[str]:
+        return list(self.coverage.get("gaps") or [])
+
+    @property
+    def progress(self) -> dict[str, Any]:
+        """Fortschritt des laufenden bzw. letzten Abrufs; ein Lauf ohne Lebenszeichen gilt als abgebrochen."""
+        try:
+            p = json.loads(self._get("progress_json") or "{}")
+        except ValueError:
+            return {}
+        if p.get("running"):
+            seen = parse_iso(p.get("updated_at"))
+            if seen is None or (_now() - seen).total_seconds() > PROGRESS_STALE_S:
+                p["running"] = False
+                p["stale"] = True
+        return p
+
+    @property
+    def backfill_pending(self) -> bool:
+        """Erstabruf in Etappen noch nicht abgeschlossen (bleibt auch nach einem Fehler bestehen)."""
+        return bool(self.coverage.get("resume"))
+
+    @property
+    def sync_state(self) -> tuple[str, str]:
+        """(Text, Badge) – „vollständig synchronisiert“ nur ohne erkannte Lücke."""
+        if self.progress.get("running"):
+            return "Abruf läuft", "info"
+        st = self.row["status"]
+        cov = self.coverage
+        if st == "synced" and cov.get("complete") and not cov.get("gaps"):
+            return ("vollständig synchronisiert" if self.is_wallet else "synchronisiert"), "good"
+        if cov.get("resume"):
+            return ("Erstabruf unvollständig – wird fortgesetzt" if st != "error" else
+                    "Erstabruf unterbrochen – Fehler, neuer Versuch folgt"), "warn"
+        return self.status_label, self.status_badge
+
+
+def _env_name(provider: str) -> str:
+    return f"PORTFOLIA_DS_{provider.upper()}"
 
 
 def next_run(enabled: bool, supported: bool, interval_min: int, last_run: datetime | None,
@@ -231,6 +347,7 @@ class DataSourceService:
     def __init__(self, ctx: Any) -> None:
         self.ctx = ctx
         self.db = ctx.db
+        self._progress_written: dict[int, datetime] = {}
 
     # -- Lesen ------------------------------------------------------------------------------------------
     def list(self) -> list[DataSource]:
@@ -259,6 +376,52 @@ class DataSourceService:
             "AND b.datasource_id=? AND b.status IN ('preview', 'partial') AND r.status NOT IN "
             "('known', 'ignored', 'committed', 'merged') GROUP BY r.status", (sid,))}
 
+    def balances(self, sid: int) -> list[Any]:
+        return self.db.q("SELECT asset_key, qty, name, note, observed_at FROM ds_balance WHERE source_id=? "
+                         "ORDER BY asset_key", (sid,))
+
+    def holdings(self, ds: DataSource) -> dict[str, Any]:
+        """Beobachteter On-Chain-Bestand (Anbieter) neben dem durch Portfolia-Buchungen erklärten Bestand des Kontos.
+
+        Zuordnung der Kennungen wie im Prüf-Stapel (gespeicherte Zuordnungen, sonst eindeutiges Symbol; Tokens nur
+        über ihre gespeicherte Zuordnung). Abweichungen werden angezeigt, nie automatisch ausgeglichen."""
+        from decimal import Decimal, InvalidOperation
+
+        from app.csvimport.service import SymbolResolver, csv_service
+
+        rows = self.balances(int(ds.id))
+        csv = csv_service(self.ctx)
+        resolver = SymbolResolver(csv.known_assets(), csv.saved_symbols())
+        led = self.ctx.ledger()
+        held = led.holdings_by_account(ds.account) if led is not None else {}
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        observed_at = None
+        for r in rows:
+            try:
+                q = Decimal(r["qty"])
+            except (InvalidOperation, TypeError):
+                continue
+            aid, how = resolver.resolve(r["asset_key"])
+            exp = held.get(aid) if aid else None
+            if aid:
+                seen.add(aid)
+            state = ("ignored" if how == "ignored" else "unmapped" if aid is None else
+                     "ok" if (exp or Decimal(0)) == q else "diff")
+            if state == "unmapped" and q == 0:
+                continue
+            items.append({"key": r["asset_key"], "name": r["name"], "note": r["note"], "observed": q,
+                          "asset_id": aid, "explained": exp if exp is not None else (Decimal(0) if aid else None),
+                          "diff": (q - (exp or Decimal(0))) if aid else None, "state": state})
+            observed_at = observed_at or r["observed_at"]
+        for aid, q in sorted(held.items()):
+            if aid not in seen and q:
+                items.append({"key": aid, "name": None, "note": None, "observed": None, "asset_id": aid,
+                              "explained": q, "diff": None, "state": "only_portfolia"})
+        return {"items": items, "observed_at": observed_at,
+                "diffs": sum(1 for i in items if i["state"] in ("diff", "only_portfolia")),
+                "unmapped": sum(1 for i in items if i["state"] == "unmapped")}
+
     def accounts(self) -> list[str]:
         pf = self.ctx.recorded_portfolio()
         return pf.all_accounts() if pf is not None else []
@@ -280,10 +443,14 @@ class DataSourceService:
         if not _NAME_RE.match(account):
             errors.append("Konto in Portfolia ungültig (höchstens 60 Zeichen).")
         address = None
+        watch: WatchConfig | None = None
+        group = None
         if kind == WALLET and prov is not None:
-            address, err = normalize_address(prov, str(data.get("address") or ""))
-            if err:
-                errors.append(err)
+            address, watch, errs = self._wallet_fields(prov, data, current)
+            errors += errs
+            group = re.sub(r"\s+", " ", str(data.get("wallet_group") or "")).strip() or None
+            if group is not None and not _GROUP_RE.match(group):
+                errors.append("Wallet-Gruppe ungültig (höchstens 40 Zeichen).")
         credential_ref = None
         if kind == EXCHANGE:
             raw = str(data.get("credential_ref") or "").strip().upper()
@@ -315,8 +482,69 @@ class DataSourceService:
         vals = {"kind": kind, "provider": pid, "name": name, "account": account, "address": address,
                 "credential_ref": credential_ref, "sync_interval_min": max(interval, 0),
                 "auto_commit": 1 if str(data.get("auto_commit") or "") in ("1", "on", "true") else 0, "note": note,
-                "key_expires_on": expires}
+                "key_expires_on": expires, "wallet_group": group,
+                "watch_json": watch.dump() if watch is not None else None}
         return vals, errors
+
+    @staticmethod
+    def _wallet_fields(prov: Any, data: Mapping[str, Any], current: DataSource | None) \
+            -> tuple[str | None, WatchConfig | None, list[str]]:
+        """Öffentliche Adresse(n) bzw. Kontoschlüssel, Anbieter und Optionen eines Wallet-Kontos prüfen.
+
+        Bitcoin: mehrere Adressen (eine je Zeile) und/oder ein öffentlicher Kontoschlüssel mit Adresstyp und
+        Gap-Limit. Andere Chains: genau eine Adresse. Fehlertexte wiederholen die Eingabe nie."""
+        errors: list[str] = []
+        prev = current.watch if current is not None else None
+        raw_lines = [x for x in re.split(r"[\s,;]+", str(data.get("address") or "")) if x]
+        if len(raw_lines) > 1 and prov.id != "bitcoin":
+            errors.append("Bitte genau eine Adresse eingeben – für weitere Adressen ein eigenes Konto anlegen.")
+        if len(raw_lines) > MAX_ADDRESSES:
+            errors.append(f"Höchstens {MAX_ADDRESSES} Adressen je Konto.")
+        addrs: list[str] = []
+        xpubs: list[str] = []
+        for line in raw_lines[:MAX_ADDRESSES]:
+            norm, err = normalize_address(prov, line)
+            if err:
+                errors.append(err)
+                continue
+            if norm and norm[1:4] == "pub":
+                xpubs.append(norm)
+            elif norm and norm not in addrs:
+                addrs.append(norm)
+        if not raw_lines:
+            errors.append("Adresse fehlt." if prov.id != "bitcoin" else
+                          "Mindestens eine Adresse oder einen öffentlichen Kontoschlüssel (xpub/ypub/zpub) angeben.")
+        if len(xpubs) > 1:
+            errors.append("Bitte nur einen Kontoschlüssel je Konto – für weitere Konten ein eigenes Konto anlegen.")
+        script = str(data.get("script") or "").strip() or None
+        if xpubs:
+            from app.datasources.chains.btckeys import parse_xpub
+
+            default = parse_xpub(xpubs[0]).default_script
+            script = script if script in SCRIPT_TYPES else default
+        else:
+            script = None
+        try:
+            gap = int(str(data.get("gap") or GAP_DEFAULT))
+        except ValueError:
+            gap = -1
+        if xpubs and not 5 <= gap <= GAP_MAX:
+            errors.append(f"Gap-Limit zwischen 5 und {GAP_MAX} wählen (Standard {GAP_DEFAULT}).")
+        conn = K.connector_for(prov.id)
+        provider = str(data.get("chain_provider") or "").strip() or None
+        allowed = getattr(conn, "endpoints", ()) if conn is not None else ()
+        if provider and provider not in allowed:
+            errors.append("Anbieter für diese Chain nicht verfügbar.")
+            provider = None
+        if data.get("tokens_shown"):  # Formular mit Kontrollkästchen
+            tokens = str(data.get("tokens") or "") in ("1", "on", "true")
+        else:
+            tokens = prev.tokens if prev is not None else True
+        watch = WatchConfig(addresses=addrs, xpubs=xpubs[:1], script=script, gap=gap if xpubs else GAP_DEFAULT,
+                            provider=provider, watch_id=(prev.watch_id if prev and prev.watch_id else ""),
+                            tokens=tokens)
+        primary = (xpubs or addrs or [None])[0]
+        return primary, watch, errors
 
     def create(self, data: Mapping[str, Any]) -> tuple[int | None, list[str]]:
         vals, errors = self.validate(data)
@@ -332,13 +560,17 @@ class DataSourceService:
             return None, errors
         stamp = iso(_now())
         nxt = next_run(True, K.supported(vals["provider"]), vals["sync_interval_min"], None)
+        if vals["watch_json"]:
+            w = WatchConfig.load(vals["watch_json"])
+            w.watch_id = w.watch_id or new_watch_id()
+            vals["watch_json"] = w.dump()
         cur = self.db.x(
             "INSERT INTO data_source(kind, provider, name, account, address, credential_ref, enabled, status, "
-            "sync_interval_min, auto_commit, next_run_at, note, key_expires_on, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,1,'created',?,?,?,?,?,?,?)",
+            "sync_interval_min, auto_commit, next_run_at, note, key_expires_on, wallet_group, watch_json, created_at, "
+            "updated_at) VALUES (?,?,?,?,?,?,1,'created',?,?,?,?,?,?,?,?,?)",
             (vals["kind"], vals["provider"], vals["name"], vals["account"], vals["address"], vals["credential_ref"],
              vals["sync_interval_min"], vals["auto_commit"], iso(nxt) if nxt else None, vals["note"],
-             vals["key_expires_on"], stamp, stamp))
+             vals["key_expires_on"], vals["wallet_group"], vals["watch_json"], stamp, stamp))
         sid = int(cur.lastrowid)  # type: ignore[arg-type]
         if api_key:
             errs = self.set_api_key(sid, api_key)
@@ -351,20 +583,33 @@ class DataSourceService:
         ds = self.get(sid)
         if ds is None:
             return ["Datenquelle nicht gefunden."]
-        merged = {"provider": ds.provider, "address": ds.address or "", **dict(data)}
+        addr_default = "\n".join(ds.addresses) if ds.is_wallet else (ds.address or "")
+        merged = {"provider": ds.provider, "address": addr_default, **dict(data)}
         vals, errors = self.validate(merged, current=ds)
         if errors:
             return errors
-        changed_target = (vals["provider"], vals["address"], vals["account"]) != (ds.provider, ds.address, ds.account)
+        old_w, new_w = ds.watch, WatchConfig.load(vals["watch_json"]) if vals["watch_json"] else None
+        changed_watch = ds.is_wallet and new_w is not None and (
+            (sorted(old_w.addresses), old_w.xpubs, old_w.script, old_w.gap, old_w.tokens)
+            != (sorted(new_w.addresses), new_w.xpubs, new_w.script, new_w.gap, new_w.tokens))
+        changed_target = changed_watch or \
+            (vals["provider"], vals["address"], vals["account"]) != (ds.provider, ds.address, ds.account)
+        changed_endpoint = ds.is_wallet and new_w is not None and old_w.provider != new_w.provider
         nxt = next_run(bool(ds.enabled), K.supported(vals["provider"]), vals["sync_interval_min"],
                        parse_iso(ds.last_run_at))
-        self.db.x(
-            "UPDATE data_source SET provider=?, name=?, account=?, address=?, credential_ref=?, sync_interval_min=?, "
-            "auto_commit=?, note=?, key_expires_on=?, next_run_at=?, updated_at=?"
-            + (", status='created', cursor_json=NULL, last_error=NULL" if changed_target else "") + " WHERE id=?",
-            (vals["provider"], vals["name"], vals["account"], vals["address"], vals["credential_ref"],
-             vals["sync_interval_min"], vals["auto_commit"], vals["note"], vals["key_expires_on"],
-             iso(nxt) if nxt else None, iso(_now()), sid))
+        with self.db.transaction() as c:
+            c.execute(
+                "UPDATE data_source SET provider=?, name=?, account=?, address=?, credential_ref=?, "
+                "sync_interval_min=?, auto_commit=?, note=?, key_expires_on=?, next_run_at=?, wallet_group=?, "
+                "watch_json=?, updated_at=?"
+                + (", status='created', cursor_json=NULL, last_error=NULL, coverage_json=NULL" if changed_target else
+                   ", status='created', last_check_json=NULL" if changed_endpoint else "") + " WHERE id=?",
+                (vals["provider"], vals["name"], vals["account"], vals["address"], vals["credential_ref"],
+                 vals["sync_interval_min"], vals["auto_commit"], vals["note"], vals["key_expires_on"],
+                 iso(nxt) if nxt else None, vals["wallet_group"], vals["watch_json"] or ds.row["watch_json"],
+                 iso(_now()), sid))
+            if changed_target:
+                c.execute("DELETE FROM ds_balance WHERE source_id=?", (sid,))
         return []
 
     def set_enabled(self, sid: int, enabled: bool) -> bool:
@@ -484,7 +729,8 @@ class DataSourceService:
         return True
 
     def rotate_keys(self) -> dict[str, Any]:
-        """Alle gespeicherten Schlüssel mit dem aktuellen Master-Key neu verschlüsseln (Rotation)."""
+        """Alle gespeicherten Schlüssel (je Datenquelle und je Anbieter) mit dem aktuellen Master-Key neu
+        verschlüsseln (Rotation)."""
         vault = self.vault()
         if not vault.available:
             return {"rotated": 0, "errors": [vault.error or "Master-Key fehlt."]}
@@ -501,6 +747,18 @@ class DataSourceService:
             self.db.x("UPDATE data_source_secret SET ciphertext=?, key_id=?, updated_at=? WHERE source_id=?",
                       (blob, kid, iso(_now()), r["source_id"]))
             done += 1
+        for r in self.db.q("SELECT provider, ciphertext, key_id FROM provider_secret"):
+            if r["key_id"] == vault.key_id:
+                continue
+            try:
+                plain = vault.decrypt_provider(r["ciphertext"], r["provider"])
+                blob, kid = vault.encrypt_provider(plain, r["provider"])
+            except VaultError as e:
+                errors.append(f"Anbieter {r['provider']}: {e}")
+                continue
+            self.db.x("UPDATE provider_secret SET ciphertext=?, key_id=?, updated_at=? WHERE provider=?",
+                      (blob, kid, iso(_now()), r["provider"]))
+            done += 1
         if done:
             self._purge_wal()
         log.info("Zugangsdaten neu verschlüsselt: %d", done)
@@ -508,11 +766,88 @@ class DataSourceService:
 
     def key_stats(self) -> dict[str, Any]:
         vault = self.vault()
-        rows = self.db.q("SELECT key_id, COUNT(*) AS n FROM data_source_secret GROUP BY key_id")
+        rows = [*self.db.q("SELECT key_id, COUNT(*) AS n FROM data_source_secret GROUP BY key_id"),
+                *self.db.q("SELECT key_id, COUNT(*) AS n FROM provider_secret GROUP BY key_id")]
         return {"total": sum(r["n"] for r in rows),
                 "stale": sum(r["n"] for r in rows if r["key_id"] != vault.key_id), "vault": vault.status()}
 
+    # -- Anbieter-Schlüssel (Wallets) ----------------------------------------------------------------------
+    def provider_keys(self) -> list[dict[str, Any]]:
+        """Je Anbieter mit Schlüssel: Status ohne Schlüssel (letzte 4 Zeichen, Herkunft, Nutzung heute)."""
+        rows = {r["provider"]: r for r in self.db.q("SELECT provider, key_id, hint, updated_at FROM provider_secret")}
+        used = {r["provider"]: r["calls"] for r in self.db.q(
+            "SELECT provider, calls FROM api_usage WHERE period=?", (_now().strftime("%Y-%m-%d"),))}
+        out = []
+        for pid, ep in PROVIDER_KEYS.items():
+            r = rows.get(pid)
+            env = K.Secret(_env_name(pid))
+            users = [ds for ds in self.list() if ds.is_wallet and ds.endpoint is not None
+                     and ds.endpoint.key_provider == pid]
+            out.append({"id": pid, "label": ep.label, "required": ep.key_required, "terms": ep.terms,
+                        "docs": ep.docs, "hint": f"••••{r['hint']}" if r is not None and r["hint"] else None,
+                        "key_id": r["key_id"] if r is not None else None,
+                        "updated_at": r["updated_at"] if r is not None else None,
+                        "mode": "app" if r is not None else ("env" if env.present else None), "env": _env_name(pid),
+                        "users": [u.name for u in users], "calls_today": used.get(f"wallet:{ep.id}", 0)})
+        return out
+
+    def set_provider_key(self, provider: str, value: str) -> list[str]:
+        if provider not in PROVIDER_KEYS:
+            return ["Unbekannter Anbieter."]
+        v = (value or "").strip()
+        if not v:
+            return ["API-Key fehlt."]
+        errors = self._key_errors(v)
+        if errors:
+            return errors
+        try:
+            blob, kid = self.vault().encrypt_provider(v, provider)
+        except VaultError as e:
+            return [str(e)]
+        stamp = iso(_now())
+        self.db.x("PRAGMA secure_delete=ON")
+        with self.db.transaction() as c:
+            c.execute("INSERT INTO provider_secret(provider, ciphertext, key_id, hint, created_at, updated_at) "
+                      "VALUES (?,?,?,?,?,?) ON CONFLICT(provider) DO UPDATE SET ciphertext=excluded.ciphertext, "
+                      "key_id=excluded.key_id, hint=excluded.hint, updated_at=excluded.updated_at",
+                      (provider, blob, kid, v[-4:], stamp, stamp))
+            # betroffene Konten neu prüfen lassen
+            for ds in self.list():
+                if ds.is_wallet and ds.endpoint is not None and ds.endpoint.key_provider == provider:
+                    c.execute("UPDATE data_source SET last_check_json=NULL, updated_at=? WHERE id=?", (stamp, ds.id))
+        self._purge_wal()
+        log.info("API-Key für Anbieter %s verschlüsselt gespeichert (Master-Key %s)", provider, kid)
+        return []
+
+    def remove_provider_key(self, provider: str) -> bool:
+        if provider not in PROVIDER_KEYS:
+            return False
+        self.db.x("PRAGMA secure_delete=ON")
+        cur = self.db.x("DELETE FROM provider_secret WHERE provider=?", (provider,))
+        self._purge_wal()
+        log.info("API-Key für Anbieter %s entfernt", provider)
+        return bool(cur.rowcount)
+
+    def provider_secret(self, provider: str) -> K.Secret:
+        """Schlüssel eines Anbieters: verschlüsselt in der App, sonst Umgebungsvariable ``PORTFOLIA_DS_<ANBIETER>``."""
+        row = self.db.q1("SELECT ciphertext FROM provider_secret WHERE provider=?", (provider,))
+        if row is not None:
+            try:
+                return K.Secret(value=self.vault().decrypt_provider(row["ciphertext"], provider))
+            except VaultError as e:
+                raise K.ConnectorError("config", str(e)) from None
+        return K.Secret(_env_name(provider))
+
     def _secret(self, ds: DataSource, conn: K.Connector) -> K.Secret:
+        if conn.wallet:
+            ep = conn.endpoint(ds.config())  # type: ignore[attr-defined]
+            if not ep.key_provider:
+                return K.Secret(None)
+            sec = self.provider_secret(ep.key_provider)
+            if ep.key_required and not sec.present:
+                raise K.ConnectorError("config", f"{ep.label} verlangt einen Schlüssel des Anbieters – unter "
+                                                 "„Anbieter-Schlüssel“ hinterlegen (wird verschlüsselt gespeichert).")
+            return sec
         if ds.key_expiry_state == "expired":
             raise K.ConnectorError("expired", f"laut Angabe am {ds.key_expiry.strftime('%d.%m.%Y')} abgelaufen – "  # type: ignore[union-attr]
                                               "neuen API-Key erstellen und unter „Zugang & Einstellungen“ ersetzen.")
@@ -553,10 +888,13 @@ class DataSourceService:
         stamp = iso(_now())
         secret = K.Secret(None)
         conn.catalog = Catalog(self.db, ds.provider)
+        self._prepare(ds, conn)
         try:
             secret = self._secret(ds, conn)
             with get_redactor().temporary(secret.values()):
                 res = conn.check(ds.config(), secret)
+            if res.balances is not None:
+                self._store_balances(sid, res.balances)
         except Exception as e:  # Anbieter-/Netzwerkfehler → Anzeige ohne Geheimnisse
             _, msg = describe_error(e, secret.values())
             self.db.x("UPDATE data_source SET status='error', last_error=?, last_error_at=?, last_check_json=?, "
@@ -589,11 +927,87 @@ class DataSourceService:
         finally:
             _SYNC_LOCK.release()
 
+    def start_sync(self, sid: int, trigger: str = "manual") -> dict[str, Any]:
+        """Abruf im Hintergrund starten (Wallets: Erstabruf in Etappen mit Fortschritt). Kehrt sofort zurück."""
+        ds = self.get(sid)
+        if ds is None:
+            return {"error": "Datenquelle nicht gefunden."}
+        if not _SYNC_LOCK.acquire(blocking=False):
+            return {"error": "Eine Synchronisierung läuft bereits – bitte kurz warten."}
+        self._set_progress(sid, {"running": True, "stage": "Start", "done": 0, "total": None, "text": "",
+                                 "started_at": iso(_now())}, force=True)
+        t = threading.Thread(target=self._background, args=(sid, trigger), name=f"ds-sync-{sid}", daemon=True)
+        try:
+            t.start()
+        except Exception:  # pragma: no cover - Thread-Start fehlgeschlagen
+            _SYNC_LOCK.release()
+            raise
+        return {"started": True}
+
+    def _background(self, sid: int, trigger: str) -> None:
+        """Hintergrundlauf: so lange Etappen, bis der Erstabruf vollständig ist, ein Fehler auftritt oder die
+        Etappengrenze erreicht ist (dann setzt der Zeitplan fort)."""
+        res: dict[str, Any] = {}
+        try:
+            for _ in range(MAX_ROUNDS):
+                res = self._sync(sid, trigger, background=True)
+                ds = self.get(sid)
+                if res.get("error") or ds is None or not ds.backfill_pending:
+                    break
+        except Exception as e:  # pragma: no cover - Absicherung: Hintergrundlauf darf nie hängen bleiben
+            log.exception("Datenquelle %s: Hintergrundlauf abgebrochen", sid)
+            res = {"error": describe_error(e)[1]}
+        finally:
+            try:
+                p = dict(self.get(sid).progress) if self.get(sid) is not None else {}  # type: ignore[union-attr]
+                p.update({"running": False, "finished_at": iso(_now()),
+                          "result": res.get("error") or res.get("message") or "", "ok": not res.get("error"),
+                          "batch_id": res.get("batch_id")})
+                self._set_progress(sid, p, force=True)
+            finally:
+                _SYNC_LOCK.release()
+                self.db.close_thread_conn()
+
+    def _set_progress(self, sid: int, data: dict[str, Any], force: bool = False) -> None:
+        now = _now()
+        last = self._progress_written.get(sid)
+        if not force and last is not None and (now - last).total_seconds() < 1.0:
+            return
+        self._progress_written[sid] = now
+        data = {**data, "updated_at": iso(now)}
+        self.db.x("UPDATE data_source SET progress_json=? WHERE id=?",
+                  (json.dumps(data, ensure_ascii=False, default=str), sid))
+
+    def _prepare(self, ds: DataSource, conn: K.Connector) -> None:
+        """Fortschritt und Nutzungszähler an den Connector anbinden."""
+        sid = int(ds.id)
+        base = {"running": True, "started_at": iso(_now())}
+
+        def progress(stage: str, done: int, total: int | None, text: str) -> None:
+            self._set_progress(sid, {**base, "stage": stage, "done": done, "total": total, "text": text[:200]})
+
+        conn.progress = progress
+        if conn.wallet:
+            ep = conn.endpoint(ds.config())  # type: ignore[attr-defined]
+            quota = Quota(self.db, f"wallet:{ep.id}", "day")
+            conn.usage = quota.add  # type: ignore[attr-defined]
+
+    def _store_balances(self, sid: int, balances: list[K.Balance]) -> None:
+        stamp = iso(_now())
+        with self.db.transaction() as c:
+            c.execute("DELETE FROM ds_balance WHERE source_id=?", (sid,))
+            c.executemany("INSERT OR REPLACE INTO ds_balance(source_id, asset_key, qty, name, note, observed_at) "
+                          "VALUES (?,?,?,?,?,?)",
+                          [(sid, b.asset_key[:120], format(b.qty.normalize(), "f") if b.qty else "0",
+                            (b.name or None) and str(b.name)[:80], b.note, stamp) for b in balances])
+
     def _fail(self, ds: DataSource, run_id: int, e: BaseException, secrets: list[str], started: datetime,
               nxt: datetime | None) -> dict[str, Any]:
         """Lauf als Fehler abschließen – Meldung ohne Geheimnisse, Wartezeit des Anbieters beachten. Der
         Abrufstand bleibt unverändert: der nächste Lauf holt dieselben Vorgänge erneut."""
         kind, msg = describe_error(e, secrets)
+        if ds.backfill_pending and ds.enabled:  # Erstabruf nicht liegen lassen: nach einer Pause erneut versuchen
+            nxt = max(nxt or started, started + timedelta(minutes=10))
         if isinstance(e, K.ConnectorError) and e.retry_after_s and nxt is not None:
             nxt = max(nxt, started + timedelta(seconds=e.retry_after_s))
         stamp = iso(started)
@@ -618,7 +1032,22 @@ class DataSourceService:
                        "ORDER BY id DESC LIMIT 1", (sid,))
         return int(r["id"]) if r is not None and csv_service(self.ctx).untouched(int(r["id"])) else None
 
-    def _sync(self, sid: int, trigger: str) -> dict[str, Any]:
+    def _sync(self, sid: int, trigger: str, background: bool = False) -> dict[str, Any]:
+        res: dict[str, Any] = {}
+        try:
+            res = self._sync_once(sid, trigger)
+            return res
+        finally:
+            if not background:  # Hintergrundläufe schließen den Fortschritt nach der letzten Etappe selbst ab
+                ds = self.get(sid)
+                if ds is not None and ds.row["progress_json"]:
+                    p = dict(ds.progress)
+                    if p.get("running"):
+                        p.update({"running": False, "finished_at": iso(_now()), "ok": not res.get("error"),
+                                  "result": res.get("error") or res.get("message") or ""})
+                        self._set_progress(sid, p, force=True)
+
+    def _sync_once(self, sid: int, trigger: str) -> dict[str, Any]:
         ds = self.get(sid)
         if ds is None:
             return {"error": "Datenquelle nicht gefunden."}
@@ -635,6 +1064,7 @@ class DataSourceService:
         nxt = next_run(bool(ds.enabled), True, int(ds.sync_interval_min or 0), started, started)
         secret = K.Secret(None)
         conn.catalog = Catalog(self.db, ds.provider)
+        self._prepare(ds, conn)
         try:
             secret = self._secret(ds, conn)
             cursor = json.loads(ds.cursor_json) if ds.cursor_json else None
@@ -643,6 +1073,7 @@ class DataSourceService:
             recs = self._normalize(ds, res)
         except Exception as e:  # Anbieter-/Netzwerk-/Vertragsfehler → Anzeige ohne Geheimnisse
             return self._fail(ds, run_id, e, secret.values(), started, nxt)
+        conn.report("Prüfung", len(res.events), len(res.events), "Vorgänge werden ausgewertet")
         from app.csvimport.service import csv_service, rec_to_json
 
         csv = csv_service(self.ctx)
@@ -678,11 +1109,13 @@ class DataSourceService:
         except Exception as e:  # Fehler der Import-Pipeline: Lauf nicht als „läuft“ stehen lassen
             log.exception("Datenquelle %s: Verarbeitung fehlgeschlagen", ds.name)
             return self._fail(ds, run_id, e, secret.values(), started, nxt)
-        partial = not res.complete  # unvollständige/ungeklärte Zeilen sind Sache der Prüfung, nicht des Abrufs
+        # unvollständige/ungeklärte Zeilen sind Sache der Prüfung, nicht des Abrufs; erkannte Lücken dagegen nicht
+        partial = not res.complete or bool(res.gaps)
         status = "partial" if partial else "synced"
-        notes = [sanitize_error(w, secret.values()) for w in res.warnings[:5]]
+        notes = [sanitize_error(w, secret.values()) for w in [*res.gaps, *res.warnings][:6]]
         if not res.complete:
-            notes.insert(0, "Abruf unvollständig – der nächste Lauf holt erneut ab")
+            notes.insert(0, "Erstabruf in Etappen – wird automatisch fortgesetzt" if res.resume else
+                         "Abruf unvollständig – der nächste Lauf holt erneut ab")
         overlap = counts.get("duplicate", 0) + counts.get("before", 0)
         parts = [f"{len(res.events)} Vorgänge", f"neu {counts.get('new', 0)}", f"bekannt {counts.get('known', 0)}"]
         for key, label in (("unclear", "ungeklärt"), ("duplicate", "mögliche Dubletten"), ("before", "vor Stichtag"),
@@ -696,12 +1129,22 @@ class DataSourceService:
         if res.skipped:
             parts.append("ohne Buchung " + ", ".join(f"{n}× {k}" for k, n in sorted(res.skipped.items())))
         msg = " · ".join(parts) + ("; " + "; ".join(notes) if notes else "")
-        coverage = {**res.coverage, "complete": res.complete, "at": stamp}
+        resume = bool(res.resume and not res.complete and res.cursor is not None)
+        coverage = {**res.coverage, "complete": res.complete, "at": stamp, "gaps": res.gaps, "resume": resume}
+        if conn.wallet:
+            coverage["limits"] = conn.coverage_limits(ds.config())  # type: ignore[attr-defined]
+        if resume and ds.enabled:  # Erstabruf in Etappen: bald fortsetzen, unabhängig vom Intervall
+            soon = started + timedelta(seconds=BACKFILL_NEXT_S)
+            nxt = min(nxt, soon) if nxt is not None else soon
+        # Abrufstand nur nach vollständigem Abruf bzw. bis zu einem sicheren Fortsetzungspunkt vorrücken
+        cursor_json = json.dumps(res.cursor) if res.cursor is not None and (res.complete or res.resume) \
+            else ds.cursor_json
+        if res.balances is not None:
+            self._store_balances(sid, res.balances)
         self.db.x("UPDATE data_source SET status=?, last_run_at=?, last_success_at=?, last_error=?, last_error_at=?, "
                   "next_run_at=?, cursor_json=?, coverage_json=?, updated_at=? WHERE id=?",
                   (status, stamp, stamp, "; ".join(notes) if partial else None, stamp if partial else None,
-                   iso(nxt) if nxt else None,
-                   json.dumps(res.cursor) if res.cursor is not None else ds.cursor_json,
+                   iso(nxt) if nxt else None, cursor_json,
                    json.dumps(coverage, ensure_ascii=False, default=str), stamp, sid))
         self._finish_run(run_id, "partial" if partial else "ok", msg, events=len(res.events),
                          rows_new=counts.get("new", 0), rows_known=counts.get("known", 0), rows_overlap=overlap,
@@ -720,13 +1163,16 @@ class DataSourceService:
             by_event[rc.rec.event_key or f"#{rc.idx}"].append(rc)
         out: set[int] = set()
         for lines in by_event.values():
+            # Transfer-Vorschläge mit bereits übernommenen Buchungen (j:…) verändern deren Lots – nie automatisch
             if all(rc.status == "new" and not rc.errors and rc.row is not None and not rc.rec.review
-                   and rc.include() for rc in lines):
+                   and rc.include() and not (rc.pair_ref or "").startswith("j:") for rc in lines):
                 out |= {rc.idx for rc in lines}
         return out
 
     def _normalize(self, ds: DataSource, res: K.FetchResult) -> list[Any]:
-        """Ereignisse → Zeilen im Zwischenformat mit Kennung ``<ereignis>#<zeile>``; Vertrag prüfen."""
+        """Ereignisse → Zeilen im Zwischenformat mit Kennung ``<ereignis>#<zeile>`` (Wallets:
+        ``<ereignis>#<unterkennung>``); Vertrag prüfen."""
+        conn_subs = ds.is_wallet
         if len(res.events) > MAX_EVENTS:
             raise K.ConnectorError("data", f"Zu viele Vorgänge in einem Lauf ({len(res.events)} > {MAX_EVENTS}).")
         recs = []
@@ -739,9 +1185,15 @@ class DataSourceService:
             if key in seen:
                 continue  # doppelt geliefert (überlappende Abrufseiten)
             seen.add(key)
+            subs: set[str] = set()
             for i, rec in enumerate(ev.lines):
                 rec.event_key, rec.event_line = key, i
-                rec.ext_id = f"{key}#{i}"
+                sub = rec.ext_id if conn_subs else None
+                if sub is not None:
+                    if not K.SUB_ID_RE.match(sub) or sub in subs:
+                        raise K.ConnectorError("data", "Ungültige oder doppelte Unterkennung einer Bewegung.")
+                    subs.add(sub)
+                rec.ext_id = f"{key}#{sub if sub is not None else i}"
                 rec.aliases = sorted({a for a in rec.aliases if K.EVENT_KEY_RE.match(a) and a.startswith(prefix)
                                       and a != key})
                 rec.account = rec.account or ds.account
@@ -755,7 +1207,10 @@ class DataSourceService:
         now = now or _now()
         out = []
         for ds in self.list():
-            if not ds.enabled or not ds.supported or int(ds.sync_interval_min or 0) <= 0:
+            if not ds.enabled or not ds.supported or (int(ds.sync_interval_min or 0) <= 0
+                                                      and not ds.backfill_pending):
+                continue
+            if ds.progress.get("running"):
                 continue
             nxt = parse_iso(ds.next_run_at)
             if nxt is not None and nxt <= now:

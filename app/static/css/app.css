@@ -495,3 +495,9 @@ table.journal select { max-width: 9em; }
 .wrap-any, .wrap-any .mono { overflow-wrap: anywhere; }
 /* Buchungsliste: Aktionen dürfen umbrechen (Symbole unter „Bearbeiten“), statt die Tabelle zu verbreitern */
 table.journal td.actions { white-space: normal; min-width: 7.5rem; }
+
+/* Wallets: Chain-Auswahl und Konten-Karten */
+.chain-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.chain-btn { justify-content: center; text-align: center; white-space: normal; }
+.ds-card h3 { font-size: 1rem; }
+.ds-progress .progress { height: 8px; }

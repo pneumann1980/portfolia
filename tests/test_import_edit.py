@@ -165,7 +165,7 @@ def test_migration_9_adds_tables_and_keeps_data(tmp_path):
     d = Database(tmp_path / "app.sqlite")
     d.migrate(target=8)
     d.x("INSERT INTO settings(key, value_json, updated_at) VALUES ('ui.default_range', '\"3J\"', 'x')")
-    d.migrate()
+    d.migrate(target=9)
     assert d.scalar("PRAGMA user_version") == 9
     tables = {r["name"] for r in d.q("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"tx_override", "import_extra"} <= tables

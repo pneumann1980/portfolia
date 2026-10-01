@@ -46,7 +46,7 @@ FILES = "files/"
 PRICE_COLS = ("series", "date", "open", "high", "low", "close", "volume", "split_factor", "ccy", "source")
 META_COLS = ("series", "history_from", "history_to", "history_status")
 DS_COLS = ("kind", "provider", "name", "account", "address", "credential_ref", "enabled", "sync_interval_min",
-           "auto_commit", "note", "key_expires_on", "cursor_json")
+           "auto_commit", "note", "key_expires_on", "cursor_json", "wallet_group", "watch_json")
 MAX_FILE_BYTES = 5 * 1024 * 1024
 
 

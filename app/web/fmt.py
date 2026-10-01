@@ -89,6 +89,29 @@ def qty(v: Any, max_decimals: int = 8) -> str:
     return s
 
 
+def qty_exact(v: Any) -> str:
+    """Menge ohne Rundung (Bestandsabgleich: auch kleinste Abweichungen sichtbar), deutsches Format."""
+    if v is None or v == "":
+        return "–"
+    d = Decimal(str(v))
+    text = format(d.normalize(), "f") if d else "0"
+    sign = "-" if text.startswith("-") else ""
+    text = text.lstrip("-")
+    int_part, _, frac = text.partition(".")
+    return sign + _group(int_part) + ("," + frac if frac else "")
+
+
+def asset_label(key: Any) -> str:
+    """Token-Kennung ``SYMBOL@CHAIN:Contract`` lesbar kürzen (Symbol · Chain · Contract gekürzt)."""
+    k = str(key or "")
+    sym, at, rest = k.partition("@")
+    if not at or ":" not in rest:
+        return k
+    chain, _, contract = rest.partition(":")
+    c = contract if len(contract) <= 14 else f"{contract[:8]}…{contract[-4:]}"
+    return f"{sym} · {chain} {c}"
+
+
 def price(v: Any) -> str:
     if v is None:
         return "–"
@@ -173,6 +196,7 @@ def register(env: Any) -> None:
     env.filters.update({
         "fromjson": fromjson,
         "num": num, "eur": eur, "eur_kpi": eur_kpi, "eur_compact": eur_compact, "pct": pct, "qty": qty, "price": price,
+        "qty_exact": qty_exact, "asset_label": asset_label,
         "tone": tone, "arrow": arrow, "date_de": date_de, "datetime_de": datetime_de, "rel_time": rel_time,
         "rel_time_iso": rel_time_iso, "duration": duration, "plain": plain_de,
     })

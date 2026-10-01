@@ -1,20 +1,38 @@
 {% extends "base.html" %}
 {% block title %}Datenquellen{% endblock %}
 {% block heading %}Datenquellen{% endblock %}
+{% macro open_line(oc, pb) %}{% if oc %}<div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div>Zur Prüfung offen:
+    {% for st, n in oc.items() %}{{ n }} {{ {'new': 'neu', 'unclear': 'ungeklärt', 'duplicate': 'mögliche Dubletten', 'before': 'vor Stichtag', 'invalid': 'unvollständig'}.get(st, st) }}{% if not loop.last %} · {% endif %}{% endfor %}
+    {% if pb %} – <a href="/journal/csv/{{ pb[0].id }}">jetzt prüfen</a>{% endif %}</div></div>{% endif %}{% endmacro %}
+{% macro holdings_table(h, limit=6) %}
+  {% if h and h['items'] %}
+  <div class="table-wrap cards-wrap" style="margin-top:8px"><table class="compact cards">
+    <thead><tr><th>Asset</th><th class="num">On-Chain beobachtet</th><th class="num">durch Portfolia-Buchungen erklärt</th><th class="num">Differenz</th></tr></thead>
+    <tbody>{% for i in h['items'][:limit] %}<tr>
+      <td data-label="Asset" class="wrap-any"><span class="mono">{{ i.key|asset_label }}</span>{% if i.asset_id and i.asset_id != i.key %} <span class="hint">→ {{ i.asset_id }}</span>{% endif %}</td>
+      <td class="num" data-label="On-Chain beobachtet">{{ i.observed|qty_exact if i.observed is not none else '–' }}</td>
+      <td class="num" data-label="durch Buchungen erklärt">{% if i.state == 'unmapped' %}<span class="hint">nicht zugeordnet</span>{% elif i.state == 'ignored' %}<span class="hint">ignoriert</span>{% else %}{{ i.explained|qty_exact }}{% endif %}</td>
+      <td class="num" data-label="Differenz">{% if i.state == 'ok' %}<span class="badge good">0</span>{% elif i.state == 'diff' %}<span class="badge warn">{{ i.diff|qty_exact }}</span>{% elif i.state == 'only_portfolia' %}<span class="badge warn">nur in Portfolia</span>{% else %}–{% endif %}</td>
+    </tr>{% endfor %}</tbody></table></div>
+  {% if h['items']|length > limit %}<div class="hint">… und {{ h['items']|length - limit }} weitere – siehe Details</div>{% endif %}
+  {% endif %}
+{% endmacro %}
 {% block content %}
 <nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a class="active" href="/settings/datasources">Datenquellen</a></nav>
 {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
 {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 
 <section class="card">
-  <div class="card-head"><h2>Börsen und Wallets</h2>
+  <div class="card-head"><h2>Wallets und Börsen</h2>
     <div class="row">
-      <a class="btn primary" href="/settings/datasources/new?kind=exchange">+ Börse</a>
-      <a class="btn" href="/settings/datasources/new?kind=wallet">+ Wallet-Adresse</a>
+      <a class="btn primary" href="/settings/datasources/new?kind=wallet">+ Wallet-Konto</a>
+      <a class="btn" href="/settings/datasources/new?kind=exchange">+ Börse</a>
     </div></div>
-  <p class="hint">Datenquellen liefern Buchungen über denselben Weg wie der CSV-Import: Prüfung, Dubletten- und
-    Transfer-Abgleich, Übernahme erst nach Durchsicht (oder automatisch nur für eindeutige neue Vorgänge). Abrufe
-    lesen nur – Portfolia handelt nie. Automatische Anbindung derzeit: <b>Bitpanda</b>.</p>
+  <p class="hint">Portfolia liest nur – öffentliche Adressen (bzw. bei Bitcoin einen öffentlichen Kontoschlüssel) und
+    API-Keys mit Leserechten. <b>Nie</b> Seed-Phrase, privaten Schlüssel, Signatur oder eine Verbindung zum Ledger-Gerät.
+    Vorgänge durchlaufen die Prüfung wie ein CSV-Import (Dubletten, Transfers zwischen eigenen Konten, ungeklärte
+    Vorgänge); ein On-Chain-Eingang ist nie automatisch ein Kauf. Automatische Anbindung: <b>Bitpanda</b>; Wallets:
+    <b>Bitcoin, Ethereum, BNB Chain, Avalanche C-Chain, Solana, Kaspa</b>.</p>
   <div class="facts" style="margin-top:8px">
     <div class="fact"><div class="k">Master-Key für API-Keys</div><div class="v">{% if keys.vault.available %}<span class="badge good">vorhanden</span> <span class="hint">ID {{ keys.vault.key_id }} · {{ keys.vault.source }}</span>{% else %}<span class="badge warn">fehlt</span><div class="hint">API-Keys können erst nach Einrichtung gespeichert werden.{% if keys.vault.note %} {{ keys.vault.note }}{% endif %}</div>{% endif %}</div></div>
     <div class="fact"><div class="k">Gespeicherte API-Keys</div><div class="v">{{ keys.total }}{% if keys.stale %} <span class="badge warn">{{ keys.stale }} mit früherem Master-Key</span>{% endif %}</div></div>
@@ -28,14 +46,83 @@
     <ul class="small">
       <li><b>angelegt</b> – gespeichert, noch nicht verbunden (ohne automatische Anbindung: Buchungen per CSV-Import)</li>
       <li><b>verbunden</b> – Verbindungsprüfung erfolgreich, noch nicht synchronisiert</li>
-      <li><b>synchronisiert</b> – letzter Abruf vollständig (Prüfpunkte können trotzdem offen sein)</li>
-      <li><b>teilweise synchronisiert</b> – Abruf unvollständig (z. B. Drosselung, Seitenende unklar); der nächste Lauf
+      <li><b>vollständig synchronisiert</b> – die unterstützten Daten des Kontos sind ohne erkannte Lücke abgerufen
+        (Prüfpunkte können trotzdem offen sein; Abdeckungsgrenzen stehen am Konto)</li>
+      <li><b>Erstabruf unvollständig</b> – lange Historie, wird in Etappen automatisch fortgesetzt</li>
+      <li><b>teilweise synchronisiert</b> – Abruf mit erkannter Lücke (z. B. Drosselung, Teilfehler); der nächste Lauf
         holt erneut ab</li>
-      <li><b>Fehler</b> – letzter Lauf fehlgeschlagen (Meldung an der Quelle)</li>
+      <li><b>Fehler</b> – letzter Lauf fehlgeschlagen (Meldung am Konto)</li>
     </ul></details>
 </section>
 
-{% for ds in items %}
+<section class="card" id="anbieter">
+  <div class="card-head"><h2>Anbieter-Schlüssel</h2></div>
+  <p class="hint">Manche Explorer verlangen einen API-Key. Er gilt für alle Konten des Anbieters, wird verschlüsselt
+    gespeichert und nie wieder angezeigt. <b>Datenschutz:</b> Jeder Anbieter sieht die abgefragten öffentlichen Adressen
+    und die IP-Adresse deines Servers und kann sie einander zuordnen.</p>
+  <div class="stack" style="gap:10px;margin-top:8px">
+  {% for k in provider_keys %}
+  <div class="box">
+    <div class="row" style="justify-content:space-between"><b>{{ k.label }}</b>
+      {% if k.mode == 'app' %}<span class="badge good">gespeichert <span class="mono">{{ k.hint }}</span></span>{% elif k.mode == 'env' %}<span class="badge good">Umgebungsvariable</span>{% else %}<span class="badge {{ 'warn' if k.users and k.required else '' }}">{{ 'fehlt' if k.required else 'optional' }}</span>{% endif %}</div>
+    <div class="hint">{{ k.terms }}{% if k.users %} · genutzt von: {{ k.users|join(', ') }}{% endif %}{% if k.calls_today %} · heute {{ k.calls_today }} Anfragen{% endif %}</div>
+    {% if keys.vault.available %}
+    <form method="post" action="/settings/datasources/provider-keys/{{ k.id }}" class="row" style="margin-top:6px" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="text" name="api_key" minlength="16" maxlength="1024" required class="mono secret-input" style="flex:1;min-width:12em" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="{{ 'neuen Schlüssel einfügen' if k.mode == 'app' else 'API-Key einfügen' }}" aria-label="API-Key {{ k.label }}">
+      <button class="btn sm" type="submit">{{ 'Ersetzen' if k.mode == 'app' else 'Speichern' }}</button></form>
+    {% endif %}
+    {% if k.mode == 'app' %}<form method="post" action="/settings/datasources/provider-keys/{{ k.id }}/delete" class="inline" data-confirm="API-Key für {{ k.label }} entfernen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost sm" type="submit">Entfernen</button></form>{% endif %}
+    <div class="hint">Alternativ als Umgebungsvariable <span class="mono">{{ k.env }}</span> (bzw. <span class="mono">{{ k.env }}_FILE</span>).</div>
+  </div>
+  {% endfor %}
+  </div>
+</section>
+
+{% for group, accounts in groups.items() %}
+<section class="card" id="gruppe-{{ loop.index }}">
+  <div class="card-head"><h2 class="wrap-any">{{ group }}</h2>
+    <a class="btn sm" href="/settings/datasources/new?kind=wallet&amp;group={{ group|urlencode }}">+ Konto in „{{ group }}“</a></div>
+  <div class="stack" style="gap:12px">
+  {% for ds in accounts %}{% set pb = pending.get(ds.id) or [] %}{% set oc = opens.get(ds.id) or {} %}{% set h = holdings.get(ds.id) %}{% set st = ds.sync_state %}
+  <div class="box ds-card" id="ds-{{ ds.id }}">
+    <div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+      <div style="min-width:0">
+        <h3 style="margin:0;overflow-wrap:anywhere">{{ ds.name }}</h3>
+        <div class="hint wrap-any">{{ ds.provider_label }} · <span class="mono">{{ ds.short_address }}</span>{% if ds.endpoint %} · {{ ds.endpoint.label }}{% endif %}</div>
+      </div>
+      <div class="row"><span class="badge {{ st[1] }}">{{ st[0] }}</span>{% if not ds.enabled %}<span class="badge">deaktiviert</span>{% endif %}</div>
+    </div>
+    {% if ds.progress.running %}<div style="margin-top:8px">{% with p=ds.progress %}{% include "partials/ds_progress.html" %}{% endwith %}</div>{% endif %}
+    {% if not ds.supported %}
+    <div class="alert" style="margin-top:8px"><span class="icon">i</span><div><b>Manuell / noch nicht unterstützt:</b> Für {{ ds.provider_label }} gibt es noch
+      keine automatische Anbindung. Buchungen bitte per <a href="/journal/csv">CSV-Import</a> erfassen.</div></div>
+    {% endif %}
+    {% for g in ds.gaps %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div><b>Lücke:</b> {{ g }}</div></div>{% endfor %}
+    {% if ds.last_error %}<div class="alert crit" style="margin-top:8px"><span class="icon">!</span><div>{{ ds.last_error }}{% if ds.last_error_at %} <span class="hint">({{ ds.last_error_at|datetime_de }})</span>{% endif %}</div></div>{% endif %}
+    <div class="facts" style="margin-top:8px">
+      <div class="fact"><div class="k">Konto in Portfolia</div><div class="v">{{ ds.account }}</div></div>
+      <div class="fact"><div class="k">Letzte erfolgreiche Synchronisierung</div><div class="v">{{ ds.last_success_at|datetime_de if ds.last_success_at else '–' }}{% if ds.backfill_pending %}<div class="hint">Erstabruf läuft in Etappen{% if ds.coverage.to_block is defined %} – bis Block {{ ds.coverage.to_block }}{% endif %}</div>{% endif %}</div></div>
+    </div>
+    {{ open_line(oc, pb) }}
+    {% if h and h['items'] %}<div style="margin-top:8px"><div class="k hint">Bestände{% if h.observed_at %} · beobachtet {{ h.observed_at|datetime_de }}{% endif %}</div>{{ holdings_table(h, 4) }}</div>{% endif %}
+    {% if ds.limits %}<details style="margin-top:6px"><summary class="hint">Abdeckungsgrenzen ({{ ds.limits|length }})</summary><ul class="small" style="margin:4px 0 0 16px">{% for l in ds.limits %}<li>{{ l }}</li>{% endfor %}</ul></details>{% endif %}
+    <div class="row" style="margin-top:10px">
+      {% if ds.supported and ds.enabled %}
+        <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary sm" type="submit" {% if ds.progress.running %}disabled{% endif %}>{{ 'Synchronisieren' if ds.last_success_at else 'Erstabruf starten' }}</button></form>
+        <form method="post" action="/settings/datasources/{{ ds.id }}/check" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Verbindung testen</button></form>
+      {% endif %}
+      <a class="btn sm" href="/settings/datasources/{{ ds.id }}">Details &amp; Einstellungen</a>
+      <form method="post" action="/settings/datasources/{{ ds.id }}/toggle" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost sm" type="submit">{{ 'Deaktivieren' if ds.enabled else 'Aktivieren' }}</button></form>
+      <form method="post" action="/settings/datasources/{{ ds.id }}/delete" class="inline" data-confirm="„{{ ds.name }}“ entfernen? Übernommene Buchungen bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost sm" type="submit">Entfernen</button></form>
+    </div>
+  </div>
+  {% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+{% for ds in exchanges %}
 <section class="card ds-card" id="ds-{{ ds.id }}">
   {% set pb = pending.get(ds.id) or [] %}
   {% set oc = opens.get(ds.id) or {} %}
@@ -45,7 +132,7 @@
       <div class="hint">{{ ds.kind_label }} · {{ ds.provider_label }}</div>
     </div>
     <div class="row">
-      <span class="badge {{ ds.status_badge }}">{{ ds.status_label }}</span>
+      <span class="badge {{ ds.sync_state[1] }}">{{ ds.sync_state[0] }}</span>
       {% if not ds.enabled %}<span class="badge">deaktiviert</span>{% endif %}
     </div>
   </div>
@@ -63,13 +150,10 @@
     <div class="fact"><div class="k">Letzte erfolgreiche Synchronisierung</div><div class="v">{{ ds.last_success_at|datetime_de if ds.last_success_at else '–' }}{% if ds.coverage and not ds.coverage.complete %}<div class="hint">unvollständig</div>{% endif %}</div></div>
     <div class="fact"><div class="k">Nächster Lauf</div><div class="v">{% if ds.next_run_at %}{{ ds.next_run_at|datetime_de }}{% else %}–<div class="hint">{{ 'deaktiviert' if not ds.enabled else ('keine automatische Anbindung' if not ds.supported else 'nur manuell') }}</div>{% endif %}</div></div>
     {% if ds.supported and ds.needs_key %}<div class="fact"><div class="k">Zugang</div><div class="v">{% if ds.key_mode == 'app' %}API-Key <span class="mono">{{ ds.key_hint }}</span>{% elif ds.key_mode == 'env' %}<span class="mono">{{ ds.credential_ref }}</span> <span class="badge {{ 'good' if ds.credential_state == 'gesetzt' else 'warn' }}">{{ ds.credential_state }}</span>{% else %}–{% endif %}{% if ds.check %}<div class="hint">Prüfung: {{ 'in Ordnung' if ds.check.ok else 'fehlgeschlagen' }}</div>{% endif %}</div></div>{% endif %}
-    {% if ds.address %}<div class="fact" style="grid-column:1/-1"><div class="k">Adresse</div><div class="v mono" style="font-weight:500">{{ ds.address }}</div></div>{% endif %}
     {% if ds.credential_ref and not ds.needs_key %}<div class="fact" style="grid-column:1/-1"><div class="k">Zugangsdaten (Umgebungsvariable)</div><div class="v"><span class="mono">{{ ds.credential_ref }}</span> <span class="badge {{ 'good' if ds.credential_state == 'gesetzt' else 'warn' }}">{{ ds.credential_state }}</span></div></div>{% endif %}
     {% if ds.last_error %}<div class="fact" style="grid-column:1/-1"><div class="k">Letzter Fehler{% if ds.last_error_at %} · {{ ds.last_error_at|datetime_de }}{% endif %}</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
   </div>
-  {% if oc %}<div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div>Zur Prüfung offen:
-    {% for st, n in oc.items() %}{{ n }} {{ {'new': 'neu', 'unclear': 'ungeklärt', 'duplicate': 'mögliche Dubletten', 'before': 'vor Stichtag', 'invalid': 'unvollständig'}.get(st, st) }}{% if not loop.last %} · {% endif %}{% endfor %}
-    {% if pb %} – <a href="/journal/csv/{{ pb[0].id }}">jetzt prüfen</a>{% endif %}</div></div>{% endif %}
+  {{ open_line(oc, pb) }}
   <div class="row" style="margin-top:12px">
     {% if ds.supported and ds.enabled %}
       <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit" {% if ds.needs_key and not ds.key_mode %}disabled{% endif %}>{{ 'Jetzt synchronisieren' if ds.last_success_at else 'Historischen Abgleich starten' }}</button></form>
@@ -80,9 +164,10 @@
     <form method="post" action="/settings/datasources/{{ ds.id }}/delete" class="inline" data-confirm="„{{ ds.name }}“ entfernen? Zugangsdaten werden gelöscht, übernommene Buchungen bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Entfernen</button></form>
   </div>
 </section>
-{% else %}
-<section class="card"><p class="hint">Noch keine Datenquelle. Lege eine Börse oder eine öffentliche Wallet-Adresse an –
-  für Bitpanda holt Portfolia die Vorgänge nach Eingabe eines API-Keys (nur Leserechte) selbst; für andere Anbieter bis
-  zu einer Anbindung per <a href="/journal/csv">CSV-Import</a>.</p></section>
 {% endfor %}
+{% if not items %}
+<section class="card"><p class="hint">Noch keine Datenquelle. Lege ein Wallet-Konto (öffentliche Adresse) oder eine
+  Börse an – für Bitpanda holt Portfolia die Vorgänge nach Eingabe eines API-Keys (nur Leserechte) selbst; für andere
+  Anbieter bis zu einer Anbindung per <a href="/journal/csv">CSV-Import</a>.</p></section>
+{% endif %}
 {% endblock %}

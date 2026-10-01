@@ -161,17 +161,36 @@ class Vault:
     def _aad(source_id: int, kind: str) -> bytes:
         return f"portfolia:ds:{int(source_id)}:{kind}".encode()
 
+    @staticmethod
+    def provider_aad(provider: str) -> bytes:
+        """Bindung eines Anbieter-Schlüssels (Etherscan, Helius, …) an seinen Anbieter."""
+        if not re.match(r"^[a-z0-9_]{2,32}$", provider or ""):
+            raise VaultError("Unbekannter Anbieter.")
+        return f"portfolia:provider:{provider}:api_key".encode()
+
     def encrypt(self, plaintext: str, source_id: int, kind: str = "api_key") -> tuple[bytes, str]:
+        return self._encrypt(plaintext, self._aad(source_id, kind))
+
+    def encrypt_provider(self, plaintext: str, provider: str) -> tuple[bytes, str]:
+        return self._encrypt(plaintext, self.provider_aad(provider))
+
+    def _encrypt(self, plaintext: str, aad: bytes) -> tuple[bytes, str]:
         if self._primary is None:
             raise VaultError(self.error or "Master-Key fehlt – Zugangsdaten können nicht gespeichert werden.")
         nonce = os.urandom(12)
-        ct = self._primary.aead().encrypt(nonce, plaintext.encode("utf-8"), self._aad(source_id, kind))
+        ct = self._primary.aead().encrypt(nonce, plaintext.encode("utf-8"), aad)
         return MAGIC + self._primary.kid + nonce + ct, self._primary.key_id
 
     def blob_key_id(self, blob: bytes) -> str | None:
         return bytes(blob[4:8]).hex() if len(blob) > 20 and bytes(blob[:4]) == MAGIC else None
 
     def decrypt(self, blob: bytes, source_id: int, kind: str = "api_key") -> str:
+        return self._decrypt(blob, self._aad(source_id, kind))
+
+    def decrypt_provider(self, blob: bytes, provider: str) -> str:
+        return self._decrypt(blob, self.provider_aad(provider))
+
+    def _decrypt(self, blob: bytes, aad: bytes) -> str:
         data = bytes(blob)
         if len(data) < 4 + 4 + 12 + 16 or data[:4] != MAGIC:
             raise VaultError("Gespeicherte Zugangsdaten sind beschädigt – bitte neu eingeben.")
@@ -184,7 +203,7 @@ class Vault:
                              "Früheren Key als PORTFOLIA_MASTER_KEY_OLD_FILE bereitstellen oder Schlüssel neu "
                              "eingeben.")
         try:
-            return key.aead().decrypt(nonce, ct, self._aad(source_id, kind)).decode("utf-8")
+            return key.aead().decrypt(nonce, ct, aad).decode("utf-8")
         except (InvalidTag, UnicodeDecodeError):
             raise VaultError("Entschlüsselung fehlgeschlagen (Datensatz beschädigt oder vertauscht) – "
                              "Schlüssel bitte neu eingeben.") from None

@@ -1,0 +1,8 @@
+{# Fortschritt eines laufenden Abrufs – fragt alle 2 s nach; nach dem Lauf lädt die Seite neu (HX-Redirect). #}
+{% set total = p.total or 0 %}{% set pct = ((p.done or 0) * 100 / total)|round|int if total else 0 %}
+<div class="ds-progress" hx-get="/settings/datasources/{{ ds.id }}/progress" hx-trigger="every 2s" hx-swap="outerHTML" role="status" aria-live="polite">
+  <div class="row" style="justify-content:space-between;gap:8px"><span class="badge info">{{ p.stage or 'Abruf läuft' }}</span>
+    <span class="hint">{% if total %}{{ pct }} %{% else %}läuft …{% endif %}</span></div>
+  <div class="progress" style="margin-top:6px"><div style="width:{{ pct if total else 15 }}%"></div></div>
+  {% if p.text %}<div class="hint wrap-any" style="margin-top:4px">{{ p.text }}</div>{% endif %}
+</div>
