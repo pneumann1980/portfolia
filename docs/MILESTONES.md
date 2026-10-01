@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 01.10.2026 · Version 0.13.1 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 01.10.2026 · Version 0.14.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -587,6 +587,48 @@ Katalog im Hintergrund (Warteschlange, Fehler, veraltet, kein Abruf je Seitenauf
 **Grenzen M15.1:** Live nicht geprüft (CoinGecko aus der Build-Umgebung gesperrt; Katalogformat laut Doku:
 Plattform → Contract, EVM klein geschrieben). Plattform-Bezeichnung für KRC-20 bei CoinGecko nicht belegt – erkannt
 werden Plattformen mit „kaspa“/„krc“ im Namen. Katalog im Speicher rund 15–25 MB (~18.000 Coins, Laden ~0,1 s).
+
+## M16 – Abgleich mit dem kuratierten Import: vorhanden oder neu, ohne Handarbeit (0.14.0)
+
+Anlass (01.10.2026, erster ETH-Abgleich: 87 Vorgänge, 32 „unvollständig“, 14 Symbole zuzuordnen): Bei vorhandenen
+kuratierten Daten soll Portfolia selbst feststellen, was existiert und was neu ist; Interaktion minimieren.
+
+**Befund:** Die kuratierten Wallet-Buchungen (Koinly) tragen den Transaktions-Hash in der Notiz (z. B. 87 von 88 bei
+„MetaMask (ETH)“), Gebühren als eigene Buchung (Abgang mit Tag `cost`, 39 Fälle), nie als Gebühr an der Buchung. Die
+„unvollständigen“ Zeilen lagen überwiegend vor dem Stichtag – der Status „unvollständig“ wurde vor dem Stichtag
+geprüft, deshalb verlangte Portfolia Zuordnungen für Vorgänge, die längst im Import stehen.
+
+**Entscheidungen**
+
+* **Abgleich über den Hash** (`app/csvimport/reconcile.py`): Index aus Notiz/Quellkennung des Imports (EVM, Bitcoin/
+  Kaspa, Solana) und `journal_tx.tx_hash`; Vergleich der Beine je Hash (summiert je Seite und Asset, Toleranz 0,5 %,
+  Gebühr im Abgang als Rückfall); bekannte Assets zuerst, jede Gegenbuchung nur einmal. Alle Hauptbeine →
+  „bereits vorhanden“ (vor dem Stichtag-Test, also auch danach); Teilen fehlt etwas → Hinweis bzw. „mögliche
+  Dublette“; vor dem Stichtag ohne Gegenstück → Hinweis „nicht im kuratierten Import“.
+* **Lernen nur bei Eindeutigkeit:** Token-Kennung → Asset, wenn alle Treffer übereinstimmen (gespeichert,
+  Migration 11: `csv_symbol.origin = 'abgleich'`, im Export enthalten, löschbar); Symbole ohne Contract nur je Stapel.
+* **Konto:** Konten der Gegenbuchungen je Stapel; automatische Umstellung der Datenquelle nur einmal, bei ≥ 3 Treffern
+  und ≥ 90 % unter einem Konto und wenn das bisherige Konto keine Buchungen hat (sonst Vorschlag mit einem Klick);
+  offene Zeilen werden umgebucht (sie tragen das Konto seit dem Abruf), kein neuer Abruf; „Rückgängig“ verhindert
+  ein erneutes automatisches Umstellen.
+* **Stichtag vor „unvollständig“/„ungeklärt“:** Zeilen bis zum Stichtag brauchen weder Zuordnung noch Entscheidung;
+  „Assets zuordnen“ zeigt nur Symbole aus zu übernehmenden Zeilen (ältere eingeklappt, optional), „Fehlende
+  EUR-Werte“ ebenso. Übernahme einer alten Zeile nur, wenn sie vollständig ist.
+* **Bestehende Stapel** werden beim Öffnen neu bewertet (Version der Auswertung im Stapel).
+
+**Tests:** `tests/test_reconcile.py` (7): ETH-Wallet gegen nachgebildeten Koinly-Import (Hash in der Notiz,
+Gebühren als `cost`, zwei Token-Logs gegen eine Buchung, Fake-Token in derselben Transaktion, Freigabe und
+fehlgeschlagene Transaktion ohne Gegenstück), gelernte Token-Zuordnung, automatische Konto-Umstellung, Übernahme
+setzt den kuratierten Bestand fort (USDC 1000 + 100 − 200), Rückgängig und Klick-Übernahme, keine Umstellung bei
+belegtem Konto, Import ohne Hashes (Stichtag entscheidet, keine Zuordnungspflicht für alte Zeilen), abweichende
+Menge nach dem Stichtag → mögliche Dublette; Regeln ohne App (Gebühr im Abgang, anderes Asset, mehrdeutige Tokens,
+App-Buchung, mehrteiliger Vorgang, Hash-Erkennung im Text).
+
+**Grenzen M16:** Abgleich nur, wo beide Seiten den Hash führen (Börsenvorgänge weiter über Anbieter-IDs bzw.
+Ähnlichkeit). Teilt der Import eine Transaktion anders auf als die Wallet (z. B. Swap als zwei Buchungen mit
+abweichenden Mengen), bleibt sie „teilweise“. Liegt dieselbe Wallet im Import auf mehreren Konten, entscheidet der
+Nutzer (Verteilung wird angezeigt). Mit echten Daten nicht live geprüft (kein Netz beim Bau); Grundlage ist die
+Struktur der vorliegenden kuratierten Daten.
 
 ## Entscheidungen des Auftraggebers (27.09.2026)
 

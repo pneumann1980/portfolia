@@ -362,7 +362,7 @@ Börsen und Wallets abgedeckt, die diese Tools unterstützen; Koinly-Wallets wer
 1. **Hochladen** (bis 25 MB): Format (automatisch), Konto (z. B. „Binance“), optional Zeitzone, Zahlenformat,
    Stichtag. Die Originaldatei bleibt gespeichert (Download jederzeit möglich).
 2. **Vorschau:** jede Zeile als Buchung (Kauf, Verkauf, Tausch, Zu-/Abgang, Ertrag mit Tag wie `staking`,
-   `interest`, `airdrop`, Gebühr) mit Status *neu*, *bereits importiert*, *mögliche Dublette*, *vor Stichtag*,
+   `interest`, `airdrop`, Gebühr) mit Status *neu*, *bereits vorhanden*, *mögliche Dublette*, *vor Stichtag*,
    *unvollständig* oder *ignoriert*.
 3. **Zuordnen:** unbekannte Symbole einem vorhandenen Asset zuordnen, als neues Asset anlegen oder ignorieren;
    Konten der Datei auf Portfolia-Konten abbilden. Zuordnungen gelten für alle weiteren Importe. Portfolia schlägt
@@ -427,7 +427,23 @@ bekommen keinen Kurs-Vorschlag; KRC-20 wird nur gefunden, wenn der Katalog den T
   (± 0,5 %) geprüft; auf demselben Konto werden solche Zeilen standardmäßig ausgelassen, auf anderen Konten nur
   markiert – zusammengeführt wird nie allein wegen Ähnlichkeit.
 * **Stichtag:** Mit kuratiertem Import werden standardmäßig nur Zeilen **nach** dessen Stand (`valuation_date`)
-  vorgeschlagen – ältere stehen dort bereits. Der Stichtag lässt sich je Import ändern oder leeren.
+  vorgeschlagen – ältere stehen dort bereits. Zeilen bis zum Stichtag gelten als *vor Stichtag*, auch wenn ihr Asset
+  unbekannt ist, ein EUR-Wert fehlt oder die Art ungeklärt ist: Für sie ist keine Zuordnung und keine Entscheidung
+  nötig (nur wer eine davon zusätzlich übernehmen will, ergänzt das Fehlende). Der Stichtag lässt sich je Import
+  ändern oder leeren.
+* **Abgleich über den Transaktions-Hash** (Wallets, Wallet-Exporte): Führt der kuratierte Import den Hash einer
+  Blockchain-Transaktion (Notiz oder Quellkennung, z. B. aus Koinly) bzw. eine App-Buchung ihn als `tx_hash`, werden
+  die Beine beider Seiten verglichen – Zugang, Abgang, Gebühr, Mengen je Seite und Asset summiert, ± 0,5 %; Gebühren
+  als eigene Buchung (Abgang mit Tag `cost`) zählen als Gebühr. Alle Hauptbeine gefunden → *bereits vorhanden*
+  (unabhängig vom Stichtag, wird nie erneut gebucht). Gleicher Hash, nicht alle Teile → vor dem Stichtag Hinweis,
+  danach *mögliche Dublette*. Vor dem Stichtag ohne Gegenstück → Hinweis „nicht im kuratierten Import“ (z. B. Spam,
+  Freigaben, Lücken; nur Information). Jede Gegenbuchung deckt höchstens ein Bein.
+* **Daraus abgeleitet, ohne Rückfrage:** Token-Zuordnungen (`SYMBOL@CHAIN:Contract` → Asset der Gegenbuchung, nur
+  wenn alle Treffer dasselbe Asset zeigen; gespeichert mit Herkunft „Abgleich“, löschbar) und das **Konto**: Führt
+  der Import die Transaktionen einer Wallet-Datenquelle unter einem anderen Konto (mindestens 3 Treffer, ≥ 90 % unter
+  einem Konto) und hat das bisherige Konto noch keine Buchungen, stellt Portfolia die Datenquelle einmalig auf
+  dieses Konto um – offene Zeilen folgen, *Rückgängig* jederzeit. Sonst erscheint ein Vorschlag mit einem Klick.
+  Für Symbole ohne Contract gilt eine gelernte Zuordnung nur in diesem Stapel.
 * **Interne Umbuchungen** eines Anbieters (Spot ↔ Earn/Staking/Funding, Kraken-Staking-Varianten wie `DOT.S`)
   werden übersprungen; der Bestand bleibt auf dem einen Konto des Anbieters.
 * **Nicht unterstützt:** Futures, Margin, Optionen, NFTs (Zeilen werden gezählt und übersprungen). Umbuchungen
@@ -587,8 +603,10 @@ funktioniert unverändert und braucht keinen Master-Key; ein in der App gespeich
 1. Der Connector liefert Vorgänge mit **stabiler Ereignis-ID** `<anbieter>:<ID>`; ein Vorgang darf **mehrere
    Buchungszeilen** haben (z. B. Kauf + Gebühr in einem dritten Asset), jede Zeile erhält die feste Kennung
    `<ereignis-id>#<zeile>` – bei erneutem Abruf verschwindet und verdoppelt sich keine.
-2. Die Zeilen durchlaufen **denselben Weg wie der CSV-Import**: Symbole zuordnen, EUR-Werte, Validierung,
-   Dubletten, Stichtag, Transfer-Abgleich – nichts umgeht Portfolio- oder Steuerlogik.
+2. Die Zeilen durchlaufen **denselben Weg wie der CSV-Import**: Abgleich über den Transaktions-Hash, Symbole
+   zuordnen, EUR-Werte, Validierung, Dubletten, Stichtag, Transfer-Abgleich – nichts umgeht Portfolio- oder
+   Steuerlogik. Der Kasten *Abgleich mit vorhandenen Buchungen* zeigt, was bereits existiert, was neu ist und was
+   noch eine Entscheidung braucht.
 3. **Prüfen und übernehmen** (*Synchronisierung prüfen*). Übernommene Buchungen heißen `PF-S-…`, tragen Quelle
    „Datenquelle · <Anbieter>“, Ereignis-ID, Zeile und Datenquelle und sind unter *Buchungen* bearbeitbar.
 
@@ -611,7 +629,8 @@ Regeln:
 * **API-Key ersetzen oder entfernen** ändert keine Buchungen. **Entfernen** der Datenquelle löscht Konfiguration,
   verschlüsselten Schlüssel (SQLite `secure_delete`, WAL wird geleert), Laufhistorie und offene Prüf-Stapel;
   übernommene Buchungen bleiben und werden von einer neu angelegten Quelle desselben Anbieters erkannt (kein
-  Doppelimport). Ändern von Anbieter, Adresse oder Konto setzt Status und Abrufstand zurück.
+  Doppelimport). Ändern von Anbieter, Adresse oder Konto in den Einstellungen setzt Status und Abrufstand zurück;
+  die Konto-Umstellung aus dem Abgleich ruft nicht neu ab.
 * **Zeitplan:** Ein Hintergrundjob prüft alle 5 Minuten fällige Quellen (aktiv, mit Anbindung und Intervall).
 * **Datenschutz:** Ein Connector überträgt nur, was für den Abruf nötig ist (Adresse bzw. API-Key an den
   jeweiligen Anbieter) – keine Bestände, Werte oder Kontonamen.
