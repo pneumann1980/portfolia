@@ -267,3 +267,66 @@ class FakeSolana(Recorder):
             return ok(None if p[0] in self.missing else self.txs.get(p[0]))
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"],
                                          "error": {"code": -32601, "message": "Method not found"}})
+
+
+class FakeKaspa(Recorder):
+    """api.kaspa.org (Blockzeit-Seiten, Grenzzeitpunkte vollständig) und api.kasplex.org (KRC-20, opScore-Cursor)."""
+
+    def __init__(self, txs: list[dict[str, Any]], balances: dict[str, int], ops: list[dict[str, Any]],
+                 tokenlist: list[dict[str, Any]], decimals: dict[str, int]) -> None:
+        super().__init__()
+        self.txs, self.bal, self.ops, self.tokenlist, self.decimals = txs, balances, ops, tokenlist, decimals
+        self.krc_status = "synced"
+
+    @staticmethod
+    def _involves(t: dict[str, Any], a: str) -> bool:
+        return any(i.get("previous_outpoint_address") == a for i in t["inputs"]) or \
+            any(o.get("script_public_key_address") == a for o in t["outputs"])
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        self.calls.append(req)
+        assert req.method == "GET" and req.url.host in ("api.kaspa.org", "api.kasplex.org")
+        inj = self.injected(req)
+        if inj is not None:
+            return inj
+        p, path = req.url.params, req.url.path
+        if req.url.host == "api.kaspa.org":
+            m = re.match(r"^/addresses/(kaspa:[a-z0-9]+)/balance$", path)
+            if m:
+                return httpx.Response(200, json={"address": m.group(1), "balance": self.bal.get(m.group(1), 0)})
+            m = re.match(r"^/addresses/(kaspa:[a-z0-9]+)/full-transactions-page$", path)
+            assert m, path
+            a, after, limit = m.group(1), int(p["after"]), int(p["limit"])
+            assert p["resolve_previous_outpoints"] == "light" and p["acceptance"] == "accepted"
+            rows = sorted((t for t in self.txs if self._involves(t, a) and t["block_time"] > after),
+                          key=lambda t: (t["block_time"], t["transaction_id"]))
+            page = rows[:limit]
+            if len(page) == limit:  # Grenzzeitpunkt vollständig mitliefern (wie der Server)
+                last = page[-1]["block_time"]
+                page += [t for t in rows[limit:] if t["block_time"] == last]
+            return httpx.Response(200, json=sorted(page, key=lambda t: -t["block_time"]))
+        path = path.removeprefix("/v1")
+        if path == "/info":
+            return httpx.Response(200, json={"message": self.krc_status, "result": {"daaScore": "1"}})
+        m = re.match(r"^/krc20/address/(kaspa:[a-z0-9]+)/tokenlist$", path)
+        if m:
+            return httpx.Response(200, json={"message": "successful", "prev": None, "next": None,
+                                             "result": self.tokenlist})
+        m = re.match(r"^/krc20/token/([A-Za-z0-9]+)$", path)
+        if m:
+            return httpx.Response(200, json={"message": "successful", "result": [
+                {"tick": m.group(1), "dec": str(self.decimals.get(m.group(1).upper(), 8))}]})
+        if path == "/krc20/oplist":
+            a = p["address"]
+            mine = [o for o in self.ops if a in (o["from"], o["to"])]
+            if p.get("prev"):
+                page = sorted((o for o in mine if int(o["opScore"]) > int(p["prev"])),
+                              key=lambda o: int(o["opScore"]))[:50]
+                page.reverse()
+            else:
+                nxt = int(p.get("next") or 9199999999999999999)
+                page = sorted((o for o in mine if int(o["opScore"]) < nxt), key=lambda o: -int(o["opScore"]))[:50]
+            return httpx.Response(200, json={"message": "successful", "result": page,
+                                             "prev": page[0]["opScore"] if page else None,
+                                             "next": page[-1]["opScore"] if page else None})
+        return httpx.Response(404, json={"message": "not found"})
