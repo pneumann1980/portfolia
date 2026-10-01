@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 01.10.2026 · Version 0.14.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 01.10.2026 · Version 0.15.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -630,6 +630,57 @@ abweichenden Mengen), bleibt sie „teilweise“. Liegt dieselbe Wallet im Impor
 Nutzer (Verteilung wird angezeigt). Mit echten Daten nicht live geprüft (kein Netz beim Bau); Grundlage ist die
 Struktur der vorliegenden kuratierten Daten.
 
+## M17 – Diagnose: Datenqualität und Bestandsabgleich, Schutzregeln für künftige Importe (0.15.0)
+
+Anlass (01.10.2026, Analyse eines Gesamtexports): doppelt gutgeschriebene Token (manuell + Transfer), Buchungspaare
+mit gleichem Hash ohne Ereignisindex, ein Anbieter-Kürzel mit der Kursquelle eines anderen Coins, fehlende bzw. alte
+Kurse, mögliche Token-Migration, rekonstruierte Buchungen. **Vorgabe:** bestehende Nutzerdaten nicht bearbeiten –
+nichts löschen, zusammenführen, umklassifizieren, ausschließen oder neu berechnen; Auswirkungen nur als Szenario.
+
+**Entscheidungen**
+
+* **Diagnose rein lesend** (`app/diagnosis/`): `collect.py` liest einen Schnappschuss (nur `SELECT` und die
+  vorhandenen Rechen-Caches), `engine.py` wertet ihn ohne Datenbankzugriff aus, `web.py` zeigt `/quality/diagnose`.
+  Kein Cache, keine Tabelle: jeder Aufruf rechnet neu; gleiche Daten → gleiche Befunde, Kennung je Befund aus Art und
+  betroffenen Buchungen. Befund = Wissen / Vermutung / Belege / Unsicherheiten / Szenario / nötige Entscheidung;
+  Status belegt · wahrscheinlich · verdacht · hinweis. Szenarien rechnen Bestandswirkungen exakt aus den Beinen der
+  betroffenen Buchungen und verfolgen Lots und Veräußerungen über die anschaffende Buchung (`DisposalPart.acq_tx`,
+  rein informativ ergänzt) – ein zweiter Ledger-Lauf je Befund wäre bei einigen Tausend Buchungen zu langsam.
+* **Dubletten:** gleicher Hash + identische Angaben (Ereignisindex aus `<ereignis>#<index>` der App-Buchungen bzw.
+  Portfolia-Exporte; verschiedene Indizes = legitim); gleiche exakte Menge auf demselben Konto ≤ 36 h mit
+  manueller Buchung; gleiche Anbieter-Kennung (auch Bitpanda-UUID in Koinly-Notizen) bzw. gleicher Hash und gleiche
+  Menge in Import und App-Buchung. Mehrere Hash-Paare desselben Kontos und Assets bilden einen Befund mit
+  gemeinsamem Szenario (Nettowirkung).
+* **Bestandsabgleich:** „intern konsistent“ (= Soll des kuratierten Imports) ist sichtbar etwas anderes als „mit
+  externer Quelle abgestimmt“; Letzteres nur bei Abruf ≤ 48 h ohne Lücke, sonst „extern nicht bestätigt“. Erklärungen
+  nur aus Befunden, die eine Mengendifferenz erklären können.
+* **Schutzregeln (nur künftige Vorgänge, Validierung unverändert):** Anbieter-Identität von Kürzeln
+  (`app/csvimport/identity.py`, Bitpanda „TH“ = Threshold Network): Auflösung nur über `TH@BITPANDA` bzw. eine
+  bestätigende Kursquelle, sonst offen; Vorschlag „eigenes Asset“; die automatische Kursquellen-Suche ordnet solche
+  Kürzel nie über das Symbol zu. Kennungen des kuratierten Imports beim CSV-/Sync-Abgleich: Koinly-ID, Bitpanda-UUID
+  in der Notiz. Gleiche exakte Menge auf demselben Konto ≤ 36 h → „mögliche Dublette“. Hash-Abgleich ohne Buchungen
+  derselben Quelle (zweite Bewegung derselben Transaktion bleibt ein eigener Vorgang). Mögliche Transfers ohne
+  Entscheidung werden nie automatisch übernommen. Auswertungsversion 3: offene Prüf-Stapel werden beim Öffnen neu
+  bewertet; übernommene Buchungen bleiben unberührt.
+* **Bewusst nicht rückwirkend:** Die Kennungs-Regeln gelten nicht in `journal.reconcile.coverage()` – sonst fielen
+  bereits übernommene App-Buchungen still aus den Berechnungen. Bestehende Zuordnungen (Kursquellen, Symbole)
+  werden nicht neu bewertet.
+
+**Tests:** `tests/test_diagnosis.py` (18, synthetisch und anonymisiert): doppelte Gutschrift manuell + Transfer,
+drei Hash-Paare ohne Index mit Netto-Szenario, zwei legitime Bewegungen mit verschiedenem Ereignisindex, Anbieter-ID
+in Import und App, Anbieter-Kürzel mit Kursquelle eines anderen Coins, Migration 10^6 mit Spam-Status,
+rekonstruierte Buchungen mit Ausgleichsbuchung (FIFO-Verbrauch je Jahr), alter manueller Kurs bzw. kein Kurs,
+Transfer-Kandidaten (Hash bzw. Zeit/Menge), externer Bestand (abgestimmt, Differenz, veraltet, nur intern); Seite und
+erneute Prüfung ändern nichts (Prüfsumme über alle Tabellen, Bestände und Lots), Diagnose deterministisch, keine
+Formulare; Schutzregeln im Prüf-Stapel (gleiche Menge → Prüfung, zweite Bewegung derselben Transaktion bleibt neu,
+Anbieter-Kürzel → Zuordnung nur für Bitpanda, Koinly-ID und Bitpanda-UUID aus dem Import → vorhanden, unklare
+Transfers nie automatisch, Kursquellen-Suche).
+
+**Grenzen M17:** Ohne Ereignisindex bleibt „gleicher Hash, gleiche Angaben“ ein Verdacht. Transfers und Migrationen
+werden nur vermutet (Adressen bzw. Contracts fehlen meist). Anbieter-Identitäten nur für hinterlegte Kürzel.
+Externe Bestände liegen nur für Wallets vor (Bitpanda meldet nur die eigene Bestandsprüfung). Die Diagnose fragt
+keine Kurse ab; Szenario-Bewertungen sind keine Marktbewertung.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
@@ -657,6 +708,8 @@ Struktur der vorliegenden kuratierten Daten.
   mit externem Master-Key, nur Leserechte, automatische Übernahme standardmäßig aus und nur je eindeutigem
   Ereignis, Doppelzählung Import ↔ App beheben, verworfene Vorgänge wieder abrufbar – siehe M12 (beantwortet die
   Fragen 4–7 und 9 für Bitpanda).
+* **Datenqualität** (01.10.2026): read-only Diagnose mit Bestandsabgleich und Schutzregeln für künftige Importe;
+  bestehende Daten werden nicht bearbeitet, Auswirkungen nur als Szenario – siehe M17.
 
 ## Offene Fragen an den Auftraggeber
 

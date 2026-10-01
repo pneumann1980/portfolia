@@ -42,7 +42,8 @@ für Smartphones (≈390 px) optimiert.
 4. [Buchungen in Portfolia erfassen](#buchungen-in-portfolia-erfassen)
 5. [CSV-Import aus Börsen und Wallets](#csv-import-aus-börsen-und-wallets)
 6. [Datenquellen: Börsen und Wallet-Adressen](#datenquellen-börsen-und-wallet-adressen) ·
-   [Wallets (read-only, sechs Chains)](#wallets-read-only-sechs-chains)
+   [Wallets (read-only, sechs Chains)](#wallets-read-only-sechs-chains) ·
+   [Diagnose: Datenqualität und Bestandsabgleich](#diagnose-datenqualität-und-bestandsabgleich)
 7. [Berechnungen](#berechnungen)
 8. [Sparpläne](#sparpläne)
 9. [Kurse und Datenquellen](#kurse-und-datenquellen)
@@ -425,7 +426,12 @@ bekommen keinen Kurs-Vorschlag; KRC-20 wird nur gefunden, wenn der Katalog den T
   Buchungsseite übereinstimmen (ein Hash kann mehrere Buchungen betreffen). Gegen Import und andere Quellen wird
   zusätzlich auf gleichen Zeitpunkt (± Zeitzonenversatz in ganzen Stunden, ± 10 Minuten) und gleiche Mengen
   (± 0,5 %) geprüft; auf demselben Konto werden solche Zeilen standardmäßig ausgelassen, auf anderen Konten nur
-  markiert – zusammengeführt wird nie allein wegen Ähnlichkeit.
+  markiert – zusammengeführt wird nie allein wegen Ähnlichkeit. Gegen den **kuratierten Import** gelten außerdem
+  dessen Kennungen: die Koinly-ID (`source = koinly`, `source_ref` = ID wie im Koinly-Export) und
+  Bitpanda-UUIDs, die Koinly in der Notiz führt (`txhash=<uuid>` auf einem Bitpanda-Konto) – Treffer sind *bereits
+  vorhanden*. Ein Zu- bzw. Abgang mit **exakt derselben Menge** desselben Assets auf demselben Konto innerhalb von
+  36 Stunden (z. B. einmal manuell nachgetragen, einmal als Transfer erfasst) wird *mögliche Dublette* und nie
+  automatisch übernommen – außer bei zwei verschiedenen Blockchain-Transaktionen, Erträgen und Fiat.
 * **Stichtag:** Mit kuratiertem Import werden standardmäßig nur Zeilen **nach** dessen Stand (`valuation_date`)
   vorgeschlagen – ältere stehen dort bereits. Zeilen bis zum Stichtag gelten als *vor Stichtag*, auch wenn ihr Asset
   unbekannt ist, ein EUR-Wert fehlt oder die Art ungeklärt ist: Für sie ist keine Zuordnung und keine Entscheidung
@@ -444,6 +450,12 @@ bekommen keinen Kurs-Vorschlag; KRC-20 wird nur gefunden, wenn der Katalog den T
   einem Konto) und hat das bisherige Konto noch keine Buchungen, stellt Portfolia die Datenquelle einmalig auf
   dieses Konto um – offene Zeilen folgen, *Rückgängig* jederzeit. Sonst erscheint ein Vorschlag mit einem Klick.
   Für Symbole ohne Contract gilt eine gelernte Zuordnung nur in diesem Stapel.
+* **Anbieter-Kürzel:** Dasselbe Symbol bezeichnet je Anbieter oft verschiedene Coins (Bitpanda „TH“ = Threshold
+  Network, CoinGecko „th“ = Team Heretics Fan Token). Für solche Kürzel wird ein Asset nur zugeordnet, wenn seine
+  Kursquelle den Coin des Anbieters bestätigt oder eine Zuordnung genau für diesen Anbieter gespeichert ist
+  (`TH@BITPANDA`) – sonst bleibt die Zeile offen („bei Bitpanda ist Threshold Network – Asset zuordnen“); der
+  Vorschlag legt ein eigenes Asset mit der richtigen CoinGecko-ID an. Auch die automatische Kursquellen-Suche
+  ordnet solche Kürzel nie über das Symbol zu. Bestehende Zuordnungen bleiben unverändert.
 * **Interne Umbuchungen** eines Anbieters (Spot ↔ Earn/Staking/Funding, Kraken-Staking-Varianten wie `DOT.S`)
   werden übersprungen; der Bestand bleibt auf dem einen Konto des Anbieters.
 * **Nicht unterstützt:** Futures, Margin, Optionen, NFTs (Zeilen werden gezählt und übersprungen). Umbuchungen
@@ -624,7 +636,8 @@ Regeln:
   Verwerfen oder Zurücksetzen); „Ignorieren aufheben“ macht es rückgängig.
 * **Automatisch übernehmen** (Standard: aus): je Vorgang nur vollständig neue, eindeutig zugeordnete Vorgänge ohne
   Prüfhinweis; ungeklärte, möglicherweise doppelte und unvollständige bleiben zur Prüfung, ohne die sicheren
-  aufzuhalten. Offene Prüfungen blockieren den Zeitplan nicht.
+  aufzuhalten – ebenso mögliche Transfers ohne Entscheidung (Vorschlag mittlerer Sicherheit oder Gegenbuchung nur
+  im kuratierten Import). Offene Prüfungen blockieren den Zeitplan nicht.
 * **Nie parallel:** Zeitplan und „Jetzt synchronisieren“ teilen sich eine Sperre.
 * **API-Key ersetzen oder entfernen** ändert keine Buchungen. **Entfernen** der Datenquelle löscht Konfiguration,
   verschlüsselten Schlüssel (SQLite `secure_delete`, WAL wird geleert), Laufhistorie und offene Prüf-Stapel;
@@ -726,6 +739,79 @@ Vorgänge (`ethereum:…`, `bsc:…`, `avalanche:…`) und Tokens (`USDC@ETH:0xa
 nachgebildete Anbieter-APIs geprüft (Paginierung, Drosselung, Abbruch/Fortsetzung). Endpunkte und Felder folgen der
 jeweiligen Dokumentation bzw. dem Quellcode der Indexer (kaspa-rest-server, go-krc20d). Beim ersten echten Abruf
 bitte „Verbindung testen“, die Bestandsprüfung und den Prüf-Stapel ansehen.
+
+---
+
+## Diagnose: Datenqualität und Bestandsabgleich
+
+*Datenqualität → Diagnose öffnen* (`/quality/diagnose`) prüft alle Buchungen, Bestände, Zuordnungen und Kurse und
+zeigt priorisierte Befunde – **nur lesend**. Die Diagnose ändert keine Buchung, Zuordnung, Lots, Kostenbasis, Kurse
+oder Bestände, schließt nichts aus Berechnungen aus und hat keine Knöpfe zum Löschen, Zusammenführen, Umbuchen,
+Bestätigen oder Ausschließen. Sie wird bei jedem Aufruf neu aus den Daten berechnet und nirgends gespeichert
+(„Erneut prüfen“ lädt nur die Seite neu); gleiche Daten ergeben dieselben Befunde mit denselben Kennungen.
+
+Jeder Befund nennt betroffene Buchungen, Konten, Quellen und Kennungen und trennt:
+
+* **Was Portfolia aus den Daten weiß** – Fakten aus Buchungen, Kennzeichen, Beständen.
+* **Was Portfolia nur vermutet** – die Deutung.
+* **Belege** und **Unsicherheiten** – was für und was gegen die Deutung spricht.
+* **Szenario (hypothetisch)** – rechnerische Auswirkung, deutlich markiert, nie gebucht (z. B. Bestand ohne die
+  vermutete Doppelbuchung, Bewertung zum Kaufkurs).
+* **Für eine spätere Korrektur nötig** – die Entscheidung, die der Nutzer treffen müsste. Auch bei starkem Verdacht
+  bereinigt Portfolia nichts automatisch.
+
+**Status eines Befunds**
+
+| Status | Bedeutung |
+|---|---|
+| belegt | folgt unmittelbar aus den Daten (Kennzeichen „rekonstruiert“, fehlender Kurs, Differenz zur Börse, Kursquelle eines anderen Coins) |
+| wahrscheinlich | mehrere unabhängige Belege, keine legitime Erklärung in den Daten erkennbar |
+| verdacht | Muster passt, aber ein entscheidender Beleg fehlt oder eine legitime Erklärung ist möglich |
+| hinweis | zur Einordnung – kein Fehler festgestellt |
+
+**Befundarten und Regeln**
+
+| Art | Erkennung |
+|---|---|
+| Wahrscheinliche Dublette | gleicher Transaktions-Hash und identische Angaben (Zeit, Konto, Richtung, Menge, EUR) – mit gleichem Ereignisindex *wahrscheinlich*, ohne Index *verdacht*, mit verschiedenen Indizes legitim (kein Befund); exakt gleiche Menge auf demselben Konto in ≤ 36 h, mindestens eine Buchung manuell (*wahrscheinlich*, wenn die Menge unverwechselbar ist und die andere Buchung einen Hash hat); gleiche Anbieter-Kennung (z. B. Bitpanda-UUID) in Import und App-Buchung; gleicher Hash und gleiche Menge in Import und App-Buchung |
+| Möglicher interner Transfer | Abgang und Zugang desselben Assets auf verschiedenen eigenen Konten ohne Verknüpfung, Zugang −2 h … +72 h, 90–100,1 % der Menge oder gleicher Hash – beide Seiten nebeneinander mit Begründung (Zeit, Menge, Gebühr, Hash, eigene Adresse) |
+| Falsche oder mehrdeutige Asset-Zuordnung | Anbieter-Kürzel mit Kursquelle eines anderen Coins (Bitpanda „TH“), mehrere Token-Contracts für ein Asset, dieselbe Kursquelle für mehrere Assets, Kurszuordnungen nur über das Symbol |
+| Bestand: beobachtet ≠ berechnet | Differenz zur Börse bzw. Blockchain (aktueller, vollständiger Abruf) oder zum Soll des kuratierten Imports |
+| Unvollständige Transaktionshistorie | negativer Bestand, Abgang ohne Anschaffung, Koinly-Kennzeichen (z. B. `KOINLY_NEG_BALANCE`), Lücken einer Datenquelle, offene Prüf-Stapel, Anfangsbestände ohne Einzelbelege |
+| Rekonstruiert oder geschätzt | Quelle `reconstructed` bzw. Kennzeichen `RECONSTRUCTED_*`/`AVG_PRICE` (Ausgleichsbuchungen, rekonstruierte Sparpläne, Lücken), Sparplan-Schätzungen, Buchungen ohne EUR-Kurs – mit betroffenen Lots, Veräußerungen je Jahr, Haltefrist und Performance |
+| Fehlender oder veralteter Kurs | gehaltene Positionen ohne gültigen Kurs (mit Kursquelle und Alter des letzten Kurspunkts), Bewertung mit manuellem bzw. Transaktionskurs (kein Marktkurs), veraltete Marktkurse |
+| Möglicher Token-Migrationsvorgang | gleiches Symbol auf demselben Konto, Mengenverhältnis 10^3/10^6/10^9/10^12/10^18 : 1 (± 0,01 %), Spam-Markierung und Contract-Adressen als Belege |
+
+**Bestandsabgleich je Konto und Asset:** berechnet (Buchungen) neben beobachtet (Börse/Blockchain mit Zeitpunkt und
+Anbieter), Soll laut kuratiertem Import und Differenz, mit möglichen Erklärungen (offene Prüf-Stapel,
+unvollständige Historie, Gebühren, Dublettenverdacht, nicht verknüpfte Transfers).
+
+| Status | Bedeutung |
+|---|---|
+| mit externer Quelle abgestimmt | Börse bzw. Blockchain meldet denselben Bestand; Abruf ≤ 48 h alt und ohne erkannte Lücke |
+| Differenz zur externen Quelle | aktueller, vollständiger Abruf meldet einen anderen Bestand |
+| extern nicht bestätigt | externer Bestand liegt vor, aber veraltet oder unvollständig – kein „stimmt“, auch bei gleichem Wert |
+| intern konsistent | aus den Buchungen reproduzierbar (= Soll des kuratierten Imports) – **nicht** extern geprüft |
+| intern abweichend | Buchungen ergeben einen anderen Bestand als das Soll |
+| ohne Abgleich | weder externer Bestand noch Soll vorhanden |
+
+„Intern konsistent“ trotz Dublettenverdacht ist kein Widerspruch: Der Soll-Bestand wurde aus denselben Buchungen
+berechnet. Portfolia speichert oder ersetzt dabei keine Bestände.
+
+**Grenzen der Erkennung**
+
+* Ohne Ereignisindex (Output-/Log-Index) sind zwei gleiche Bewegungen in derselben Blockchain-Transaktion nicht von
+  einer Doppelbuchung zu unterscheiden; Steuertool-Exporte (z. B. Koinly) liefern keinen Index.
+* Gleiche Menge und Zeit beweisen keine Dublette; zwei verschiedene Hashes gelten immer als zwei Vorgänge.
+* Transfers zwischen eigenen Konten werden nur vermutet; Adressen der Gegenseite fehlen meist. Abgänge an Dritte mit
+  zufällig ähnlichem Zugang sind möglich.
+* Die Anbieter-Identität von Kürzeln kennt Portfolia nur für hinterlegte Fälle (`app/csvimport/identity.py`, derzeit
+  Bitpanda „TH“); andere Symbolkonflikte erscheinen als mehrdeutig bzw. als Kurszuordnung „nur über das Symbol“.
+* Migrationen sind ohne Contract-Adressen und Projektangaben nicht belegbar und bleiben *verdacht*.
+* Kurse fragt die Diagnose nicht ab; Szenarien nutzen nur gespeicherte Kurse bzw. Kaufkurse und sind keine
+  Marktbewertung. Veräußerungen werden über die anschaffende Buchung der Lots zugeordnet.
+* Ein externer Bestand liegt nur für Wallets vor (Bestandsmeldung der Anbieter); Börsenkonten bleiben „intern
+  konsistent“ bzw. „ohne Abgleich“.
 
 ---
 
@@ -867,6 +953,10 @@ Import, täglich um 06:40 und auf Knopfdruck im CoinGecko-Katalog gesucht.
   Mengen oder Konten, danach nur die IDs der Kandidaten (`/coins/markets`).
 * Stammt das Asset aus einer Wallet-Anbindung (Token-Zuordnung mit Contract), entscheidet der Contract im Katalog –
   eindeutig, Sicherheit „hoch“, ohne Marktdaten-Abruf.
+* **Anbieter-Kürzel** (z. B. Bitpanda „TH“ = Threshold Network): nur auf Konten dieses Anbieters gebucht → dessen
+  Coin („hoch“); auch auf anderen Konten → nur Vorschlag („niedrig“). Nie über das Symbol – dort hieße „TH“ der Team
+  Heretics Fan Token. Bestehende Zuordnungen prüft die Suche nicht erneut; eine falsche zeigt die
+  [Diagnose](#diagnose-datenqualität-und-bestandsabgleich) mit ihrer Wirkung auf die Bewertung.
 * Sonst Kandidaten mit gleichem Symbol; die Konten liefern die Chain („MetaMask (BNB)“ → BNB Smart Chain, „Kaspa (KAS)“ →
   Kaspa, Börsenkonten keine). Coins nur auf anderen Chains entfallen, ebenso Coins, deren Kursspanne (Allzeittief ÷ 3 bis
   Allzeithoch × 3) die eigenen Transaktionskurse nicht enthält – z. B. LUNA zu Kursen von LUNA Classic.
@@ -1071,6 +1161,9 @@ SQLite-Sicherung unter *Backups* der richtige Weg.
 | „mit einem anderen Master-Key verschlüsselt (Key-ID …)“ | Falscher Master-Key nach Restore/Rotation: richtigen Key ablegen bzw. alten als `PORTFOLIA_MASTER_KEY_OLD_FILE` bereitstellen, sonst API-Key neu eingeben. |
 | Bitpanda „teilweise synchronisiert“ | Abruf unvollständig (Drosselung, Seitenende unklar) – der nächste Lauf holt erneut ab; Details unter „Abdeckung“ der Datenquelle. |
 | Bitpanda „Berechtigung fehlt“ / „abgelehnt“ | API-Key mit Leserecht „Transaction“ neu erstellen und unter „API-Key ersetzen“ eintragen. |
+| Prüf-Stapel: „gleiche Menge wie … – möglicherweise doppelt erfasst“ | Eine vorhandene Buchung auf demselben Konto hat exakt dieselbe Menge (≤ 36 h). Beim Anbieter bzw. im Explorer prüfen; nur bei zwei echten Vorgängen übernehmen. |
+| Prüf-Stapel: „„TH“ bei Bitpanda ist Threshold Network – Asset zuordnen“ | Anbieter-Kürzel ohne bestätigte Kursquelle: Vorschlag „neu anlegen“ (eigenes Asset mit CoinGecko-ID des Anbieter-Coins) übernehmen oder ein passendes Asset zuordnen; gilt nur für diesen Anbieter. |
+| Diagnose zeigt „intern konsistent“ trotz Dublettenverdacht | Kein Widerspruch: Der Soll-Bestand stammt aus denselben Buchungen. Klären über Explorer bzw. Anbieter – siehe [Diagnose](#diagnose-datenqualität-und-bestandsabgleich). |
 
 ---
 
