@@ -364,13 +364,41 @@ Börsen und Wallets abgedeckt, die diese Tools unterstützen; Koinly-Wallets wer
 2. **Vorschau:** jede Zeile als Buchung (Kauf, Verkauf, Tausch, Zu-/Abgang, Ertrag mit Tag wie `staking`,
    `interest`, `airdrop`, Gebühr) mit Status *neu*, *bereits importiert*, *mögliche Dublette*, *vor Stichtag*,
    *unvollständig* oder *ignoriert*.
-3. **Zuordnen:** unbekannte Symbole einem vorhandenen Asset zuordnen, als neues Asset anlegen (Vorschlag für
-   Name und CoinGecko-ID gängiger Coins) oder ignorieren; Konten der Datei auf Portfolia-Konten abbilden.
-   Zuordnungen gelten für alle weiteren Importe.
+3. **Zuordnen:** unbekannte Symbole einem vorhandenen Asset zuordnen, als neues Asset anlegen oder ignorieren;
+   Konten der Datei auf Portfolia-Konten abbilden. Zuordnungen gelten für alle weiteren Importe. Portfolia schlägt
+   für jedes Symbol automatisch etwas vor und belegt das Formular vor (siehe *Automatische Vorschläge beim Zuordnen* unten) – gespeichert
+   wird erst mit „Zuordnungen speichern“.
 4. **Übernehmen:** gültige Zeilen werden Journal-Buchungen (`PF-C-…`, Quelle „CSV · <Format>“, bearbeitbar).
    Offene Zeilen (z. B. ohne EUR-Wert) bleiben im Import und lassen sich später ergänzen und nachschieben.
 5. **Rückgängig:** nimmt alle Buchungen eines Imports zurück; danach kann dieselbe Datei erneut (korrigiert)
    übernommen werden.
+
+**Automatische Vorschläge beim Zuordnen** – Abgleich mit der vorhandenen Datenbasis (Assets aus Import und App,
+aktive und offene Kursquellen-Zuordnungen, frühere Symbol-Zuordnungen, Token-Namen der Wallet-Anbindung) und dem
+lokal gespeicherten CoinGecko-Katalog (`/coins/list` mit Contract-Adressen je Chain, höchstens wöchentlich geladen;
+fehlt er, wird er im Hintergrund geholt). Gesucht wird lokal: An CoinGecko gehen weder Symbole noch Contracts, Mengen
+oder Konten.
+
+| Fall | Vorschlag | Sicherheit |
+|---|---|---|
+| Token (`SYMBOL@CHAIN:Contract`), Contract im Katalog, ein Asset nutzt diese CoinGecko-ID | zuordnen | hoch |
+| … ein Asset hat dazu einen offenen Kursquellen-Vorschlag | zuordnen, Kursquelle bestätigen | hoch |
+| … kein passendes Asset | neu anlegen mit Name und CoinGecko-ID; gleicher Coin auf weiterer Chain → dorthin zuordnen | hoch |
+| … einziges Krypto-Asset gleichen Symbols ohne Kursquelle | zuordnen, Kursquelle übernehmen (abwählbar) | mittel |
+| … Asset gleichen Symbols mit anderer CoinGecko-ID | neu anlegen als `SYMBOL#2` mit Warnhinweis | hoch |
+| gleicher Contract früher unter anderem Symbol zugeordnet bzw. ignoriert | übernehmen | hoch |
+| Token nicht im Katalog und als Spam erkannt | ignorieren | hoch |
+| Token nicht im Katalog, nur erhalten, nie bewegt (typischer Werbe-Token) | ignorieren | mittel |
+| Token nicht im Katalog, sonst | offen, mit Hinweis | – |
+| Symbol ohne Contract: mehrdeutig (mehrere Assets) | das einzige mit Kursquelle bzw. ohne Spam-Markierung | mittel |
+| … bei einem anderen Import schon zugeordnet | zuordnen | mittel |
+| … bekannter Coin bzw. einziger Coin mit dem Symbol im Katalog | neu anlegen mit CoinGecko-ID | hoch / mittel |
+| … mehrere Coins mit dem Symbol | Auswahlliste; ohne Auswahl entscheidet nach der Übernahme die Kursquellen-Suche anhand von Marktdaten | niedrig |
+
+Tokens werden **nie über das Symbol allein** bestimmt (gefälschte Tokens tragen gern bekannte Symbole wie USDC);
+„hoch“ und „mittel“ belegen die Aktion vor, „niedrig“ nur die Felder. Grenzen: Tokens, die CoinGecko nicht führt,
+bekommen keinen Kurs-Vorschlag; KRC-20 wird nur gefunden, wenn der Katalog den Tick unter einer Kaspa-Plattform führt
+(sonst entscheidet die Kursquellen-Suche über Symbol und Chain-Hinweis). Der Katalog belegt im Speicher rund 15–25 MB.
 
 **Wichtige Regeln**
 
@@ -818,7 +846,9 @@ Import, täglich um 06:40 und auf Knopfdruck im CoinGecko-Katalog gesucht.
 
 * Katalog `/coins/list` inkl. Chains, wöchentlich geladen und lokal durchsucht – an CoinGecko gehen keine Symbole,
   Mengen oder Konten, danach nur die IDs der Kandidaten (`/coins/markets`).
-* Kandidaten mit gleichem Symbol; die Konten liefern die Chain („MetaMask (BNB)“ → BNB Smart Chain, „Kaspa (KAS)“ →
+* Stammt das Asset aus einer Wallet-Anbindung (Token-Zuordnung mit Contract), entscheidet der Contract im Katalog –
+  eindeutig, Sicherheit „hoch“, ohne Marktdaten-Abruf.
+* Sonst Kandidaten mit gleichem Symbol; die Konten liefern die Chain („MetaMask (BNB)“ → BNB Smart Chain, „Kaspa (KAS)“ →
   Kaspa, Börsenkonten keine). Coins nur auf anderen Chains entfallen, ebenso Coins, deren Kursspanne (Allzeittief ÷ 3 bis
   Allzeithoch × 3) die eigenen Transaktionskurse nicht enthält – z. B. LUNA zu Kursen von LUNA Classic.
 * Sicherheit „hoch“ (genau ein passender Coin, Chain und Kurse passen) wird automatisch übernommen, „mittel“/„niedrig“

@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 01.10.2026 · Version 0.13.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 01.10.2026 · Version 0.13.1 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -557,6 +557,36 @@ veröffentlichte Testvektoren (Keccak, EIP-55, RIPEMD-160, BIP173/350, BIP44/49/
 **Grenzen M15:** Nicht live verifiziert (kein Netzzugang beim Bau). BNB Chain braucht einen bezahlten
 Etherscan-Plan oder einen Anbieter, der Chain 56 liefert. NFTs, Native Staking (Solana), Lightning/Multisig, KRC-721
 nicht erfasst; Swaps/DeFi nur zur Prüfung, keine automatische Bewertung von Positionen in Verträgen.
+
+### M15.1 – Automatische Vorschläge beim Zuordnen, mobiles Formular (0.13.1)
+
+Anlass (01.10.2026, Rückmeldung zum ersten MetaMask-Abgleich): CoinGecko-ID-Feld ragte mobil aus der Karte; Symbole
+und Tokens sollen automatisch gesucht und mit der vorhandenen Datenbasis abgeglichen werden.
+
+* **Vorschläge** (`app/csvimport/suggest.py`) je unbekanntem Symbol mit Aktion, Feldern, Begründung und Sicherheit:
+  Datenbasis (Assets, aktive/offene Kursquellen, frühere Zuordnungen auch mit anderem Symbol, Token-Namen der
+  Wallet-Anbindung) und lokaler CoinGecko-Katalog, neu mit **Contract-Index je Plattform** (EVM ohne
+  Groß-/Kleinschreibung, Solana-Mint, KRC-20-Tick). Tokens nie über das Symbol allein; nicht gelistete, nur
+  erhaltene Tokens → „ignorieren“ (mittel). Bei Zuordnung zu einem Asset ohne Kursquelle wird die CoinGecko-ID
+  per Häkchen mit übernommen (`asset_source`, Herkunft Nutzer, Grund „Contract laut CoinGecko-Katalog“).
+* **Kein zusätzlicher Datenabfluss:** keine Abfrage je Contract (`/coins/{platform}/contract/…` hätte den Bestand
+  offengelegt); nur der allgemeine Katalog, höchstens alle 7 Tage, Abruf höchstens alle 30 Minuten angestoßen
+  (Hintergrundjob `coingecko_catalog`, Seite fragt den Stand ab).
+* **Kursquellen-Suche** nutzt Contracts aus Token-Zuordnungen: eindeutiger Coin → „hoch“ ohne Marktdaten-Abruf.
+* **Mobil:** Eingaben im Kartenlayout volle Breite (keine festen Breiten mehr), Vorschlag und Felder je Zeile über
+  die volle Kartenbreite. Prüfung neu je Element gegen die eigene Karte (bisher nur seitenweites Querscrollen –
+  deshalb blieb der Fehler unentdeckt); gegen das alte Template reproduziert (360/390 px), neu ohne Überlauf bei
+  360/390/412/1280 px, hell und dunkel.
+
+**Tests:** `tests/test_asset_suggest.py` (10): Regeln je Fall, Fake-Token mit gleichem Symbol, zweite Chain desselben
+Coins, Konflikt mit anderer CoinGecko-ID, offener Kursquellen-Vorschlag, gespeicherte Contracts, Solana-Mint aus
+großgeschriebener Kennung, Börsen-Symbole (mehrdeutig, bekannt, eindeutig, mehrere Coins, ohne Katalog), freie IDs;
+Prüf-Stapel einer ETH-Wallet Ende-zu-Ende (Formular wie im Browser abgeschickt, Kursquelle mit und ohne Häkchen),
+Katalog im Hintergrund (Warteschlange, Fehler, veraltet, kein Abruf je Seitenaufruf), Kursquellen-Suche über Contract.
+
+**Grenzen M15.1:** Live nicht geprüft (CoinGecko aus der Build-Umgebung gesperrt; Katalogformat laut Doku:
+Plattform → Contract, EVM klein geschrieben). Plattform-Bezeichnung für KRC-20 bei CoinGecko nicht belegt – erkannt
+werden Plattformen mit „kaspa“/„krc“ im Namen. Katalog im Speicher rund 15–25 MB (~18.000 Coins, Laden ~0,1 s).
 
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
