@@ -494,7 +494,7 @@ def test_migration_10_keeps_sources_and_adds_wallet_tables(tmp_path):
     d.migrate(target=9)
     d.x("INSERT INTO data_source(kind, provider, name, account, address, created_at, updated_at) VALUES "
         "('wallet', 'ethereum', 'Alt', 'Alt', ?, 'x', 'x')", (A,))
-    d.migrate()
+    d.migrate(target=10)
     assert d.scalar("PRAGMA user_version") == 10
     row = d.q1("SELECT * FROM data_source WHERE name='Alt'")
     assert row["address"] == A and row["wallet_group"] is None and row["watch_json"] is None

@@ -325,7 +325,7 @@ def batch_suggestions(ctx: Any, batch: Mapping[str, Any], ov: Mapping[str, Any],
     from app.csvimport.service import csv_service
     from app.prices.sources import catalog_state, source_service
 
-    unknown = list(ov.get("unknown") or [])
+    unknown = [*(ov.get("unknown") or []), *(ov.get("unknown_old") or [])]
     wants = any(u.get("hint") not in ("security", "fiat") for u in unknown)
     state = catalog_state(ctx, start=wants)
     names: dict[str, str] = {}
@@ -334,6 +334,7 @@ def batch_suggestions(ctx: Any, batch: Mapping[str, Any], ov: Mapping[str, Any],
             "SELECT asset_key, name FROM ds_balance WHERE source_id=? AND name IS NOT NULL", (batch["datasource_id"],))}
     basis = Basis(known, csv_service(ctx).saved_symbols(), source_service(ctx).rows())
     out = Suggester(basis, state["catalog"], names, [batch["account"], *(ov.get("accounts") or {})]).run(unknown)
-    state["prefilled"] = sum(1 for s in out.values() if s.prefill)
+    relevant = {u["symbol"] for u in ov.get("unknown") or []}
+    state["prefilled"] = sum(1 for k, s in out.items() if s.prefill and k in relevant)
     state["tokens"] = sum(1 for u in unknown if split_token(str(u.get("display") or u["symbol"])) is not None)
     return out, state

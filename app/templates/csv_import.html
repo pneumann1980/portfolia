@@ -66,7 +66,7 @@
 <details class="box" style="margin-top:8px" id="zuordnungen"><summary>Gespeicherte Zuordnungen <span class="badge">{{ symbols|length + account_maps|length }}</span></summary>
   {% if symbols %}<h3 style="margin-top:10px">Symbole → Assets</h3>
   <div class="table-wrap"><table class="compact"><thead><tr><th>Symbol laut Datei</th><th>Asset</th><th></th></tr></thead><tbody>
-    {% for sm in symbols %}<tr><td class="mono">{{ sm.symbol }}</td><td>{{ sm.asset_id or 'ignoriert' }}</td>
+    {% for sm in symbols %}<tr><td class="mono">{{ sm.symbol }}</td><td>{{ sm.asset_id or 'ignoriert' }}{% if sm.origin == 'abgleich' %} <span class="badge info" title="Aus gleicher Blockchain-Transaktion im kuratierten Import bzw. in Portfolia abgeleitet">Abgleich</span>{% endif %}</td>
       <td class="actions"><form method="post" action="/journal/csv/symbol/delete" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="symbol" value="{{ sm.symbol }}"><button class="icon-btn" type="submit" title="Zuordnung entfernen" aria-label="Zuordnung {{ sm.symbol }} entfernen">×</button></form></td></tr>{% endfor %}
   </tbody></table></div>{% endif %}
   {% if account_maps %}<h3 style="margin-top:10px">Konten laut Datei → Konten</h3>

@@ -19,6 +19,7 @@ from app.csvimport.profiles import BUILTIN, MAPPING_FIELDS, MappingProfile
 from app.csvimport.reader import CsvError, read_table
 from app.csvimport.service import (
     BATCH_STATUS,
+    EVAL_VERSION,
     MAX_UPLOAD,
     PAGE,
     STATUS_BADGE,
@@ -40,7 +41,7 @@ GROUPS = ("Börse", "Wallet", "Steuertool", "Portfolia")
 CONF_BADGE = {"hoch": "good", "mittel": "info", "niedrig": "warn"}
 TZ_CHOICES = [("", "wie Format (Standard)"), ("UTC", "UTC"), ("Europe/Berlin", "Europe/Berlin (Ortszeit)")]
 FILTERS = {"": "alle", "new": "neu", "unclear": "ungeklärt", "duplicate": "Dubletten", "invalid": "unvollständig",
-           "before": "vor Stichtag", "known": "bereits importiert", "ignored": "ignoriert", "committed": "übernommen"}
+           "before": "vor Stichtag", "known": "bereits vorhanden", "ignored": "ignoriert", "committed": "übernommen"}
 MAPPING_KINDS = {"trade": "Handel/Tausch", "deposit": "Zugang ohne Ertrag", "withdrawal": "Abgang ohne Kosten",
                  "conversion": "Umstellung (ohne Veräußerung)", "skip": "überspringen",
                  **{f"deposit:{t}": f"Ertrag: {t}" for t in ("staking", "reward", "interest", "lending", "airdrop",
@@ -84,6 +85,36 @@ def _index(request: Request, errors: list[str] | None = None, status_code: int =
                   max_mb=MAX_UPLOAD // 1024 // 1024)
 
 
+def _account_info(ctx: Any, svc: Any, b: Any) -> dict[str, Any] | None:
+    """Konto laut Abgleich: Umstellung einer Datenquelle (automatisch, einmal) bzw. Vorschlag mit einem Klick."""
+    if b["status"] not in ("preview", "partial"):
+        return None
+    if b["kind"] == "sync":
+        if not b["datasource_id"]:
+            return None
+        from app.datasources.service import datasource_service
+
+        dsvc = datasource_service(ctx)
+        ds = dsvc.get(int(b["datasource_id"]))
+        if ds is None:
+            return None
+        if b["status"] == "preview" and dsvc.adopt_account(ds):
+            ds = dsvc.get(int(b["datasource_id"])) or ds
+        return {"current": ds.account, "switch": dsvc.account_switch(int(ds.id)),
+                "suggestion": dsvc.account_suggestion(ds), "editable": True}
+    accs = (json.loads(b["summary_json"] or "{}").get("recon") or {}).get("accounts") or {}
+    if not accs:
+        return None
+    top, n = max(accs.items(), key=lambda kv: kv[1])
+    if top == b["account"]:
+        return None
+    committed = bool(svc.db.scalar("SELECT 1 FROM csv_row WHERE batch_id=? AND status IN ('committed', 'merged')",
+                                   (b["id"],)))
+    return {"current": b["account"], "switch": None, "editable": not committed,
+            "suggestion": {"account": top, "matches": n, "total": sum(accs.values()), "used": 0,
+                           "others": sorted(((a, k) for a, k in accs.items() if a != top), key=lambda x: -x[1])[:3]}}
+
+
 def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, errors: list[str] | None = None,
                 msg: str = "") -> HTMLResponse:
     ctx = get_ctx(request)
@@ -91,10 +122,17 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
     b = svc.batch(bid)
     if b is None:
         raise HTTPException(404)
+    if b["status"] in ("preview", "partial") and \
+            json.loads(b["summary_json"] or "{}").get("eval_v") != EVAL_VERSION:
+        svc.evaluate(bid)  # mit älterer Logik bewertet (z. B. vor dem Abgleich über den Hash) → neu bewerten
+        b = svc.batch(bid)
+    acct = _account_info(ctx, svc, b)
+    b = svc.batch(bid)
     prof = svc.profile(b["profile"])
-    ov = svc.overview(bid) if b["status"] != "mapping" else {"counts": {}, "unknown": [], "accounts": {},
-                                                            "missing_price": {}, "pairs": [], "to_commit": 0,
-                                                            "total": 0, "by_idx": {}}
+    ov = svc.overview(bid) if b["status"] != "mapping" else {"counts": {}, "unknown": [], "unknown_old": [],
+                                                            "accounts": {}, "missing_price": {}, "pairs": [],
+                                                            "to_commit": 0, "total": 0, "by_idx": {}, "recon": None,
+                                                            "auto_symbols": []}
     rows = list(ov["by_idx"].values())
     if status == "committed":
         sel = [rc for rc in rows if rc.status in ("committed", "merged")]
@@ -110,7 +148,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
     assets = sorted(known.values(), key=lambda a: (a.is_fiat, a.name.lower()))
     sugg: dict[str, Any] = {}
     catalog: dict[str, Any] = {}
-    if ov["unknown"] and b["status"] in ("preview", "partial", "committed"):
+    if (ov["unknown"] or ov["unknown_old"]) and b["status"] in ("preview", "partial", "committed"):
         sugg, catalog = batch_suggestions(ctx, b, ov, known)
     job = ctx.db.q1("SELECT running, progress_json, last_end, last_ok, last_error FROM job_status WHERE "
                     "job='csv_prices'")
@@ -127,7 +165,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         kind_label=M.KIND_LABEL, source_label=source_label,
         ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
                                                               (b["datasource_id"],))),
-        sugg=sugg, catalog=catalog, conf_badge=CONF_BADGE,
+        sugg=sugg, catalog=catalog, conf_badge=CONF_BADGE, acct=acct,
     )
 
 
@@ -342,6 +380,40 @@ def make_router() -> APIRouter:
         if errors:
             return _batch_page(request, bid, errors=errors)
         return _back(request, _redir(bid, f, "symbols" if n else ""))
+
+    @router.post("/journal/csv/{bid}/account-adopt")
+    async def account_adopt(request: Request, bid: int) -> Response:
+        """Konto laut Abgleich übernehmen: bei Datenquellen deren Konto (offene Stapel folgen), sonst des Imports."""
+        ctx = get_ctx(request)
+        svc = csv_service(ctx)
+        b = svc.batch(bid)
+        if b is None:
+            raise HTTPException(404)
+        f = await _form(request)
+        account = str(f.get("account") or "").strip()
+        if b["kind"] == "sync" and b["datasource_id"]:
+            from app.datasources.service import datasource_service
+
+            errs = await run_in_threadpool(datasource_service(ctx).switch_account, int(b["datasource_id"]), account)
+        else:
+            errs = await run_in_threadpool(svc.set_options, bid, {"account": account})
+        if errs:
+            return _batch_page(request, bid, errors=errs)
+        return _back(request, _redir(bid, f, "account"))
+
+    @router.post("/journal/csv/{bid}/account-undo")
+    async def account_undo(request: Request, bid: int) -> Response:
+        ctx = get_ctx(request)
+        b = csv_service(ctx).batch(bid)
+        if b is None or not b["datasource_id"]:
+            raise HTTPException(404)
+        from app.datasources.service import datasource_service
+
+        f = await _form(request)
+        errs = await run_in_threadpool(datasource_service(ctx).undo_account_switch, int(b["datasource_id"]))
+        if errs:
+            return _batch_page(request, bid, errors=errs)
+        return _back(request, _redir(bid, f, "account"))
 
     @router.get("/journal/csv/{bid}/catalog", response_class=HTMLResponse)
     def catalog_status(request: Request, bid: int) -> Response:

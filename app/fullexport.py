@@ -83,7 +83,7 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
                                      "ORDER BY event_key", drop=()),
         "event_aliases": [r for r in _rows(db, "SELECT key, tx_id FROM journal_event_alias ORDER BY tx_id, key",
                                            drop=()) if r["tx_id"] in tx_ids],
-        "csv_symbols": _rows(db, "SELECT symbol, asset_id FROM csv_symbol ORDER BY symbol", drop=()),
+        "csv_symbols": _rows(db, "SELECT symbol, asset_id, origin FROM csv_symbol ORDER BY symbol", drop=()),
         "csv_accounts": _rows(db, "SELECT name, account FROM csv_account ORDER BY name", drop=()),
         "csv_mappings": _rows(db, "SELECT name, spec_json FROM csv_mapping ORDER BY name, id", drop=()),
         "deleted_journal": _rows(db, "SELECT * FROM journal_tx WHERE status='deleted' AND (external_id IS NOT NULL "

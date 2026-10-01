@@ -44,6 +44,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.csvimport import model as M
+from app.csvimport import reconcile as R
 from app.csvimport.events import derive_event_key, derive_tx_hash, identity_keys, normalize_hash, source_ref_keys
 from app.csvimport.model import ParseOptions, Rec
 from app.csvimport.profiles import BUILTIN, PROFILES, MappingProfile, Profile, detect, header_matcher
@@ -77,12 +78,14 @@ def _locked(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     return wrapper
 
-STATUS_LABEL = {"new": "neu", "known": "bereits importiert", "duplicate": "mögliche Dublette", "before": "vor Stichtag",
+STATUS_LABEL = {"new": "neu", "known": "bereits vorhanden", "duplicate": "mögliche Dublette", "before": "vor Stichtag",
                 "ignored": "ignoriert", "invalid": "unvollständig", "unclear": "ungeklärt", "committed": "übernommen",
                 "merged": "als Transfer übernommen"}
 STATUS_BADGE = {"new": "good", "known": "", "duplicate": "warn", "before": "", "ignored": "", "invalid": "crit",
                 "unclear": "warn", "committed": "info", "merged": "info"}
 DONE = ("known", "ignored", "committed", "merged")  # Zeilen ohne offene Entscheidung
+EVAL_VERSION = 2  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
+RELEVANT = ("new", "invalid", "unclear", "duplicate")  # zu übernehmen bzw. zu entscheiden
 BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial": "teilweise übernommen",
                 "committed": "übernommen", "reverted": "rückgängig gemacht"}
 NEED_VALUE_TAGS = frozenset(C.INCOME_TAGS) | frozenset(C.LOSS_TAGS) | frozenset(C.GIFT_OUT_TAGS) | \
@@ -150,6 +153,12 @@ class SymbolResolver:
             for al in a.aliases:
                 self.by_alias[al.strip().upper()].add(aid)
         self._cache: dict[str, tuple[str | None, str]] = {}
+
+    def learn(self, mapping: Mapping[str, str]) -> None:
+        """Zuordnungen aus dem Abgleich ergänzen (gespeicherte Zuordnungen des Nutzers haben Vorrang)."""
+        for k, v in mapping.items():
+            self.saved.setdefault(k.strip().upper(), v)
+        self._cache.clear()
 
     def resolve(self, raw: str) -> tuple[str | None, str]:
         key = raw.strip().upper()
@@ -339,6 +348,7 @@ class RowCtx:
     dup_same_account: bool = False
     prev_ref: str | None = None
     pair_why: str | None = None  # Begründung des Transfer-Vorschlags (Anzeige)
+    recon: dict[str, Any] | None = None  # Abgleich über den Transaktions-Hash (siehe reconcile.py)
 
     @property
     def ts(self) -> datetime:
@@ -710,10 +720,11 @@ class CsvImportService:
     def saved_accounts(self) -> dict[str, str]:
         return {r["name"]: r["account"] for r in self.db.q("SELECT name, account FROM csv_account")}
 
-    def set_symbol(self, symbol: str, asset_id: str | None) -> None:
-        self.db.x("INSERT INTO csv_symbol(symbol, asset_id, updated_at) VALUES (?,?,?) ON CONFLICT(symbol) DO "
-                  "UPDATE SET asset_id=excluded.asset_id, updated_at=excluded.updated_at",
-                  (symbol.strip().upper()[:80], asset_id, _now()))
+    def set_symbol(self, symbol: str, asset_id: str | None, origin: str | None = None) -> None:
+        """Zuordnung speichern; ``origin`` = 'abgleich' für automatisch abgeleitete (sonst vom Nutzer)."""
+        self.db.x("INSERT INTO csv_symbol(symbol, asset_id, origin, updated_at) VALUES (?,?,?,?) ON CONFLICT(symbol) "
+                  "DO UPDATE SET asset_id=excluded.asset_id, origin=excluded.origin, updated_at=excluded.updated_at",
+                  (symbol.strip().upper()[:80], asset_id, origin, _now()))
 
     def delete_symbol(self, symbol: str) -> None:
         self.db.x("DELETE FROM csv_symbol WHERE symbol=?", (symbol,))
@@ -728,6 +739,25 @@ class CsvImportService:
 
     def known_assets(self) -> dict[str, AssetInfo]:
         return self.journal.known_assets()
+
+    @_locked
+    def rebook(self, bid: int, old: str, new: str) -> int:
+        """Offene Zeilen eines Stapels vom Konto ``old`` auf ``new`` umstellen (Konto-Umstellung einer Datenquelle –
+        deren Zeilen tragen das Konto seit dem Abruf); übernommene Zeilen bleiben unverändert."""
+        data = []
+        for r in self.db.q("SELECT id, rec_json, status FROM csv_row WHERE batch_id=?", (bid,)):
+            if r["status"] in ("committed", "merged"):
+                continue
+            rec = rec_from_json(r["rec_json"])
+            if old not in (rec.account, rec.to_account):
+                continue
+            rec.account = new if rec.account == old else rec.account
+            rec.to_account = new if rec.to_account == old else rec.to_account
+            data.append((rec_to_json(rec), r["id"]))
+        if data:
+            self.db.xmany("UPDATE csv_row SET rec_json=? WHERE id=?", data)
+        self.db.x("UPDATE csv_batch SET account=?, updated_at=? WHERE id=? AND account=?", (new, _now(), bid, old))
+        return len(data)
 
     # -- Auswerten ----------------------------------------------------------------------------------------
     def _load(self, bid: int) -> list[RowCtx]:
@@ -744,6 +774,7 @@ class CsvImportService:
             rc.dup_of, rc.dup_same_account = msgs.get("dup_of", []), bool(msgs.get("dup_same"))
             rc.symbols = msgs.get("symbols", {})
             rc.pair_why = msgs.get("pair_why")
+            rc.recon = msgs.get("recon")
             out.append(rc)
         return out
 
@@ -768,10 +799,14 @@ class CsvImportService:
             "SELECT external_id, status, tx_id, batch_id FROM journal_tx WHERE source=? AND external_id IS NOT NULL "
             "AND status <> 'reverted'", (source,))}
         open_rows = [rc for rc in rows if rc.open]
+        # Abgleich über den Transaktions-Hash: vorhandene Vorgänge erkennen, Zuordnungen lernen (vor dem Aufbau)
+        recon = self._reconcile(bid, open_rows, resolver, assets)
         seen_ext: dict[str, int] = {}
         for rc in open_rows:
             rc.errors, rc.warnings, rc.dup_of, rc.dup_same_account = [], [], [], False
             rc.value_src = rc.fee_src = None
+            m = recon.rows.get(rc.idx)
+            rc.recon = m.as_dict() if m is not None else None
             # ungeklärte Vorgänge einer Datenquelle werden nie zu Buchungen – nur angezeigt und entschieden
             rc.row = None if rc.rec.kind == M.REVIEW else self._build(rc, resolver, acc_map, batch, source, prof)
         # Werte: zuerst Zeilen mit Fiat-Seite/Dateiwert (liefern Kurse für die übrigen), dann Kursabfragen
@@ -800,6 +835,7 @@ class CsvImportService:
         for rc in open_rows:
             ext = rc.rec.ext_id or ""
             dec = decisions.get(rc.rec.event_key or "")
+            m = recon.rows.get(rc.idx)
             if rc.symbols and any(v == "ignored" for v in rc.symbols.values()):
                 rc.status = "ignored"
             elif ext and ext in known:
@@ -810,16 +846,32 @@ class CsvImportService:
             elif dec is not None:
                 rc.status = "ignored"
                 rc.warnings.insert(0, "dauerhaft ignoriert" + (f": {dec['reason']}" if dec["reason"] else ""))
-            elif rc.rec.kind == M.REVIEW:
-                rc.status = "unclear"
-                rc.warnings.insert(0, rc.rec.note or "Deutung nicht eindeutig – bitte prüfen")
+            elif m is not None and m.state == "full":  # gleiche Blockchain-Transaktion, alle Beine gefunden
+                rc.status = "known"
+                rc.dup_of = m.txs[:5]
+                rc.warnings.insert(0, _recon_text(m))
             elif ext and ext in seen_ext:
                 rc.status = "known"
                 rc.warnings.insert(0, f"doppelte Zeile in der Datei (wie Zeile {seen_ext[ext]})")
+            elif cutoff is not None and rc.d <= cutoff:
+                # bis zum Stichtag maßgeblich ist der kuratierte Import – keine Zuordnung oder Entscheidung nötig
+                rc.status = "before"
+                if m is not None:
+                    rc.warnings.insert(0, _recon_text(m))
+                elif recon.rows and R.row_hash(rc.rec):
+                    rc.recon = {"state": "missing"}
+                    rc.warnings.insert(0, "nicht im kuratierten Import gefunden (z. B. Spam, Freigabe oder Lücke im "
+                                          "Import) – bei Bedarf übernehmen")
+            elif rc.rec.kind == M.REVIEW:
+                rc.status = "unclear"
+                rc.warnings.insert(0, rc.rec.note or "Deutung nicht eindeutig – bitte prüfen")
             elif rc.errors or rc.row is None:
                 rc.status = "invalid"
-            elif cutoff is not None and rc.d <= cutoff:
-                rc.status = "before"
+            elif m is not None:  # gleicher Hash, nicht alle Beine gefunden → Entscheidung, nie still doppelt
+                rc.status = "duplicate"
+                rc.dup_of = m.txs[:5]
+                rc.dup_same_account = True
+                rc.warnings.insert(0, _recon_text(m))
             else:
                 rc.status = "new"
             if rc.rec.review and rc.status == "new":
@@ -830,10 +882,60 @@ class CsvImportService:
         self._duplicates([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._transfers(bid, rows, pf, valuer)
         self._save(rows)
+        self._save_recon(batch, rows, recon)
         counts = defaultdict(int)
         for rc in rows:
             counts[rc.status] += 1
         return dict(counts)
+
+    def _reconcile(self, bid: int, rows: list[RowCtx], resolver: SymbolResolver,
+                   assets: Mapping[str, AssetInfo]) -> R.Result:
+        """Abgleich mit dem kuratierten Import und App-Buchungen über den Transaktions-Hash. Gelernte Token-Zuordnungen
+        werden gespeichert (Herkunft „abgleich“, gelten für künftige Abrufe ohne Gegenbuchung), gelernte Symbole ohne
+        Contract nur für diese Auswertung."""
+        if not any(R.row_hash(rc.rec) for rc in rows):
+            return R.Result()
+        base, _ = self.ctx.effective_base()
+        journal = self.db.q(
+            "SELECT tx_id, type, tag, from_account, from_asset, from_qty, to_account, to_asset, to_qty, fee_asset, "
+            "fee_qty, tx_hash FROM journal_tx WHERE status IN ('active', 'merged') AND tx_hash IS NOT NULL AND "
+            "tx_hash <> '' AND source <> 'transfer' AND (batch_id IS NULL OR batch_id <> ?)", (bid,))
+        index = R.HashIndex(base.txs if base is not None else [], journal)
+        if not len(index):
+            return R.Result()
+        res = R.reconcile(rows, index, lambda sym: resolver.resolve(sym)[0], assets)
+        for sym, aid in res.learned.items():
+            if "@" in sym:
+                self.set_symbol(sym, aid, origin="abgleich")
+                log.info("Token-Zuordnung aus dem Abgleich: %s → %s", sym, aid)
+        if res.learned:
+            resolver.learn(res.learned)
+        return res
+
+    def _save_recon(self, batch: Any, rows: list[RowCtx], recon: R.Result) -> None:
+        """Ergebnis des Abgleichs im Stapel (Anzeige; Grundlage der Konto-Zuordnung einer Datenquelle) und Stand der
+        Auswertung (ältere Stapel werden beim Öffnen neu bewertet)."""
+        summ = json.loads(self.db.scalar("SELECT summary_json FROM csv_batch WHERE id=?", (batch["id"],)) or "{}")
+        summ["eval_v"] = EVAL_VERSION
+        if recon.rows:
+            found = [rc for rc in rows if rc.status == "known" and (rc.recon or {}).get("state") == "full"]
+            summ["recon"] = {
+                "hashes": recon.hashes,
+                "found_import": sum(1 for rc in found if rc.recon and rc.recon.get("origin") == "import"),
+                "found_app": sum(1 for rc in found if rc.recon and rc.recon.get("origin") == "journal"),
+                # nach dem Stichtag: gleiche Transaktion, aber nicht alle Teile → mögliche Dublette (Entscheidung)
+                "partial": sum(1 for rc in rows if rc.open and rc.status == "duplicate"
+                               and (rc.recon or {}).get("state") == "partial"),
+                # vor dem Stichtag: nicht bzw. nicht vollständig im Import (Information, z. B. Spam oder Lücke)
+                "missing": sum(1 for rc in rows if rc.open and rc.status == "before"
+                               and (rc.recon or {}).get("state") in ("missing", "partial")),
+                "accounts": dict(recon.accounts.most_common(5)),
+                "learned_plain": {k: v for k, v in recon.learned.items() if "@" not in k},
+            }
+        else:
+            summ.pop("recon", None)
+        self.db.x("UPDATE csv_batch SET summary_json=? WHERE id=?", (json.dumps(summ, ensure_ascii=False),
+                                                                     batch["id"]))
 
     def _build(self, rc: RowCtx, resolver: SymbolResolver, acc_map: Mapping[str, str], batch: Any, source: str,
                prof: Profile | None) -> dict[str, str] | None:
@@ -1308,7 +1410,7 @@ class CsvImportService:
                 continue
             msgs = {"errors": rc.errors[:10], "warnings": rc.warnings[:10], "value_src": rc.value_src,
                     "fee_src": rc.fee_src, "dup_of": rc.dup_of[:5], "dup_same": rc.dup_same_account,
-                    "symbols": rc.symbols, "pair_why": rc.pair_why if rc.pair_ref else None}
+                    "symbols": rc.symbols, "pair_why": rc.pair_why if rc.pair_ref else None, "recon": rc.recon}
             data.append((json.dumps(rc.row, ensure_ascii=False) if rc.row is not None else None, rc.status,
                          json.dumps(msgs, ensure_ascii=False), rc.pair_ref, rc.pair_conf, rc.pair_ok, rc.id))
         if data:
@@ -1324,18 +1426,21 @@ class CsvImportService:
         counts: dict[str, int] = defaultdict(int)
         for rc in rows:
             counts[rc.status] += 1
+        # Zuordnen nur, was übernommen werden soll; Symbole nur aus Vorgängen vor dem Stichtag sind optional
         unknown: dict[str, dict[str, Any]] = {}
+        unknown_old: dict[str, dict[str, Any]] = {}
         accounts: dict[str, int] = defaultdict(int)
         missing_price: dict[str, int] = defaultdict(int)
         for rc in rows:
             if not rc.open:
                 continue
-            for raw, v in rc.symbols.items():
+            target = unknown if rc.status in RELEVANT else unknown_old if rc.status == "before" else None
+            for raw, v in rc.symbols.items() if target is not None else ():
                 if v in ("unknown", "ambiguous"):
-                    u = unknown.setdefault(raw.upper(), {"symbol": raw.upper(), "display": raw, "count": 0,
-                                                         "ambiguous": v == "ambiguous",
-                                                         "hint": rc.rec.class_hint.get(raw), "spam": False,
-                                                         "dirs": set(), "kinds": set()})
+                    u = target.setdefault(raw.upper(), {"symbol": raw.upper(), "display": raw, "count": 0,
+                                                        "ambiguous": v == "ambiguous",
+                                                        "hint": rc.rec.class_hint.get(raw), "spam": False,
+                                                        "dirs": set(), "kinds": set(), "old": target is unknown_old})
                     u["count"] += 1
                     u["spam"] = u["spam"] or bool(rc.rec.review and "Spam" in rc.rec.review)
                     u["dirs"].add(_direction(rc.rec, raw))
@@ -1343,18 +1448,30 @@ class CsvImportService:
             for a in (rc.rec.account, rc.rec.to_account):
                 if a:
                     accounts[a] += 1
-            for e in rc.errors:
+            for e in rc.errors if rc.status in RELEVANT else ():
                 if e.startswith("EUR-Wert fehlt") and rc.row is not None:
                     missing_price[rc.row["to_asset"] if rc.row["to_asset"] and rc.row["type"] != "sell"
                                   else rc.row["from_asset"]] += 1
+        for k in [k for k in unknown_old if k in unknown]:
+            del unknown_old[k]
+        ordered = sorted(unknown.values(), key=lambda u: -u["count"])
+        ordered_old = sorted(unknown_old.values(), key=lambda u: -u["count"])
+        for i, u in enumerate([*ordered, *ordered_old]):
+            u["i"] = i  # Feldindex im gemeinsamen Formular
         pairs = [rc for rc in rows if rc.open and rc.pair_ref and rc.row is not None and
                  rc.row["type"] == "withdrawal"]
         pairs += [rc for rc in rows if rc.open and rc.pair_ref and rc.pair_ref.startswith("j:") and rc.row is not None
                   and rc.row["type"] == "deposit"]
-        return {"counts": dict(counts), "unknown": sorted(unknown.values(), key=lambda u: -u["count"]),
+        batch = self.batch(bid)
+        summ = json.loads(batch["summary_json"] or "{}") if batch is not None else {}
+        syms = {s.strip().upper() for rc in rows for s in rc.rec.symbols()}
+        auto = [(r["symbol"], r["asset_id"]) for r in self.db.q(
+            "SELECT symbol, asset_id FROM csv_symbol WHERE origin='abgleich' ORDER BY symbol") if r["symbol"] in syms]
+        return {"counts": dict(counts), "unknown": ordered, "unknown_old": ordered_old,
                 "accounts": dict(accounts), "missing_price": dict(missing_price), "pairs": pairs,
-                "to_commit": sum(1 for rc in rows if rc.open and rc.include()), "total": len(rows),
-                "by_idx": {rc.idx: rc for rc in rows}}
+                "to_commit": sum(1 for rc in rows if rc.open and rc.include() and rc.row is not None
+                                 and not rc.errors), "total": len(rows),
+                "by_idx": {rc.idx: rc for rc in rows}, "recon": summ.get("recon"), "auto_symbols": auto}
 
     # -- Eingaben -----------------------------------------------------------------------------------------
     @_locked
@@ -1595,6 +1712,17 @@ class CsvImportService:
 
     def account_rows(self) -> list[Any]:
         return self.db.q("SELECT * FROM csv_account ORDER BY name")
+
+
+def _recon_text(m: R.RowMatch) -> str:
+    where = "im kuratierten Import" if m.origin == "import" else "bereits in Portfolia erfasst"
+    acc = f" · {', '.join(m.accounts)}" if m.accounts else ""
+    txt = f"{where}: {', '.join(m.txs[:3])}{acc} (gleiche Blockchain-Transaktion)"
+    if m.state != "full" and m.missing:
+        txt += f" – dort nicht gefunden: {', '.join(m.missing)}"
+    for sym, aid in m.other_asset.items():
+        txt += f" – Gegenbuchung mit {aid} statt {sym}: Zuordnung prüfen"
+    return txt
 
 
 def _span(d: timedelta) -> str:

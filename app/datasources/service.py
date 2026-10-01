@@ -45,7 +45,7 @@ import json
 import logging
 import re
 import threading
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -82,6 +82,8 @@ KEY_WARN_DAYS = 14
 DONE = ("known", "ignored", "committed", "merged")
 _SYNC_LOCK = threading.Lock()  # ein Lauf zur Zeit (Zeitplan und „Jetzt synchronisieren“ nicht parallel)
 _NAME_RE = re.compile(r"^[^\x00-\x1f<>]{1,60}$")
+ACCOUNT_MIN_MATCHES = 3  # automatische Konto-Umstellung: mindestens so viele Treffer im kuratierten Import …
+ACCOUNT_SHARE = 0.9  # … und dieser Anteil unter einem Konto
 _KEY_RE = re.compile(r"^[\x21-\x7e]{16,1024}$")  # druckbare ASCII-Zeichen ohne Leerzeichen
 _GROUP_RE = re.compile(r"^[^\x00-\x1f<>]{1,40}$")
 PROGRESS_STALE_S = 600  # ohne Lebenszeichen gilt ein Lauf als abgebrochen (Neustart des Containers)
@@ -376,6 +378,86 @@ class DataSourceService:
     def pending_batch(self, sid: int) -> Any:
         rows = self.pending_batches(sid)
         return rows[0] if rows else None
+
+    # -- Konto aus dem Abgleich mit dem kuratierten Import -------------------------------------------------
+    def account_evidence(self, sid: int) -> Counter[str]:
+        """Konten der Gegenbuchungen (kuratierter Import, App) laut Abgleich der offenen Prüf-Stapel dieser Quelle."""
+        votes: Counter[str] = Counter()
+        for b in self.db.q("SELECT summary_json FROM csv_batch WHERE kind='sync' AND datasource_id=? AND status IN "
+                           "('preview', 'partial')", (sid,)):
+            accs = (json.loads(b["summary_json"] or "{}").get("recon") or {}).get("accounts") or {}
+            votes.update({str(k): int(v) for k, v in accs.items() if k})
+        return votes
+
+    def account_switch(self, sid: int) -> dict[str, Any] | None:
+        """Letzte Konto-Umstellung aus dem Abgleich (automatisch oder per Klick, ggf. zurückgenommen)."""
+        v = self.ctx.settings.get(f"datasource.{sid}.account_switch")
+        return v if isinstance(v, dict) else None
+
+    def _account_bookings(self, account: str) -> int:
+        pf = self.ctx.recorded_portfolio()
+        return sum(1 for t in (pf.txs if pf is not None else []) if account in (t.from_account, t.to_account))
+
+    def account_suggestion(self, ds: DataSource) -> dict[str, Any] | None:
+        """Konto, unter dem der kuratierte Import bzw. die App die Vorgänge dieser Quelle führt – sofern es vom Konto
+        der Quelle abweicht. ``auto``: eindeutig genug für die automatische Umstellung."""
+        votes = self.account_evidence(int(ds.id))
+        total = sum(votes.values())
+        if not total:
+            return None
+        top, n = votes.most_common(1)[0]
+        if top == ds.account:
+            return None
+        used = self._account_bookings(ds.account)
+        return {"account": top, "matches": n, "total": total, "others": votes.most_common(4)[1:], "used": used,
+                "auto": n >= ACCOUNT_MIN_MATCHES and n / total >= ACCOUNT_SHARE and not used}
+
+    def adopt_account(self, ds: DataSource) -> str | None:
+        """Konto der Quelle automatisch auf das Konto des kuratierten Imports umstellen – nur einmal, nur bei
+        eindeutigem Abgleich und solange das bisherige Konto keine Buchungen hat (nichts wird aufgeteilt)."""
+        if self.account_switch(int(ds.id)) is not None:
+            return None  # schon umgestellt oder zurückgenommen: Entscheidung des Nutzers gilt
+        sug = self.account_suggestion(ds)
+        if sug is None or not sug["auto"]:
+            return None
+        self.switch_account(int(ds.id), sug["account"], auto=True, matches=int(sug["matches"]))
+        return str(sug["account"])
+
+    def switch_account(self, sid: int, account: str, *, auto: bool = False, matches: int = 0,
+                       undo: bool = False) -> list[str]:
+        """Konto der Quelle ändern, ohne neu abzurufen: offene Prüf-Stapel ohne Übernahme folgen und werden neu
+        bewertet; bereits übernommene Buchungen bleiben auf ihrem Konto."""
+        ds = self.get(sid)
+        if ds is None:
+            return ["Datenquelle nicht gefunden."]
+        account = re.sub(r"\s+", " ", account or "").strip()
+        if not _NAME_RE.match(account):
+            return ["Kontoname fehlt oder ist zu lang (höchstens 60 Zeichen)."]
+        old = ds.account
+        if account == old:
+            return []
+        stamp = iso(_now())
+        self.db.x("UPDATE data_source SET account=?, updated_at=? WHERE id=?", (account, stamp, sid))
+        self.ctx.settings.set(f"datasource.{sid}.account_switch",
+                              {"from": old, "to": account, "auto": auto, "matches": matches, "undone": undo,
+                               "at": stamp})
+        log.info("Datenquelle %s: Konto %s → %s (%s)", ds.name, old, account,
+                 "zurückgenommen" if undo else "automatisch aus dem Abgleich" if auto else "per Klick")
+        from app.csvimport.service import csv_service
+
+        csv = csv_service(self.ctx)
+        for b in self.db.q("SELECT id FROM csv_batch WHERE kind='sync' AND datasource_id=? AND status='preview'",
+                           (sid,)):
+            csv.rebook(int(b["id"]), old, account)
+            csv.evaluate(int(b["id"]))
+        return []
+
+    def undo_account_switch(self, sid: int) -> list[str]:
+        sw = self.account_switch(sid)
+        ds = self.get(sid)
+        if ds is None or not sw or sw.get("undone") or ds.account != sw.get("to"):
+            return ["Keine Umstellung zum Zurücknehmen."]
+        return self.switch_account(sid, str(sw.get("from") or ""), undo=True)
 
     def open_counts(self, sid: int) -> dict[str, int]:
         """Offene Zeilen je Status über alle Prüf-Stapel der Quelle (neu, ungeklärt, mögliche Dublette …)."""
@@ -1113,6 +1195,10 @@ class DataSourceService:
                                                         "IN ('committed', 'merged')", (bid,), default=0):
                     csv.discard(bid)  # nichts Neues – kein leerer Prüf-Stapel
                     bid = None
+            if bid is not None:  # Konto des kuratierten Imports übernehmen, solange nichts aufgeteilt wird
+                switched = self.adopt_account(ds)
+                if switched:
+                    ds = self.get(sid) or ds
             if ds.auto_commit:  # je Ereignis – auch in offenen Stapeln, sobald sie eindeutig geworden sind
                 for b in self.pending_batches(sid):
                     eligible = self._auto_eligible(csv.rows(int(b["id"])))

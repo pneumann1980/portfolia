@@ -409,6 +409,11 @@ CREATE TABLE IF NOT EXISTS provider_secret (
   updated_at  TEXT NOT NULL
 );
 """),
+    (11, """
+-- Herkunft einer Symbol-Zuordnung: NULL = vom Nutzer, 'abgleich' = aus gleicher Blockchain-Transaktion im
+-- kuratierten Import bzw. in App-Buchungen abgeleitet (Anzeige, jederzeit löschbar)
+ALTER TABLE csv_symbol ADD COLUMN origin TEXT;
+"""),
 ]
 
 

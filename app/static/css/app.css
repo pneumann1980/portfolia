@@ -483,6 +483,8 @@ tr.is-ended td { color: var(--muted); }
   table.cards .inline-amount { justify-content: flex-start; }
 }
 /* Prüf-Stapel: Assets zuordnen (Vorschläge, Eingaben ohne Überlaufen auf schmalen Bildschirmen) */
+ul.recon-list { list-style: none; padding: 0; margin: 6px 0 4px; display: flex; flex-direction: column; gap: 6px; }
+ul.recon-list .badge { min-width: 2.2em; text-align: center; margin-right: 4px; }
 .sugg-sum { font-size: 0.85rem; color: var(--ink-2); margin: 0 0 10px; overflow-wrap: anywhere; }
 .sugg-sum > .badge:first-child { margin-right: 4px; }
 .sugg { margin-top: 6px; font-size: 0.82rem; line-height: 1.4; color: var(--ink-2); overflow-wrap: anywhere; }
