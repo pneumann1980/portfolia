@@ -160,3 +160,52 @@ def all_rows(c: TestClient, sid: int) -> dict[str, Any]:
 def balances(c: TestClient, sid: int) -> dict[str, str]:
     return {r["asset_key"]: r["qty"] for r in ctx(c).db.q("SELECT asset_key, qty FROM ds_balance WHERE source_id=?",
                                                           (sid,))}
+
+
+class FakeEsplora(Recorder):
+    """Esplora-API (mempool.space/Blockstream): Statistik je Adresse aus den Transaktionen berechnet, Historie
+    neueste zuerst in Seiten zu 25 ab ``last_seen_txid``."""
+
+    def __init__(self, txs: list[dict[str, Any]], tip: int, mempool: list[dict[str, Any]] | None = None) -> None:
+        super().__init__()
+        self.txs = txs
+        self.tip = tip
+        self.mempool = mempool or []
+
+    @staticmethod
+    def _involves(t: dict[str, Any], a: str) -> bool:
+        return any((v.get("prevout") or {}).get("scriptpubkey_address") == a for v in t["vin"]) or \
+            any(o.get("scriptpubkey_address") == a for o in t["vout"])
+
+    def _stats(self, txs: list[dict[str, Any]], a: str) -> dict[str, int]:
+        funded = sum(o["value"] for t in txs for o in t["vout"] if o.get("scriptpubkey_address") == a)
+        spent = sum(v["prevout"]["value"] for t in txs for v in t["vin"]
+                    if (v.get("prevout") or {}).get("scriptpubkey_address") == a)
+        return {"tx_count": sum(1 for t in txs if self._involves(t, a)), "funded_txo_sum": funded,
+                "spent_txo_sum": spent, "funded_txo_count": 0, "spent_txo_count": 0}
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        self.calls.append(req)
+        assert req.method == "GET" and req.url.host in ("mempool.space", "blockstream.info")
+        assert not req.url.params, "Esplora braucht keine Parameter (kein Schlüssel)"
+        inj = self.injected(req)
+        if inj is not None:
+            return inj
+        path = req.url.path.removeprefix("/api")
+        if path == "/blocks/tip/height":
+            return httpx.Response(200, text=str(self.tip))
+        m = re.match(r"^/address/([a-zA-Z0-9]+)$", path)
+        if m:
+            a = m.group(1)
+            return httpx.Response(200, json={"address": a, "chain_stats": self._stats(self.txs, a),
+                                             "mempool_stats": self._stats(self.mempool, a)})
+        m = re.match(r"^/address/([a-zA-Z0-9]+)/txs/chain(?:/([0-9a-f]{64}))?$", path)
+        if m:
+            a, last = m.group(1), m.group(2)
+            mine = sorted((t for t in self.txs if self._involves(t, a)),
+                          key=lambda t: (-t["status"]["block_height"], t["txid"]))
+            if last:
+                idx = next(i for i, t in enumerate(mine) if t["txid"] == last)
+                mine = mine[idx + 1:]
+            return httpx.Response(200, json=mine[:25])
+        return httpx.Response(404, text="not found")
