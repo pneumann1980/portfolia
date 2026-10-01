@@ -500,4 +500,5 @@ table.journal td.actions { white-space: normal; min-width: 7.5rem; }
 .chain-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .chain-btn { justify-content: center; text-align: center; white-space: normal; }
 .ds-card h3 { font-size: 1rem; }
+div.box, .ds-card.box { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; background: var(--surface); }
 .ds-progress .progress { height: 8px; }

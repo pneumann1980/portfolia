@@ -293,7 +293,7 @@ def make_router() -> APIRouter:
             elif action == "ignore":
                 svc.set_symbol(symbol, None)
             elif action == "new":
-                base = symbol.split(";", 1)[0]
+                base = symbol.split("@", 1)[0].split(";", 1)[0]
                 cls = str(f.get(f"class_{i}") or "crypto")
                 qid = str(f.get(f"qid_{i}") or "").strip()
                 qs = {"crypto": "coingecko", "security": "yahoo"}.get(cls, "none") if qid else "none"

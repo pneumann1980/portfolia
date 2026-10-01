@@ -504,3 +504,34 @@ def test_migration_10_keeps_sources_and_adds_wallet_tables(tmp_path):
     from app.datasources.service import DataSource
     ds = DataSource(row)
     assert ds.addresses == [A] and ds.watch.addresses == []
+
+
+def test_token_mapping_in_review_batch_uses_contract(client, evm):
+    sid = eth_wallet(client)
+    res = sync(client, sid)
+    page = client.get(f"/journal/csv/{res['batch_id']}").text
+    assert "Token über Chain und Contract erkannt" in page
+    assert f"https://etherscan.io/token/{USDC}" in page and f"https://etherscan.io/token/{FAKE}" in page
+    assert "USDC · ETH 0xa0b869…eb48" in page
+    import re as _re
+    form = {}
+    for i, sym in _re.findall(r'name="sym_(\d+)" value="([^"]+)"', page):
+        if sym.upper() == f"USDC@ETH:{USDC}".upper():
+            form |= {f"sym_{i}": sym, f"act_{i}": "new", f"id_{i}": "USDC", f"name_{i}": "USD Coin",
+                     f"class_{i}": "crypto", f"qid_{i}": "usd-coin"}
+        elif sym.upper() == f"USDC@ETH:{FAKE}".upper():
+            form |= {f"sym_{i}": sym, f"act_{i}": "ignore"}
+            # Standard für Tokens: „später“ (kein Asset aus einem womöglich gefälschten Symbol)
+            sel = _re.search(rf'<select name="act_{i}">(.*?)</select>', page, _re.S).group(1)
+            assert 'value="new" selected' not in sel and 'value="ignore" selected' in sel  # Spam: ignorieren
+    r = post(client, f"/journal/csv/{res['batch_id']}/symbols", **form)
+    assert r.status_code == 303
+    rows = rows_by_ext(client, res["batch_id"])
+    usdc_rows = [v for v in rows.values() if v.rec.in_sym == f"USDC@ETH:{USDC}" and v.rec.kind == "deposit"]
+    assert usdc_rows and all(v.row and v.row["to_asset"] == "USDC" for v in usdc_rows)
+    spam_rows = [v for v in rows.values() if v.rec.in_sym == f"USDC@ETH:{FAKE}"]
+    assert spam_rows and all(v.status == "ignored" for v in spam_rows)
+    # gleiches Symbol, anderer Contract: nie dem echten USDC zugeordnet
+    from app.csvimport.service import csv_service as _csv
+    saved = _csv(ctx(client)).saved_symbols()
+    assert saved[f"USDC@ETH:{USDC}".upper()] == "USDC" and saved[f"USDC@ETH:{FAKE}".upper()] is None

@@ -55,16 +55,19 @@
     </ul></details>
 </section>
 
+{% set key_missing = provider_keys|selectattr('required')|selectattr('users')|rejectattr('mode')|list %}
 <section class="card" id="anbieter">
-  <div class="card-head"><h2>Anbieter-Schlüssel</h2></div>
-  <p class="hint">Manche Explorer verlangen einen API-Key. Er gilt für alle Konten des Anbieters, wird verschlüsselt
+  <details {% if key_missing %}open{% endif %}><summary><h2 style="display:inline">Anbieter-Schlüssel</h2>
+    <span class="hint">{% for k in provider_keys %}{{ k.label.split(' ')[0] }}: {{ 'gespeichert' if k.mode == 'app' else ('Umgebungsvariable' if k.mode == 'env' else ('fehlt' if k.required and k.users else ('nicht hinterlegt' if k.required else 'optional'))) }}{% if not loop.last %} · {% endif %}{% endfor %}</span>
+    {% if key_missing %}<span class="badge warn">nötig für {{ key_missing|map(attribute='users')|map('join', ', ')|join(', ') }}</span>{% endif %}</summary>
+  <p class="hint" style="margin-top:8px">Manche Explorer verlangen einen API-Key. Er gilt für alle Konten des Anbieters, wird verschlüsselt
     gespeichert und nie wieder angezeigt. <b>Datenschutz:</b> Jeder Anbieter sieht die abgefragten öffentlichen Adressen
     und die IP-Adresse deines Servers und kann sie einander zuordnen.</p>
   <div class="stack" style="gap:10px;margin-top:8px">
   {% for k in provider_keys %}
   <div class="box">
     <div class="row" style="justify-content:space-between"><b>{{ k.label }}</b>
-      {% if k.mode == 'app' %}<span class="badge good">gespeichert <span class="mono">{{ k.hint }}</span></span>{% elif k.mode == 'env' %}<span class="badge good">Umgebungsvariable</span>{% else %}<span class="badge {{ 'warn' if k.users and k.required else '' }}">{{ 'fehlt' if k.required else 'optional' }}</span>{% endif %}</div>
+      {% if k.mode == 'app' %}<span class="badge good">gespeichert <span class="mono">{{ k.hint }}</span></span>{% elif k.mode == 'env' %}<span class="badge good">Umgebungsvariable</span>{% else %}<span class="badge {{ 'warn' if k.users and k.required else '' }}">{{ ('fehlt' if k.users else 'nicht hinterlegt') if k.required else 'optional' }}</span>{% endif %}</div>
     <div class="hint">{{ k.terms }}{% if k.users %} · genutzt von: {{ k.users|join(', ') }}{% endif %}{% if k.calls_today %} · heute {{ k.calls_today }} Anfragen{% endif %}</div>
     {% if keys.vault.available %}
     <form method="post" action="/settings/datasources/provider-keys/{{ k.id }}" class="row" style="margin-top:6px" autocomplete="off">
@@ -77,6 +80,7 @@
   </div>
   {% endfor %}
   </div>
+  </details>
 </section>
 
 {% for group, accounts in groups.items() %}
@@ -99,7 +103,7 @@
       keine automatische Anbindung. Buchungen bitte per <a href="/journal/csv">CSV-Import</a> erfassen.</div></div>
     {% endif %}
     {% for g in ds.gaps %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div><b>Lücke:</b> {{ g }}</div></div>{% endfor %}
-    {% if ds.last_error %}<div class="alert crit" style="margin-top:8px"><span class="icon">!</span><div>{{ ds.last_error }}{% if ds.last_error_at %} <span class="hint">({{ ds.last_error_at|datetime_de }})</span>{% endif %}</div></div>{% endif %}
+    {% if ds.last_error and ds.row.status == 'error' %}<div class="alert crit" style="margin-top:8px"><span class="icon">!</span><div>{{ ds.last_error }}{% if ds.last_error_at %} <span class="hint">({{ ds.last_error_at|datetime_de }})</span>{% endif %}</div></div>{% endif %}
     <div class="facts" style="margin-top:8px">
       <div class="fact"><div class="k">Konto in Portfolia</div><div class="v">{{ ds.account }}</div></div>
       <div class="fact"><div class="k">Letzte erfolgreiche Synchronisierung</div><div class="v">{{ ds.last_success_at|datetime_de if ds.last_success_at else '–' }}{% if ds.backfill_pending %}<div class="hint">Erstabruf läuft in Etappen{% if ds.coverage.to_block is defined %} – bis Block {{ ds.coverage.to_block }}{% endif %}</div>{% endif %}</div></div>

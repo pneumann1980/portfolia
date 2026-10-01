@@ -112,6 +112,18 @@ def asset_label(key: Any) -> str:
     return f"{sym} · {chain} {c}"
 
 
+_TOKEN_LINKS = {"ETH": "https://etherscan.io/token/{}", "BSC": "https://bscscan.com/token/{}",
+                "AVAX": "https://snowtrace.io/token/{}", "SOL": "https://solscan.io/token/{}"}
+
+
+def token_link(key: Any) -> str:
+    """Explorer-Link zum Contract/Mint eines Tokens (öffnet der Nutzer selbst; Portfolia ruft ihn nie ab)."""
+    _sym, at, rest = str(key or "").partition("@")
+    chain, _, contract = rest.partition(":")
+    tpl = _TOKEN_LINKS.get(chain) if at else None
+    return tpl.format(contract) if tpl and contract else ""
+
+
 def price(v: Any) -> str:
     if v is None:
         return "–"
@@ -196,7 +208,7 @@ def register(env: Any) -> None:
     env.filters.update({
         "fromjson": fromjson,
         "num": num, "eur": eur, "eur_kpi": eur_kpi, "eur_compact": eur_compact, "pct": pct, "qty": qty, "price": price,
-        "qty_exact": qty_exact, "asset_label": asset_label,
+        "qty_exact": qty_exact, "asset_label": asset_label, "token_link": token_link,
         "tone": tone, "arrow": arrow, "date_de": date_de, "datetime_de": datetime_de, "rel_time": rel_time,
         "rel_time_iso": rel_time_iso, "duration": duration, "plain": plain_de,
     })

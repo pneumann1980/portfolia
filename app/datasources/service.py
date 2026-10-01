@@ -1113,9 +1113,14 @@ class DataSourceService:
         partial = not res.complete or bool(res.gaps)
         status = "partial" if partial else "synced"
         notes = [sanitize_error(w, secret.values()) for w in [*res.gaps, *res.warnings][:6]]
-        if not res.complete:
-            notes.insert(0, "Erstabruf in Etappen – wird automatisch fortgesetzt" if res.resume else
+        more = bool(res.resume and not res.complete and res.cursor is not None)
+        if res.more is not None:
+            more = more and bool(res.more)
+        if not res.complete and not res.gaps:
+            notes.insert(0, "Erstabruf in Etappen – wird automatisch fortgesetzt" if more else
                          "Abruf unvollständig – der nächste Lauf holt erneut ab")
+        elif more:
+            notes.insert(0, "Erstabruf in Etappen – wird automatisch fortgesetzt")
         overlap = counts.get("duplicate", 0) + counts.get("before", 0)
         parts = [f"{len(res.events)} Vorgänge", f"neu {counts.get('new', 0)}", f"bekannt {counts.get('known', 0)}"]
         for key, label in (("unclear", "ungeklärt"), ("duplicate", "mögliche Dubletten"), ("before", "vor Stichtag"),
@@ -1129,9 +1134,7 @@ class DataSourceService:
         if res.skipped:
             parts.append("ohne Buchung " + ", ".join(f"{n}× {k}" for k, n in sorted(res.skipped.items())))
         msg = " · ".join(parts) + ("; " + "; ".join(notes) if notes else "")
-        resume = bool(res.resume and not res.complete and res.cursor is not None)
-        if res.more is not None:
-            resume = resume and bool(res.more)
+        resume = more
         coverage = {**res.coverage, "complete": res.complete, "at": stamp, "gaps": res.gaps, "resume": resume}
         if conn.wallet:
             coverage["limits"] = conn.coverage_limits(ds.config())  # type: ignore[attr-defined]

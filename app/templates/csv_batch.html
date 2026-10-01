@@ -76,10 +76,12 @@
   <form method="post" action="/journal/csv/{{ b.id }}/symbols">{{ hidden_nav() }}
   <div class="table-wrap cards-wrap"><table class="compact cards">
     <thead><tr><th>Symbol</th><th class="num">Zeilen</th><th>Aktion</th><th>Vorhandenes Asset</th><th>Neu: ID / Name</th><th>Neu: Klasse / Kurs-ID</th></tr></thead>
-    <tbody>{% for u in ov.unknown %}{% set base = u.symbol.split(';')[0] %}{% set kc = known_coins.get(base) %}{% set i = loop.index0 %}
-      <tr><td class="mono" data-label="Symbol">{{ u.symbol }}<input type="hidden" name="sym_{{ i }}" value="{{ u.symbol }}">{% if u.ambiguous %}<div class="hint">mehrdeutig</div>{% endif %}</td>
+    <tbody>{% for u in ov.unknown %}{% set token = '@' in u.symbol %}{% set base = u.symbol.split('@')[0].split(';')[0] %}{% set kc = known_coins.get(base) %}{% set i = loop.index0 %}
+      <tr><td class="wrap-any" data-label="Symbol"><span class="mono">{{ (u.display or u.symbol)|asset_label if token else u.symbol }}</span><input type="hidden" name="sym_{{ i }}" value="{{ u.symbol }}">{% if u.ambiguous %}<div class="hint">mehrdeutig</div>{% endif %}
+          {% if u.spam %}<div><span class="badge warn">möglicher Spam</span></div>{% endif %}
+          {% if token %}<div class="hint">Token über Chain und Contract erkannt – das Symbol kann gefälscht sein.{% set link = (u.display or u.symbol)|token_link %}{% if link %} <a href="{{ link }}" target="_blank" rel="noopener noreferrer">Contract prüfen</a>{% endif %}</div>{% endif %}</td>
         <td class="num" data-label="Zeilen">{{ u.count }}</td>
-        <td data-label="Aktion"><select name="act_{{ i }}"><option value="">später</option><option value="new" {% if not u.ambiguous %}selected{% endif %}>neu anlegen</option><option value="map" {% if u.ambiguous %}selected{% endif %}>zuordnen</option><option value="ignore">ignorieren</option></select></td>
+        <td data-label="Aktion"><select name="act_{{ i }}"><option value="">später</option><option value="new" {% if not u.ambiguous and not token %}selected{% endif %}>neu anlegen</option><option value="map" {% if u.ambiguous %}selected{% endif %}>zuordnen</option><option value="ignore" {% if u.spam %}selected{% endif %}>ignorieren</option></select></td>
         <td data-label="Vorhanden"><input type="text" name="asset_{{ i }}" list="dl-assets" placeholder="ID oder Name" autocomplete="off"></td>
         <td data-label="Neu"><input type="text" name="id_{{ i }}" value="{{ base }}" aria-label="ID für {{ u.symbol }}" style="max-width:9em"> <input type="text" name="name_{{ i }}" value="{{ kc[0] if kc else base }}" aria-label="Name für {{ u.symbol }}"></td>
         <td data-label="Klasse"><select name="class_{{ i }}" aria-label="Klasse für {{ u.symbol }}"><option value="crypto" {% if u.hint != 'security' %}selected{% endif %}>Krypto</option><option value="security" {% if u.hint == 'security' %}selected{% endif %}>Wertpapier</option><option value="fiat">Währung</option></select>
@@ -132,7 +134,7 @@
     <tbody>{% for rc in ov.pairs %}{% set other = ov.by_idx.get(rc.pair_ref[2:]|int) if rc.pair_ref.startswith('b:') else none %}
       <tr><td data-label="Abgang">{% if rc.row.type == 'withdrawal' %}{{ rc.ts|datetime_de }} · {{ leg(rc.row.from_account, rc.row.from_asset, rc.row.from_qty, '−') }}{% else %}<span class="mono">{{ rc.pair_ref[2:] }}</span> <span class="hint">(bereits erfasst)</span>{% endif %}</td>
         <td data-label="Zugang">{% if rc.row.type == 'deposit' %}{{ rc.ts|datetime_de }} · {{ leg(rc.row.to_account, rc.row.to_asset, rc.row.to_qty, '+') }}{% elif other %}{{ other.ts|datetime_de }} · {{ leg(other.row.to_account, other.row.to_asset, other.row.to_qty, '+') }}{% else %}<span class="mono">{{ rc.pair_ref[2:] }}</span> <span class="hint">(bereits erfasst)</span>{% endif %}</td>
-        <td data-label="Sicherheit"><span class="badge {{ 'good' if rc.pair_conf == 'hoch' else 'warn' }}">{{ rc.pair_conf }}</span></td>
+        <td data-label="Sicherheit"><span class="badge {{ 'good' if rc.pair_conf == 'hoch' else 'warn' }}">{{ rc.pair_conf }}</span>{% if rc.pair_why %}<div class="hint">{{ rc.pair_why }}</div>{% endif %}{% if rc.pair_ref.startswith('j:') %}<div class="hint">verknüpft eine bereits übernommene Buchung – deren Lots werden als Transfer fortgeführt (Rückgängig über den Stapel); nie automatisch</div>{% endif %}</td>
         <td data-label="Transfer?"><select name="pair_{{ rc.idx }}"><option value="" {% if rc.pair_ok is none %}selected{% endif %}>{{ 'ja (automatisch)' if rc.pair_conf == 'hoch' else 'nein (Vorschlag)' }}</option><option value="1" {% if rc.pair_ok == 1 %}selected{% endif %}>ja</option><option value="0" {% if rc.pair_ok == 0 %}selected{% endif %}>nein</option></select></td></tr>
     {% endfor %}</tbody>
   </table></div>

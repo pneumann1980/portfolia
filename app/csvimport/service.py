@@ -1324,9 +1324,11 @@ class CsvImportService:
                 continue
             for raw, v in rc.symbols.items():
                 if v in ("unknown", "ambiguous"):
-                    u = unknown.setdefault(raw.upper(), {"symbol": raw.upper(), "count": 0, "ambiguous": v ==
-                                                         "ambiguous", "hint": rc.rec.class_hint.get(raw)})
+                    u = unknown.setdefault(raw.upper(), {"symbol": raw.upper(), "display": raw, "count": 0,
+                                                         "ambiguous": v == "ambiguous",
+                                                         "hint": rc.rec.class_hint.get(raw), "spam": False})
                     u["count"] += 1
+                    u["spam"] = u["spam"] or bool(rc.rec.review and "Spam" in rc.rec.review)
             for a in (rc.rec.account, rc.rec.to_account):
                 if a:
                     accounts[a] += 1
