@@ -112,3 +112,10 @@ enthält curl-impersonate (libcurl mit BoringSSL), dessen Lizenzhinweise die Pro
 Kurse, Devisenkurse, News und Videos werden zur Laufzeit von Diensten Dritter abgerufen (Yahoo Finance,
 CoinGecko, EZB/Frankfurter, RSS-Feeds, YouTube, optional Anthropic). Für deren Nutzung gelten die
 jeweiligen Nutzungsbedingungen; die Inhalte sind nicht Teil dieses Repositorys oder des Images.
+
+Wallet-Daten (nur bei eingerichteten Wallet-Konten, nur öffentliche Adressen) kommen von Etherscan, Routescan,
+mempool.space bzw. Blockstream (Esplora), dem öffentlichen Solana-RPC der Solana Foundation bzw. Helius,
+api.kaspa.org (kaspa-rest-server) und api.kasplex.org (Kasplex KRC-20-Indexer); es gelten deren
+Nutzungsbedingungen. Die Bitcoin-Ableitung (BIP32, nur öffentlich), Bech32/Bech32m, Base58, Keccak-256 und
+RIPEMD-160 sind eigene Implementierungen nach den jeweiligen öffentlichen Spezifikationen (BIP32/44/49/84/86/173/
+350, FIPS 202/Keccak, RIPEMD-160); die Testvektoren stammen aus diesen Spezifikationen.

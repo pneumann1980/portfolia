@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 30.09.2026 · Version 0.12.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 01.10.2026 · Version 0.13.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -502,6 +502,62 @@ bearbeitbar als Überlagerung). Nicht übertragen werden CSV-Stapel mit Original
 erzeugte Steuer-PDFs (regenerierbar) – für eine byte-genaue Kopie bleibt die SQLite-Sicherung. API-Keys sind nach
 der Neueinrichtung neu einzugeben.
 
+## M15 – Wallets read-only: Bitcoin, Ethereum, BNB Chain, Avalanche C-Chain, Solana, Kaspa
+
+Anlass (01.10.2026): Wallets direkt in Portfolia einrichten und synchronisieren – nur öffentliche Adressen bzw.
+Kontoschlüssel, nie Seed-Phrase, privater Schlüssel, Signatur oder Gerätezugriff; getrennte, wartbare Adapter mit
+gemeinsamem Ablauf; jede Chain getestet und mit dokumentierter Abdeckung.
+
+**Anbieter-Recherche (vor der Umsetzung)**
+
+* Etherscan API V2: kostenloser Key nur noch für Ethereum (u. a.); BNB Chain (56) und Avalanche (43114) nur mit
+  bezahltem Plan; seit 07/2026 höchstens 1.000 Einträge je Anfrage im kostenlosen Plan. BscScan-API abgekündigt.
+* Routescan (Etherscan-kompatibel, Snowtrace): ohne Key 2/s und 10.000/Tag; Standard für Avalanche, Alternative für
+  Ethereum/BNB (Abdeckung per „Verbindung testen“). NodeReal/BSCTrace verworfen: Abfragen auf 1.000 Blöcke je
+  Fenster begrenzt – für Historien ungeeignet; Moralis nicht verifizierbar (Doku nicht erreichbar).
+* Bitcoin: Esplora-API (mempool.space, Blockstream), 25 Transaktionen je Seite, `chain_stats` je Adresse.
+* Solana: öffentlicher RPC (100/10 s, nicht für Dauerbetrieb) bzw. Helius mit Key; `getSignaturesForAddress` erfasst
+  eingehende Token-Transfers nur über das Token-Konto → Token-Konten werden mit abgefragt.
+* Kaspa: kaspa-rest-server (Quellcode geprüft: `after` aufsteigend, Grenzzeitpunkte vollständig, `light`-Auflösung
+  der Eingänge); KRC-20: Kasplex-Indexer go-krc20d (Quellcode geprüft: Op-Liste 50 je Seite, `next` exklusiv,
+  `prev` aufsteigend, `address` allein genügt).
+
+**Entscheidungen**
+
+* **Gemeinsames Framework** (`app/datasources/wallet.py`, `chainhttp.py`): geprüfter Anbieter-Katalog mit festen
+  HTTPS-Endpunkten (kein SSRF, keine Weiterleitungen, Host-Prüfung je Anfrage), `Decimal`-JSON, Mindestabstand je
+  Anbieter, Backoff mit `Retry-After`, Anfrage-/Warte-/Zeitbudget, begrenzte Parallelität; einheitliche Einordnung
+  (Zugang/Abgang/Gebühr/Tausch/ungeklärt mit Begründung), Tokens über Chain + Contract/Mint/Tick.
+* **Connector-Vertrag erweitert:** stabile Unterkennung je Bewegung (`Rec.ext_id`), sicherer Fortsetzungspunkt bei
+  Etappen (`resume`), Fortsetzung bald (`more`), erkannte Lücken (`gaps` → nie „vollständig“), beobachtete
+  Bestände (`balances`).
+* **Ablauf:** Hintergrundlauf mit Fortschritt (HTMX-Abfrage), Erstabruf in Etappen, die sich selbst fortsetzen
+  (auch ohne Intervall und nach Fehlern mit Pause); Zeitplan überspringt laufende Quellen.
+* **Adapter:** EVM (eine Klasse, Chain-ID 1/56/43114; Listen im Gleichschritt, Seiten nie mitten im Block, nur
+  bestätigte Blöcke), Bitcoin (Adressen + xpub/ypub/zpub, BIP32 nur öffentlich, BIP44/49/84/86, Gap-Limit,
+  UTXO-Bilanz), Solana (Wallet + Token-Konten inkl. geschlossener, Vor-/Nach-Bestände, Miete als Eigentum,
+  blockweise Zeiger), Kaspa (Blockzeit-Seiten mit Überlappung, Commit/Reveal-Erkennung; KRC-20 mit eigenem Cursor,
+  Ausfall = Lücke bei vollständigem KAS).
+* **Abgleich:** Transfer-Vorschläge mit Begründung und Hash bestehender Buchungen; Paare mit bereits übernommenen
+  Buchungen nie automatisch (Lots nicht still verändern); Zu-/Abgänge, die ein erfasster Transfer schon abdeckt, als
+  Dublette; gleiche Blockchain-Transaktion aus Wallet-CSV als Dublette.
+* **Oberfläche:** Wallets nach frei benannten Gruppen, Chain-Auswahl in zwei Schritten, Anbieter-Schlüssel
+  (verschlüsselt, nie exportiert), „On-Chain beobachtet“ vs. „durch Portfolia-Buchungen erklärt“, Lücken und
+  Abdeckungsgrenzen am Konto, Token-Zuordnung über Contract mit Explorer-Link (Spam: Vorschlag „ignorieren“).
+* **Migration 10** (nur additiv): `data_source.wallet_group/watch_json/progress_json`, `ds_balance`,
+  `provider_secret`.
+
+**Tests:** `tests/test_wallets_evm.py` (22), `tests/test_wallets_bitcoin.py` (6), `tests/test_wallets_solana.py` (6),
+`tests/test_wallets_kaspa.py` (5) mit nachgebildeten Anbieter-APIs (`tests/wallet_fakes.py`): mehrere Token-Logs je
+Hash, gleiche Adresse auf drei Chains, gleiches Symbol mit anderem Contract, Wechselgeld und mehrere Adressen,
+Token-Konten (auch geschlossene), Kaspa-Historie und KRC-20, Gebühren, Paginierung, Drosselung, abgebrochener
+Erstabruf, wiederholte Läufe, Bestandsabweichungen, Dubletten gegen CSV und Bitpanda, Migration 10; Codecs gegen
+veröffentlichte Testvektoren (Keccak, EIP-55, RIPEMD-160, BIP173/350, BIP44/49/84/86, Kaspa-Referenzadresse).
+
+**Grenzen M15:** Nicht live verifiziert (kein Netzzugang beim Bau). BNB Chain braucht einen bezahlten
+Etherscan-Plan oder einen Anbieter, der Chain 56 liefert. NFTs, Native Staking (Solana), Lightning/Multisig, KRC-721
+nicht erfasst; Swaps/DeFi nur zur Prüfung, keine automatische Bewertung von Positionen in Verträgen.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
@@ -520,6 +576,8 @@ der Neueinrichtung neu einzugeben.
   Import-Format exportierbar; datierte ZIP-Sicherungen nach Änderungen – siehe M8. **Erweitert am 28.09.2026:**
   Grundlage für in der App konfigurierbare Datenquellen (Börsen, öffentliche Adressen), noch ohne Anbindung –
   siehe M11.
+* **Wallets auf sechs Chains** (01.10.2026): read-only über öffentliche Adressen bzw. Kontoschlüssel, mit
+  Anbieter-Recherche und dokumentierter Abdeckung je Chain – siehe M15.
 * **Positionen als Verlust ausbuchen** (28.09.2026, neue Anforderung) und verkaufte Aktien nicht als
   „unbewertet“ melden – siehe M9.
 * **Kursquellen automatisch suchen** (CoinGecko) und mobiles Layout korrigieren (28.09.2026) – siehe M10.

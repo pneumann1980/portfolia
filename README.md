@@ -11,7 +11,10 @@ YouTube-Videos werden je Position gefiltert.
   **CSV-Exporten von Börsen, Wallets und Steuertools** übernommen (siehe [CSV-Import](#csv-import-aus-börsen-und-wallets))
   – auch ganz ohne Import. Börsen und öffentliche Wallet-Adressen lassen sich als [Datenquellen](#datenquellen-börsen-und-wallet-adressen)
   anlegen; **Bitpanda** wird read-only per API-Key synchronisiert (Schlüssel in der App eingegeben, verschlüsselt
-  gespeichert, jede Buchung vor der Übernahme prüfbar). In der App erfasste
+  gespeichert, jede Buchung vor der Übernahme prüfbar). **Wallets** auf Bitcoin, Ethereum, BNB Chain, Avalanche
+  C-Chain, Solana und Kaspa werden read-only über öffentliche Adressen bzw. einen öffentlichen Kontoschlüssel
+  synchronisiert (siehe [Wallets](#wallets-read-only-sechs-chains)) – nie Seed-Phrase, privater Schlüssel oder
+  Signatur. In der App erfasste
   Buchungen und Assets liegen neben abgeleiteten Daten (Kurse, News, Snapshots, Berichte) in `/data/app.sqlite`.
 * **Export und Sicherung:** Alles lässt sich jederzeit im einheitlichen Import-Format (Datenvertrag, Schema 1.1)
   exportieren – **vollständig**, inklusive aller Änderungen in der App, Kursquellen, Einstellungen und Kurshistorie,
@@ -38,7 +41,8 @@ für Smartphones (≈390 px) optimiert.
 3. [Datenvertrag (Import-ZIP)](#datenvertrag-import-zip)
 4. [Buchungen in Portfolia erfassen](#buchungen-in-portfolia-erfassen)
 5. [CSV-Import aus Börsen und Wallets](#csv-import-aus-börsen-und-wallets)
-6. [Datenquellen: Börsen und Wallet-Adressen](#datenquellen-börsen-und-wallet-adressen)
+6. [Datenquellen: Börsen und Wallet-Adressen](#datenquellen-börsen-und-wallet-adressen) ·
+   [Wallets (read-only, sechs Chains)](#wallets-read-only-sechs-chains)
 7. [Berechnungen](#berechnungen)
 8. [Sparpläne](#sparpläne)
 9. [Kurse und Datenquellen](#kurse-und-datenquellen)
@@ -76,13 +80,19 @@ Package settings → Change visibility → Public*; es enthält nur den öffentl
    | `/run/secrets/portfolia` | `/boot/config/portfolia` | **ro** | Master-Key (`master.key`) für in der App gespeicherte API-Keys von Datenquellen – bewusst außerhalb von appdata (siehe [Master-Key](#master-key-für-api-keys)) |
 
 3. Optional API-Schlüssel für Kurse und News eintragen (Umgebungsvariablen, nie angezeigt oder geloggt).
-4. Nur für Datenquellen mit API-Key (Bitpanda): einmalig den Master-Key anlegen (Unraid-Terminal), danach bleibt
-   er unverändert – Einzelheiten, Backup und Rotation unter [Master-Key](#master-key-für-api-keys):
+4. Nur für Datenquellen mit API-Key (Bitpanda; bei Wallets Etherscan, Routescan oder Helius): einmalig den
+   Master-Key anlegen (Unraid-Terminal), danach bleibt er unverändert – Einzelheiten, Backup und Rotation unter
+   [Master-Key](#master-key-für-api-keys). Wallets über mempool.space/Blockstream (Bitcoin), Routescan (Avalanche),
+   den öffentlichen Solana-RPC und api.kaspa.org brauchen keinen Schlüssel:
    ```sh
    mkdir -p /boot/config/portfolia
    openssl rand -base64 32 > /boot/config/portfolia/master.key
    ```
 5. Container starten, Weboberfläche über *WebUI* öffnen (Port 8080).
+6. Optional Wallets einrichten: *Einstellungen → Datenquellen → „+ Wallet-Konto“* → Chain → Name/Gruppe →
+   öffentliche Adresse (Bitcoin auch xpub/ypub/zpub) → „Verbindung testen“ → „Erstabruf starten“ (siehe
+   [Wallets](#wallets-read-only-sechs-chains)). Der Container braucht dafür ausgehenden HTTPS-Zugriff auf die
+   gewählten Anbieter.
 
 **Aktualisieren:** *Docker → portfolia → Update* (bzw. *Check for Updates*). Zeigt Unraid „not available“, hilft
 *Advanced View* → *force update* oder *Edit → Apply* (lädt `latest` neu und erstellt den Container neu; Daten in
@@ -405,10 +415,12 @@ Börsen und Wallets abgedeckt, die diese Tools unterstützen; Koinly-Wallets wer
 *Einstellungen → Datenquellen* verwaltet Börsenkonten und öffentliche Wallet-Adressen als Quellen für Buchungen:
 anlegen, ansehen, bearbeiten, deaktivieren und entfernen – auch auf dem Smartphone.
 
-> **Stand 0.11:** Automatische Anbindung für **Bitpanda** (Public API, ausschließlich lesend). Sie ist mit
-> anonymisierten Testdaten (Fixtures) geprüft, **noch nicht mit einem echten Bitpanda-Konto** – siehe
-> [Grenzen der Bitpanda-Anbindung](#grenzen-der-bitpanda-anbindung). Alle anderen Börsen und Chains zeigen
-> ehrlich **„Manuell / noch nicht unterstützt“** und verweisen auf den CSV-Import.
+> **Stand 0.13:** Automatische Anbindung für **Bitpanda** (Public API) und für **Wallets auf sechs Chains**
+> (Bitcoin, Ethereum, BNB Chain, Avalanche C-Chain, Solana, Kaspa) – ausschließlich lesend. Alle Anbindungen sind
+> mit anonymisierten bzw. synthetischen Testdaten (Fixtures) und nachgebildeten Anbieter-APIs geprüft, **noch
+> nicht live** – siehe [Grenzen der Bitpanda-Anbindung](#grenzen-der-bitpanda-anbindung) und
+> [Wallets](#wallets-read-only-sechs-chains). Alle anderen Börsen und Chains zeigen ehrlich **„Manuell / noch
+> nicht unterstützt“** und verweisen auf den CSV-Import.
 
 **Datensatz:** Art (Börse oder Wallet-Adresse), Anbieter bzw. Chain, frei wählbarer Name, Konto in Portfolia (auf
 das gebucht wird – bei vorhandenen Buchungen aus Import oder CSV dasselbe Konto wählen), öffentliche Adresse bzw.
@@ -418,9 +430,10 @@ stündlich, alle 6/12 Stunden, täglich), automatische Übernahme (Standard: aus
 erfolgreicher Lauf, letzter Fehler, nächster Lauf, Abdeckung des letzten Abrufs und Laufhistorie.
 
 **Status:** *angelegt* · *verbunden* (Verbindungsprüfung erfolgreich, noch nicht synchronisiert) ·
-*synchronisiert* (letzter Abruf nachweislich vollständig) · *teilweise synchronisiert* (Seitenende oder Abdeckung
-unklar, Drosselung, Teilfehler – eine erfolgreiche HTTP-Antwort allein genügt nicht; der nächste Lauf holt erneut
-ab) · *Fehler* mit verständlicher Meldung, z. B. „API-Key abgelaufen“, „Berechtigung fehlt“, „Anbieter drosselt
+*synchronisiert* bzw. bei Wallets *vollständig synchronisiert* (letzter Abruf nachweislich vollständig, ohne erkannte
+Lücke) · *Erstabruf unvollständig* (lange Historie, wird in Etappen automatisch fortgesetzt) · *teilweise
+synchronisiert* (Seitenende oder Abdeckung unklar, Drosselung, Teilfehler, erkannte Lücke – eine erfolgreiche
+HTTP-Antwort allein genügt nicht; der nächste Lauf holt erneut ab) · *Fehler* mit verständlicher Meldung, z. B. „API-Key abgelaufen“, „Berechtigung fehlt“, „Anbieter drosselt
 Anfragen (HTTP 429)“, „Anbieter vorübergehend nicht erreichbar“. *Deaktiviert* stoppt nur den Zeitplan.
 
 ### Bitpanda einrichten
@@ -602,6 +615,70 @@ enthält, dürfen sie nicht doppelt zählen:
   prüfbedürftig markiert.
 * **Nicht abgebildet:** Tausch Krypto → Krypto, Stocks/ETFs, Edelmetalle, Indizes, Korrekturen (siehe oben); für
   diese Fälle bleibt der CSV-Import bzw. die manuelle Erfassung.
+
+## Wallets (read-only, sechs Chains)
+
+*Einstellungen → Datenquellen → „+ Wallet-Konto“*: Chain wählen, Namen vergeben (z. B. „Ledger BTC“, „Ledger ETH“,
+„MetaMask BNB“), optional einer **Wallet-Gruppe** zuordnen („Ledger“, „MetaMask“), öffentliche Adresse eintragen –
+bei Bitcoin auch mehrere Adressen oder den **öffentlichen Kontoschlüssel** (xpub/ypub/zpub). Portfolia prüft die
+Eingabe mit Prüfsumme (EIP-55, Bech32/Bech32m, Base58Check, Kaspa), zeigt nach „Verbindung testen“ die beobachteten
+Bestände, holt mit „Erstabruf starten“ die Historie (im Hintergrund, mit Fortschritt, in Etappen) und synchronisiert
+danach inkrementell. **Nie** werden Seed-Phrase, privater Schlüssel, Wallet-Signatur oder eine Verbindung zum
+Ledger-Gerät verlangt – solche Eingaben werden abgelehnt. Portfolia schreibt nichts in eine Wallet.
+
+**Jede Chain ist ein eigenes Konto:** Dieselbe 0x-Adresse auf Ethereum, BNB Chain und Avalanche ergibt drei Konten;
+Vorgänge (`ethereum:…`, `bsc:…`, `avalanche:…`) und Tokens (`USDC@ETH:0xa0b8…`, `USDC@BSC:…`) bleiben getrennt.
+
+### Abdeckung je Chain
+
+| Chain | Adress-/Kontotypen | Native / Tokens | Historie | Gebühren | Anbieter (Standard · Alternative) | Keys | Kosten/Limits (Stand 10/2026) | Bekannte Lücken |
+|---|---|---|---|---|---|---|---|---|
+| **Bitcoin** | Einzeladressen P2PKH (1…), P2SH (3…), P2WPKH/P2WSH (bc1q…), P2TR (bc1p…), mehrere je Konto; Kontoschlüssel xpub/ypub/zpub mit wählbarem Typ (Legacy, Nested/Native SegWit, Taproot nach BIP44/49/84/86), Empfang + Wechselgeld bis Gap-Limit (Standard 20) | BTC | vollständig je Adresse (Esplora, 25 je Seite) | je Transaktion (`fee`), nur wenn alle Eingänge eigen | mempool.space · Blockstream Esplora | keine | kein Key; Limit nicht beziffert, Portfolia ≤ 1 Anfrage/s | Einzeladressen: Wechselgeld an nicht eingetragene Adressen zählt als Abgang (angezeigt); Adressen jenseits des Gap-Limits; Lightning, Multisig, Ordinals/Runes; CoinJoin/PayJoin nur als Saldo zur Prüfung |
+| **Ethereum** | eine 0x-Adresse je Konto | ETH; ERC-20 (Contract-genau) | vollständig, Blockfenster ≤ 1.000 Einträge, nie mitten im Block | gasUsed × gasPrice der eigenen Transaktion | Etherscan API V2 · Routescan | Etherscan: kostenloser Key nötig | 3–5 Anfragen/s, 100.000/Tag, ≤ 1.000 Einträge je Anfrage | NFTs (ERC-721/1155) nicht gebucht (Prüfung zeigt, ob vorhanden); Positionen in Verträgen nicht sichtbar; interne Bewegungen laut Indexer-Trace |
+| **BNB Chain** | wie Ethereum | BNB; BEP-20 | wie Ethereum | wie Ethereum | Etherscan API V2 · Routescan | Etherscan: **kostenpflichtiger Plan** | BscScan-API laut BNB Chain seit Ende 2025 abgekündigt; Etherscan liefert Chain 56 nur bezahlt (ab ca. 49 USD/Monat); Routescan ohne Key – Abdeckung zeigt „Verbindung testen“ | wie Ethereum; ohne passenden Anbieter keine Synchronisierung (klare Meldung, CSV-Weg bleibt) |
+| **Avalanche C-Chain** | wie Ethereum | AVAX; ERC-20 | wie Ethereum | wie Ethereum | Routescan (Snowtrace) · Etherscan (bezahlt) | optional (Routescan-Key) | ohne Key 2/s, 10.000/Tag; kostenloser Key 5/s, 100.000/Tag | wie Ethereum; X-/P-Chain nicht erfasst |
+| **Solana** | eine Adresse je Konto | SOL (inkl. Miete der Token-Konten); SPL- und Token-2022-Tokens (Mint-genau) | Signaturen der Wallet **und** aller Token-Konten (aktuelle + frühere aus Transaktionen) | `meta.fee`, wenn die Wallet zahlt | öffentlicher RPC (Solana Foundation) · Helius | Helius: Key nötig | öffentlich 100/10 s je IP, 40/10 s je Methode, nicht für Dauerbetrieb; Helius frei 10/s | Native Staking/Inflations-Rewards nicht als Vorgang; mehrere Bewegungen desselben Tokens je Transaktion saldiert; NFTs gezählt, nicht gebucht; Token-Konten, die der Wallet nur per Autoritätswechsel gehörten und heute anderen gehören, nicht auffindbar |
+| **Kaspa** | eine Adresse je Konto | KAS; KRC-20 über Kasplex | KAS vollständig (Blockzeit-Seiten, 30 min Überlappung); KRC-20-Operationen je Adresse | aus Eingängen − Ausgängen; KRC-20-Commit/Reveal als nur Gebühr | api.kaspa.org (KAS) · api.kasplex.org (KRC-20) | keine | kein Key; Limits nicht beziffert, Portfolia ≤ 2/s | KRC-20 abhängig vom Kasplex-Indexer (Ausfall/„nicht synchron“ = sichtbare Lücke, KAS bleibt vollständig, Ergänzung per CSV); KRC-721 nicht erfasst |
+
+### So arbeiten alle Chain-Adapter
+
+* **Nur geprüfte Endpunkte:** Anbieter sind fest hinterlegt (HTTPS, kein Freitext-URL-Feld, keine Weiterleitungen,
+  Host-Prüfung vor jeder Anfrage) – kein Server-Side-Request-Forgery. Beträge werden exakt als `Decimal` gelesen.
+* **Anbieter-Schlüssel** (Etherscan, Routescan, Helius) gelten je Anbieter, werden unter *Datenquellen →
+  Anbieter-Schlüssel* verschlüsselt gespeichert (derselbe [Master-Key](#master-key-für-api-keys)), nie angezeigt,
+  nie exportiert; alternativ `PORTFOLIA_DS_ETHERSCAN`, `PORTFOLIA_DS_ROUTESCAN`, `PORTFOLIA_DS_HELIUS` (bzw.
+  `…_FILE`).
+* **Datenschutz:** Der gewählte Anbieter sieht die abgefragten öffentlichen Adressen und die IP des Servers und
+  kann sie verknüpfen. Ein Kontoschlüssel (xpub) legt alle Adressen des Kontos offen – ausgeben lässt sich damit
+  nichts. Stückzahlen, Werte oder Kontonamen verlassen den Server nie.
+* **Lückenlos und wiederholbar:** Abrufe in Seiten mit Mindestabstand, Wiederholung bei 429/5xx mit Backoff und
+  `Retry-After`, begrenzte Parallelität, Anfrage- und Zeitbudget je Lauf. Der Fortsetzungspunkt rückt nur über
+  vollständig verarbeitete Daten vor (Blöcke, Seiten, Signatur-Blöcke); ein abgebrochener Erstabruf setzt sich in
+  Etappen selbst fort, auch nach Fehlern. Nur bestätigte Daten werden gebucht (Ethereum 64, BNB 20, Avalanche 6
+  Blöcke, Bitcoin 3 Bestätigungen, Solana „finalized“, Kaspa akzeptiert); Unbestätigtes wird gezählt.
+* **Stabile Kennungen:** Ereignis `<chain>:<tx>:<eigenes Konto>`, je Bewegung eine feste Unterkennung (z. B.
+  `#n:out`, `#t:<fingerabdruck>#1` für den zweiten gleichartigen Token-Transfer im selben Hash, `#fee`) – wiederholte
+  und überlappende Läufe erzeugen keine Doppelungen.
+* **Beobachtet ≠ gekauft:** Ein Eingang ist ein Zugang, kein Kauf; Anschaffungskosten und -daten werden nie erfunden.
+  Swaps, Vertragsaufrufe, Bridges, Staking, Rewards, Mints, mögliche Spam-Tokens (Werbung/Links im Namen,
+  unbekannte Tokens ohne eigene Aktion) und Unklares gehen mit Begründung in den Prüf-Stapel. 0-Wert-Transfers
+  (Address-Poisoning) werden gezählt, nicht gebucht. Tokens werden über Chain + Contract/Mint/Tick zugeordnet, nie
+  über das Symbol – ein gefälschter „USDC“ bleibt ein eigenes Asset (Vorschlag: ignorieren).
+* **Abgleich mit Börsen und CSV:** Eine Bitpanda-Auszahlung und der passende Wallet-Eingang werden als Transfer
+  vorgeschlagen (mit Begründung: gleicher Hash bzw. Menge/Zeitabstand) – Anschaffungsdatum und -kosten bleiben
+  erhalten, nichts zählt als zwei unabhängige Vorgänge. Vorschläge, die eine bereits übernommene Buchung verändern
+  würden, werden **nie automatisch** übernommen. Ist der Transfer schon erfasst (Import oder Journal), erscheint der
+  Wallet-Vorgang als Dublette; derselbe Hash aus einem Wallet-CSV (z. B. Ledger Live) ebenso.
+* **Bestandsabgleich:** Je Konto stehen **On-Chain beobachtet** (laut Anbieter) und **durch Portfolia-Buchungen
+  erklärt** (übernommene Buchungen des Kontos) nebeneinander; Abweichungen werden angezeigt, nie ausgeglichen.
+* **Status:** „vollständig synchronisiert“ nur, wenn die unterstützten Daten des Kontos ohne erkannte Lücke abgerufen
+  sind. Erkannte Lücken (Anbieterfehler, nicht abrufbare Transaktion, Indexer nicht synchron) stehen als Warnung am
+  Konto; dauerhafte Abdeckungsgrenzen sind am Konto aufgeführt.
+
+**Nicht live verifiziert:** Ohne Netzzugang beim Bau wurden alle sechs Anbindungen mit Fixtures gegen
+nachgebildete Anbieter-APIs geprüft (Paginierung, Drosselung, Abbruch/Fortsetzung). Endpunkte und Felder folgen der
+jeweiligen Dokumentation bzw. dem Quellcode der Indexer (kaspa-rest-server, go-krc20d). Beim ersten echten Abruf
+bitte „Verbindung testen“, die Bestandsprüfung und den Prüf-Stapel ansehen.
 
 ---
 
