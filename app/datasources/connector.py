@@ -151,6 +151,9 @@ class FetchResult:
     more: bool | None = None  # weitere Etappen ausstehend → bald fortsetzen (Standard: wie ``resume``)
     gaps: list[str] = field(default_factory=list)  # erkannte Lücken dieses Abrufs (→ nie „vollständig“)
     balances: list[Balance] | None = None  # beobachtete Bestände (Plausibilitätsprüfung), None = nicht abgefragt
+    # vollständige Historie neu ausgewertet: unbearbeitete offene Prüf-Stapel der Quelle werden ersetzt (sonst
+    # blieben ihre Vorgänge in der alten Auswertung „wartend“ stehen)
+    refresh_open: bool = False
 
 
 @dataclass(frozen=True)

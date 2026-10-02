@@ -1172,6 +1172,13 @@ class DataSourceService:
         from app.csvimport.service import csv_service, rec_to_json
 
         csv = csv_service(self.ctx)
+        refreshed = kept = 0
+        if res.refresh_open and res.complete:  # vollständige Historie neu ausgewertet → alte Auswertung ersetzen
+            for b in self.pending_batches(sid):
+                if csv.untouched(int(b["id"])):
+                    refreshed += bool(csv.discard(int(b["id"]), rewind=False))
+                else:
+                    kept += 1
         waiting = self._waiting(ds.provider)
         fresh = [r for r in recs if (r.event_key or "") not in waiting]
         n_waiting = len({r.event_key for r in recs if (r.event_key or "") in waiting})
@@ -1226,8 +1233,11 @@ class DataSourceService:
                            ("invalid", "unvollständig"), ("ignored", "ignoriert")):
             if counts.get(key):
                 parts.append(f"{label} {counts[key]}")
+        if refreshed:
+            parts.append(f"{refreshed} unbearbeitete{'r' if refreshed == 1 else ''} Prüf-Stapel neu ausgewertet")
         if n_waiting:
-            parts.append(f"wartet bereits auf Prüfung {n_waiting}")
+            parts.append(f"wartet bereits auf Prüfung {n_waiting}"
+                         + (" (in bearbeiteten Prüf-Stapeln – zum Neueinlesen dort verwerfen)" if kept else ""))
         if committed:
             parts.append(f"übernommen {committed}")
         if res.skipped:

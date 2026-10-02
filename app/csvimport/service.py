@@ -663,9 +663,10 @@ class CsvImportService:
         return []
 
     @_locked
-    def discard(self, bid: int) -> bool:
+    def discard(self, bid: int, rewind: bool = True) -> bool:
         """Stapel ohne Übernahmen verwerfen. Bei Datenquellen wird der Abrufstand vor den ältesten offenen Vorgang
-        zurückgesetzt – verworfene Vorgänge kommen beim nächsten Lauf wieder (bekannte werden erkannt)."""
+        zurückgesetzt – verworfene Vorgänge kommen beim nächsten Lauf wieder (bekannte werden erkannt).
+        ``rewind=False``: Abrufstand bleibt (der laufende Abruf liefert die Vorgänge ohnehin neu)."""
         batch = self.batch(bid)
         if batch is None:
             return False
@@ -673,7 +674,8 @@ class CsvImportService:
                            default=0)
         if n:
             return False
-        open_ts = [rc.ts for rc in self._load(bid) if rc.status not in DONE] if batch["kind"] == "sync" else []
+        open_ts = [rc.ts for rc in self._load(bid) if rc.status not in DONE] if batch["kind"] == "sync" and rewind \
+            else []
         self.db.x("DELETE FROM csv_batch WHERE id=?", (bid,))
         if open_ts and batch["datasource_id"]:
             from app.datasources.service import datasource_service

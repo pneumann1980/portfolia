@@ -18,18 +18,30 @@ Schnittstelle
 Robustheit
     Beträge ausschließlich als ``Decimal`` (JSON mit ``parse_float=Decimal``), Zeitpunkte in UTC, Timeouts,
     ``429`` mit ``Retry-After`` (begrenztes Wartebudget), vorübergehende Fehler mit wenigen Wiederholungen,
-    Cursor-Pagination mit Schleifen- und Seitenendeschutz. Ist das Seitenende nicht eindeutig erkennbar oder bricht
-    der Abruf ab, gilt er als unvollständig: Status „teilweise“, der Abrufstand rückt nicht vor.
+    Cursor-Pagination mit Schleifen- und Seitenendeschutz (leere Seite = Ende, Cursor-Echo → letzte Kennung). Ist
+    das Seitenende nicht eindeutig erkennbar oder bricht der Abruf ab, gilt er als unvollständig: Status
+    „teilweise“, der Abrufstand rückt nicht vor.
+
+Antwortformat
+    Beträge und Gebühren als Text/Zahl oder als Objekt ``{"value", "currency_id"|"asset_id"}`` (aktuelles Format);
+    Zeitpunkt am Vorgang oder an seinen Teilen (frühester), erkannt über übliche Feldnamen bzw. jedes Feld mit
+    Zeitnamen (ohne Änderungs-/Ablaufzeiten). Verwendetes Feld und Originalantwort bleiben in den Rohdaten.
 
 Abbildung – nur eindeutige Fälle, sonst „ungeklärt“ mit Grund (nie geraten, nie still verworfen)
     * Kauf: ein Fiat-Ausgang + ein Krypto-Eingang (auch Sparplan) · Verkauf: Krypto-Ausgang + Fiat-Eingang
-    * Einzahlung/Auszahlung: ein Eingang bzw. Ausgang (Fiat oder Krypto) mit Vorgangsart „deposit“/„withdraw…“
-    * Rewards/Staking: ein Krypto-Eingang mit Vorgangsart genau „reward“/„staking reward“ → Zugang mit Ertrags-Tag
-    * Gebühren: eigene Gebühren-Teile (Transaktionsart „fee“) → Gebührenzeile; Gebühren an Haupt-Teilen werden
-      übernommen, aber als prüfbedürftig markiert (ob der Betrag sie enthält, ist nicht dokumentiert)
-    * interne Umbuchungen (gleiches Asset, gleicher Betrag, Ein- und Ausgang) → ohne Buchung, gezählt
-    * ungeklärt: Korrekturen/Stornos (``compensates``) samt storniertem Vorgang, Tausch Krypto↔Krypto, Aktien/ETFs,
-      Edelmetalle, Indizes, unbekannte Assets oder Vorgangsarten, fehlende Richtung oder Zeitangabe
+    * Swap: Verkaufs- und Kauf-Paar über dieselbe Fiat-Währung → Verkauf + Kauf mit den Euro-Werten
+    * Einzahlung/Auszahlung: ein Eingang bzw. Ausgang (Fiat oder Krypto) mit Vorgangsart „deposit“/„withdraw…“;
+      Sparplan-Einzahlung (Transaktionsart „deposit“) → Zugang
+    * Erträge: ein Krypto-Eingang mit Ertragsart (reward, staking reward, passive earn reward, onetime reward, …) →
+      Zugang mit Ertrags-Tag
+    * Token-Umstellung (merger, migration): Krypto-Ausgang + Krypto-Eingang → Umstellung, prüfbedürftig
+    * Gebühren: eigene Gebühren-Teile (Transaktionsart „fee“) → Gebührenzeile; Gebühren an Haupt-Teilen (auch in
+      eigener Währung) werden übernommen, aber als prüfbedürftig markiert (ob der Betrag sie enthält, ist nicht
+      dokumentiert)
+    * interne Umbuchungen (gleiches Asset, gleicher Betrag, Ein- und Ausgang) und Staking-Umbuchungen (stake,
+      unstake) → ohne Buchung, gezählt
+    * ungeklärt: Korrekturen/Stornos (``compensates``) samt storniertem Vorgang, Tausch Krypto↔Krypto ohne Euro-Teile,
+      Aktien/ETFs, Edelmetalle, Indizes, unbekannte Assets oder Vorgangsarten, fehlende Richtung oder Zeitangabe
 """
 
 from __future__ import annotations
@@ -59,6 +71,7 @@ from app.datasources.catalog import MemoryCatalog
 log = logging.getLogger(__name__)
 
 BASE_URL = "https://api.public.bitpanda.com/v1"
+CURSOR_VERSION = 2  # 2: Beträge als Objekt, Zeitpunkt auch an den Teilen – ältere Abrufstände → Neuabruf
 PREFIX = "bitpanda"
 PAGE_SIZE = 100
 MAX_PAGES = 2000
@@ -68,7 +81,13 @@ RETRIES = 3
 WAIT_BUDGET_S = 120.0
 MAX_RETRY_AFTER_S = 60.0
 COMMON_PAGE_SIZES = frozenset({10, 20, 25, 50, 100, 200, 250, 500, 1000})
-REWARD_TYPES = {"reward", "rewards", "stakingreward", "stakingrewards"}
+# Ertragsarten (normalisierte Vorgangsart → Tag des Datenvertrags); nur Krypto-Zugänge
+INCOME_TYPES = {"reward": "reward", "rewards": "reward", "stakingreward": "staking", "stakingrewards": "staking",
+                "passiveearnreward": "reward", "earnreward": "reward", "onetimereward": "bonus", "bonus": "bonus",
+                "cashback": "cashback", "airdrop": "airdrop", "interest": "interest", "lendingreward": "lending"}
+REWARD_TYPES = set(INCOME_TYPES)
+STAKE_TYPES = {"stake", "unstake", "staking", "unstaking", "earnstake", "earnunstake"}
+CONVERSION_WORDS = ("merger", "migration", "rename", "redenomination", "conversion")
 _TRADE_WORDS = ("buy", "sell", "trade", "order", "saving", "instant")
 _NOT_TRADE = ("reward", "staking", "deposit", "withdraw", "transfer", "airdrop", "fee", "bonus", "interest")
 _CORRECTION = ("cancel", "revers", "compensat", "refund", "chargeback", "storno", "correct")
@@ -106,19 +125,84 @@ def _dec(v: Any) -> Decimal | None:
 
 
 def _ts(v: Any) -> datetime | None:
-    if v is None:
+    """Zeitpunkt aus ISO-8601, Unix-Zeit (Sekunden/Millisekunden, auch als Text) oder einem Zeitobjekt
+    (z. B. ``{"date_iso8601": …, "unix": …}``)."""
+    if v is None or isinstance(v, bool):
         return None
-    if isinstance(v, int | Decimal) and not isinstance(v, bool):
+    if isinstance(v, dict):
+        for k in ("date_iso8601", "iso8601", "iso", "datetime", "date_time", "value", "timestamp", "unix", "epoch"):
+            if k in v and (dt := _ts(v[k])) is not None:
+                return dt
+        return None
+    if isinstance(v, int | float | Decimal):
         n = float(v)
-        return datetime.fromtimestamp(n / 1000 if n > 1e11 else n, UTC)
+        if not (1e8 < n < 1e14):  # plausibler Bereich (1973 … 5138), sonst keine Zeitangabe
+            return None
+        try:
+            return datetime.fromtimestamp(n / 1000 if n > 1e11 else n, UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
     s = str(v).strip()
     if not s:
         return None
+    if re.fullmatch(r"\d{9,14}(\.\d+)?", s):
+        return _ts(Decimal(s))
     try:
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         return None
     return (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).astimezone(UTC)
+
+
+# Zeitfelder in fester Rangfolge: Ausführung/Gutschrift vor Anlage; Änderungs- oder Ablaufzeiten nie
+TIME_KEYS = ("timestamp", "time", "ts", "occurred_at", "occurredAt", "executed_at", "executedAt", "credited_at",
+             "creditedAt", "booked_at", "bookedAt", "settled_at", "settledAt", "completed_at", "completedAt",
+             "processed_at", "processedAt", "effective_at", "effectiveAt", "transaction_time", "transactionTime",
+             "operation_time", "operationTime", "date", "datetime", "created_at", "createdAt", "created")
+_TIME_HINT = re.compile(r"(time|date|_at$|At$|stamp)", re.I)
+_TIME_EXCLUDE = re.compile(r"(updated|modified|expir|valid|last|next|deadline|until)", re.I)
+
+
+def _find_time(d: Any) -> tuple[datetime | None, str | None]:
+    """(Zeitpunkt, Feldname) eines Vorgangs bzw. Teils: bekannte Felder in Rangfolge, sonst jedes Feld, dessen Name
+    nach einer Zeitangabe klingt und dessen Wert sich als Zeitpunkt lesen lässt (Name wird mitgeliefert)."""
+    if not isinstance(d, dict):
+        return None, None
+    for k in TIME_KEYS:
+        if k in d and (dt := _ts(d[k])) is not None:
+            return dt, k
+    for k in sorted(d):
+        if _TIME_HINT.search(k) and not _TIME_EXCLUDE.search(k) and (dt := _ts(d[k])) is not None:
+            return dt, k
+    return None, None
+
+
+def _val(v: Any) -> tuple[Decimal | None, str | None]:
+    """Betrag und Asset-/Währungs-ID: Text/Zahl oder Betragsobjekt ``{"value": …, "currency_id"|"asset_id": …}``."""
+    if isinstance(v, dict):
+        amount = _dec(_get(v, "value", "amount", "quantity", "qty"))
+        ref = _get(v, "currency_id", "currencyId", "fiat_id", "fiatId", "asset_id", "assetId")
+        return amount, _s(ref)
+    return _dec(v), None
+
+
+def _is_fiat_obj(v: Any) -> bool:
+    return isinstance(v, dict) and _get(v, "currency_id", "currencyId", "fiat_id", "fiatId") is not None
+
+
+def _plain(v: Any, depth: int = 0) -> Any:
+    """Originaldaten JSON-tauglich (Decimal als Text) für die Nachprüfung im Prüf-Stapel."""
+    if depth > 6:
+        return None
+    if isinstance(v, dict):
+        return {str(k): _plain(x, depth + 1) for k, x in list(v.items())[:60]}
+    if isinstance(v, list):
+        return [_plain(x, depth + 1) for x in v[:40]]
+    if isinstance(v, Decimal):
+        return format(v, "f")
+    if isinstance(v, str):
+        return v[:300]
+    return v
 
 
 def _iso_z(dt: datetime) -> str:
@@ -298,10 +382,17 @@ class _Leg:
     compensates: str | None
     ttype: str
     raw: dict[str, Any] = field(default_factory=dict)
+    fee_ref: str | None = None  # Asset/Währung der Gebühr, falls angegeben (sonst wie der Betrag)
+    fee_kind: str = "?"
+    fee_symbol: str | None = None
 
     @property
     def is_fee(self) -> bool:
         return "fee" in self.ttype
+
+    @property
+    def fee_sym(self) -> str | None:
+        return self.fee_symbol if self.fee_ref and self.fee_ref != self.ref else self.symbol
 
 
 def _asset_kind(meta: dict[str, Any] | None) -> str:
@@ -408,13 +499,36 @@ class _Mapper:
                 r.review = "Gebühren an mehreren Teilen – Zuordnung prüfen"
             if charged:
                 lg = charged[0]
-                r.fee_sym, r.fee_qty = lg.symbol, lg.fee
-                r.review = r.review or (f"Gebühr {_s(lg.fee)} {lg.symbol}: ob der Betrag sie bereits enthält, ist "
+                r.fee_sym, r.fee_qty = lg.fee_sym, lg.fee
+                if r.fee_sym is None:
+                    r.review = "Gebühr in einem unbekannten Asset – bitte mit dem Bitpanda-Beleg vergleichen"
+                r.review = r.review or (f"Gebühr {_s(lg.fee)} {lg.fee_sym}: ob der Betrag sie bereits enthält, ist "
                                         "nicht dokumentiert – bitte mit dem Bitpanda-Beleg vergleichen")
             return r
 
         trade_like = not otype or any(w in otype for w in _TRADE_WORDS)
         conflicting = any(w in otype for w in _NOT_TRADE)
+        if otype in STAKE_TYPES and len(main) == 1 and main[0].kind == "crypto" and not fees:
+            return None, "Umbuchung in bzw. aus Bitpanda Staking (kein Zu- oder Abgang)"
+        if len(ins) == 2 and len(outs) == 2 and {lg.ttype for lg in main} == {"buy", "sell"}:
+            pair = {(lg.ttype, lg.side): lg for lg in main}
+            so, si, bo, bi = (pair.get(k) for k in (("sell", "out"), ("sell", "in"), ("buy", "out"), ("buy", "in")))
+            if so and si and bo and bi and so.kind == "crypto" and si.kind == "fiat" and bo.kind == "fiat" \
+                    and bi.kind == "crypto" and si.symbol == bo.symbol:
+                note = f"Tausch {so.symbol} → {bi.symbol} über {si.symbol} (Bitpanda Swap)"
+                sell = with_fee(rec(M.TRADE, out_sym=so.symbol, out_qty=so.amount, in_sym=si.symbol, in_qty=si.amount,
+                                    value=si.amount, value_ccy=si.symbol, note=note), so, si)
+                buy = with_fee(rec(M.TRADE, out_sym=bo.symbol, out_qty=bo.amount, in_sym=bi.symbol, in_qty=bi.amount,
+                                   value=bo.amount, value_ccy=bo.symbol, note=note), bo, bi)
+                return K.SourceEvent(op.key, ts, [sell, buy, *fee_lines], label), None
+        if len(ins) == 1 and len(outs) == 1 and any(w in otype for w in CONVERSION_WORDS):
+            i, o = ins[0], outs[0]
+            if i.kind == "crypto" and o.kind == "crypto":
+                r = with_fee(rec(M.CONVERSION, out_sym=o.symbol, out_qty=o.amount, in_sym=i.symbol, in_qty=i.amount,
+                                 note=f"Token-Umstellung {o.symbol} → {i.symbol} ({op.type})"), o, i)
+                r.review = r.review or ("Token-Umstellung: Einstand und Anschaffungsdatum gehen auf das neue Asset "
+                                        "über – Verhältnis und Asset-Zuordnung bitte prüfen")
+                return K.SourceEvent(op.key, ts, [r, *fee_lines], label), None
         if len(ins) == 1 and len(outs) == 1:
             i, o = ins[0], outs[0]
             if o.kind == "fiat" and i.kind == "crypto" and trade_like and not conflicting:
@@ -432,12 +546,13 @@ class _Mapper:
                 return review("Währungstausch Fiat → Fiat"), None
         if len(ins) == 1 and not outs:
             i = ins[0]
-            if otype in REWARD_TYPES and i.kind == "crypto":
-                r = with_fee(rec(M.DEPOSIT, in_sym=i.symbol, in_qty=i.amount,
-                                 tag="staking" if "staking" in otype else "reward"), i)
+            if otype in INCOME_TYPES and i.kind == "crypto":
+                r = with_fee(rec(M.DEPOSIT, in_sym=i.symbol, in_qty=i.amount, tag=INCOME_TYPES[otype]), i)
                 return K.SourceEvent(op.key, ts, [r, *fee_lines], label), None
-            if "deposit" in otype and not any(w in otype for w in _INCOME_WORDS):
-                r = with_fee(rec(M.DEPOSIT, in_sym=i.symbol, in_qty=i.amount), i)
+            if ("deposit" in otype or (i.ttype == "deposit" and "saving" in otype)) \
+                    and not any(w in otype for w in _INCOME_WORDS):
+                r = with_fee(rec(M.DEPOSIT, in_sym=i.symbol, in_qty=i.amount,
+                                 note="Einzahlung für den Sparplan" if "saving" in otype else None), i)
                 return K.SourceEvent(op.key, ts, [r, *fee_lines], label), None
         if len(outs) == 1 and not ins and "withdraw" in otype:
             o = outs[0]
@@ -517,43 +632,64 @@ class BitpandaConnector(K.Connector):
 
     # -- Abrufen ------------------------------------------------------------------------------------------
     def rewind(self, cursor: dict[str, Any] | None, before: datetime) -> dict[str, Any] | None:
-        if not cursor or not cursor.get("from"):
-            return None  # ohnehin vollständiger Abruf
-        cur = _ts(cursor.get("from"))
-        new = before - OVERLAP
-        return {**cursor, "from": _iso_z(min(cur, new) if cur else new)}
+        """Verworfene Vorgänge erneut liefern: vollständiger Neuabruf. Die Bitpanda-Historie ist klein (wenige
+        Seiten), bekannte Vorgänge werden erkannt – und der Zeitpunkt eines verworfenen Vorgangs ist nicht immer
+        verlässlich (ohne Zeitangabe trägt er den Abrufzeitpunkt)."""
+        return None
 
     def fetch(self, cfg: K.SourceConfig, secret: K.Secret, cursor: dict[str, Any] | None) -> K.FetchResult:
         started = datetime.now(UTC)
+        notes: list[str] = []
+        if cursor and cursor.get("v") != CURSOR_VERSION:
+            cursor = None  # Abrufstand einer älteren Auswertung → Vorgänge vollständig neu abrufen und auswerten
+            notes.append("Auswertung der Bitpanda-Daten verbessert – alle Vorgänge werden neu abgerufen (bereits "
+                         "übernommene werden erkannt)")
         since = _ts((cursor or {}).get("from"))
         coverage: dict[str, Any] = {"api": BASE_URL, "mode": "inkrementell" if since else "vollständig",
                                     "from": _iso_z(since) if since else None, "to": _iso_z(started)}
         with self._client() as client:
             api = _Api(secret.reveal(), client, self.sleep)
-            items, complete, notes = self._operations(api, since, coverage)
+            items, complete, page_notes = self._operations(api, since, coverage)
+            notes += page_notes
             ops = [self._parse(o) for o in items if isinstance(o, dict)]
             if len(ops) != len(items):
                 notes.append(f"{len(items) - len(ops)} Einträge ohne erkennbare Struktur übersprungen")
                 complete = False
+            fields: dict[str, int] = defaultdict(int)
+            for op in ops:
+                fields[op.raw.get("time_field") or "–"] += 1
+            coverage["time_fields"] = dict(fields)
+            without = fields.get("–", 0)
+            if without:
+                sample = next((op.raw for op in ops if not op.raw.get("time_field")), {})
+                notes.append(f"{without} Vorgänge ohne erkennbaren Zeitpunkt (Felder: "
+                             + ", ".join(sample.get("fields") or []) + ")")
             self._resolve(api, ops, notes)
             events, skipped = self._map(ops)
             if complete and since is None:
                 self._balances(api, ops, coverage, notes)
             coverage.update(requests=api.requests, throttled=api.throttled, waited_s=round(api.waited, 1))
         coverage["limits"] = self._limits(events)
-        nxt = {"v": 1, "from": _iso_z(started - OVERLAP)} if complete else None
+        nxt = {"v": CURSOR_VERSION, "from": _iso_z(started - OVERLAP)} if complete else None
+        # vollständige Historie: unbearbeitete offene Prüf-Stapel dieser Quelle durch die neue Auswertung ersetzen
         return K.FetchResult(events=events, cursor=nxt, complete=complete, warnings=notes, skipped=skipped,
-                             coverage=coverage)
+                             coverage=coverage, refresh_open=complete and since is None)
 
     def _operations(self, api: _Api, since: datetime | None,
                     coverage: dict[str, Any]) -> tuple[list[Any], bool, list[str]]:
+        """Alle Seiten von ``/operations``. Dokumentiert: ``cursor`` der Antwort als ``cursor`` der nächsten Anfrage,
+        fehlt am Ende. Beobachtet: auch die letzte Seite kann einen Cursor tragen – eine leere Seite beendet den
+        Abruf daher immer. Wiederholt die API den gesendeten Cursor, gilt die Kennung des letzten Vorgangs als
+        Fortsetzungspunkt (der Cursor bezeichnet laut Doku ein Element der Liste); liefert eine Seite nur bereits
+        bekannte Vorgänge, endet der Abruf als unvollständig (Schleifenschutz)."""
         base: dict[str, Any] = {"pageSize": PAGE_SIZE}
         if since is not None:
             base["from"] = _iso_z(since)
         variants = [base, {k: v for k, v in base.items() if k != "pageSize"}, {}]
         notes: list[str] = []
         items: list[Any] = []
-        seen: set[str] = set()
+        seen_ids: set[str] = set()
+        seen_cursors: set[str] = set()
         pages = 0
         complete = True
         params = dict(base)
@@ -580,22 +716,36 @@ class BitpandaConnector(K.Connector):
             page = _items(body)
             if page is None:
                 raise K.ConnectorError("data", "Antwort von /operations enthält keine Vorgangsliste.")
-            items.extend(page)
             pages += 1
+            if not page:
+                break  # leere Seite: Ende – auch wenn die Antwort noch einen Cursor trägt
+            ids = [_s(_get(o, "id", "operation_id", "operationId")) if isinstance(o, dict) else None for o in page]
+            fresh = [o for o, i in zip(page, ids, strict=True) if i is None or i not in seen_ids]
+            if not fresh:
+                notes.append("Pagination wiederholt bereits abgerufene Vorgänge – Abruf beendet, Abdeckung unklar")
+                complete = False
+                break
+            items.extend(fresh)
+            seen_ids.update(i for i in ids if i)
             nxt, known = _next(body)
-            if nxt:
-                if nxt in seen:
+            sent = params.get("cursor")
+            if nxt and (nxt == sent or nxt in seen_cursors):
+                last = next((i for i in reversed(ids) if i), None)
+                nxt = last if last and last != sent and last not in seen_cursors else None
+                if nxt is None:
                     notes.append("Pagination wiederholt denselben Cursor – Abruf beendet, Abdeckung unklar")
                     complete = False
                     break
+                coverage["cursor_mode"] = "Kennung des letzten Vorgangs"
+            if nxt:
                 if pages >= MAX_PAGES:
                     notes.append(f"Mehr als {MAX_PAGES} Seiten – Rest folgt im nächsten Lauf")
                     complete = False
                     break
-                seen.add(nxt)
+                seen_cursors.add(nxt)
                 params = {**params, "cursor": nxt}
                 continue
-            if not known and page and (len(page) in COMMON_PAGE_SIZES or len(page) == requested):
+            if not known and (len(page) in COMMON_PAGE_SIZES or len(page) == requested):
                 notes.append("Seitenende nicht eindeutig (volle Seite ohne Cursor) – Abdeckung unklar")
                 complete = False
             break
@@ -603,19 +753,24 @@ class BitpandaConnector(K.Connector):
         return items, complete, notes
 
     def _parse(self, o: dict[str, Any]) -> _Op:
+        """Vorgang → Teile. Beträge als Text/Zahl oder als Objekt ``{"value", "currency_id"|"asset_id"}``; Zeitpunkt
+        am Vorgang oder – fehlt er dort – an den Teilen (frühester Zeitpunkt); verwendete Felder in ``raw``."""
         op_id = _get(o, "id", "operation_id", "operationId")
         op_type = str(_get(o, "type", "operation_type", "operationType") or "")
-        ts = _ts(_get(o, "timestamp", "created_at", "createdAt", "executed_at", "executedAt", "time", "credited_at",
-                      "creditedAt"))
+        ts, ts_key = _find_time(o)
         txs = o.get("transactions")
         single = not isinstance(txs, list)
         if single:
             txs = [o]  # Vorgang ohne Teilliste: der Vorgang selbst ist der einzige Teil
         legs = []
+        leg_times: list[tuple[datetime, str]] = []
         for t in txs:
             if not isinstance(t, dict):
                 continue
-            amount = _dec(_get(t, "amount", "asset_amount", "assetAmount", "quantity"))
+            amount_obj = _get(t, "amount", "asset_amount", "assetAmount", "quantity")
+            fee_obj = _get(t, "fee", "fee_amount", "feeAmount")
+            amount, amount_ref = _val(amount_obj)
+            fee, fee_ref = _val(fee_obj)
             flow = str(_get(t, "flow", "direction", "in_or_out", "inOrOut", "side") or "").lower()
             side = "in" if flow in ("incoming", "in", "credit") else "out" if flow in ("outgoing", "out", "debit") \
                 else "?"
@@ -623,61 +778,80 @@ class BitpandaConnector(K.Connector):
                 side = "out"
             if amount is not None:
                 amount = abs(amount)
-            cur_id = _get(t, "currency_id", "currencyId", "fiat_id", "fiatId")
-            asset_id = _get(t, "asset_id", "assetId")
+            cur_id = _s(_get(t, "currency_id", "currencyId", "fiat_id", "fiatId"))
+            asset_id = _s(_get(t, "asset_id", "assetId"))
+            ref = cur_id or asset_id or amount_ref
+            fiat = bool(cur_id) or (not asset_id and _is_fiat_obj(amount_obj))
+            fee_fiat = _is_fiat_obj(fee_obj)
+            if not single:
+                lt, lk = _find_time(t)
+                if lt is not None:
+                    leg_times.append((lt, f"transactions[].{lk}"))
             legs.append(_Leg(
                 id=None if single else _s(_get(t, "transaction_id", "transactionId", "id")),
-                side=side, amount=amount, fee=abs(_dec(_get(t, "fee_amount", "feeAmount", "fee")) or Decimal(0)),
-                ref=_s(cur_id or asset_id), kind="fiat" if cur_id else "?", symbol=None,
+                side=side, amount=amount, fee=abs(fee or Decimal(0)),
+                ref=ref, kind="fiat" if fiat else "?", symbol=None,
                 trade_id=_s(_get(t, "trade_id", "tradeId")), compensates=_s(_get(t, "compensates")),
                 ttype=_norm(_get(t, "transaction_type", "transactionType", "kind")),
+                fee_ref=fee_ref if fee_ref and fee_ref != ref else None, fee_kind="fiat" if fee_fiat else "?",
                 raw={"id": _s(_get(t, "transaction_id", "transactionId", "id")), "flow": flow or None,
-                     "amount": _s(_get(t, "amount", "asset_amount", "assetAmount", "quantity")),
-                     "fee": _s(_get(t, "fee_amount", "feeAmount", "fee")), "asset_id": _s(asset_id),
-                     "currency_id": _s(cur_id), "trade_id": _s(_get(t, "trade_id", "tradeId")),
+                     "amount": _s(amount), "fee": _s(fee), "asset_id": asset_id, "currency_id": cur_id,
+                     "ref": ref, "fee_ref": fee_ref, "trade_id": _s(_get(t, "trade_id", "tradeId")),
                      "transaction_type": _s(_get(t, "transaction_type", "transactionType")),
                      "compensates": _s(_get(t, "compensates"))}))
-        raw = {"operation_id": _s(op_id), "type": op_type or None,
-               "timestamp": _s(_get(o, "timestamp", "created_at", "createdAt", "executed_at", "time")),
-               "transactions": [lg.raw for lg in legs]}
+        if ts is None and leg_times:
+            ts, ts_key = min(leg_times)
+        fields = sorted(str(k) for k in o)
+        leg_fields = sorted({str(k) for t in (txs if not single else []) if isinstance(t, dict) for k in t})
+        raw = {"operation_id": _s(op_id), "type": op_type or None, "timestamp": _iso_z(ts) if ts else None,
+               "time_field": ts_key, "fields": fields, "transaction_fields": leg_fields,
+               "transactions": [lg.raw for lg in legs], "api": _plain(o)}
         return _Op(id=_s(op_id), type=op_type, ts=ts, legs=legs, raw=raw)
 
     def _resolve(self, api: _Api, ops: list[_Op], notes: list[str]) -> None:
-        """Asset-/Währungs-UUIDs → Symbol und Art; nur unbekannte IDs werden abgerufen (Zwischenspeicher)."""
+        """Asset-/Währungs-UUIDs → Symbol und Art (auch der Gebühr); nur unbekannte IDs werden abgerufen
+        (Zwischenspeicher)."""
         cat = self._catalog()
-        currencies_loaded = False
-        failed: str | None = None
+        state = {"currencies": False, "failed": None}
+
+        def lookup(ref: str, fiat: bool) -> dict[str, Any] | None:
+            meta = cat.get(ref)
+            if meta is None and fiat and not state["currencies"]:
+                state["currencies"] = True
+                self._load_currencies(api, cat, notes)
+                meta = cat.get(ref)
+            if meta is None and not fiat and state["failed"] is None:
+                try:
+                    meta = self._load_asset(api, cat, ref)
+                except K.ConnectorError as e:
+                    if e.kind in ("auth", "scope", "expired"):
+                        state["failed"] = e.message
+                        notes.append("Asset-Stammdaten nicht abrufbar – betroffene Vorgänge sind „ungeklärt“ "
+                                     f"({e.message})")
+                    elif e.kind in ("rate_limit", "unavailable"):
+                        state["failed"] = e.message
+                        notes.append(f"Asset-Stammdaten vorübergehend nicht abrufbar ({e.message})")
+                    meta = None
+            return meta
+
         for op in ops:
             for lg in op.legs:
                 if not lg.ref:
                     lg.kind = "unknown"
-                    continue
-                meta = cat.get(lg.ref)
-                if meta is None and lg.kind == "fiat" and not currencies_loaded:
-                    currencies_loaded = True
-                    self._load_currencies(api, cat, notes)
-                    meta = cat.get(lg.ref)
-                if meta is None and lg.kind != "fiat" and failed is None:
-                    try:
-                        meta = self._load_asset(api, cat, lg.ref)
-                    except K.ConnectorError as e:
-                        if e.kind in ("auth", "scope", "expired"):
-                            failed = e.message
-                            notes.append("Asset-Stammdaten nicht abrufbar – betroffene Vorgänge sind „ungeklärt“ "
-                                         f"({e.message})")
-                        elif e.kind in ("rate_limit", "unavailable"):
-                            failed = e.message
-                            notes.append(f"Asset-Stammdaten vorübergehend nicht abrufbar ({e.message})")
-                        else:
-                            meta = None
-                if meta is None:
-                    lg.kind = "unknown"
-                    continue
-                lg.symbol = (meta.get("symbol") or "").upper() or None
-                lg.kind = "fiat" if lg.kind == "fiat" else _asset_kind(meta)
-                if lg.symbol is None:
-                    lg.kind = "unknown"
-                lg.raw["symbol"] = lg.symbol
+                else:
+                    meta = lookup(lg.ref, lg.kind == "fiat")
+                    if meta is None:
+                        lg.kind = "unknown"
+                    else:
+                        lg.symbol = (meta.get("symbol") or "").upper() or None
+                        lg.kind = "fiat" if lg.kind == "fiat" else _asset_kind(meta)
+                        if lg.symbol is None:
+                            lg.kind = "unknown"
+                        lg.raw["symbol"] = lg.symbol
+                if lg.fee_ref and lg.fee:
+                    meta = lookup(lg.fee_ref, lg.fee_kind == "fiat")
+                    lg.fee_symbol = (meta.get("symbol") or "").upper() or None if meta else None
+                    lg.raw["fee_symbol"] = lg.fee_symbol
 
     def _load_currencies(self, api: _Api, cat: Any, notes: list[str]) -> None:
         try:
@@ -740,9 +914,10 @@ class BitpandaConnector(K.Connector):
             for lg in op.legs:
                 if lg.ref and lg.amount is not None and lg.side in ("in", "out"):
                     net[lg.ref] += lg.amount if lg.side == "in" else -lg.amount
-                    net[lg.ref] -= lg.fee
                     if lg.symbol:
                         sym[lg.ref] = lg.symbol
+                if lg.fee and (lg.fee_ref or lg.ref):
+                    net[lg.fee_ref or lg.ref] -= lg.fee  # type: ignore[index]
         diffs = []
         checked = 0
         for h in _items(body) or []:

@@ -62,6 +62,7 @@ class FakeBitpanda:
         self.calls: list[httpx.Request] = []
         self.fail: dict[str, list[httpx.Response]] = {}  # Pfad/Cursor → vorgegebene Antworten (einmalig)
         self.ops_override: list[Any] | None = None
+        self.json_pages: dict[str | None, Any] | None = None  # Cursor → Antwort (aktuelles Format, ohne Dateien)
         self.holdings_status = 200
 
     def handler(self, req: httpx.Request) -> httpx.Response:
@@ -77,6 +78,8 @@ class FakeBitpanda:
             if self.fail.get(k):
                 return self.fail[k].pop(0)
         if path == "/v1/operations":
+            if self.json_pages is not None:
+                return httpx.Response(200, json=self.json_pages.get(req.url.params.get("cursor"), {"data": []}))
             if self.ops_override is not None:
                 return httpx.Response(200, json={"data": self.ops_override})
             if req.url.params.get("pageSize") == "1":
@@ -443,15 +446,21 @@ def test_decimal_precision_and_unknown_structures(api):
 
 
 def test_incremental_fetch_uses_time_filter_and_overlap(api):
-    res = fetch({"v": 1, "from": "2024-02-18T00:00:00Z"})
+    res = fetch({"v": B.CURSOR_VERSION, "from": "2024-02-18T00:00:00Z"})
     first = api.ops_requests()[0]
     assert first.url.params.get("from") == "2024-02-18T00:00:00Z" and res.coverage["mode"] == "inkrementell"
     assert "balances" not in res.coverage  # Bestandsprüfung nur bei vollständiger Historie
-    conn = B.BitpandaConnector()
+    assert not res.refresh_open  # inkrementell: offene Prüf-Stapel bleiben, wie sie sind
+    assert res.cursor["v"] == B.CURSOR_VERSION
+    # Abrufstand einer älteren Auswertung → vollständiger Neuabruf, offene Stapel werden neu ausgewertet
+    api.calls.clear()
+    res = fetch({"v": 1, "from": "2024-02-18T00:00:00Z"})
+    assert "from" not in api.ops_requests()[0].url.params and res.coverage["mode"] == "vollständig"
+    assert res.refresh_open and any("neu abgerufen" in w for w in res.warnings)
     from datetime import UTC, datetime
 
-    rw = conn.rewind({"v": 1, "from": "2024-03-10T00:00:00Z"}, datetime(2024, 2, 20, tzinfo=UTC))
-    assert rw["from"] == "2024-02-18T00:00:00Z"  # vor den verworfenen Vorgang (mit Überlappung)
+    conn = B.BitpandaConnector()  # Verwerfen → vollständiger Neuabruf (Zeitpunkt verworfener Vorgänge unsicher)
+    assert conn.rewind({"v": 2, "from": "2024-03-10T00:00:00Z"}, datetime(2024, 2, 20, tzinfo=UTC)) is None
     assert conn.rewind(None, datetime(2024, 2, 20, tzinfo=UTC)) is None
 
 
@@ -487,6 +496,134 @@ def test_unclear_pagination_and_cursor_loops_are_incomplete(api):
     api.ops_override = full  # volle Standardseite ohne Cursor: Ende nicht eindeutig
     res = fetch()
     assert not res.complete and any("Seitenende" in w for w in res.warnings)
+
+
+# ----------------------------------------------------------------------------------------------------
+# Aktuelles Antwortformat der Public API (Stand 10/2026): Betragsobjekte, Zeitpunkt an den Teilen,
+# Kleinschreibung, Cursor auch auf der letzten Seite – synthetische Werte
+# ----------------------------------------------------------------------------------------------------
+
+EUR_ID, BTC_ID, ETH_ID, BEST_ID = U(0xE0), U(0xB1), U(0xE1), U(0xBE)
+T0, T1, T2 = "2025-04-01T06:00:12Z", "2025-04-01T06:05:00Z", "2025-05-02T14:30:00Z"
+
+
+def amt(value: str, ref: str) -> dict[str, str]:
+    return {"value": value, ("currency_id" if ref == EUR_ID else "asset_id"): ref}
+
+
+def leg(n: int, flow: str, value: str, ref: str, *, ttype: str | None = None, fee: str = "0",
+        fee_ref: str | None = None, **extra: Any) -> dict[str, Any]:
+    return {"id": U(0x7A0 + n), "flow": flow, "amount": amt(value, ref), "fee": amt(fee, fee_ref or ref),
+            "asset_id": None if ref == EUR_ID else ref, "currency_id": ref if ref == EUR_ID else None,
+            "trade_id": None, "transaction_type": ttype, "compensates": None, **extra}
+
+
+def current_format_ops() -> list[dict[str, Any]]:
+    return [
+        {"id": U(0x701), "type": "savings_plan", "transactions": [
+            leg(1, "outgoing", "50", EUR_ID, ttype="buy", credited_at=T1),
+            leg(2, "incoming", "0.00061234", BTC_ID, ttype="buy", credited_at=T1)]},
+        {"id": U(0x702), "type": "savings_plan", "transactions": [
+            leg(3, "incoming", "50", EUR_ID, ttype="deposit", credited_at=T0)]},
+        {"id": U(0x703), "type": "passive_earn_reward", "occurred_at": T2, "transactions": [
+            leg(4, "incoming", "0.00012", ETH_ID)]},
+        {"id": U(0x704), "type": "onetime_reward", "time": {"date_iso8601": "2025-05-03T10:00:00+02:00"},
+         "transactions": [leg(5, "incoming", "10", BEST_ID)]},
+        {"id": U(0x705), "type": "swap", "transactions": [
+            leg(6, "outgoing", "0.0005", BTC_ID, ttype="sell", credited_at=T2),
+            leg(7, "incoming", "40.10", EUR_ID, ttype="sell", credited_at=T2),
+            leg(8, "outgoing", "40.10", EUR_ID, ttype="buy", credited_at=T2),
+            leg(9, "incoming", "0.0151", ETH_ID, ttype="buy", credited_at=T2)]},
+        {"id": U(0x706), "type": "stake", "transactions": [leg(10, "outgoing", "0.01", ETH_ID, credited_at=T2)]},
+        {"id": U(0x707), "type": "merger_crypto", "transactions": [
+            leg(11, "outgoing", "100", BEST_ID, credited_at=T2), leg(12, "incoming", "100", ETH_ID, credited_at=T2)]},
+        {"id": U(0x708), "type": "buy", "transactions": [
+            leg(13, "outgoing", "100", EUR_ID, credited_at=T2),
+            leg(14, "incoming", "0.0012", BTC_ID, fee="1.5", fee_ref=EUR_ID, credited_at=T2)]},
+        {"id": U(0x709), "type": "withdrawal", "transactions": [leg(15, "outgoing", "0.001", BTC_ID)]},  # ohne Zeit
+    ]
+
+
+def test_current_response_format_is_mapped(api):
+    """Betragsobjekte, Zeitpunkt am Vorgang, an den Teilen oder als Zeitobjekt; letzte Seite mit Cursor."""
+    api.json_pages = {None: {"data": current_format_ops(), "cursor": "c-last"},
+                      "c-last": {"data": [], "cursor": "c-last"}}  # Cursor auch auf der leeren Folgeseite
+    res = fetch()
+    assert res.complete and not any("wiederholt" in w for w in res.warnings)  # leere Seite = Ende
+    assert res.coverage["operations"] == 9 and res.refresh_open
+    assert res.coverage["time_fields"] == {"transactions[].credited_at": 6, "occurred_at": 1, "time": 1, "–": 1}
+    ev = by_event(res)
+
+    def lines(n: int) -> list[Any]:
+        return ev[f"bitpanda:{U(0x700 + n)}"].lines
+
+    (plan,) = lines(1)
+    assert (plan.kind, plan.out_sym, plan.out_qty, plan.in_sym, plan.in_qty, plan.value) == (
+        M.TRADE, "EUR", D("50"), "BTC", D("0.00061234"), D("50"))
+    assert plan.ts.isoformat() == "2025-04-01T06:05:00+00:00" and plan.note == "Sparplan" and plan.review is None
+    (dep,) = lines(2)
+    assert (dep.kind, dep.in_sym, dep.in_qty, dep.tag) == (M.DEPOSIT, "EUR", D("50"), None)
+    assert "Sparplan" in dep.note
+    (earn,) = lines(3)
+    assert (earn.kind, earn.in_sym, earn.tag, earn.ts.isoformat()) == (M.DEPOSIT, "ETH", "reward",
+                                                                      "2025-05-02T14:30:00+00:00")
+    (bonus,) = lines(4)
+    assert (bonus.kind, bonus.tag, bonus.ts.isoformat()) == (M.DEPOSIT, "bonus", "2025-05-03T08:00:00+00:00")
+    sell, buy = lines(5)  # Swap = Verkauf gegen EUR + Kauf mit EUR, Gegenwert aus den Euro-Teilen
+    assert (sell.out_sym, sell.in_sym, sell.value) == ("BTC", "EUR", D("40.10"))
+    assert (buy.out_sym, buy.in_sym, buy.in_qty, buy.value) == ("EUR", "ETH", D("0.0151"), D("40.10"))
+    assert f"bitpanda:{U(0x706)}" not in ev and any("Staking" in k for k in res.skipped)
+    (conv,) = lines(7)
+    assert (conv.kind, conv.out_sym, conv.in_sym) == (M.CONVERSION, "BEST", "ETH") and conv.review
+    (fee_buy,) = lines(8)
+    assert (fee_buy.fee_sym, fee_buy.fee_qty) == ("EUR", D("1.5")) and "Gebühr" in fee_buy.review
+    (no_time,) = lines(9)
+    assert no_time.kind == M.REVIEW and "Zeitpunkt fehlt" in no_time.note
+    assert any("ohne erkennbaren Zeitpunkt" in w and "transactions" in w for w in res.warnings)
+    raw = plan.raw  # Originaldaten zur Nachprüfung, Beträge als Text
+    assert raw["time_field"] == "transactions[].credited_at" and raw["api"]["transactions"][0]["amount"] == {
+        "value": "50", "currency_id": EUR_ID}
+    assert raw["transactions"][0]["amount"] == "50"
+
+
+def test_cursor_echo_continues_with_last_operation_id(api):
+    ops = current_format_ops()[:4]
+    api.json_pages = {None: {"data": ops[:2], "cursor": "c1"},
+                      "c1": {"data": ops[2:], "cursor": "c1"},  # Antwort wiederholt den gesendeten Cursor
+                      U(0x704): {"data": []}}
+    res = fetch()
+    assert res.complete and res.coverage["operations"] == 4 and res.coverage["cursor_mode"]
+    assert [r.url.params.get("cursor") for r in api.ops_requests()] == [None, "c1", U(0x704)]
+    api.calls.clear()
+    api.json_pages = {None: {"data": ops[:2], "cursor": "c1"}, "c1": {"data": ops[:2], "cursor": "c2"}}
+    res = fetch()  # Folgeseite liefert nur Bekanntes → Schleifenschutz, unvollständig
+    assert not res.complete and any("wiederholt" in w for w in res.warnings) and res.cursor is None
+
+
+def test_full_refetch_replaces_untouched_open_batch(client, api):
+    c = client
+    sid = create_bitpanda(c)
+    old_bid = batch_of(sync(c, sid))
+    assert csv_service(ctx(c)).untouched(old_bid)
+    # Abrufstand einer älteren Auswertung → vollständiger Neuabruf ersetzt den unbearbeiteten Stapel
+    ctx(c).db.x("UPDATE data_source SET cursor_json=? WHERE id=?", (json.dumps({"v": 1, "from": T0}), sid))
+    r = sync(c, sid)
+    new_bid = batch_of(r)
+    assert new_bid != old_bid and csv_service(ctx(c)).batch(old_bid) is None
+    assert f"{op_key(1)}#0" in rows_by_key(c, new_bid)
+    run = datasource_service(ctx(c)).runs(sid)[0]
+    assert "neu ausgewertet" in run["message"] and "wartet bereits" not in run["message"]
+    assert json.loads(source(c, sid)["cursor_json"])["v"] == B.CURSOR_VERSION
+    # bearbeiteter Stapel (Eingabe in einer Zeile) bleibt unangetastet – mit Hinweis; „dauerhaft ignorieren“ gilt je
+    # Ereignis und übersteht den Neuabruf ohnehin
+    create_unknown_assets(c, new_bid)
+    rs = rows_by_key(c, new_bid)
+    post(c, f"/journal/csv/{new_bid}/rows", **{f"val_{rs[f'{op_key(2)}#1'].idx}": "0,40"})
+    assert not csv_service(ctx(c)).untouched(new_bid)
+    ctx(c).db.x("UPDATE data_source SET cursor_json=NULL WHERE id=?", (sid,))
+    sync(c, sid)
+    assert csv_service(ctx(c)).batch(new_bid) is not None
+    assert "bearbeiteten Prüf-Stapeln" in datasource_service(ctx(c)).runs(sid)[0]["message"]
 
 
 def test_bad_parameter_falls_back_without_page_size(api):
