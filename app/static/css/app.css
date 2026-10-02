@@ -600,6 +600,7 @@ tr.has-compare > td { border-bottom: 0; }
 tr.dup-row > td { padding-top: 0; }
 details.dup-compare { margin: 0 0 6px; padding: 6px 10px; border: 1px dashed var(--border); border-radius: var(--radius-sm); }
 details.dup-compare > summary { cursor: pointer; font-size: .82rem; }
+.tside-decide { gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
 .cmp { display: grid; grid-template-columns: minmax(5.5em, max-content) repeat(var(--n), minmax(0, 1fr)); gap: 4px 12px; margin: 8px 0 4px; font-size: .82rem; align-items: start; }
 .cmp > div { min-width: 0; overflow-wrap: anywhere; }
 .cmp-k { color: var(--ink-2); font-size: .74rem; font-weight: 600; padding-top: 1px; }

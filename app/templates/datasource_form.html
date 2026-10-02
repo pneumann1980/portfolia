@@ -83,6 +83,14 @@
     <div class="fact"><div class="k">Angelegt</div><div class="v">{{ ds.created_at|datetime_de }}</div></div>
     {% if ds.last_error %}<div class="fact" style="grid-column:1/-1"><div class="k">Letzter Fehler{% if ds.last_error_at %} · {{ ds.last_error_at|datetime_de }}{% endif %}</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
   </div>
+  {% if acct_sug %}{% set sg = acct_sug %}
+  <div class="alert warn" style="margin-top:10px" id="konto"><span class="icon">!</span><div><b>Konto laut Abgleich:</b> Der kuratierte Import führt {{ sg.matches }} von {{ sg.total }} gefundenen Vorgängen dieser Quelle unter <b>„{{ sg.account }}“</b>{% if sg.sides %} (davon {{ sg.sides }} als Seite eines Transfers – gleiche Menge, ohne gemeinsamen Hash, z. B. verzögerte Auszahlung einer Börse){% endif %}; diese Quelle bucht auf „{{ ds.account }}“ – vermutlich dasselbe Wallet unter zwei Namen.
+    {% if sg.used %}Auf „{{ ds.account }}“ gibt es {{ sg.used }} Buchung{{ 'en' if sg.used != 1 }} – sie bleiben dort (bei Bedarf einzeln anpassen bzw. unter <a href="/journal/abgleich">Abgleich mit dem Import</a> entscheiden); künftige Vorgänge gehen auf das neue Konto.{% endif %}
+    <form method="post" action="/settings/datasources/{{ ds.id }}/account-adopt" class="inline" data-confirm="Konto dieser Quelle auf „{{ sg.account }}“ umstellen? Offene Prüf-Stapel folgen, übernommene Buchungen bleiben auf „{{ ds.account }}“ (zurücknehmbar)."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ sg.account }}"><button class="btn sm" type="submit">Konto „{{ sg.account }}“ übernehmen</button></form></div></div>
+  {% elif acct_sw and not acct_sw.undone and acct_sw.to == ds.account %}
+  <div class="alert info" style="margin-top:10px" id="konto"><span class="icon">i</span><div>Konto {{ 'automatisch' if acct_sw.auto else '' }} von „{{ acct_sw['from'] }}“ auf „{{ acct_sw.to }}“ umgestellt{% if acct_sw.at %} ({{ acct_sw.at|datetime_de }}){% endif %}.
+    <form method="post" action="/settings/datasources/{{ ds.id }}/account-undo" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Rückgängig</button></form></div></div>
+  {% endif %}
   {% set cov = ds.coverage %}
   {% if cov %}
   <details class="box" style="margin-top:10px" {% if not cov.complete %}open{% endif %}><summary>Abdeckung des letzten Abrufs {% if cov.complete %}<span class="badge good">vollständig</span>{% else %}<span class="badge warn">unvollständig</span>{% endif %}</summary>

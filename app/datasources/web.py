@@ -92,7 +92,9 @@ def _form_page(request: Request, data: dict[str, Any], errors: list[str], sid: i
                   script_types=SCRIPT_TYPES, gap_default=GAP_DEFAULT, groups=groups,
                   provider_keys={k["id"]: k for k in svc.provider_keys()},
                   holdings=svc.holdings(ds) if ds is not None and (ds.is_wallet or svc.balances(int(ds.id))) else None,
-                  outdated=svc.outdated(int(ds.id)) if ds is not None else 0, quality=_quality(ctx, ds))
+                  outdated=svc.outdated(int(ds.id)) if ds is not None else 0, quality=_quality(ctx, ds),
+                  acct_sug=svc.account_suggestion(ds) if ds is not None else None,
+                  acct_sw=svc.account_switch(int(ds.id)) if ds is not None else None)
 
 
 def _quality(ctx: Any, ds: Any) -> Any:
@@ -168,6 +170,30 @@ def make_router() -> APIRouter:
         if errors:
             return _form_page(request, _safe_echo(data), errors, sid, status_code=400)
         return _back(request, _list_url(sid, msg="Änderungen gespeichert."))
+
+    @router.post("/settings/datasources/{sid}/account-adopt")
+    async def account_adopt(request: Request, sid: int) -> Response:
+        """Konto laut Abgleich übernehmen (ohne Neuabruf): offene Prüf-Stapel folgen, übernommene Buchungen bleiben
+        auf ihrem Konto; zurücknehmbar."""
+        svc = datasource_service(get_ctx(request))
+        if svc.get(sid) is None:
+            raise HTTPException(404)
+        f = await request.form()
+        errs = await run_in_threadpool(svc.switch_account, sid, str(f.get("account") or ""))
+        if errs:
+            return _back(request, _detail_url(sid, error=" ".join(errs)) + "#konto")
+        return _back(request, _detail_url(sid, msg="Konto umgestellt – offene Prüf-Stapel folgen, bereits übernommene "
+                                                   "Buchungen bleiben auf ihrem Konto.") + "#konto")
+
+    @router.post("/settings/datasources/{sid}/account-undo")
+    async def account_undo(request: Request, sid: int) -> Response:
+        svc = datasource_service(get_ctx(request))
+        if svc.get(sid) is None:
+            raise HTTPException(404)
+        errs = await run_in_threadpool(svc.undo_account_switch, sid)
+        if errs:
+            return _back(request, _detail_url(sid, error=" ".join(errs)) + "#konto")
+        return _back(request, _detail_url(sid, msg="Konto-Umstellung zurückgenommen.") + "#konto")
 
     @router.post("/settings/datasources/{sid}/key")
     async def set_key(request: Request, sid: int) -> Response:

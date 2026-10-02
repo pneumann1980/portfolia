@@ -102,6 +102,8 @@ class Snapshot:
     import_ids: frozenset[str] = frozenset()
     max_age: dict[str, int | None] = field(default_factory=dict)  # crypto | security → Tage (None = unbegrenzt)
     journal_dups: dict[str, list[str]] = field(default_factory=dict)  # manuelle Buchung → ähnliche Import-Buchungen
+    # App-Zu-/Abgang → Seite eines Import-Transfers (verzögert bzw. anderer Kontoname, app.csvimport.transfer_side)
+    journal_sides: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     settings: Any = None
     base: Portfolio | None = None  # kuratierter Import ohne Änderungen in der App (Soll-Bestände beziehen sich darauf)
     saved_symbols: dict[str, str | None] = field(default_factory=dict)  # gespeicherte Symbol-Zuordnungen (csv_symbol)
@@ -139,7 +141,10 @@ def collect(ctx: Any, now: datetime | None = None) -> Snapshot:
     try:
         from app.journal.service import journal_service
 
-        snap.journal_dups = journal_service(ctx).duplicates(ctx.recorded_portfolio())
+        js = journal_service(ctx)
+        recorded = ctx.recorded_portfolio()
+        snap.journal_dups = js.duplicates(recorded)
+        snap.journal_sides = js.transfer_sides(recorded)
     except Exception as e:  # Journal-Modul optional
         log.debug("Journal-Dubletten nicht verfügbar: %s", e)
     resolver = None

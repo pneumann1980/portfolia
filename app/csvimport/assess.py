@@ -66,6 +66,7 @@ BASIS_LABEL = {
     "file_dup": "doppelte Zeile in der Datei",
     "sig": "gleiche Assets, Mengen und Zeitpunkt",
     "transfer_leg": "Seite eines erfassten Transfers",
+    "transfer_leg_acc": "Seite eines erfassten Transfers unter anderem Kontonamen",
     "same_qty": "gleiche Menge auf demselben Konto",
     "reconstructed": "nahe einer rekonstruierten Buchung",
     "event_part": "Teil eines bereits vorhandenen Vorgangs",
@@ -106,6 +107,8 @@ PRIORITY_REASON = {
 }
 TIME_MINOR_S = 15 * 60  # geringe Zeitabweichung (Erfassung vs. Ausführung)
 TRANSFER_MINOR_S = 6 * 3600  # Transferseiten: Auslösung und Gutschrift liegen auseinander
+TRANSFER_BASES = frozenset({"transfer_leg", "transfer_leg_acc"})  # Treffer auf eine Transferseite (transfer_side.py)
+TRANSFER_VALUE_REL = Decimal("0.15")  # Transferseite: Kursbewegung zwischen Auslösung und Gutschrift (bis 7 Tage)
 ROUND_REL = Decimal("0.0001")  # Rundungsdifferenz (0,01 %)
 
 
@@ -404,7 +407,10 @@ class _Acc:
         return [x for x in self.diff if x["sev"] == "relevant"]
 
 
-def _cmp_time(acc: _Acc, new: Book, old: Book, role: str) -> float | None:
+def _cmp_time(acc: _Acc, new: Book, old: Book, role: str, delayed_ok: bool = False) -> float | None:
+    """Zeitpunkt vergleichen. ``delayed_ok``: Zugangsseite eines erfassten Transfers – eine spätere Gutschrift
+    (verzögerte Auszahlung, Fenster laut :mod:`app.csvimport.transfer_side`) ist kein Widerspruch, und ihr Zeitpunkt
+    ergänzt den Transfer, statt dessen Zeitpunkt (Auslösung) zu ersetzen."""
     if new.ts is None or old.ts is None:
         acc.d("ts", "relevant", "Zeitpunkt fehlt auf einer Seite")
         return None
@@ -430,9 +436,15 @@ def _cmp_time(acc: _Acc, new: Book, old: Book, role: str) -> float | None:
     elif role in ("out", "in") and a <= TRANSFER_MINOR_S:
         acc.d("ts", "minor", f"Zeitpunkt {_span_text(a)} abweichend – bei Transfers liegen Auslösung und "
                              f"Gutschrift auseinander ({when})")
+    elif role == "in" and delayed_ok and sec < 0:
+        acc.d("ts", "minor", f"Gutschrift {_span_text(a)} nach der Auslösung des Transfers – verzögerte Auszahlung "
+                             f"bzw. Bestätigung ({when})")
     else:
         acc.d("ts", "relevant", f"Zeitpunkt {_span_text(a)} abweichend ({when})")
-    if a >= 60:
+    if a >= 60 and role == "in" and delayed_ok and sec < 0:
+        acc.a("ts", f"Zeitpunkt der Gutschrift {fmt_de_datetime(new.ts)} (laut {KIND_LABEL.get(new.kind, new.kind)};"
+                    " der Transfer behält den Zeitpunkt der Auslösung)")
+    elif a >= 60:
         side = preferred("ts", new.kind, old.kind, old.manual)
         if side == "new":
             acc.a("ts", f"Zeitpunkt der {KIND_LABEL.get(new.kind, new.kind)} {fmt_de_datetime(new.ts)}", "new")
@@ -533,7 +545,7 @@ def _cmp_fee(acc: _Acc, new: Book, old: Book) -> bool:
     return explained
 
 
-def _cmp_value(acc: _Acc, new: Book, old: Book) -> None:
+def _cmp_value(acc: _Acc, new: Book, old: Book, role: str = "same") -> None:
     nv, ov = new.value_eur, old.value_eur
     vkind = _value_src_kind(new.value_src)
     origin = {"source": f"laut {KIND_LABEL.get(new.kind, new.kind)}", "manual": "Eingabe",
@@ -555,6 +567,10 @@ def _cmp_value(acc: _Acc, new: Book, old: Book) -> None:
     text = f"EUR-Wert neu {_e(nv)} ({origin}), vorhanden {_e(ov)} – {_pct(nv, ov)}"
     if dv <= tol_abs or dv / max(nv, ov) <= tol_rel:
         acc.d("value", "minor", text)
+    elif role in ("in", "out") and dv / max(nv, ov) <= TRANSFER_VALUE_REL:
+        # Seite eines Transfers: Wert nur informativ (der Einstand wandert mit), oft zu anderen Zeitpunkten bewertet
+        # (verzögerte Gutschrift) – grobe Abweichungen deuten dagegen auf eine falsche Kurs-/Asset-Zuordnung
+        acc.d("value", "minor", text + " – Transferseite, zu verschiedenen Zeitpunkten bewertet (nur informativ)")
     else:
         acc.d("value", "relevant", text + " – Kurs- bzw. Asset-Zuordnung prüfen")
     if vkind == "source":
@@ -627,6 +643,28 @@ def _neu(rc: Any) -> dict[str, Any]:
             "why": "kein Gegenstück im Bestand gefunden (Kennung, Hash, Menge/Zeit, Transfers)"}
 
 
+def _transfer_side(acc: _Acc, rc: Any, new: Book, old: Book, target: str, role: str, basis: str) -> None:
+    """Zu- bzw. Abgang als Seite eines erfassten Transfers: Belege (Zeitpunkt laut Notiz) und – unter anderem
+    Kontonamen – die Korrekturvorschläge (nie automatisch)."""
+    side = getattr(rc, "side", None) or {}
+    if side.get("note_time"):
+        from app.util.timeutil import parse_iso
+
+        nt = parse_iso(side["note_time"])
+        if nt is not None:
+            acc.ok.append(f"Zeitpunkt der Gutschrift laut Notiz von {target}: {fmt_de_datetime(nt)}")
+    if basis != "transfer_leg_acc":
+        return
+    mine = (new.inn if role == "in" else new.out) or ("", "", Decimal(0))
+    theirs = (old.inn if role == "in" else old.out) or ("", "", Decimal(0))
+    what = "Zugangsseite" if role == "in" else "Abgangsseite"
+    acc.fix.append(f"Nicht zusätzlich buchen: mit {target} verknüpfen ({what} des Transfers) – sonst zählt die Menge "
+                   "doppelt und der Einstand der Gegenseite ginge verloren")
+    if mine[0] and theirs[0]:
+        acc.fix.append(f"Konten angleichen: „{mine[0]}“ und „{theirs[0]}“ bezeichnen vermutlich dasselbe Wallet – "
+                       f"Konto der Datenquelle auf „{theirs[0]}“ umstellen bzw. im kuratierten Import vereinheitlichen")
+
+
 def assess(rc: Any, books: Books, new_kind: str, source: str) -> dict[str, Any] | None:
     """Bewertung einer offenen Prüfzeile (oder None, wenn nichts zu bewerten ist)."""
     if rc.status == "ignored" or not rc.open:
@@ -658,7 +696,7 @@ def assess(rc: Any, books: Books, new_kind: str, source: str) -> dict[str, Any] 
         state = {"deleted": "gelöscht", "reverted": "rückgängig gemacht", "replaced": "ersetzt"}[old.status]
         acc.d("struct", "relevant", f"vorhandene Buchung {target} ist {state}")
     # Felder
-    seconds = _cmp_time(acc, new, old, role)
+    seconds = _cmp_time(acc, new, old, role, delayed_ok=basis in TRANSFER_BASES)
     if role == "part":
         acc.ok.append("Teil desselben Vorgangs")
     else:
@@ -681,8 +719,10 @@ def assess(rc: Any, books: Books, new_kind: str, source: str) -> dict[str, Any] 
             _cmp_leg(acc, "Zugang", "inn", new.inn, old.inn)
             if new.inn and old.inn and not old.inn[0] and new.inn[0]:
                 acc.a("counter", f"Gegenkonto {new.inn[0]}")
-        _cmp_value(acc, new, old)
+        _cmp_value(acc, new, old, role)
     _cmp_hash(acc, new, old)
+    if basis in TRANSFER_BASES:
+        _transfer_side(acc, rc, new, old, target, role, basis)
     if basis not in SAME_SOURCE and new.kind != old.kind:
         acc.a("id", f"Kennung der {KIND_LABEL.get(new.kind, new.kind)}", None)
     # Ergebnis
@@ -700,7 +740,7 @@ def assess(rc: Any, books: Books, new_kind: str, source: str) -> dict[str, Any] 
     # „hoch“ nur bei kleinem Zeitabstand; ein Versatz um ganze Stunden (Zeitzone) bleibt „mittel“ – ebenso runde
     # Mengen ohne Kennung (zwei gleiche runde Beträge sind häufiger Zufall als krumme)
     close = seconds is None or seconds <= TIME_MINOR_S or (role in ("out", "in") and seconds <= 2 * 3600)
-    if basis in ("sig", "same_qty", "transfer_leg") and seconds is not None and seconds > 60 and _round(new):
+    if basis in ("sig", "same_qty", *TRANSFER_BASES) and seconds is not None and seconds > 60 and _round(new):
         close = False
     if basis in IDENTITY:
         conf = "sicher" if not relevant and not fee_conflict else "hoch"

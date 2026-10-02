@@ -896,6 +896,48 @@ nicht belegt – geprüft wird, was die Buchung im Ledger bewirkt. Werte der neu
 die vorhandene Buchung übernommen (Korrekturvorschlag + „Bearbeiten“). Der Vollständigkeitsbericht braucht nach dem
 Update einen vollständigen Neuabruf; Lücken vor dem ersten API-Vorgang sind grundsätzlich nicht prüfbar.
 
+## M19.1 – Transferseite bei verzögerter Auszahlung und anderem Kontonamen (0.17.1)
+
+Anlass (02.10.2026, Meldung des Auftraggebers): Ein Wallet-Zugang der Bitcoin-Datenquelle wurde als neue Buchung
+übernommen, obwohl der kuratierte Import denselben Vorgang als Transfer „Börse → Wallet“ führt – die Börse hatte
+mehr als einen Tag verzögert ausgezahlt. Diagnose: Die Verzögerung lag im bisherigen Fenster (72 h); die Erkennung
+scheiterte am **Kontonamen** (Import: Wallet-Name des Steuertools, Datenquelle: eigener Name) – sie verlangte
+dasselbe Konto.
+Gebuchte App-Buchungen prüfte der Journal-Abgleich nur gegen Buchungen gleicher Art (Zugang ≠ Transfer).
+
+**Entscheidungen**
+
+* Ein Regelwerk für Prüf-Stapel, Buchungsliste, Abgleich mit dem Import und Datenqualität:
+  `app/csvimport/transfer_side.py`. Gleiches Konto wie bisher (± 0,5 %); anderer Kontoname nur bei exakt gleicher
+  Menge, ohne Fiat, nicht auf dem Absenderkonto und nur, wenn das Konto des Transfers nicht von einer eigenen
+  Datenquelle geführt wird. Zugänge bis 72 h nach dem Transfer, bei exakter, unverwechselbarer Menge (≥ 6
+  signifikante Stellen) bis 7 Tage; Abgänge ± 2 h; verschiedene Hashes nie. Je Transferseite ein Treffer.
+* Prüf-Stapel: Treffer → mögliche Dublette (`transfer_leg` bzw. `transfer_leg_acc`), nie automatisch übernommen;
+  Bewertung „Widerspruch: Konto“ (Sicherheit mittel), spätere Gutschrift kein Zeitwiderspruch, EUR-Wert einer
+  Transferseite bis 15 % gering (verschiedene Bewertungszeitpunkte), Zeitpunkt laut Notiz der Transfer-Buchung als
+  Beleg; Korrekturvorschläge „verknüpfen“ und „Konten angleichen“. Auswertungsstand 6: offene Stapel werden beim
+  Öffnen **und vor jeder automatischen Übernahme** neu bewertet.
+* Gebuchte App-Buchungen: „Transferseite?“ in der Buchungsliste (Gegenüberstellung, *Import-Transfer gilt* / *Keine
+  Dublette*), Kandidat unter *Abgleich mit dem Import*, Befund in der Datenqualität mit Vorschau und Rückgängig
+  (vorhandene Lösung „im Import enthalten“; „Import-Buchung ausblenden“ entfällt hier, weil es auch die Auszahlung
+  der Börse entfernte). Entscheidungen werden in `journal_import_link` gespeichert – keine Migration.
+* Konto der Datenquelle: Transferseiten unter anderem Kontonamen (offen, verknüpft, gebucht, entschieden) gehen als
+  Beleg in „Konto laut Abgleich“ ein – Umstellung per Klick ohne Neuabruf, zurücknehmbar; automatisch nur aus dem
+  Hash-Abgleich wie bisher.
+
+**Tests:** Regeln (Fenster, exakte/unverwechselbare/runde Menge, Konto, Hash, Datenquelle, Fiat, Absenderkonto, PF-T,
+Abgangsseite mit Gebühr, Vorrang gleiches Konto, Notiz-Beleg), Wallet-Datenquelle mit automatischer Übernahme
+(Regressionsfall strukturgleich, andere Zahlen), Verknüpfen, bereits gebuchter Zugang (Buchungsliste, Abgleich,
+Datenqualität mit Vorschau, Übernehmen, Rückgängig), Entscheidung „keine Dublette“, Konto-Vorschlag ohne
+automatische Umstellung. Lokal (nicht im Repository) mit dem echten Export und einem nachgestellten App-Zugang
+geprüft: Treffer wie gemeldet, keine Zufallstreffer bei rund 5 000 Zu-/Abgängen des Imports.
+
+**Grenzen:** Ohne gemeinsamen Hash bleibt die Zuordnung ein begründeter Verdacht (Entscheidung beim Nutzer). Bereits
+gebuchte App-Buchungen werden nicht verschoben: Nach „Import-Transfer gilt“ liegen spätere Bewegungen der
+Datenquelle weiter auf deren Konto, bis die Konten angeglichen sind (Konto der Datenquelle bzw. einzelne Buchungen
+bearbeiten, oder im kuratierten Import vereinheitlichen). Auszahlungen, die später als 7 Tage gutgeschrieben werden,
+und Teilgutschriften (andere Menge) werden nicht als Transferseite erkannt.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
@@ -930,6 +972,8 @@ Update einen vollständigen Neuabruf; Lücken vor dem ersten API-Vorgang sind gr
 * **Importprüfung und Reconciliation** (02.10.2026): Stapelverarbeitung mit Vorschau und Rückgängig, Ergänzungen
   ohne Überschreiben, Quellenpriorität, Bitpanda-Vollständigkeit; vorhandene Daten nicht verändern, historische
   Probleme nur als Korrekturvorschlag – siehe M19.
+* **Gekoppelte Buchung bei verzögerter Auszahlung** (02.10.2026): Wallet-Zugang als Seite eines Import-Transfers
+  erkennen – auch verzögert und unter anderem Kontonamen; bereits gebuchte Fälle zur Entscheidung – siehe M19.1.
 
 ## Offene Fragen an den Auftraggeber
 

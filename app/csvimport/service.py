@@ -45,6 +45,7 @@ from typing import Any
 
 from app.csvimport import model as M
 from app.csvimport import reconcile as R
+from app.csvimport import transfer_side as TS
 from app.csvimport.events import derive_event_key, derive_tx_hash, identity_keys, normalize_hash, source_ref_keys
 from app.csvimport.identity import (
     PROVIDER_LABEL,
@@ -97,7 +98,7 @@ STATUS_BADGE = {"new": "good", "known": "", "duplicate": "warn", "before": "", "
                 "unclear": "warn", "committed": "info", "merged": "info", "linked": "info"}
 DONE = ("known", "ignored", "committed", "merged", "linked")  # Zeilen ohne offene Entscheidung
 CLOSED = ("committed", "merged", "linked")  # abgeschlossen: gebucht bzw. mit vorhandener Buchung verknüpft
-EVAL_VERSION = 5  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
+EVAL_VERSION = 6  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
 RELEVANT = ("new", "invalid", "unclear", "duplicate")  # zu übernehmen bzw. zu entscheiden
 BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial": "teilweise übernommen",
                 "committed": "übernommen", "reverted": "rückgängig gemacht"}
@@ -388,6 +389,7 @@ class RowCtx:
     basis: str | None = None  # Grundlage des Treffers auf vorhandene Buchungen (Erkennungsregel, siehe assess.py)
     roles: dict[str, str] = field(default_factory=dict)  # vorhandene Buchung → Rolle (same | out | in | part)
     match: dict[str, Any] | None = None  # Bewertung des Abgleichs (Ergebnis, Sicherheit, Belege – assess.py)
+    side: dict[str, Any] | None = None  # Seite eines erfassten Transfers (transfer_side.py; nur in der Auswertung)
 
     @property
     def ts(self) -> datetime:
@@ -873,7 +875,7 @@ class CsvImportService:
         seen_ext: dict[str, int] = {}
         for rc in open_rows:
             rc.errors, rc.warnings, rc.dup_of, rc.dup_same_account = [], [], [], False
-            rc.basis, rc.roles, rc.match = None, {}, None
+            rc.basis, rc.roles, rc.match, rc.side = None, {}, None, None
             rc.value_src = rc.fee_src = None
             m = recon.rows.get(rc.idx)
             rc.recon = m.as_dict() if m is not None else None
@@ -996,6 +998,17 @@ class CsvImportService:
             counts[rc.status] += 1
         return dict(counts)
 
+    def ensure_current(self, bid: int) -> bool:
+        """Offenen Stapel neu bewerten, wenn er mit einer älteren Auswertung bewertet wurde (``EVAL_VERSION``) – vor
+        dem Anzeigen und vor jeder automatischen Übernahme, damit nie nach überholten Regeln gebucht wird."""
+        b = self.batch(bid)
+        if b is None or b["status"] not in ("preview", "partial"):
+            return False
+        if json.loads(b["summary_json"] or "{}").get("eval_v") == EVAL_VERSION:
+            return False
+        self.evaluate(bid)
+        return True
+
     def _alive(self, pf: Portfolio | None) -> set[str]:
         """Buchungen, auf die eine Verknüpfung zeigen darf: erfasste Buchungen, Import, App-Buchungen (aktiv bzw. in
         einem Transfer zusammengeführt)."""
@@ -1074,6 +1087,16 @@ class CsvImportService:
             }
         else:
             summ.pop("recon", None)
+        # Konten der Import-Transfers, deren Seite eine Zeile unter anderem Kontonamen ist (Hinweis auf dasselbe
+        # Wallet unter zwei Namen – Grundlage des Konto-Vorschlags, nie der automatischen Umstellung)
+        sides: dict[str, int] = defaultdict(int)
+        for rc in rows:
+            if rc.open and rc.basis == "transfer_leg_acc" and rc.side and rc.side.get("account"):
+                sides[str(rc.side["account"])] += 1
+        if sides:
+            summ["side_accounts"] = dict(sides)
+        else:
+            summ.pop("side_accounts", None)
         self.db.x("UPDATE csv_batch SET summary_json=? WHERE id=?", (json.dumps(summ, ensure_ascii=False),
                                                                      batch["id"]))
 
@@ -1363,25 +1386,22 @@ class CsvImportService:
         if pf is None or not rows:
             return
         index: dict[tuple[str, str], list[Tx]] = defaultdict(list)
-        transfers: dict[str, list[Tx]] = defaultdict(list)
         for t in pf.txs:
             if t.origin == "journal" and (t.source or "") == source:
                 continue  # gleiche Quelle: Erkennung über die Quellkennung
             index[(t.from_asset or "", t.to_asset or "")].append(t)
-            # erfasste Transfers (Import, Journal) – nicht die aus abgeglichenen Paaren entstandenen (PF-T): deren
-            # Zu-/Abgänge sind über ihre Kennungen bekannt, ein neuer Vorgang ist ein anderer
-            if t.type == "transfer" and t.from_asset and t.from_asset == t.to_asset and \
-                    not (t.origin == "journal" and t.source == "transfer"):
-                transfers[t.from_asset].append(t)
         for lst in index.values():
             lst.sort(key=lambda t: t.ts)
         hashes = self._hash_lookup()
-        used: set[str] = set()
+        # erfasste Transfers (Import, Journal) – nicht die aus abgeglichenen Paaren entstandenen (PF-T): deren
+        # Zu-/Abgänge sind über ihre Kennungen bekannt, ein neuer Vorgang ist ein anderer
+        transfers = TS.TransferIndex(pf.txs, hashes, TS.managed_accounts(self.db),
+                                     keep=lambda t: not (t.origin == "journal" and (t.source or "") == source))
         for rc in rows:
             row = rc.row
             if row is None:
                 continue
-            if self._covered_by_transfer(rc, transfers, used, hashes):
+            if transfers and self._covered_by_transfer(rc, transfers):
                 continue
             key = (row["from_asset"], row["to_asset"])
             cands = index.get(key)
@@ -1416,17 +1436,7 @@ class CsvImportService:
 
     def _hash_lookup(self) -> Callable[[Tx], set[str]]:
         """Transaktions-Hashes einer Buchung: Import aus Notiz/Quellkennung, App-Buchungen aus ``tx_hash``."""
-        journal: dict[str, str] = {r["tx_id"]: h for r in self.db.q(
-            "SELECT tx_id, tx_hash FROM journal_tx WHERE tx_hash IS NOT NULL AND tx_hash <> ''")
-            if (h := normalize_hash(r["tx_hash"]))}
-
-        def get(t: Tx) -> set[str]:
-            out = R.hashes_in(t.note, t.source_ref)
-            if t.tx_id in journal:
-                out.add(journal[t.tx_id])
-            return out
-
-        return get
+        return TS.hash_lookup(self.db)
 
     def _same_qty(self, rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
         """Gleiche exakte Menge desselben Assets auf demselben Konto und derselben Seite (Zu- bzw. Abgang) innerhalb
@@ -1562,48 +1572,36 @@ class CsvImportService:
                 break
 
     @staticmethod
-    def _covered_by_transfer(rc: RowCtx, transfers: Mapping[str, list[Tx]], used: set[str],
-                             hashes: Callable[[Tx], set[str]]) -> bool:
-        """Zu- bzw. Abgang, der bereits Teil eines erfassten Transfers ist (z. B. Börsen-Auszahlung → Wallet, im
-        kuratierten Import oder im Journal als Transfer gebucht) → mögliche Dublette auf demselben Konto: ohne
-        Abwahl zählte die Menge doppelt. Abgänge auch bei anders dargestellter Gebühr (Betrag mit bzw. ohne Gebühr,
-        gleicher Gesamtabgang); verschiedene Blockchain-Transaktionen nie."""
+    def _covered_by_transfer(rc: RowCtx, transfers: TS.TransferIndex) -> bool:
+        """Zu- bzw. Abgang, der bereits Seite eines erfassten Transfers ist (z. B. Börsen-Auszahlung → Wallet, im
+        kuratierten Import oder im Journal als Transfer gebucht) → mögliche Dublette, nie automatisch übernommen:
+        ohne Abwahl zählte die Menge doppelt. Auch bei verzögerter Gutschrift (bis 7 Tage bei exakt gleicher,
+        unverwechselbarer Menge) und – nur bei exakt gleicher Menge – unter anderem Kontonamen (dasselbe Wallet in
+        Steuertool und Datenquelle verschieden benannt); Regeln in :mod:`app.csvimport.transfer_side`. Abgänge auch
+        bei anders dargestellter Gebühr; verschiedene Blockchain-Transaktionen nie."""
         row = rc.row
         assert row is not None
-        if row["type"] == "deposit" and not row["tag"] and row["to_asset"]:
-            asset, acc, qty, side = row["to_asset"], row["to_account"], _row_d(row["to_qty"]), "to"
-        elif row["type"] == "withdrawal" and not row["tag"] and row["from_asset"]:
-            asset, acc, qty, side = row["from_asset"], row["from_account"], _row_d(row["from_qty"]), "from"
-        else:
+        p = TS.probe_of_row(row, rc.ts, normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id)))
+        if p is None:
             return False
-        if not qty:
+        hit = transfers.find(p)
+        if hit is None:
             return False
-        fee = _row_d(row["fee_qty"]) if side == "from" and row["fee_asset"] == asset else None
-        h = normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id))
-        for t in sorted(transfers.get(asset, ()), key=lambda t: abs((t.ts - rc.ts).total_seconds())):
-            t_acc = t.to_account if side == "to" else t.from_account
-            t_qty = t.to_qty if side == "to" else t.from_qty
-            if t_acc != acc or not t_qty or t.tx_id in used:
-                continue
-            if side == "to":  # Eingang kommt nach dem Abgang (Netzwerkgebühr: Zugang ≤ Abgang)
-                ok_time = t.ts - TRANSFER_BEFORE <= rc.ts <= t.ts + TRANSFER_AFTER
-                ok_qty = _qty_eq(qty, t_qty) or bool(t.from_qty and _qty_eq(qty, t.from_qty))
-            else:
-                ok_time = abs((t.ts - rc.ts).total_seconds()) <= TRANSFER_BEFORE.total_seconds()
-                ok_qty = _qty_eq(qty, t_qty) or _fee_variant(qty, fee, t)
-            if not ok_time or not ok_qty:
-                continue
-            if h and (th := hashes(t)) and h not in th:
-                continue  # gleiche Menge, aber eine andere Blockchain-Transaktion
-            used.add(t.tx_id)
-            rc.status, rc.basis = "duplicate", "transfer_leg"
-            rc.dup_of = [t.tx_id]
-            rc.roles = {t.tx_id: "out" if side == "from" else "in"}
-            rc.dup_same_account = True
+        transfers.claim(hit)
+        t = hit.tx
+        rc.status, rc.basis = "duplicate", hit.basis
+        rc.dup_of = [t.tx_id]
+        rc.roles = {t.tx_id: hit.role}
+        rc.dup_same_account = True  # nie als Vorschlag übernehmen – auch nicht unter anderem Kontonamen
+        rc.side = hit.info()
+        if hit.same_account:
             rc.warnings.insert(0, f"bereits als Transfer erfasst: {t.tx_id} ({t.from_account} → {t.to_account})"
-                                  " – nicht erneut übernehmen")
-            return True
-        return False
+                                  + (f", Gutschrift {TS.span_text(hit.delay)} (verzögerte Auszahlung)"
+                                     if hit.delayed else "") + " – nicht erneut übernehmen")
+        else:
+            rc.warnings.insert(0, f"vermutlich {hit.text(p.account)} – dasselbe Wallet unter zwei Kontonamen? "
+                                  "Nicht zusätzlich übernehmen (zählte doppelt): verknüpfen und Konten angleichen")
+        return True
 
     @staticmethod
     def _event_parts(rows: list[RowCtx]) -> None:

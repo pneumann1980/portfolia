@@ -351,17 +351,29 @@ def _import_vs_app(facts: Facts, f: Finding) -> Recommendation | None:
     if not imps or not jrns:
         return None
     rough = bool(d.get("rough"))
+    side = d.get("side") or {}
     j_ids = ", ".join(t.tx_id for t in jrns)
     i_ids = ", ".join(t.tx_id for t in imps)
-    text = (f"Erst prüfen, ob {j_ids} denselben Vorgang abbildet wie {i_ids} (Datum, Menge, Gegenkonto). Nur dann "
-            "als „im Import enthalten“ markieren; sonst als geprüft markieren." if rough else
-            f"{j_ids} als „im Import enthalten“ markieren. Die App-Buchung zählt dann nicht mehr, bleibt aber mit "
-            "Herkunft erhalten – und zählt automatisch wieder, falls ein späterer Import den Vorgang nicht mehr "
-            "enthält. So bleibt der kuratierte Import maßgeblich.")
+    if side:  # Seite eines Import-Transfers (verzögert bzw. anderer Kontoname)
+        acc_j = (jrns[0].to_account if side.get("role") == "in" else jrns[0].from_account) or ""
+        text = (f"Ist {j_ids} die {'Gutschrift' if side.get('role') == 'in' else 'Auszahlung'} des Transfers {i_ids}, "
+                f"als „im Import enthalten“ markieren: Der Transfer zählt (Einstand und Haltedauer wandern mit), die "
+                "App-Buchung nicht mehr – sie bleibt mit Herkunft erhalten."
+                + ("" if side.get("same", True) else
+                   f" Anschließend die Konten angleichen: „{acc_j}“ und „{side.get('account')}“ bezeichnen dann "
+                   "dasselbe Wallet – sonst laufen spätere Bewegungen der Datenquelle weiter auf „"
+                   f"{acc_j}“, während der Bestand des Transfers auf „{side.get('account')}“ liegt."))
+    else:
+        text = (f"Erst prüfen, ob {j_ids} denselben Vorgang abbildet wie {i_ids} (Datum, Menge, Gegenkonto). Nur "
+                "dann als „im Import enthalten“ markieren; sonst als geprüft markieren." if rough else
+                f"{j_ids} als „im Import enthalten“ markieren. Die App-Buchung zählt dann nicht mehr, bleibt aber mit "
+                "Herkunft erhalten – und zählt automatisch wieder, falls ein späterer Import den Vorgang nicht mehr "
+                "enthält. So bleibt der kuratierte Import maßgeblich.")
     opts = [Option("cover", f"{j_ids} als „im Import enthalten“ markieren",
                    f"Verknüpfung App-Buchung ↔ Import-Buchung {imps[0].tx_id} (wie unter Journal → Abgleich); die "
                    "App-Buchung zählt nicht mehr.", recommended=True)]
-    if all(t.origin == "import" for t in imps):
+    # einen Import-Transfer auszublenden entfernte auch dessen andere Seite (z. B. die Auszahlung der Börse)
+    if all(t.origin == "import" for t in imps) and not side:
         opts.append(Option("hide_import", f"Stattdessen {i_ids} ausblenden – die App-Buchung gilt",
                            "; ".join(hide_text(t) for t in imps) + ". Sinnvoll, wenn die App-Buchung genauer ist "
                                                                     "(z. B. Gebühren, Uhrzeit)."))
@@ -369,8 +381,11 @@ def _import_vs_app(facts: Facts, f: Finding) -> Recommendation | None:
     hashes = d.get("hashes") or []
     checks = _hash_checks(facts, [*imps, *jrns], "Explorer: Vorgang ansehen") if hashes else []
     acc = jrns[0].to_account or jrns[0].from_account
-    return Recommendation(text=text, conditional=rough, checks=checks, options=opts,
-                          links=[Link("Journal → Abgleich", "/journal/abgleich"), *_journal_links(acc, None)])
+    if side and not side.get("same", True):
+        checks.append((f"Adresse bzw. Kontoauszug: sind „{acc}“ und „{side.get('account')}“ dasselbe Wallet?", []))
+    return Recommendation(text=text, conditional=rough or bool(side and not side.get("same", True)), checks=checks,
+                          options=opts, links=[Link("Journal → Abgleich", "/journal/abgleich"),
+                                               *_journal_links(acc, None)])
 
 
 def _transfer(facts: Facts, f: Finding) -> Recommendation | None:

@@ -102,6 +102,7 @@ neu bewertet (typisch: mögliche Dublette, Vorschlag „nicht übernehmen“); n
 | 5 | Quellenpriorität: Bearbeitungsreihenfolge, feldbezogener Vorrang, Herkunftskennzeichnung | umgesetzt (Vorschlag, nie automatisch überschrieben) |
 | 6 | Bitpanda-Vollständigkeit: Bericht „nachgewiesen / plausibel / nicht verifizierbar“ | umgesetzt (`app/datasources/quality.py`) |
 | 7 | Feldweises Übernehmen einzelner Werte in die vorhandene Buchung | **offen** – bewusst nicht automatisch; heute über „Bearbeiten“ anhand des Korrekturvorschlags |
+| 8 | Transferseite bei verzögerter Auszahlung bzw. anderem Kontonamen – im Prüf-Stapel und für bereits gebuchte App-Buchungen (0.17.1) | umgesetzt (`app/csvimport/transfer_side.py`, Abschnitt 5) |
 
 Details zu Regeln, Grenzen und Tests: README, Abschnitte „Importprüfung: Abgleich je Zeile, Stapelaktionen,
 Verknüpfen“ und „Vollständigkeit der Historie“; Meilenstein M19 in `docs/MILESTONES.md`.
@@ -128,3 +129,54 @@ Verknüpfen“ und „Vollständigkeit der Historie“; Meilenstein M19 in `docs
 * **Rücknahme der Migration:** Die Tabellen `import_action` und `tx_link` können entfallen; Zeilen mit Status
   `linked` gelten in älteren Versionen wieder als offen (neu bewertet), nach erneutem Update wieder als verknüpft.
   Buchungen sind nicht betroffen.
+
+---
+
+## 5 · Transferseiten: verzögerte Auszahlung, anderer Kontoname (0.17.1)
+
+**Fall.** Kuratierter Import: Transfer „Börse → Wallet“ (Zeitpunkt der Auszahlung, Wallet-Name des
+Steuertools, kein Hash, Notiz mit dem Zeitpunkt der Gutschrift). Wallet-Datenquelle unter eigenem Kontonamen:
+Zugang derselben Menge mehr als einen Tag später. Bis 0.17.0 wurde der Zugang als neu übernommen (mit automatischer
+Übernahme still) – die Menge zählte doppelt, und als Zugang hätte sie einen neuen Einstand begonnen. Ursache war
+nicht die Verzögerung (im Fenster von 72 h), sondern die Bedingung „gleiches Konto“; der Journal-Abgleich verglich
+nur gleiche Arten.
+
+**Regeln** (ein Modul für alle Stellen, `app/csvimport/transfer_side.py`):
+
+| | gleiches Konto | anderer Kontoname |
+|---|---|---|
+| Menge | ± 0,5 %, Gebühr netto/brutto | exakt (Rundung der Quellen: 10⁻⁶ relativ, mind. 10⁻⁸) |
+| Zugang | −2 h … +72 h; exakt und ≥ 6 signifikante Stellen: bis +7 Tage | ebenso |
+| Abgang | ± 2 h | ± 2 h |
+| nie | verschiedene Hashes; Erträge/Einordnungen; Paar-Transfers der App (PF-T) | zusätzlich Fiat, Zugang auf dem Absenderkonto, Zielkonto mit eigener Datenquelle |
+
+Je Transferseite höchstens ein Treffer (gleiches Konto vor anderem, exakt vor ungefähr, dann nächster Zeitpunkt);
+bereits als „Import-Buchung gilt“ entschiedene Seiten sind vergeben, „keine Dublette“ schließt das Paar aus.
+
+**Wo es wirkt.**
+
+| Stelle | Wirkung | Entscheidung |
+|---|---|---|
+| Prüf-Stapel (CSV, Datenquelle) | mögliche Dublette, nie automatisch übernommen; Abgleich „Widerspruch: Konto“, Belege (Notiz-Zeitpunkt), Korrekturvorschläge | „verknüpfen“ (nicht buchen) oder ausdrücklich übernehmen |
+| Buchungsliste | „Transferseite?“ mit Gegenüberstellung | *Import-Transfer gilt* / *Keine Dublette* |
+| Abgleich mit dem Import | Kandidat mit Begründung | wie bisher, gespeichert in `journal_import_link` |
+| Datenqualität | Befund „Zugang … doppelt?“ mit Szenario | „im Import enthalten“ mit Vorschau, Übernehmen, Rückgängig |
+| Datenquelle | „Konto laut Abgleich“ (Belege: Hash und Transferseiten) | Umstellung per Klick ohne Neuabruf, zurücknehmbar |
+
+**Annahmen und Grenzen.**
+
+* Ohne gemeinsamen Hash ist die Zuordnung ein begründeter Verdacht; deshalb nie automatisch. Lokal gegen den echten
+  Export geprüft (nicht im Repository): der gemeldete Fall (App-Zugang nach dem Screenshot nachgestellt) wird
+  gefunden, unter rund 5 000 Zu-/Abgängen des Imports
+  kein Zufallstreffer – auch nicht, wenn jeder als „anderes Konto“ geprüft wird.
+* „Import-Transfer gilt“ nimmt die App-Buchung aus der Rechnung, verschiebt aber nichts: Heißt dasselbe Wallet in
+  Import und Datenquelle verschieden, liegen spätere Bewegungen der Datenquelle weiter auf deren Konto (Bestand je
+  Konto aufgeteilt, ggf. negativ). Konten angleichen: Konto der Datenquelle umstellen (neue Vorgänge), gebuchte
+  App-Buchungen einzeln bearbeiten oder im kuratierten Import vereinheitlichen. Ein Werkzeug zum Zusammenführen von
+  Konten gibt es nicht.
+* Die automatische Konto-Umstellung bleibt an den Hash-Abgleich gebunden (≥ 3 Treffer, ≥ 90 %, Konto ohne
+  Buchungen); Transferseiten sind nur Belege für den Vorschlag.
+* Nicht erkannt: Gutschriften später als 7 Tage, Teilgutschriften (andere Menge, z. B. Netzwerkgebühr beim
+  Empfänger abgezogen, aber nicht im Import geführt), runde Mengen nach mehr als 72 h.
+* Auswertungsstand 6: offene Prüf-Stapel werden beim Öffnen und vor jeder automatischen Übernahme neu bewertet;
+  Status können sich dabei ändern (Zugang → mögliche Dublette). Keine Migration.

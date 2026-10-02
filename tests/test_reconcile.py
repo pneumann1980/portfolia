@@ -180,7 +180,7 @@ def test_account_switch_undo_and_manual_adopt(client, evm, config):
     # zurückgenommen: kein erneutes automatisches Umstellen, stattdessen Vorschlag mit einem Klick
     page = client.get(f"/journal/csv/{bid}").text
     assert svc.get(sid).account == "Ledger ETH"
-    assert "führt 5 von 5 gefundenen Transaktionen unter <b>„MetaMask (ETH)“</b>" in page
+    assert "führt 5 von 5 gefundenen Vorgängen unter <b>„MetaMask (ETH)“</b>" in page
     assert "Konto „MetaMask (ETH)“ übernehmen" in page
     (usdc_out,) = by_hash(client, bid)["09"]
     assert usdc_out.row["from_account"] == "Ledger ETH"

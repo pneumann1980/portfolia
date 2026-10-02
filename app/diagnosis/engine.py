@@ -306,8 +306,8 @@ def diagnose(snap: Snapshot) -> Report:
     idx = None
     if snap.pf is not None and snap.ledger is not None:
         idx = _Index(snap)
-        for rule in (_dup_same_hash, _dup_same_qty, _dup_same_id, _transfers, _assets, _history, _estimated,
-                     _prices, _migrations):
+        for rule in (_dup_same_hash, _dup_same_qty, _dup_same_id, _dup_transfer_side, _transfers, _assets, _history,
+                     _estimated, _prices, _migrations):
             findings += rule(idx, stats)
         rows, hf = _holdings(idx, stats)
         holdings = rows
@@ -676,6 +676,58 @@ def _dup_same_id(idx: _Index, stats: dict[str, int]) -> list[Finding]:
         f.txs = [idx.ref(j), *(idx.ref(t) for t in imps)]
         out.append(idx.attach(f))
     stats["same_id"] = len(out)
+    return out
+
+
+def _dup_transfer_side(idx: _Index, stats: dict[str, int]) -> list[Finding]:
+    """App-Zu- bzw. -Abgang (z. B. aus einer Wallet-Datenquelle), der einer Seite eines Import-Transfers entspricht –
+    auch verzögert gutgeschrieben (Auszahlung der Börse Stunden bis Tage später) und unter anderem Kontonamen
+    (Regeln: :mod:`app.csvimport.transfer_side`). Ohne Entscheidung zählt die Menge doppelt."""
+    out: list[Finding] = []
+    for jid, hits in sorted(idx.snap.journal_sides.items()):
+        j = idx.by_id.get(jid)
+        h = hits[0] if hits else None
+        t = idx.by_id.get(h["tx"]) if h else None
+        if j is None or t is None or h is None or (jid in idx.dup_txs and t.tx_id in idx.dup_txs):
+            continue
+        inn = h["role"] == "in"
+        aid = (j.to_asset if inn else j.from_asset) or ""
+        q = (j.to_qty if inn else j.from_qty) or ZERO
+        acc_j = (j.to_account if inn else j.from_account) or ""
+        side = "Zugangsseite" if inn else "Abgangsseite"
+        status = "wahrscheinlich" if h.get("note_time") or (h["same"] and h["exact"]) else "verdacht"
+        evidence = [f"Menge {'exakt ' if h['exact'] else 'nahezu '}gleich ({_q(q)} {aid})",
+                    f"Abstand: {_dur(abs(j.ts - t.ts))} {'nach' if j.ts >= t.ts else 'vor'} dem Transfer"
+                    + (" – verzögerte Auszahlung bzw. Gutschrift" if inn and j.ts - t.ts > timedelta(hours=2) else ""),
+                    f"gleiches Konto {acc_j}" if h["same"] else
+                    f"Konten: „{acc_j}“ (App) / „{h['account']}“ (Import) – vermutlich dasselbe Wallet, zwei Namen"]
+        if h.get("note_time"):
+            evidence.append("Zeitpunkt der Gutschrift laut Notiz der Import-Buchung bestätigt")
+        uncertainty = ["Ohne gemeinsamen Transaktions-Hash beruht die Zuordnung auf Asset, Menge und Zeit – bei "
+                       "exakter, unverwechselbarer Menge ist ein Zufall unwahrscheinlich, aber nicht ausgeschlossen."]
+        if not h["same"]:
+            uncertainty.append(f"Ob „{acc_j}“ und „{h['account']}“ dasselbe Wallet sind, folgt nicht aus den Buchungen "
+                               "– Adresse bzw. Kontoauszug prüfen.")
+        f = Finding(
+            kind="duplicate", status=status, priority=1,
+            title=f"{'Zugang' if inn else 'Abgang'} {_q(q)} {aid} doppelt? {side} des Import-Transfers {t.tx_id}",
+            known=[idx.describe(j), idx.describe(t), f"Vermutlich {h['text']}."],
+            suspected=[f"Die App-Buchung bildet dieselbe Bewegung ab wie die {side} des Transfers im kuratierten "
+                       "Import – die Menge zählt doppelt, und als Zugang begänne sie einen neuen Einstand."],
+            evidence=evidence, uncertainty=uncertainty,
+            pairs=[(idx.ref(t), idx.ref(j), h["text"])],
+            scenario=_scenario_without(idx, [j], f"Szenario (hypothetisch): ohne die App-Buchung {jid} – es zählt "
+                                                 "nur der Transfer."),
+            decision="App-Buchung als „im Import enthalten“ markieren (hier mit Vorschau bzw. unter Journal → "
+                     "Abgleich); bei abweichendem Kontonamen danach die Konten angleichen. Portfolia ändert nichts "
+                     "automatisch.",
+            key=f"tside|{jid}|{t.tx_id}", weight=q,
+            data={"type": "import_vs_app", "imports": [t.tx_id], "journals": [jid],
+                  "side": {k: h[k] for k in ("role", "same", "exact", "account") if k in h}})
+        f.txs = [idx.ref(t), idx.ref(j)]
+        idx.dup_txs.update((jid, t.tx_id))
+        out.append(idx.attach(f))
+    stats["transfer_sides"] = len(out)
     return out
 
 

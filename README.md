@@ -510,6 +510,29 @@ stimmig; *nicht belegbar* → offene Frage mit dem Gesamtabgang der vorhandenen 
 vorhanden zusätzlich gebucht → Widerspruch mit Differenz und Korrekturvorschlag. Eine anders dargestellte Gebühr
 (netto/brutto) gilt bei der Erkennung als derselbe Abgang, damit keine zweite Abbuchung entsteht.
 
+**Seite eines erfassten Transfers – auch verzögert und unter anderem Kontonamen.** Führt der kuratierte Import eine
+Auszahlung als Transfer „Börse → eigenes Wallet“ (Zeitpunkt der Auszahlung, Wallet-Name des Steuertools), liefert die
+Wallet-Datenquelle denselben Vorgang als Zugang – oft Stunden bis Tage später (die Börse zahlt verzögert aus) und unter
+ihrem eigenen Kontonamen. Ein solcher Zugang (bzw. Abgang) wird als Seite des Transfers erkannt und **nie automatisch
+gebucht**:
+
+| Regel | gleiches Konto | anderer Kontoname |
+|---|---|---|
+| Menge | ± 0,5 % bzw. Gebühr anders dargestellt | exakt gleich (nur Rundung der Quellen) |
+| Zugang | 2 h vor bis 72 h nach dem Transfer; bei exakt gleicher, unverwechselbarer Menge (≥ 6 signifikante Stellen) bis 7 Tage | ebenso |
+| Abgang | ± 2 h | ± 2 h |
+| ausgeschlossen | verschiedene Transaktions-Hashes | zusätzlich: Fiat, Zugang auf dem Absenderkonto, Zielkonto des Transfers mit eigener Datenquelle |
+
+Bewertung bei anderem Kontonamen: *Widersprüchlich* (Konto), Sicherheit *mittel*; eine spätere Gutschrift gilt nicht als
+Zeitwiderspruch, ein abweichender EUR-Wert (andere Bewertungszeitpunkte) nur bis 15 % als gering. Belegt die Notiz
+der Transfer-Buchung den Zeitpunkt der Gutschrift (z. B. „Zugang … am 2024-05-02T10:15:00Z“), steht das bei den Belegen.
+Vorgeschlagen werden **verknüpfen** (nicht buchen) und **Konten angleichen**. Bereits gebuchte App-Buchungen (z. B.
+früher automatisch übernommene Zugänge) zeigt die Buchungsliste mit „Transferseite?“, Gegenüberstellung und den
+Entscheidungen *Import-Transfer gilt* / *Keine Dublette*; dieselben Fälle stehen unter *Buchungen → Abgleich mit dem
+Import* und in der *Datenqualität* (mit Vorschau der Bestandswirkung und Rückgängig). Die Datenquelle zeigt unter
+*Synchronisierung* „Konto laut Abgleich“ mit einer Umstellung per Klick (ohne Neuabruf, zurücknehmbar; übernommene
+Buchungen bleiben auf ihrem Konto) – automatisch umgestellt wird nur aus dem Hash-Abgleich, nie aus Transferseiten.
+
 **Weitere Schutzregeln der Erkennung:** zwei verschiedene Blockchain-Transaktionen sind nie Dubletten (auch bei gleicher
 Menge und Zeit); weitere Zeilen eines Ereignisses, dessen Hauptzeile bereits vorhanden ist (z. B. Gebührenzeile), gehen
 nie still in die Buchungen (Schutz vor doppelten Gebühren); gleiche Menge, Konto und Zeit mit **anderem Asset** →
@@ -806,6 +829,11 @@ enthält, dürfen sie nicht doppelt zählen:
   Stand des Imports → *Buchungen → Abgleich mit dem Import*: „Import-Buchung gilt“ oder „keine Dublette“. Die
   Entscheidung speichert beide IDs und lässt sich aufheben; nichts wird still zusammengeführt. Das betrifft vor
   allem Importe aus Steuertools (z. B. Koinly), deren IDs keine Bitpanda-IDs enthalten.
+* **Transferseite, nur Vorschlag:** ein Zu- bzw. Abgang der App (z. B. aus einer Wallet-Datenquelle), der einer Seite
+  eines Import-Transfers entspricht – auch verzögert gutgeschrieben und unter anderem Kontonamen (Regeln unter
+  *Importprüfung*). „Import-Buchung gilt“ lässt den Transfer zählen (Einstand und Haltedauer wandern mit), die
+  App-Buchung nicht mehr. Heißt dasselbe Wallet in Import und Datenquelle verschieden, danach die Konten angleichen –
+  sonst laufen spätere Bewegungen der Datenquelle auf dem anderen Konto weiter.
 
 ### Grenzen der Bitpanda-Anbindung
 

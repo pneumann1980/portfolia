@@ -12,6 +12,10 @@ Regeln
     * **Unsicher, nur Vorschlag:** gleiche Art, gleiche Assets, Menge ± 1 %, Datum ± 2 Tage, App-Buchung nicht
       nach dem Stand des Imports. Nie still zusammengeführt – der Nutzer entscheidet („Import-Buchung gilt“ bzw.
       „keine Dublette“); die Entscheidung speichert beide IDs (``journal_import_link``).
+    * **Transferseite, nur Vorschlag:** ein Zu- bzw. Abgang der App (z. B. Wallet-Datenquelle), der einer Seite
+      eines Import-Transfers entspricht – auch verzögert gutgeschrieben (Auszahlung der Börse Stunden bis Tage
+      später) und unter anderem Kontonamen (Regeln: :mod:`app.csvimport.transfer_side`). „Import-Buchung gilt“
+      lässt den Transfer zählen (Einstand und Haltedauer wandern mit), die App-Buchung nicht mehr.
 """
 
 from __future__ import annotations
@@ -45,6 +49,8 @@ class Candidate:
     journal: Tx
     imports: list[Tx] = field(default_factory=list)
     distinct: set[str] = field(default_factory=set)
+    why: dict[str, str] = field(default_factory=dict)  # Import-Buchung → Begründung (Transferseite)
+    side: dict[str, Any] = field(default_factory=dict)  # Import-Buchung → Treffer (transfer_side.Hit.info)
 
 
 def _aliases(db: Any) -> dict[str, set[str]]:
@@ -86,8 +92,61 @@ def _qty_close(a: Decimal | None, b: Decimal | None) -> bool:
     return abs(a - b) <= max(abs(b) * QTY_TOL, Decimal("1e-8"))
 
 
+def _decisions(db: Any) -> dict[str, dict[str, str]]:
+    decided: dict[str, dict[str, str]] = defaultdict(dict)
+    for r in db.q("SELECT journal_tx_id, import_tx_id, decision FROM journal_import_link"):
+        decided[r["journal_tx_id"]][r["import_tx_id"]] = r["decision"]
+    return decided
+
+
+def transfer_sides(db: Any, pf: Portfolio | None) -> dict[str, list[Any]]:
+    """Zählende App-Buchungen (Zu- bzw. Abgang ohne Einordnung), die einer Seite eines Import-Transfers entsprechen –
+    auch verzögert und unter anderem Kontonamen (:mod:`app.csvimport.transfer_side`). Rückgabe: App-Buchung →
+    Treffer (``Hit``). Seiten, für die bereits „Import-Buchung gilt“ entschieden ist, sind vergeben; „keine
+    Dublette“ schließt das Paar aus."""
+    from app.csvimport import transfer_side as TS
+    from app.csvimport.events import normalize_hash
+
+    if pf is None:
+        return {}
+    imports = [t for t in pf.txs if t.origin == "import"]
+    journal = sorted((t for t in pf.txs if t.origin == "journal" and t.type in ("deposit", "withdrawal")
+                      and not t.tag), key=lambda t: (t.ts, t.tx_id))
+    if not imports or not journal:
+        return {}
+    idx = TS.TransferIndex(imports, TS.hash_lookup(db), TS.managed_accounts(db))
+    if not idx:
+        return {}
+    decided = _decisions(db)
+    covered = [jid for jid, d in decided.items() if "covered" in d.values()]
+    types: dict[str, str] = {}
+    for i in range(0, len(covered), 500):
+        part = covered[i:i + 500]
+        types.update({r["tx_id"]: r["type"] for r in db.q(
+            f"SELECT tx_id, type FROM journal_tx WHERE tx_id IN ({','.join('?' * len(part))})", part)})
+    for jid in covered:
+        role = {"deposit": "in", "withdrawal": "out"}.get(types.get(jid, ""))
+        for iid, dec in decided[jid].items():
+            if dec == "covered" and role:
+                idx.claim_side(iid, role)
+    hashes = {r["tx_id"]: h for r in db.q("SELECT tx_id, tx_hash FROM journal_tx WHERE status='active' AND tx_hash "
+                                          "IS NOT NULL AND tx_hash <> ''") if (h := normalize_hash(r["tx_hash"]))}
+    out: dict[str, list[Any]] = {}
+    for j in journal:
+        p = TS.probe_of_tx(j, hashes.get(j.tx_id))
+        if p is None:
+            continue
+        dist = {iid for iid, d in decided.get(j.tx_id, {}).items() if d == "distinct"}
+        hit = idx.find(p, exclude=dist)
+        if hit is not None:
+            idx.claim(hit)
+            out[j.tx_id] = [hit]
+    return out
+
+
 def candidates(db: Any, pf: Portfolio | None, base: Portfolio | None) -> list[Candidate]:
-    """Mögliche Doppelzählungen: zählende App-Buchungen bis zum Stand des Imports mit ähnlicher Import-Buchung."""
+    """Mögliche Doppelzählungen: zählende App-Buchungen bis zum Stand des Imports mit ähnlicher Import-Buchung sowie
+    Zu-/Abgänge, die einer Seite eines Import-Transfers entsprechen (:func:`transfer_sides`)."""
     if pf is None or base is None or base.valuation_date is None:
         return []
     limit = base.valuation_date + timedelta(days=1)
@@ -96,10 +155,9 @@ def candidates(db: Any, pf: Portfolio | None, base: Portfolio | None) -> list[Ca
         index[(t.type, t.from_asset or "", t.to_asset or "")].append(t)
     for lst in index.values():
         lst.sort(key=lambda t: t.date)
-    decided: dict[str, dict[str, str]] = defaultdict(dict)
-    for r in db.q("SELECT journal_tx_id, import_tx_id, decision FROM journal_import_link"):
-        decided[r["journal_tx_id"]][r["import_tx_id"]] = r["decision"]
+    decided = _decisions(db)
     out = []
+    by_journal: dict[str, Candidate] = {}
     for j in pf.txs:
         if j.origin != "journal" or j.date > limit:
             continue
@@ -116,7 +174,22 @@ def candidates(db: Any, pf: Portfolio | None, base: Portfolio | None) -> list[Ca
         dist = {tid for tid, d in decided.get(j.tx_id, {}).items() if d == "distinct"}
         hits = [t for t in hits if t.tx_id not in dist]
         if hits:
-            out.append(Candidate(j, hits, dist))
+            by_journal[j.tx_id] = Candidate(j, hits, dist)
+            out.append(by_journal[j.tx_id])
+    by_id = {t.tx_id: t for t in pf.txs}
+    for jid, hits in transfer_sides(db, pf).items():
+        j = by_id[jid]
+        cand = by_journal.get(jid)
+        if cand is None:
+            cand = Candidate(j, [], {tid for tid, d in decided.get(jid, {}).items() if d == "distinct"})
+            out.append(cand)
+        for h in hits:
+            if h.tx.tx_id not in {t.tx_id for t in cand.imports}:
+                cand.imports.append(h.tx)
+            account = (j.to_account if h.role == "in" else j.from_account) or ""
+            cand.why[h.tx.tx_id] = h.text(account)
+            cand.side[h.tx.tx_id] = h.info()
+    out.sort(key=lambda c: (c.journal.ts, c.journal.tx_id))
     return out
 
 

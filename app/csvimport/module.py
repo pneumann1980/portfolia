@@ -19,7 +19,6 @@ from app.csvimport.profiles import BUILTIN, MAPPING_FIELDS, MappingProfile
 from app.csvimport.reader import CsvError, read_table
 from app.csvimport.service import (
     BATCH_STATUS,
-    EVAL_VERSION,
     MAX_UPLOAD,
     PAGE,
     STATUS_BADGE,
@@ -131,7 +130,10 @@ def _account_info(ctx: Any, svc: Any, b: Any) -> dict[str, Any] | None:
             ds = dsvc.get(int(b["datasource_id"])) or ds
         return {"current": ds.account, "switch": dsvc.account_switch(int(ds.id)),
                 "suggestion": dsvc.account_suggestion(ds), "editable": True}
-    accs = (json.loads(b["summary_json"] or "{}").get("recon") or {}).get("accounts") or {}
+    summ = json.loads(b["summary_json"] or "{}")
+    hashes = (summ.get("recon") or {}).get("accounts") or {}
+    sides = summ.get("side_accounts") or {}
+    accs = {a: int(hashes.get(a, 0)) + int(sides.get(a, 0)) for a in {*hashes, *sides} if a}
     if not accs:
         return None
     top, n = max(accs.items(), key=lambda kv: kv[1])
@@ -141,6 +143,7 @@ def _account_info(ctx: Any, svc: Any, b: Any) -> dict[str, Any] | None:
                                    (b["id"],)))
     return {"current": b["account"], "switch": None, "editable": not committed,
             "suggestion": {"account": top, "matches": n, "total": sum(accs.values()), "used": 0,
+                           "sides": int(sides.get(top, 0)),
                            "others": sorted(((a, k) for a, k in accs.items() if a != top), key=lambda x: -x[1])[:3]}}
 
 
@@ -163,9 +166,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
     b = svc.batch(bid)
     if b is None:
         raise HTTPException(404)
-    if b["status"] in ("preview", "partial") and \
-            json.loads(b["summary_json"] or "{}").get("eval_v") != EVAL_VERSION:
-        svc.evaluate(bid)  # mit älterer Logik bewertet (z. B. vor dem Abgleich über den Hash) → neu bewerten
+    if svc.ensure_current(bid):  # mit älterer Logik bewertet (z. B. vor einer neuen Erkennungsregel) → neu bewerten
         b = svc.batch(bid)
     acct = _account_info(ctx, svc, b)
     b = svc.batch(bid)

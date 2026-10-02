@@ -302,10 +302,29 @@ class JournalService:
                 continue
             sel.append((t, kind))
         sel.sort(key=lambda x: (x[0].ts, x[0].seq), reverse=True)
-        dups = self.duplicates(self.ctx.recorded_portfolio())
-        rows = [{"t": t, "kind": k, "label": forms.label_for(t), "dups": dups.get(t.tx_id, [])}
-                for t, k in sel[offset:offset + limit]]
+        recorded = self.ctx.recorded_portfolio()
+        dups = self.duplicates(recorded)
+        sides = self.transfer_sides(recorded)
+        rows = []
+        for t, k in sel[offset:offset + limit]:
+            tside = sides.get(t.tx_id, [])
+            rows.append({"t": t, "kind": k, "label": forms.label_for(t), "tside": tside,
+                         "dups": list(dict.fromkeys([*(x["tx"] for x in tside), *dups.get(t.tx_id, [])]))})
         return rows, len(sel)
+
+    def transfer_sides(self, pf: Portfolio | None = None) -> dict[str, list[dict[str, Any]]]:
+        """App-Buchungen (Zu-/Abgang), die vermutlich eine Seite eines Import-Transfers sind – verzögert bzw. unter
+        anderem Kontonamen (siehe :func:`app.journal.reconcile.transfer_sides`); je Treffer Kennung und Begründung."""
+        from app.journal.reconcile import transfer_sides
+
+        pf = pf or self.ctx.recorded_portfolio()
+        out: dict[str, list[dict[str, Any]]] = {}
+        by_id = {t.tx_id: t for t in pf.txs} if pf is not None else {}
+        for jid, hits in transfer_sides(self.db, pf).items():
+            j = by_id[jid]
+            out[jid] = [{**h.info(), "text": h.text((j.to_account if h.role == "in" else j.from_account) or "")}
+                        for h in hits]
+        return out
 
     def meta(self, tx_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Journal-Eigenschaften (Quelle, Gruppe, CSV-Import) für die Anzeige einer Seite von Buchungen."""

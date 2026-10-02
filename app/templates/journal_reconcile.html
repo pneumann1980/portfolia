@@ -12,7 +12,9 @@
     Datenquelle), dürfen sie nicht doppelt zählen. <b>Gleiche Anbieter-ID</b> (im Import über <span class="mono">source_ref</span>,
     z. B. <span class="mono">bitpanda:&lt;ID&gt;</span>) wird automatisch erkannt – die Import-Buchung gilt, die App-Buchung bleibt
     mit Herkunft erhalten. <b>Ähnliche</b> Buchungen (gleiche Art und Assets, Menge ± 1 %, ± 2 Tage, bis zum Stand des Imports)
-    werden nie still zusammengeführt – hier entscheidest du.</p>
+    werden nie still zusammengeführt – hier entscheidest du. Ebenso <b>Zu- und Abgänge, die einer Seite eines Import-Transfers
+    entsprechen</b> – auch wenn die Gutschrift Stunden bis Tage später kam (verzögerte Auszahlung der Börse) oder das Wallet in der
+    Datenquelle anders heißt als im Import: „Import-Buchung gilt“ lässt den Transfer zählen (Einstand und Haltedauer wandern mit).</p>
   {% if base is none %}<p class="hint">Kein kuratierter Import aktiv – nichts abzugleichen.</p>{% endif %}
 </section>
 
@@ -23,9 +25,10 @@
     <thead><tr><th>App-Buchung (zählt derzeit)</th><th>Ähnliche Import-Buchung</th><th>Entscheidung</th></tr></thead>
     <tbody>{% for c in cands %}{% for t in c.imports %}<tr>
       <td data-label="App-Buchung"><span class="mono">{{ c.journal.tx_id }}</span> · {{ c.journal.date|date_de }}<div>{{ tx_types.get(c.journal.type, c.journal.type) }} {{ legs(c.journal) }}</div>
-        <div class="hint">{{ source_label(c.journal.source) }}{% if c.journal.source_ref %} · {{ c.journal.source_ref }}{% endif %}</div></td>
-      <td data-label="Import-Buchung"><span class="mono">{{ t.tx_id }}</span> · {{ t.date|date_de }}<div>{{ legs(t) }}</div>
-        <div class="hint">{{ t.source or 'Import' }}{% if t.source_ref %} · {{ t.source_ref|truncate(40, true, '…', 0) }}{% endif %}{% if t.from_account or t.to_account %} · Konto {{ t.from_account or t.to_account }}{% endif %}</div></td>
+        <div class="hint wrap-any">{% if c.journal.to_account or c.journal.from_account %}Konto {{ c.journal.to_account or c.journal.from_account }} · {% endif %}{{ source_label(c.journal.source) }}{% if c.journal.source_ref %} · <span title="{{ c.journal.source_ref }}">{{ c.journal.source_ref|truncate(40, true, '…', 0) }}</span>{% endif %}</div></td>
+      <td data-label="Import-Buchung"><span class="mono">{{ t.tx_id }}</span> · {{ t.date|date_de }}<div>{% if t.type == 'transfer' %}Transfer {{ t.from_account }} → {{ t.to_account }}: {% endif %}{{ legs(t) }}</div>
+        <div class="hint">{{ t.source or 'Import' }}{% if t.source_ref %} · {{ t.source_ref|truncate(40, true, '…', 0) }}{% endif %}{% if t.type != 'transfer' and (t.from_account or t.to_account) %} · Konto {{ t.from_account or t.to_account }}{% endif %}</div>
+        {% if c.why.get(t.tx_id) %}{% set sd = c.side.get(t.tx_id, {}) %}<div class="hint"><span class="badge warn">Transferseite</span> {{ c.why[t.tx_id] }}{% if not sd.get('same', true) %} – nach der Entscheidung Konten angleichen{% endif %}</div>{% endif %}</td>
       <td data-label="Entscheidung"><form method="post" action="/journal/abgleich" class="row">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="journal_tx_id" value="{{ c.journal.tx_id }}"><input type="hidden" name="import_tx_id" value="{{ t.tx_id }}">
         <button class="btn sm primary" name="decision" value="covered" type="submit">Import-Buchung gilt</button>
@@ -41,7 +44,7 @@
   <div class="table-wrap cards-wrap"><table class="compact cards">
     <thead><tr><th>App-Buchung (zählt nicht)</th><th>Import-Buchung</th><th>Grund</th></tr></thead>
     <tbody>{% for c, j, t in covered %}<tr>
-      <td data-label="App-Buchung"><span class="mono">{{ c.journal_tx_id }}</span>{% if j %} · {{ j.ts_utc|datetime_de }}<div class="hint">{{ source_label(j.source) }}{% if j.external_id %} · {{ j.external_id }}{% endif %}</div>{% endif %}</td>
+      <td data-label="App-Buchung"><span class="mono">{{ c.journal_tx_id }}</span>{% if j %} · {{ j.ts_utc|datetime_de }}<div class="hint wrap-any">{{ source_label(j.source) }}{% if j.external_id %} · <span title="{{ j.external_id }}">{{ j.external_id|truncate(40, true, '…', 0) }}</span>{% endif %}</div>{% endif %}</td>
       <td data-label="Import-Buchung"><span class="mono">{{ c.import_tx_id }}</span>{% if t %} · {{ t.date|date_de }}<div>{{ legs(t) }}</div><div class="hint">{{ t.source or 'Import' }}{% if t.source_ref %} · {{ t.source_ref|truncate(40, true, '…', 0) }}{% endif %}</div>{% endif %}</td>
       <td data-label="Grund">{% if c.how == 'exakt' %}gleiche Anbieter-ID{% else %}als Dublette bestätigt
         <form method="post" action="/journal/abgleich" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="journal_tx_id" value="{{ c.journal_tx_id }}"><input type="hidden" name="import_tx_id" value="{{ c.import_tx_id }}"><button class="btn sm ghost" name="decision" value="undo" type="submit">aufheben</button></form>{% endif %}</td>

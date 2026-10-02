@@ -399,10 +399,57 @@ class DataSourceService:
         pf = self.ctx.recorded_portfolio()
         return sum(1 for t in (pf.txs if pf is not None else []) if account in (t.from_account, t.to_account))
 
+    def account_side_evidence(self, ds: DataSource) -> Counter[str]:
+        """Konten von Import-Transfers, deren Zu- bzw. Abgangsseite ein Vorgang dieser Quelle unter anderem Kontonamen
+        ist (exakt gleiche Menge, ohne gemeinsamen Hash – :mod:`app.csvimport.transfer_side`): offene Prüf-Stapel
+        sowie übernommene Buchungen der Quelle, auch bereits als „im Import enthalten“ entschiedene."""
+        sid = int(ds.id)
+        votes: Counter[str] = Counter()
+        for b in self.db.q("SELECT summary_json FROM csv_batch WHERE kind='sync' AND datasource_id=? AND status IN "
+                           "('preview', 'partial')", (sid,)):
+            accs = json.loads(b["summary_json"] or "{}").get("side_accounts") or {}
+            votes.update({str(k): int(v) for k, v in accs.items() if k})
+        base, _ = self.ctx.effective_base()
+        imports = {t.tx_id: t for t in base.txs} if base is not None else {}
+        # mit „verknüpfen“ entschiedene Zeilen der Quelle (Seite eines Import-Transfers)
+        for r in self.db.q("SELECT l.tx_id, l.role, l.record_json FROM tx_link l JOIN csv_batch b ON b.id = "
+                           "l.batch_id WHERE b.datasource_id=? AND l.status='active' AND l.role IN ('in', 'out')",
+                           (sid,)):
+            t = imports.get(r["tx_id"])
+            if t is None or t.type != "transfer":
+                continue
+            leg = json.loads(r["record_json"] or "{}").get("inn" if r["role"] == "in" else "out") or [None]
+            acc = t.to_account if r["role"] == "in" else t.from_account
+            if acc and leg[0] and acc != leg[0]:
+                votes[acc] += 1
+        mine = {r["tx_id"]: r for r in self.db.q(
+            "SELECT tx_id, type, from_account, to_account FROM journal_tx WHERE datasource_id=? AND status='active' "
+            "AND type IN ('deposit', 'withdrawal')", (sid,))}
+        if not mine:
+            return votes
+        from app.journal.service import journal_service
+
+        for jid, hits in journal_service(self.ctx).transfer_sides().items():
+            if jid in mine:
+                votes.update(h["account"] for h in hits if not h["same"] and h.get("account"))
+        for r in self.db.q("SELECT journal_tx_id, import_tx_id FROM journal_import_link WHERE decision='covered'"):
+            j, t = mine.get(r["journal_tx_id"]), imports.get(r["import_tx_id"])
+            if j is None or t is None or t.type != "transfer":
+                continue
+            acc, own = (t.to_account, j["to_account"]) if j["type"] == "deposit" else (t.from_account,
+                                                                                       j["from_account"])
+            if acc and acc != own:
+                votes[acc] += 1
+        return votes
+
     def account_suggestion(self, ds: DataSource) -> dict[str, Any] | None:
         """Konto, unter dem der kuratierte Import bzw. die App die Vorgänge dieser Quelle führt – sofern es vom Konto
-        der Quelle abweicht. ``auto``: eindeutig genug für die automatische Umstellung."""
-        votes = self.account_evidence(int(ds.id))
+        der Quelle abweicht. Belege: gleiche Blockchain-Transaktion (Hash) und Transferseiten unter anderem
+        Kontonamen (``sides``). ``auto`` (automatische Umstellung) nur aus dem Hash-Abgleich – eindeutig genug und
+        solange das bisherige Konto keine Buchungen hat."""
+        hashes = self.account_evidence(int(ds.id))
+        sides = self.account_side_evidence(ds)
+        votes = hashes + sides
         total = sum(votes.values())
         if not total:
             return None
@@ -410,8 +457,12 @@ class DataSourceService:
         if top == ds.account:
             return None
         used = self._account_bookings(ds.account)
+        h_n, h_total = hashes.get(top, 0), sum(hashes.values())
+        contra = sum(sides.values()) - sides.get(top, 0)  # Transferseiten, die auf andere Konten zeigen
         return {"account": top, "matches": n, "total": total, "others": votes.most_common(4)[1:], "used": used,
-                "auto": n >= ACCOUNT_MIN_MATCHES and n / total >= ACCOUNT_SHARE and not used}
+                "sides": sides.get(top, 0),
+                "auto": h_n >= ACCOUNT_MIN_MATCHES and h_n / max(h_total, 1) >= ACCOUNT_SHARE and not used
+                and not contra}
 
     def adopt_account(self, ds: DataSource) -> str | None:
         """Konto der Quelle automatisch auf das Konto des kuratierten Imports umstellen – nur einmal, nur bei
@@ -1320,6 +1371,7 @@ class DataSourceService:
                     ds = self.get(sid) or ds
             if ds.auto_commit:  # je Ereignis – auch in offenen Stapeln, sobald sie eindeutig geworden sind
                 for b in self.pending_batches(sid):
+                    csv.ensure_current(int(b["id"]))  # nie nach überholter Auswertung übernehmen
                     eligible = self._auto_eligible(csv.rows(int(b["id"])))
                     if eligible:
                         out = csv.commit(int(b["id"]), only_idx=eligible)
