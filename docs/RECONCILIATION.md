@@ -101,7 +101,7 @@ neu bewertet (typisch: mögliche Dublette, Vorschlag „nicht übernehmen“); n
 | 4 | Verknüpfen statt verwerfen (Ergänzungen bleiben mit Herkunft erhalten) | umgesetzt |
 | 5 | Quellenpriorität: Bearbeitungsreihenfolge, feldbezogener Vorrang, Herkunftskennzeichnung | umgesetzt (Vorschlag, nie automatisch überschrieben) |
 | 6 | Bitpanda-Vollständigkeit: Bericht „nachgewiesen / plausibel / nicht verifizierbar“ | umgesetzt (`app/datasources/quality.py`) |
-| 7 | Feldweises Übernehmen einzelner Werte in die vorhandene Buchung | **offen** – bewusst nicht automatisch; heute über „Bearbeiten“ mit Vorschlagswert |
+| 7 | Feldweises Übernehmen einzelner Werte in die vorhandene Buchung | **offen** – bewusst nicht automatisch; heute über „Bearbeiten“ anhand des Korrekturvorschlags |
 
 Details zu Regeln, Grenzen und Tests: README, Abschnitte „Importprüfung: Abgleich je Zeile, Stapelaktionen,
 Verknüpfen“ und „Vollständigkeit der Historie“; Meilenstein M19 in `docs/MILESTONES.md`.
@@ -110,8 +110,13 @@ Verknüpfen“ und „Vollständigkeit der Historie“; Meilenstein M19 in `docs
 
 ## 4 · Annahmen, Grenzen, offene Punkte
 
-* **Nur synthetische Tests.** Der Regressionsfall ist mit den vorgegebenen Werten nachgebildet; echte Exporte bzw.
-  API-Antworten des Auftraggebers wurden für Tests und Doku nicht verwendet.
+* **Nur synthetische Tests.** Der Regressionsfall ist strukturgleich nachgebildet (gleiche Konstellation, andere
+  Zahlen), damit keine echten Buchungsdaten ins Repository gelangen; mit den Originalwerten der Aufgabenbeschreibung
+  wurde er nur lokal geprüft. Echte Exporte bzw. API-Antworten wurden für Tests und Doku nicht verwendet.
+* **Neubewertung nach dem Update.** Offene Prüf-Stapel werden beim Öffnen neu bewertet (Auswertungsstand 5). Status
+  können sich dabei ändern – z. B. gelten verschiedene Blockchain-Transaktionen nicht mehr als Dublette, Gebühren-
+  zeilen bereits vorhandener Vorgänge dagegen schon. Eigene Entscheidungen (ja/nein, Werte, Transfer-Bestätigungen)
+  bleiben; gebucht wird nur über „Übernehmen“ bzw. eine eingeschaltete automatische Übernahme.
 * **Koinly-Gebührenkonvention nicht belegt.** Ob Koinly die Gebühr zusätzlich zum gesendeten Betrag führt, ist hier
   nicht verifiziert. Geprüft wird deshalb die Wirkung der vorhandenen Buchung im Ledger (Abgang + Gebühr im selben
   Asset) gegen den Beleg der Quelle.
