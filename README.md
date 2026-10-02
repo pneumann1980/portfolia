@@ -528,24 +528,37 @@ Alles geschieht in der App; einmalige Voraussetzung ist der [Master-Key](#master
 
 | Bitpanda | Portfolia | Bedingung |
 |---|---|---|
-| Kauf Krypto gegen Fiat, auch Sparplan | Kauf, Wert = Fiat-Betrag | genau ein Fiat-Ausgang und ein Krypto-Eingang |
+| Kauf Krypto gegen Fiat, auch Sparplan (`buy`, `savings_plan`) | Kauf, Wert = Fiat-Betrag | genau ein Fiat-Ausgang und ein Krypto-Eingang |
 | Verkauf Krypto gegen Fiat | Verkauf, Wert = Fiat-Betrag | genau ein Krypto-Ausgang und ein Fiat-Eingang |
-| Einzahlung Fiat oder Krypto | Zugang | ein Eingang, Vorgangsart „deposit“ |
+| Swap Krypto → Krypto (`swap`, über EUR) | zwei Buchungen: Verkauf gegen EUR + Kauf mit EUR, Werte aus den Euro-Teilen | je ein Verkaufs- und Kauf-Paar (Transaktionsart `sell`/`buy`) in derselben Fiat-Währung |
+| Einzahlung Fiat oder Krypto, Sparplan-Einzahlung | Zugang | ein Eingang, Vorgangsart „deposit“ bzw. Sparplan mit Transaktionsart „deposit“ |
 | Auszahlung Fiat oder Krypto | Abgang inkl. Gebühr | ein Ausgang, Vorgangsart „withdraw…“ |
-| Reward, Staking-Reward | Zugang mit Ertrags-Tag `reward` bzw. `staking` | ein Krypto-Eingang, Vorgangsart genau „reward“/„staking reward“ |
+| Rewards: `reward`, `staking_reward`, `passive_earn_reward`, `onetime_reward`, Cashback, Airdrop | Zugang mit Ertrags-Tag (`reward`, `staking`, `bonus`, `cashback`, `airdrop` …) | ein Krypto-Eingang |
+| Token-Umstellung (`merger_crypto`, Migration) | Umstellung (Kapitalmaßnahme, Einstand geht über), **prüfbedürftig** | ein Krypto-Ausgang und ein Krypto-Eingang |
 | eigener Gebühren-Teil (z. B. in BEST) | Gebührenzeile desselben Vorgangs | Transaktionsart „fee“ |
-| Gebühr an einem Haupt-Teil | Gebühr an der Buchung, **als prüfbedürftig markiert** | ob der Betrag die Gebühr enthält, ist nicht dokumentiert |
-| interne Umbuchung (gleiches Asset und gleicher Betrag ein und aus) | keine Buchung, im Lauf gezählt | – |
+| Gebühr an einem Haupt-Teil (auch in eigener Währung) | Gebühr an der Buchung, **als prüfbedürftig markiert** | ob der Betrag die Gebühr enthält, ist nicht dokumentiert |
+| interne Umbuchung (gleiches Asset und gleicher Betrag ein und aus), Staking `stake`/`unstake` | keine Buchung, im Lauf gezählt | – |
 
 **Bewusst nicht automatisch – „ungeklärt“ mit Grund:** Korrekturen und Stornos (`compensates`) samt dem
-stornierten Vorgang, Tausch Krypto → Krypto (kein EUR-Gegenwert in den API-Daten), Fiat → Fiat, Aktien und ETFs
-(Bitpanda Stocks), Edelmetalle, Kryptoindizes, unbekannte Assets oder Vorgangsarten sowie Vorgänge ohne Zeitpunkt
-oder Richtung. Sie werden weder still verworfen noch als Kauf oder Verkauf geraten.
+stornierten Vorgang, Tausch Krypto → Krypto ohne Euro-Teile, Fiat → Fiat, Aktien und ETFs (Bitpanda Stocks),
+Edelmetalle, Kryptoindizes, unbekannte Assets oder Vorgangsarten sowie Vorgänge ohne Zeitpunkt oder Richtung (mit
+den gelieferten Feldnamen im Hinweis). Sie werden weder still verworfen noch als Kauf oder Verkauf geraten.
+
+**Antwortformat:** Beträge und Gebühren kommen als Text bzw. Zahl oder als Objekt `{"value", "currency_id" |
+"asset_id"}`; der Zeitpunkt steht am Vorgang oder an seinen Teilen (dann gilt der früheste). Erkannt werden die
+üblichen Feldnamen (`timestamp`, `time`, `occurred_at`, `executed_at`, `credited_at`, `created_at` …, auch als
+Unix-Zeit oder Zeitobjekt) und notfalls jedes Feld, dessen Name nach einer Zeitangabe klingt – Änderungs- und
+Ablaufzeiten nie. Welches Feld verwendet wurde, steht in der Abdeckung des Laufs (`time_fields`) und je Zeile in den
+Rohdaten; dort liegt auch die Originalantwort des Vorgangs.
 
 **Technik und Aufwand:** nur `GET` an `https://api.public.bitpanda.com/v1` mit Header `x-api-key` – keine
 schreibenden Aufrufe, kein stiller Rückgriff auf die ältere API `api.bitpanda.com`, Umleitungen werden nicht
-verfolgt. Cursor-Pagination (100 je Seite) mit Schutz gegen Schleifen und unklares Seitenende; Folgeläufe fragen
-nur ab dem letzten vollständigen Stand (minus 2 Tage Überlappung) ab, Asset-Stammdaten werden 30 Tage
+verfolgt. Cursor-Pagination (100 je Seite): eine leere Seite beendet den Abruf (auch wenn sie noch einen Cursor
+trägt); wiederholt die API den gesendeten Cursor, gilt die Kennung des letzten Vorgangs als Fortsetzungspunkt;
+liefert eine Seite nur Bekanntes, endet der Lauf als „teilweise“. Folgeläufe fragen nur ab dem letzten
+vollständigen Stand (minus 2 Tage Überlappung) ab; nach dem Verwerfen eines Prüf-Stapels oder einer verbesserten
+Auswertung (neue Version des Abrufstands) wird die ganze Historie neu abgerufen, und unbearbeitete offene
+Prüf-Stapel werden durch die neue Auswertung ersetzt. Asset-Stammdaten werden 30 Tage
 zwischengespeichert – ein stündlicher Lauf braucht meist ein bis zwei Aufrufe. Timeouts 20 s, bei 429 Warten nach
 `Retry-After` (höchstens 60 s je Wartezeit, 120 s je Lauf), bei 5xx drei Versuche. Beträge exakt als Dezimalzahl,
 Zeitpunkte in UTC; Originalbeträge, Währungen, Gebühren, Bitpanda-IDs und Rohdaten bleiben je Zeile als Herkunft
@@ -675,8 +688,13 @@ enthält, dürfen sie nicht doppelt zählen:
   Unterscheidung „fehlendes Recht“ vs. „ungültiger Schlüssel“ stützt sich zusätzlich auf den Bestände-Test.
 * **Gebühren:** Ob ein Betrag die Gebühr bereits enthält, ist nicht dokumentiert – betroffene Buchungen sind als
   prüfbedürftig markiert.
-* **Nicht abgebildet:** Tausch Krypto → Krypto, Stocks/ETFs, Edelmetalle, Indizes, Korrekturen (siehe oben); für
-  diese Fälle bleibt der CSV-Import bzw. die manuelle Erfassung.
+* **Nicht abgebildet:** Tausch Krypto → Krypto ohne Euro-Teile, Stocks/ETFs, Edelmetalle, Indizes, Korrekturen
+  (siehe oben); für diese Fälle bleibt der CSV-Import bzw. die manuelle Erfassung.
+* **Antwortformat geändert (Oktober 2026):** Bitpanda liefert Beträge inzwischen als Objekt und den Zeitpunkt nicht
+  mehr unter den zuvor dokumentierten Namen – ältere Portfolia-Versionen zeigten deshalb alle Vorgänge als
+  „ungeklärt: Zeitpunkt fehlt“ und meldeten „Pagination wiederholt denselben Cursor“. Ab 0.16.1 werden beide
+  Formate gelesen; der nächste Lauf ruft die Historie automatisch neu ab und ersetzt den unbearbeiteten alten
+  Prüf-Stapel.
 
 ## Wallets (read-only, sechs Chains)
 
@@ -1231,6 +1249,7 @@ SQLite-Sicherung unter *Backups* der richtige Weg.
 | „Master-Key fehlt“ / „Datei … nicht lesbar“ | Datei fehlt oder Container nach dem Anlegen nicht neu gestartet → [Master-Key](#master-key-für-api-keys). |
 | „mit einem anderen Master-Key verschlüsselt (Key-ID …)“ | Falscher Master-Key nach Restore/Rotation: richtigen Key ablegen bzw. alten als `PORTFOLIA_MASTER_KEY_OLD_FILE` bereitstellen, sonst API-Key neu eingeben. |
 | Bitpanda „teilweise synchronisiert“ | Abruf unvollständig (Drosselung, Seitenende unklar) – der nächste Lauf holt erneut ab; Details unter „Abdeckung“ der Datenquelle. |
+| Bitpanda: alle Vorgänge „ungeklärt: Zeitpunkt fehlt“, „Pagination wiederholt denselben Cursor“ | Geändertes Antwortformat der API (Oktober 2026) – ab 0.16.1 behoben: Container aktualisieren, „Jetzt abrufen“. Der alte, unbearbeitete Prüf-Stapel wird automatisch ersetzt; hast du darin schon Werte eingetragen, den Stapel verwerfen. Bleibt der Hinweis, nennt er die gelieferten Feldnamen. |
 | Bitpanda „Berechtigung fehlt“ / „abgelehnt“ | API-Key mit Leserecht „Transaction“ neu erstellen und unter „API-Key ersetzen“ eintragen. |
 | Prüf-Stapel: „rekonstruierte Buchung … im kuratierten Import – ersetzt dieser Vorgang sie?“ | Echte Abrechnung zu einer geschätzten Buchung: im kuratierten Import die rekonstruierte Buchung ersetzen und den Vorgang auslassen – oder übernehmen, wenn es ein zusätzlicher Vorgang ist. |
 | Prüf-Stapel: „gleiche Menge wie … – möglicherweise doppelt erfasst“ | Eine vorhandene Buchung auf demselben Konto hat exakt dieselbe Menge (≤ 36 h). Beim Anbieter bzw. im Explorer prüfen; nur bei zwei echten Vorgängen übernehmen. |

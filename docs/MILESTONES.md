@@ -732,6 +732,38 @@ zurückgenommen; Kopie gelöscht, keine Daten im Repository).
 Vorschau sind vorläufig (Zusammenfassung, aktuelle Optionen). Teilbuchungen von Gruppen, abgeglichene Transfers und
 Sparplan-Buchungen ändert die Diagnose nicht. Explorer-Prüfung bleibt Sache des Nutzers.
 
+### M18.1 – Bitpanda: aktuelles Antwortformat der Public API (0.16.1)
+
+Anlass (02.10.2026): Alle Vorgänge eines echten Abrufs standen als „ungeklärt: Zeitpunkt fehlt“ im Prüf-Stapel,
+der Lauf endete mit „Pagination wiederholt denselben Cursor“. Ursachen (aus den Rohdaten des Stapels, die gehostete
+Dokumentation war aus der Build-Umgebung nicht erreichbar): Beträge und Gebühren kommen als Objekt
+`{"value", "currency_id"|"asset_id"}`, der Zeitpunkt steht nicht unter den bisher gelesenen Namen am Vorgang, und
+die API trägt auch auf der letzten Seite einen Cursor (die leere Folgeseite wiederholt ihn).
+
+**Entscheidungen**
+
+* Beträge/Gebühren aus Objekt oder Text; Gebühr in eigener Währung (`fee_ref`) mit eigenem Symbol.
+* Zeitpunkt in fester Rangfolge am Vorgang, sonst an den Teilen (frühester), sonst jedes Feld mit Zeitnamen
+  (ohne Änderungs-/Ablaufzeiten); auch Unix-Zeit und Zeitobjekte. Verwendetes Feld in der Abdeckung
+  (`time_fields`) und je Zeile; Originalantwort des Vorgangs in den Rohdaten. Ohne Zeitpunkt: weiterhin „ungeklärt“,
+  aber mit den gelieferten Feldnamen.
+* Pagination: leere Seite = Ende; Cursor-Echo → Kennung des letzten Vorgangs als Fortsetzungspunkt (laut Doku
+  bezeichnet der Cursor ein Element); Seite nur mit Bekanntem → „teilweise“.
+* Abbildung ergänzt: Sparplan-Einzahlung (Fiat-Zugang), `passive_earn_reward`/`onetime_reward` u. a. als Ertrag,
+  Swap als Verkauf + Kauf über die Euro-Teile, `stake`/`unstake` ohne Buchung, `merger_crypto` als prüfbedürftige
+  Token-Umstellung.
+* Abrufstand Version 2: ältere Stände und das Verwerfen eines Stapels lösen einen vollständigen Neuabruf aus;
+  bei vollständiger Historie werden unbearbeitete offene Prüf-Stapel der Quelle durch die neue Auswertung ersetzt
+  (`FetchResult.refresh_open`), bearbeitete bleiben mit Hinweis stehen.
+
+**Tests:** aktuelles Antwortformat (9 Vorgangsarten, drei Zeitfeld-Varianten, Cursor auf der letzten Seite),
+Cursor-Echo und Schleifenschutz, Ersetzen eines unbearbeiteten Stapels bzw. Stehenlassen eines bearbeiteten.
+Lokal an den rekonstruierten Vorgängen des echten Stapels geprüft (mit ergänztem Zeitpunkt alle abgebildet bzw.
+bewusst ohne Buchung, keiner „ungeklärt“; Daten nicht im Repository).
+
+**Grenze:** Der tatsächliche Name des Zeitfelds ist nicht belegt (Doku nicht erreichbar); die tolerante Erkennung
+deckt die üblichen Varianten ab, ein Restfall erscheint mit Feldnamen statt still.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
