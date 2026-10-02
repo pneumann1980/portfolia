@@ -353,7 +353,7 @@ def _transfer(st: _State, w: Tx | None, d: Tx | None, plan: Plan) -> None:
     row = {"datetime": _dt(w), "type": "transfer", "tag": "",
            "from_account": w.from_account or "", "from_asset": w.from_asset or "", "from_qty": _s(fq),
            "to_account": d.to_account or "", "to_asset": d.to_asset or "", "to_qty": _s(min(tq, fq)),
-           "fee_asset": src.fee_asset or "" if src.fee_qty else "", "fee_qty": _s(src.fee_qty),
+           "fee_asset": (src.fee_asset or "") if src.fee_qty else "", "fee_qty": _s(src.fee_qty),
            "fee_eur": _s(src.fee_eur) if src.fee_qty else "", "value_eur": "", "orig_price": "", "orig_ccy": "",
            "related_asset": "",
            "note": f"Interner Transfer {w.from_account} → {d.to_account} (Korrektur aus der Diagnose: {w.tx_id} + "

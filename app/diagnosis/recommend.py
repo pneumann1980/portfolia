@@ -175,9 +175,10 @@ class Facts:
 def explorer_links(h: str, providers: list[str], texts: list[str | None]) -> list[Link]:
     """Links zur Transaktion im Explorer (öffnet der Nutzer; Portfolia ruft sie nie ab)."""
     if _HEX64.match(h):
-        evm = any(f"0x{h}" in (x or "").lower() for x in texts)
-        provs = [p for p in providers if (p in _EVM) == evm] or (list(_EVM) if evm else ["bitcoin", "kaspa"])
-        return [Link(EXPLORER_TX[p][0], EXPLORER_TX[p][1].format(h), True) for p in provs if p != "solana"]
+        provs = [p for p in providers if p != "solana"]  # Chain des Kontos bekannt (Datenquelle, Asset, Contract)
+        if not provs:  # sonst nach Schreibweise: 0x… = EVM-Chain, ohne Präfix = Bitcoin bzw. Kaspa
+            provs = list(_EVM) if any(f"0x{h}" in (x or "").lower() for x in texts) else ["bitcoin", "kaspa"]
+        return [Link(EXPLORER_TX[p][0], EXPLORER_TX[p][1].format(h), True) for p in provs]
     if 80 <= len(h) <= 90:  # Solana-Signatur: Groß-/Kleinschreibung aus dem Originaltext
         for x in texts:
             m = re.search(re.escape(h), x or "", re.I)
@@ -187,16 +188,15 @@ def explorer_links(h: str, providers: list[str], texts: list[str | None]) -> lis
 
 
 def _hash_checks(facts: Facts, txs: list[Tx], text: str) -> list[tuple[str, list[Link]]]:
+    from app.csvimport.events import normalize_hash
+    from app.csvimport.reconcile import hashes_in
+
     out: list[tuple[str, list[Link]]] = []
     seen: set[str] = set()
     for t in txs:
-        from app.csvimport.reconcile import hashes_in
-
         hs = sorted(hashes_in(t.note, t.source_ref))
         m = facts.snap.journal.get(t.tx_id) if facts.snap is not None else None
         if m is not None and m.tx_hash:
-            from app.csvimport.events import normalize_hash
-
             h = normalize_hash(m.tx_hash)
             if h and h not in hs:
                 hs.append(h)

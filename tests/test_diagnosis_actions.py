@@ -98,6 +98,20 @@ def test_recommendation_offers_fix_alternatives_and_dismiss(cfg):
     assert all(re.fullmatch(r"https://[a-z.]+/tx/0x[0-9a-f]{64}", link.url) for link in links)
 
 
+def test_explorer_links_carry_only_the_hash_and_follow_the_chain():
+    from app.diagnosis.recommend import explorer_links
+
+    h = "ab" * 32
+    assert [x.url for x in explorer_links(h, ["ethereum"], [None])] == [f"https://etherscan.io/tx/0x{h}"]
+    assert [x.label for x in explorer_links(h, [], [f"txhash=0x{h}"])] == ["Etherscan", "BscScan", "Snowtrace"]
+    assert [x.url for x in explorer_links(h, [], [f"txhash={h}"])] == [f"https://mempool.space/tx/{h}",
+                                                                      f"https://explorer.kaspa.org/txs/{h}"]
+    sig = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi" * 2  # Solana: Schreibweise aus dem Originaltext
+    assert [x.url for x in explorer_links(sig.lower(), ["solana"], [f"sig {sig}"])] == [
+        f"https://solscan.io/tx/{sig}"]
+    assert all(x.external for x in explorer_links(h, ["kaspa"], []))
+
+
 def test_preview_computes_effects_without_writing(cfg):
     ctx = toka_ctx(cfg)
     before = fingerprint(ctx.db)
