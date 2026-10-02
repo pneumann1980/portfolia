@@ -7,8 +7,9 @@ Bestände und manuelle Kurse. Was der Datenvertrag nicht abbildet, liegt im Ordn
 
 * ``state.json`` – Einstellungen, Kursquellen-Zuordnungen samt Status (auch abgelehnte Vorschläge),
   Sparplan-Wahl und verworfene Ausführungen, Datenquellen (ohne Zugangsdaten), „dauerhaft ignoriert“,
-  Anbieter-IDs der Buchungen, CSV-Zuordnungen (Symbole, Konten, eigene Formate) und Kennungen gelöschter CSV- und
-  Sync-Buchungen (damit sie nicht erneut importiert werden).
+  Anbieter-IDs der Buchungen, CSV-Zuordnungen (Symbole, Konten, eigene Formate), Kennungen gelöschter CSV- und
+  Sync-Buchungen (damit sie nicht erneut importiert werden) und Befunde der Diagnose, die als „geprüft“ markiert
+  sind (übernommene Korrekturen stecken bereits in den Buchungen und Zuordnungen).
 * ``usage.json`` – verbrauchte API-Aufrufe (CoinGecko-Monatskontingent läuft weiter).
 * ``price_daily.csv``, ``series_meta.csv`` – Kurshistorie (die CoinGecko-Demo-API liefert nur 365 Tage nach).
 * ``files/sources.yaml``, ``files/tax_rules/…`` – News-Quellen und lokale Steuerregeln.
@@ -89,6 +90,8 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
         "deleted_journal": _rows(db, "SELECT * FROM journal_tx WHERE status='deleted' AND (external_id IS NOT NULL "
                                      "OR event_key IS NOT NULL) ORDER BY id", drop=("id", "form_json", "batch_id",
                                                                                     "datasource_id")),
+        "diag_dismissed": _rows(db, "SELECT finding_id, kind, title, fingerprint, note, created_at FROM diag_decision "
+                                    "WHERE action='dismiss' AND status='active' ORDER BY id", drop=()),
     }
     out = {
         STATE: json.dumps(state, ensure_ascii=False, sort_keys=True, indent=1).encode("utf-8"),
@@ -148,6 +151,7 @@ def summary(extras: dict[str, bytes]) -> dict[str, Any] | None:
         "csv": len(st.get("csv_symbols") or []) + len(st.get("csv_accounts") or []) + len(st.get("csv_mappings")
                                                                                              or []),
         "deleted": len(st.get("deleted_journal") or []),
+        "checked": len(st.get("diag_dismissed") or []),
         "prices": max(0, prices.count(b"\n") - 1),
         "files": sorted(n[len(FILES):] for n in extras if n.startswith(FILES)),
     }
@@ -218,6 +222,7 @@ def apply(ctx: Any, import_id: int) -> dict[str, int]:
                          + _mappings(c, st.get("csv_mappings") or [], now))
         counts["deleted"] = _insert(c, "journal_tx", [{**r, "status": "deleted"} for r in
                                                       st.get("deleted_journal") or []], "OR IGNORE")
+        counts["checked"] = _dismissed(c, st.get("diag_dismissed") or [])
         counts["usage"] = _usage(c, extras.get(USAGE))
         counts["prices"] = _prices(c, extras.get(PRICES))
         counts["series_meta"] = _meta(c, extras.get(META))
@@ -254,6 +259,22 @@ def apply(ctx: Any, import_id: int) -> dict[str, int]:
             sched.trigger(job, delay)
     log.info("Portfolia-Export übernommen (Import %s): %s", import_id, counts)
     return counts
+
+
+def _dismissed(c: Any, rows: list[Any]) -> int:
+    """„Geprüft“-Markierungen der Diagnose ergänzen (gleicher Befund mit gleichen Daten nur einmal)."""
+    n = 0
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("finding_id") or not r.get("fingerprint"):
+            continue
+        if c.execute("SELECT 1 FROM diag_decision WHERE finding_id=? AND fingerprint=? AND action='dismiss' AND "
+                     "status='active'", (r["finding_id"], r["fingerprint"])).fetchone():
+            continue
+        c.execute("INSERT INTO diag_decision(finding_id, kind, title, action, fingerprint, note, status, created_at) "
+                  "VALUES (?,?,?,?,?,?,?,?)", (r["finding_id"], r.get("kind") or "", r.get("title") or "", "dismiss",
+                                              r["fingerprint"], r.get("note"), "active", r.get("created_at") or ""))
+        n += 1
+    return n
 
 
 def _insert(c: Any, table: str, rows: Any, mode: str) -> int:

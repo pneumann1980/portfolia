@@ -3,7 +3,7 @@
 <div class="alert warn" id="restore" style="margin:8px 0"><span class="icon">!</span><div>
   <b>Die aktive Import-Datei ist ein Portfolia-Export</b>{% if sm.app_version %} (Version {{ sm.app_version }}){% endif %} mit
   Zusatzdaten: {{ sm.settings }} Einstellungen, {{ sm.asset_sources }} Kursquellen-Zuordnungen, {{ sm.plans }} Sparplan-Angaben,
-  {{ sm.datasources }} Datenquellen (ohne API-Keys), {{ sm.decisions }} Entscheidungen, {{ sm.csv }} CSV-Zuordnungen,
+  {{ sm.datasources }} Datenquellen (ohne API-Keys), {{ sm.decisions }} Entscheidungen, {{ sm.csv }} CSV-Zuordnungen,{% if sm.checked %} {{ sm.checked }} geprüfte Befunde (Diagnose),{% endif %}
   {{ sm.prices|num(0) }} Tageskurse{% if sm.files %}, Dateien: {{ sm.files|join(', ') }}{% endif %}.
   <div class="hint">Übernehmen ergänzt Zuordnungen und Kurshistorie und überschreibt Einstellungen; nichts wird gelöscht, ersetzte
     Dateien werden als <code>.bak-…</code> gesichert. API-Keys danach unter Datenquellen neu eingeben.</div>

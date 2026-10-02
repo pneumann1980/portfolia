@@ -82,6 +82,9 @@ _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,99}$")
 _URL_RE = re.compile(r"coingecko\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?[^/?#]+/([a-z0-9-]+)", re.I)
 
 
+OVERRIDE = "override"  # Herkunft einer Zuordnung, die eine Kursquelle des Imports ausdrücklich ersetzt
+
+
 def chain_hints(accounts: list[str]) -> set[str]:
     out: set[str] = set()
     for acc in accounts:
@@ -607,7 +610,10 @@ class SourceService:
 
 
 def apply_sources(db: Any, assets: dict[str, AssetInfo]) -> dict[str, AssetInfo]:
-    """Aktive Zuordnungen auf Assets ohne eigene Kursquelle anwenden (gleiches Objekt, wenn nichts zu tun ist)."""
+    """Aktive Zuordnungen auf Assets ohne eigene Kursquelle anwenden (gleiches Objekt, wenn nichts zu tun ist).
+
+    Herkunft ``override`` (ausdrückliche Korrektur des Nutzers, z. B. aus der Diagnose) ersetzt auch eine Kursquelle
+    des Imports – etwa wenn der Import ein Anbieter-Kürzel einem anderen Coin zuordnet."""
     try:
         rows = db.q("SELECT asset_id, quote_source, quote_id, origin FROM asset_source "
                     "WHERE status='active' AND quote_id IS NOT NULL")
@@ -616,7 +622,7 @@ def apply_sources(db: Any, assets: dict[str, AssetInfo]) -> dict[str, AssetInfo]
     out = None
     for r in rows:
         a = assets.get(r["asset_id"])
-        if a is None or not needs_source(a):
+        if a is None or (not needs_source(a) and r["origin"] != OVERRIDE):
             continue
         if out is None:
             out = dict(assets)

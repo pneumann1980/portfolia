@@ -29,6 +29,7 @@ from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote
 
 from app.csvimport.events import identity_keys, normalize_hash, source_ref_keys
 from app.csvimport.identity import PROVIDER_LABEL, confirms, identity, note_identity_keys, provider_of
@@ -196,9 +197,20 @@ class _Index:
                 fee=(t.fee_asset, t.fee_qty) if t.fee_asset and t.fee_qty else None,
                 value_eur=t.value_eur, source=self.source_label(t), source_ref=t.source_ref, origin=t.origin,
                 hashes=sorted(self.hashes.get(t.tx_id, ())), event_index=self.event_index(t), flags=_flags(t),
-                note=(t.note[:240] + "…") if t.note and len(t.note) > 240 else t.note)
+                note=(t.note[:240] + "…") if t.note and len(t.note) > 240 else t.note, edit_url=self.edit_url(t))
             self._refs[t.tx_id] = r
         return r
+
+    def edit_url(self, t: Tx) -> str | None:
+        """Bearbeiten im Journal: Import-Buchungen als Überlagerung, App-Buchungen nur aus bearbeitbaren Quellen."""
+        if t.origin == "journal":
+            m = self.meta.get(t.tx_id)
+            if m is None or m.status != "active" or not (m.source in ("manual", "transfer")
+                                                          or m.source.startswith(("csv:", "sync:"))):
+                return None
+        elif t.origin != "import":
+            return None
+        return f"/journal/{quote(t.tx_id, safe='')}/edit"
 
     def describe(self, t: Tx) -> str:
         """Einzeilige Beschreibung einer Buchung (UTC, exakte Mengen)."""
@@ -291,6 +303,7 @@ def diagnose(snap: Snapshot) -> Report:
     stats: dict[str, int] = {}
     findings: list[Finding] = []
     holdings: list[HoldingRow] = []
+    idx = None
     if snap.pf is not None and snap.ledger is not None:
         idx = _Index(snap)
         for rule in (_dup_same_hash, _dup_same_qty, _dup_same_id, _transfers, _assets, _history, _estimated,
@@ -302,7 +315,8 @@ def diagnose(snap: Snapshot) -> Report:
         stats["txs"] = len(idx.txs)
     findings += _open_batches(snap, stats)
     findings.sort(key=lambda f: (*f.sort_key(), f.id))
-    return Report(findings=findings, holdings=holdings, generated_for=snap.today, stats=stats)
+    return Report(findings=findings, holdings=holdings, generated_for=snap.today, stats=stats, snapshot=snap,
+                  index=idx)
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -383,11 +397,15 @@ def _dup_same_hash(idx: _Index, stats: dict[str, int]) -> list[Finding]:
         extra: list[Tx] = []
         evidence: list[str] = []
         all_tx: list[Tx] = []
+        pair_ids: list[list[str]] = []
+        pair_hashes: list[str] = []
         for h, txs, _st in items:
             first, rest = txs[0], txs[1:]
             all_tx += txs
             for t in rest:
                 extra.append(t)
+                pair_ids.append([first.tx_id, t.tx_id])
+                pair_hashes.append(h)
                 ia, ib = idx.event_index(first), idx.event_index(t)
                 why = (f"gleicher Hash {_short(h)}, gleicher Zeitpunkt, gleiches Konto, gleiche Richtung, Menge und "
                        f"EUR-Wert; Kennungen {first.tx_id} ≠ {t.tx_id}; Ereignisindex "
@@ -429,7 +447,8 @@ def _dup_same_hash(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                      "Nur wenn nicht: eine Buchung je Paar im kuratierten Import entfernen bzw. in Portfolia "
                      "löschen (Überlagerung). Portfolia ändert nichts automatisch.",
             key="hash|" + "|".join(sorted(t.tx_id for t in all_tx)),
-            weight=sum((abs(v) for v in _effect(extra).values()), ZERO))
+            weight=sum((abs(v) for v in _effect(extra).values()), ZERO),
+            data={"type": "hash_pairs", "pairs": pair_ids, "hashes": pair_hashes, "accounts": accs})
         f.txs = [idx.ref(t) for t in all_tx[:2 * MAX_PAIRS_SHOWN]]
         out.append(idx.attach(f))
     return out + _dup_cross_source(idx)
@@ -476,7 +495,8 @@ def _dup_cross_source(idx: _Index) -> list[Finding]:
                                                           f"{tj.tx_id}."),
                     decision="App-Buchung als „im Import enthalten“ markieren bzw. zurücknehmen (Journal → Abgleich). "
                              "Portfolia ändert nichts automatisch.",
-                    key=f"cross|{h}|{'|'.join(sorted(pair))}", weight=qi)
+                    key=f"cross|{h}|{'|'.join(sorted(pair))}", weight=qi,
+                    data={"type": "import_vs_app", "imports": [ti.tx_id], "journals": [tj.tx_id], "hashes": [h]})
                 f.txs = [idx.ref(ti), idx.ref(tj)]
                 out.append(idx.attach(f))
     return out
@@ -581,7 +601,9 @@ def _qty_finding(idx: _Index, side: str, acc: str, aid: str, q: Decimal, a: Tx, 
         decision=f"Beim Konto {acc} (Explorer bzw. Anbieter) prüfen, ob {_q(q)} {aid} einmal oder zweimal "
                  f"eingegangen sind. Nur wenn einmal: {weak.tx_id} im kuratierten Import entfernen bzw. in Portfolia "
                  "löschen (Überlagerung). Portfolia ändert nichts automatisch.",
-        key=f"qty|{side}|{'|'.join(sorted((a.tx_id, b.tx_id)))}", weight=abs(q), positions=[(acc, aid)])
+        key=f"qty|{side}|{'|'.join(sorted((a.tx_id, b.tx_id)))}", weight=abs(q), positions=[(acc, aid)],
+        data={"type": "same_qty", "weak": weak.tx_id, "strong": strong.tx_id, "account": acc, "asset": aid,
+              "hashes": sorted(idx.hashes[strong.tx_id])})
     f.txs = [idx.ref(weak), idx.ref(strong)]
     return idx.attach(f, derive_positions=False)
 
@@ -627,7 +649,8 @@ def _dup_same_id(idx: _Index, stats: dict[str, int]) -> list[Finding]:
             scenario=_scenario_without(idx, jrn, "Szenario (hypothetisch): ohne die App-Buchungen dieses Vorgangs."),
             decision="Entscheiden, welche Fassung gilt: App-Buchung zurücknehmen bzw. als „im Import enthalten“ "
                      "markieren (Journal → Abgleich) – Portfolia ändert nichts automatisch.",
-            key=f"id|{k}")
+            key=f"id|{k}",
+            data={"type": "import_vs_app", "imports": [t.tx_id for t in imp], "journals": [t.tx_id for t in jrn]})
         f.txs = [idx.ref(t) for t in [*imp, *jrn]]
         idx.dup_txs.update(ids)
         out.append(idx.attach(f))
@@ -648,7 +671,8 @@ def _dup_same_id(idx: _Index, stats: dict[str, int]) -> list[Finding]:
             scenario=_scenario_without(idx, [j], f"Szenario (hypothetisch): ohne die manuelle Buchung {jid}."),
             decision="Manuelle Buchung prüfen und bei Doppelung in Portfolia löschen – Portfolia ändert nichts "
                      "automatisch.",
-            key=f"journal|{jid}|{'|'.join(sorted(hits))}")
+            key=f"journal|{jid}|{'|'.join(sorted(hits))}",
+            data={"type": "import_vs_app", "imports": [t.tx_id for t in imps], "journals": [jid], "rough": True})
         f.txs = [idx.ref(j), *(idx.ref(t) for t in imps)]
         out.append(idx.attach(f))
     stats["same_id"] = len(out)
@@ -768,7 +792,8 @@ def _transfers(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                      "dann im kuratierten Import als Transfer zusammenführen bzw. im Journal verknüpfen. Portfolia "
                      "legt keine Verknüpfung automatisch an.",
             key=f"transfer|{status}|{src}|{dst}|{aid}|" + "|".join(f"{w.tx_id}>{d.tx_id}" for w, d, _r, _h in items),
-            weight=val_in)
+            weight=val_in,
+            data={"type": "transfer", "pairs": [[w.tx_id, d.tx_id] for w, d, _r, _h in items]})
         f.txs = [x for w, d, _r, _h in items[:MAX_PAIRS_SHOWN] for x in (idx.ref(w), idx.ref(d))]
         out.append(idx.attach(f))
     stats["transfer_pairs"] = sum(len(v) for v in groups.values())
@@ -869,6 +894,8 @@ def _assets(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                      "oder ein eigenes Asset anlegen. Portfolia ändert die bestehende Zuordnung nicht selbst; neue "
                      f"{pa.symbol}-Vorgänge von {PROVIDER_LABEL.get(prov, prov)} gehen in die Prüfung.",
             key=f"provider|{prov}|{aid}", weight=cur_val or ZERO,
+            data={"type": "provider_quote", "asset": aid, "coin": pa.coingecko, "coin_name": pa.name,
+                  "provider": prov, "current": a.quote_id if other_coin else None},
             positions=sorted((acc, x) for (acc, x), v in idx.led.balances.items() if x == aid and v))
         f.txs = [idx.ref(t) for t in txs[:20]]
         f.identifiers.append(f"{pa.symbol}@{prov.upper()}")
@@ -897,7 +924,8 @@ def _assets(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                              "Projektseite."],
                 decision="Contracts im Explorer prüfen; eine falsche Zuordnung unter Einstellungen → CSV-Import → "
                          "Zuordnungen löschen. Bestehende Buchungen bleiben unverändert.",
-                key=f"contracts|{aid}|{chain}")
+                key=f"contracts|{aid}|{chain}",
+                data={"type": "contracts", "asset": aid, "keys": on_chain})
             f.assets.append(aid)
             f.identifiers += sorted(contracts)
             out.append(idx.attach(f))
@@ -1245,9 +1273,14 @@ def _prices(idx: _Index, stats: dict[str, int]) -> list[Finding]:
         last = lat.point or lat.expired
         last_txt = (f"{KIND_LABEL[last.kind]} vom {_d(last.date)}: {_px(last.price)} (Alter "
                     f"{(idx.snap.today - last.date).days} Tage)") if last else "kein Kurspunkt (manuell/Transaktion)"
+        data: dict[str, Any] = {"type": "price_fallback", "asset": aid}
         if p is None or not p.valued:
             status, prio = "belegt", 2
             title = f"Kein gültiger Kurs: {aid} wird mit 0 € bewertet"
+            data = {"type": "unvalued", "asset": aid,
+                    "suggestion": src_row.get("quote_id") if src_row.get("status") == "suggested" else None,
+                    "suggestion_confidence": src_row.get("confidence"),
+                    "positions": [[acc, str(v)] for acc, x in positions(aid) if (v := idx.bal(acc, x)) > 0]}
             known = [f"Bestand {_q(q)} {aid}; Kursquelle: {source}.",
                      f"Letzter Kurspunkt: {last_txt}"
                      + (f" – älter als das Höchstalter von {lat.max_age} Tagen, daher nicht verwendet."
@@ -1269,7 +1302,7 @@ def _prices(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                     uncertainty=["Der tatsächliche Marktwert ist unbekannt; die Diagnose fragt keine Kurse ab."],
                     decision="Kursquelle zuordnen (Einstellungen → Kursquellen) oder einen aktuellen manuellen Kurs im "
                              "kuratierten Import hinterlegen. Portfolia ändert Kurse und Werte nicht.",
-                    key=f"price|{aid}", weight=weight.quantize(Decimal("0.01")) if weight else ZERO,
+                    key=f"price|{aid}", weight=weight.quantize(Decimal("0.01")) if weight else ZERO, data=data,
                     assets=[aid], positions=positions(aid), accounts=sorted({acc for acc, _x in positions(aid)}))
         for pos in f.positions:
             idx.findings_by_pos[pos].append(f)
@@ -1285,7 +1318,7 @@ def _prices(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                     uncertainty=["Häufige Ursache ist ein ausgefallener oder gedrosselter Kursabruf (Container aus, "
                                  "Kontingent) – siehe Datenqualität → Kursquellen."],
                     decision="Kursabruf prüfen; Portfolia ändert gespeicherte Kurse und Werte nicht.",
-                    key="price-stale|" + "|".join(sorted(a for a, _l, _w in stale)),
+                    key="price-stale|" + "|".join(sorted(a for a, _l, _w in stale)), data={"type": "stale"},
                     weight=sum((w for _a, _l, w in stale), ZERO).quantize(Decimal("0.01")),
                     assets=[a for a, _l, _w in stale])
         f.positions = [pos for a, _l, _w in stale for pos in positions(a)]
@@ -1383,7 +1416,10 @@ def _migrations(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                                             (f"Bestand {new}", _q(q_new), _q(q_new))]),
                     decision="Contract-Adressen beider Token im Explorer bzw. beim Projekt prüfen; danach über "
                              "Migration (Kapitalmaßnahme), Abschreibung oder Spam-Status entscheiden.",
-                    key=f"migration|{acc}|{old}|{new}")
+                    key=f"migration|{acc}|{old}|{new}",
+                    data={"type": "migration", "account": acc, "old": old, "new": new, "q_old": str(q_old),
+                          "q_new": str(q_new), "receipt": first_new.tx_id if first_new is not None else None,
+                          "spam": new if a_new.status == "spam" else old if a_old.status == "spam" else None})
                 if first_new is not None:
                     f.txs = [idx.ref(first_new)]
                 f.positions = [(acc, old), (acc, new)]
@@ -1404,6 +1440,53 @@ def _migrations(idx: _Index, stats: dict[str, int]) -> list[Finding]:
 
 def _tol(v: Decimal) -> Decimal:
     return max(Decimal("1e-8"), abs(v) * Decimal("1e-9"))
+
+
+def _soll_eq(expected: Decimal, v: Decimal) -> bool:
+    return abs(expected - v) <= max(Decimal("1e-8"), abs(expected) * Decimal("1e-6"))
+
+
+_APP_LABEL = {"journal": "App-Buchung(en)", "plan": "Sparplan-Buchung(en)", "hidden": "in Portfolia ausgeblendete "
+              "Import-Buchung(en)", "edited": "in Portfolia geänderte Import-Buchung(en)"}
+
+
+def _app_changes(idx: _Index) -> tuple[dict[tuple[str, str], Decimal] | None, dict[tuple[str, str], dict[str, int]]]:
+    """Bestände laut unverändertem Import (je Konto/Asset) und Änderungen in Portfolia, die eine Position berühren
+    (App-Buchungen, Sparplan-Buchungen, ausgeblendete bzw. geänderte Import-Buchungen)."""
+    base = idx.snap.base
+    if base is None:
+        return None, {}
+    raw: dict[tuple[str, str], Decimal] = defaultdict(lambda: ZERO)
+    raw_by_id: dict[str, dict[tuple[str, str], Decimal]] = {}
+    for t in base.txs:
+        e = _effect([t])
+        raw_by_id[t.tx_id] = e
+        for k, v in e.items():
+            raw[k] += v
+    why: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    present: set[str] = set()
+    for t in idx.txs:
+        e = _effect([t])
+        if t.origin == "import" and t.tx_id in raw_by_id:
+            present.add(t.tx_id)
+            r = raw_by_id[t.tx_id]
+            for k in set(r) | set(e):
+                if r.get(k, ZERO) != e.get(k, ZERO):
+                    why[k]["edited"] += 1
+        elif t.origin in ("journal", "plan"):
+            for k in e:
+                why[k][t.origin] += 1
+    for tid, r in raw_by_id.items():
+        if tid not in present:
+            for k in r:
+                why[k]["hidden"] += 1
+    return raw, why
+
+
+def _app_text(row: HoldingRow, raw_q: Decimal, why: dict[str, int]) -> str:
+    parts = ", ".join(f"{n} {_APP_LABEL[k]}" for k, n in sorted(why.items()) if n)
+    return (f"Soll laut Import {_q(row.expected)} = Bestand aus den Import-Buchungen ({_q(raw_q)}); die Differenz "
+            f"{_q(row.computed - raw_q)} stammt aus Änderungen in Portfolia: {parts}")
 
 
 def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], list[Finding]]:
@@ -1433,6 +1516,24 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
     rows: list[HoldingRow] = []
     findings: list[Finding] = []
     totals = idx.led.holdings_by_asset()
+    raw, why = _app_changes(idx)
+    raw_tot: dict[str, Decimal] = defaultdict(lambda: ZERO)
+    why_tot: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for (_acc, x), v in (raw or {}).items():
+        raw_tot[x] += v
+    for (_acc, x), w in why.items():
+        for k, n in w.items():
+            why_tot[x][k] += n
+
+    def internal(row: HoldingRow, raw_q: Decimal | None, changes: dict[str, int] | None) -> str:
+        assert row.expected is not None
+        if _soll_eq(row.expected, row.computed):
+            return "intern_ok"
+        if raw_q is not None and changes and _soll_eq(row.expected, raw_q):
+            row.explanations.append(_app_text(row, raw_q, changes))
+            return "intern_app"
+        return "intern_diff"
+
     for h in idx.pf.holdings_check:
         if h.get("account"):
             continue
@@ -1440,8 +1541,7 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
         row = HoldingRow(account="(alle Konten)", asset=aid, name=idx.asset(aid).name,
                          computed=totals.get(aid, ZERO), expected=Decimal(str(h["qty"])),
                          expected_as_of=idx.pf.valuation_date)
-        row.status = "intern_ok" if abs(row.expected - row.computed) <= max(  # type: ignore[operator]
-            Decimal("1e-8"), abs(row.expected) * Decimal("1e-6")) else "intern_diff"  # type: ignore[arg-type]
+        row.status = internal(row, raw_tot.get(aid, ZERO) if raw is not None else None, why_tot.get(aid))
         rows.append(row)
         f = _holding_finding(idx, row)
         if f is not None:
@@ -1481,8 +1581,7 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
             row.explanations.append("Anbieter meldet für dieses Asset keinen Bestand (nicht geliefert, nicht "
                                     "zugeordnet oder 0)")
         elif row.expected is not None:
-            row.status = "intern_ok" if abs(row.expected - comp) <= max(Decimal("1e-8"), abs(row.expected)
-                                                                         * Decimal("1e-6")) else "intern_diff"
+            row.status = internal(row, raw.get((acc, aid), ZERO) if raw is not None else None, why.get((acc, aid)))
         else:
             row.status = "offen"
         _explain(idx, row, open_by_acc.get(acc, []), unmapped.get(acc, []))
@@ -1490,7 +1589,7 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
         f = _holding_finding(idx, row)
         if f is not None:
             findings.append(f)
-    for k in ("extern_ok", "extern_diff", "extern_unsicher", "intern_ok", "intern_diff", "offen"):
+    for k in ("extern_ok", "extern_diff", "extern_unsicher", "intern_ok", "intern_app", "intern_diff", "offen"):
         stats[f"holdings_{k}"] = sum(1 for r in rows if r.status == k)
     return rows, findings
 
@@ -1547,7 +1646,11 @@ def _holding_finding(idx: _Index, row: HoldingRow) -> Finding | None:
                          "automatisch aus und speichert keine Bestände.",
                 accounts=[row.account], assets=[row.asset], positions=[(row.account, row.asset)],
                 key=f"holding|{row.account}|{row.asset}|{row.status}",
-                weight=abs(row.diff if row.diff is not None else row.internal_diff or ZERO))
+                weight=abs(row.diff if row.diff is not None else row.internal_diff or ZERO),
+                data={"type": "holding", "account": row.account, "asset": row.asset, "status": row.status,
+                      "computed": str(row.computed), "observed": None if row.observed is None else str(row.observed),
+                      "expected": None if row.expected is None else str(row.expected),
+                      "observed_at": row.observed_at.isoformat() if row.observed_at else None})
     return f
 
 

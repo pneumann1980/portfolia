@@ -360,7 +360,7 @@ def test_holdings_reconciliation_distinguishes_internal_and_external(cfg):
 
 
 # ----------------------------------------------------------------------------------------------------
-# Nur lesend, deterministisch, Ansicht ohne Aktionen
+# Nur lesend, deterministisch, Aktionen nur über Vorschau und ausdrückliches Übernehmen
 # ----------------------------------------------------------------------------------------------------
 
 def test_diagnosis_page_and_rescan_change_nothing(cfg):
@@ -387,7 +387,12 @@ def test_diagnosis_page_and_rescan_change_nothing(cfg):
         assert dict(led2.balances) == balances and [(x.acq_tx, x.qty, x.cost) for x in led2.lots] == lots
         html = pages[0].text
         body = html[html.index('class="stack diag"'):html.index("</main>") if "</main>" in html else len(html)]
-        assert "<form" not in body and "hx-post" not in body and "hx-delete" not in body
+        # Aktionen nur als ausdrückliche POST-Formulare der Diagnose (Vorschau ist ein GET ohne Schreibzugriff)
+        assert "hx-post" not in body and "hx-delete" not in body
+        actions = re.findall(r'<form method="post" action="([^"]+)"', body)
+        assert actions and all(a.startswith("/quality/diagnose/") for a in actions)
+        assert body.count("<form") == len(actions)
+        assert "Empfehlung" in body and "/quality/diagnose/plan?f=" in body
         assert "Szenario (hypothetisch)" in body and "intern konsistent" in body
         assert "zuerst ansehen" in body
         assert "/quality/diagnose" in c.get("/quality").text

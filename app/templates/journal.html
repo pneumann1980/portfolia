@@ -61,6 +61,8 @@
             {% else %}
             <form method="post" action="/journal/{{ t.tx_id }}/delete" class="inline" data-confirm="Buchung {{ t.tx_id }} löschen? (lässt sich wiederherstellen)"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="icon-btn" type="submit" title="Löschen" aria-label="Buchung {{ t.tx_id }} löschen">×</button></form>
             {% endif %}
+          {% elif r.kind == 'journal' and m and m.source == 'diagnose' %}
+            <a class="btn sm ghost" href="/quality/diagnose#decisions" title="Korrektur aus der Diagnose – zurücknehmen unter Diagnose → Entscheidungen und Korrekturen">Zur Korrektur</a>
           {% elif r.kind == 'import' %}{% set o = ov.get(t.tx_id) %}
             <a class="btn sm" href="/journal/{{ t.tx_id }}/edit" title="Import-Buchung bearbeiten – die Import-Datei bleibt unverändert">Bearbeiten</a>
             <a class="icon-btn" href="/journal/new?copy={{ t.tx_id }}" title="Kopieren – als Vorlage für eine manuelle Buchung" aria-label="Buchung {{ t.tx_id }} kopieren">⧉</a>

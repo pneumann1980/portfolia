@@ -103,6 +103,8 @@ class Snapshot:
     max_age: dict[str, int | None] = field(default_factory=dict)  # crypto | security → Tage (None = unbegrenzt)
     journal_dups: dict[str, list[str]] = field(default_factory=dict)  # manuelle Buchung → ähnliche Import-Buchungen
     settings: Any = None
+    base: Portfolio | None = None  # kuratierter Import ohne Änderungen in der App (Soll-Bestände beziehen sich darauf)
+    saved_symbols: dict[str, str | None] = field(default_factory=dict)  # gespeicherte Symbol-Zuordnungen (csv_symbol)
 
 
 def _dec(v: Any) -> Decimal | None:
@@ -121,6 +123,7 @@ def collect(ctx: Any, now: datetime | None = None) -> Snapshot:
     if pf is not None and led is not None:
         snap.prices = ctx.price_infos(pf, led)
     base = ctx.base_portfolio()
+    snap.base = base
     snap.import_ids = frozenset(t.tx_id for t in base.txs) if base is not None else frozenset()
     from app.prices.fallback import DEFAULT_MAX_AGE, SETTING_KEYS
 
@@ -145,6 +148,7 @@ def collect(ctx: Any, now: datetime | None = None) -> Snapshot:
 
         csv = csv_service(ctx)
         saved = csv.saved_symbols()
+        snap.saved_symbols = dict(saved)
         resolver = SymbolResolver(csv.known_assets(), saved)
         for sym, aid in sorted(saved.items()):
             if aid and "@" in sym and ":" in sym.split("@", 1)[1]:

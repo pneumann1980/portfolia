@@ -414,6 +414,27 @@ CREATE TABLE IF NOT EXISTS provider_secret (
 -- kuratierten Import bzw. in App-Buchungen abgeleitet (Anzeige, jederzeit löschbar)
 ALTER TABLE csv_symbol ADD COLUMN origin TEXT;
 """),
+    (12, """
+-- Entscheidungen zu Befunden der Diagnose: übernommene Korrektur (fix, mit Vorher-Zustand je Änderung für
+-- „Rückgängig“) oder „geprüft, kein Handlungsbedarf“ (dismiss, gilt nur solange die Befunddaten gleich bleiben).
+CREATE TABLE IF NOT EXISTS diag_decision (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  finding_id   TEXT NOT NULL,
+  kind         TEXT NOT NULL,                     -- Befundart
+  title        TEXT NOT NULL,                     -- Titel des Befunds beim Entscheiden
+  action       TEXT NOT NULL,                     -- fix | dismiss
+  option       TEXT,                              -- gewählte Lösung (fix)
+  option_label TEXT,
+  params_json  TEXT,
+  ops_json     TEXT,                              -- ausgeführte Änderungen mit Vorher-Zustand
+  fingerprint  TEXT,                              -- Prüfsumme der Befunddaten beim Entscheiden
+  note         TEXT,
+  status       TEXT NOT NULL DEFAULT 'active',    -- active | undone
+  created_at   TEXT NOT NULL,
+  undone_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_diag_decision_finding ON diag_decision(finding_id, status);
+"""),
 ]
 
 

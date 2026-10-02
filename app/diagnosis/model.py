@@ -45,6 +45,10 @@ HOLDING_STATUS: dict[str, tuple[str, str, str]] = {
                         "externer Bestand liegt vor, aber der Abruf ist veraltet oder unvollständig – kein „stimmt“"),
     "intern_ok": ("intern konsistent", "info",
                   "aus den Buchungen reproduzierbar (Soll laut kuratiertem Import) – nicht extern geprüft"),
+    "intern_app": ("Import-Soll + Änderungen in Portfolia", "info",
+                   "die Buchungen des Imports ergeben das Soll; die Abweichung stammt vollständig aus Änderungen in "
+                   "Portfolia (ausgeblendete, geänderte oder ergänzte Buchungen, Sparplan-Schätzungen) – nicht extern "
+                   "geprüft"),
     "intern_diff": ("intern abweichend", "warn", "Buchungen ergeben einen anderen Bestand als das Soll des Imports"),
     "offen": ("ohne Abgleich", "", "weder externer Bestand noch Soll-Bestand vorhanden"),
 }
@@ -69,6 +73,7 @@ class TxRef:
     event_index: str | None = None
     flags: list[str] = field(default_factory=list)
     note: str | None = None
+    edit_url: str | None = None  # Bearbeiten im Journal (Import-Buchung: Überlagerung; App-Buchung: falls bearbeitbar)
 
 
 @dataclass
@@ -100,6 +105,7 @@ class Finding:
     priority: int = 2  # 1 = zuerst ansehen … 3 = Einordnung
     weight: Decimal = Decimal(0)  # Sortierung innerhalb gleicher Priorität (z. B. betroffener Wert)
     key: str = ""  # stabile Kennung (aus Art und betroffenen Buchungen/Schlüsseln)
+    data: dict[str, Any] = field(default_factory=dict)  # maschinenlesbar für Empfehlungen (Buchungen, Asset, Coin …)
 
     @property
     def id(self) -> str:
@@ -143,6 +149,8 @@ class Report:
     holdings: list[HoldingRow]
     generated_for: date
     stats: dict[str, int] = field(default_factory=dict)  # Kennzahlen der Prüfung (z. B. legitime Hash-Gruppen)
+    snapshot: Any = field(default=None, repr=False, compare=False)  # Grundlage (für Empfehlungen und Vorschau)
+    index: Any = field(default=None, repr=False, compare=False)  # Nachschlage-Index der Regeln (Buchungsanzeige)
 
     def counts(self) -> dict[str, dict[str, int]]:
         out: dict[str, dict[str, int]] = {k: {} for k in KINDS}

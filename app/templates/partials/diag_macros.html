@@ -1,0 +1,42 @@
+{# Gemeinsame Bausteine der Diagnose (Befundliste und Vorschau einer Korrektur) #}
+{% macro txref(t, new=false) %}
+<div class="txref{% if new %} txref-new{% endif %}">
+  <div class="row">{% if new %}<span class="badge good">neue Buchung</span>{% else %}<span class="mono">{{ t.tx_id }}</span>{% endif %}<span class="badge">{{ type_label.get(t.type, t.type) }}{% if t.tag %} · {{ t.tag }}{% endif %}</span><span class="badge">{{ origin_label.get(t.origin, t.origin) }}</span></div>
+  <div>{{ t.ts|datetime_de }} <span class="hint">· {{ utc_fmt(t.ts) }}</span></div>
+  {% if t.out %}<div>−{{ t.out[2]|qty_exact }} {{ t.out[1] }}{% if t.out[0] %} <span class="hint">von {{ t.out[0] }}</span>{% endif %}</div>{% endif %}
+  {% if t.inn %}<div>+{{ t.inn[2]|qty_exact }} {{ t.inn[1] }}{% if t.inn[0] %} <span class="hint">auf {{ t.inn[0] }}</span>{% endif %}</div>{% endif %}
+  {% if t.fee %}<div class="hint">Gebühr {{ t.fee[1]|qty_exact }} {{ t.fee[0] }}</div>{% endif %}
+  {% if t.value_eur is not none %}<div class="hint">Wert {{ t.value_eur|eur }}</div>{% elif new %}<div class="hint">ohne EUR-Wert</div>{% endif %}
+  <div class="hint">{{ t.source }}{% if t.source_ref %} · Quellkennung <span class="mono">{{ t.source_ref }}</span>{% endif %}</div>
+  {% if not new %}
+  {% for h in t.hashes %}<div class="hint">Hash <span class="mono">{{ h }}</span></div>{% endfor %}
+  <div class="hint">Ereignisindex: {% if t.event_index is not none %}<span class="mono">{{ t.event_index }}</span>{% else %}fehlt{% endif %}</div>
+  {% endif %}
+  {% if t.flags %}<div class="row">{% for fl in t.flags %}<span class="badge">{{ fl }}</span>{% endfor %}</div>{% endif %}
+  {% if t.note %}<div class="hint">Notiz: {{ t.note }}</div>{% endif %}
+  {% if not new %}<div class="hint"><a href="/journal?q={{ t.tx_id|urlencode }}">in den Buchungen anzeigen</a>{% if t.edit_url %} · <a href="{{ t.edit_url }}">bearbeiten</a>{% endif %}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro ext_links(links) %}{% for l in links %} · <a href="{{ l.url }}"{% if l.external %} target="_blank" rel="noopener noreferrer"{% endif %}>{{ l.label }}{% if l.external %} ↗{% endif %}</a>{% endfor %}{% endmacro %}
+
+{% macro param_field(p, values) %}
+{% if p.kind == 'multi' %}
+<fieldset class="param-set">
+  <legend>{{ p.label }}</legend>
+  {% for v, label in p.choices %}<label class="check"><input type="checkbox" name="p_{{ p.name }}" value="{{ v }}"{% if v in values %} checked{% endif %}> <span>{{ label }}</span></label>{% endfor %}
+  {% if p.hint %}<div class="hint">{{ p.hint }}</div>{% endif %}
+</fieldset>
+{% else %}
+<label class="field">{{ p.label }}
+  {% if p.kind == 'select' %}
+  <select name="p_{{ p.name }}">{% for v, label in p.choices %}<option value="{{ v }}"{% if v in values %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+  {% elif p.kind == 'date' %}
+  <input type="date" name="p_{{ p.name }}" value="{{ values[0] if values else '' }}">
+  {% else %}
+  <input type="text" name="p_{{ p.name }}" value="{{ values[0] if values else '' }}"{% if p.kind == 'decimal' %} inputmode="decimal"{% endif %} autocomplete="off">
+  {% endif %}
+  {% if p.hint %}<span class="hint">{{ p.hint }}</span>{% endif %}
+</label>
+{% endif %}
+{% endmacro %}

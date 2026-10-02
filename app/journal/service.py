@@ -36,8 +36,8 @@ from app.util.timeutil import iso, local_tz, parse_iso, to_local_date, today_loc
 
 log = logging.getLogger(__name__)
 
-SOURCE_LABEL = {"manual": "manuell", "transfer": "Transfer-Abgleich"}
-TX_PREFIX = {"manual": "PF-M-", "csv": "PF-C-", "transfer": "PF-T-", "sync": "PF-S-"}
+SOURCE_LABEL = {"manual": "manuell", "transfer": "Transfer-Abgleich", "diagnose": "Korrektur aus der Diagnose"}
+TX_PREFIX = {"manual": "PF-M-", "csv": "PF-C-", "transfer": "PF-T-", "sync": "PF-S-", "diagnose": "PF-D-"}
 EDITABLE_SOURCES = ("manual", "transfer")
 SEQ_BASE = 2_000_000
 TAX_TYPES = {"share": "Aktie", "etf_equity": "Aktienfonds (≥ 51 % Aktien)", "etf_mixed": "Mischfonds (≥ 25 % Aktien)",

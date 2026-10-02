@@ -44,7 +44,7 @@
         <td data-label="Asset"><b>{{ a.name }}</b><div class="hint">{{ a.symbol }}{% if it.held %} · im Bestand{% else %} · nicht mehr im Bestand{% endif %}</div></td>
         <td data-label="Konten">{{ it.accounts|join(', ') or '–' }}{% if it.hints %}<div class="hint">Chain: {{ it.hints|join(', ') }}</div>{% endif %}</td>
         <td data-label="Status">
-          {% if it.status == 'active' %}<span class="badge good">zugeordnet</span>{% if r.origin == 'auto' %} <span class="hint">automatisch</span>{% endif %}
+          {% if it.status == 'active' %}<span class="badge good">zugeordnet</span>{% if r.origin == 'auto' %} <span class="hint">automatisch</span>{% elif r.origin == 'override' %} <span class="hint">ersetzt die Kursquelle des Imports</span>{% endif %}
           {% elif it.status == 'suggested' %}<span class="badge warn">Vorschlag</span>
           {% elif it.status == 'none' %}<span class="badge">kein Treffer</span>
           {% elif it.status == 'rejected' %}<span class="badge">abgelehnt</span>

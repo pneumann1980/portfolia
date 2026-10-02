@@ -562,6 +562,28 @@ ul.diag-counts a.badge:hover { text-decoration: none; filter: brightness(0.97); 
 .scen-row .scen-label { font-weight: 600; }
 .scen-row .scen-k { font-style: normal; color: var(--ink-2); }
 .scen-head { display: none; }
+/* Diagnose: Empfehlung, Lösungen, Vorschau einer Korrektur, Entscheidungen */
+.reco { border: 1px solid var(--info-ink); border-left-width: 4px; border-radius: var(--radius-sm); padding: 10px 12px; background: var(--info-bg); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.reco > h4 { color: var(--info-ink); margin: 0; }
+.reco p { margin: 0; }
+.reco-opts { display: grid; gap: 8px; }
+.reco-opt { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); min-width: 0; }
+.reco-opt.is-rec { border-color: var(--good-ink); }
+.reco-opt-text { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.reco-opt .btn { flex: 0 0 auto; }
+.caution { color: var(--warn-ink); }
+.reco-dismiss { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.reco-dismiss input[type="text"] { flex: 1 1 220px; min-width: 0; }
+.reco-dismiss .btn, .reco-opt .btn, .op-list .btn { white-space: normal; text-align: left; max-width: 100%; }
+.checked-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 12px; padding: 6px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.checked-row > div { flex: 1 1 260px; min-width: 0; }
+details.decision-row > summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; overflow-wrap: anywhere; }
+ol.op-list { margin: 0; padding-left: 20px; display: grid; gap: 10px; }
+ol.op-list li.op { display: flex; flex-direction: column; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.txref-new { border: 2px solid var(--good-ink); background: var(--good-bg); }
+fieldset.param-set { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; margin: 0; display: grid; gap: 6px; min-width: 0; }
+fieldset.param-set legend { font-size: 0.85rem; color: var(--ink-2); padding: 0 4px; }
+.diag h3 { font-size: 0.92rem; margin: 14px 0 6px; }
 @media (min-width: 700px) {
   .scen-row { grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1.2fr); gap: 10px; }
   .scen-row > span:not(.scen-label) { text-align: right; font-variant-numeric: tabular-nums; }

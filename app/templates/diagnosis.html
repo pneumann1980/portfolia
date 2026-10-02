@@ -4,20 +4,29 @@
 {% macro qurl(k=None, s=None) -%}
 /quality/diagnose?{% if k %}kind={{ k }}{% endif %}{% if k and s %}&amp;{% endif %}{% if s %}status={{ s }}{% endif %}
 {%- endmacro %}
-{% macro txref(t) %}
-<div class="txref">
-  <div class="row"><span class="mono">{{ t.tx_id }}</span><span class="badge">{{ type_label.get(t.type, t.type) }}{% if t.tag %} · {{ t.tag }}{% endif %}</span><span class="badge">{{ origin_label.get(t.origin, t.origin) }}</span></div>
-  <div>{{ t.ts|datetime_de }} <span class="hint">· {{ utc_fmt(t.ts) }}</span></div>
-  {% if t.out %}<div>−{{ t.out[2]|qty_exact }} {{ t.out[1] }}{% if t.out[0] %} <span class="hint">von {{ t.out[0] }}</span>{% endif %}</div>{% endif %}
-  {% if t.inn %}<div>+{{ t.inn[2]|qty_exact }} {{ t.inn[1] }}{% if t.inn[0] %} <span class="hint">auf {{ t.inn[0] }}</span>{% endif %}</div>{% endif %}
-  {% if t.fee %}<div class="hint">Gebühr {{ t.fee[1]|qty_exact }} {{ t.fee[0] }}</div>{% endif %}
-  {% if t.value_eur is not none %}<div class="hint">Wert {{ t.value_eur|eur }}</div>{% endif %}
-  <div class="hint">{{ t.source }}{% if t.source_ref %} · Quellkennung <span class="mono">{{ t.source_ref }}</span>{% endif %}</div>
-  {% for h in t.hashes %}<div class="hint">Hash <span class="mono">{{ h }}</span></div>{% endfor %}
-  <div class="hint">Ereignisindex: {% if t.event_index is not none %}<span class="mono">{{ t.event_index }}</span>{% else %}fehlt{% endif %}</div>
-  {% if t.flags %}<div class="row">{% for fl in t.flags %}<span class="badge">{{ fl }}</span>{% endfor %}</div>{% endif %}
-  {% if t.note %}<div class="hint">Notiz: {{ t.note }}</div>{% endif %}
-  <div class="hint"><a href="/journal?q={{ t.tx_id|urlencode }}">in den Buchungen anzeigen</a></div>
+{% import "partials/diag_macros.html" as dm with context %}
+{% macro reco(f) %}{% set rec = recs[f.id] %}
+<div class="reco">
+  <h4>{{ 'Empfehlung (nach Prüfung)' if rec.conditional else 'Empfehlung' }}</h4>
+  <p>{{ rec.text }}</p>
+  {% if rec.checks %}<div><span class="hint">Vorher prüfen (Links öffnest nur du – Portfolia ruft sie nicht ab):</span>
+    <ul>{% for text, links in rec.checks %}<li>{{ text }}{{ dm.ext_links(links) }}</li>{% endfor %}</ul></div>{% endif %}
+  {% for d in fixes.get(f.id, []) %}<div class="alert"><span class="icon">i</span><div>Korrektur #{{ d.id }} vom {{ d.created|datetime_de }} übernommen ({{ d.option_label }}) – der Befund besteht weiter bzw. wieder. <a href="#d-{{ d.id }}">Zur Entscheidung</a></div></div>{% endfor %}
+  {% if f.id in changed %}{% set d = changed[f.id] %}<div class="alert warn"><span class="icon">!</span><div>Am {{ d.created|datetime_de }} als geprüft markiert{% if d.note %} („{{ d.note }}“){% endif %} – seitdem haben sich die Daten des Befunds geändert. Bitte erneut prüfen.</div></div>{% endif %}
+  {% if rec.fixes %}<div class="reco-opts">
+    {% for o in rec.fixes %}<div class="reco-opt{% if o.recommended %} is-rec{% endif %}">
+      <div class="reco-opt-text"><b>{{ o.label }}</b>{% if o.recommended %} <span class="badge good">empfohlen</span>{% else %} <span class="badge">Alternative</span>{% endif %}
+        <div class="hint">{{ o.summary }}</div>
+        {% if o.caution %}<div class="hint caution">⚠ {{ o.caution }}</div>{% endif %}</div>
+      <a class="btn sm{% if o.recommended %} primary{% endif %}" href="/quality/diagnose/plan?f={{ f.id }}&amp;o={{ o.key }}">Vorschau{% if o.params %} &amp; Auswahl{% endif %}</a>
+    </div>{% endfor %}
+  </div>{% endif %}
+  {% for o in rec.options if o.dismiss %}
+  <form method="post" action="/quality/diagnose/dismiss" class="reco-dismiss"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ f.id }}">
+    <input type="text" name="note" maxlength="500" placeholder="Notiz (optional), z. B. „im Explorer geprüft“" aria-label="Notiz zur Prüfung">
+    <button class="btn sm ghost" type="submit">{{ o.label }}</button>
+  </form>{% endfor %}
+  {% if rec.links %}<div class="hint">Weiter:{% for l in rec.links %}{{ ' · ' if not loop.first else ' ' }}<a href="{{ l.url }}"{% if l.external %} target="_blank" rel="noopener noreferrer"{% endif %}>{{ l.label }}</a>{% endfor %}</div>{% endif %}
 </div>
 {% endmacro %}
 {% block content %}
@@ -25,10 +34,12 @@
 
 <section class="card">
   <div class="card-head"><h2>Diagnose: Datenqualität und Bestandsabgleich</h2>
-    <div class="row"><a class="btn sm" href="/quality">Datenqualität</a><a class="btn sm" href="{{ qurl(kind, status) }}" title="Diagnose neu berechnen (ändert keine Daten)">Erneut prüfen</a></div>
+    <div class="row"><a class="btn sm" href="/quality">Datenqualität</a><a class="btn sm" href="{{ qurl(kind, status) }}" title="Diagnose neu berechnen (ändert keine Daten)">Erneut prüfen</a>{% if decisions %}<a class="btn sm" href="#decisions">Entscheidungen ({{ decisions|selectattr('active')|list|length }})</a>{% endif %}</div>
   </div>
-  <div class="alert"><span class="icon">i</span><div><strong>Nur lesend.</strong> Die Diagnose ändert keine Buchung, Zuordnung, Lots, Kurse oder Bestände und schließt nichts aus Berechnungen aus. Auswirkungen stehen ausschließlich in Kästen <em>„Szenario (hypothetisch)“</em>. Auch bei starkem Verdacht bereinigt Portfolia nichts automatisch.</div></div>
-  <p class="hint">Stand {{ generated|datetime_de }} · {{ report.stats.get('txs', 0) }} Buchungen geprüft · {{ report.findings|length }} Befunde{% if report.stats.get('same_hash_distinct_index') %} · {{ report.stats.same_hash_distinct_index }} Hash-Gruppen mit unterschiedlichem Ereignisindex gelten als legitim{% endif %}</p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  <div class="alert"><span class="icon">i</span><div><strong>Die Diagnose ändert nichts von selbst.</strong> Je Befund steht eine Empfehlung mit Alternativen. Eine Korrektur wird erst übernommen, wenn du sie in der <em>Vorschau</em> geprüft und bestätigt hast – die Vorschau zeigt jede betroffene Buchung und rechnet Bestände, Einstand, realisierte Ergebnisse und Steuerwerte vorher/nachher durch. Jede Korrektur lässt sich unter <a href="#decisions">Entscheidungen und Korrekturen</a> zurücknehmen; nichts wird physisch gelöscht. Auswirkungen in Kästen <em>„Szenario (hypothetisch)“</em> sind reine Rechenbeispiele.</div></div>
+  <p class="hint">Stand {{ generated|datetime_de }} · {{ report.stats.get('txs', 0) }} Buchungen geprüft · {{ n_open }} offene Befunde{% if dismissed %} · <a href="#checked">{{ dismissed|length }} als geprüft markiert</a>{% endif %}{% if report.stats.get('same_hash_distinct_index') %} · {{ report.stats.same_hash_distinct_index }} Hash-Gruppen mit unterschiedlichem Ereignisindex gelten als legitim{% endif %}</p>
   <ul class="diag-counts">
     {% for k, label in kinds.items() %}<li><a href="{{ qurl(k) }}">{{ label }}</a>
       <span class="row">{% for s in statuses %}{% set n = counts[k].get(s, 0) %}{% if n %}<a class="badge {{ status_badge[s] }}" href="{{ qurl(k, s) }}">{{ n }} {{ s }}</a>{% endif %}{% endfor %}{% if not counts[k] %}<span class="muted">keine</span>{% endif %}</span></li>{% endfor %}
@@ -45,7 +56,7 @@
 </section>
 
 <section class="card" id="findings">
-  <div class="card-head"><h2>Befunde ({{ shown|length }}{% if kind or status %} von {{ report.findings|length }}{% endif %})</h2></div>
+  <div class="card-head"><h2>Befunde ({{ shown|length }}{% if kind or status %} von {{ n_open }}{% endif %})</h2></div>
   <div class="filters">
     <div class="seg" role="group" aria-label="Befundart">
       <a href="{{ qurl(None, status) }}" class="{% if not kind %}active{% endif %}">Alle</a>
@@ -66,16 +77,17 @@
       <div class="f-meta">{% if f.accounts %}{{ f.accounts[:4]|join(', ') }}{% if f.accounts|length > 4 %} …{% endif %}{% endif %}{% if f.assets %}{% if f.accounts %} · {% endif %}{{ f.assets[:6]|join(', ') }}{% if f.assets|length > 6 %} …{% endif %}{% endif %}{% if f.txs %} · {{ f.txs|length }} Buchung{{ 'en' if f.txs|length != 1 }}{% endif %}</div>
     </summary>
     <div class="finding-body">
+      {{ reco(f) }}
       {% if f.known %}<div><h4>Was Portfolia aus den Daten weiß</h4><ul>{% for x in f.known %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
       {% if f.suspected %}<div><h4>Was Portfolia nur vermutet</h4><ul>{% for x in f.suspected %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
       {% if f.evidence %}<div><h4>Belege</h4><ul>{% for x in f.evidence %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
       {% if f.uncertainty %}<div><h4>Unsicherheiten</h4><ul>{% for x in f.uncertainty %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
       {% if f.pairs %}
       <div><h4>Gegenüberstellung</h4>
-        <div class="stack" style="gap:10px">{% for a, b, why in f.pairs %}<div class="pair">{{ txref(a) }}{{ txref(b) }}<div class="pair-why">Begründung: {{ why }}</div></div>{% endfor %}</div>
+        <div class="stack" style="gap:10px">{% for a, b, why in f.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">Begründung: {{ why }}</div></div>{% endfor %}</div>
       </div>
       {% elif f.txs %}
-      <div><h4>Betroffene Buchungen ({{ f.txs|length }})</h4><div class="tx-grid">{% for t in f.txs %}{{ txref(t) }}{% endfor %}</div></div>
+      <div><h4>Betroffene Buchungen ({{ f.txs|length }})</h4><div class="tx-grid">{% for t in f.txs %}{{ dm.txref(t) }}{% endfor %}</div></div>
       {% endif %}
       {% if f.scenario %}
       <div class="scenario" role="note">
@@ -87,7 +99,6 @@
         </div>{% endif %}
       </div>
       {% endif %}
-      {% if f.decision %}<div class="decision"><h4>Für eine spätere Korrektur nötig – Entscheidung des Nutzers</h4>{{ f.decision }}</div>{% endif %}
       <div class="f-meta">
         {% if f.accounts %}Konten: {{ f.accounts|join(', ') }} · {% endif %}{% if f.sources %}Quellen: {{ f.sources|join(', ') }} · {% endif %}Befund-ID <span class="mono">{{ f.id }}</span>
         {% if f.identifiers %}<div>Kennungen: <span class="mono">{{ f.identifiers[:24]|join(' · ') }}{% if f.identifiers|length > 24 %} …{% endif %}</span></div>{% endif %}
@@ -96,6 +107,44 @@
   </details>
   {% endfor %}
   </div>
+  {% if dismissed %}
+  <details class="box" id="checked" style="margin-top:12px"><summary><strong>Als geprüft markiert ({{ dismissed|length }})</strong> <span class="hint">– ohne Handlungsbedarf; kommen zurück, sobald sich ihre Daten ändern</span></summary>
+    <div class="stack" style="gap:8px;margin-top:8px">
+    {% for f in dismissed %}{% set d = marks[f.id] %}
+      <div class="checked-row">
+        <div><span class="badge {{ status_badge[f.status] }}">{{ f.status }}</span> <span class="badge">{{ f.kind_label }}</span> {{ f.title }}
+          <div class="hint">geprüft am {{ d.created|datetime_de }}{% if d.note %} · „{{ d.note }}“{% endif %}</div></div>
+        <form method="post" action="/quality/diagnose/decision/{{ d.id }}/reopen" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Wieder öffnen</button></form>
+      </div>
+    {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+</section>
+
+<section class="card" id="decisions">
+  <div class="card-head"><h2>Entscheidungen und Korrekturen</h2></div>
+  {% if not decisions %}<p class="hint">Noch keine. Übernommene Korrekturen und „als geprüft markiert“ erscheinen hier – mit allen Änderungen und „Rückgängig“.</p>{% else %}
+  <p class="hint">Rückgängig nimmt eine Korrektur als Ganzes zurück (in einer Transaktion). Wurde ein betroffenes Objekt danach anderweitig geändert, verweigert Portfolia das Zurücksetzen statt es zu überschreiben.</p>
+  <div class="stack" style="gap:8px">
+  {% for d in decisions %}
+    <details class="box decision-row" id="d-{{ d.id }}"{% if loop.first and d.active and msg %} open{% endif %}>
+      <summary><span class="badge {{ 'info' if d.action == 'fix' else '' }}">{{ 'Korrektur' if d.action == 'fix' else 'geprüft' }} #{{ d.id }}</span>
+        {% if d.active %}<span class="badge good">aktiv</span>{% else %}<span class="badge">zurückgenommen{% if d.undone_at %} {{ d.undone_at|datetime_de }}{% endif %}</span>{% endif %}
+        <span class="f-title">{{ d.option_label or 'kein Handlungsbedarf' }}</span>
+        <span class="hint">{{ d.created|datetime_de }} · {{ d.title }}</span></summary>
+      <div class="stack" style="gap:6px;margin-top:8px">
+        {% if d.changes %}<ul class="plain-list">{% for c in d.changes %}<li>{{ c.label }}{% if c.kind == 'create' %} <span class="mono">{{ c.target }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+        {% if d.note %}<div class="hint">Notiz: {{ d.note }}</div>{% endif %}
+        {% if d.active %}
+          {% if d.action == 'fix' %}<form method="post" action="/quality/diagnose/decision/{{ d.id }}/undo" data-confirm="Korrektur #{{ d.id }} zurücknehmen? Alle {{ d.changes|length }} Änderungen werden rückgängig gemacht."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Rückgängig</button></form>
+          {% else %}<form method="post" action="/quality/diagnose/decision/{{ d.id }}/reopen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Wieder öffnen</button></form>{% endif %}
+        {% endif %}
+      </div>
+    </details>
+  {% endfor %}
+  </div>
+  {% endif %}
 </section>
 
 <section class="card" id="holdings">
