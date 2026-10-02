@@ -747,20 +747,21 @@ bitte „Verbindung testen“, die Bestandsprüfung und den Prüf-Stapel ansehen
 ## Diagnose: Datenqualität und Bestandsabgleich
 
 *Datenqualität → Diagnose öffnen* (`/quality/diagnose`) prüft alle Buchungen, Bestände, Zuordnungen und Kurse und
-zeigt priorisierte Befunde – **nur lesend**. Die Diagnose ändert keine Buchung, Zuordnung, Lots, Kostenbasis, Kurse
-oder Bestände, schließt nichts aus Berechnungen aus und hat keine Knöpfe zum Löschen, Zusammenführen, Umbuchen,
-Bestätigen oder Ausschließen. Sie wird bei jedem Aufruf neu aus den Daten berechnet und nirgends gespeichert
-(„Erneut prüfen“ lädt nur die Seite neu); gleiche Daten ergeben dieselben Befunde mit denselben Kennungen.
+zeigt priorisierte Befunde. **Die Diagnose selbst ändert nichts:** Sie wird bei jedem Aufruf neu aus den Daten
+berechnet („Erneut prüfen“ lädt nur die Seite neu); gleiche Daten ergeben dieselben Befunde mit denselben
+Kennungen. Korrekturen gibt es nur auf ausdrücklichen Wunsch je Befund – nach einer Vorschau mit berechneten
+Auswirkungen und jederzeit umkehrbar (siehe [Empfehlungen und Korrekturen](#empfehlungen-und-korrekturen)). Auch bei
+starkem Verdacht bereinigt Portfolia nichts automatisch.
 
 Jeder Befund nennt betroffene Buchungen, Konten, Quellen und Kennungen und trennt:
 
+* **Empfehlung** – was Portfolia rät, was vorher zu prüfen ist (mit Explorer-Links) und welche Lösungen zur Wahl
+  stehen: die empfohlene, Alternativen, eine eigene Auswahl und „als geprüft markieren“.
 * **Was Portfolia aus den Daten weiß** – Fakten aus Buchungen, Kennzeichen, Beständen.
 * **Was Portfolia nur vermutet** – die Deutung.
 * **Belege** und **Unsicherheiten** – was für und was gegen die Deutung spricht.
 * **Szenario (hypothetisch)** – rechnerische Auswirkung, deutlich markiert, nie gebucht (z. B. Bestand ohne die
   vermutete Doppelbuchung, Bewertung zum Kaufkurs).
-* **Für eine spätere Korrektur nötig** – die Entscheidung, die der Nutzer treffen müsste. Auch bei starkem Verdacht
-  bereinigt Portfolia nichts automatisch.
 
 **Status eines Befunds**
 
@@ -794,6 +795,7 @@ unvollständige Historie, Gebühren, Dublettenverdacht, nicht verknüpfte Transf
 | Differenz zur externen Quelle | aktueller, vollständiger Abruf meldet einen anderen Bestand |
 | extern nicht bestätigt | externer Bestand liegt vor, aber veraltet oder unvollständig – kein „stimmt“, auch bei gleichem Wert |
 | intern konsistent | aus den Buchungen reproduzierbar (= Soll des kuratierten Imports) – **nicht** extern geprüft |
+| Import-Soll + Änderungen in Portfolia | die Import-Buchungen ergeben das Soll; die Abweichung stammt vollständig aus Änderungen in Portfolia (ausgeblendete, geänderte oder ergänzte Buchungen, Sparplan-Schätzungen) – z. B. nach einer übernommenen Korrektur; kein Befund |
 | intern abweichend | Buchungen ergeben einen anderen Bestand als das Soll |
 | ohne Abgleich | weder externer Bestand noch Soll vorhanden |
 
@@ -814,6 +816,71 @@ berechnet. Portfolia speichert oder ersetzt dabei keine Bestände.
   Marktbewertung. Veräußerungen werden über die anschaffende Buchung der Lots zugeordnet.
 * Ein externer Bestand liegt nur für Wallets vor (Bestandsmeldung der Anbieter); Börsenkonten bleiben „intern
   konsistent“ bzw. „ohne Abgleich“.
+
+### Empfehlungen und Korrekturen
+
+Ein Befund lässt sich aufklappen und direkt bearbeiten: Die **Empfehlung** sagt, was Portfolia rät und was vorher zu
+prüfen ist; darunter stehen die Lösungen. Jede Lösung führt zuerst in eine **Vorschau**, erst „Übernehmen“ ändert
+Daten.
+
+**Grundsätze**
+
+* **Nie automatisch.** Eine Korrektur gilt genau einem Befund und genau der gewählten Lösung; nichts wird im
+  Hintergrund oder für mehrere Befunde auf einmal geändert.
+* **Alles sichtbar.** Die Vorschau zeigt jede Änderung mit der vollständigen Buchung (ausgeblendet, zusammengeführt,
+  „im Import enthalten“, neu angelegt, Kursquelle, Zuordnung) und rechnet die Folgen auf einer Kopie im Speicher
+  durch: Bestand, Einstand offener Lots und Wert je Konto/Asset, Bestandsabgleich vorher/nachher, realisierte
+  Ergebnisse und Erträge je Jahr, die Zusammenfassung des **Steuerberichts** je betroffenem Jahr (mit dem Regelwerk
+  und seinen Optionen), neue bzw. entfallende Ledger-Hinweise und welche Befunde danach erledigt, neu oder geändert
+  sind. Die Vorschau schreibt nichts.
+* **Nichts wird gelöscht.** Korrekturen nutzen die vorhandenen, umkehrbaren Mechanismen: Import-Buchung ausblenden =
+  Überlagerung „gelöscht“ (die Import-Datei bleibt unverändert, ein späterer Import hebt das nicht auf),
+  App-Buchung = Status „gelöscht“ bzw. „zusammengeführt“, „im Import enthalten“ = Entscheidung wie unter
+  *Journal → Abgleich*, Kursquelle = Zuordnung unter *Kursquellen*, neue Buchungen = App-Buchungen der Quelle
+  „Korrektur aus der Diagnose“ (`PF-D-…`).
+* **Atomar und aktuell.** „Übernehmen“ berechnet Befund und Lösung neu und vergleicht sie über eine Prüfsumme mit der
+  Vorschau (Änderungen, Ausgangszustand jedes betroffenen Objekts, Datenstand). Hat sich seitdem etwas geändert –
+  z. B. durch einen Abruf –, wird nichts übernommen. Alle Änderungen einer Korrektur laufen in einer Transaktion.
+* **Rückgängig.** *Entscheidungen und Korrekturen* listet jede Korrektur mit allen Änderungen; „Rückgängig“ nimmt sie
+  als Ganzes zurück (Vorher-Zustand je Änderung ist gespeichert). Wurde ein betroffenes Objekt danach anderweitig
+  geändert (z. B. Kursquelle neu gesetzt), verweigert Portfolia das Zurücksetzen, statt die spätere Entscheidung zu
+  überschreiben; bereits selbst Wiederhergestelltes wird übersprungen.
+
+**Lösungen je Befund**
+
+| Befund | Empfehlung | Alternativen |
+|---|---|---|
+| Gleiche Menge zweimal gebucht (manuell + belegt) | schwächer belegte Buchung ausblenden – bei *wahrscheinlich* direkt, bei *verdacht* erst nach Prüfung (Explorer-Link zum belegten Vorgang) | stattdessen die andere ausblenden · eigene Auswahl · als geprüft markieren |
+| Paare mit gleichem Hash | je Paar die zweite Buchung ausblenden, Auswahl je Paar (App-Buchung neben Import-Buchung: „im Import enthalten“) – nur Paare, die im Explorer eine Bewegung zeigen | eigene Auswahl · als geprüft markieren (zwei legitime Bewegungen) |
+| Vorgang im Import und als App-Buchung | App-Buchung als „im Import enthalten“ markieren (bleibt erhalten, zählt wieder, falls ein späterer Import den Vorgang nicht mehr enthält) | Import-Buchung ausblenden (App-Buchung gilt) · als geprüft markieren |
+| Möglicher interner Transfer | als Transfer verbuchen: je Paar eine Transfer-Buchung, Abgang und Zugang zählen nicht mehr einzeln; Einstand und Anschaffungsdatum wandern mit, Mengendifferenz = Transfergebühr; Auswahl je Paar | eigene Auswahl · als geprüft markieren (Vorgang mit Dritten) |
+| Anbieter-Kürzel mit Kursquelle eines anderen Coins | Kursquelle auf den Anbieter-Coin setzen (ersetzt auch eine Kursquelle des Imports) | andere CoinGecko-ID · als geprüft markieren |
+| Kein gültiger Kurs / Ersatzkurs | Vorschlag der Kurssuche übernehmen (bei Sicherheit hoch/mittel) | eigene CoinGecko-ID · als Verlust ausbuchen (eigene Seite) · als geprüft markieren |
+| Mehrere Contracts je Asset | nach Explorer-Prüfung falsche Token-Zuordnung entfernen (wirkt auf künftige Importe/Abrufe) | als geprüft markieren |
+| Möglicher Token-Migrationsvorgang | keine – erst Contract-Adressen prüfen | Migration buchen (Kapitalmaßnahme alt → neu, Zugang des neuen Tokens entfällt) · Zugang ausblenden (Spam) · als geprüft markieren |
+| Bestand ≠ extern bzw. Soll | Ursache klären (Prüf-Stapel, fehlende Vorgänge, Gebühren) | Ausgleichsbuchung als Notlösung (Zu- bzw. Abgang der Differenz, Art, EUR-Wert und Datum wählbar) · als geprüft markieren |
+| übrige (Historie, Schätzungen, veraltete Kurse) | Hinweis, wo die Ursache zu beheben ist | eigene Auswahl auszublendender Buchungen (wo Buchungen betroffen sind) · als geprüft markieren |
+
+Eine **eigene Lösung** ist immer möglich: „Eigene Auswahl: Buchungen ausblenden“ (mit Vorschau), „bearbeiten“ an
+jeder betroffenen Buchung (Journal; Import-Buchungen als Überlagerung) oder „als geprüft markieren“ mit Notiz.
+
+**Als geprüft markieren** ändert keine Daten: Der Befund wandert in *Als geprüft markiert* und gilt dort, solange
+seine Daten gleich bleiben (Prüfsumme; eine neue Abrufzeit allein zählt nicht). Ändern sich Mengen, Buchungen oder
+Status, erscheint er wieder mit dem Hinweis „seitdem geändert“. „Wieder öffnen“ hebt die Markierung auf. Der
+Gesamtexport nimmt geprüfte Befunde mit.
+
+**Grenzen**
+
+* Die Vorschau fragt keine Kurse ab: Nach einer neuen Kursquelle stehen Wert und Kursbefunde erst nach dem
+  Kursabruf fest.
+* Die Steuerwerte der Vorschau sind die Zusammenfassung des Steuerberichts mit den aktuellen Optionen – vorläufig;
+  maßgeblich bleibt der Bericht nach dem Übernehmen. Die Portfolia-Ansicht (realisierte Ergebnisse) nutzt die
+  eingestellte Verbrauchsfolge und kann deshalb von den Steuerwerten (je Wallet, Regelwerk) abweichen.
+* Übernommen wird nur, was die Diagnose belegen kann; die Prüfung im Explorer bzw. beim Anbieter ersetzt sie nicht.
+  Eine Ausgleichsbuchung macht Mengen passend, erklärt aber keine Differenz.
+* Korrekturen aus der Diagnose lassen sich nur dort zurücknehmen (im Journal ohne Bearbeiten/Löschen); eine
+  Teilbuchung einer Gruppe, ein abgeglichener Transfer oder eine Sparplan-Buchung wird nicht über die Diagnose
+  geändert.
 
 ---
 
@@ -958,7 +1025,9 @@ Import, täglich um 06:40 und auf Knopfdruck im CoinGecko-Katalog gesucht.
 * **Anbieter-Kürzel** (z. B. Bitpanda „TH“ = Threshold Network): nur auf Konten dieses Anbieters gebucht → dessen
   Coin („hoch“); auch auf anderen Konten → nur Vorschlag („niedrig“). Nie über das Symbol – dort hieße „TH“ der Team
   Heretics Fan Token. Bestehende Zuordnungen prüft die Suche nicht erneut; eine falsche zeigt die
-  [Diagnose](#diagnose-datenqualität-und-bestandsabgleich) mit ihrer Wirkung auf die Bewertung.
+  [Diagnose](#diagnose-datenqualität-und-bestandsabgleich) mit ihrer Wirkung auf die Bewertung und bietet die
+  Korrektur an – auch wenn die falsche Kursquelle aus dem kuratierten Import stammt (die Zuordnung „ersetzt die
+  Kursquelle des Imports“, „Zuordnung entfernen“ stellt sie wieder her).
 * Sonst Kandidaten mit gleichem Symbol; die Konten liefern die Chain („MetaMask (BNB)“ → BNB Smart Chain, „Kaspa (KAS)“ →
   Kaspa, Börsenkonten keine). Coins nur auf anderen Chains entfallen, ebenso Coins, deren Kursspanne (Allzeittief ÷ 3 bis
   Allzeithoch × 3) die eigenen Transaktionskurse nicht enthält – z. B. LUNA zu Kursen von LUNA Classic.
@@ -1113,7 +1182,7 @@ Der Gesamtexport enthält alles, was eine neue Installation für denselben Stand
 | Teil | Inhalt |
 |---|---|
 | Datenvertrag (`transactions.csv` …) | alle Buchungen in ihrer wirksamen Fassung (inkl. Änderungen/Löschungen an Import-Buchungen), Assets mit Kursquellen, Konten mit Steuereinstellung, aktueller Bestand, manuelle Kurse |
-| `portfolia/state.json` | alle Einstellungen, Kursquellen-Zuordnungen samt Status (auch abgelehnte Vorschläge), Sparplan-Wahl und verworfene Ausführungen, Datenquellen (**ohne** API-Keys), „dauerhaft ignoriert“, Anbieter-IDs, CSV-Zuordnungen (Symbole, Konten, eigene Formate), Kennungen gelöschter CSV-/Sync-Buchungen |
+| `portfolia/state.json` | alle Einstellungen, Kursquellen-Zuordnungen samt Status (auch abgelehnte Vorschläge), Sparplan-Wahl und verworfene Ausführungen, Datenquellen (**ohne** API-Keys), „dauerhaft ignoriert“, Anbieter-IDs, CSV-Zuordnungen (Symbole, Konten, eigene Formate), Kennungen gelöschter CSV-/Sync-Buchungen, als „geprüft“ markierte Befunde der Diagnose (übernommene Korrekturen stecken bereits in Buchungen und Zuordnungen) |
 | `portfolia/price_daily.csv`, `series_meta.csv` | Kurshistorie – wichtig, weil die CoinGecko-Demo-API nur 365 Tage nachliefert |
 | `portfolia/usage.json` | API-Verbrauch des Monats (das CoinGecko-Kontingent läuft weiter) |
 | `portfolia/files/` | `sources.yaml` (News-Quellen) und lokale Steuerregeln (`tax_rules/`) |
@@ -1167,6 +1236,8 @@ SQLite-Sicherung unter *Backups* der richtige Weg.
 | Prüf-Stapel: „gleiche Menge wie … – möglicherweise doppelt erfasst“ | Eine vorhandene Buchung auf demselben Konto hat exakt dieselbe Menge (≤ 36 h). Beim Anbieter bzw. im Explorer prüfen; nur bei zwei echten Vorgängen übernehmen. |
 | Prüf-Stapel: „„TH“ bei Bitpanda ist Threshold Network – Asset zuordnen“ | Anbieter-Kürzel ohne bestätigte Kursquelle: Vorschlag „neu anlegen“ (eigenes Asset mit CoinGecko-ID des Anbieter-Coins) übernehmen oder ein passendes Asset zuordnen; gilt nur für diesen Anbieter. |
 | Diagnose zeigt „intern konsistent“ trotz Dublettenverdacht | Kein Widerspruch: Der Soll-Bestand stammt aus denselben Buchungen. Klären über Explorer bzw. Anbieter – siehe [Diagnose](#diagnose-datenqualität-und-bestandsabgleich). |
+| Diagnose: „Die Vorschau ist nicht mehr aktuell“ | Zwischen Vorschau und Übernehmen haben sich Daten geändert (z. B. Abruf einer Datenquelle). Es wurde nichts geändert – Vorschau neu öffnen, prüfen, erneut übernehmen. |
+| Diagnose: „Rückgängig nicht möglich“ | Ein betroffenes Objekt wurde nach der Korrektur anderweitig geändert (z. B. Kursquelle neu gesetzt); Portfolia überschreibt das nicht. Den Stand unter Kursquellen bzw. im Journal selbst anpassen. |
 
 ---
 

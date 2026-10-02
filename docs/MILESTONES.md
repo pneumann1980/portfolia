@@ -683,6 +683,55 @@ werden nur vermutet (Adressen bzw. Contracts fehlen meist). Anbieter-Identitäte
 Externe Bestände liegen nur für Wallets vor (Bitpanda meldet nur die eigene Bestandsprüfung). Die Diagnose fragt
 keine Kurse ab; Szenario-Bewertungen sind keine Marktbewertung.
 
+## M18 – Diagnose: Empfehlung je Befund, Korrektur per Knopfdruck mit Vorschau und Rückgängig (0.16.0)
+
+Anlass (02.10.2026): Befunde nicht nur aufklappen, sondern je Befund eine Empfehlung erhalten und die Änderungen mit
+einem Knopfdruck übernehmen – mit gut sichtbaren Folgen und der Möglichkeit, eine andere Lösung zu wählen. Die Vorgabe
+aus M17 („nichts automatisch bereinigen“) gilt weiter: geändert wird nur auf ausdrückliche Entscheidung je Befund.
+
+**Entscheidungen**
+
+* **Empfehlung ≠ Aktion** (`app/diagnosis/recommend.py`): je Befundtyp Text, Prüfhinweise (Explorer-Links nur mit
+  Hash/Contract, öffnet ausschließlich der Nutzer), empfohlene Lösung, Alternativen, „Eigene Auswahl: Buchungen
+  ausblenden“ und „als geprüft markieren“. Bei *verdacht* ist die Empfehlung ausdrücklich „nach Prüfung“; Migration
+  und Bestandsdifferenz haben keine empfohlene Buchung (Ausgleichsbuchung nur als Notlösung).
+* **Befunddaten maschinenlesbar** (`Finding.data`): Buchungen, Paare, Asset, Coin, Konto – Grundlage der Lösungen.
+* **Korrektur = vorhandene, umkehrbare Mechanismen** (`app/diagnosis/actions.py`): Import-Buchung ausblenden =
+  `tx_override` „delete“, App-Buchung = Status `deleted` bzw. `merged`, „im Import enthalten“ =
+  `journal_import_link` „covered“, Kursquelle = `asset_source` (neu: Herkunft `override` ersetzt auch eine Kursquelle
+  des Imports), Zuordnung entfernen = `csv_symbol`, neue Buchungen = App-Buchungen der Quelle `diagnose` (`PF-D-…`,
+  im Journal nicht bearbeitbar, Rückgängig nur über die Diagnose). Nichts wird physisch gelöscht.
+* **Vorschau rechnet, schreibt nicht:** hypothetisches Portfolio (Buchungen entfernt/ergänzt, Kursquellen ersetzt),
+  zweiter Ledger-Lauf, Diagnose auf dem hypothetischen Schnappschuss (erledigte, neue, geänderte Befunde;
+  Bestandsabgleich vorher/nachher), Steuer-Regelwerk mit dessen Ledger-Optionen je Jahr mit geänderten Veräußerungen,
+  Erträgen oder Jahresend-Lots (Zusammenfassung des Steuerberichts vorher/nachher). Laufzeit bei rund 6 000 Buchungen
+  ca. 1–2 s.
+* **Übernehmen nur bei unveränderter Vorschau:** Prüfsumme über Befund, Lösung, Eingaben, alle Änderungen samt
+  Ausgangszustand und Datenstand (Buchungen, Überlagerungen, Abgleich, aktive Kursquellen, Zuordnungen, aktiver
+  Import). Plan wird beim Übernehmen neu berechnet und verglichen; Ausführung in einer Transaktion mit erneuter
+  Zustandsprüfung je Objekt; Modul-Sperre gegen parallele Korrekturen.
+* **Rückgängig als Ganzes** (`diag_decision`, Migration 12): Vorher-Zustand je Änderung gespeichert; bereits selbst
+  Wiederhergestelltes wird übersprungen, später anderweitig Geändertes (z. B. neue Kursquelle) verweigert das
+  Zurücksetzen – nichts wird überschrieben.
+* **„Als geprüft markieren“** speichert nur eine Prüfsumme der Befunddaten (ohne Abrufzeit); ändern sich die Daten,
+  erscheint der Befund wieder. Wandert mit dem Gesamtexport (`state.json` → `diag_dismissed`).
+* **Bestandsabgleich „Import-Soll + Änderungen in Portfolia“:** Ergibt der unveränderte Import das Soll und erklärt
+  sich die Differenz vollständig aus App-Änderungen (ausgeblendet, geändert, ergänzt, Sparplan), entsteht kein Befund
+  „intern abweichend“ – sonst würde jede übernommene Dubletten-Korrektur einen neuen Befund erzeugen.
+
+**Tests:** `tests/test_diagnosis_actions.py` (19, synthetisch): Empfehlung und Alternativen, Vorschau ohne
+Schreibzugriff mit Beständen, Status, Jahreswerten und Steuer, Übernehmen + exaktes Rückgängig (Prüfsumme über alle
+Nutzdaten), veraltete bzw. manipulierte Vorschau, späteres eigenes Wiederherstellen, Hash-Paare mit Teilauswahl,
+„im Import enthalten“, Transfer mit Steuerwirkung und Anschaffungsdatum, Kursquelle über dem Import und Konflikt beim
+Rückgängig, Vorschlag übernehmen (Zeile exakt wiederhergestellt), Ausgleichsbuchung mit Eingabeprüfung, Migration,
+Contract-Zuordnung, eigene Auswahl, „geprüft“ mit Prüfsumme, Web-Ablauf mit CSRF, Gesamtexport. Lokal zusätzlich auf
+einer Wegwerf-Kopie eines echten Exports geprüft (keine Ausnahme; alle empfohlenen Korrekturen übernommen und exakt
+zurückgenommen; Kopie gelöscht, keine Daten im Repository).
+
+**Grenzen M18:** Die Vorschau fragt keine Kurse ab (neue Kursquelle → Wert erst nach dem Abruf). Steuerwerte der
+Vorschau sind vorläufig (Zusammenfassung, aktuelle Optionen). Teilbuchungen von Gruppen, abgeglichene Transfers und
+Sparplan-Buchungen ändert die Diagnose nicht. Explorer-Prüfung bleibt Sache des Nutzers.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
@@ -712,6 +761,8 @@ keine Kurse ab; Szenario-Bewertungen sind keine Marktbewertung.
   Fragen 4–7 und 9 für Bitpanda).
 * **Datenqualität** (01.10.2026): read-only Diagnose mit Bestandsabgleich und Schutzregeln für künftige Importe;
   bestehende Daten werden nicht bearbeitet, Auswirkungen nur als Szenario – siehe M17.
+* **Korrekturen aus der Diagnose** (02.10.2026): Empfehlung je Befund, Übernehmen per Knopfdruck nach Vorschau mit
+  allen Folgen, Alternativen und eigene Lösung, Rückgängig – weiterhin nichts automatisch; siehe M18.
 
 ## Offene Fragen an den Auftraggeber
 
