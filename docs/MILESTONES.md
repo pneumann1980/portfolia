@@ -909,9 +909,10 @@ Gebuchte App-Buchungen prüfte der Journal-Abgleich nur gegen Buchungen gleicher
 
 * Ein Regelwerk für Prüf-Stapel, Buchungsliste, Abgleich mit dem Import und Datenqualität:
   `app/csvimport/transfer_side.py`. Gleiches Konto wie bisher (± 0,5 %); anderer Kontoname nur bei exakt gleicher
-  Menge, ohne Fiat, nicht auf dem Absenderkonto und nur, wenn das Konto des Transfers nicht von einer eigenen
-  Datenquelle geführt wird. Zugänge bis 72 h nach dem Transfer, bei exakter, unverwechselbarer Menge (≥ 6
-  signifikante Stellen) bis 7 Tage; Abgänge ± 2 h; verschiedene Hashes nie. Je Transferseite ein Treffer.
+  Menge, ohne Fiat, nicht auf dem Absenderkonto und nur, wenn das Konto des Transfers nicht von einer anderen
+  Datenquelle geführt wird (dieselbe Datenquelle zählt nicht: ihr Konto kann inzwischen umgestellt sein). Zugänge
+  bis 72 h nach dem Transfer, bei exakter, unverwechselbarer Menge (≥ 6 signifikante Stellen) bis 7 Tage; Abgänge
+  ± 2 h; verschiedene Hashes nie. Je Transferseite ein Treffer.
 * Prüf-Stapel: Treffer → mögliche Dublette (`transfer_leg` bzw. `transfer_leg_acc`), nie automatisch übernommen;
   Bewertung „Widerspruch: Konto“ (Sicherheit mittel), spätere Gutschrift kein Zeitwiderspruch, EUR-Wert einer
   Transferseite bis 15 % gering (verschiedene Bewertungszeitpunkte), Zeitpunkt laut Notiz der Transfer-Buchung als
@@ -929,7 +930,7 @@ Gebuchte App-Buchungen prüfte der Journal-Abgleich nur gegen Buchungen gleicher
 Abgangsseite mit Gebühr, Vorrang gleiches Konto, Notiz-Beleg), Wallet-Datenquelle mit automatischer Übernahme
 (Regressionsfall strukturgleich, andere Zahlen), Verknüpfen, bereits gebuchter Zugang (Buchungsliste, Abgleich,
 Datenqualität mit Vorschau, Übernehmen, Rückgängig), Entscheidung „keine Dublette“, Konto-Vorschlag ohne
-automatische Umstellung. Lokal (nicht im Repository) mit dem echten Export und einem nachgestellten App-Zugang
+automatische Umstellung, gebuchter Zugang nach Umstellung des Kontos der Datenquelle weiter erkannt. Lokal (nicht im Repository) mit dem echten Export und einem nachgestellten App-Zugang
 geprüft: Treffer wie gemeldet, keine Zufallstreffer bei rund 5 000 Zu-/Abgängen des Imports.
 
 **Grenzen:** Ohne gemeinsamen Hash bleibt die Zuordnung ein begründeter Verdacht (Entscheidung beim Nutzer). Bereits

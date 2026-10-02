@@ -106,8 +106,14 @@ def test_rules_exclusions():
     idx = _index(t, hashes={"IMP-T": {"aa" * 32}})
     assert idx.find(_in(WALLET_DS, QTY, RECV, h="bb" * 32)) is None
     assert idx.find(_in(WALLET_DS, QTY, RECV, h="aa" * 32)) is not None
-    # Zielkonto des Transfers mit eigener Datenquelle: der Vorgang wäre dort zu erwarten
+    # Zielkonto des Transfers mit eigener Datenquelle: der Vorgang wäre dort zu erwarten – außer es ist dieselbe
+    # Datenquelle (ihr Konto wurde umgestellt, ältere Buchungen liegen noch auf dem früheren Konto)
     assert _index(t, managed=(WALLET_IMPORT,)).find(_in(WALLET_DS, QTY, RECV)) is None
+    other = TS.TransferIndex([t], lambda _t: set(), {WALLET_IMPORT: {2}})
+    assert other.find(TS.Probe("in", WALLET_DS, "BTC", D(QTY), RECV, source_id=1)) is None
+    own = TS.TransferIndex([t], lambda _t: set(), {WALLET_IMPORT: {1}})
+    assert own.find(TS.Probe("in", WALLET_DS, "BTC", D(QTY), RECV, source_id=1)) is not None
+    assert own.find(TS.Probe("in", WALLET_DS, "BTC", D(QTY), RECV)) is None  # Herkunft unbekannt
     # Zugang auf dem Absenderkonto ist keine Zugangsseite; anderes Asset; Fiat unter anderem Konto
     assert _index(t).find(_in("Börse", QTY, RECV)) is None
     assert _index(t).find(_in(WALLET_DS, QTY, RECV, asset="ETH")) is None
@@ -322,3 +328,26 @@ def test_account_hint_from_transfer_side_is_suggestion_only(client, config, espl
     post(c, f"/settings/datasources/{sid}/account-undo")
     assert svc.get(sid).account == WALLET_DS
     assert not ctx(c).db.q("SELECT 1 FROM journal_tx")
+
+
+def test_booked_deposit_still_found_after_account_switch(client, config, esplora):
+    """Wird zuerst (wie vorgeschlagen) das Konto der Datenquelle umgestellt, bleibt der früher gebuchte Zugang auf
+    dem alten Konto als Transferseite erkennbar – die Ausnahme „Konto mit eigener Datenquelle“ gilt nur für andere
+    Datenquellen."""
+    c = client
+    _import(config)
+    assert tasks.import_check(ctx(c), "test").status == "imported"
+    sid = create_wallet(c, "bitcoin", ZPUB, name=WALLET_DS, script="p2wpkh")
+    svc = datasource_service(ctx(c))
+    svc.sync(sid, "manual")
+    rc = _wallet_row(c, sid)
+    bid = int(ctx(c).db.scalar("SELECT batch_id FROM csv_row WHERE id=?", (rc.id,)))
+    post(c, f"/journal/csv/{bid}/row-action", row_action=f"include:{rc.idx}")
+    jid = ctx(c).db.scalar("SELECT tx_id FROM journal_tx WHERE status='active' AND type='deposit'")
+    assert post(c, f"/settings/datasources/{sid}/account-adopt", account=WALLET_IMPORT).status_code == 303
+    assert svc.get(sid).account == WALLET_IMPORT
+    html = c.get("/journal").text
+    assert "Transferseite?" in html and f'id="cmp-{jid}"' in html
+    post(c, "/journal/abgleich", journal_tx_id=jid, import_tx_id="IMP-T", decision="covered")
+    assert _btc(c) == {"Börse": D("1") - D(QTY), WALLET_IMPORT: D(QTY)}
+

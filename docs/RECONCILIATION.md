@@ -148,7 +148,7 @@ nur gleiche Arten.
 | Menge | ± 0,5 %, Gebühr netto/brutto | exakt (Rundung der Quellen: 10⁻⁶ relativ, mind. 10⁻⁸) |
 | Zugang | −2 h … +72 h; exakt und ≥ 6 signifikante Stellen: bis +7 Tage | ebenso |
 | Abgang | ± 2 h | ± 2 h |
-| nie | verschiedene Hashes; Erträge/Einordnungen; Paar-Transfers der App (PF-T) | zusätzlich Fiat, Zugang auf dem Absenderkonto, Zielkonto mit eigener Datenquelle |
+| nie | verschiedene Hashes; Erträge/Einordnungen; Paar-Transfers der App (PF-T) | zusätzlich Fiat, Zugang auf dem Absenderkonto, Zielkonto von einer anderen Datenquelle geführt |
 
 Je Transferseite höchstens ein Treffer (gleiches Konto vor anderem, exakt vor ungefähr, dann nächster Zeitpunkt);
 bereits als „Import-Buchung gilt“ entschiedene Seiten sind vergeben, „keine Dublette“ schließt das Paar aus.

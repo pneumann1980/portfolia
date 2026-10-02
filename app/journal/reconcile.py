@@ -129,11 +129,13 @@ def transfer_sides(db: Any, pf: Portfolio | None) -> dict[str, list[Any]]:
         for iid, dec in decided[jid].items():
             if dec == "covered" and role:
                 idx.claim_side(iid, role)
-    hashes = {r["tx_id"]: h for r in db.q("SELECT tx_id, tx_hash FROM journal_tx WHERE status='active' AND tx_hash "
-                                          "IS NOT NULL AND tx_hash <> ''") if (h := normalize_hash(r["tx_hash"]))}
+    meta = {r["tx_id"]: (normalize_hash(r["tx_hash"]), r["datasource_id"]) for r in db.q(
+        "SELECT tx_id, tx_hash, datasource_id FROM journal_tx WHERE status='active' AND ((tx_hash IS NOT NULL AND "
+        "tx_hash <> '') OR datasource_id IS NOT NULL)")}
     out: dict[str, list[Any]] = {}
     for j in journal:
-        p = TS.probe_of_tx(j, hashes.get(j.tx_id))
+        h, ds_id = meta.get(j.tx_id, (None, None))
+        p = TS.probe_of_tx(j, h, ds_id)
         if p is None:
             continue
         dist = {iid for iid, d in decided.get(j.tx_id, {}).items() if d == "distinct"}

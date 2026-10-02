@@ -521,7 +521,7 @@ gebucht**:
 | Menge | ± 0,5 % bzw. Gebühr anders dargestellt | exakt gleich (nur Rundung der Quellen) |
 | Zugang | 2 h vor bis 72 h nach dem Transfer; bei exakt gleicher, unverwechselbarer Menge (≥ 6 signifikante Stellen) bis 7 Tage | ebenso |
 | Abgang | ± 2 h | ± 2 h |
-| ausgeschlossen | verschiedene Transaktions-Hashes | zusätzlich: Fiat, Zugang auf dem Absenderkonto, Zielkonto des Transfers mit eigener Datenquelle |
+| ausgeschlossen | verschiedene Transaktions-Hashes | zusätzlich: Fiat, Zugang auf dem Absenderkonto, Zielkonto des Transfers von einer anderen Datenquelle geführt |
 
 Bewertung bei anderem Kontonamen: *Widersprüchlich* (Konto), Sicherheit *mittel*; eine spätere Gutschrift gilt nicht als
 Zeitwiderspruch, ein abweichender EUR-Wert (andere Bewertungszeitpunkte) nur bis 15 % als gering. Belegt die Notiz

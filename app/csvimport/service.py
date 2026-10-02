@@ -972,7 +972,7 @@ class CsvImportService:
         for rc in probe:
             rc.status = "new"
         self._same_events([rc for rc in open_rows if rc.status in ("new", "invalid", "unclear", "before")], source)
-        self._duplicates([rc for rc in open_rows if rc.status == "new"], pf, source)
+        self._duplicates([rc for rc in open_rows if rc.status == "new"], pf, source, batch["datasource_id"])
         self._same_qty([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._reconstructed([rc for rc in open_rows if rc.status == "new"], pf)
         self._asset_mismatch([rc for rc in open_rows if rc.status == "new"], pf, source)
@@ -1379,7 +1379,7 @@ class CsvImportService:
                 rc.dup_same_account = True
                 rc.warnings.insert(0, f"gleiche Blockchain-Transaktion bereits vorhanden: {', '.join(hits[:3])}")
 
-    def _duplicates(self, rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
+    def _duplicates(self, rows: list[RowCtx], pf: Portfolio | None, source: str, ds_id: int | None = None) -> None:
         """Gleiche Assets, gleiche Mengen, nahezu gleicher Zeitpunkt (≤ 10 min oder Zeitzonenversatz ± 2 min) →
         mögliche Dublette. Eine anders dargestellte Gebühr (im Betrag enthalten bzw. zusätzlich) gilt als gleicher
         Abgang; zwei verschiedene Blockchain-Transaktionen sind nie Dubletten."""
@@ -1401,7 +1401,7 @@ class CsvImportService:
             row = rc.row
             if row is None:
                 continue
-            if transfers and self._covered_by_transfer(rc, transfers):
+            if transfers and self._covered_by_transfer(rc, transfers, ds_id):
                 continue
             key = (row["from_asset"], row["to_asset"])
             cands = index.get(key)
@@ -1572,7 +1572,7 @@ class CsvImportService:
                 break
 
     @staticmethod
-    def _covered_by_transfer(rc: RowCtx, transfers: TS.TransferIndex) -> bool:
+    def _covered_by_transfer(rc: RowCtx, transfers: TS.TransferIndex, ds_id: int | None = None) -> bool:
         """Zu- bzw. Abgang, der bereits Seite eines erfassten Transfers ist (z. B. Börsen-Auszahlung → Wallet, im
         kuratierten Import oder im Journal als Transfer gebucht) → mögliche Dublette, nie automatisch übernommen:
         ohne Abwahl zählte die Menge doppelt. Auch bei verzögerter Gutschrift (bis 7 Tage bei exakt gleicher,
@@ -1581,7 +1581,7 @@ class CsvImportService:
         bei anders dargestellter Gebühr; verschiedene Blockchain-Transaktionen nie."""
         row = rc.row
         assert row is not None
-        p = TS.probe_of_row(row, rc.ts, normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id)))
+        p = TS.probe_of_row(row, rc.ts, normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id)), ds_id)
         if p is None:
             return False
         hit = transfers.find(p)

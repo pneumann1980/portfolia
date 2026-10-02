@@ -18,8 +18,9 @@ der nächste Zeitpunkt)
     * Abgangsseite: ± 2 h; gleicher Abgang auch bei anders dargestellter Gebühr (Gesamtabgang gleich).
     * Nie bei verschiedenen Transaktions-Hashes.
     * Gleiches Konto: Menge ± 0,5 % (wie die Dublettenprüfung). Anderes Konto: nur exakt gleiche Menge, kein Fiat,
-      nicht das Gegenkonto des Transfers und nur, wenn das Konto des Transfers nicht von einer eigenen Datenquelle
-      geführt wird – sonst wäre der Vorgang dort zu erwarten.
+      nicht das Gegenkonto des Transfers und nur, wenn das Konto des Transfers nicht von einer *anderen* Datenquelle
+      geführt wird – sonst wäre der Vorgang dort zu erwarten. (Führt es dieselbe Datenquelle, wurde ihr Konto
+      inzwischen umgestellt: ältere Buchungen liegen noch auf dem früheren Konto.)
 
 Belege, die die Zuordnung stützen (nie Voraussetzung): ein Zeitpunkt in der Notiz der Transfer-Buchung, der auf
 ± 2 min dem Zu- bzw. Abgang entspricht (z. B. „Zugang … am 2024-05-02T10:15:00Z“ eines Steuertools).
@@ -121,6 +122,7 @@ class Probe:
     ts: datetime
     fee: Decimal | None = None  # Gebühr im selben Asset (Abgang)
     hash: str | None = None
+    source_id: int | None = None  # Datenquelle, aus der der Vorgang stammt (falls bekannt)
 
 
 @dataclass
@@ -178,30 +180,31 @@ def _d(v: Any) -> Decimal | None:
         return None
 
 
-def probe_of_row(row: Mapping[str, Any], ts: datetime, h: str | None) -> Probe | None:
+def probe_of_row(row: Mapping[str, Any], ts: datetime, h: str | None, source_id: int | None = None) -> Probe | None:
     """Zu- bzw. Abgang einer aufbereiteten Prüfzeile (``transactions.csv``-Format) – ohne Einordnung."""
     if row.get("tag"):
         return None
     if row.get("type") == "deposit" and row.get("to_asset"):
         q = _d(row.get("to_qty"))
-        return Probe("in", str(row.get("to_account") or ""), str(row["to_asset"]), q, ts, None, h) if q else None
+        return Probe("in", str(row.get("to_account") or ""), str(row["to_asset"]), q, ts, None, h,
+                     source_id) if q else None
     if row.get("type") == "withdrawal" and row.get("from_asset"):
         q = _d(row.get("from_qty"))
         asset = str(row["from_asset"])
         fee = _d(row.get("fee_qty")) if row.get("fee_asset") == asset else None
-        return Probe("out", str(row.get("from_account") or ""), asset, q, ts, fee, h) if q else None
+        return Probe("out", str(row.get("from_account") or ""), asset, q, ts, fee, h, source_id) if q else None
     return None
 
 
-def probe_of_tx(t: Tx, h: str | None = None) -> Probe | None:
+def probe_of_tx(t: Tx, h: str | None = None, source_id: int | None = None) -> Probe | None:
     """Zu- bzw. Abgang einer Buchung (z. B. App-Buchung einer Datenquelle) – ohne Einordnung."""
     if t.tag:
         return None
     if t.type == "deposit" and t.to_asset and t.to_qty:
-        return Probe("in", t.to_account or "", t.to_asset, abs(t.to_qty), t.ts, None, h)
+        return Probe("in", t.to_account or "", t.to_asset, abs(t.to_qty), t.ts, None, h, source_id)
     if t.type == "withdrawal" and t.from_asset and t.from_qty:
         fee = abs(t.fee_qty) if t.fee_asset == t.from_asset and t.fee_qty else None
-        return Probe("out", t.from_account or "", t.from_asset, abs(t.from_qty), t.ts, fee, h)
+        return Probe("out", t.from_account or "", t.from_asset, abs(t.from_qty), t.ts, fee, h, source_id)
     return None
 
 
@@ -213,14 +216,18 @@ class TransferIndex:
     """Erfasste Transfers je Asset; :meth:`find` sucht die passende Seite, :meth:`claim` vergibt sie (je Seite
     höchstens ein Zu- bzw. Abgang)."""
 
-    def __init__(self, txs: Iterable[Tx], hashes: Callable[[Tx], set[str]], managed: Iterable[str] = (),
+    def __init__(self, txs: Iterable[Tx], hashes: Callable[[Tx], set[str]],
+                 managed: Mapping[str, Iterable[int]] | Iterable[str] = (),
                  keep: Callable[[Tx], bool] | None = None) -> None:
         self.by_asset: dict[str, list[Tx]] = defaultdict(list)
         for t in txs:
             if is_transfer(t) and (keep is None or keep(t)):
                 self.by_asset[t.from_asset or ""].append(t)
         self.hashes = hashes
-        self.managed = frozenset(a for a in managed if a)  # Konten mit eigener Datenquelle
+        # Konten mit eigener Datenquelle → deren IDs (ohne ID: von einer unbekannten Datenquelle geführt)
+        self.managed: dict[str, frozenset[int]] = (
+            {a: frozenset(ids) for a, ids in managed.items() if a} if isinstance(managed, Mapping)
+            else {a: frozenset() for a in managed if a})
         self.used: set[tuple[str, str]] = set()
 
     def __bool__(self) -> bool:
@@ -243,6 +250,14 @@ class TransferIndex:
             return None
         return min(hits, key=lambda h: (not h.same_account, not h.exact, abs(h.delay), h.tx.tx_id))
 
+    def _other_source(self, account: str, source_id: int | None) -> bool:
+        """Führt eine *andere* Datenquelle dieses Konto? Dann wäre der Vorgang dort zu erwarten. Dieselbe
+        Datenquelle zählt nicht (ihr Konto wurde umgestellt, ältere Buchungen liegen noch auf dem früheren)."""
+        if account not in self.managed:
+            return False
+        owners = self.managed[account]
+        return source_id is None or not owners or bool(owners - {source_id})
+
     def _match(self, p: Probe, t: Tx) -> Hit | None:
         if (t.tx_id, p.side) in self.used:
             return None
@@ -258,8 +273,8 @@ class TransferIndex:
             theirs = [q for q in (t_out, (t_out + t_fee) if t_out and t_fee else None) if q]
             mine = [p.qty, *([p.qty + p.fee] if p.fee else [])]
         same = bool(acc) and acc == p.account
-        if not same and (not acc or not p.account or p.account == other or acc in self.managed
-                         or p.asset in C.ISO_CURRENCIES):
+        if not same and (not acc or not p.account or p.account == other or p.asset in C.ISO_CURRENCIES
+                         or self._other_source(acc, p.source_id)):
             return None
         is_exact = any(exact(a, b) for a in mine for b in theirs)
         if not is_exact and not (same and any(close(a, b) for a in mine for b in theirs)):
@@ -296,12 +311,17 @@ def hash_lookup(db: Any) -> Callable[[Tx], set[str]]:
     return get
 
 
-def managed_accounts(db: Any) -> set[str]:
-    """Konten, die eine Datenquelle führt (dort kommen deren Vorgänge an)."""
+def managed_accounts(db: Any) -> dict[str, set[int]]:
+    """Konten, die eine Datenquelle führt (dort kommen deren Vorgänge an) → IDs der Datenquellen."""
+    out: dict[str, set[int]] = defaultdict(set)
     try:
-        return {r["account"] for r in db.q("SELECT account FROM data_source") if r["account"]}
+        rows = db.q("SELECT id, account FROM data_source")
     except Exception:  # ältere Datenbank ohne Datenquellen
-        return set()
+        return {}
+    for r in rows:
+        if r["account"]:
+            out[r["account"]].add(int(r["id"]))
+    return dict(out)
 
 
 __all__ = ["AFTER", "BEFORE", "DELAYED", "Hit", "Probe", "TransferIndex", "close", "distinct", "exact",
