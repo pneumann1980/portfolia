@@ -825,6 +825,28 @@ enthält er nicht – ob `credited_at` geliefert wird, zeigt erst die Abdeckung 
 dokumentierte Semantik (Wertebereiche, Gebühren, Staking im Bestand, Höchstwert von `page_size`, Bezug von `from`)
 bleibt Annahme und ist im Code bzw. README benannt.
 
+### M18.3 – Dubletten: vorhandene Buchung gegenüberstellen (0.16.3)
+
+Anlass (02.10.2026): Bei einer möglichen Dublette nannte der Prüf-Stapel nur die Kennung der vorhandenen Buchung
+(„ähnelt PF-C-…“), die Buchungsliste nur ein Badge mit Tooltip – vergleichen ließ sich nichts.
+
+**Entscheidungen**
+
+* Prüf-Stapel: Unter jeder Zeile mit Verweis auf vorhandene Buchungen (mögliche Dublette, bereits vorhanden,
+  gleicher Transaktions-Hash) steht „Vergleich mit der vorhandenen Buchung“ – neue Zeile und bis zu zwei vorhandene
+  Buchungen nebeneinander: Zeitpunkt (mit Abstand), Art, Abgang, Zugang (je mit Konto), Gebühr, EUR-Wert, Herkunft,
+  Kennung, Hash, Notiz; Abweichungen hervorgehoben, Zahl der Abweichungen im Titel. Bei *mögliche Dublette*
+  aufgeklappt, sonst eingeklappt. Bekannte Zeilen tragen dafür jetzt ebenfalls den Verweis (`dup_of`).
+* Buchungsliste: „Dublette?“ springt zur Gegenüberstellung unter der Zeile (App-Buchung ↔ ähnliche Import-Buchung).
+* Suche der vorhandenen Buchung: erfasste Buchungen, Import, Journal in jedem Status (gelöscht, zusammengeführt –
+  mit Status angezeigt). Nur Anzeige, keine Änderung; gemeinsames Partial `partials/compare.html`, Logik in
+  `app/csvimport/compare.py`.
+
+**Tests:** Abweichungen je Feld (Zeit unter einer Minute gleich, Wert auf den Cent, unbekanntes Konto kein
+Unterschied, verschiedene Hashes), Zeitabstand als Text, Prüf-Stapel (Dublette aufgeklappt mit genau einer
+hervorgehobenen Abweichung, bekannte Zeile eingeklappt mit „Angaben gleich“), Buchungsliste (Sprungmarke, beide
+Buchungen).
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

@@ -1,0 +1,25 @@
+{# Gegenüberstellung einer Buchung bzw. Prüfzeile mit vorhandenen Buchungen (siehe app/csvimport/compare.py) #}
+{% macro cmp_ts(s) -%}{% if s.ts_missing %}<span class="badge warn">Zeitpunkt fehlt</span>{% elif s.ts %}{{ s.ts|datetime_de }}{% else %}–{% endif %}{%- endmacro %}
+{% macro cmp_leg(l, sign) -%}{% if l %}<span class="nowrap">{{ sign }}{{ l[2]|qty_exact }} {{ l[1] }}</span>{% if l[0] %}<div class="hint">{{ l[0] }}</div>{% endif %}{% else %}–{% endif %}{%- endmacro %}
+{% macro cmp_type(s) -%}{% if s.type %}{{ tx_types.get(s.type, s.type) }}{% if s.tag %} · {{ tag_label.get(s.tag, s.tag) }}{% endif %}{% else %}–{% endif %}{%- endmacro %}
+{% macro cmp_hash(s) -%}{% for h in s.hashes %}<span class="mono" title="{{ h }}">{{ h[:10] }}…{{ h[-6:] }}</span>{% if not loop.last %}<br>{% endif %}{% else %}–{% endfor %}{%- endmacro %}
+{% macro compare_block(c, open=false, hint="Hervorgehoben ist, was von der neuen Zeile abweicht. Nur Anzeige – entschieden wird über „Übernehmen“.") %}{% set nd = c.diffs|map('length')|sum %}
+<details class="dup-compare"{% if open %} open{% endif %}>
+  <summary>{{ 'Vergleich mit der vorhandenen Buchung' if c.old|length == 1 else 'Vergleich mit den vorhandenen Buchungen' }} {% for s in c.old %}<span class="mono">{{ s.label }}</span>{% if not loop.last %}, {% endif %}{% endfor %} {% if nd %}<span class="badge warn">{{ nd }} Abweichung{{ 'en' if nd != 1 }}</span>{% else %}<span class="badge good">Angaben gleich</span>{% endif %}</summary>
+  <div class="cmp" style="--n: {{ 1 + c.old|length }}">
+    <div class="cmp-k"></div><div class="cmp-h">{{ c.new_title }} · <span class="mono">{{ c.new.label }}</span><div class="hint">{{ c.new.origin }}</div></div>{% for s in c.old %}<div class="cmp-h">Vorhanden · <span class="mono">{{ s.label }}</span><div class="hint">{{ s.origin }}{% if s.status %} · <b>{{ s.status }}</b>{% endif %}</div></div>{% endfor %}
+    <div class="cmp-k">Zeitpunkt</div><div>{{ cmp_ts(c.new) }}</div>{% for s in c.old %}<div class="{{ 'diff' if 'ts' in c.diffs[loop.index0] }}">{{ cmp_ts(s) }}{% if c.deltas[loop.index0] and c.deltas[loop.index0] != 'gleich' %}<div class="hint">Abstand {{ c.deltas[loop.index0] }}</div>{% endif %}</div>{% endfor %}
+    <div class="cmp-k">Art</div><div>{{ cmp_type(c.new) }}</div>{% for s in c.old %}<div class="{{ 'diff' if 'type' in c.diffs[loop.index0] }}">{{ cmp_type(s) }}</div>{% endfor %}
+    <div class="cmp-k">Abgang</div><div>{{ cmp_leg(c.new.out, '−') }}</div>{% for s in c.old %}<div class="{{ 'diff' if 'out' in c.diffs[loop.index0] }}">{{ cmp_leg(s.out, '−') }}</div>{% endfor %}
+    <div class="cmp-k">Zugang</div><div>{{ cmp_leg(c.new.inn, '+') }}</div>{% for s in c.old %}<div class="{{ 'diff' if 'inn' in c.diffs[loop.index0] }}">{{ cmp_leg(s.inn, '+') }}</div>{% endfor %}
+    <div class="cmp-k">Gebühr</div><div>{% if c.new.fee %}{{ c.new.fee[1]|qty_exact }} {{ c.new.fee[0] }}{% else %}–{% endif %}</div>{% for s in c.old %}<div class="{{ 'diff' if 'fee' in c.diffs[loop.index0] }}">{% if s.fee %}{{ s.fee[1]|qty_exact }} {{ s.fee[0] }}{% else %}–{% endif %}</div>{% endfor %}
+    <div class="cmp-k">EUR-Wert</div><div>{{ c.new.value_eur|eur if c.new.value_eur is not none else '–' }}</div>{% for s in c.old %}<div class="{{ 'diff' if 'value' in c.diffs[loop.index0] }}">{{ s.value_eur|eur if s.value_eur is not none else '–' }}</div>{% endfor %}
+    <div class="cmp-k">Kennung</div><div class="mono">{{ c.new.ref or '–' }}</div>{% for s in c.old %}<div class="mono">{{ s.ref or '–' }}</div>{% endfor %}
+    {% if c.has_hash %}<div class="cmp-k">Tx-Hash</div><div>{{ cmp_hash(c.new) }}</div>{% for s in c.old %}<div class="{{ 'diff' if 'hash' in c.diffs[loop.index0] }}">{{ cmp_hash(s) }}</div>{% endfor %}{% endif %}
+    {% if c.has_note %}<div class="cmp-k">Notiz</div><div class="hint">{{ (c.new.note or '–')|truncate(140, true, '…', 0) }}</div>{% for s in c.old %}<div class="hint">{{ (s.note or '–')|truncate(140, true, '…', 0) }}</div>{% endfor %}{% endif %}
+    <div class="cmp-k"></div><div></div>{% for s in c.old %}<div class="hint">{% if s.url %}<a href="{{ s.url }}">in den Buchungen</a>{% endif %}{% if s.edit_url %} · <a href="{{ s.edit_url }}">bearbeiten</a>{% endif %}</div>{% endfor %}
+  </div>
+  {% if c.more %}<p class="hint">Weitere ähnliche Buchungen: {% for t in c.more %}<a class="mono" href="/journal?q={{ t|urlencode }}">{{ t }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  <p class="hint">{{ hint }}</p>
+</details>
+{% endmacro %}

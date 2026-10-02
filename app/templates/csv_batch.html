@@ -5,6 +5,7 @@
   {%- if asset %}<span class="nowrap">{{ sign }}{{ q|qty }} {{ asset }}</span>{% if acc %}<div class="hint">{{ acc }}</div>{% endif %}{% else %}–{% endif -%}
 {%- endmacro %}
 {% macro hidden_nav() -%}<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="_status" value="{{ status }}"><input type="hidden" name="_offset" value="{{ offset }}">{%- endmacro %}
+{% import "partials/compare.html" as cmpm with context %}
 {% set open = b.status in ('preview', 'partial', 'committed') %}
 {% set committed_n = ov.counts.get('committed', 0) + ov.counts.get('merged', 0) %}
 {% block content %}
@@ -214,8 +215,8 @@
   <form method="post" action="/journal/csv/{{ b.id }}/rows">{{ hidden_nav() }}
   <div class="table-wrap cards-wrap"><table class="compact cards journal">
     <thead><tr><th class="num">Zeile</th><th>Datum</th><th>Vorgang</th><th>Abgang</th><th>Zugang</th><th class="num">Gebühr</th><th class="num">EUR-Wert</th><th>Status</th><th>Übernehmen</th></tr></thead>
-    <tbody>{% for rc in rows %}{% set r = rc.row %}
-      <tr><td class="num" data-label="Zeile">{{ rc.line }}</td>
+    <tbody>{% for rc in rows %}{% set r = rc.row %}{% set cmp = compare.get(rc.idx) %}
+      <tr{% if cmp %} class="has-compare"{% endif %}><td class="num" data-label="Zeile">{{ rc.line }}</td>
         <td class="nowrap" data-label="Datum">{% if rc.rec.ts_missing %}<span class="badge warn" title="Die Quelle liefert keinen Zeitpunkt – die Zeile wird nicht gebucht.">Zeitpunkt fehlt</span>{% else %}{{ rc.ts|datetime_de }}{% endif %}</td>
         <td data-label="Vorgang">{% if r %}{{ tx_types.get(r.type, r.type) }}{% if r.tag %} · {{ tag_label.get(r.tag, r.tag) }}{% endif %}{% else %}{{ kind_label.get(rc.rec.kind, rc.rec.kind) }}{% endif %}
           {% if rc.rec.label %}<div class="hint" title="{{ rc.rec.label }}">{{ rc.rec.label|truncate(34, true, '…', 0) }}</div>{% endif %}{% if rc.rec.note %}<div class="hint" title="{{ rc.rec.note }}">{{ rc.rec.note|truncate(48, true, '…', 0) }}</div>{% endif %}
@@ -249,6 +250,7 @@
             {% if rc.status in ('unclear', 'duplicate', 'new', 'invalid', 'before') %}<div><button class="btn sm ghost" type="submit" formaction="/journal/csv/{{ b.id }}/ignore" name="ignore" value="{{ rc.rec.event_key }}" title="Dieser Vorgang wird bei keinem Abruf mehr zur Prüfung vorgelegt (Entscheidung gespeichert, jederzeit aufhebbar).">dauerhaft ignorieren</button></div>
             {% elif rc.status == 'ignored' and rc.warnings and rc.warnings[0].startswith('dauerhaft ignoriert') %}<div><button class="btn sm ghost" type="submit" formaction="/journal/csv/{{ b.id }}/ignore" name="release" value="{{ rc.rec.event_key }}">Ignorieren aufheben</button></div>{% endif %}
           {% endif %}</td></tr>
+      {% if cmp %}<tr class="dup-row"><td colspan="9" class="wide">{{ cmpm.compare_block(cmp, rc.status == 'duplicate') }}</td></tr>{% endif %}
     {% endfor %}</tbody>
   </table></div>
   <div class="row" style="margin-top:8px;justify-content:space-between">

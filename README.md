@@ -299,7 +299,9 @@ Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Port
   letzter Transaktionskurs der letzten 31 Tage). Die Herkunft des Werts wird gespeichert.
 * **Prüfung:** derselbe Validator wie beim Import (Pflichtbeine, `value_eur`, Transfers …). Hinweise, wenn
   ein Abgang den Bestand eines Kontos ins Minus drückt oder eine manuelle Buchung einer Import-Buchung stark
-  ähnelt (gleiche Konten und Assets, ±2 Tage, Menge ±1 % → „Dublette?“, auch unter *Datenqualität*).
+  ähnelt (gleiche Konten und Assets, ±2 Tage, Menge ±1 % → „Dublette?“, auch unter *Datenqualität*). Unter der
+  Zeile stehen beide Buchungen nebeneinander (Zeitpunkt, Art, Ab-/Zugang, Gebühr, Wert, Herkunft, Kennung, Hash,
+  Notiz), Abweichungen sind hervorgehoben – das Badge springt dorthin.
 * **Bearbeiten, Kopieren, Löschen – für alle Buchungen:** in der App erfasste (IDs `PF-M-000001` ff.), per CSV
   oder Datenquelle übernommene und **Buchungen des kuratierten Imports**. Import-Buchungen werden im Expertenmodus
   (alle Felder des Datenvertrags) bearbeitet; die Import-Datei bleibt unverändert, die Änderung gilt als
@@ -372,7 +374,12 @@ Börsen und Wallets abgedeckt, die diese Tools unterstützen; Koinly-Wallets wer
    Stichtag. Die Originaldatei bleibt gespeichert (Download jederzeit möglich).
 2. **Vorschau:** jede Zeile als Buchung (Kauf, Verkauf, Tausch, Zu-/Abgang, Ertrag mit Tag wie `staking`,
    `interest`, `airdrop`, Gebühr) mit Status *neu*, *bereits vorhanden*, *mögliche Dublette*, *vor Stichtag*,
-   *unvollständig* oder *ignoriert*.
+   *unvollständig* oder *ignoriert*. Verweist eine Zeile auf vorhandene Buchungen (Dublettenverdacht, bereits
+   vorhanden, gleicher Transaktions-Hash), zeigt „Vergleich mit der vorhandenen Buchung“ beide Seiten Feld für
+   Feld – Zeitpunkt mit Abstand, Art, Ab- und Zugang mit Konto, Gebühr, EUR-Wert, Herkunft, Kennung, Hash, Notiz –
+   und hebt hervor, was abweicht; bei *mögliche Dublette* aufgeklappt, sonst eingeklappt. Gesucht wird in den
+   erfassten Buchungen, im Import und im Journal (auch gelöschte bzw. zusammengeführte Buchungen, mit Status). Bis zu
+   zwei Buchungen stehen nebeneinander, weitere als Verweis. Nur Anzeige – entschieden wird über „Übernehmen“.
 3. **Zuordnen:** unbekannte Symbole einem vorhandenen Asset zuordnen, als neues Asset anlegen oder ignorieren;
    Konten der Datei auf Portfolia-Konten abbilden. Zuordnungen gelten für alle weiteren Importe. Portfolia schlägt
    für jedes Symbol automatisch etwas vor und belegt das Formular vor (siehe *Automatische Vorschläge beim Zuordnen* unten) – gespeichert

@@ -1181,6 +1181,17 @@ def test_csv_booking_with_same_id_is_known_and_similar_is_candidate(client, api)
     assert known.status == "known" and "gleiche Anbieter-ID" in known.warnings[0]  # trade.trade_id
     sell = rs[f"{op_key(12)}#0"]
     assert sell.status == "duplicate" and not sell.include()  # unsicher → Entscheidung, nicht still
+    # Gegenüberstellung mit der vorhandenen Buchung: offen bei Dubletten, Abweichung (Erlös) hervorgehoben
+    legacy = journal(c, "source='csv:bitpanda' AND external_id LIKE '%legacy%'")[0]["tx_id"]
+    assert sell.dup_of == [legacy]
+    page_ = c.get(f"/journal/csv/{bid}?status=duplicate").text
+    block = page_[page_.index('<details class="dup-compare" open>'):]
+    block = block[:block.index("</details>")]
+    assert f"Vorhanden · <span class=\"mono\">{legacy}</span>" in block and "1 Abweichung" in block
+    assert block.count('class="diff"') == 1 and "+98,12 EUR" in block and "+98,12345678 EUR" in block
+    assert "App · CSV · Bitpanda" in block and "Abstand" not in block  # gleicher Zeitpunkt
+    known_page = c.get(f"/journal/csv/{bid}?status=known").text  # bereits vorhanden: eingeklappt, gleiche Angaben
+    assert '<details class="dup-compare">' in known_page and "Angaben gleich" in known_page
     post(c, f"/journal/csv/{bid}/commit")
     assert not journal(c, f"source='sync:bitpanda' AND event_key='{op_key(1)}'")  # nicht doppelt gebucht
     # umgekehrt: CSV nach der Synchronisierung erkennt die API-Buchung (Alias Trade-ID)

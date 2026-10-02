@@ -204,6 +204,12 @@ def test_with_import_duplicates_and_plan_supersede(sample_client):
     assert r.status_code == 303 and "Dublette" in r.headers["location"]
     page = c.get("/journal?origin=journal").text
     assert "Dublette?" in page and imp.tx_id in page
+    # Gegenüberstellung unter der Zeile: diese App-Buchung ↔ ähnliche Import-Buchung, Feld für Feld
+    block = page[page.index('class="dup-row"'):]
+    block = block[:block.index("</details>")]
+    assert 'id="cmp-' in page and "Vergleich mit der vorhandenen Buchung" in block and imp.tx_id in block
+    assert "Diese Buchung" in block and "Vorhanden" in block and "Zeitpunkt" in block and "Zugang" in block
+    assert 'href="#cmp-' in page  # Badge springt zur Gegenüberstellung
     # Sparplan-Schätzung wird durch eine passende manuell erfasste Ausführung ersetzt
     svc = plan_service(ctx)
     ctx.db.x("DELETE FROM tx_estimate")

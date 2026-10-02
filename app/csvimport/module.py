@@ -148,6 +148,10 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
     sel.sort(key=lambda rc: (rc.status not in ("invalid", "duplicate"), rc.idx))
     offset = max(0, offset)
     page = sel[offset:offset + PAGE]
+    from app.csvimport.compare import build as build_compare
+
+    compare = build_compare(ctx, page, "dieser Prüf-Stapel · " + (source_label(b["source"]) if b["kind"] == "sync"
+                                                                     else (prof.label if prof else b["profile"])))
     js = journal_service(ctx)
     known = js.known_assets()
     assets = sorted(known.values(), key=lambda a: (a.is_fiat, a.name.lower()))
@@ -170,7 +174,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         kind_label=M.KIND_LABEL, source_label=source_label,
         ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
                                                               (b["datasource_id"],))),
-        sugg=sugg, catalog=catalog, conf_badge=CONF_BADGE, acct=acct, outdated=outdated,
+        sugg=sugg, catalog=catalog, conf_badge=CONF_BADGE, acct=acct, outdated=outdated, compare=compare,
     )
 
 

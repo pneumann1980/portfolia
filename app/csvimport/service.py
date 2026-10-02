@@ -897,11 +897,13 @@ class CsvImportService:
             elif ext and ext in known:
                 k = known[ext]
                 rc.status = "known"
+                rc.dup_of = [k["tx_id"]]
                 rc.warnings.insert(0, f"bereits importiert als {k['tx_id']}" + (" (gelöscht)" if k["status"] ==
                                                                                  "deleted" else ""))
             elif rc.rec.event_key and rc.rec.event_key in known_events:
                 k = known_events[rc.rec.event_key]
                 rc.status = "known"
+                rc.dup_of = [k["tx_id"]]
                 rc.warnings.insert(0, f"Vorgang bereits übernommen als {k['tx_id']}" + (" (gelöscht)" if k["status"] ==
                                                                                          "deleted" else "")
                                    + " – Zeile einer neueren Auswertung, wird nicht zusätzlich gebucht")

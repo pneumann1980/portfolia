@@ -595,3 +595,20 @@ fieldset.param-set legend { font-size: 0.85rem; color: var(--ink-2); padding: 0 
 details.origin { margin-top: 2px; }
 details.origin > summary { cursor: pointer; font-size: .8rem; }
 details.origin > div { margin-top: 2px; max-width: 34ch; }
+/* Prüf-Stapel: neue Zeile ↔ vorhandene Buchung(en) gegenüberstellen (mögliche Dublette, bereits vorhanden) */
+tr.has-compare > td { border-bottom: 0; }
+tr.dup-row > td { padding-top: 0; }
+details.dup-compare { margin: 0 0 6px; padding: 6px 10px; border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+details.dup-compare > summary { cursor: pointer; font-size: .82rem; }
+.cmp { display: grid; grid-template-columns: minmax(5.5em, max-content) repeat(var(--n), minmax(0, 1fr)); gap: 4px 12px; margin: 8px 0 4px; font-size: .82rem; align-items: start; }
+.cmp > div { min-width: 0; overflow-wrap: anywhere; }
+.cmp-k { color: var(--ink-2); font-size: .74rem; font-weight: 600; padding-top: 1px; }
+.cmp-h { font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 3px; }
+.cmp .diff { background: var(--warn-bg); color: var(--warn-ink); border-radius: 4px; padding: 0 4px; font-weight: 600; }
+@media (max-width: 699px) {
+  table.cards tr.has-compare { border-bottom: 0; padding-bottom: 4px; }
+  table.cards tr.dup-row { padding-top: 0; }
+  .cmp { grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 2px 10px; }
+  .cmp .cmp-k { grid-column: 1 / -1; margin-top: 6px; }
+  .cmp .cmp-k:empty { display: none; }
+}
