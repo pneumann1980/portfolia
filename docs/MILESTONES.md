@@ -764,6 +764,67 @@ bewusst ohne Buchung, keiner „ungeklärt“; Daten nicht im Repository).
 **Grenze:** Der tatsächliche Name des Zeitfelds ist nicht belegt (Doku nicht erreichbar); die tolerante Erkennung
 deckt die üblichen Varianten ab, ein Restfall erscheint mit Feldnamen statt still.
 
+### M18.2 – Bitpanda: Vertrag laut offizieller Referenz, Reparaturweg, Bestandsabgleich (0.16.2)
+
+Anlass (02.10.2026): Prüfung von 0.16.1 durch den Auftraggeber – weiterhin `pageSize` statt `page_size`, `_next()`
+bewertete Cursor-Felder vor `has_next_page=false`, ein wiederholter Cursor wurde durch die letzte Vorgangskennung
+ersetzt (nicht belegt), die Bestandsprüfung nutzte `/portfolio/holdings`, Zeitpunkte wurden über geratene Feldnamen
+gesucht, die Tests bildeten den Vertrag falsch ab, und die Erfolgsmeldung stützte sich auf Rohdaten mit künstlich
+ergänztem Zeitpunkt. Die Referenz (docs.public.bitpanda.com, OpenAPI je Endpunkt) war diesmal abrufbar.
+
+**Belegt (Repository, CI, Registry, Rohdaten):** Der Standard-Branch des Repositorys ist der Entwicklungs-Branch;
+die CI veröffentlicht nur für ihn bzw. `v*`-Tags. `latest` und `sha-ad35bd9` hatten am 02.10.2026 denselben Digest
+(0.16.1, veröffentlicht 07:59 UTC). Der gemeldete Prüf-Stapel (08:43 Ortszeit = 06:43 UTC) stammt von einer Version
+vor 0.16.0: Rohdaten ohne Zeitfeld-Angabe, Betragsobjekte als Text abgelegt, alle Vorgänge „Zeitpunkt fehlt“. Ob
+der Container danach aktualisiert wurde, ist aus dem Repository nicht belegbar – deshalb ab 0.16.2 der Commit im
+Image und in der App.
+
+**Entscheidungen**
+
+* Nur dokumentierte Parameter und Felder: `page_size` (100, bei HTTP 400 der Standard 25), `cursor`, `from` im
+  Format der Referenz; `operation_id`, `operation_type`, `transactions[]`; `flow`, `credited_at`, `asset_amount`,
+  `fee_amount`, `asset_balance_after`, `trade` (inkl. `trade_id` als Alias), `compensates`, `wallet_id`.
+* Pagination: Seite vollständig verarbeiten, dann `has_next_page`; `false` beendet trotz `next_cursor`, `true`
+  folgt `next_cursor` unverändert; kein Ersatz-Cursor. Fehlende/widersprüchliche Angaben, wiederholter Cursor, nur
+  Bekanntes, drei leere Seiten → „teilweise“ mit Grund; eine leere Seite mit `true` wird verfolgt, nie als Ende
+  gewertet. Ende und Ursache in der Abdeckung (`pagination`).
+* Zeitpunkt ausschließlich `transactions[].credited_at`; ohne ihn `Rec.ts_missing` (Anzeige „Zeitpunkt fehlt“,
+  Status ungeklärt vor jeder Stichtagsprüfung, nie gebucht) – der Abrufzeitpunkt dient nur der Sortierung.
+* Gebühren nur mit Beleg: Saldoverlauf (`asset_balance_after`) für `fee_amount`, Kurse (`rate`/`rate_with_fee`) und
+  Saldo für `trade.fee`; sonst prüfbedürftig.
+* `/v1/portfolio` (`balance.value`) bei jedem Lauf → Bestände der Datenquelle (Vergleich mit Portfolia-Buchungen);
+  nach vollständigem Abruf Abgleich mit der Summe der Vorgänge für alle Asset-IDs beider Seiten mit erklärender
+  Lesart; ohne auswertbare Position „nicht geprüft“. Keine Ausgleichsbuchungen.
+* Diagnose je Lauf (nur Namen und Zähler): Parser-Version, Zeitquellen, fehlende Pflichtfelder, nicht dokumentierte
+  Felder, Saldoverlauf stimmig/Brüche; je Zeile „Herkunft“ im Prüf-Stapel.
+* Reparaturweg: `Rec.raw.parser` (3); je neu geliefertem Ereignis werden unbearbeitete Zeilen älterer bzw.
+  abweichender Auswertung in offenen Stapeln derselben Datenquelle ersetzt – auch bei unvollständigem Abruf;
+  bearbeitete bleiben (Zähler, „Veraltete Zeilen neu auswerten“ setzt Eingaben ausdrücklich zurück und ruft neu ab);
+  „Vollständig neu abrufen“ an der Datenquelle. Ersetzt `FetchResult.refresh_open`. Abrufstand Version 3 → ein
+  vollständiger Neuabruf nach dem Update.
+* Wartende Ereignisse je Datenquelle statt je Anbieter; ein bereits übernommenes Ereignis bleibt bei versionierter
+  Auswertung bekannt, auch wenn eine neue Auswertung es anders auf Zeilen verteilt (keine Doppelbuchung).
+* Erfolgszeitpunkt rückt nur bei vollständigem Abruf (bzw. einer Etappe des Erstabrufs) vor.
+* Build-Kennung: `PORTFOLIA_REVISION` (CI), sichtbar in Seitenleiste, Einstellungen → System, `/healthz`; Smoke-Test
+  prüft sie, ein CI-Schritt nennt die veröffentlichten Tags.
+
+**Tests:** synthetische Fixtures im Aufbau der Referenz; Test-Server lehnt `pageSize`, unbekannte Endpunkte
+(`/portfolio/holdings`, `/assets/{id}`), nie ausgegebene Cursor und ungültige Zeitangaben ab. Abgedeckt: Zeitpunkt
+nur an den Teilen, nicht dokumentiertes Zeitfeld am Vorgang (nicht gelesen), nicht lesbares `credited_at`;
+Betragsobjekte, `fee_amount` (zusätzlich/enthalten/ohne Beleg/anderes Asset), `trade.fee` (enthalten/zusätzlich
+mit und ohne Saldobeleg/ohne Kurse); mehrere Seiten, letzte Seite mit `next_cursor` und `has_next_page=false`,
+wiederholter Cursor, Rücksprung, sechs Arten fehlender bzw. widersprüchlicher Angaben, leere Zwischenseite,
+Seitenlänge ohne Bedeutung, Rückfall auf `page_size=25`; `/portfolio` mit `balance.value`, ohne auswertbare
+Position, leer, ohne Recht; Spur eines Sparplans vom HTTP-JSON bis zur angezeigten Zeile; alte unbearbeitete und
+bearbeitete Prüf-Stapel, Ignorier-Entscheidung, übernommene Buchung mit anderer Zeilenaufteilung; vollständiger
+Neuabruf und inkrementeller Abruf ohne Dubletten; zwei Datenquellen desselben Kontos.
+
+**Grenzen:** Nicht gegen echte HTTP-Antworten geprüft (keine vorliegend). Lokal geprüft wurde der gemeldete,
+unveränderte Prüf-Stapel (Erkennung als ältere Auswertung, Ersetzen ohne Dubletten); die Original-Antworten der API
+enthält er nicht – ob `credited_at` geliefert wird, zeigt erst die Abdeckung des nächsten echten Laufs. Nicht
+dokumentierte Semantik (Wertebereiche, Gebühren, Staking im Bestand, Höchstwert von `page_size`, Bezug von `from`)
+bleibt Annahme und ist im Code bzw. README benannt.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

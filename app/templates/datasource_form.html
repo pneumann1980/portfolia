@@ -8,11 +8,11 @@
     <li>Namen vergeben (z. B. „Portfolia“) und <b>nur Leserechte</b> wählen:
       <ul>
         <li><b>Transaction</b> – erforderlich (Vorgänge/Historie)</li>
-        <li><b>Balance</b> – optional, nur für die Bestandsprüfung</li>
+        <li><b>Balances</b> – optional, nur für die Bestandsprüfung</li>
       </ul></li>
     <li><b>Keine Schreibrechte:</b> „Trade (Write)“ bzw. „Trading“ und „Earn (Write)“ <b>nicht</b> aktivieren – Portfolia
-      handelt nie und braucht sie nicht. „Trade (Read)“ ist nicht erforderlich; ob Asset-Stammdaten ohne weiteres
-      Recht lesbar sind, zeigt „Verbindung testen“.</li>
+      handelt nie und braucht sie nicht. Asset-Stammdaten sind laut Bitpanda ohne eigenes Recht lesbar – „Verbindung
+      testen“ zeigt es.</li>
     <li>Ein <b>Ablaufdatum</b> setzen (z. B. 12 Monate) und hier eintragen – Portfolia erinnert rechtzeitig.</li>
     <li>Schlüssel kopieren, unten einfügen, speichern, <b>Verbindung testen</b>.</li>
   </ol>
@@ -89,7 +89,16 @@
     <ul class="small" style="margin:8px 0 0 16px">
       <li>Umfang: {{ cov.mode or '–' }}{% if cov['from'] %}, ab {{ cov['from']|datetime_de }}{% endif %}{% if cov.to %} bis {{ cov.to|datetime_de }}{% endif %}</li>
       {% if cov.pages is defined %}<li>{{ cov.pages }} Seite(n), {{ cov.operations }} Vorgänge, {{ cov.requests or 0 }} Anfragen{% if cov.throttled %}, {{ cov.throttled }}× gedrosselt ({{ cov.waited_s }} s gewartet){% endif %}</li>{% endif %}
-      {% if cov.balances %}<li>Bestandsprüfung: {% if cov.balances.checked %}{{ cov.balances.assets }} Assets geprüft, {{ cov.balances.differences }} Abweichung(en){% for ex in cov.balances.examples %}<br><span class="mono">{{ ex }}</span>{% endfor %}{% else %}{{ cov.balances.note }}{% endif %}</li>{% endif %}
+      {% if cov.parser %}<li>Auswertung: Parser v{{ cov.parser }} · Zeitpunkt: {% for k, n in (cov.time_fields or {}).items() %}{{ k }} {{ n }}×{% if not loop.last %}, {% endif %}{% else %}–{% endfor %}</li>{% endif %}
+      {% if cov.pagination %}<li>Pagination: Ende {{ cov.pagination.end or 'unbekannt' }}{% if cov.pagination.next_cursor_on_last_page and cov.pagination.end == 'has_next_page=false' %} (next_cursor der letzten Seite laut has_next_page nicht verwendet){% endif %}, page_size {{ cov.page_size }}</li>{% endif %}
+      {% set dg = cov.diagnostics %}{% if dg %}
+      {% if dg.missing %}<li>Fehlende Pflichtfelder: {% for k, n in dg.missing.items() %}{{ k }} {{ n }}×{% if not loop.last %}, {% endif %}{% endfor %}</li>{% endif %}
+      {% if dg.undocumented %}<li>Nicht dokumentierte Felder: {% for lvl, ks in dg.undocumented.items() %}{{ lvl }}: {{ ks|join(', ') }}{% if not loop.last %}; {% endif %}{% endfor %}</li>{% endif %}
+      {% set dc = dg.counts or {} %}{% if dc.get('Saldoverlauf: Übergänge') %}<li>Saldoverlauf (asset_balance_after): {{ dc.get('Saldoverlauf: stimmig', 0) }} von {{ dc['Saldoverlauf: Übergänge'] }} Übergängen stimmig{% if dc.get('Saldoverlauf: Brüche') %} – <b>{{ dc['Saldoverlauf: Brüche'] }} Brüche</b> (fehlende oder anders dargestellte Vorgänge){% endif %}</li>{% endif %}
+      {% for k, n in dc.items() if not k.startswith('Saldoverlauf') %}<li>{{ k }}: {{ n }}×</li>{% endfor %}
+      {% endif %}
+      {% if cov.repair and (cov.repair.replaced or cov.repair.kept) %}<li>Ältere Auswertungen: {{ cov.repair.replaced }} Vorgänge ersetzt{% if cov.repair.kept %}, {{ cov.repair.kept }} bearbeitet und unverändert gelassen{% endif %}</li>{% endif %}
+      {% if cov.balances %}<li>Bestandsprüfung{% if ds.provider == 'bitpanda' %} (/portfolio){% endif %}: {% if cov.balances.checked %}{{ cov.balances.assets }} Positionen{% if cov.balances.compared %}, gegen die Summe der Vorgänge {{ cov.balances.compared }} Assets verglichen, {{ cov.balances.differences }} Abweichung(en){% endif %}{% if cov.balances.note %} – {{ cov.balances.note }}{% endif %}{% for ex in cov.balances.examples %}<br><span class="mono">{{ ex }}</span>{% endfor %}{% else %}<b>nicht geprüft</b> – {{ cov.balances.note }}{% endif %}</li>{% endif %}
       {% if cov.provider %}<li>Anbieter: {{ cov.provider }}{% if cov.to_block is defined %} · Blöcke {{ cov.from_block }}–{{ cov.to_block }} (Kettenspitze {{ cov.tip }}, ≥ {{ cov.confirmations }} Bestätigungen){% endif %}</li>{% endif %}
       {% if cov.requests is defined and cov.pages is not defined %}<li>{{ cov.requests }} Anfragen{% if cov.throttled %}, {{ cov.throttled }}× gedrosselt{% endif %}{% if cov.waited_s %}, {{ cov.waited_s }} s gewartet{% endif %}</li>{% endif %}
       {% if cov.pending %}<li>{{ cov.pending }} unbestätigte Vorgänge – werden nach Bestätigung gebucht</li>{% endif %}
@@ -97,20 +106,21 @@
       {% for l in cov.limits or [] %}<li>{{ l }}</li>{% endfor %}
       <li>Grundlage ist immer die Vorgangshistorie; Bestände dienen nur als Plausibilitätsprüfung.</li>
     </ul></details>{% endif %}
-  {% if ds.is_wallet and holdings %}
-  <h3 style="margin-top:14px">Bestände: On-Chain beobachtet vs. durch Portfolia-Buchungen erklärt</h3>
-  <p class="hint">Beobachtet = laut Anbieter{% if holdings.observed_at %} ({{ holdings.observed_at|datetime_de }}){% endif %}; erklärt = Bestand des Kontos „{{ ds.account }}“ aus übernommenen Buchungen. Abweichungen sind Hinweise (offene Prüfpunkte, unbestätigte Vorgänge, nicht erfasste Bewegungen) – sie werden nie automatisch ausgeglichen.</p>
+  {% if holdings and (ds.is_wallet or holdings['items']) %}{% set obs = 'On-Chain beobachtet' if ds.is_wallet else 'laut ' ~ ds.provider_label %}
+  <h3 style="margin-top:14px">Bestände: {{ obs }} vs. durch Portfolia-Buchungen erklärt</h3>
+  <p class="hint">Beobachtet = laut Anbieter{% if holdings.observed_at %} ({{ holdings.observed_at|datetime_de }}){% endif %}; erklärt = Bestand des Kontos „{{ ds.account }}“ aus übernommenen Buchungen. Abweichungen sind Hinweise (offene Prüfpunkte, unbestätigte Vorgänge, nicht erfasste Bewegungen) – sie werden nie automatisch ausgeglichen.{% if not ds.is_wallet %} Darunter je Asset der Abgleich des Anbieterbestands mit der Summe seiner Vorgänge.{% endif %}</p>
   {% if holdings['items'] %}
   <div class="table-wrap cards-wrap"><table class="compact cards">
-    <thead><tr><th>Asset</th><th class="num">On-Chain beobachtet</th><th class="num">durch Portfolia-Buchungen erklärt</th><th class="num">Differenz</th></tr></thead>
+    <thead><tr><th>Asset</th><th class="num">{{ obs }}</th><th class="num">durch Portfolia-Buchungen erklärt</th><th class="num">Differenz</th></tr></thead>
     <tbody>{% for i in holdings['items'] %}<tr>
-      <td data-label="Asset" class="wrap-any"><span class="mono">{{ i.key|asset_label }}</span>{% if i.name %} <span class="hint">{{ i.name }}</span>{% endif %}{% if i.asset_id and i.asset_id != i.key %}<div class="hint">→ {{ i.asset_id }}</div>{% endif %}</td>
-      <td class="num" data-label="On-Chain beobachtet">{{ i.observed|qty_exact if i.observed is not none else '–' }}</td>
+      <td data-label="Asset" class="wrap-any"><span class="mono">{{ i.key|asset_label }}</span>{% if i.name %} <span class="hint">{{ i.name }}</span>{% endif %}{% if i.asset_id and i.asset_id != i.key %}<div class="hint">→ {{ i.asset_id }}</div>{% endif %}{% if i.note %}<div class="hint">{{ i.note }}</div>{% endif %}</td>
+      <td class="num" data-label="{{ obs }}">{{ i.observed|qty_exact if i.observed is not none else '–' }}</td>
       <td class="num" data-label="durch Buchungen erklärt">{% if i.state == 'unmapped' %}<span class="hint">nicht zugeordnet – im Prüf-Stapel zuordnen</span>{% elif i.state == 'ignored' %}<span class="hint">ignoriert</span>{% else %}{{ i.explained|qty_exact }}{% endif %}</td>
       <td class="num" data-label="Differenz">{% if i.state == 'ok' %}<span class="badge good">0</span>{% elif i.state == 'diff' %}<span class="badge warn">{{ i.diff|qty_exact }}</span>{% elif i.state == 'only_portfolia' %}<span class="badge warn">nur in Portfolia</span>{% else %}–{% endif %}</td>
     </tr>{% endfor %}</tbody></table></div>
   {% else %}<p class="hint">Noch keine Bestände beobachtet – „Verbindung testen“ oder synchronisieren.</p>{% endif %}
   {% endif %}
+  {% if outdated %}<div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div><b>{{ outdated }} {{ 'Vorgang' if outdated == 1 else 'Vorgänge' }} in offenen Prüf-Stapeln mit älterer Auswertung</b> – unbearbeitete ersetzt die nächste Synchronisierung („Vollständig neu abrufen“ sofort), bearbeitete im Prüf-Stapel über „Veraltete Zeilen neu auswerten“.</div></div>{% endif %}
   {% if open_counts %}
   <div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div><b>Zur Prüfung offen:</b>
     {% for st, n in open_counts.items() %}{{ n }} {{ {'new': 'neu', 'unclear': 'ungeklärt', 'duplicate': 'mögliche Dubletten', 'before': 'vor Stichtag', 'invalid': 'unvollständig'}.get(st, st) }}{% if not loop.last %} · {% endif %}{% endfor %}
@@ -125,6 +135,7 @@
     <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit" {% if ds.needs_key and not ds.key_mode %}disabled title="Zuerst API-Key eingeben"{% endif %}{% if ds.progress.running %} disabled{% endif %}>{{ 'Jetzt synchronisieren' if ds.last_success_at else ('Erstabruf starten' if ds.is_wallet else 'Historischen Abgleich starten') }}</button></form>
     {% if ds.is_wallet %}<form method="post" action="/settings/datasources/{{ ds.id }}/check" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Verbindung testen</button></form>{% endif %}
     {% endif %}
+    {% if ds.supported and ds.enabled and ds.provider == 'bitpanda' %}<form method="post" action="/settings/datasources/{{ ds.id }}/refetch" class="inline" data-confirm="Alle Vorgänge jetzt vollständig neu abrufen? Unbearbeitete Prüfzeilen älterer Auswertungen werden ersetzt; übernommene Buchungen, Eingaben und „dauerhaft ignoriert“ bleiben."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit" {% if ds.needs_key and not ds.key_mode %}disabled{% endif %}>Vollständig neu abrufen</button></form>{% endif %}
     {% if ds.supported and ds.cursor_json %}<form method="post" action="/settings/datasources/{{ ds.id }}/reset" class="inline" data-confirm="Abrufstand zurücksetzen? Der nächste Lauf holt alle Vorgänge erneut; bereits übernommene werden erkannt, Überschneidungen mit CSV-Importen erscheinen erneut zur Prüfung."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Abrufstand zurücksetzen</button></form>{% endif %}
   </div>
   <p class="hint" style="margin-top:8px">Vor der Übernahme zeigt der Prüf-Stapel neue, bereits bekannte (z. B. per CSV importierte), möglicherweise doppelte und ungeklärte Vorgänge. Nach der Prüfung kannst du unten eine stündliche Synchronisierung einschalten – sie liest nur.</p>

@@ -151,9 +151,6 @@ class FetchResult:
     more: bool | None = None  # weitere Etappen ausstehend → bald fortsetzen (Standard: wie ``resume``)
     gaps: list[str] = field(default_factory=list)  # erkannte Lücken dieses Abrufs (→ nie „vollständig“)
     balances: list[Balance] | None = None  # beobachtete Bestände (Plausibilitätsprüfung), None = nicht abgefragt
-    # vollständige Historie neu ausgewertet: unbearbeitete offene Prüf-Stapel der Quelle werden ersetzt (sonst
-    # blieben ihre Vorgänge in der alten Auswertung „wartend“ stehen)
-    refresh_open: bool = False
 
 
 @dataclass(frozen=True)
@@ -179,6 +176,9 @@ class Connector(ABC):
     label: ClassVar[str]
     needs_credentials: ClassVar[bool] = False
     wallet: ClassVar[bool] = False  # Wallet-Connector (öffentliche Adressen, Schlüssel je Anbieter statt je Quelle)
+    # Version der Auswertung (``Rec.raw["parser"]``): Prüfzeilen einer älteren Version werden bei einem Abruf ersetzt,
+    # solange niemand sie bearbeitet hat (siehe DataSourceService._repair); None = ohne Versionsführung
+    parser_version: ClassVar[int | None] = None
     # vom Dienst gesetzt: Zwischenspeicher für Stammdaten des Anbieters (z. B. Asset-ID → Symbol), spart Abrufe
     catalog: Any = None
     # vom Dienst gesetzt: Fortschritt melden (Phase, erledigt, gesamt bzw. None, Text)

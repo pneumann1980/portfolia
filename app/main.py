@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
 
-from app import __version__
+from app import REVISION, __version__
 from app.config import Config
 from app.context import AppContext
 from app.logging_setup import attach_db_handler, setup_logging
@@ -39,8 +39,8 @@ def build_app(config: Config | None = None, start_scheduler: bool | None = None)
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ctx.startup()
         attach_db_handler(config.db_path)
-        log.info("Portfolia %s gestartet (Port %s, Demo=%s, Auth=%s)", __version__, config.port, config.demo_mode,
-                 config.auth_mode)
+        log.info("Portfolia %s (Build %s) gestartet (Port %s, Demo=%s, Auth=%s)", __version__, REVISION[:7] or "lokal",
+                 config.port, config.demo_mode, config.auth_mode)
         run_sched = config.scheduler_enabled if start_scheduler is None else start_scheduler
         if run_sched:
             from app.jobs.scheduler import Scheduler

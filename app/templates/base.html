@@ -41,7 +41,7 @@
     <div class="spacer"></div>
     <button class="nav-link" type="button" data-theme-toggle style="border:0;background:none;cursor:pointer;font:inherit;width:100%">
       <svg><use href="#i-moon"/></svg><span>Hell/Dunkel</span></button>
-    <div class="hint" style="padding:6px 10px">v{{ version }}</div>
+    <div class="hint" style="padding:6px 10px" title="{{ 'Build ' ~ revision if revision else 'ohne Build-Kennung (lokal gebaut)' }}">v{{ version }}{% if revision %} · {{ revision[:7] }}{% endif %}</div>
   </nav>
   <div class="main">
     <header class="topbar">

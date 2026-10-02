@@ -1,0 +1,178 @@
+{
+ "data": [
+  {
+   "asset_id": null,
+   "currency_id": "00000000-0000-0000-0000-0000000000e0",
+   "balance": {
+    "value": "123.12345678",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "available_balance": {
+    "value": "123.12345678",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "invested_amount": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "average_buy_price": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "currency_balance": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return_percent": "0"
+  },
+  {
+   "asset_id": "00000000-0000-0000-0000-0000000000b1",
+   "currency_id": "00000000-0000-0000-0000-0000000000e0",
+   "balance": {
+    "value": "0.00385",
+    "asset_id": "00000000-0000-0000-0000-0000000000b1"
+   },
+   "available_balance": {
+    "value": "0.00385",
+    "asset_id": "00000000-0000-0000-0000-0000000000b1"
+   },
+   "invested_amount": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "average_buy_price": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "currency_balance": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return_percent": "0"
+  },
+  {
+   "asset_id": "00000000-0000-0000-0000-0000000000e1",
+   "currency_id": "00000000-0000-0000-0000-0000000000e0",
+   "balance": {
+    "value": "0.0241",
+    "asset_id": "00000000-0000-0000-0000-0000000000e1"
+   },
+   "available_balance": {
+    "value": "0.0221",
+    "asset_id": "00000000-0000-0000-0000-0000000000e1"
+   },
+   "invested_amount": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "average_buy_price": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "currency_balance": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return_percent": "0"
+  },
+  {
+   "asset_id": "00000000-0000-0000-0000-0000000000be",
+   "currency_id": "00000000-0000-0000-0000-0000000000e0",
+   "balance": {
+    "value": "0.98",
+    "asset_id": "00000000-0000-0000-0000-0000000000be"
+   },
+   "available_balance": {
+    "value": "0.98",
+    "asset_id": "00000000-0000-0000-0000-0000000000be"
+   },
+   "invested_amount": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "average_buy_price": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "currency_balance": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return_percent": "0"
+  },
+  {
+   "asset_id": "00000000-0000-0000-0000-0000000000a1",
+   "currency_id": "00000000-0000-0000-0000-0000000000e0",
+   "balance": {
+    "value": "0.5",
+    "asset_id": "00000000-0000-0000-0000-0000000000a1"
+   },
+   "available_balance": {
+    "value": "0.5",
+    "asset_id": "00000000-0000-0000-0000-0000000000a1"
+   },
+   "invested_amount": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "average_buy_price": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "currency_balance": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return_percent": "0"
+  },
+  {
+   "asset_id": "00000000-0000-0000-0000-0000000000a0",
+   "currency_id": "00000000-0000-0000-0000-0000000000e0",
+   "balance": {
+    "value": "1",
+    "asset_id": "00000000-0000-0000-0000-0000000000a0"
+   },
+   "available_balance": {
+    "value": "1",
+    "asset_id": "00000000-0000-0000-0000-0000000000a0"
+   },
+   "invested_amount": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "average_buy_price": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "currency_balance": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return": {
+    "value": "0",
+    "currency_id": "00000000-0000-0000-0000-0000000000e0"
+   },
+   "total_return_percent": "0"
+  }
+ ]
+}

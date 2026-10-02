@@ -100,6 +100,14 @@ Package settings → Change visibility → Public*; es enthält nur den öffentl
 `/data` und `/exports` bleiben erhalten). Images ab 0.9.0 werden als Docker-Manifestliste veröffentlicht, damit die
 Update-Prüfung von Unraid funktioniert (OCI-Indizes mit Attestierungen erkennt sie nicht).
 
+**Welcher Stand läuft?** Die CI veröffentlicht Images nur für Pushes auf den Standard-Branch des Repositorys
+(`latest` und `sha-<Commit>`) und für Versions-Tags `v*` (`X.Y.Z`, `X.Y`) – ein grüner Build eines anderen Branches
+erzeugt kein Update. Ab 0.16.2 trägt jedes Image seinen Commit: Seitenleiste „v0.16.2 · abc1234“, *Einstellungen →
+System → Version* und `GET /healthz` (`"revision"`). Nach dem Update dort prüfen, ob der Commit dem erwarteten
+entspricht (GitHub → Actions → Lauf → Schritt „Veröffentlichte Tags“); „ohne Build-Kennung“ heißt lokal bzw. vor
+0.16.2 gebaut. Im Unraid-Terminal: `docker image inspect ghcr.io/pneumann1980/portfolia:latest --format
+'{{ index .Config.Labels "org.opencontainers.image.revision" }}'`.
+
 Das Image läuft als Nicht-Root-Benutzer mit `PUID`/`PGID` (Unraid-Standard 99/100), hat einen
 `HEALTHCHECK` (`/healthz`) und schreibt strukturierte Logs (JSON) auf stdout.
 
@@ -503,10 +511,10 @@ Alles geschieht in der App; einmalige Voraussetzung ist der [Master-Key](#master
 
    | Recht bei Bitpanda | Bedarf | Wofür |
    |---|---|---|
-   | **Transaction** (lesen) | **erforderlich** | Vorgänge (`GET /operations`) |
-   | **Balance** (lesen) | optional | Bestandsprüfung (`GET /portfolio/holdings`) – nur Hinweis, nie Buchung |
-   | Trade (Read) | nicht angefordert | Asset-Stammdaten (`GET /assets`, `/currencies`) – ob sie ohne weiteres Recht lesbar sind, zeigt „Verbindung testen“ |
-   | **Trade (Write) / Trading, Earn (Write)** | **nie aktivieren** | Portfolia handelt nie und ruft keine schreibenden Endpunkte auf |
+   | **Transaction** (lesen) | **erforderlich** | Vorgänge (`GET /v1/operations`) |
+   | **Balances** (lesen) | optional | Bestandsprüfung (`GET /v1/portfolio`, `balance.value`) – nur Hinweis, nie Buchung |
+   | – | kein Recht nötig | Asset-Stammdaten (`GET /v1/assets`, `/v1/currencies`) – laut Referenz öffentlich |
+   | **Trade (Write), Earn (Write)** | **nie aktivieren** | Portfolia handelt nie und ruft keine schreibenden Endpunkte auf |
 
    Ein Ablaufdatum setzen (z. B. 12 Monate) und in Portfolia eintragen: Die App warnt 14 Tage vorher und ruft
    nach Ablauf nicht mehr ab.
@@ -532,11 +540,12 @@ Alles geschieht in der App; einmalige Voraussetzung ist der [Master-Key](#master
 | Verkauf Krypto gegen Fiat | Verkauf, Wert = Fiat-Betrag | genau ein Krypto-Ausgang und ein Fiat-Eingang |
 | Swap Krypto → Krypto (`swap`, über EUR) | zwei Buchungen: Verkauf gegen EUR + Kauf mit EUR, Werte aus den Euro-Teilen | je ein Verkaufs- und Kauf-Paar (Transaktionsart `sell`/`buy`) in derselben Fiat-Währung |
 | Einzahlung Fiat oder Krypto, Sparplan-Einzahlung | Zugang | ein Eingang, Vorgangsart „deposit“ bzw. Sparplan mit Transaktionsart „deposit“ |
-| Auszahlung Fiat oder Krypto | Abgang inkl. Gebühr | ein Ausgang, Vorgangsart „withdraw…“ |
+| Auszahlung Fiat oder Krypto | Abgang und Gebühr (siehe *Gebühren*) | ein Ausgang, Vorgangsart „withdraw…“ |
 | Rewards: `reward`, `staking_reward`, `passive_earn_reward`, `onetime_reward`, Cashback, Airdrop | Zugang mit Ertrags-Tag (`reward`, `staking`, `bonus`, `cashback`, `airdrop` …) | ein Krypto-Eingang |
 | Token-Umstellung (`merger_crypto`, Migration) | Umstellung (Kapitalmaßnahme, Einstand geht über), **prüfbedürftig** | ein Krypto-Ausgang und ein Krypto-Eingang |
 | eigener Gebühren-Teil (z. B. in BEST) | Gebührenzeile desselben Vorgangs | Transaktionsart „fee“ |
-| Gebühr an einem Haupt-Teil (auch in eigener Währung) | Gebühr an der Buchung, **als prüfbedürftig markiert** | ob der Betrag die Gebühr enthält, ist nicht dokumentiert |
+| `fee_amount` an einem Haupt-Teil | Gebühr so, wie der Saldoverlauf sie belegt; ohne Beleg **prüfbedürftig** | siehe *Gebühren* |
+| `trade.fee` (Handelsgebühr) | im Betrag enthalten → nur Hinweis; zusätzlich → Gebühr an der Buchung | Kurs `rate`/`rate_with_fee` und Saldo, sonst **prüfbedürftig** |
 | interne Umbuchung (gleiches Asset und gleicher Betrag ein und aus), Staking `stake`/`unstake` | keine Buchung, im Lauf gezählt | – |
 
 **Bewusst nicht automatisch – „ungeklärt“ mit Grund:** Korrekturen und Stornos (`compensates`) samt dem
@@ -544,27 +553,64 @@ stornierten Vorgang, Tausch Krypto → Krypto ohne Euro-Teile, Fiat → Fiat, Ak
 Edelmetalle, Kryptoindizes, unbekannte Assets oder Vorgangsarten sowie Vorgänge ohne Zeitpunkt oder Richtung (mit
 den gelieferten Feldnamen im Hinweis). Sie werden weder still verworfen noch als Kauf oder Verkauf geraten.
 
-**Antwortformat:** Beträge und Gebühren kommen als Text bzw. Zahl oder als Objekt `{"value", "currency_id" |
-"asset_id"}`; der Zeitpunkt steht am Vorgang oder an seinen Teilen (dann gilt der früheste). Erkannt werden die
-üblichen Feldnamen (`timestamp`, `time`, `occurred_at`, `executed_at`, `credited_at`, `created_at` …, auch als
-Unix-Zeit oder Zeitobjekt) und notfalls jedes Feld, dessen Name nach einer Zeitangabe klingt – Änderungs- und
-Ablaufzeiten nie. Welches Feld verwendet wurde, steht in der Abdeckung des Laufs (`time_fields`) und je Zeile in den
-Rohdaten; dort liegt auch die Originalantwort des Vorgangs.
+**Vertrag (offizielle Referenz, [docs.public.bitpanda.com](https://docs.public.bitpanda.com/list-operations-4375770e0),
+geprüft am 02.10.2026):** `GET /v1/operations` mit `page_size` (Standard 25), `cursor`, `from`/`to`; Antwort `data[]`,
+`self_cursor`, `next_cursor`, `has_next_page`. Je Vorgang `operation_id`, `operation_type`, `transactions[]`; je Teil
+`flow` (`INCOMING`/`OUTGOING`), `credited_at`, `transaction_type`, `wallet_id` und die Betragsobjekte `asset_amount`,
+`fee_amount`, `asset_balance_after` (`{value, asset_id | currency_id}`), dazu `compensates` und `trade` (`trade_id`,
+`fee`, `rate`, `rate_with_fee` …). Bestände: `GET /v1/portfolio` → `data[].balance.value`. Portfolia liest genau diese
+Felder – keine geratenen Ersatzfelder; nicht dokumentierte Felder und fehlende Pflichtfelder zeigt die Abdeckung des
+Laufs mit Namen (nie mit Werten).
+
+**Zeitpunkt:** ausschließlich `transactions[].credited_at` (bei mehreren Teilen der früheste). Fehlt er, bleibt der
+Vorgang *ungeklärt* und trägt im Prüf-Stapel „Zeitpunkt fehlt“ – mit Mengen, ohne Datum, nie gebucht. Kein Ersatz
+durch den Abrufzeitpunkt; liefert Bitpanda den Zeitpunkt später, ersetzt der nächste Abruf die Zeile.
+
+**Gebühren** (Bedeutung nicht dokumentiert – übernommen wird nur, was die Daten selbst belegen):
+
+* `fee_amount`: Der Saldoverlauf (`asset_balance_after` desselben Wallets gegenüber dem vorherigen Teil im selben
+  Abruf) zeigt, ob die Gebühr *zusätzlich* abgezogen wurde (Buchung: Betrag + Gebühr) oder *im Betrag* steckt
+  (Abgang = Betrag − Gebühr, dazu die Gebühr; bei Eingängen nur Hinweis). Ohne Beleg: Betrag + Gebühr, prüfbedürftig.
+* `trade.fee`: Betrag ≈ Menge × `rate_with_fee` → Gebühr im Fiat-Betrag enthalten (Einstand bzw. Erlös stimmen ohne
+  weitere Gebühr, Hinweis an der Zeile); Betrag ≈ Menge × `rate` → zusätzlich (Gebühr an der Buchung, prüfbedürftig,
+  solange der Saldoverlauf die Abbuchung nicht belegt); sonst prüfbedürftig, nichts geraten.
+
+**Pagination:** Jede Seite wird vollständig verarbeitet; dann entscheidet `has_next_page`. `false` beendet den Abruf –
+auch wenn `next_cursor` gesetzt ist; `true` setzt mit `next_cursor` unverändert fort. `self_cursor` und
+Vorgangskennungen sind nie Fortsetzungspunkte. Als *teilweise* (Abrufstand rückt nicht vor, Erfolgszeitpunkt
+bleibt) enden: fehlendes oder nicht boolesches `has_next_page`, `true` ohne `next_cursor` oder mit
+`next_cursor = self_cursor`, ein wiederholter Cursor, eine Seite nur mit bereits gelieferten Vorgängen, drei leere
+Seiten in Folge trotz `true`, Abbruch durch Drosselung bzw. Störung und mehr als 2000 Seiten. Die Seitenlänge
+entscheidet nie über das Ende. `page_size` = 100 (Höchstwert nicht dokumentiert); lehnt Bitpanda das mit HTTP 400 ab,
+gilt der dokumentierte Standard 25. Wie das Ende erkannt wurde, steht in der Abdeckung („Ende has_next_page=false“).
 
 **Technik und Aufwand:** nur `GET` an `https://api.public.bitpanda.com/v1` mit Header `x-api-key` – keine
-schreibenden Aufrufe, kein stiller Rückgriff auf die ältere API `api.bitpanda.com`, Umleitungen werden nicht
-verfolgt. Cursor-Pagination (100 je Seite): eine leere Seite beendet den Abruf (auch wenn sie noch einen Cursor
-trägt); wiederholt die API den gesendeten Cursor, gilt die Kennung des letzten Vorgangs als Fortsetzungspunkt;
-liefert eine Seite nur Bekanntes, endet der Lauf als „teilweise“. Folgeläufe fragen nur ab dem letzten
-vollständigen Stand (minus 2 Tage Überlappung) ab; nach dem Verwerfen eines Prüf-Stapels oder einer verbesserten
-Auswertung (neue Version des Abrufstands) wird die ganze Historie neu abgerufen, und unbearbeitete offene
-Prüf-Stapel werden durch die neue Auswertung ersetzt. Asset-Stammdaten werden 30 Tage
-zwischengespeichert – ein stündlicher Lauf braucht meist ein bis zwei Aufrufe. Timeouts 20 s, bei 429 Warten nach
-`Retry-After` (höchstens 60 s je Wartezeit, 120 s je Lauf), bei 5xx drei Versuche. Beträge exakt als Dezimalzahl,
-Zeitpunkte in UTC; Originalbeträge, Währungen, Gebühren, Bitpanda-IDs und Rohdaten bleiben je Zeile als Herkunft
-gespeichert. Ereignis-ID `bitpanda:<Vorgangs-UUID>`, jede Zeile `…#1`, `…#2` (fest), dazu Aliase für Transaktions-
-und Trade-IDs – so wird dieselbe Buchung aus dem Bitpanda-CSV-Export (Transaktions-ID `T…`) erkannt. Die
-Bestandsprüfung läuft nur beim vollständigen historischen Abgleich (mit Leserecht „Balance“).
+schreibenden Aufrufe, kein Rückgriff auf die ältere API `api.bitpanda.com`, Umleitungen werden nicht verfolgt.
+Folgeläufe fragen mit `from` (Format `2024-01-01T00:00:00.000Z`) ab dem letzten vollständigen Stand minus 2 Tage ab;
+eine neue Auswertungsversion (Parser), das Verwerfen eines Prüf-Stapels oder „Vollständig neu abrufen“ holen die
+ganze Historie. Asset-Stammdaten werden gesammelt (`/assets?id=…`) abgerufen und 30 Tage zwischengespeichert.
+Timeouts 20 s, bei 429 Warten nach `Retry-After` (höchstens 60 s je Wartezeit, 120 s je Lauf), bei 5xx drei Versuche.
+Beträge exakt als Dezimalzahl, Zeitpunkte in UTC; je Zeile bleiben Auswertungsversion, Zeitquelle, Teile und die
+Originalantwort des Vorgangs als Herkunft gespeichert (im Prüf-Stapel unter „Herkunft“). Ereignis-ID
+`bitpanda:<operation_id>`, Zeilen `…#0`, `…#1` (fest), dazu Aliase für Transaktions- und Trade-IDs (`trade.trade_id`)
+– so wird dieselbe Buchung aus dem Bitpanda-CSV-Export (Transaktions-ID `T…`) erkannt.
+
+**Bestände gegenprüfen:** Jeder Lauf liest `/v1/portfolio` (Leserecht „Balances“). Die Datenquelle zeigt je Asset den
+Bitpanda-Bestand neben dem Bestand aus Portfolia-Buchungen des Kontos; nach vollständigem Abruf zusätzlich den
+Abgleich mit der Summe aller Vorgänge – für alle Asset-IDs beider Seiten, mit der Lesart, die den Bestand erklärt
+(z. B. „Gebühren zusätzlich abgezogen“, „ohne Staking-Umbuchungen“), und dem letzten Saldo laut Vorgängen. Eine
+Antwort ohne auswertbare Position (`balance.value`) gilt nicht als geprüft. Abweichungen sind Hinweise – es entstehen
+nie Ausgleichsbuchungen.
+
+**Ältere Auswertungen ersetzen (Reparaturweg):** Jede Prüfzeile trägt die Version ihrer Auswertung. Liefert ein
+Abruf einen Vorgang erneut und unterscheidet sich die neue Auswertung, ersetzt Portfolia dessen Zeilen in offenen
+Prüf-Stapeln derselben Datenquelle – nur wenn sie unbearbeitet sind (keine Entscheidung „übernehmen ja/nein“, kein
+eingetragener Wert, keine Transfer-Bestätigung, nichts übernommen). Bearbeitete bleiben stehen; der Prüf-Stapel
+nennt ihre Zahl und bietet „Veraltete Zeilen neu auswerten“ (Eingaben daran verwerfen, vollständig neu abrufen).
+„Dauerhaft ignorieren“ gilt je Vorgang und damit auch für die neue Auswertung; übernommene Buchungen bleiben
+unverändert, und ein bereits übernommener Vorgang wird nicht ein zweites Mal gebucht – auch wenn die neue
+Auswertung ihn anders auf Zeilen verteilt. Wiederholte Läufe ersetzen nichts doppelt. Wartende Vorgänge blockieren
+nur ihre eigene Datenquelle, nie ein anderes Bitpanda-Konto.
 
 ### Master-Key für API-Keys
 
@@ -679,22 +725,30 @@ enthält, dürfen sie nicht doppelt zählen:
 
 ### Grenzen der Bitpanda-Anbindung
 
-* **Nicht live verifiziert:** Die gehostete Bitpanda-Entwicklerdokumentation war beim Bau nicht erreichbar;
-  Endpunkte, Feldnamen, Pagination und Fehlercodes stützen sich auf die offiziell veröffentlichte API-Beschreibung
-  von Bitpanda auf GitHub und öffentliche Beispiele. Der Parser ist deshalb tolerant (mehrere Feldnamen,
-  Pagination-Varianten, Rückfall ohne Seitengröße/Zeitfilter bei HTTP 400) und meldet Unklares als „ungeklärt“ bzw.
-  „teilweise“ statt zu raten. Beim ersten echten Abgleich bitte die Prüf-Liste und die Bestandsprüfung ansehen.
+* **Geprüft gegen die Referenz, nicht gegen ein echtes Konto:** Endpunkte, Parameter und Feldnamen folgen der
+  offiziellen Referenz (Stand 02.10.2026); die Tests nutzen synthetische Antworten in deren Aufbau, und der
+  Test-Server lehnt nicht dokumentierte Parameter, Endpunkte und Cursor ab. Echte Antworten wurden nicht geprüft –
+  ob z. B. `credited_at` bei allen Vorgängen gefüllt ist, zeigt erst die Abdeckung des ersten Laufs („Zeitpunkt:
+  transactions[].credited_at …×, fehlt …×“, fehlende Pflichtfelder, nicht dokumentierte Felder).
+* **Nicht dokumentiert, deshalb nie vorausgesetzt:** Wertebereich von `operation_type`/`transaction_type`
+  (beobachtet u. a. `buy`, `sell`, `swap`, `deposit`, `withdrawal`, `savings_plan`, `stake`,
+  `passive_earn_reward`, `onetime_reward`, `merger_crypto`), Höchstwert von `page_size`, worauf sich `from` bezieht,
+  ob Gebühren im Betrag enthalten sind, ob `balance` gestakte Mengen enthält, ob `asset_balance_after` je Wallet gilt.
+* **Korrektur gegenüber 0.16.1:** 0.16.1 sendete `pageSize` statt `page_size`, folgte einem `next_cursor` trotz
+  `has_next_page=false`, ersetzte einen wiederholten Cursor durch die letzte Vorgangskennung, prüfte Bestände über
+  `/portfolio/holdings` und erkannte Zeitpunkte über geratene Feldnamen. 0.16.2 hält sich an die Referenz.
 * **Scope-Fehler:** Ob Bitpanda ein fehlendes Leserecht mit 401 oder 403 beantwortet, ist nicht dokumentiert – die
   Unterscheidung „fehlendes Recht“ vs. „ungültiger Schlüssel“ stützt sich zusätzlich auf den Bestände-Test.
-* **Gebühren:** Ob ein Betrag die Gebühr bereits enthält, ist nicht dokumentiert – betroffene Buchungen sind als
-  prüfbedürftig markiert.
+* **Gebühren:** Ob ein Betrag die Gebühr bereits enthält, ist nicht dokumentiert – belegt wird es nur über den
+  Saldoverlauf bzw. die Kurse des Handels; sonst bleibt die Buchung prüfbedürftig.
+* **Bestandsabgleich:** nur Plausibilität. Der Vergleich mit der Summe der Vorgänge braucht einen vollständigen Abruf
+  der Historie; die Lesart (Gebühren, Staking) ist eine Erklärung, kein Beleg. Assets ohne Symbol in den
+  Stammdaten erscheinen mit ihrer Bitpanda-Kennung; Stocks, Metalle und Indizes werden verglichen, aber nicht gebucht.
 * **Nicht abgebildet:** Tausch Krypto → Krypto ohne Euro-Teile, Stocks/ETFs, Edelmetalle, Indizes, Korrekturen
   (siehe oben); für diese Fälle bleibt der CSV-Import bzw. die manuelle Erfassung.
-* **Antwortformat geändert (Oktober 2026):** Bitpanda liefert Beträge inzwischen als Objekt und den Zeitpunkt nicht
-  mehr unter den zuvor dokumentierten Namen – ältere Portfolia-Versionen zeigten deshalb alle Vorgänge als
-  „ungeklärt: Zeitpunkt fehlt“ und meldeten „Pagination wiederholt denselben Cursor“. Ab 0.16.1 werden beide
-  Formate gelesen; der nächste Lauf ruft die Historie automatisch neu ab und ersetzt den unbearbeiteten alten
-  Prüf-Stapel.
+* **Ohne Zeitpunkt:** Vorgänge ohne `credited_at` (z. B. noch nicht gutgeschrieben) bleiben ungeklärt, bis Bitpanda
+  den Zeitpunkt liefert; inkrementelle Läufe sehen sie erst wieder, wenn er innerhalb des Abfragefensters liegt –
+  sonst „Vollständig neu abrufen“.
 
 ## Wallets (read-only, sechs Chains)
 
@@ -1248,8 +1302,8 @@ SQLite-Sicherung unter *Backups* der richtige Weg.
 | Zugriff verweigert (403) | CSRF-Schutz: Seite neu laden; Cross-Site-Formulare werden abgelehnt. |
 | „Master-Key fehlt“ / „Datei … nicht lesbar“ | Datei fehlt oder Container nach dem Anlegen nicht neu gestartet → [Master-Key](#master-key-für-api-keys). |
 | „mit einem anderen Master-Key verschlüsselt (Key-ID …)“ | Falscher Master-Key nach Restore/Rotation: richtigen Key ablegen bzw. alten als `PORTFOLIA_MASTER_KEY_OLD_FILE` bereitstellen, sonst API-Key neu eingeben. |
-| Bitpanda „teilweise synchronisiert“ | Abruf unvollständig (Drosselung, Seitenende unklar) – der nächste Lauf holt erneut ab; Details unter „Abdeckung“ der Datenquelle. |
-| Bitpanda: alle Vorgänge „ungeklärt: Zeitpunkt fehlt“, „Pagination wiederholt denselben Cursor“ | Geändertes Antwortformat der API (Oktober 2026) – ab 0.16.1 behoben: Container aktualisieren, „Jetzt abrufen“. Der alte, unbearbeitete Prüf-Stapel wird automatisch ersetzt; hast du darin schon Werte eingetragen, den Stapel verwerfen. Bleibt der Hinweis, nennt er die gelieferten Feldnamen. |
+| Bitpanda „teilweise synchronisiert“ | Abruf unvollständig (Drosselung, Pagination-Angaben fehlen oder widersprechen sich) – der nächste Lauf holt erneut ab, der Abrufstand bleibt; „Abdeckung“ der Datenquelle nennt das Ende der Pagination und die Ursache. |
+| Bitpanda: alle Vorgänge „ungeklärt: Zeitpunkt fehlt“ ohne Mengen, „Pagination wiederholt denselben Cursor“ | Zeilen einer Version vor 0.16.2 (Pagination und Zeitfeld nicht nach Referenz). 1. Laufende Version prüfen: Seitenleiste bzw. `/healthz` muss 0.16.2 mit erwartetem Build zeigen (sonst Container aktualisieren, siehe *Welcher Stand läuft?*). 2. *Datenquelle → Vollständig neu abrufen*: unbearbeitete alte Prüfzeilen werden ersetzt, Buchungen bleiben. 3. Bearbeitete alte Zeilen: im Prüf-Stapel „Veraltete Zeilen neu auswerten“. 4. Bleibt „Zeitpunkt fehlt“, zeigt die Abdeckung, ob `credited_at` fehlt („Zeitpunkt: … fehlt n×“) – dann liefert Bitpanda ihn nicht; die Zeile wird nicht gebucht. |
 | Bitpanda „Berechtigung fehlt“ / „abgelehnt“ | API-Key mit Leserecht „Transaction“ neu erstellen und unter „API-Key ersetzen“ eintragen. |
 | Prüf-Stapel: „rekonstruierte Buchung … im kuratierten Import – ersetzt dieser Vorgang sie?“ | Echte Abrechnung zu einer geschätzten Buchung: im kuratierten Import die rekonstruierte Buchung ersetzen und den Vorgang auslassen – oder übernehmen, wenn es ein zusätzlicher Vorgang ist. |
 | Prüf-Stapel: „gleiche Menge wie … – möglicherweise doppelt erfasst“ | Eine vorhandene Buchung auf demselben Konto hat exakt dieselbe Menge (≤ 36 h). Beim Anbieter bzw. im Explorer prüfen; nur bei zwei echten Vorgängen übernehmen. |
@@ -1298,12 +1352,14 @@ tests/        pytest (inkl. synthetischer Großimport)
 `app/main.py` laden. Der Vertrag (Ereignis-ID im Format des CSV-Profils, feste Zeilenreihenfolge, Aliase,
 Cursor nur bei vollständigem Abruf, `rewind()`, Zeilenart „review“ für Ungeklärtes, `ConnectorError` mit Text ohne
 Geheimnisse) steht im Modul-Docstring; `tests/test_datasources.py` zeigt einen Test-Connector,
-`app/datasources/bitpanda.py` mit `tests/test_bitpanda.py` (anonymisierte Fixtures unter `tests/data/bitpanda/`)
-einen produktiven.
+`app/datasources/bitpanda.py` mit `tests/test_bitpanda.py` (synthetische Fixtures im Format der Referenz unter
+`tests/data/bitpanda/`, Test-Server lehnt nicht Dokumentiertes ab) einen produktiven.
 
 CI (GitHub Actions): Lint und Tests bei jedem Push/PR; Image-Build und Veröffentlichung nach GHCR
-(`ghcr.io/pneumann1980/portfolia`) für den Standard-Branch und Versions-Tags – als Docker-Manifestliste ohne
-Attestierungen (Unraid-Update-Prüfung), was ein eigener CI-Schritt prüft.
+(`ghcr.io/pneumann1980/portfolia`) nur für den Standard-Branch und Versions-Tags – als Docker-Manifestliste ohne
+Attestierungen (Unraid-Update-Prüfung), was ein eigener CI-Schritt prüft. Das Image trägt den Commit
+(`PORTFOLIA_REVISION`, Label `org.opencontainers.image.revision`); der Smoke-Test prüft ihn über `/healthz`, der
+Schritt „Veröffentlichte Tags“ nennt Tags und Digest.
 
 ---
 
@@ -1316,8 +1372,8 @@ Bekannte Grenzen (Auswahl, vollständig in [`docs/MILESTONES.md`](docs/MILESTONE
 * Formularzeilen nur für 2024 und Anlage SO 2025 hinterlegt (aus Sekundärquellen, ohne Gewähr); für andere
   Jahre nennt die Übertragungshilfe nur die Feldbezeichnungen.
 * Datenquellen sind inoffiziell (Yahoo) bzw. limitiert (CoinGecko Demo); Ausfälle werden sichtbar markiert.
-* Bitpanda-Anbindung mit Fixtures getestet, nicht mit einem echten Konto; nicht abgebildete Vorgänge (Tausch,
-  Stocks, Metalle, Indizes, Korrekturen) bleiben zur Prüfung – siehe
+* Bitpanda-Anbindung gegen die offizielle Referenz und synthetische Antworten getestet, nicht mit einem echten
+  Konto; nicht abgebildete Vorgänge (Tausch, Stocks, Metalle, Indizes, Korrekturen) bleiben zur Prüfung – siehe
   [Grenzen der Bitpanda-Anbindung](#grenzen-der-bitpanda-anbindung).
 
 **Lizenz:** Portfolia steht unter der [MIT-Lizenz](LICENSE) – Nutzung, Änderung und Weitergabe (auch

@@ -1,62 +1,76 @@
 {
- "00000000-0000-0000-0000-0000000000b1": {
-  "data": [
-   {
-    "id": "00000000-0000-0000-0000-0000000000b1",
-    "symbol": "BTC",
-    "type": "CRYPTO",
-    "isin": null
-   }
-  ]
- },
- "00000000-0000-0000-0000-0000000000e1": {
-  "data": [
-   {
-    "id": "00000000-0000-0000-0000-0000000000e1",
-    "symbol": "ETH",
-    "type": "CRYPTO",
-    "isin": null
-   }
-  ]
- },
- "00000000-0000-0000-0000-0000000000be": {
-  "data": [
-   {
-    "id": "00000000-0000-0000-0000-0000000000be",
-    "symbol": "BEST",
-    "type": "CRYPTO",
-    "isin": null
-   }
-  ]
- },
- "00000000-0000-0000-0000-0000000000a1": {
-  "data": [
-   {
-    "id": "00000000-0000-0000-0000-0000000000a1",
-    "symbol": "AAPL",
-    "type": "STOCK",
-    "isin": "US0378331005"
-   }
-  ]
- },
- "00000000-0000-0000-0000-0000000000a0": {
-  "data": [
-   {
-    "id": "00000000-0000-0000-0000-0000000000a0",
-    "symbol": "XAU",
-    "type": "METAL",
-    "isin": null
-   }
-  ]
- },
- "00000000-0000-0000-0000-0000000000c1": {
-  "data": [
-   {
-    "id": "00000000-0000-0000-0000-0000000000c1",
-    "symbol": "BCI5",
-    "type": "INDEX",
-    "isin": null
-   }
-  ]
- }
+ "data": [
+  {
+   "id": "00000000-0000-0000-0000-0000000000b1",
+   "name": "Bitcoin",
+   "symbol": "BTC",
+   "isin": null,
+   "group": "CRYPTOCOIN",
+   "type": "CRYPTO",
+   "buy_active": true,
+   "sell_active": true,
+   "withdrawal_active": true,
+   "deposit_active": true
+  },
+  {
+   "id": "00000000-0000-0000-0000-0000000000e1",
+   "name": "Ethereum",
+   "symbol": "ETH",
+   "isin": null,
+   "group": "CRYPTOCOIN",
+   "type": "CRYPTO",
+   "buy_active": true,
+   "sell_active": true,
+   "withdrawal_active": true,
+   "deposit_active": true
+  },
+  {
+   "id": "00000000-0000-0000-0000-0000000000be",
+   "name": "Bitpanda Ecosystem Token",
+   "symbol": "BEST",
+   "isin": null,
+   "group": "CRYPTOCOIN",
+   "type": "CRYPTO",
+   "buy_active": true,
+   "sell_active": true,
+   "withdrawal_active": true,
+   "deposit_active": true
+  },
+  {
+   "id": "00000000-0000-0000-0000-0000000000a1",
+   "name": "Apple",
+   "symbol": "AAPL",
+   "isin": "US0378331005",
+   "group": "STOCK",
+   "type": "equity_security",
+   "buy_active": true,
+   "sell_active": true,
+   "withdrawal_active": true,
+   "deposit_active": true
+  },
+  {
+   "id": "00000000-0000-0000-0000-0000000000a0",
+   "name": "Gold",
+   "symbol": "XAU",
+   "isin": null,
+   "group": "PRECIOUS_METAL",
+   "type": "METAL",
+   "buy_active": true,
+   "sell_active": true,
+   "withdrawal_active": true,
+   "deposit_active": true
+  },
+  {
+   "id": "00000000-0000-0000-0000-0000000000c1",
+   "name": "Bitpanda Crypto Index 5",
+   "symbol": "BCI5",
+   "isin": null,
+   "group": "INDEX",
+   "type": "INDEX",
+   "buy_active": true,
+   "sell_active": true,
+   "withdrawal_active": true,
+   "deposit_active": true
+  }
+ ]
 }

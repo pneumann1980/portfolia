@@ -186,7 +186,7 @@
 <section class="card" id="system">
   <div class="card-head"><h2>System</h2></div>
   <dl class="kv">
-    <dt>Version</dt><dd>{{ version }}</dd>
+    <dt>Version</dt><dd>{{ version }}{% if revision %} <span class="hint mono" title="{{ revision }}">Build {{ revision[:7] }}</span>{% else %} <span class="hint">ohne Build-Kennung (lokal gebaut)</span>{% endif %}</dd>
     <dt>Datenverzeichnis</dt><dd class="mono">{{ config.data_dir }}</dd>
     <dt>Importverzeichnis</dt><dd class="mono">{{ config.import_dir }}</dd>
     <dt>Zeitzone</dt><dd>{{ config.tz }}</dd>

@@ -91,7 +91,8 @@ def _form_page(request: Request, data: dict[str, Any], errors: list[str], sid: i
                   vault=svc.vault().status(), keys=svc.key_stats(), msg=msg, error=error, chain_info=chain_info,
                   script_types=SCRIPT_TYPES, gap_default=GAP_DEFAULT, groups=groups,
                   provider_keys={k["id"]: k for k in svc.provider_keys()},
-                  holdings=svc.holdings(ds) if ds is not None and ds.is_wallet else None)
+                  holdings=svc.holdings(ds) if ds is not None and (ds.is_wallet or svc.balances(int(ds.id))) else None,
+                  outdated=svc.outdated(int(ds.id)) if ds is not None else 0)
 
 
 def make_router() -> APIRouter:
@@ -217,6 +218,21 @@ def make_router() -> APIRouter:
             raise HTTPException(404)
         return _back(request, _list_url(sid, msg="Abrufstand zurückgesetzt – der nächste Lauf holt alle Vorgänge "
                                                  "erneut; bereits übernommene werden erkannt."))
+
+    @router.post("/settings/datasources/{sid}/refetch")
+    async def refetch(request: Request, sid: int) -> Response:
+        """Vollständig neu abrufen (Abrufstand verwerfen, sofort synchronisieren) – ersetzt unbearbeitete Prüfzeilen
+        älterer Auswertungen; übernommene Buchungen, Eingaben und Ignorier-Entscheidungen bleiben."""
+        svc = datasource_service(get_ctx(request))
+        ds = svc.get(sid)
+        if ds is None:
+            raise HTTPException(404)
+        res = await run_in_threadpool(svc.refetch, sid)
+        if res.get("batch_id") and not res.get("committed"):
+            return _back(request, f"/journal/csv/{res['batch_id']}")
+        key = "error" if (res.get("error") or res.get("unsupported")) else "msg"
+        text = res.get("error") or res.get("unsupported") or res.get("message") or "Keine neuen Vorgänge."
+        return _back(request, _detail_url(sid, **{key: text}) + "#status")
 
     @router.post("/settings/datasources/{sid}/check")
     async def check(request: Request, sid: int) -> Response:

@@ -591,3 +591,7 @@ fieldset.param-set legend { font-size: 0.85rem; color: var(--ink-2); padding: 0 
   .scen-head { display: grid; font-size: 0.76rem; font-weight: 600; color: var(--ink-2); border-top: 0; }
 }
 
+/* Herkunft einer Prüfzeile (Datenquelle): klein, aufklappbar */
+details.origin { margin-top: 2px; }
+details.origin > summary { cursor: pointer; font-size: .8rem; }
+details.origin > div { margin-top: 2px; max-width: 34ch; }

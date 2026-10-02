@@ -56,6 +56,8 @@ class Rec:
     note: str | None = None
     label: str | None = None  # Vorgangsbezeichnung der Quelle (Anzeige)
     date_only: bool = False
+    # Datenquelle ohne Zeitpunkt: ``ts`` ist nur Sortierhilfe (Abrufzeitpunkt) – nie Buchungsdatum, Anzeige „fehlt“
+    ts_missing: bool = False
     class_hint: dict[str, str] = field(default_factory=dict)  # Symbol → security|crypto|fiat (z. B. Bitpanda)
     row: dict[str, str] | None = None  # DIRECT: Zeile im einheitlichen Format
 

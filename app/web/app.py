@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
 
-from app import APP_NAME, __version__
+from app import APP_NAME, REVISION, __version__
 from app.context import AppContext
 from app.web import fmt
 from app.web.security import BasicAuthMiddleware, CsrfMiddleware, SecurityHeadersMiddleware
@@ -39,7 +39,8 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
     app.state.ctx = ctx
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     fmt.register(templates.env)
-    templates.env.globals.update(app_name=APP_NAME, version=__version__, nav=NAV, demo_mode=ctx.config.demo_mode)
+    templates.env.globals.update(app_name=APP_NAME, version=__version__, revision=REVISION, nav=NAV,
+                                 demo_mode=ctx.config.demo_mode)
     app.state.templates = templates
 
     app.add_middleware(CsrfMiddleware)
@@ -64,7 +65,8 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
             ok = True
         except Exception:
             ok = False
-        return JSONResponse({"status": "ok" if ok else "degraded", "version": __version__},
+        return JSONResponse({"status": "ok" if ok else "degraded", "version": __version__,
+                             "revision": REVISION or None},
                             status_code=200 if ok else 503)
 
     @app.exception_handler(404)

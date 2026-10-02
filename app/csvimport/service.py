@@ -96,7 +96,7 @@ STATUS_LABEL = {"new": "neu", "known": "bereits vorhanden", "duplicate": "mögli
 STATUS_BADGE = {"new": "good", "known": "", "duplicate": "warn", "before": "", "ignored": "", "invalid": "crit",
                 "unclear": "warn", "committed": "info", "merged": "info"}
 DONE = ("known", "ignored", "committed", "merged")  # Zeilen ohne offene Entscheidung
-EVAL_VERSION = 3  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
+EVAL_VERSION = 4  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
 RELEVANT = ("new", "invalid", "unclear", "duplicate")  # zu übernehmen bzw. zu entscheiden
 BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial": "teilweise übernommen",
                 "committed": "übernommen", "reverted": "rückgängig gemacht"}
@@ -135,7 +135,8 @@ def rec_to_json(r: Rec) -> str:
     for k, v in list(d.items()):
         if isinstance(v, Decimal):
             d[k] = s(v)
-    return json.dumps({k: v for k, v in d.items() if v not in (None, {}, "", [])}, ensure_ascii=False)
+    return json.dumps({k: v for k, v in d.items() if v not in (None, {}, "", []) and not (k == "ts_missing" and not v)},
+                      ensure_ascii=False)
 
 
 def rec_from_json(raw: str) -> Rec:
@@ -844,6 +845,15 @@ class CsvImportService:
         known = {r["external_id"]: r for r in self.db.q(
             "SELECT external_id, status, tx_id, batch_id FROM journal_tx WHERE source=? AND external_id IS NOT NULL "
             "AND status <> 'reverted'", (source,))}
+        # Datenquellen mit versionierter Auswertung (Bitpanda): ein Ereignis, das aus einem anderen Stapel bereits
+        # übernommen ist, bleibt bekannt – auch wenn eine neuere Auswertung es in andere Zeilen teilt (sonst entstünden
+        # Doppelbuchungen). Nicht bei Wallets: dort sind Zeilen eines Ereignisses eigene Bewegungen (Unterkennung).
+        known_events: dict[str, Any] = {}
+        if batch["kind"] == "sync" and _versioned(source):
+            for r in self.db.q("SELECT event_key, tx_id, status FROM journal_tx WHERE source=? AND event_key IS NOT "
+                               "NULL AND status <> 'reverted' AND (batch_id IS NULL OR batch_id <> ?) ORDER BY tx_id",
+                               (source, bid)):
+                known_events.setdefault(r["event_key"], r)
         open_rows = [rc for rc in rows if rc.open]
         # Abgleich über den Transaktions-Hash: vorhandene Vorgänge erkennen, Zuordnungen lernen (vor dem Aufbau)
         recon = self._reconcile(bid, open_rows, resolver, assets)
@@ -889,9 +899,18 @@ class CsvImportService:
                 rc.status = "known"
                 rc.warnings.insert(0, f"bereits importiert als {k['tx_id']}" + (" (gelöscht)" if k["status"] ==
                                                                                  "deleted" else ""))
+            elif rc.rec.event_key and rc.rec.event_key in known_events:
+                k = known_events[rc.rec.event_key]
+                rc.status = "known"
+                rc.warnings.insert(0, f"Vorgang bereits übernommen als {k['tx_id']}" + (" (gelöscht)" if k["status"] ==
+                                                                                         "deleted" else "")
+                                   + " – Zeile einer neueren Auswertung, wird nicht zusätzlich gebucht")
             elif dec is not None:
                 rc.status = "ignored"
                 rc.warnings.insert(0, "dauerhaft ignoriert" + (f": {dec['reason']}" if dec["reason"] else ""))
+            elif rc.rec.ts_missing:  # ohne Zeitpunkt weder Stichtag noch Buchung – nur Prüfung
+                rc.status = "unclear"
+                rc.warnings.insert(0, rc.rec.note or "Zeitpunkt fehlt in den Daten der Quelle")
             elif m is not None and m.state == "full":  # gleiche Blockchain-Transaktion, alle Beine gefunden
                 rc.status = "known"
                 rc.dup_of = m.txs[:5]
@@ -1926,6 +1945,15 @@ def _qty_eq(a: Decimal | None, b: Decimal | None) -> bool:
     if a is None or b is None:
         return False
     return abs(a - b) <= max(abs(b) * DUP_QTY_TOL, Decimal("1e-8"))
+
+
+def _versioned(source: str) -> bool:
+    """Anbieter einer Datenquelle mit versionierter Auswertung (Zeilen eines Ereignisses = Deutung, keine
+    eigenständigen Bewegungen)."""
+    from app.datasources.connector import connector_for
+
+    conn = connector_for(source.removeprefix("sync:")) if source.startswith("sync:") else None
+    return bool(conn is not None and conn.parser_version)
 
 
 def _strip_prefix(msg: str) -> str:

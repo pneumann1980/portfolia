@@ -61,3 +61,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=60s --timeout=6s --start-period=60s --retries=3 CMD ["python", "-B", "/usr/local/bin/healthcheck.py"]
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["python", "-m", "app"]
+# zuletzt: ändert sich mit jedem Commit, alle vorherigen Schichten bleiben im Cache
+ARG PORTFOLIA_REVISION=""
+ENV PORTFOLIA_REVISION=${PORTFOLIA_REVISION}
+LABEL org.opencontainers.image.revision="${PORTFOLIA_REVISION}"

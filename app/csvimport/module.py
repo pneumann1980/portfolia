@@ -128,6 +128,11 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         b = svc.batch(bid)
     acct = _account_info(ctx, svc, b)
     b = svc.batch(bid)
+    outdated = 0
+    if b["kind"] == "sync" and b["datasource_id"] and b["status"] in ("preview", "partial"):
+        from app.datasources.service import datasource_service
+
+        outdated = datasource_service(ctx).outdated(int(b["datasource_id"]), bid)
     prof = svc.profile(b["profile"])
     ov = svc.overview(bid) if b["status"] != "mapping" else {"counts": {}, "unknown": [], "unknown_old": [],
                                                             "accounts": {}, "missing_price": {}, "pairs": [],
@@ -165,7 +170,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         kind_label=M.KIND_LABEL, source_label=source_label,
         ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
                                                               (b["datasource_id"],))),
-        sugg=sugg, catalog=catalog, conf_badge=CONF_BADGE, acct=acct,
+        sugg=sugg, catalog=catalog, conf_badge=CONF_BADGE, acct=acct, outdated=outdated,
     )
 
 
@@ -452,6 +457,30 @@ def make_router() -> APIRouter:
                                        str(f.get("reason") or "vom Nutzer entschieden")):
             return _batch_page(request, bid, errors=["Vorgang nicht gefunden."])
         return _back(request, _redir(bid, f, "rows"))
+
+    @router.post("/journal/csv/{bid}/refresh-outdated")
+    async def refresh_outdated(request: Request, bid: int) -> Response:
+        """Zeilen älterer Auswertungen ersetzen: Eingaben daran zurücksetzen (ausdrücklich bestätigt), dann die
+        Datenquelle vollständig neu abrufen. Übernommene Buchungen und Ignorier-Entscheidungen bleiben."""
+        from app.datasources.service import datasource_service
+
+        ctx = get_ctx(request)
+        b = csv_service(ctx).batch(bid)
+        if b is None or b["kind"] != "sync" or not b["datasource_id"]:
+            raise HTTPException(404)
+        dsvc = datasource_service(ctx)
+        sid = int(b["datasource_id"])
+        if dsvc.get(sid) is None:
+            return _batch_page(request, bid, errors=["Datenquelle entfernt – Stapel bitte verwerfen und neu anlegen."])
+        await run_in_threadpool(dsvc.reset_outdated, sid, bid)
+        res = await run_in_threadpool(dsvc.refetch, sid)
+        if res.get("error"):
+            return _batch_page(request, bid, errors=[f"Neuabruf fehlgeschlagen: {res['error']}"])
+        target = res.get("batch_id") or (dsvc.pending_batch(sid) or {"id": None})["id"]
+        if target:
+            return _back(request, f"/journal/csv/{target}")
+        return _back(request, f"/settings/datasources/{sid}?" + urlencode({"msg": res.get("message") or "Neu "
+                                                                                  "abgerufen."}))
 
     @router.post("/journal/csv/{bid}/rows")
     async def rows(request: Request, bid: int) -> Response:

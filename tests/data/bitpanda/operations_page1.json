@@ -1,88 +1,257 @@
 {
  "data": [
   {
-   "id": "00000000-0000-0000-0000-000000000101",
-   "type": "BUY",
-   "timestamp": "2024-02-02T09:00:00Z",
+   "operation_id": "00000000-0000-0000-0000-000000000101",
+   "operation_type": "buy",
    "transactions": [
     {
      "transaction_id": "00000000-0000-0000-0000-000000001001",
-     "flow": "OUTGOING",
-     "amount": "250.00",
-     "fee_amount": "0",
+     "asset_id": null,
      "currency_id": "00000000-0000-0000-0000-0000000000e0",
-     "trade_id": "00000000-0000-0000-0000-000000002001"
+     "wallet_id": "00000000-0000-0000-0000-0000000000f0",
+     "wallet_owner": "OWNER",
+     "asset_amount": {
+      "value": "250.00",
+      "currency_id": "00000000-0000-0000-0000-0000000000e0"
+     },
+     "fee_amount": {
+      "value": "0",
+      "currency_id": "00000000-0000-0000-0000-0000000000e0"
+     },
+     "transaction_type": null,
+     "flow": "OUTGOING",
+     "order_id": null,
+     "credited_at": "2024-02-02T09:00:00Z",
+     "asset_balance_after": {
+      "value": "250",
+      "currency_id": "00000000-0000-0000-0000-0000000000e0"
+     },
+     "compensates": null,
+     "compensates_info": null,
+     "index_asset_id": null,
+     "trade": {
+      "trade_id": "00000000-0000-0000-0000-000000002001",
+      "fee": {
+       "value": "3.73",
+       "currency_id": "00000000-0000-0000-0000-0000000000e0"
+      },
+      "fee_percentage": "1.49",
+      "rate": "44776.36363636",
+      "rate_with_fee": "45454.54545455",
+      "to_eur_rate": "1"
+     }
     },
     {
      "transaction_id": "00000000-0000-0000-0000-000000001002",
-     "flow": "INCOMING",
-     "amount": "0.00550000",
-     "fee_amount": "0",
      "asset_id": "00000000-0000-0000-0000-0000000000b1",
-     "trade_id": "00000000-0000-0000-0000-000000002001"
+     "currency_id": null,
+     "wallet_id": "00000000-0000-0000-0000-0000000000f1",
+     "wallet_owner": "OWNER",
+     "asset_amount": {
+      "value": "0.00550000",
+      "asset_id": "00000000-0000-0000-0000-0000000000b1"
+     },
+     "fee_amount": {
+      "value": "0",
+      "asset_id": "00000000-0000-0000-0000-0000000000b1"
+     },
+     "transaction_type": null,
+     "flow": "INCOMING",
+     "order_id": null,
+     "credited_at": "2024-02-02T09:00:00Z",
+     "asset_balance_after": {
+      "value": "0.0055",
+      "asset_id": "00000000-0000-0000-0000-0000000000b1"
+     },
+     "compensates": null,
+     "compensates_info": null,
+     "index_asset_id": null,
+     "trade": {
+      "trade_id": "00000000-0000-0000-0000-000000002001",
+      "fee": {
+       "value": "3.73",
+       "currency_id": "00000000-0000-0000-0000-0000000000e0"
+      },
+      "fee_percentage": "1.49",
+      "rate": "44776.36363636",
+      "rate_with_fee": "45454.54545455",
+      "to_eur_rate": "1"
+     }
     }
    ]
   },
   {
-   "id": "00000000-0000-0000-0000-000000000102",
-   "type": "BUY",
-   "timestamp": "2024-02-05T10:30:00Z",
+   "operation_id": "00000000-0000-0000-0000-000000000102",
+   "operation_type": "buy",
    "transactions": [
     {
      "transaction_id": "00000000-0000-0000-0000-000000001003",
-     "flow": "OUTGOING",
-     "amount": "100.00",
-     "fee_amount": "0",
+     "asset_id": null,
      "currency_id": "00000000-0000-0000-0000-0000000000e0",
-     "trade_id": "00000000-0000-0000-0000-000000002002"
+     "wallet_id": "00000000-0000-0000-0000-0000000000f0",
+     "wallet_owner": "OWNER",
+     "asset_amount": {
+      "value": "100.00",
+      "currency_id": "00000000-0000-0000-0000-0000000000e0"
+     },
+     "fee_amount": {
+      "value": "0",
+      "currency_id": "00000000-0000-0000-0000-0000000000e0"
+     },
+     "transaction_type": null,
+     "flow": "OUTGOING",
+     "order_id": null,
+     "credited_at": "2024-02-05T10:30:00Z",
+     "asset_balance_after": {
+      "value": "150",
+      "currency_id": "00000000-0000-0000-0000-0000000000e0"
+     },
+     "compensates": null,
+     "compensates_info": null,
+     "index_asset_id": null,
+     "trade": {
+      "trade_id": "00000000-0000-0000-0000-000000002002",
+      "fee": {
+       "value": "0",
+       "currency_id": "00000000-0000-0000-0000-0000000000e0"
+      },
+      "fee_percentage": "1.49",
+      "rate": "3333.33333333",
+      "rate_with_fee": "3333.33333333",
+      "to_eur_rate": "1"
+     }
     },
     {
      "transaction_id": "00000000-0000-0000-0000-000000001004",
-     "flow": "INCOMING",
-     "amount": "0.03000000",
-     "fee_amount": "0",
      "asset_id": "00000000-0000-0000-0000-0000000000e1",
-     "trade_id": "00000000-0000-0000-0000-000000002002"
+     "currency_id": null,
+     "wallet_id": "00000000-0000-0000-0000-0000000000f2",
+     "wallet_owner": "OWNER",
+     "asset_amount": {
+      "value": "0.03000000",
+      "asset_id": "00000000-0000-0000-0000-0000000000e1"
+     },
+     "fee_amount": {
+      "value": "0",
+      "asset_id": "00000000-0000-0000-0000-0000000000e1"
+     },
+     "transaction_type": null,
+     "flow": "INCOMING",
+     "order_id": null,
+     "credited_at": "2024-02-05T10:30:00Z",
+     "asset_balance_after": {
+      "value": "0.03",
+      "asset_id": "00000000-0000-0000-0000-0000000000e1"
+     },
+     "compensates": null,
+     "compensates_info": null,
+     "index_asset_id": null,
+     "trade": {
+      "trade_id": "00000000-0000-0000-0000-000000002002",
+      "fee": {
+       "value": "0",
+       "currency_id": "00000000-0000-0000-0000-0000000000e0"
+      },
+      "fee_percentage": "1.49",
+      "rate": "3333.33333333",
+      "rate_with_fee": "3333.33333333",
+      "to_eur_rate": "1"
+     }
     },
     {
      "transaction_id": "00000000-0000-0000-0000-000000001005",
-     "flow": "OUTGOING",
-     "amount": "0.25000000",
-     "fee_amount": "0",
      "asset_id": "00000000-0000-0000-0000-0000000000be",
-     "transaction_type": "FEE",
-     "trade_id": "00000000-0000-0000-0000-000000002002"
+     "currency_id": null,
+     "wallet_id": "00000000-0000-0000-0000-0000000000f3",
+     "wallet_owner": "OWNER",
+     "asset_amount": {
+      "value": "0.25000000",
+      "asset_id": "00000000-0000-0000-0000-0000000000be"
+     },
+     "fee_amount": {
+      "value": "0",
+      "asset_id": "00000000-0000-0000-0000-0000000000be"
+     },
+     "transaction_type": "fee",
+     "flow": "OUTGOING",
+     "order_id": null,
+     "credited_at": "2024-02-05T10:30:00Z",
+     "asset_balance_after": null,
+     "compensates": null,
+     "compensates_info": null,
+     "index_asset_id": null,
+     "trade": null
     }
    ]
   },
   {
-   "id": "00000000-0000-0000-0000-000000000103",
-   "type": "DEPOSIT",
-   "timestamp": "2024-02-01T08:00:00Z",
+   "operation_id": "00000000-0000-0000-0000-000000000103",
+   "operation_type": "deposit",
    "transactions": [
     {
      "transaction_id": "00000000-0000-0000-0000-000000001006",
+     "asset_id": null,
+     "currency_id": "00000000-0000-0000-0000-0000000000e0",
+     "wallet_id": "00000000-0000-0000-0000-0000000000f0",
+     "wallet_owner": "OWNER",
+     "asset_amount": {
+      "value": "500.00",
+      "currency_id": "00000000-0000-0000-0000-0000000000e0"
+     },
+     "fee_amount": {
+      "value": "0",
+      "currency_id": "00000000-0000-0000-0000-0000000000e0"
+     },
+     "transaction_type": null,
      "flow": "INCOMING",
-     "amount": "500.00",
-     "fee_amount": "0",
-     "currency_id": "00000000-0000-0000-0000-0000000000e0"
+     "order_id": null,
+     "credited_at": "2024-02-01T08:00:00Z",
+     "asset_balance_after": {
+      "value": "500",
+      "currency_id": "00000000-0000-0000-0000-0000000000e0"
+     },
+     "compensates": null,
+     "compensates_info": null,
+     "index_asset_id": null,
+     "trade": null
     }
    ]
   },
   {
-   "id": "00000000-0000-0000-0000-000000000104",
-   "type": "WITHDRAWAL",
-   "timestamp": "2024-02-12T12:00:00Z",
+   "operation_id": "00000000-0000-0000-0000-000000000104",
+   "operation_type": "withdrawal",
    "transactions": [
     {
      "transaction_id": "00000000-0000-0000-0000-000000001007",
+     "asset_id": "00000000-0000-0000-0000-0000000000b1",
+     "currency_id": null,
+     "wallet_id": "00000000-0000-0000-0000-0000000000f1",
+     "wallet_owner": "OWNER",
+     "asset_amount": {
+      "value": "0.00100000",
+      "asset_id": "00000000-0000-0000-0000-0000000000b1"
+     },
+     "fee_amount": {
+      "value": "0.00005000",
+      "asset_id": "00000000-0000-0000-0000-0000000000b1"
+     },
+     "transaction_type": null,
      "flow": "OUTGOING",
-     "amount": "0.00100000",
-     "fee_amount": "0.00005000",
-     "asset_id": "00000000-0000-0000-0000-0000000000b1"
+     "order_id": null,
+     "credited_at": "2024-02-12T12:00:00Z",
+     "asset_balance_after": {
+      "value": "0.00445",
+      "asset_id": "00000000-0000-0000-0000-0000000000b1"
+     },
+     "compensates": null,
+     "compensates_info": null,
+     "index_asset_id": null,
+     "trade": null
     }
    ]
   }
  ],
- "cursor": "c-page-2"
+ "self_cursor": "c-1",
+ "next_cursor": "c-2",
+ "has_next_page": true
 }

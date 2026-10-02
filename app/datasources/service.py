@@ -41,6 +41,7 @@ Wallets
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -1113,12 +1114,125 @@ class DataSourceService:
         log.warning("Datenquelle %s: Synchronisierung fehlgeschlagen (%s): %s", ds.name, kind, msg)
         return {"error": msg, "kind": kind}
 
-    def _waiting(self, provider: str) -> set[str]:
-        """Ereignisse, die bereits in einem offenen Prüf-Stapel des Anbieters auf eine Entscheidung warten."""
-        return {r["event_key"] for r in self.db.q(
-            "SELECT DISTINCT r.event_key FROM csv_row r JOIN csv_batch b ON b.id = r.batch_id WHERE b.kind='sync' "
-            "AND b.source=? AND b.status IN ('preview', 'partial') AND r.event_key IS NOT NULL AND r.status NOT IN "
-            "('known', 'ignored', 'committed', 'merged')", (f"sync:{provider}",))}
+    def _open_rows(self, sid: int) -> list[Any]:
+        """Zeilen mit Ereigniskennung in offenen Prüf-Stapeln dieser Datenquelle (nicht des ganzen Anbieters: ein
+        zweites Konto desselben Anbieters wird nie blockiert; doppelt verbunden schützt die Kennung beim Übernehmen)."""
+        return self.db.q(
+            "SELECT r.id, r.batch_id, r.status, r.decision, r.value_in, r.fee_in, r.pair_ok, r.tx_id, r.rec_json, "
+            "r.event_key FROM csv_row r JOIN csv_batch b ON b.id = r.batch_id WHERE b.kind='sync' AND "
+            "b.datasource_id=? AND b.status IN ('preview', 'partial') AND r.event_key IS NOT NULL", (sid,))
+
+    def _present(self, sid: int) -> dict[str, bool]:
+        """Ereignis → wartet es noch auf eine Entscheidung? Enthalten sind alle Ereignisse offener Prüf-Stapel der
+        Quelle – auch bekannte und ignorierte, damit ein erneuter Abruf sie nicht ein zweites Mal ablegt."""
+        out: dict[str, bool] = {}
+        for r in self._open_rows(sid):
+            out[r["event_key"]] = out.get(r["event_key"], False) or r["status"] not in DONE_ROWS
+        return out
+
+    def _repair(self, sid: int, recs: list[Any]) -> dict[str, int]:
+        """Prüfzeilen älterer Auswertungen ersetzen – je Ereignis, das dieser Abruf neu geliefert hat und dessen
+        Zeilen sich geändert haben (andere Parser-Version oder andere Daten des Anbieters).
+
+        Ersetzt werden nur unbearbeitete Zeilen (keine Entscheidung, keine Eingabe, nichts übernommen); bearbeitete
+        bleiben unverändert und werden gezählt („Veraltete Zeilen neu auswerten“ im Prüf-Stapel). „Dauerhaft
+        ignorieren“ hängt am Ereignis und gilt für die neuen Zeilen weiter. Wiederholbar: unveränderte Ereignisse
+        bleiben stehen, ersetzte werden genau einmal neu abgelegt."""
+        from app.csvimport.service import csv_service, rec_from_json
+
+        new: dict[str, list[Any]] = defaultdict(list)
+        for r in recs:
+            if r.event_key:
+                new[r.event_key].append(r)
+        old: dict[str, list[Any]] = defaultdict(list)
+        for row in self._open_rows(sid):
+            if row["event_key"] in new:
+                old[row["event_key"]].append(row)
+        drop: list[int] = []
+        batches: Counter[int] = Counter()  # Stapel → ersetzte Ereignisse
+        replaced = kept = 0
+        for key, rows in old.items():
+            if any(r["status"] in ("committed", "merged") or r["tx_id"] for r in rows):
+                continue  # (teilweise) übernommen – bleibt; die neue Auswertung erkennt das Ereignis als bekannt
+            if _fingerprint(rec_from_json(r["rec_json"]) for r in rows) == _fingerprint(new[key]):
+                continue
+            if any(r["decision"] is not None or r["value_in"] is not None or r["fee_in"] is not None
+                   or r["pair_ok"] is not None for r in rows):
+                kept += 1
+                continue
+            drop += [int(r["id"]) for r in rows]
+            batches.update({int(r["batch_id"]) for r in rows})
+            replaced += 1
+        if drop:
+            with self.db.transaction() as c:
+                for i in range(0, len(drop), 500):
+                    part = drop[i:i + 500]
+                    c.execute(f"DELETE FROM csv_row WHERE id IN ({','.join('?' * len(part))})", part)
+            csv = csv_service(self.ctx)
+            for bid in sorted(batches):
+                n = self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=?", (bid,), default=0)
+                if not n:
+                    csv.discard(bid, rewind=False)
+                    continue
+                summ = json.loads(self.db.scalar("SELECT summary_json FROM csv_batch WHERE id=?", (bid,)) or "{}")
+                summ.update(recs=n, rows_read=n, events=self.db.scalar(
+                    "SELECT COUNT(DISTINCT event_key) FROM csv_row WHERE batch_id=?", (bid,), default=0))
+                summ["replaced"] = int(summ.get("replaced", 0)) + batches[bid]
+                self.db.x("UPDATE csv_batch SET summary_json=? WHERE id=?", (json.dumps(summ), bid))
+                csv.evaluate(bid)  # Transfer-Vorschläge und Status der verbliebenen Zeilen neu bewerten
+            log.info("Datenquelle %s: %d Vorgänge mit älterer Auswertung ersetzt", sid, replaced)
+        return {"replaced": replaced, "kept": kept}
+
+    def _parser_version(self, sid: int) -> int | None:
+        ds = self.get(sid)
+        conn = K.connector_for(ds.provider) if ds is not None else None
+        return getattr(conn, "parser_version", None)
+
+    def _outdated_rows(self, sid: int, bid: int | None = None) -> dict[str, list[Any]]:
+        """Nicht übernommene Ereignisse offener Prüf-Stapel, deren Zeilen eine ältere Auswertung tragen."""
+        version = self._parser_version(sid)
+        if not version:
+            return {}
+        by_event: dict[str, list[Any]] = defaultdict(list)
+        for r in self._open_rows(sid):
+            if bid is None or int(r["batch_id"]) == bid:
+                by_event[r["event_key"]].append(r)
+        return {k: rows for k, rows in by_event.items()
+                if not any(r["status"] in ("committed", "merged") or r["tx_id"] for r in rows)
+                and any(_parser_of(r["rec_json"]) < version for r in rows)}
+
+    def outdated(self, sid: int, bid: int | None = None) -> int:
+        """Anzahl Ereignisse mit älterer Auswertung (nur Anbieter mit Versionsführung)."""
+        return len(self._outdated_rows(sid, bid))
+
+    def reset_outdated(self, sid: int, bid: int | None = None) -> int:
+        """Eingaben an Zeilen älterer Auswertungen zurücksetzen – nur auf ausdrücklichen Wunsch (Prüf-Stapel →
+        „Veraltete Zeilen neu auswerten“): Übernehmen ja/nein, EUR-Wert, Gebühr, Transfer-Bestätigung. Übernommene
+        Ereignisse und „dauerhaft ignorieren“ (gespeichert je Ereignis) bleiben unberührt; der folgende Abruf ersetzt
+        die Zeilen durch die aktuelle Auswertung."""
+        from app.csvimport.service import csv_service
+
+        stale = self._outdated_rows(sid, bid)
+        ids = [int(r["id"]) for rows in stale.values() for r in rows]
+        if not ids:
+            return 0
+        with self.db.transaction() as c:
+            for i in range(0, len(ids), 500):
+                part = ids[i:i + 500]
+                c.execute("UPDATE csv_row SET decision=NULL, value_in=NULL, fee_in=NULL, pair_ok=NULL WHERE id IN "
+                          f"({','.join('?' * len(part))})", part)
+        csv = csv_service(self.ctx)
+        for b in sorted({int(r["batch_id"]) for rows in stale.values() for r in rows}):
+            csv.evaluate(b)
+        log.info("Datenquelle %s: Eingaben an %d Vorgängen älterer Auswertung zurückgesetzt", sid, len(stale))
+        return len(stale)
+
+    def refetch(self, sid: int) -> dict[str, Any]:
+        """Vollständig neu abrufen: Abrufstand verwerfen und sofort synchronisieren – unbearbeitete Prüfzeilen
+        älterer Auswertungen werden dabei ersetzt, übernommene Buchungen und Entscheidungen bleiben."""
+        if not self.reset_cursor(sid):
+            return {"error": "Datenquelle nicht gefunden."}
+        return self.sync(sid, "manual")
 
     def _appendable(self, sid: int) -> int | None:
         from app.csvimport.service import csv_service
@@ -1172,16 +1286,14 @@ class DataSourceService:
         from app.csvimport.service import csv_service, rec_to_json
 
         csv = csv_service(self.ctx)
-        refreshed = kept = 0
-        if res.refresh_open and res.complete:  # vollständige Historie neu ausgewertet → alte Auswertung ersetzen
-            for b in self.pending_batches(sid):
-                if csv.untouched(int(b["id"])):
-                    refreshed += bool(csv.discard(int(b["id"]), rewind=False))
-                else:
-                    kept += 1
-        waiting = self._waiting(ds.provider)
-        fresh = [r for r in recs if (r.event_key or "") not in waiting]
-        n_waiting = len({r.event_key for r in recs if (r.event_key or "") in waiting})
+        try:  # ältere Auswertungen je Ereignis ersetzen – auch wenn der Abruf unvollständig war
+            repair = self._repair(sid, recs) if conn.parser_version else {"replaced": 0, "kept": 0}
+        except Exception as e:
+            log.exception("Datenquelle %s: Ersetzen älterer Prüfzeilen fehlgeschlagen", ds.name)
+            return self._fail(ds, run_id, e, secret.values(), started, nxt)
+        present = self._present(sid)
+        fresh = [r for r in recs if (r.event_key or "") not in present]
+        n_waiting = len({r.event_key for r in recs if present.get(r.event_key or "")})
         counts: dict[str, int] = defaultdict(int)
         committed = 0
         bid = None
@@ -1233,11 +1345,13 @@ class DataSourceService:
                            ("invalid", "unvollständig"), ("ignored", "ignoriert")):
             if counts.get(key):
                 parts.append(f"{label} {counts[key]}")
-        if refreshed:
-            parts.append(f"{refreshed} unbearbeitete{'r' if refreshed == 1 else ''} Prüf-Stapel neu ausgewertet")
+        if repair["replaced"]:
+            parts.append(f"neu ausgewertet {repair['replaced']} (ältere Prüfzeilen ersetzt)")
+        if repair["kept"]:
+            parts.append(f"{repair['kept']} bearbeitete Vorgänge mit älterer Auswertung unverändert – im Prüf-Stapel "
+                         "„Veraltete Zeilen neu auswerten“")
         if n_waiting:
-            parts.append(f"wartet bereits auf Prüfung {n_waiting}"
-                         + (" (in bearbeiteten Prüf-Stapeln – zum Neueinlesen dort verwerfen)" if kept else ""))
+            parts.append(f"wartet bereits auf Prüfung {n_waiting}")
         if committed:
             parts.append(f"übernommen {committed}")
         if res.skipped:
@@ -1245,7 +1359,7 @@ class DataSourceService:
         msg = " · ".join(parts) + ("; " + "; ".join(notes) if notes else "")
         resume = more
         coverage = {**res.coverage, "complete": res.complete, "at": stamp, "resume": resume,
-                    "gaps": [sanitize_error(g, secret.values()) for g in res.gaps[:20]]}
+                    "gaps": [sanitize_error(g, secret.values()) for g in res.gaps[:20]], "repair": repair}
         if conn.wallet:
             coverage["limits"] = conn.coverage_limits(ds.config())  # type: ignore[attr-defined]
         if resume and ds.enabled:  # Erstabruf in Etappen: bald fortsetzen, unabhängig vom Intervall
@@ -1256,9 +1370,12 @@ class DataSourceService:
             else ds.cursor_json
         if res.balances is not None:
             self._store_balances(sid, res.balances)
+        # „erfolgreich“ nur nach vollständigem Abruf (bzw. einer Etappe des Erstabrufs) – ein abgebrochener Lauf
+        # zieht weder Abrufstand noch Erfolgszeitpunkt vor
+        success = stamp if (not partial or more) else ds.last_success_at
         self.db.x("UPDATE data_source SET status=?, last_run_at=?, last_success_at=?, last_error=?, last_error_at=?, "
                   "next_run_at=?, cursor_json=?, coverage_json=?, updated_at=? WHERE id=?",
-                  (status, stamp, stamp, "; ".join(notes) if partial else None, stamp if partial else None,
+                  (status, stamp, success, "; ".join(notes) if partial else None, stamp if partial else None,
                    iso(nxt) if nxt else None, cursor_json,
                    json.dumps(coverage, ensure_ascii=False, default=str), stamp, sid))
         self._finish_run(run_id, "partial" if partial else "ok", msg, events=len(res.events),
@@ -1341,6 +1458,32 @@ class DataSourceService:
             res = self.sync(int(ds.id), "schedule")
             done[ds.name] = res.get("status") or res.get("error") or res.get("skipped") or res.get("unsupported")
         return {"ran": len(done), "results": done}
+
+
+DONE_ROWS = ("known", "ignored", "committed", "merged")  # Zeilen ohne offene Entscheidung
+
+
+def _parser_of(rec_json: str) -> int:
+    """Version der Auswertung einer gespeicherten Zeile (``raw.parser``; ältere Zeilen ohne Angabe → 0)."""
+    try:
+        raw = json.loads(rec_json).get("raw") or {}
+        return int(raw.get("parser") or 0)
+    except (ValueError, TypeError, AttributeError):
+        return 0
+
+
+def _fingerprint(recs: Iterable[Any]) -> list[str]:
+    """Vergleichsform der Zeilen eines Ereignisses – ohne Zeilennummer; ohne Zeitpunkt auch ohne den
+    Abrufzeitpunkt, der dort nur Sortierhilfe ist."""
+    from app.csvimport.service import rec_to_json
+
+    out = []
+    for r in recs:
+        c = dataclasses.replace(r, line=0)
+        if c.ts_missing:
+            c.ts = datetime(1970, 1, 1, tzinfo=UTC)
+        out.append(rec_to_json(c))
+    return sorted(out)
 
 
 def datasource_service(ctx: Any) -> DataSourceService:

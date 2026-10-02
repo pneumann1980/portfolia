@@ -24,12 +24,16 @@
     {% if b.kind == 'sync' %}<dt>Datenquelle</dt><dd>{{ source_label(b.source) }}{% if ds_exists %} · <a href="/settings/datasources/{{ b.datasource_id }}">Einstellungen</a>{% else %} <span class="hint">(Datenquelle entfernt)</span>{% endif %}</dd>
     {% else %}<dt>Format</dt><dd>{{ prof.label if prof else b.profile }}{% if prof and prof.id.startswith('mapping:') %} · <a href="/journal/csv/{{ b.id }}/mapping">Zuordnung bearbeiten</a>{% endif %}</dd>{% endif %}
     <dt>Konto</dt><dd>{{ b.account }}{% if prof and prof.multi_account %} <span class="hint">(Ersatz für Zeilen ohne Konto)</span>{% endif %}</dd>
-    {% if b.kind == 'sync' %}<dt>Abgerufen</dt><dd>{{ summary.get('events', ov.total) }} Vorgänge → {{ ov.total }} Buchungszeilen</dd>
+    {% if b.kind == 'sync' %}<dt>Abgerufen</dt><dd>{{ summary.get('events', ov.total) }} Vorgänge → {{ ov.total }} Buchungszeilen{% if summary.get('replaced') %} <span class="hint">({{ summary.replaced }} durch eine neuere Auswertung ersetzt und in einen neueren Prüf-Stapel übernommen)</span>{% endif %}</dd>
     {% else %}<dt>Gelesen</dt><dd>{{ summary.get('rows_read', 0) }} Zeilen → {{ ov.total }} Vorgänge{% if summary.get('skipped') %}, {{ summary.skipped.values()|sum }} übersprungen{% endif %}{% if summary.get('error_count') %}, <b>{{ summary.error_count }} nicht lesbar</b>{% endif %}</dd>{% endif %}
     <dt>Status der Zeilen</dt><dd>{% for k, n in ov.counts.items() %}<a class="badge {{ status_badge.get(k, '') }}" href="/journal/csv/{{ b.id }}?status={{ 'committed' if k == 'merged' else k }}">{{ status_label.get(k, k) }}: {{ n }}</a> {% endfor %}</dd>
     {% if options.get('cutoff') %}<dt>Stichtag</dt><dd>nur Buchungen nach dem {{ options.cutoff|date_de }} werden vorgeschlagen</dd>{% endif %}
     <dt>Eingelesen</dt><dd>{{ b.created_at|datetime_de }}{% if b.committed_at %} · übernommen {{ b.committed_at|datetime_de }}{% endif %}{% if b.reverted_at %} · rückgängig {{ b.reverted_at|datetime_de }}{% endif %}</dd>
   </dl>
+  {% if outdated %}
+  <div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div><b>{{ outdated }} {{ 'Vorgang' if outdated == 1 else 'Vorgänge' }} mit älterer Auswertung.</b> Diese Zeilen stammen aus einer früheren Version der Anbindung (z. B. ohne Zeitpunkt oder Mengen). Unbearbeitete Zeilen ersetzt jede Synchronisierung automatisch; Zeilen mit Eingaben (Übernehmen ja/nein, EUR-Wert, Transfer-Bestätigung) bleiben, bis du sie hier neu auswerten lässt.
+    <form method="post" action="/journal/csv/{{ b.id }}/refresh-outdated" class="row" style="margin-top:6px" data-confirm="Eingaben an {{ outdated }} veralteten {{ 'Vorgang' if outdated == 1 else 'Vorgängen' }} verwerfen und die Datenquelle vollständig neu abrufen? Übernommene Buchungen und „dauerhaft ignoriert“ bleiben unverändert."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Veraltete Zeilen neu auswerten</button></form></div></div>
+  {% endif %}
   {% if summary.get('skipped') or summary.get('errors') %}
   <details class="box" style="margin-top:10px"><summary>Übersprungene und nicht lesbare Zeilen</summary>
     {% if summary.get('skipped') %}<ul class="plain">{% for k, n in summary.skipped.items() %}<li>{{ n }} × {{ k }}</li>{% endfor %}</ul>{% endif %}
@@ -212,9 +216,14 @@
     <thead><tr><th class="num">Zeile</th><th>Datum</th><th>Vorgang</th><th>Abgang</th><th>Zugang</th><th class="num">Gebühr</th><th class="num">EUR-Wert</th><th>Status</th><th>Übernehmen</th></tr></thead>
     <tbody>{% for rc in rows %}{% set r = rc.row %}
       <tr><td class="num" data-label="Zeile">{{ rc.line }}</td>
-        <td class="nowrap" data-label="Datum">{{ rc.ts|datetime_de }}</td>
+        <td class="nowrap" data-label="Datum">{% if rc.rec.ts_missing %}<span class="badge warn" title="Die Quelle liefert keinen Zeitpunkt – die Zeile wird nicht gebucht.">Zeitpunkt fehlt</span>{% else %}{{ rc.ts|datetime_de }}{% endif %}</td>
         <td data-label="Vorgang">{% if r %}{{ tx_types.get(r.type, r.type) }}{% if r.tag %} · {{ tag_label.get(r.tag, r.tag) }}{% endif %}{% else %}{{ kind_label.get(rc.rec.kind, rc.rec.kind) }}{% endif %}
-          {% if rc.rec.label %}<div class="hint" title="{{ rc.rec.label }}">{{ rc.rec.label|truncate(34, true, '…', 0) }}</div>{% endif %}{% if rc.rec.note %}<div class="hint" title="{{ rc.rec.note }}">{{ rc.rec.note|truncate(48, true, '…', 0) }}</div>{% endif %}</td>
+          {% if rc.rec.label %}<div class="hint" title="{{ rc.rec.label }}">{{ rc.rec.label|truncate(34, true, '…', 0) }}</div>{% endif %}{% if rc.rec.note %}<div class="hint" title="{{ rc.rec.note }}">{{ rc.rec.note|truncate(48, true, '…', 0) }}</div>{% endif %}
+          {% if b.kind == 'sync' and rc.rec.raw %}{% set rw = rc.rec.raw %}<details class="origin"><summary class="hint">Herkunft</summary><div class="hint wrap-any">
+            {% if rw.get('operation_type') or rw.get('type') %}Vorgangsart „{{ rw.get('operation_type') or rw.get('type') }}“ · {% endif %}{% if rw.get('parser') %}Auswertung v{{ rw.parser }}{% else %}ältere Auswertung (ohne Versionsangabe){% endif %}<br>
+            Zeitpunkt: {% if rw.get('time_source') %}{{ rw.time_source }}{% if rw.get('time_partial') %} (nicht an allen Teilen){% endif %}{% elif rw.get('parser') %}fehlt in den Daten{% else %}nicht ermittelt{% endif %}
+            {% for t in rw.get('transactions') or [] %}<br>· {{ (t.get('flow') or '?')|lower }} {{ t.get('amount') or '–' }} {{ t.get('symbol') or '' }}{% if t.get('transaction_type') %} [{{ t.transaction_type }}]{% endif %}{% if t.get('credited_at') %} · {{ t.credited_at }}{% endif %}{% if t.get('fee') %} · Gebühr {{ t.fee }}{% endif %}{% if t.get('trade_fee') %} · trade.fee {{ t.trade_fee }}{% endif %}{% endfor %}
+          </div></details>{% endif %}</td>
         {% if r %}
         <td data-label="Abgang">{{ leg(r.from_account, r.from_asset, r.from_qty, '−') }}</td>
         <td data-label="Zugang">{{ leg(r.to_account, r.to_asset, r.to_qty, '+') }}</td>
