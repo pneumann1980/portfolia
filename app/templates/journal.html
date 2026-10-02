@@ -2,6 +2,7 @@
 {% block title %}Buchungen{% endblock %}
 {% block heading %}Buchungen{% endblock %}
 {% import "partials/compare.html" as cmpm with context %}
+{% import "partials/links.html" as lkm %}
 {% macro sym(aid) -%}{{ syms.get(aid, aid) }}{%- endmacro %}
 {% macro leg(acc, asset, q, sign) -%}
   {%- if asset %}<span class="nowrap">{{ sign }}{{ q|qty }} {{ sym(asset) }}</span>{% if acc %}<div class="hint">{{ acc }}</div>{% endif %}{% else %}–{% endif -%}
@@ -44,15 +45,16 @@
     <thead><tr><th>Datum</th><th>Vorgang</th><th>Abgang</th><th>Zugang</th><th class="num">Gebühr</th><th class="num">Wert</th><th>Quelle</th><th></th></tr></thead>
     <tbody>
     {% for r in rows %}{% set t = r.t %}
-      {% set cmp = compare.get(t.tx_id) %}<tr class="{{ 'is-new' if saved_tx and t.tx_id == saved_tx }}{{ ' has-compare' if cmp }}">
+      {% set cmp = compare.get(t.tx_id) %}{% set lks = links.get(t.tx_id) %}<tr class="{{ 'is-new' if saved_tx and t.tx_id == saved_tx }}{{ ' has-compare' if cmp or lks }}">
         <td class="nowrap" data-label="Datum">{{ t.date|date_de if t.date_only else t.ts|datetime_de }}<div class="hint mono">{{ t.tx_id }}</div></td>
-        <td data-label="Vorgang">{{ r.label }}{% if t.related_asset %}<div class="hint">zu {{ names.get(t.related_asset, t.related_asset) }}</div>{% endif %}{% if t.note and r.kind != 'plan_est' %}<div class="hint">{{ t.note }}</div>{% endif %}</td>
+        <td data-label="Vorgang">{{ r.label }}{% if t.related_asset %}<div class="hint">zu {{ names.get(t.related_asset, t.related_asset) }}</div>{% endif %}{% if t.note and r.kind != 'plan_est' %}<div class="hint wrap-any">{{ t.note }}</div>{% endif %}</td>
         <td data-label="Abgang">{{ leg(t.from_account, t.from_asset, t.from_qty, '−') }}</td>
         <td data-label="Zugang">{{ leg(t.to_account, t.to_asset, t.to_qty, '+') }}</td>
         <td class="num" data-label="Gebühr">{% if t.fee_qty %}<span class="nowrap">{{ t.fee_qty|qty }} {{ sym(t.fee_asset) }}</span>{% if t.fee_eur and t.fee_asset != 'EUR' %}<div class="hint">{{ t.fee_eur|eur }}</div>{% endif %}{% elif t.fee_eur %}{{ t.fee_eur|eur }}{% else %}–{% endif %}</td>
         <td class="num" data-label="Wert">{{ t.value_eur|eur if t.value_eur is not none else '–' }}</td>
         <td data-label="Quelle">{% set m = jmeta.get(t.tx_id) %}{% if r.kind in ('journal', 'csv', 'sync') %}{% if m and m.batch_id %}<a class="badge info" href="/journal/csv/{{ m.batch_id }}">{{ source_label(t.source) }}</a>{% else %}<span class="badge info">{{ source_label(t.source) }}</span>{% endif %}{% elif r.kind == 'plan_est' %}<a class="badge warn" href="/plans">Sparplan · geschätzt</a>{% elif r.kind == 'plan' %}<a class="badge" href="/plans#confirmed">Sparplan · freigegeben</a>{% else %}<span class="hint">Import{% if t.source %} · {{ t.source }}{% endif %}</span>{% set o = ov.get(t.tx_id) %}{% if o and o.action == 'edit' %} <span class="badge {{ 'warn' if o.status != 'ok' else 'info' }}" title="{{ o.text or 'in Portfolia bearbeitet – die Import-Datei bleibt unverändert' }}">bearbeitet</span>{% endif %}{% endif %}
-          {% if r.dups %}<div><a class="badge warn" href="#cmp-{{ t.tx_id }}" title="Ähnliche Import-Buchung: {{ r.dups|join(', ') }} – Vergleich unter der Zeile">Dublette?</a></div>{% endif %}</td>
+          {% if r.dups %}<div><a class="badge warn" href="#cmp-{{ t.tx_id }}" title="Ähnliche Import-Buchung: {{ r.dups|join(', ') }} – Vergleich unter der Zeile">Dublette?</a></div>{% endif %}
+          {% if lks %}<div><a class="badge info" href="#src-{{ t.tx_id }}" title="Derselbe Vorgang aus weiteren Quellen – Werte und Herkunft unter der Zeile">+{{ lks|length }} Quelle{{ 'n' if lks|length != 1 }}</a></div>{% endif %}</td>
         <td class="actions">
           {% if r.kind in ('journal', 'csv', 'sync') and m and m.editable %}
             <a class="btn sm" href="/journal/{{ t.tx_id }}/edit">Bearbeiten</a>
@@ -75,6 +77,7 @@
           {% endif %}
         </td>
       </tr>
+      {% if lks %}<tr class="dup-row" id="src-{{ t.tx_id }}"><td colspan="8" class="wide">{{ lkm.links_block(lks, source_label) }}</td></tr>{% endif %}
       {% if cmp %}<tr class="dup-row" id="cmp-{{ t.tx_id }}"><td colspan="8" class="wide">{{ cmpm.compare_block(cmp, false, "Ähnliche Import-Buchung (gleiche Art, Konten und Assets, ±2 Tage, Menge ±1 %). Hervorgehoben ist, was von dieser Buchung abweicht. Ist es dieselbe Buchung: diese App-Buchung löschen – liegt sie vor dem Stand des Imports, alternativ unter „Abgleich mit dem Import“ „Import-Buchung gilt“ wählen. Nur Anzeige – nichts wird automatisch geändert.") }}</td></tr>{% endif %}
     {% endfor %}
     </tbody>

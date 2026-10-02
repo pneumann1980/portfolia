@@ -84,6 +84,10 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
                                      "ORDER BY event_key", drop=()),
         "event_aliases": [r for r in _rows(db, "SELECT key, tx_id FROM journal_event_alias ORDER BY tx_id, key",
                                            drop=()) if r["tx_id"] in tx_ids],
+        # verknüpfte Quelldatensätze (Importprüfung): Werte und Herkunft weiterer Quellen je Buchung
+        "tx_links": [r for r in _rows(db, "SELECT tx_id, source, ext_id, event_key, role, record_json, "
+                                          "assessment_json, created_at FROM tx_link WHERE status='active' ORDER BY id",
+                                      drop=()) if r["tx_id"] in tx_ids],
         "csv_symbols": _rows(db, "SELECT symbol, asset_id, origin FROM csv_symbol ORDER BY symbol", drop=()),
         "csv_accounts": _rows(db, "SELECT name, account FROM csv_account ORDER BY name", drop=()),
         "csv_mappings": _rows(db, "SELECT name, spec_json FROM csv_mapping ORDER BY name, id", drop=()),
@@ -148,6 +152,7 @@ def summary(extras: dict[str, bytes]) -> dict[str, Any] | None:
         "plans": len(st.get("plans") or []) + len(st.get("plan_dismissed") or []),
         "datasources": len(st.get("datasources") or []),
         "decisions": len(st.get("event_decisions") or []),
+        "links": len(st.get("tx_links") or []),
         "csv": len(st.get("csv_symbols") or []) + len(st.get("csv_accounts") or []) + len(st.get("csv_mappings")
                                                                                              or []),
         "deleted": len(st.get("deleted_journal") or []),
@@ -155,6 +160,24 @@ def summary(extras: dict[str, bytes]) -> dict[str, Any] | None:
         "prices": max(0, prices.count(b"\n") - 1),
         "files": sorted(n[len(FILES):] for n in extras if n.startswith(FILES)),
     }
+
+
+def _links(c: Any, rows: list[dict[str, Any]]) -> int:
+    """Verknüpfte Quelldatensätze übernehmen – je Buchung, Quelle, Kennung und Zeitpunkt höchstens einmal."""
+    n = 0
+    for r in rows:
+        if not r.get("tx_id") or not r.get("source") or not r.get("record_json"):
+            continue
+        if c.execute("SELECT 1 FROM tx_link WHERE tx_id=? AND source=? AND IFNULL(ext_id, '')=? AND created_at=? AND "
+                     "status='active'", (r["tx_id"], r["source"], r.get("ext_id") or "", r.get("created_at") or "")
+                     ).fetchone():
+            continue
+        c.execute("INSERT INTO tx_link(tx_id, source, ext_id, event_key, role, record_json, assessment_json, "
+                  "created_at) VALUES (?,?,?,?,?,?,?,?)",
+                  (r["tx_id"], r["source"], r.get("ext_id"), r.get("event_key"), r.get("role"), r["record_json"],
+                   r.get("assessment_json"), r.get("created_at") or ""))
+        n += 1
+    return n
 
 
 def is_fresh(db: Any) -> bool:
@@ -215,6 +238,7 @@ def apply(ctx: Any, import_id: int) -> dict[str, int]:
         counts["datasources"] = _datasources(c, st.get("datasources") or [], now)
         counts["decisions"] = _insert(c, "event_decision", st.get("event_decisions"), "OR IGNORE")
         counts["aliases"] = _insert(c, "journal_event_alias", st.get("event_aliases"), "OR IGNORE")
+        counts["links"] = _links(c, st.get("tx_links") or [])
         counts["csv"] = (_insert(c, "csv_symbol", [{**r, "updated_at": now} for r in st.get("csv_symbols") or []],
                                  "OR IGNORE")
                          + _insert(c, "csv_account", [{**r, "updated_at": now} for r in st.get("csv_accounts") or []],

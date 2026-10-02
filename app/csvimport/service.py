@@ -92,11 +92,12 @@ def _locked(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 STATUS_LABEL = {"new": "neu", "known": "bereits vorhanden", "duplicate": "mögliche Dublette", "before": "vor Stichtag",
                 "ignored": "ignoriert", "invalid": "unvollständig", "unclear": "ungeklärt", "committed": "übernommen",
-                "merged": "als Transfer übernommen"}
+                "merged": "als Transfer übernommen", "linked": "verknüpft"}
 STATUS_BADGE = {"new": "good", "known": "", "duplicate": "warn", "before": "", "ignored": "", "invalid": "crit",
-                "unclear": "warn", "committed": "info", "merged": "info"}
-DONE = ("known", "ignored", "committed", "merged")  # Zeilen ohne offene Entscheidung
-EVAL_VERSION = 4  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
+                "unclear": "warn", "committed": "info", "merged": "info", "linked": "info"}
+DONE = ("known", "ignored", "committed", "merged", "linked")  # Zeilen ohne offene Entscheidung
+CLOSED = ("committed", "merged", "linked")  # abgeschlossen: gebucht bzw. mit vorhandener Buchung verknüpft
+EVAL_VERSION = 5  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
 RELEVANT = ("new", "invalid", "unclear", "duplicate")  # zu übernehmen bzw. zu entscheiden
 BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial": "teilweise übernommen",
                 "committed": "übernommen", "reverted": "rückgängig gemacht"}
@@ -384,6 +385,9 @@ class RowCtx:
     pair_why: str | None = None  # Begründung des Transfer-Vorschlags (Anzeige)
     recon: dict[str, Any] | None = None  # Abgleich über den Transaktions-Hash (siehe reconcile.py)
     counterpart: str | None = None  # passende Gegenbuchung im kuratierten Import (möglicher Transfer)
+    basis: str | None = None  # Grundlage des Treffers auf vorhandene Buchungen (Erkennungsregel, siehe assess.py)
+    roles: dict[str, str] = field(default_factory=dict)  # vorhandene Buchung → Rolle (same | out | in | part)
+    match: dict[str, Any] | None = None  # Bewertung des Abgleichs (Ergebnis, Sicherheit, Belege – assess.py)
 
     @property
     def ts(self) -> datetime:
@@ -395,7 +399,7 @@ class RowCtx:
 
     @property
     def open(self) -> bool:
-        return self.status not in ("committed", "merged")
+        return self.status not in CLOSED
 
     @property
     def missing_value(self) -> bool:
@@ -751,7 +755,7 @@ class CsvImportService:
             summary = {"rows_read": 0, "recs": 0, "skipped": {}, "errors": [{"line": 0, "message": str(e)}],
                        "error_count": 1, "notes": []}
         with self.db.transaction() as c:
-            c.execute("DELETE FROM csv_row WHERE batch_id=? AND status NOT IN ('committed','merged')", (bid,))
+            c.execute("DELETE FROM csv_row WHERE batch_id=? AND status NOT IN ('committed','merged','linked')", (bid,))
             done = {r["idx"] for r in c.execute("SELECT idx FROM csv_row WHERE batch_id=?", (bid,))}
             c.executemany("INSERT INTO csv_row(batch_id, idx, line, rec_json, status) VALUES (?,?,?,?, 'new')",
                           [(bid, i, r.line, rec_to_json(r)) for i, r in enumerate(recs) if i not in done])
@@ -792,7 +796,7 @@ class CsvImportService:
         deren Zeilen tragen das Konto seit dem Abruf); übernommene Zeilen bleiben unverändert."""
         data = []
         for r in self.db.q("SELECT id, rec_json, status FROM csv_row WHERE batch_id=?", (bid,)):
-            if r["status"] in ("committed", "merged"):
+            if r["status"] in CLOSED:
                 continue
             rec = rec_from_json(r["rec_json"])
             if old not in (rec.account, rec.to_account):
@@ -822,6 +826,9 @@ class CsvImportService:
             rc.pair_why = msgs.get("pair_why")
             rc.recon = msgs.get("recon")
             rc.counterpart = msgs.get("counterpart")
+            rc.basis = msgs.get("basis")
+            rc.roles = msgs.get("roles") or {}
+            rc.match = msgs.get("match")
             out.append(rc)
         return out
 
@@ -854,12 +861,19 @@ class CsvImportService:
                                "NULL AND status <> 'reverted' AND (batch_id IS NULL OR batch_id <> ?) ORDER BY tx_id",
                                (source, bid)):
                 known_events.setdefault(r["event_key"], r)
+        # verknüpfte Zeilen, deren Buchung es nicht mehr gibt (gelöscht, nicht mehr im Import): wieder zur Prüfung
+        alive = self._alive(pf)
+        reopened = self._reopen_orphans(bid, rows, alive)
         open_rows = [rc for rc in rows if rc.open]
         # Abgleich über den Transaktions-Hash: vorhandene Vorgänge erkennen, Zuordnungen lernen (vor dem Aufbau)
         recon = self._reconcile(bid, open_rows, resolver, assets)
+        # mit „verknüpfen“ entschiedene Zeilen (auch aus früheren Stapeln bzw. Importen derselben Quelle)
+        linked = {r["key"]: r["tx_id"] for r in self.db.q("SELECT key, tx_id FROM journal_event_alias WHERE key LIKE "
+                                                         "'row:%' ORDER BY tx_id") if r["tx_id"] in alive}
         seen_ext: dict[str, int] = {}
         for rc in open_rows:
             rc.errors, rc.warnings, rc.dup_of, rc.dup_same_account = [], [], [], False
+            rc.basis, rc.roles, rc.match = None, {}, None
             rc.value_src = rc.fee_src = None
             m = recon.rows.get(rc.idx)
             rc.recon = m.as_dict() if m is not None else None
@@ -896,13 +910,18 @@ class CsvImportService:
                 rc.status = "ignored"
             elif ext and ext in known:
                 k = known[ext]
-                rc.status = "known"
+                rc.status, rc.basis = "known", "ext"
                 rc.dup_of = [k["tx_id"]]
                 rc.warnings.insert(0, f"bereits importiert als {k['tx_id']}" + (" (gelöscht)" if k["status"] ==
                                                                                  "deleted" else ""))
+            elif (lk := line_key(source, rc.rec)) and lk in linked:
+                rc.status, rc.basis = "known", "link"
+                rc.dup_of = [linked[lk]]
+                rc.warnings.insert(0, f"bereits mit {linked[lk]} verknüpft (Entscheidung „verknüpfen“) – wird nicht "
+                                      "gebucht")
             elif rc.rec.event_key and rc.rec.event_key in known_events:
                 k = known_events[rc.rec.event_key]
-                rc.status = "known"
+                rc.status, rc.basis = "known", "event"
                 rc.dup_of = [k["tx_id"]]
                 rc.warnings.insert(0, f"Vorgang bereits übernommen als {k['tx_id']}" + (" (gelöscht)" if k["status"] ==
                                                                                          "deleted" else "")
@@ -914,11 +933,11 @@ class CsvImportService:
                 rc.status = "unclear"
                 rc.warnings.insert(0, rc.rec.note or "Zeitpunkt fehlt in den Daten der Quelle")
             elif m is not None and m.state == "full":  # gleiche Blockchain-Transaktion, alle Beine gefunden
-                rc.status = "known"
+                rc.status, rc.basis = "known", "hash_full"
                 rc.dup_of = m.txs[:5]
                 rc.warnings.insert(0, _recon_text(m))
             elif ext and ext in seen_ext:
-                rc.status = "known"
+                rc.status, rc.basis = "known", "file_dup"
                 rc.warnings.insert(0, f"doppelte Zeile in der Datei (wie Zeile {seen_ext[ext]})")
             elif cutoff is not None and rc.d <= cutoff:
                 # bis zum Stichtag maßgeblich ist der kuratierte Import – keine Zuordnung oder Entscheidung nötig
@@ -935,7 +954,7 @@ class CsvImportService:
             elif rc.errors or rc.row is None:
                 rc.status = "invalid"
             elif m is not None:  # gleicher Hash, nicht alle Beine gefunden → Entscheidung, nie still doppelt
-                rc.status = "duplicate"
+                rc.status, rc.basis = "duplicate", "hash_partial"
                 rc.dup_of = m.txs[:5]
                 rc.dup_same_account = True
                 rc.warnings.insert(0, _recon_text(m))
@@ -945,17 +964,65 @@ class CsvImportService:
                 rc.warnings.insert(0, f"Bitte prüfen: {rc.rec.review}")
             if ext:
                 seen_ext.setdefault(ext, rc.line or 0)
+        # Vorgänge vor dem Stichtag werden mitgeprüft, ohne ihren Status zu ändern: gefunden → im Bestand, sonst
+        # mögliche Lücke im kuratierten Import (Anzeige; übernommen wird nur auf ausdrücklichen Wunsch)
+        probe = [rc for rc in open_rows if rc.status == "before" and rc.row is not None]
+        for rc in probe:
+            rc.status = "new"
         self._same_events([rc for rc in open_rows if rc.status in ("new", "invalid", "unclear", "before")], source)
         self._duplicates([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._same_qty([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._reconstructed([rc for rc in open_rows if rc.status == "new"], pf)
+        self._asset_mismatch([rc for rc in open_rows if rc.status == "new"], pf, source)
+        self._event_parts(open_rows)
+        for rc in open_rows:
+            if rc.idx in reopened:
+                rc.warnings.insert(0, f"Verknüpfung aufgehoben: Buchung {reopened[rc.idx]} gibt es nicht mehr "
+                                      "(gelöscht bzw. nicht mehr im Import) – bitte erneut prüfen")
+        for rc in probe:
+            if rc.status in ("new", "duplicate"):
+                rc.status, rc.dup_same_account = "before", False
+                if rc.dup_of and (rc.recon or {}).get("state") == "missing":
+                    rc.recon = None
+                    rc.warnings = [w for w in rc.warnings if not w.startswith("nicht im kuratierten Import")]
         self._transfers(bid, rows, pf, valuer)
+        from app.csvimport.assess import assess_rows
+
+        assess_rows(self.ctx, open_rows, source, pf)
         self._save(rows)
         self._save_recon(batch, rows, recon)
         counts = defaultdict(int)
         for rc in rows:
             counts[rc.status] += 1
         return dict(counts)
+
+    def _alive(self, pf: Portfolio | None) -> set[str]:
+        """Buchungen, auf die eine Verknüpfung zeigen darf: erfasste Buchungen, Import, App-Buchungen (aktiv bzw. in
+        einem Transfer zusammengeführt)."""
+        out = {t.tx_id for t in pf.txs} if pf is not None else set()
+        base, _ = self.ctx.effective_base()
+        out |= {t.tx_id for t in base.txs} if base is not None else set()
+        out |= {r["tx_id"] for r in self.db.q("SELECT tx_id FROM journal_tx WHERE status IN ('active', 'merged')")}
+        return out
+
+    def _reopen_orphans(self, bid: int, rows: list[RowCtx], alive: set[str]) -> dict[int, str]:
+        """Verknüpfte Zeilen ohne bestehende Buchung wieder öffnen (Status „neu“, Verknüpfung als aufgehoben
+        protokolliert) – eine Entscheidung „verknüpfen“ ohne Ziel darf keinen Vorgang verdecken."""
+        out: dict[int, str] = {}
+        for rc in rows:
+            if rc.status != "linked" or not rc.tx_id or rc.tx_id in alive:
+                continue
+            out[rc.idx] = rc.tx_id
+            with self.db.transaction() as c:
+                c.execute("UPDATE csv_row SET status='new', tx_id=NULL WHERE id=?", (rc.id,))
+                c.execute("UPDATE tx_link SET status='undone', undone_at=? WHERE batch_id=? AND row_idx=? AND "
+                          "status='active'", (_now(), bid, rc.idx))
+                self.journal._log(c, "import_link_orphan", f"csv:{bid}", None, {"row": rc.idx, "tx_id": rc.tx_id},
+                                  _now())
+            log.warning("Prüf-Stapel %s, Zeile %s: verknüpfte Buchung %s fehlt – Zeile wieder offen", bid, rc.line,
+                        rc.tx_id)
+            rc.status, rc.tx_id = "new", None
+        return out
 
     def _reconcile(self, bid: int, rows: list[RowCtx], resolver: SymbolResolver,
                    assets: Mapping[str, AssetInfo]) -> R.Result:
@@ -1240,7 +1307,7 @@ class CsvImportService:
             prefix, _, native = ext.partition(":")
             ref_tid = ref_ids.get(f"{prefix.lower()}:{native.strip().upper()}") if native else None
             if tid is not None or ref_tid is not None:
-                rc.status = "known"
+                rc.status, rc.basis = "known", "ref"
                 rc.dup_of = [tid or ref_tid]  # type: ignore[list-item]
                 rc.warnings.insert(0, f"bereits im Import enthalten als {tid or ref_tid} – gleiche Kennung"
                                       + ("" if tid else f" ({prefix}-ID)"))
@@ -1269,7 +1336,7 @@ class CsvImportService:
                     hit.setdefault(r["tx_id"], r)
             if hit:
                 first = next(iter(hit.values()))
-                rc.status = "known"
+                rc.status, rc.basis = "known", "id"
                 rc.dup_of = list(hit)
                 rc.warnings.insert(0, f"bereits vorhanden als {', '.join(list(hit)[:3])} "
                                       f"({source_label(first['source'])}"
@@ -1284,12 +1351,15 @@ class CsvImportService:
                 if (r["type"], r["from_asset"] or "", r["to_asset"] or "") == (row["type"], row["from_asset"],
                                                                                  row["to_asset"])))
             if hits:
-                rc.status = "duplicate"
+                rc.status, rc.basis = "duplicate", "hash"
                 rc.dup_of = hits
                 rc.dup_same_account = True
                 rc.warnings.insert(0, f"gleiche Blockchain-Transaktion bereits vorhanden: {', '.join(hits[:3])}")
 
     def _duplicates(self, rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
+        """Gleiche Assets, gleiche Mengen, nahezu gleicher Zeitpunkt (≤ 10 min oder Zeitzonenversatz ± 2 min) →
+        mögliche Dublette. Eine anders dargestellte Gebühr (im Betrag enthalten bzw. zusätzlich) gilt als gleicher
+        Abgang; zwei verschiedene Blockchain-Transaktionen sind nie Dubletten."""
         if pf is None or not rows:
             return
         index: dict[tuple[str, str], list[Tx]] = defaultdict(list)
@@ -1305,12 +1375,13 @@ class CsvImportService:
                 transfers[t.from_asset].append(t)
         for lst in index.values():
             lst.sort(key=lambda t: t.ts)
+        hashes = self._hash_lookup()
         used: set[str] = set()
         for rc in rows:
             row = rc.row
             if row is None:
                 continue
-            if self._covered_by_transfer(rc, transfers, used):
+            if self._covered_by_transfer(rc, transfers, used, hashes):
                 continue
             key = (row["from_asset"], row["to_asset"])
             cands = index.get(key)
@@ -1318,10 +1389,12 @@ class CsvImportService:
                 continue
             lo = bisect.bisect_left([t.ts for t in cands], rc.ts - timedelta(hours=15))
             fq, tq = _row_d(row["from_qty"]), _row_d(row["to_qty"])
+            fee_from = _row_d(row["fee_qty"]) if row["fee_asset"] and row["fee_asset"] == row["from_asset"] else None
+            h = normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id))
             for t in cands[lo:]:
                 if t.ts > rc.ts + timedelta(hours=15):
                     break
-                if not _qty_eq(fq, t.from_qty) or not _qty_eq(tq, t.to_qty):
+                if not _qty_eq(tq, t.to_qty) or not (_qty_eq(fq, t.from_qty) or _fee_variant(fq, fee_from, t)):
                     continue
                 delta = abs((t.ts - rc.ts).total_seconds())
                 if not (rc.rec.date_only or t.date_only):
@@ -1329,17 +1402,33 @@ class CsvImportService:
                         continue
                 elif t.date != rc.d:
                     continue
+                if h and (th := hashes(t)) and h not in th:
+                    continue  # zwei verschiedene Blockchain-Transaktionen mit gleichen Mengen
                 rc.dup_of.append(t.tx_id)
+                rc.roles[t.tx_id] = "same"
                 if row["from_account"] in (t.from_account, t.to_account) or \
                         row["to_account"] in (t.from_account, t.to_account):
                     rc.dup_same_account = rc.dup_same_account or bool(row["from_account"] or row["to_account"])
             if rc.dup_of:
-                rc.status = "duplicate"
+                rc.status, rc.basis = "duplicate", "sig"
                 rc.warnings.insert(0, f"ähnelt {', '.join(rc.dup_of[:3])}" + (" (gleiches Konto)" if
                                                                                 rc.dup_same_account else ""))
 
-    @staticmethod
-    def _same_qty(rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
+    def _hash_lookup(self) -> Callable[[Tx], set[str]]:
+        """Transaktions-Hashes einer Buchung: Import aus Notiz/Quellkennung, App-Buchungen aus ``tx_hash``."""
+        journal: dict[str, str] = {r["tx_id"]: h for r in self.db.q(
+            "SELECT tx_id, tx_hash FROM journal_tx WHERE tx_hash IS NOT NULL AND tx_hash <> ''")
+            if (h := normalize_hash(r["tx_hash"]))}
+
+        def get(t: Tx) -> set[str]:
+            out = R.hashes_in(t.note, t.source_ref)
+            if t.tx_id in journal:
+                out.add(journal[t.tx_id])
+            return out
+
+        return get
+
+    def _same_qty(self, rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
         """Gleiche exakte Menge desselben Assets auf demselben Konto und derselben Seite (Zu- bzw. Abgang) innerhalb
         von 36 Stunden – Muster „einmal manuell nachgetragen, einmal importiert bzw. als Transfer erfasst“. Gleiche
         Menge und Zeit beweisen keine Dublette; der Vorgang geht deshalb in die Prüfung (nie automatisch übernommen),
@@ -1359,6 +1448,7 @@ class CsvImportService:
                 index[("out", t.from_account, t.from_asset, t.from_qty)].append(t)
         if not index:
             return
+        hashes = self._hash_lookup()
         for rc in rows:
             row = rc.row
             if row is None or row["type"] not in ("deposit", "withdrawal", "transfer") or rc.status != "new":
@@ -1378,13 +1468,14 @@ class CsvImportService:
                 for t in index.get(key, ()):
                     if abs(t.ts - rc.ts) > SAME_QTY_WINDOW or t.tx_id in rc.dup_of:
                         continue
-                    t_hashes = R.hashes_in(t.note, t.source_ref)
+                    t_hashes = hashes(t)
                     if h and t_hashes and h not in t_hashes:
                         continue  # zwei verschiedene Blockchain-Transaktionen
                     hits.append(t)
+                    rc.roles.setdefault(t.tx_id, "same")
             if hits:
                 hits.sort(key=lambda t: (abs(t.ts - rc.ts), t.tx_id))
-                rc.status = "duplicate"
+                rc.status, rc.basis = "duplicate", "same_qty"
                 rc.dup_same_account = True
                 rc.dup_of = list(dict.fromkeys([*rc.dup_of, *(t.tx_id for t in hits)]))
                 t = hits[0]
@@ -1421,7 +1512,7 @@ class CsvImportService:
                           key=lambda t: (abs(t.ts - rc.ts), t.tx_id))
             if hits:
                 t = hits[0]
-                rc.status = "duplicate"
+                rc.status, rc.basis = "duplicate", "reconstructed"
                 rc.dup_same_account = True
                 rc.dup_of = list(dict.fromkeys([*rc.dup_of, *(x.tx_id for x in hits)]))
                 rc.warnings.insert(0, f"rekonstruierte Buchung {t.tx_id} ({fmt_de_date(to_local_date(t.ts))}) im "
@@ -1429,10 +1520,54 @@ class CsvImportService:
                                       "zusätzlich übernehmen")
 
     @staticmethod
-    def _covered_by_transfer(rc: RowCtx, transfers: Mapping[str, list[Tx]], used: set[str]) -> bool:
+    def _asset_mismatch(rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
+        """Gleiche exakte Menge auf demselben Konto und derselben Seite innerhalb von 10 Minuten, aber ein anderes
+        Asset: vermutlich eine falsche Asset-Zuordnung (z. B. gleiches Kürzel für verschiedene Coins) – nie still
+        zusätzlich buchen, sondern prüfen. Fiat bleibt außen vor (runde Beträge sind häufig)."""
+        if pf is None or not rows:
+            return
+        index: dict[tuple[str, str, Decimal], list[Tx]] = defaultdict(list)
+        for t in pf.txs:
+            if (t.origin == "journal" and (t.source or "") == source) or t.origin == "plan":
+                continue
+            if t.to_account and t.to_asset and t.to_qty and t.to_asset not in C.ISO_CURRENCIES:
+                index[("in", t.to_account, t.to_qty)].append(t)
+            if t.from_account and t.from_asset and t.from_qty and t.from_asset not in C.ISO_CURRENCIES:
+                index[("out", t.from_account, t.from_qty)].append(t)
+        if not index:
+            return
+        for rc in rows:
+            row = rc.row
+            if row is None or rc.status != "new":
+                continue
+            legs = []
+            if row["to_asset"] and row["to_qty"]:
+                legs.append(("in", row["to_account"], Decimal(row["to_qty"]), row["to_asset"]))
+            if row["from_asset"] and row["from_qty"]:
+                legs.append(("out", row["from_account"], Decimal(row["from_qty"]), row["from_asset"]))
+            for side, acc, q, asset in legs:
+                if asset in C.ISO_CURRENCIES:
+                    continue
+                hit = next(((t, t.to_asset if side == "in" else t.from_asset) for t in index.get((side, acc, q), ())
+                            if (t.to_asset if side == "in" else t.from_asset) != asset
+                            and abs(t.ts - rc.ts) <= timedelta(minutes=10)), None)
+                if hit is None:
+                    continue
+                t, other = hit
+                rc.status, rc.basis = "duplicate", "asset_mismatch"
+                rc.dup_same_account = True
+                rc.dup_of, rc.roles = [t.tx_id], {t.tx_id: "same"}
+                rc.warnings.insert(0, f"gleiche Menge und Zeit wie {t.tx_id} auf demselben Konto, aber {other} statt "
+                                      f"{asset} – Asset-Zuordnung prüfen")
+                break
+
+    @staticmethod
+    def _covered_by_transfer(rc: RowCtx, transfers: Mapping[str, list[Tx]], used: set[str],
+                             hashes: Callable[[Tx], set[str]]) -> bool:
         """Zu- bzw. Abgang, der bereits Teil eines erfassten Transfers ist (z. B. Börsen-Auszahlung → Wallet, im
         kuratierten Import oder im Journal als Transfer gebucht) → mögliche Dublette auf demselben Konto: ohne
-        Abwahl zählte die Menge doppelt."""
+        Abwahl zählte die Menge doppelt. Abgänge auch bei anders dargestellter Gebühr (Betrag mit bzw. ohne Gebühr,
+        gleicher Gesamtabgang); verschiedene Blockchain-Transaktionen nie."""
         row = rc.row
         assert row is not None
         if row["type"] == "deposit" and not row["tag"] and row["to_asset"]:
@@ -1443,6 +1578,8 @@ class CsvImportService:
             return False
         if not qty:
             return False
+        fee = _row_d(row["fee_qty"]) if side == "from" and row["fee_asset"] == asset else None
+        h = normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id))
         for t in sorted(transfers.get(asset, ()), key=lambda t: abs((t.ts - rc.ts).total_seconds())):
             t_acc = t.to_account if side == "to" else t.from_account
             t_qty = t.to_qty if side == "to" else t.from_qty
@@ -1450,17 +1587,51 @@ class CsvImportService:
                 continue
             if side == "to":  # Eingang kommt nach dem Abgang (Netzwerkgebühr: Zugang ≤ Abgang)
                 ok_time = t.ts - TRANSFER_BEFORE <= rc.ts <= t.ts + TRANSFER_AFTER
+                ok_qty = _qty_eq(qty, t_qty) or bool(t.from_qty and _qty_eq(qty, t.from_qty))
             else:
                 ok_time = abs((t.ts - rc.ts).total_seconds()) <= TRANSFER_BEFORE.total_seconds()
-            if ok_time and (_qty_eq(qty, t_qty) or (side == "to" and t.from_qty and _qty_eq(qty, t.from_qty))):
-                used.add(t.tx_id)
-                rc.status = "duplicate"
-                rc.dup_of = [t.tx_id]
-                rc.dup_same_account = True
-                rc.warnings.insert(0, f"bereits als Transfer erfasst: {t.tx_id} ({t.from_account} → {t.to_account})"
-                                      " – nicht erneut übernehmen")
-                return True
+                ok_qty = _qty_eq(qty, t_qty) or _fee_variant(qty, fee, t)
+            if not ok_time or not ok_qty:
+                continue
+            if h and (th := hashes(t)) and h not in th:
+                continue  # gleiche Menge, aber eine andere Blockchain-Transaktion
+            used.add(t.tx_id)
+            rc.status, rc.basis = "duplicate", "transfer_leg"
+            rc.dup_of = [t.tx_id]
+            rc.roles = {t.tx_id: "out" if side == "from" else "in"}
+            rc.dup_same_account = True
+            rc.warnings.insert(0, f"bereits als Transfer erfasst: {t.tx_id} ({t.from_account} → {t.to_account})"
+                                  " – nicht erneut übernehmen")
+            return True
         return False
+
+    @staticmethod
+    def _event_parts(rows: list[RowCtx]) -> None:
+        """Weitere Zeilen eines Ereignisses, dessen andere Zeile bereits als vorhanden erkannt ist (z. B. die
+        Gebührenzeile eines Handels, den der kuratierte Import samt Gebühr führt): nie still zusätzlich buchen –
+        sonst zählte die Gebühr doppelt. Nur bei Treffern aus anderen Quellen (gleiche Quelle: Kennung)."""
+        by_event: dict[str, list[RowCtx]] = defaultdict(list)
+        for rc in rows:
+            if rc.rec.event_key:
+                by_event[rc.rec.event_key].append(rc)
+        for lines in by_event.values():
+            if len(lines) < 2:
+                continue
+            hit = [rc for rc in lines if rc.dup_of and rc.basis not in (None, "ext", "event", "file_dup", "link",
+                                                                         "event_part")]
+            if not hit:
+                continue
+            targets = list(dict.fromkeys(t for rc in hit for t in rc.dup_of))[:5]
+            for rc in lines:
+                if rc.status != "new" or rc.row is None:
+                    continue
+                rc.status, rc.basis = "duplicate", "event_part"
+                rc.dup_of = list(targets)
+                rc.roles = dict.fromkeys(targets, "part")
+                rc.dup_same_account = True
+                rc.warnings.insert(0, f"Teil eines Vorgangs, dessen andere Zeile bereits vorhanden ist "
+                                      f"({', '.join(targets[:3])}) – vor dem Übernehmen prüfen, ob die vorhandene "
+                                      "Buchung diesen Teil (z. B. die Gebühr) schon enthält")
 
     # -- Transfers ----------------------------------------------------------------------------------------
     def _transfers(self, bid: int, rows: list[RowCtx], pf: Portfolio | None, V: Valuer) -> None:
@@ -1597,7 +1768,8 @@ class CsvImportService:
             msgs = {"errors": rc.errors[:10], "warnings": rc.warnings[:10], "value_src": rc.value_src,
                     "fee_src": rc.fee_src, "dup_of": rc.dup_of[:5], "dup_same": rc.dup_same_account,
                     "symbols": rc.symbols, "pair_why": rc.pair_why if rc.pair_ref else None, "recon": rc.recon,
-                    "counterpart": rc.counterpart}
+                    "counterpart": rc.counterpart, "basis": rc.basis if rc.dup_of else None,
+                    "roles": {k: v for k, v in rc.roles.items() if k in rc.dup_of[:5]} or None, "match": rc.match}
             data.append((json.dumps(rc.row, ensure_ascii=False) if rc.row is not None else None, rc.status,
                          json.dumps(msgs, ensure_ascii=False), rc.pair_ref, rc.pair_conf, rc.pair_ok, rc.id))
         if data:
@@ -1713,7 +1885,18 @@ class CsvImportService:
             return {"errors": ["Stapel nicht übernehmbar."]}
         self.evaluate(bid)
         rows = self._load(bid)
-        by_idx = {rc.idx: rc for rc in rows}
+        plan = self.commit_plan(rows, only_idx)
+        if plan.get("errors"):
+            return plan
+        stamp = _now()
+        with self.db.transaction() as c:
+            res = self.commit_apply(c, batch, rows, plan, only_idx, stamp)
+        self.journal.after_change()
+        log.info("CSV-Stapel %s übernommen: %d Buchungen, %d Transfers", bid, res["created"], res["transfers"])
+        return {**res, "errors": []}
+
+    def commit_plan(self, rows: list[RowCtx], only_idx: set[int] | None = None) -> dict[str, Any]:
+        """Zu übernehmende Zeilen bestimmen und validieren (ohne Schreibzugriff)."""
         chosen = [rc for rc in rows if rc.open and rc.include() and rc.row is not None and not rc.errors
                   and (only_idx is None or rc.idx in only_idx)]
         if not chosen:
@@ -1725,73 +1908,80 @@ class CsvImportService:
         rep, parsed = validate_tx_rows([{**rc.row, "tx_id": f"Z{rc.idx}"} for rc in chosen], classes)  # type: ignore
         if rep.errors:
             return {"errors": [m.message for m in rep.errors[:10]]}
-        p_by_idx = {rc.idx: p for rc, p in zip(chosen, parsed, strict=True)}
+        return {"chosen": chosen, "parsed": {rc.idx: p for rc, p in zip(chosen, parsed, strict=True)}}
+
+    def commit_apply(self, c: Any, batch: Any, rows: list[RowCtx], plan: Mapping[str, Any],
+                     only_idx: set[int] | None, stamp: str) -> dict[str, Any]:
+        """Geplante Zeilen innerhalb der Transaktion ``c`` buchen (Transfers zusammenführen, Status des Stapels)."""
+        bid = int(batch["id"])
+        chosen: list[RowCtx] = plan["chosen"]
+        p_by_idx: dict[int, Any] = plan["parsed"]
+        by_idx = {rc.idx: rc for rc in rows}
         source = self.source_of(batch)
-        stamp = _now()
         js = self.journal
         created = merged = transfers = 0
+        tx_ids: list[str] = []
         pairs: list[tuple[RowCtx, str]] = []  # (Zeile, Gegenbuchung) – bestätigte Paare
-        with self.db.transaction() as c:
-            for rc in chosen:
-                p = p_by_idx[rc.idx]
-                pair_other = rc.pair_ref if rc.pair_ref and pair_accepted(rc) else None
-                if pair_other and pair_other.startswith("b:"):
-                    other = by_idx.get(int(pair_other[2:]))
-                    if other is None or not other.include() or other.idx not in p_by_idx:
-                        pair_other = None
-                status = "merged" if pair_other else "active"
-                tx_id = js._insert(c, p, rc.value_src, None, stamp, None, source,
-                                   external_id=rc.rec.ext_id, batch_id=bid, status=status, log=False,
-                                   event_key=rc.rec.event_key or derive_event_key(rc.rec.ext_id),
-                                   event_line=rc.rec.event_line,
-                                   tx_hash=normalize_hash(rc.rec.txhash) or derive_tx_hash(rc.rec.ext_id),
-                                   datasource_id=batch["datasource_id"])
-                if rc.rec.aliases:
-                    c.executemany("INSERT OR IGNORE INTO journal_event_alias(key, tx_id) VALUES (?,?)",
-                                  [(a, tx_id) for a in rc.rec.aliases])
-                rc.tx_id = tx_id
-                rc.status = "merged" if pair_other else "committed"
-                c.execute("UPDATE csv_row SET status=?, tx_id=? WHERE id=?", (rc.status, tx_id, rc.id))
-                if pair_other:
-                    pairs.append((rc, pair_other))
-                    merged += 1
-                else:
-                    created += 1
-            done: set[str] = set()
-            for rc, other_ref in pairs:
-                if rc.tx_id in done:
-                    continue
-                if other_ref.startswith("b:"):
-                    other = by_idx[int(other_ref[2:])]
-                    other_tx = other.tx_id
-                else:
-                    other_tx = other_ref[2:]
-                    j = c.execute("SELECT status FROM journal_tx WHERE tx_id=?", (other_tx,)).fetchone()
-                    if j is None or j["status"] != "active":
-                        c.execute("UPDATE journal_tx SET status='active' WHERE tx_id=?", (rc.tx_id,))
-                        c.execute("UPDATE csv_row SET status='committed' WHERE id=?", (rc.id,))
-                        merged -= 1
-                        created += 1
-                        continue
-                if other_tx is None:
-                    continue
-                t_id = self._merge(c, js, rc.tx_id or "", other_tx, bid, stamp)  # type: ignore[arg-type]
-                if t_id:
-                    transfers += 1
-                done.update((rc.tx_id or "", other_tx))
-            chosen_ids = {rc.id for rc in chosen}
-            if batch["kind"] == "sync":  # offen bleibt, was noch eine Entscheidung braucht
-                left = sum(1 for rc in rows if rc.open and rc.id not in chosen_ids and (
-                    rc.status in ("invalid", "unclear") or (only_idx is not None and rc.status not in DONE)))
+        for rc in chosen:
+            p = p_by_idx[rc.idx]
+            pair_other = rc.pair_ref if rc.pair_ref and pair_accepted(rc) else None
+            if pair_other and pair_other.startswith("b:"):
+                other = by_idx.get(int(pair_other[2:]))
+                if other is None or not other.include() or other.idx not in p_by_idx:
+                    pair_other = None
+            status = "merged" if pair_other else "active"
+            tx_id = js._insert(c, p, rc.value_src, None, stamp, None, source,
+                               external_id=rc.rec.ext_id, batch_id=bid, status=status, log=False,
+                               event_key=rc.rec.event_key or derive_event_key(rc.rec.ext_id),
+                               event_line=rc.rec.event_line,
+                               tx_hash=normalize_hash(rc.rec.txhash) or derive_tx_hash(rc.rec.ext_id),
+                               datasource_id=batch["datasource_id"])
+            if rc.rec.aliases:
+                c.executemany("INSERT OR IGNORE INTO journal_event_alias(key, tx_id) VALUES (?,?)",
+                              [(a, tx_id) for a in rc.rec.aliases])
+            rc.tx_id = tx_id
+            tx_ids.append(tx_id)
+            rc.status = "merged" if pair_other else "committed"
+            c.execute("UPDATE csv_row SET status=?, tx_id=? WHERE id=?", (rc.status, tx_id, rc.id))
+            if pair_other:
+                pairs.append((rc, pair_other))
+                merged += 1
             else:
-                left = sum(1 for rc in rows if rc.open and rc.id not in chosen_ids and rc.status == "invalid")
-            c.execute("UPDATE csv_batch SET status=?, committed_at=?, updated_at=? WHERE id=?",
-                      ("partial" if left else "committed", stamp, stamp, bid))
-            js._log(c, "csv_commit", f"csv:{bid}", None, {"created": created, "merged": merged,
-                                                           "transfers": transfers}, stamp)
-        js.after_change()
-        log.info("CSV-Stapel %s übernommen: %d Buchungen, %d Transfers", bid, created, transfers)
-        return {"created": created, "transfers": transfers, "merged": merged, "errors": []}
+                created += 1
+        done: set[str] = set()
+        for rc, other_ref in pairs:
+            if rc.tx_id in done:
+                continue
+            if other_ref.startswith("b:"):
+                other = by_idx[int(other_ref[2:])]
+                other_tx = other.tx_id
+            else:
+                other_tx = other_ref[2:]
+                j = c.execute("SELECT status FROM journal_tx WHERE tx_id=?", (other_tx,)).fetchone()
+                if j is None or j["status"] != "active":
+                    c.execute("UPDATE journal_tx SET status='active' WHERE tx_id=?", (rc.tx_id,))
+                    c.execute("UPDATE csv_row SET status='committed' WHERE id=?", (rc.id,))
+                    merged -= 1
+                    created += 1
+                    continue
+            if other_tx is None:
+                continue
+            t_id = self._merge(c, js, rc.tx_id or "", other_tx, bid, stamp)  # type: ignore[arg-type]
+            if t_id:
+                transfers += 1
+                tx_ids.append(t_id)
+            done.update((rc.tx_id or "", other_tx))
+        chosen_ids = {rc.id for rc in chosen}
+        if batch["kind"] == "sync" or only_idx is not None:  # offen bleibt, was noch eine Entscheidung braucht
+            left = sum(1 for rc in rows if rc.open and rc.id not in chosen_ids and (
+                rc.status in ("invalid", "unclear") or (only_idx is not None and rc.status not in DONE)))
+        else:
+            left = sum(1 for rc in rows if rc.open and rc.id not in chosen_ids and rc.status == "invalid")
+        c.execute("UPDATE csv_batch SET status=?, committed_at=?, updated_at=? WHERE id=?",
+                  ("partial" if left else "committed", stamp, stamp, bid))
+        js._log(c, "csv_commit", f"csv:{bid}", None, {"created": created, "merged": merged,
+                                                       "transfers": transfers}, stamp)
+        return {"created": created, "transfers": transfers, "merged": merged, "tx_ids": tx_ids}
 
     def _merge(self, c: Any, js: JournalService, a_tx: str, b_tx: str, bid: int, stamp: str) -> str | None:
         """Abgang + Zugang → Transfer-Buchung; beide Einzelbuchungen werden „merged“."""
@@ -1947,6 +2137,23 @@ def _qty_eq(a: Decimal | None, b: Decimal | None) -> bool:
     if a is None or b is None:
         return False
     return abs(a - b) <= max(abs(b) * DUP_QTY_TOL, Decimal("1e-8"))
+
+
+def _fee_variant(q: Decimal | None, fee: Decimal | None, t: Tx) -> bool:
+    """Gleicher Abgang bei anders dargestellter Gebühr im selben Asset: neu brutto = vorhanden netto (Gebühr im Betrag
+    bzw. zusätzlich), neu netto + Gebühr = vorhanden brutto oder gleicher Gesamtabgang (Abgang + Gebühr)."""
+    if q is None or t.from_qty is None:
+        return False
+    t_fee = t.fee_qty if t.fee_asset and t.fee_asset == t.from_asset and t.fee_qty else None
+    mine = [q, *([q + fee] if fee else [])]
+    theirs = [t.from_qty, *([t.from_qty + t_fee] if t_fee else [])]
+    return any(_qty_eq(a, b) for a in mine for b in theirs)
+
+
+def line_key(source: str, rec: Rec) -> str | None:
+    """Dauerhafte Kennung einer Quellzeile für „verknüpfen“ (``journal_event_alias``): Quelle + Kennung der Zeile.
+    Ohne Kennung der Quelle (z. B. Datei ohne IDs) keine – die Zeile wird dann nur über die Prüfung erkannt."""
+    return f"row:{source}|{rec.ext_id}" if rec.ext_id else None
 
 
 def _versioned(source: str) -> bool:

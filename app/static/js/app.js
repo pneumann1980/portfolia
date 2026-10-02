@@ -159,6 +159,28 @@
     if (el.form) syncChecks(el.form, el.getAttribute("data-check-all"));
   });
 
+  // --- Prüf-Stapel: Auswahl einzelner Zeilen (serverseitig gespeichert, gilt über Seiten hinweg) ----------
+  document.addEventListener("change", function (e) {
+    var t = e.target;
+    if (!t || !t.matches || !t.matches("input[data-select-url]")) return;
+    var body = new URLSearchParams();
+    body.set("op", "toggle");
+    body.set("idx", t.value);
+    body.set("on", t.checked ? "1" : "0");
+    fetch(t.getAttribute("data-select-url"), {
+      method: "POST", credentials: "same-origin", body: body.toString(),
+      headers: { "X-CSRF-Token": csrf, "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" }
+    }).then(function (r) {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    }).then(function (d) {
+      document.querySelectorAll(".sel-count").forEach(function (el) { el.textContent = String(d.selected); });
+    }).catch(function () {
+      t.checked = !t.checked;
+      toast("Auswahl nicht gespeichert", "crit");
+    });
+  });
+
   // --- Segment-Schalter (Zeitraum, Darstellung, Allokation) -------------------------------------------
   function pressIn(group, btn) {
     group.querySelectorAll("button").forEach(function (b) { b.setAttribute("aria-pressed", b === btn ? "true" : "false"); });

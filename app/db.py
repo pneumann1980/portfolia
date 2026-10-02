@@ -435,6 +435,44 @@ CREATE TABLE IF NOT EXISTS diag_decision (
 );
 CREATE INDEX IF NOT EXISTS ix_diag_decision_finding ON diag_decision(finding_id, status);
 """),
+    (13, """
+-- Importprüfung (additiv, bestehende Tabellen und Daten bleiben unverändert):
+-- Stapelaktionen mit Vorher-Zustand je Änderung (Protokoll, Rückgängig, Schutz vor doppelter Ausführung).
+CREATE TABLE IF NOT EXISTS import_action (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  token        TEXT NOT NULL UNIQUE,              -- aus der Vorschau: dieselbe Aktion wird nie zweimal ausgeführt
+  batch_id     INTEGER NOT NULL,                  -- Prüf-Stapel (ohne Fremdschlüssel: Protokoll bleibt)
+  action       TEXT NOT NULL,                     -- suggest | link | skip | include | ignore | reset
+  label        TEXT NOT NULL,
+  params_json  TEXT,                              -- Auswahl und Filter beim Ausführen
+  ops_json     TEXT NOT NULL,                     -- ausgeführte Änderungen mit Vorher-Zustand
+  summary_json TEXT,                              -- Anzahl je Wirkung, Bestandswirkung
+  status       TEXT NOT NULL DEFAULT 'active',    -- active | undone
+  created_at   TEXT NOT NULL,
+  undone_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_import_action_batch ON import_action(batch_id, id);
+-- Verknüpfte Quelldatensätze je Buchung: derselbe Vorgang aus einer weiteren Quelle, mit seinen Werten und der
+-- Bewertung beim Verknüpfen – Herkunft statt Zusammenführung; die Buchung selbst bleibt unverändert.
+CREATE TABLE IF NOT EXISTS tx_link (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  tx_id           TEXT NOT NULL,                  -- vorhandene Buchung (Import oder App)
+  source          TEXT NOT NULL,                  -- Quelle des Datensatzes (sync:bitpanda, csv:koinly …)
+  ext_id          TEXT,                           -- Kennung des Datensatzes in der Quelle
+  event_key       TEXT,
+  role            TEXT,                           -- same | out | in | part
+  batch_id        INTEGER,
+  row_idx         INTEGER,
+  action_id       INTEGER,
+  record_json     TEXT NOT NULL,                  -- Werte der Quelle (Zeit, Art, Beine, Gebühr, EUR-Wert, Hash, IDs)
+  assessment_json TEXT,                           -- Abgleich beim Verknüpfen (Ergebnis, Belege, Abweichungen)
+  status          TEXT NOT NULL DEFAULT 'active', -- active | undone
+  created_at      TEXT NOT NULL,
+  undone_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_tx_link_tx ON tx_link(tx_id, status);
+CREATE INDEX IF NOT EXISTS ix_tx_link_src ON tx_link(source, ext_id);
+"""),
 ]
 
 

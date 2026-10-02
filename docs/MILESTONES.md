@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 01.10.2026 · Version 0.15.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 02.10.2026 · Version 0.17.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -847,6 +847,55 @@ Unterschied, verschiedene Hashes), Zeitabstand als Text, Prüf-Stapel (Dublette 
 hervorgehobenen Abweichung, bekannte Zeile eingeklappt mit „Angaben gleich“), Buchungsliste (Sprungmarke, beide
 Buchungen).
 
+## M19 – Importprüfung: Abgleich je Zeile, Stapelaktionen, Verknüpfen, Vollständigkeit (0.17.0)
+
+Anlass (02.10.2026): Hunderte mögliche Dubletten mussten einzeln geprüft werden; beim Auslassen gingen die Angaben
+der neuen Quelle verloren; Koinly fasst technische Buchungen zusammen; nach der Bitpanda-API-Umstellung war offen,
+ob Vorgänge fehlen. Bestandsaufnahme, Plan und Datenmodell: `docs/RECONCILIATION.md`.
+
+**Entscheidungen**
+
+* Erweiterung der vorhandenen Pipeline statt Neubau: Die Erkennungsregeln halten fest, worauf ein Treffer beruht
+  und welche Seite einer Buchung er betrifft; `app/csvimport/assess.py` bewertet daraus je Zeile Ergebnis
+  (Dublette, Ergänzung, neu, Widerspruch, komplex), qualitative Sicherheit, Belege, Abweichungen (gering/relevant),
+  Ergänzungen, Gebührenprüfung, Quellenvorrang und Korrekturvorschläge. Gespeichert in `csv_row.messages`.
+* Erkennung geschärft: Gebühr netto/brutto anders dargestellt gilt als derselbe Abgang; verschiedene Tx-Hashes nie
+  Dublette; Zeilen eines Ereignisses, dessen Hauptzeile vorhanden ist, nie still gebucht; gleiche Menge/Konto/Zeit
+  mit anderem Asset → Widerspruch; Zeilen vor dem Stichtag werden mitgeprüft (mögliche Lücken), ohne Statuswechsel.
+  Bitpanda liefert den Gebührenbeleg strukturiert (`Rec.fee_basis`: extra/inside/open; ältere Zeilen aus dem Text).
+* Stapelaktionen (`app/csvimport/batch.py`): Auswahl (Gruppe, Seite, alle gefilterten, einzeln, Vorauswahl
+  „sicher“), Filter, Vorschau mit Bestandswirkung und Ausschlussgründen, Ausführung genau einmal je Vorschau (Token,
+  Fingerabdruck) in **einer** Transaktion (`commit` dafür in Planung und Anwendung geteilt), Protokoll mit
+  Vorher-Zustand, Rückgängig nur für Unverändertes. Feste Regeln: Dubletten/Ergänzungen nie gebucht, „übernehmen“
+  per Stapel nur für „neu“ ohne Prüfhinweis, Widersprüche/komplexe Fälle/vor Stichtag nur mit Bestätigung,
+  Transfer-Paare nur gemeinsam.
+* Verknüpfen statt verwerfen: Zeilenstatus `linked`; Werte und Abgleich als Quelldatensatz in `tx_link`,
+  Wiedererkennung über `journal_event_alias` (`row:<quelle>|<id>`, bei 1:1-Ereignissen zusätzlich Anbieter-IDs);
+  Anzeige „+n Quellen“ in der Buchungsliste, Teil des Gesamtexports. Fehlt das Ziel später, wird die Zeile wieder
+  geöffnet.
+* Quellenvorrang je Feld nur als begründeter Vorschlag; manuelle Korrekturen gehen vor; nie automatisches
+  Überschreiben. Bearbeitungsreihenfolge „Zuerst prüfen“: neue Quellen und Vorgänge ohne Gegenstück zuerst.
+* Vollständigkeitsbericht je Börsen-Datenquelle (`app/datasources/quality.py`): nachgewiesen / plausibel / nicht
+  verifizierbar aus Belegen der Abrufe; vollständige Abrufe halten Zeitraum, Monate, Vorgänge ohne Zeitpunkt und
+  übernommene, aber nicht mehr gelieferte Vorgänge fest.
+* Migration 13 (additiv): `import_action`, `tx_link`. Bestehende Tabellen und Daten unverändert; ältere Versionen
+  ignorieren die Tabellen. Keine automatische Bereinigung bestehender Daten.
+
+**Tests:** zentraler Regressionsfall Koinly-Transfer ↔ Bitpanda-Auszahlung (Gebühr zusätzlich belegt / nicht
+belegbar / im Betrag enthalten), Vorgänge vor dem Stichtag, Übersicht → Vorschau → Ausführen → Rückgängig, doppeltes
+Absenden, veraltete Vorschau, Auswahl über Seiten und Filter, Wiedererkennung nach vollständigem Neuabruf, Anzeige
+und Gesamtexport samt Neueinrichtung, manuelle Einzahlung ↔ API-Einzahlung, gleiche Beträge mit verschiedenen
+Hashes, falsche Kurs- bzw. Asset-Zuordnung, Zugangsseite eines Transfers zwischen eigenen Wallets, Transfer-Paar nur
+gemeinsam (inkl. Rückgängig), verschwundene Zielbuchung, Teil-Übernahme hält den Stapel offen,
+Vollständigkeitsbericht (Bruch im Saldoverlauf, leerer Monat, Import-Buchung ohne API-Gegenstück, nicht mehr
+gelieferter Vorgang).
+
+**Grenzen:** Alle Tests synthetisch; mit echten Exporten bzw. API-Antworten nicht geprüft. Die Sicherheitsstufen
+sind Regeln, keine kalibrierten Wahrscheinlichkeiten. Ob Koinly Gebühren zusätzlich zum gesendeten Betrag führt, ist
+nicht belegt – geprüft wird, was die Buchung im Ledger bewirkt. Werte der neuen Quelle werden nicht feldweise in
+die vorhandene Buchung übernommen (Korrekturvorschlag + „Bearbeiten“). Der Vollständigkeitsbericht braucht nach dem
+Update einen vollständigen Neuabruf; Lücken vor dem ersten API-Vorgang sind grundsätzlich nicht prüfbar.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
@@ -878,6 +927,9 @@ Buchungen).
   bestehende Daten werden nicht bearbeitet, Auswirkungen nur als Szenario – siehe M17.
 * **Korrekturen aus der Diagnose** (02.10.2026): Empfehlung je Befund, Übernehmen per Knopfdruck nach Vorschau mit
   allen Folgen, Alternativen und eigene Lösung, Rückgängig – weiterhin nichts automatisch; siehe M18.
+* **Importprüfung und Reconciliation** (02.10.2026): Stapelverarbeitung mit Vorschau und Rückgängig, Ergänzungen
+  ohne Überschreiben, Quellenpriorität, Bitpanda-Vollständigkeit; vorhandene Daten nicht verändern, historische
+  Probleme nur als Korrekturvorschlag – siehe M19.
 
 ## Offene Fragen an den Auftraggeber
 

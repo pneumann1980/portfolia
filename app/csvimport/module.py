@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
@@ -41,7 +41,9 @@ GROUPS = ("Börse", "Wallet", "Steuertool", "Portfolia")
 CONF_BADGE = {"hoch": "good", "mittel": "info", "niedrig": "warn"}
 TZ_CHOICES = [("", "wie Format (Standard)"), ("UTC", "UTC"), ("Europe/Berlin", "Europe/Berlin (Ortszeit)")]
 FILTERS = {"": "alle", "new": "neu", "unclear": "ungeklärt", "duplicate": "Dubletten", "invalid": "unvollständig",
-           "before": "vor Stichtag", "known": "bereits vorhanden", "ignored": "ignoriert", "committed": "übernommen"}
+           "before": "vor Stichtag", "known": "bereits vorhanden", "ignored": "ignoriert", "committed": "übernommen",
+           "linked": "verknüpft"}
+CAT_ORDER = {"dublette": 0, "ergaenzung": 1, "neu": 2, "widerspruch": 3, "komplex": 4}
 MAPPING_KINDS = {"trade": "Handel/Tausch", "deposit": "Zugang ohne Ertrag", "withdrawal": "Abgang ohne Kosten",
                  "conversion": "Umstellung (ohne Veräußerung)", "skip": "überspringen",
                  **{f"deposit:{t}": f"Ertrag: {t}" for t in ("staking", "reward", "interest", "lending", "airdrop",
@@ -76,13 +78,40 @@ def _index(request: Request, errors: list[str] | None = None, status_code: int =
         label = prof.label if prof else source_label(b["source"]) if b["kind"] == "sync" else "unbekannt"
         batches.append({"b": b, "summary": summ, "counts": counts, "profile": label,
                         "status": BATCH_STATUS.get(b["status"], b["status"])})
+    queue = _review_queue(ctx, svc, [x for x in batches if x["b"]["status"] in ("preview", "partial")])
     base = ctx.base_portfolio()
     return render(request, "csv_import.html", status_code=status_code, active="journal", errors=errors or [],
                   groups=_profiles_grouped(svc), batches=batches, tz_choices=TZ_CHOICES, form=form or {},
                   accounts=journal_service(ctx).known_accounts(), symbols=svc.symbol_rows(),
                   account_maps=svc.account_rows(), mappings=svc.mapping_profiles(),
                   cutoff=base.valuation_date.isoformat() if base is not None and base.valuation_date else "",
+                  queue=queue,
                   max_mb=MAX_UPLOAD // 1024 // 1024)
+
+
+def _review_queue(ctx: Any, svc: Any, open_batches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bearbeitungsreihenfolge offener Prüf-Stapel: neue Quellen (noch nichts übernommen) und Vorgänge ohne
+    Gegenstück im Bestand zuerst – dort liegen am ehesten fehlende Transaktionen."""
+    out = []
+    for x in open_batches:
+        b = x["b"]
+        cats = {r["cat"] or "": r["n"] for r in ctx.db.q(
+            "SELECT json_extract(messages, '$.match.cat') AS cat, COUNT(*) AS n FROM csv_row WHERE batch_id=? AND "
+            "status IN ('new', 'duplicate', 'unclear', 'invalid') GROUP BY cat", (b["id"],))}
+        gaps = ctx.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status='before' AND "
+                             "json_extract(messages, '$.match.cat')='neu'", (b["id"],), default=0)
+        n_open = sum(cats.values())
+        if not n_open and not gaps:
+            continue
+        source = svc.source_of(b)
+        fresh = not ctx.db.scalar("SELECT COUNT(*) FROM journal_tx WHERE source=? AND status IN ('active', 'merged')",
+                                  (source,), default=0) and not ctx.db.scalar(
+            "SELECT COUNT(*) FROM tx_link WHERE source=? AND status='active'", (source,), default=0)
+        manual = cats.get("widerspruch", 0) + cats.get("komplex", 0) + cats.get("", 0)
+        out.append({**x, "open": n_open, "neu": cats.get("neu", 0), "manual": manual, "gaps": gaps,
+                    "linkable": cats.get("dublette", 0) + cats.get("ergaenzung", 0), "fresh": fresh})
+    out.sort(key=lambda q: (not q["fresh"], -(q["neu"] + q["gaps"]), -q["open"], -int(q["b"]["id"])))
+    return out
 
 
 def _account_info(ctx: Any, svc: Any, b: Any) -> dict[str, Any] | None:
@@ -115,8 +144,20 @@ def _account_info(ctx: Any, svc: Any, b: Any) -> dict[str, Any] | None:
                            "others": sorted(((a, k) for a, k in accs.items() if a != top), key=lambda x: -x[1])[:3]}}
 
 
+def _qs(flt: Any, status: str) -> Any:
+    """Abfrage für Links der Prüfseite: ``qs({...})`` setzt nur die angegebenen Filter (Übersicht),
+    ``qs({...}, keep=True)`` behält die übrigen (Reiter, Seiten)."""
+    def build(extra: dict[str, Any] | None = None, keep: bool = False) -> str:
+        base = {**flt.params(), "status": status} if keep else {}
+        return urlencode({k: v for k, v in {**base, **(extra or {})}.items() if v not in (None, "")})
+    return build
+
+
 def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, errors: list[str] | None = None,
-                msg: str = "") -> HTMLResponse:
+                msg: str = "", filters: Any = None) -> HTMLResponse:
+    from app.csvimport import assess as A
+    from app.csvimport import batch as BA
+
     ctx = get_ctx(request)
     svc = csv_service(ctx)
     b = svc.batch(bid)
@@ -139,15 +180,18 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
                                                             "to_commit": 0, "total": 0, "by_idx": {}, "recon": None,
                                                             "auto_symbols": []}
     rows = list(ov["by_idx"].values())
-    if status == "committed":
-        sel = [rc for rc in rows if rc.status in ("committed", "merged")]
-    elif status:
-        sel = [rc for rc in rows if rc.status == status]
-    else:
-        sel = rows
-    sel.sort(key=lambda rc: (rc.status not in ("invalid", "duplicate"), rc.idx))
+    flt = filters if filters is not None else BA.Filters.parse(request.query_params, FILTERS)
+    flt.status = status
+    sel = [rc for rc in rows if flt.test(rc)]
+    # Gruppen der Übersicht: Dubletten, Ergänzungen, neu, Widersprüche, komplexe Fälle; Erledigtes zuletzt
+    sel.sort(key=lambda rc: (not rc.open or rc.status in ("known", "ignored"), rc.status != "invalid",
+                             CAT_ORDER.get((rc.match or {}).get("cat", ""), 5), rc.idx))
     offset = max(0, offset)
     page = sel[offset:offset + PAGE]
+    chosen = BA.selection(ctx.db, bid, rows) if b["status"] in ("preview", "partial") else set()
+    review = BA.overview(rows)
+    actions = BA.actions(ctx.db, bid)
+    batch_accounts = sorted({a for rc in rows for a in (rc.rec.account, rc.rec.to_account) if a})
     from app.csvimport.compare import build as build_compare
 
     compare = build_compare(ctx, page, "dieser Prüf-Stapel · " + (source_label(b["source"]) if b["kind"] == "sync"
@@ -170,7 +214,13 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         tz_choices=TZ_CHOICES, job=job, job_progress=json.loads(job["progress_json"] or "{}") if job else {},
         acc_map=acc_rows, pair_accepted=pair_accepted, tax_types=TAX_TYPES, groups=_profiles_grouped(svc),
         tx_types=forms.TYPE_LABEL, tag_label=forms.TAG_LABEL,
-        more_url=f"/journal/csv/{bid}?" + urlencode({"status": status, "offset": offset + PAGE}),
+        more_url=f"/journal/csv/{bid}?" + urlencode({**flt.params(), "status": status, "offset": offset + PAGE}),
+        flt=flt, chosen=chosen, review=review, actions=actions, groups_def=BA.GROUPS, batch_accounts=batch_accounts,
+        cat_label=A.CAT_LABEL, cat_badge=A.CAT_BADGE, cat_hint=A.CAT_HINT, conf_label=A.CONF, conf_badge2=A.CONF_BADGE,
+        conflicts=BA.CONFLICTS, action_label=A.ACTION_LABEL, kind_label2=A.KIND_LABEL, group_of=BA.group_of,
+        sel_count=len(chosen), batch_actions=BA.ACTIONS, filtered_n=len(sel),
+        group_state=BA.group_state(rows, chosen), qs=_qs(flt, status),
+        page_idx=[rc.idx for rc in page],
         kind_label=M.KIND_LABEL, source_label=source_label,
         ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
                                                               (b["datasource_id"],))),
@@ -298,8 +348,12 @@ def make_router() -> APIRouter:
         return {k: f.get(k) for k in f}
 
     def _redir(bid: int, f: dict[str, Any], msg: str = "") -> str:
+        from app.csvimport.batch import Filters
+
         q = {k: v for k, v in (("status", f.get("_status") or ""), ("offset", f.get("_offset") or ""),
                                ("msg", msg)) if v}
+        q |= {k: v for k, v in Filters.parse({f"_{k}": f.get(f"_{k}") for k in Filters.KEYS}).params().items()
+              if k != "status"}
         return f"/journal/csv/{bid}" + (f"?{urlencode(q)}" if q else "")
 
     @router.post("/journal/csv/{bid}/options")
@@ -497,6 +551,118 @@ def make_router() -> APIRouter:
         else:
             await run_in_threadpool(svc.set_rows, bid, f)
         return _back(request, _redir(bid, f, "rows"))
+
+    # -- Importprüfung: Auswahl, Vorschau, Stapelaktionen ----------------------------------------------
+    @router.post("/journal/csv/{bid}/select")
+    async def select(request: Request, bid: int) -> Response:
+        """Auswahl ändern: einzelne Zeile (HTMX, Zähler wird aktualisiert), Seite, alle gefilterten, Gruppen der
+        Übersicht, Vorauswahl, leeren."""
+        from app.csvimport import batch as BA
+
+        ctx = get_ctx(request)
+        svc = csv_service(ctx)
+        b = svc.batch(bid)
+        if b is None:
+            raise HTTPException(404)
+        f = await request.form(max_fields=5000)
+        op = str(f.get("op") or "")
+        rows_ = svc.rows(bid)
+        idxs = [int(v) for v in f.getlist("idx") if str(v).isdigit()]
+        on = str(f.get("on") or "") == "1" or (op == "toggle" and "sel" in f)
+        flt = BA.Filters.parse({k: f.get(k) for k in f}, FILTERS)
+        groups = [str(g) for g in f.getlist("grp")]
+        chosen = await run_in_threadpool(BA.change_selection, ctx.db, bid, rows_, op, idxs=idxs, on=on,
+                                         groups=groups, filters=flt)
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"selected": len(chosen)})
+        target = f"/journal/csv/{bid}?" + urlencode({**flt.params(), **({"offset": f.get("_offset")} if
+                                                                         f.get("_offset") else {})}) + "#pruefung"
+        return _back(request, target)
+
+    def _preview(request: Request, bid: int, action: str, force: bool, errors: list[str] | None = None,
+                 status_code: int = 200) -> HTMLResponse:
+        from app.csvimport import assess as A
+        from app.csvimport import batch as BA
+
+        ctx = get_ctx(request)
+        svc = csv_service(ctx)
+        b = svc.batch(bid)
+        if b is None:
+            raise HTTPException(404)
+        if action not in BA.ACTIONS:
+            action = "suggest"
+        if b["status"] not in ("mapping", "reverted"):
+            svc.evaluate(bid)  # wie beim Ausführen: frisch bewerten, sonst wiche der Fingerabdruck ab
+        rows_ = svc.rows(bid)
+        chosen = BA.selection(ctx.db, bid, rows_)
+        plan = BA.plan(svc, bid, action, chosen, force, rows_)
+        return render(request, "csv_preview.html", active="journal", b=b, plan=plan, action=action, force=force,
+                      actions=BA.ACTIONS, effect_label=BA.EFFECT_LABEL, token=BA.new_token(),
+                      fingerprint=plan.fingerprint(), selected=len(chosen), errors=errors or [],
+                      cat_label=A.CAT_LABEL, cat_badge=A.CAT_BADGE, conf_badge2=A.CONF_BADGE,
+                      tx_types=forms.TYPE_LABEL, tag_label=forms.TAG_LABEL, kind_label=M.KIND_LABEL,
+                      status_code=status_code)
+
+    @router.get("/journal/csv/{bid}/preview", response_class=HTMLResponse)
+    def preview(request: Request, bid: int, action: str = "suggest", force: str = "") -> HTMLResponse:
+        return _preview(request, bid, action, force == "1")
+
+    @router.post("/journal/csv/{bid}/execute")
+    async def execute(request: Request, bid: int) -> Response:
+        from app.csvimport import batch as BA
+
+        ctx = get_ctx(request)
+        svc = csv_service(ctx)
+        if svc.batch(bid) is None:
+            raise HTTPException(404)
+        f = await _form(request)
+        action = str(f.get("action") or "")
+        force = str(f.get("force") or "") == "1"
+        chosen = BA.selection(ctx.db, bid, svc.rows(bid))
+        res = await run_in_threadpool(BA.execute, svc, bid, action, chosen, token=str(f.get("token") or ""),
+                                      fingerprint=str(f.get("fingerprint") or ""), force=force)
+        if res.get("errors"):
+            return _preview(request, bid, action, force, res["errors"], 409)
+        return _back(request, f"/journal/csv/{bid}?" + urlencode({"msg": "action", "a": res["action_id"]})
+                     + "#verlauf")
+
+    @router.post("/journal/csv/{bid}/row-action")
+    async def row_action(request: Request, bid: int) -> Response:
+        """Einzelaktion an einer Zeile (nach Prüfung des Vergleichs): verknüpfen bzw. übernehmen – ausdrücklich
+        gewählt, deshalb auch bei Abweichungen; mit Protokoll und Rückgängig wie eine Stapelaktion."""
+        from app.csvimport import batch as BA
+
+        ctx = get_ctx(request)
+        svc = csv_service(ctx)
+        if svc.batch(bid) is None:
+            raise HTTPException(404)
+        f = await _form(request)
+        action, _, idx = str(f.get("row_action") or "").partition(":")
+        if action not in ("link", "include") or not idx.isdigit():
+            raise HTTPException(400)
+        await run_in_threadpool(svc.set_rows, bid, f)  # übrige Eingaben der Seite nicht verlieren
+        rows_ = svc.rows(bid)
+        p = BA.plan(svc, bid, action, {int(idx)}, True, rows_)
+        res = await run_in_threadpool(BA.execute, svc, bid, action, {int(idx)}, token=BA.new_token(),
+                                      fingerprint=p.fingerprint(), force=True, params={"single": True})
+        if res.get("errors"):
+            reason = p.items[0].note if p.items else ""
+            return _batch_page(request, bid, errors=[*res["errors"], *([reason] if reason else [])])
+        return _back(request, _redir(bid, f, "action"))
+
+    @router.post("/journal/csv/{bid}/actions/{aid}/undo")
+    async def undo_action(request: Request, bid: int, aid: int) -> Response:
+        from app.csvimport import batch as BA
+
+        svc = csv_service(get_ctx(request))
+        a = svc.db.q1("SELECT batch_id FROM import_action WHERE id=?", (aid,))
+        if a is None or int(a["batch_id"]) != bid:
+            raise HTTPException(404)
+        res = await run_in_threadpool(BA.undo, svc, aid)
+        if res.get("errors"):
+            return _batch_page(request, bid, errors=res["errors"])
+        q = {"msg": "undo", "r": res["restored"], "c": res["changed"], "t": res["reverted"]}
+        return _back(request, f"/journal/csv/{bid}?{urlencode(q)}#verlauf")
 
     @router.post("/journal/csv/{bid}/commit")
     async def commit(request: Request, bid: int) -> Response:

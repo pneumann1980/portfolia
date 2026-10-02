@@ -1,0 +1,23 @@
+{# Verknüpfte Quelldatensätze einer Buchung (tx_link): derselbe Vorgang aus weiteren Quellen – mit deren Werten und
+   Herkunft. Die Buchung selbst bleibt unverändert. #}
+{% macro links_block(lst, source_label) -%}
+{%- if lst -%}
+<details class="links assess"><summary>Weitere Quellen dieses Vorgangs ({{ lst|length }}) – verknüpft, die Buchung selbst ist unverändert</summary>
+  <ul class="plain assess-list">
+  {% for l in lst %}{% set r = l.record %}{% set a = l.assessment or {} %}
+    <li><b>{{ source_label(l.source) }}</b>{% if l.role and l.role != 'same' %} · {{ {'out': 'Abgangsseite', 'in': 'Zugangsseite', 'part': 'Teil'}.get(l.role, l.role) }}{% endif %}
+      {% if r.ts %} · {{ r.ts|datetime_de }}{% endif %}
+      {% if r.out %} · −{{ r.out[2]|qty }} {{ r.out[1] }}{% endif %}{% if r.inn %} · +{{ r.inn[2]|qty }} {{ r.inn[1] }}{% endif %}
+      {% if r.fee %} · Gebühr {{ r.fee[1]|qty }} {{ r.fee[0] }}{% if r.fee_basis %} ({{ {'extra': 'zusätzlich belastet, belegt', 'inside': 'im Betrag enthalten, belegt', 'open': 'Belastung nicht belegbar'}.get(r.fee_basis, r.fee_basis) }}){% endif %}{% endif %}
+      {% if r.value_eur %} · {{ r.value_eur|eur }}{% if r.value_src %} <span class="hint">({{ r.value_src }})</span>{% endif %}{% endif %}
+      {% if r.hash %} · Hash <span class="mono">{{ r.hash[:10] }}…</span>{% endif %}
+      {% if r.ext_id %}<div class="hint mono wrap-any">{{ r.ext_id }}</div>{% endif %}
+      <div class="hint">verknüpft {{ l.created_at|datetime_de }}{% if a.cat %} · {{ {'dublette': 'Dublette', 'ergaenzung': 'Ergänzung', 'widerspruch': 'mit Abweichungen', 'komplex': 'komplexe Zuordnung'}.get(a.cat, a.cat) }}{% endif %}{% if l.batch_id %} · <a href="/journal/csv/{{ l.batch_id }}#verlauf">Prüf-Stapel</a>{% endif %}</div>
+      {% for d in (a.diff or [])[:3] %}<div class="hint">{{ '≠' if d.sev == 'relevant' else '~' }} {{ d.t }}</div>{% endfor %}
+      {% if a.fee and a.fee.state != 'ok' %}<div class="hint">Gebühr: {{ a.fee.t }}</div>{% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</details>
+{%- endif -%}
+{%- endmacro %}

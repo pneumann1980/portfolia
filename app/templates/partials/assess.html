@@ -1,0 +1,42 @@
+{# Abgleich einer Prüfzeile (Bewertung aus app/csvimport/assess.py): Ergebnis, Sicherheit, Belege, Abweichungen,
+   Ergänzungen, Gebührenprüfung, Quellenvorrang, Korrekturvorschläge. Nur Anzeige. #}
+{% set CAT_LABEL = {"dublette": "Eindeutige Dublette", "ergaenzung": "Ergänzende Informationen", "neu": "Neue Transaktion",
+                    "widerspruch": "Widersprüchlich / unklar", "komplex": "Komplexe Zuordnung"} %}
+{% set CAT_BADGE = {"dublette": "", "ergaenzung": "info", "neu": "good", "widerspruch": "warn", "komplex": "warn"} %}
+{% set CONF_BADGE = {"sicher": "good", "hoch": "good", "mittel": "info", "niedrig": "warn"} %}
+{% set ROLE_LABEL = {"same": "ganze Buchung", "out": "Abgangsseite", "in": "Zugangsseite", "part": "Teil"} %}
+{% set KIND = {"exchange": "Börse", "chain": "Blockchain/Wallet", "taxtool": "Steuertool", "manual": "manuell",
+               "app": "Portfolia", "plan": "Sparplan", "reconstructed": "rekonstruiert", "import": "kuratierter Import"} %}
+
+{% set CAT_SHORT = {"dublette": "Dublette", "ergaenzung": "Ergänzung", "neu": "Neu", "widerspruch": "Widerspruch",
+                     "komplex": "Komplex"} %}
+{% macro badges(m) -%}
+  {%- if m -%}<span class="badge {{ CAT_BADGE.get(m.cat, '') }}" title="Ergebnis des Abgleichs: {{ CAT_LABEL.get(m.cat, m.cat) }}">{{ CAT_SHORT.get(m.cat, m.cat) }}</span>
+  <span class="badge {{ CONF_BADGE.get(m.conf, '') }}" title="Sicherheit (qualitativ)">{{ m.conf }}</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro summary(m) -%}
+  {%- if m -%}
+  {%- set rel = (m.diff or [])|selectattr('sev', 'equalto', 'relevant')|list -%}
+  <div class="hint assess-why">{{ m.why }}{% if m.target %} · {{ m.target }}{% if m.role and m.role != 'same' %} ({{ ROLE_LABEL.get(m.role, m.role) }}){% endif %}{% endif %}</div>
+  {%- for d in rel[:2] %}<div class="hint assess-diff">≠ {{ d.t }}</div>{% endfor -%}
+  {%- if m.fee and m.fee.state in ('conflict', 'open') %}<div class="hint assess-fee {{ m.fee.state }}">Gebühr: {{ 'Widerspruch' if m.fee.state == 'conflict' else 'nicht belegbar' }}</div>{% endif -%}
+  {%- for h in (m.hints or [])[:2] %}<div class="hint">{{ h }}</div>{% endfor -%}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro detail(m, open=false) -%}
+{%- if m and (m.ok or m.diff or m.add or m.fee or m.fix) -%}
+<details class="assess"{% if open %} open{% endif %}><summary>Abgleich: {{ CAT_LABEL.get(m.cat, m.cat) }} · Sicherheit {{ m.conf }}{% if m.diff %} · {{ m.diff|length }} Abweichung{{ 'en' if m.diff|length != 1 }}{% endif %}{% if m.add %} · {{ m.add|length }} Ergänzung{{ 'en' if m.add|length != 1 }}{% endif %}</summary>
+  <ul class="plain assess-list">
+    {% for t in m.ok %}<li class="ok"><span aria-hidden="true">✓</span> {{ t }}</li>{% endfor %}
+    {% for d in m.diff %}<li class="{{ 'rel' if d.sev == 'relevant' else 'minor' }}"><span aria-hidden="true">{{ '≠' if d.sev == 'relevant' else '~' }}</span> {{ d.t }}{% if d.sev != 'relevant' %} <span class="hint">(gering)</span>{% endif %}</li>{% endfor %}
+    {% for a in m.add %}<li class="add"><span aria-hidden="true">+</span> ergänzt: {{ a.t }}{% if a.pref == 'new' %} <span class="hint">(Vorrang dieser Quelle)</span>{% endif %}</li>{% endfor %}
+    {% if m.fee %}<li class="fee {{ m.fee.state }}"><span aria-hidden="true">{{ '✓' if m.fee.state == 'ok' else '?' if m.fee.state == 'open' else '≠' }}</span> Gebührenprüfung: {{ m.fee.t }}</li>{% endif %}
+    {% for p in m.prio or [] %}<li class="prio"><span aria-hidden="true">↑</span> Vorrang {{ p.t }} – vorhandene Buchung bleibt unverändert</li>{% endfor %}
+    {% for f in m.fix or [] %}<li class="fix"><span aria-hidden="true">→</span> Korrekturvorschlag (nicht automatisch): {{ f }}</li>{% endfor %}
+  </ul>
+  {% if m.src %}<p class="hint">Quellen: neu {{ KIND.get(m.src.new, m.src.new) }} · vorhanden {{ KIND.get(m.src.old, m.src.old) }}{% if m.src.old_manual %} (in der App korrigiert bzw. manuell – hat Vorrang){% endif %}</p>{% endif %}
+</details>
+{%- endif -%}
+{%- endmacro %}

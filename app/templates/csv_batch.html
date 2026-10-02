@@ -4,8 +4,9 @@
 {% macro leg(acc, asset, q, sign) -%}
   {%- if asset %}<span class="nowrap">{{ sign }}{{ q|qty }} {{ asset }}</span>{% if acc %}<div class="hint">{{ acc }}</div>{% endif %}{% else %}–{% endif -%}
 {%- endmacro %}
-{% macro hidden_nav() -%}<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="_status" value="{{ status }}"><input type="hidden" name="_offset" value="{{ offset }}">{%- endmacro %}
+{% macro hidden_nav() -%}<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="_status" value="{{ status }}"><input type="hidden" name="_offset" value="{{ offset }}">{% for k, v in flt.params().items() if k != 'status' %}<input type="hidden" name="_{{ k }}" value="{{ v }}">{% endfor %}{%- endmacro %}
 {% import "partials/compare.html" as cmpm with context %}
+{% import "partials/assess.html" as am %}
 {% set open = b.status in ('preview', 'partial', 'committed') %}
 {% set committed_n = ov.counts.get('committed', 0) + ov.counts.get('merged', 0) %}
 {% block content %}
@@ -15,6 +16,8 @@
 {% elif msg == 'reverted' %}<div class="alert good"><span class="icon">✓</span><div>Import rückgängig gemacht – die Buchungen dieses Imports zählen nicht mehr.</div></div>
 {% elif msg == 'prices' %}<div class="alert good"><span class="icon">✓</span><div>Kurse geladen und Werte neu ermittelt.</div></div>
 {% elif msg == 'account' %}<div class="alert good"><span class="icon">✓</span><div>Konto geändert und neu ausgewertet.</div></div>
+{% elif msg == 'action' %}<div class="alert good"><span class="icon">✓</span><div>Stapelaktion ausgeführt und protokolliert – im <a href="#verlauf">Verlauf</a> jederzeit rückgängig zu machen.</div></div>
+{% elif msg == 'undo' %}<div class="alert good"><span class="icon">✓</span><div>Rückgängig gemacht: {{ request.query_params.get('r', '0') }} Zeilen zurückgesetzt{% if request.query_params.get('t', '0') != '0' %}, {{ request.query_params.get('t') }} Buchungen zurückgenommen{% endif %}{% if request.query_params.get('c', '0') != '0' %}; {{ request.query_params.get('c') }} seitdem geänderte Zeilen blieben unverändert{% endif %}.</div></div>
 {% elif msg %}<div class="alert good"><span class="icon">✓</span><div>Gespeichert und neu ausgewertet.</div></div>{% endif %}
 
 <section class="card">
@@ -73,6 +76,38 @@
       <button class="btn sm ghost" type="submit">Wechseln</button></form>{% endif %}
   </details>{% endif %}
 </section>
+
+{% if b.status in ('preview', 'partial') and (review.total or review.before or review.known) %}{% set gs = group_state %}
+<section class="card review" style="margin-top:16px" id="pruefung">
+  <div class="card-head"><h2>Vorschlag: Importprüfung</h2><span class="badge {{ 'warn' if review.total else 'good' }}">{{ review.total }} zu entscheiden</span></div>
+  <p class="hint">Abgleich je Zeile über Kennung, Blockchain-Hash, Konto, Asset, Menge, Gebühr, Zeitpunkt und Art – gleiche Beträge oder Zeitpunkte allein gelten nie als derselbe Vorgang. Verknüpfen bucht nichts: die vorhandene Buchung bleibt unverändert, die Angaben dieser Quelle bleiben mit Herkunft an ihr erhalten.</p>
+  <div class="review-stats">
+    <a href="?{{ qs({'cat': 'dublette'}) }}#zeilen"><b>{{ review.groups.dublette }}</b><span>Eindeutige Dubletten</span></a>
+    <a href="?{{ qs({'cat': 'ergaenzung'}) }}#zeilen"><b>{{ review.groups.ergaenzung }}</b><span>Ergänzungen</span></a>
+    <a href="?{{ qs({'cat': 'neu'}) }}#zeilen"><b>{{ review.groups.neu }}</b><span>Neu</span></a>
+    <a href="?{{ qs({'cat': 'manuell'}) }}#zeilen"><b>{{ review.groups.manuell }}</b><span>Manuell prüfen</span></a>
+  </div>
+  <div class="review-groups">
+  {% for g, (title, hint) in groups_def.items() %}{% set st = gs[g] %}
+    <form method="post" action="/journal/csv/{{ b.id }}/select" class="review-group">{{ hidden_nav() }}<input type="hidden" name="op" value="group"><input type="hidden" name="grp" value="{{ g }}">
+      <label class="check"><input type="checkbox" name="on" value="1" data-autosubmit {% if st[1] and st[0] == st[1] %}checked{% endif %} {% if not st[1] %}disabled{% endif %}>
+        <span><b>{{ title }} ({{ st[1] }})</b>{% if st[0] and st[0] < st[1] %} <span class="badge">{{ st[0] }} von {{ st[1] }} ausgewählt</span>{% endif %}<span class="hint">{{ hint }}</span></span></label>
+      <noscript><button class="btn sm ghost" type="submit">Übernehmen</button></noscript></form>
+  {% endfor %}
+    <div class="review-group manual"><span class="check-pad" aria-hidden="true">!</span><span><b>Manuell prüfen ({{ gs.manuell[1] }})</b><span class="hint">{% for r, n in review.reasons.items() %}{{ r }}: {{ n }}{{ ' · ' if not loop.last }}{% else %}nichts offen{% endfor %}{% if gs.manuell[1] %} – <a href="?{{ qs({'cat': 'manuell'}) }}#zeilen">einzeln ansehen</a>{% endif %}</span></span></div>
+  </div>
+  <div class="row review-foot">
+    <form method="post" action="/journal/csv/{{ b.id }}/select" class="inline">{{ hidden_nav() }}<input type="hidden" name="op" value="groups">{% for g in groups_def %}<input type="hidden" name="grp" value="{{ g }}">{% endfor %}<button class="btn sm ghost" type="submit">Alle auswählen</button></form>
+    <form method="post" action="/journal/csv/{{ b.id }}/select" class="inline">{{ hidden_nav() }}<input type="hidden" name="op" value="safe"><button class="btn sm ghost" type="submit" title="Dubletten und Ergänzungen mit hoher Sicherheit">Vorauswahl</button></form>
+    <form method="post" action="/journal/csv/{{ b.id }}/select" class="inline">{{ hidden_nav() }}<input type="hidden" name="op" value="none"><button class="btn sm ghost" type="submit">Leeren</button></form>
+    <span class="sel-info"><b class="sel-count">{{ sel_count }}</b> ausgewählt <span class="hint">– einzelne Zeilen in der Liste zusätzlich ab- bzw. anwählbar</span></span>
+    <a class="btn primary" href="/journal/csv/{{ b.id }}/preview?action=suggest">Vorschau</a>
+  </div>
+  {% if review.before or review.known or review.linked %}<p class="hint" style="margin-top:8px">
+    {% if review.known %}{{ review.known }} Vorgänge automatisch als vorhanden erkannt (gleiche Kennung bzw. Blockchain-Transaktion).{% endif %}
+    {% if review.linked %}{{ review.linked }} verknüpft.{% endif %}
+    {% if review.before %}Vor dem Stichtag {{ review.before }} Vorgänge: {{ review.before_found }} im Bestand gefunden{% if review.before_gaps %}, <a href="?{{ qs({'status': 'before', 'cat': 'neu'}) }}#zeilen"><b>{{ review.before_gaps }} nicht gefunden</b></a> – mögliche Lücken im kuratierten Import (nur Hinweis; übernehmen nur ausdrücklich){% endif %}.{% endif %}</p>{% endif %}
+</section>{% endif %}
 
 {% macro map_row(u) -%}
 {% set token = '@' in u.symbol and not u.provider %}{% set base = u.symbol.split('@')[0].split(';')[0] %}{% set kc = known_coins.get(base) if not token else none %}{% set i = u.i %}{% set s = sugg.get(u.symbol) %}{% set security = u.hint == 'security' %}
@@ -210,13 +245,34 @@
 <section class="card" style="margin-top:16px" id="zeilen">
   <div class="card-head"><h2>Vorschau <span class="badge">{{ total_sel }}</span></h2>
     {% if b.status in ('preview', 'partial') %}<form method="post" action="/journal/csv/{{ b.id }}/commit" class="inline" data-confirm="{{ ov.to_commit }} Buchungen übernehmen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit" {% if not ov.to_commit %}disabled{% endif %}>{{ ov.to_commit }} Buchung{{ 'en' if ov.to_commit != 1 }} übernehmen</button></form>{% endif %}</div>
-  <nav class="tabs" aria-label="Status">{% for k, l in filters.items() %}{% set n = (ov.counts.get('committed', 0) + ov.counts.get('merged', 0)) if k == 'committed' else (ov.total if not k else ov.counts.get(k, 0)) %}{% if n or not k or k == status %}<a class="{{ 'active' if status == k }}" href="/journal/csv/{{ b.id }}{% if k %}?status={{ k }}{% endif %}">{{ l }} <span class="badge">{{ n }}</span></a>{% endif %}{% endfor %}</nav>
+  <nav class="tabs" aria-label="Status">{% for k, l in filters.items() %}{% set n = (ov.counts.get('committed', 0) + ov.counts.get('merged', 0)) if k == 'committed' else (ov.total if not k else ov.counts.get(k, 0)) %}{% if n or not k or k == status %}<a class="{{ 'active' if status == k }}" href="/journal/csv/{{ b.id }}?{{ qs({'status': k}, keep=True) }}#zeilen">{{ l }} <span class="badge">{{ n }}</span></a>{% endif %}{% endfor %}</nav>
+  <form method="get" action="/journal/csv/{{ b.id }}" class="filters">{% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+    <label class="field">Ergebnis<select name="cat"><option value="">alle</option>{% for k, l in cat_label.items() %}<option value="{{ k }}" {% if flt.cat == k %}selected{% endif %}>{{ l }}</option>{% endfor %}<option value="manuell" {% if flt.cat == 'manuell' %}selected{% endif %}>manuell prüfen</option></select></label>
+    <label class="field">Sicherheit<select name="conf"><option value="">alle</option>{% for k in conf_label %}<option value="{{ k }}" {% if flt.conf == k %}selected{% endif %}>{{ k }}</option>{% endfor %}</select></label>
+    <label class="field">Abweichung<select name="conflict"><option value="">alle</option>{% for k, l in conflicts.items() %}<option value="{{ k }}" {% if flt.conflict == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="field">Entscheidung<select name="dec"><option value="">alle</option><option value="open" {% if flt.dec == 'open' %}selected{% endif %}>offen</option><option value="include" {% if flt.dec == 'include' %}selected{% endif %}>ja</option><option value="skip" {% if flt.dec == 'skip' %}selected{% endif %}>nein</option></select></label>
+    {% if batch_accounts|length > 1 %}<label class="field">Konto/Wallet<select name="acc"><option value="">alle</option>{% for a in batch_accounts %}<option value="{{ a }}" {% if flt.acc == a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>{% endif %}
+    <label class="field">von<input type="date" name="frm" value="{{ flt.frm }}"></label>
+    <label class="field">bis<input type="date" name="to" value="{{ flt.to }}"></label>
+    <div class="filters-go"><button class="btn sm" type="submit">Filtern</button>{% if flt.extra %} <a class="btn sm ghost" href="/journal/csv/{{ b.id }}{% if status %}?status={{ status }}{% endif %}#zeilen">Filter zurücksetzen</a>{% endif %}</div>
+  </form>
+  {% if b.status in ('preview', 'partial') and rows %}
+  <div class="row sel-bar">
+    <form method="post" action="/journal/csv/{{ b.id }}/select" class="inline">{{ hidden_nav() }}<input type="hidden" name="op" value="page"><input type="hidden" name="on" value="1">{% for i in page_idx %}<input type="hidden" name="idx" value="{{ i }}">{% endfor %}<button class="btn sm ghost" type="submit">Diese Seite auswählen</button></form>
+    <form method="post" action="/journal/csv/{{ b.id }}/select" class="inline">{{ hidden_nav() }}<input type="hidden" name="op" value="page"><input type="hidden" name="on" value="0">{% for i in page_idx %}<input type="hidden" name="idx" value="{{ i }}">{% endfor %}<button class="btn sm ghost" type="submit">Seite abwählen</button></form>
+    {% if filtered_n > rows|length or flt.extra or status %}
+    <form method="post" action="/journal/csv/{{ b.id }}/select" class="inline">{{ hidden_nav() }}<input type="hidden" name="op" value="filtered"><input type="hidden" name="on" value="1">{% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}{% for k, v in flt.params().items() if k != 'status' %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}<button class="btn sm ghost" type="submit">Alle {{ filtered_n }} gefilterten auswählen</button></form>
+    <form method="post" action="/journal/csv/{{ b.id }}/select" class="inline">{{ hidden_nav() }}<input type="hidden" name="op" value="filtered"><input type="hidden" name="on" value="0">{% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}{% for k, v in flt.params().items() if k != 'status' %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}<button class="btn sm ghost" type="submit">gefilterte abwählen</button></form>
+    {% endif %}
+    <span class="sel-info"><b class="sel-count">{{ sel_count }}</b> ausgewählt</span>
+    <a class="btn sm primary" href="/journal/csv/{{ b.id }}/preview?action=suggest">Vorschau</a>
+  </div>{% endif %}
   {% if rows %}
   <form method="post" action="/journal/csv/{{ b.id }}/rows">{{ hidden_nav() }}
   <div class="table-wrap cards-wrap"><table class="compact cards journal">
     <thead><tr><th class="num">Zeile</th><th>Datum</th><th>Vorgang</th><th>Abgang</th><th>Zugang</th><th class="num">Gebühr</th><th class="num">EUR-Wert</th><th>Status</th><th>Übernehmen</th></tr></thead>
-    <tbody>{% for rc in rows %}{% set r = rc.row %}{% set cmp = compare.get(rc.idx) %}
-      <tr{% if cmp %} class="has-compare"{% endif %}><td class="num" data-label="Zeile">{{ rc.line }}</td>
+    <tbody>{% for rc in rows %}{% set r = rc.row %}{% set cmp = compare.get(rc.idx) %}{% set m = rc.match %}
+      <tr{% if cmp or m %} class="has-compare"{% endif %}><td class="num sel" data-label="Zeile"><label class="sel-line">{% if b.status in ('preview', 'partial') and rc.open and rc.status != 'ignored' %}<input type="checkbox" value="{{ rc.idx }}" data-select-url="/journal/csv/{{ b.id }}/select" {% if rc.idx in chosen %}checked{% endif %} aria-label="Zeile {{ rc.line }} auswählen">{% endif %}<span>{{ rc.line }}</span></label></td>
         <td class="nowrap" data-label="Datum">{% if rc.rec.ts_missing %}<span class="badge warn" title="Die Quelle liefert keinen Zeitpunkt – die Zeile wird nicht gebucht.">Zeitpunkt fehlt</span>{% else %}{{ rc.ts|datetime_de }}{% endif %}</td>
         <td data-label="Vorgang">{% if r %}{{ tx_types.get(r.type, r.type) }}{% if r.tag %} · {{ tag_label.get(r.tag, r.tag) }}{% endif %}{% else %}{{ kind_label.get(rc.rec.kind, rc.rec.kind) }}{% endif %}
           {% if rc.rec.label %}<div class="hint" title="{{ rc.rec.label }}">{{ rc.rec.label|truncate(34, true, '…', 0) }}</div>{% endif %}{% if rc.rec.note %}<div class="hint" title="{{ rc.rec.note }}">{{ rc.rec.note|truncate(48, true, '…', 0) }}</div>{% endif %}
@@ -238,19 +294,21 @@
         <td class="num" data-label="EUR-Wert">{% if r and r.value_eur %}{{ r.value_eur|eur }}{% if rc.value_src %}<div class="hint wrap">{{ rc.value_src }}</div>{% endif %}{% else %}–{% endif %}
           {% if rc.open and r and (rc.missing_value or rc.value_in) %}<input type="text" name="val_{{ rc.idx }}" value="{{ rc.value_in or '' }}" inputmode="decimal" placeholder="Wert in €" aria-label="EUR-Wert" style="max-width:8em">{% endif %}</td>
         <td data-label="Status"><span class="badge {{ status_badge.get(rc.status, '') }}">{{ status_label.get(rc.status, rc.status) }}</span>{% if rc.tx_id %} <span class="mono hint">{{ rc.tx_id }}</span>{% endif %}
+          {% if m and rc.open %}<div class="assess-badges">{{ am.badges(m) }}</div>{{ am.summary(m) }}{% endif %}
           {% if rc.pair_ref %}<div><span class="badge {{ 'good' if pair_accepted(rc) else '' }}">Transfer{{ '' if pair_accepted(rc) else '?' }}</span></div>{% endif %}
           {% for e in rc.errors %}<div class="hint"{% if rc.status != 'before' %} style="color:var(--crit-ink)"{% endif %}>{{ 'Zum Übernehmen fehlt: ' if rc.status == 'before' }}{{ e }}</div>{% endfor %}
           {% for w in rc.warnings %}<div class="hint">{{ w }}</div>{% endfor %}</td>
-        <td data-label="Übernehmen">{% if rc.open and (rc.status in ('new', 'duplicate') or rc.status == 'before' and not rc.errors) %}<select name="dec_{{ rc.idx }}" aria-label="Zeile {{ rc.line }} übernehmen">
+        <td class="decide" data-label="Übernehmen">{% if rc.open and (rc.status in ('new', 'duplicate') or rc.status == 'before' and not rc.errors) %}<select name="dec_{{ rc.idx }}" aria-label="Zeile {{ rc.line }} übernehmen">
             <option value="" {% if rc.decision is none %}selected{% endif %}>auto: {{ 'ja' if rc.default_include else 'nein' }}</option>
             <option value="include" {% if rc.decision == 'include' %}selected{% endif %}>ja</option>
             <option value="skip" {% if rc.decision == 'skip' %}selected{% endif %}>nein</option></select>
           {% elif rc.open %}–{% else %}✓{% endif %}
+          {% if b.status in ('preview', 'partial') and m and rc.open and m.target and m.action != none and rc.status in ('duplicate', 'known', 'before') %}<div><button class="btn sm ghost" type="submit" formaction="/journal/csv/{{ b.id }}/row-action" name="row_action" value="link:{{ rc.idx }}" title="Nicht buchen; Kennung und Angaben dieser Quelle an {{ m.target }} festhalten (Rückgängig im Verlauf)">verknüpfen</button></div>{% endif %}
           {% if b.kind == 'sync' and rc.open and rc.rec.event_key %}
             {% if rc.status in ('unclear', 'duplicate', 'new', 'invalid', 'before') %}<div><button class="btn sm ghost" type="submit" formaction="/journal/csv/{{ b.id }}/ignore" name="ignore" value="{{ rc.rec.event_key }}" title="Dieser Vorgang wird bei keinem Abruf mehr zur Prüfung vorgelegt (Entscheidung gespeichert, jederzeit aufhebbar).">dauerhaft ignorieren</button></div>
             {% elif rc.status == 'ignored' and rc.warnings and rc.warnings[0].startswith('dauerhaft ignoriert') %}<div><button class="btn sm ghost" type="submit" formaction="/journal/csv/{{ b.id }}/ignore" name="release" value="{{ rc.rec.event_key }}">Ignorieren aufheben</button></div>{% endif %}
           {% endif %}</td></tr>
-      {% if cmp %}<tr class="dup-row"><td colspan="9" class="wide">{{ cmpm.compare_block(cmp, rc.status == 'duplicate') }}</td></tr>{% endif %}
+      {% if cmp or (m and rc.open and (m.ok or m.diff or m.add or m.fee)) %}<tr class="dup-row"><td colspan="9" class="wide">{% if m and rc.open %}{{ am.detail(m, m.cat in ('widerspruch', 'komplex') and rc.status == 'duplicate') }}{% endif %}{% if cmp %}{{ cmpm.compare_block(cmp, rc.status == 'duplicate') }}{% endif %}</td></tr>{% endif %}
     {% endfor %}</tbody>
   </table></div>
   <div class="row" style="margin-top:8px;justify-content:space-between">
@@ -266,6 +324,21 @@
   {% else %}<p class="hint">Keine Zeilen{% if status %} mit diesem Status{% endif %}.</p>{% endif %}
 </section>
 
+{% if actions %}
+<section class="card" style="margin-top:16px" id="verlauf">
+  <div class="card-head"><h2>Verlauf der Stapelaktionen</h2></div>
+  <p class="hint">Jede Aktion ist mit dem Vorher-Zustand protokolliert. Rückgängig setzt nur zurück, was seitdem unverändert ist; übernommene Buchungen werden wie beim Rückgängigmachen eines Imports zurückgenommen.</p>
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>Zeitpunkt</th><th>Aktion</th><th>Wirkung</th><th>Status</th><th></th></tr></thead>
+    <tbody>{% for a in actions %}{% set su = a.summary %}
+      <tr><td data-label="Zeitpunkt" class="nowrap">{{ a.created_at|datetime_de }}</td><td data-label="Aktion">{{ a.label }}</td>
+        <td data-label="Wirkung">{% for k, n in (su.counts or {}).items() %}{{ n }} {{ {'link': 'verknüpft', 'include': 'zum Übernehmen', 'skip': 'ausgelassen', 'ignore': 'ignoriert', 'reset': 'zurückgesetzt'}.get(k, k) }}{{ ', ' if not loop.last }}{% endfor %}{% if su.created %} · {{ su.created }} Buchungen{% endif %}{% if su.excluded %} · {{ su.excluded }} ausgeschlossen{% endif %}</td>
+        <td data-label="Status"><span class="badge {{ '' if a.status == 'undone' else 'good' }}">{{ 'rückgängig gemacht' if a.status == 'undone' else 'ausgeführt' }}</span>{% if a.undone_at %}<div class="hint">{{ a.undone_at|datetime_de }}</div>{% endif %}</td>
+        <td>{% if a.status == 'active' %}<form method="post" action="/journal/csv/{{ b.id }}/actions/{{ a.id }}/undo" class="inline" data-confirm="Diese Stapelaktion rückgängig machen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>{% endif %}
+
 <section class="card" style="margin-top:16px">
   <div class="card-head"><h2>Import verwalten</h2></div>
   <div class="row" style="gap:8px;flex-wrap:wrap">
@@ -274,7 +347,7 @@
     {% elif b.status == 'reverted' %}
     <form method="post" action="/journal/csv/{{ b.id }}/reopen" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Erneut als Vorschau öffnen</button></form>
     {% endif %}
-    {% if not committed_n %}<form method="post" action="/journal/csv/{{ b.id }}/discard" class="inline" data-confirm="{{ 'Diesen Abruf verwerfen? Seine Vorgänge liefert die Datenquelle erst nach „Abrufstand zurücksetzen“ erneut.' if b.kind == 'sync' else 'Diesen Import samt Originaldatei verwerfen?' }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Verwerfen</button></form>{% endif %}
+    {% if not committed_n %}<form method="post" action="/journal/csv/{{ b.id }}/discard" class="inline" data-confirm="{{ 'Diesen Abruf verwerfen? Seine Vorgänge liefert die Datenquelle erst nach „Abrufstand zurücksetzen“ erneut.' if b.kind == 'sync' else 'Diesen Import samt Originaldatei verwerfen?' }}{% if review.linked %} Verknüpfungen ({{ review.linked }}) bleiben mit ihren Werten an den Buchungen erhalten.{% endif %}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Verwerfen</button></form>{% endif %}
     <a class="btn ghost" href="/journal/csv">Zurück zur Übersicht</a>
   </div>
   <p class="hint">Übernommene Buchungen erscheinen unter „Buchungen“ mit der Quelle „{{ 'Datenquelle' if b.kind == 'sync' else 'CSV' }}“ und lassen sich dort einzeln bearbeiten oder löschen. Der Gesamtexport und die automatischen ZIP-Sicherungen enthalten sie im einheitlichen Format.</p>

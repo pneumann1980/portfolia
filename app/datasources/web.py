@@ -92,7 +92,17 @@ def _form_page(request: Request, data: dict[str, Any], errors: list[str], sid: i
                   script_types=SCRIPT_TYPES, gap_default=GAP_DEFAULT, groups=groups,
                   provider_keys={k["id"]: k for k in svc.provider_keys()},
                   holdings=svc.holdings(ds) if ds is not None and (ds.is_wallet or svc.balances(int(ds.id))) else None,
-                  outdated=svc.outdated(int(ds.id)) if ds is not None else 0)
+                  outdated=svc.outdated(int(ds.id)) if ds is not None else 0, quality=_quality(ctx, ds))
+
+
+def _quality(ctx: Any, ds: Any) -> Any:
+    from app.datasources.quality import report
+
+    try:
+        return report(ctx, ds)
+    except Exception:  # Bericht ist Zusatzinformation – die Seite muss immer laden
+        log.exception("Vollständigkeitsbericht für Datenquelle %s fehlgeschlagen", getattr(ds, "id", "?"))
+        return None
 
 
 def make_router() -> APIRouter:

@@ -749,16 +749,17 @@ def _leg_fees(r: Rec, parts: Iterable[_Leg]) -> Rec:
         _set_review(r, f"Gebühr {_q(lg.fee)} in einem unbekannten Asset – bitte mit dem Bitpanda-Beleg vergleichen")
         return r
     if lg.fee_mode == "extra":
-        r.fee_sym, r.fee_qty = sym, lg.fee
+        r.fee_sym, r.fee_qty, r.fee_basis = sym, lg.fee, "extra"
         _add_note(r, f"Gebühr {_q(lg.fee)} {sym} zusätzlich abgezogen (laut Saldoverlauf)")
     elif lg.fee_mode == "inside" and lg.side == "out" and r.out_qty is not None and r.out_qty > lg.fee:
         r.out_qty = r.out_qty - lg.fee  # Abgang ohne Gebühr; zusammen verlässt der Betrag das Wallet
-        r.fee_sym, r.fee_qty = sym, lg.fee
+        r.fee_sym, r.fee_qty, r.fee_basis = sym, lg.fee, "inside"
         _add_note(r, f"Betrag {_q(lg.amount)} {lg.symbol} enthält die Gebühr {_q(lg.fee)} (laut Saldoverlauf)")
     elif lg.fee_mode == "inside" and lg.side == "in":
+        r.fee_basis = "inside"
         _add_note(r, f"Gebühr {_q(lg.fee)} {sym} ohne Wirkung auf den Bestand (laut Saldoverlauf) – nur Hinweis")
     else:
-        r.fee_sym, r.fee_qty = sym, lg.fee
+        r.fee_sym, r.fee_qty, r.fee_basis = sym, lg.fee, "open"
         _set_review(r, f"Gebühr {_q(lg.fee)} {sym}: ob der Betrag sie bereits enthält, ist nicht dokumentiert und hier "
                        "nicht belegbar – bitte mit dem Bitpanda-Beleg vergleichen")
     return r
@@ -780,6 +781,7 @@ def _trade(r: Rec, *, fiat: _Leg, crypto: _Leg) -> Rec:
     text = f"{_q(src.trade_fee)} {sym or '?'}"
     mode = _rate_mode(fiat.amount, crypto.amount, src.rate, src.rate_with_fee)
     if mode == "inside":
+        r.fee_basis = r.fee_basis or "inside"
         _add_note(r, f"Gebühr {text} laut Bitpanda im Betrag enthalten (Kurs mit Gebühr)")
         return r
     if r.fee_qty:  # zweite Gebühr ohne eigenes Feld – nicht still zusammenfassen
@@ -787,12 +789,14 @@ def _trade(r: Rec, *, fiat: _Leg, crypto: _Leg) -> Rec:
         return r
     if mode == "extra" and sym is not None:
         r.fee_sym, r.fee_qty = sym, src.trade_fee
+        r.fee_basis = "extra" if fiat.trade_fee_extra else "open"
         if fiat.trade_fee_extra:
             _add_note(r, f"Gebühr {text} zusätzlich zum Betrag (laut Kurs und Saldoverlauf)")
         else:
             _set_review(r, f"Gebühr {text} laut Kurs zusätzlich zum Betrag, Abbuchung nicht belegt – bitte mit dem "
                            "Bitpanda-Beleg vergleichen")
         return r
+    r.fee_basis = "open"
     _set_review(r, f"Gebühr {text} laut Bitpanda (trade.fee): ob der Betrag sie enthält, ist nicht dokumentiert und "
                    "aus Kurs und Saldo nicht ableitbar – bitte mit dem Bitpanda-Beleg vergleichen")
     return r

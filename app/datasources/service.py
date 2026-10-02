@@ -70,7 +70,7 @@ from app.datasources.vault import Vault, VaultError
 from app.datasources.wallet import GAP_DEFAULT, GAP_MAX, MAX_ADDRESSES, SCRIPT_TYPES, WatchConfig, new_watch_id, short
 from app.logging_setup import get_redactor
 from app.util.http import Quota
-from app.util.timeutil import iso, local_tz, parse_iso
+from app.util.timeutil import iso, local_tz, parse_iso, to_local_date
 
 log = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ STATUS_BADGE = {"created": "", "connected": "info", "synced": "good", "partial":
 RUN_STATUS_LABEL = {"running": "läuft", "ok": "erfolgreich", "partial": "teilweise", "error": "Fehler"}
 MAX_EVENTS = 50_000
 KEY_WARN_DAYS = 14
-DONE = ("known", "ignored", "committed", "merged")
+DONE = ("known", "ignored", "committed", "merged", "linked")
 _SYNC_LOCK = threading.Lock()  # ein Lauf zur Zeit (Zeitplan und „Jetzt synchronisieren“ nicht parallel)
 _NAME_RE = re.compile(r"^[^\x00-\x1f<>]{1,60}$")
 ACCOUNT_MIN_MATCHES = 3  # automatische Konto-Umstellung: mindestens so viele Treffer im kuratierten Import …
@@ -465,7 +465,7 @@ class DataSourceService:
         return {r["status"]: r["n"] for r in self.db.q(
             "SELECT r.status, COUNT(*) AS n FROM csv_row r JOIN csv_batch b ON b.id = r.batch_id WHERE b.kind='sync' "
             "AND b.datasource_id=? AND b.status IN ('preview', 'partial') AND r.status NOT IN "
-            "('known', 'ignored', 'committed', 'merged') GROUP BY r.status", (sid,))}
+            "('known', 'ignored', 'committed', 'merged', 'linked') GROUP BY r.status", (sid,))}
 
     def balances(self, sid: int) -> list[Any]:
         return self.db.q("SELECT asset_key, qty, name, note, observed_at FROM ds_balance WHERE source_id=? "
@@ -1152,8 +1152,8 @@ class DataSourceService:
         batches: Counter[int] = Counter()  # Stapel → ersetzte Ereignisse
         replaced = kept = 0
         for key, rows in old.items():
-            if any(r["status"] in ("committed", "merged") or r["tx_id"] for r in rows):
-                continue  # (teilweise) übernommen – bleibt; die neue Auswertung erkennt das Ereignis als bekannt
+            if any(r["status"] in ("committed", "merged", "linked") or r["tx_id"] for r in rows):
+                continue  # (teilweise) übernommen bzw. verknüpft – bleibt; die neue Auswertung erkennt es als bekannt
             if _fingerprint(rec_from_json(r["rec_json"]) for r in rows) == _fingerprint(new[key]):
                 continue
             if any(r["decision"] is not None or r["value_in"] is not None or r["fee_in"] is not None
@@ -1198,7 +1198,7 @@ class DataSourceService:
             if bid is None or int(r["batch_id"]) == bid:
                 by_event[r["event_key"]].append(r)
         return {k: rows for k, rows in by_event.items()
-                if not any(r["status"] in ("committed", "merged") or r["tx_id"] for r in rows)
+                if not any(r["status"] in ("committed", "merged", "linked") or r["tx_id"] for r in rows)
                 and any(_parser_of(r["rec_json"]) < version for r in rows)}
 
     def outdated(self, sid: int, bid: int | None = None) -> int:
@@ -1309,9 +1309,9 @@ class DataSourceService:
                 for rc in rows:
                     counts[rc.status] += 1
                 open_rows = self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status NOT IN "
-                                           "('known', 'ignored', 'committed', 'merged')", (bid,), default=0)
+                                           "('known', 'ignored', 'committed', 'merged', 'linked')", (bid,), default=0)
                 if not open_rows and not self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status "
-                                                        "IN ('committed', 'merged')", (bid,), default=0):
+                                                        "IN ('committed', 'merged', 'linked')", (bid,), default=0):
                     csv.discard(bid)  # nichts Neues – kein leerer Prüf-Stapel
                     bid = None
             if bid is not None:  # Konto des kuratierten Imports übernehmen, solange nichts aufgeteilt wird
@@ -1360,6 +1360,12 @@ class DataSourceService:
         resume = more
         coverage = {**res.coverage, "complete": res.complete, "at": stamp, "resume": resume,
                     "gaps": [sanitize_error(g, secret.values()) for g in res.gaps[:20]], "repair": repair}
+        # Belege zur Vollständigkeit der Historie: nur aus einem vollständigen Abruf ab Beginn, sonst der letzte Stand
+        prev_cov = json.loads(ds.coverage_json or "{}")
+        if res.complete and res.coverage.get("mode") == "vollständig":
+            coverage["history"] = self._history(sid, recs, stamp)
+        elif isinstance(prev_cov, dict) and prev_cov.get("history"):
+            coverage["history"] = prev_cov["history"]
         if conn.wallet:
             coverage["limits"] = conn.coverage_limits(ds.config())  # type: ignore[attr-defined]
         if resume and ds.enabled:  # Erstabruf in Etappen: bald fortsetzen, unabhängig vom Intervall
@@ -1386,6 +1392,32 @@ class DataSourceService:
                                                  "waiting": n_waiting}, ensure_ascii=False, default=str))
         log.info("Datenquelle %s synchronisiert: %s", ds.name, msg)
         return {"status": status, "batch_id": bid, "message": msg, "committed": committed, **counts}
+
+    def _history(self, sid: int, recs: list[Any], stamp: str) -> dict[str, Any]:
+        """Kennzahlen eines vollständigen Abrufs der Historie: Zeitraum, Vorgänge je Monat, Vorgänge ohne Zeitpunkt
+        und übernommene bzw. verknüpfte Vorgänge dieser Quelle, die der Abruf nicht (mehr) liefert."""
+        first_ts: dict[str, datetime] = {}
+        no_ts: set[str] = set()
+        for r in recs:
+            key = r.event_key or r.ext_id or ""
+            if r.ts_missing:
+                no_ts.add(key)
+            elif key not in first_ts or r.ts < first_ts[key]:
+                first_ts[key] = r.ts
+        months: Counter[str] = Counter(to_local_date(ts).strftime("%Y-%m") for ts in first_ts.values())
+        delivered = {r.event_key for r in recs if r.event_key}
+        committed = {r["event_key"] for r in self.db.q(
+            "SELECT DISTINCT event_key FROM journal_tx WHERE datasource_id=? AND status IN ('active', 'merged') AND "
+            "event_key IS NOT NULL", (sid,))}
+        linked = {r["event_key"] for r in self.db.q(
+            "SELECT DISTINCT r.event_key FROM csv_row r JOIN csv_batch b ON b.id = r.batch_id WHERE "
+            "b.datasource_id=? AND r.status='linked' AND r.event_key IS NOT NULL", (sid,))}
+        missing = sorted((committed | linked) - delivered)
+        times = sorted(first_ts.values())
+        return {"at": stamp, "events": len(delivered | set(first_ts)), "first": iso(times[0]) if times else None,
+                "last": iso(times[-1]) if times else None, "months": dict(sorted(months.items())),
+                "no_ts": len(no_ts), "missing": len(missing), "missing_examples": missing[:10],
+                "missing_committed": len(set(missing) & committed), "missing_linked": len(set(missing) & linked)}
 
     @staticmethod
     def _auto_eligible(rows: list[Any]) -> set[int]:
@@ -1460,7 +1492,7 @@ class DataSourceService:
         return {"ran": len(done), "results": done}
 
 
-DONE_ROWS = ("known", "ignored", "committed", "merged")  # Zeilen ohne offene Entscheidung
+DONE_ROWS = ("known", "ignored", "committed", "merged", "linked")  # Zeilen ohne offene Entscheidung
 
 
 def _parser_of(rec_json: str) -> int:

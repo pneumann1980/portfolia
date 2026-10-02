@@ -58,6 +58,9 @@ class Rec:
     date_only: bool = False
     # Datenquelle ohne Zeitpunkt: ``ts`` ist nur Sortierhilfe (Abrufzeitpunkt) – nie Buchungsdatum, Anzeige „fehlt“
     ts_missing: bool = False
+    # Beleg der Quelle, wie die Gebühr belastet wurde: extra (zusätzlich zum Betrag) | inside (im Betrag enthalten bzw.
+    # ohne Wirkung) | open (nicht belegbar); None = keine Angabe (Abgleich: Gebührenprüfung gegen vorhandene Buchungen)
+    fee_basis: str | None = None
     class_hint: dict[str, str] = field(default_factory=dict)  # Symbol → security|crypto|fiat (z. B. Bitpanda)
     row: dict[str, str] | None = None  # DIRECT: Zeile im einheitlichen Format
 

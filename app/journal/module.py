@@ -127,6 +127,9 @@ def make_router() -> APIRouter:
         from app.csvimport.compare import for_journal
 
         compare = for_journal(ctx, rows)
+        from app.csvimport.batch import links_for
+
+        links = links_for(ctx.db, [r["t"].tx_id for r in rows])
         params = {"account": account, "asset": asset, "origin": origin, "type": typ, "year": year, "q": q}
         more = {**{k: v for k, v in params.items() if v}, "offset": offset + PAGE}
         warnings = [w for w in request.query_params.getlist("w") if w][:5]
@@ -141,7 +144,7 @@ def make_router() -> APIRouter:
             jmeta=svc.meta([r["t"].tx_id for r in rows if r["kind"] in ("journal", "csv", "sync")]),
             saved=SAVED.get(saved), saved_tx=tx, warnings=warnings, own_assets=svc.assets(),
             deleted=[*svc.deleted_imports(), *svc.deleted()], has_import=ctx.active_import_id() is not None,
-            ov=svc.override_states(), compare=compare, tag_label=forms.TAG_LABEL,
+            ov=svc.override_states(), compare=compare, tag_label=forms.TAG_LABEL, links=links,
         )
 
     @router.get("/journal/new", response_class=HTMLResponse)

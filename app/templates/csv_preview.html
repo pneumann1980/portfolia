@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Vorschau Stapelaktion · {{ b.filename }}{% endblock %}
+{% block heading %}Vorschau: Stapelaktion{% endblock %}
+{% macro leg(acc, asset, q, sign) -%}
+  {%- if asset %}<span class="nowrap">{{ sign }}{{ q|qty }} {{ asset }}</span>{% if acc %}<div class="hint">{{ acc }}</div>{% endif %}{% else %}–{% endif -%}
+{%- endmacro %}
+{% import "partials/assess.html" as am %}
+{% block content %}
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/csv">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
+{% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+{% set todo = plan.todo %}{% set counts = plan.counts() %}
+
+<section class="card">
+  <div class="card-head"><h2>{{ actions[action][0] }}</h2><a class="btn sm ghost" href="/journal/csv/{{ b.id }}#pruefung">Zurück zum Prüf-Stapel</a></div>
+  <p class="hint">{{ b.filename }} · {{ selected }} Zeilen ausgewählt. {{ actions[action][1] }}.</p>
+  <nav class="tabs" aria-label="Aktion">{% for k, (label, _hint) in actions.items() %}<a class="{{ 'active' if k == action }}" href="/journal/csv/{{ b.id }}/preview?action={{ k }}{% if force %}&force=1{% endif %}">{{ label }}</a>{% endfor %}</nav>
+  {% if action in ('link', 'include') %}
+  <form method="get" action="/journal/csv/{{ b.id }}/preview" class="row" style="margin-top:8px"><input type="hidden" name="action" value="{{ action }}">
+    <label class="check"><input type="checkbox" name="force" value="1" data-autosubmit {% if force %}checked{% endif %}> auch Widersprüche, komplexe Fälle{% if action == 'include' %} und Vorgänge vor dem Stichtag{% endif %} einbeziehen – nur nach Einzelprüfung</label>
+    <noscript><button class="btn sm ghost" type="submit">Anwenden</button></noscript></form>{% endif %}
+  <div class="review-stats" style="margin-top:12px">
+    {% for k, n in counts.items() %}<div><b>{{ n }}</b><span>{{ effect_label.get(k, k) }}</span></div>{% endfor %}
+    <div><b>{{ plan.excluded|length }}</b><span>ausgeschlossen</span></div>
+  </div>
+  {% if not todo %}<p class="hint">Nichts auszuführen – passe die Auswahl oder die Aktion an.</p>{% endif %}
+</section>
+
+{% if plan.impact %}
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Wirkung auf die Bestände</h2></div>
+  <p class="hint">Durch das Übernehmen ändern sich diese Bestände (Konto, Asset). Transfers zwischen eigenen Konten erscheinen auf beiden Seiten.</p>
+  <div class="table-wrap cards-wrap"><table class="compact cards">
+    <thead><tr><th>Konto</th><th>Asset</th><th class="num">jetzt</th><th class="num">Änderung</th><th class="num">danach</th></tr></thead>
+    <tbody>{% for x in plan.impact %}
+      <tr><td data-label="Konto">{{ x.account or '–' }}</td><td data-label="Asset">{{ x.asset }}</td>
+        <td class="num" data-label="jetzt">{{ x.now|qty if x.now is not none else '–' }}</td>
+        <td class="num" data-label="Änderung">{{ '+' if x.delta > 0 }}{{ x.delta|qty }}</td>
+        <td class="num" data-label="danach">{% if x.after is not none %}<span class="{{ 'badge crit' if x.negative }}">{{ x.after|qty }}</span>{% if x.negative %}<div class="hint">negativ – fehlt ein Zugang?</div>{% endif %}{% else %}–{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>{% endif %}
+
+{% if plan.prevented %}
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Schutz vor Doppelbuchung</h2></div>
+  <p class="hint">Diese Mengen würden ohne die Aktion beim nächsten Übernehmen zusätzlich gebucht (Vorschlag „ja“ bzw. eigene Auswahl). Nach der Aktion bleiben sie aus dem Bestand – die vorhandenen Buchungen zählen.</p>
+  <ul class="plain">{% for x in plan.prevented %}<li>{{ x.account or '–' }} · {{ '+' if x.delta > 0 }}{{ x.delta|qty }} {{ x.asset }}</li>{% endfor %}</ul>
+</section>{% endif %}
+
+{% if plan.questions or plan.fixes %}
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Offene Fragen und Korrekturvorschläge</h2></div>
+  <p class="hint">Werden <b>nicht</b> automatisch umgesetzt. Vorhandene Buchungen bleiben unverändert; korrigieren lässt sich eine Buchung unter „Buchungen“ → Bearbeiten.</p>
+  <ul class="plain assess-list">
+    {% for rc, t in plan.questions[:50] %}<li class="fee open"><span aria-hidden="true">?</span> Zeile {{ rc.line }}: {{ t }}</li>{% endfor %}
+    {% for rc, t in plan.fixes[:50] %}<li class="fix"><span aria-hidden="true">→</span> Zeile {{ rc.line }}: {{ t }}</li>{% endfor %}
+  </ul>
+</section>{% endif %}
+
+{% if plan.excluded %}
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Nicht automatisch bearbeitet <span class="badge warn">{{ plan.excluded|length }}</span></h2></div>
+  <ul class="plain">{% for reason, n, items in plan.reasons() %}<li><b>{{ n }}×</b> {{ reason }} <span class="hint">(Zeile{{ 'n' if items|length > 1 }} {% for it in items %}{{ it.rc.line }}{{ ', ' if not loop.last }}{% endfor %}{% if n > items|length %} …{% endif %})</span></li>{% endfor %}</ul>
+</section>{% endif %}
+
+{% if todo %}
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Änderungen <span class="badge">{{ todo|length }}</span></h2></div>
+  <div class="table-wrap cards-wrap"><table class="compact cards journal">
+    <thead><tr><th class="num">Zeile</th><th>Datum</th><th>Vorgang</th><th>Abgang</th><th>Zugang</th><th>Abgleich</th><th>Wirkung</th></tr></thead>
+    <tbody>{% for it in todo[:300] %}{% set rc = it.rc %}{% set r = rc.row %}
+      <tr><td class="num" data-label="Zeile">{{ rc.line }}</td><td class="nowrap" data-label="Datum">{{ rc.ts|datetime_de if not rc.rec.ts_missing else 'Zeitpunkt fehlt' }}</td>
+        <td data-label="Vorgang">{% if r %}{{ tx_types.get(r.type, r.type) }}{% if r.tag %} · {{ tag_label.get(r.tag, r.tag) }}{% endif %}{% else %}{{ kind_label.get(rc.rec.kind, rc.rec.kind) }}{% endif %}</td>
+        <td data-label="Abgang">{% if r %}{{ leg(r.from_account, r.from_asset, r.from_qty, '−') }}{% else %}–{% endif %}</td>
+        <td data-label="Zugang">{% if r %}{{ leg(r.to_account, r.to_asset, r.to_qty, '+') }}{% else %}–{% endif %}</td>
+        <td data-label="Abgleich">{{ am.badges(rc.match) }}</td>
+        <td data-label="Wirkung"><b>{{ effect_label.get(it.act, it.act) }}</b>{% if it.target %}<div class="hint mono">{{ it.target }}</div>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% if todo|length > 300 %}<p class="hint">… und {{ todo|length - 300 }} weitere.</p>{% endif %}
+</section>{% endif %}
+
+<section class="card" style="margin-top:16px">
+  <form method="post" action="/journal/csv/{{ b.id }}/execute" class="row" data-confirm="{{ todo|length }} Änderungen ausführen? Die Aktion wird protokolliert und lässt sich im Verlauf rückgängig machen.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="fingerprint" value="{{ fingerprint }}"><input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="force" value="{{ '1' if force else '' }}">
+    <button class="btn primary" type="submit" {% if not todo %}disabled{% endif %}>Ausführen ({{ todo|length }} Änderung{{ 'en' if todo|length != 1 }})</button>
+    <a class="btn ghost" href="/journal/csv/{{ b.id }}#pruefung">Abbrechen</a>
+  </form>
+  <p class="hint">Alles oder nichts: Schlägt ein Teil fehl (z. B. Validierung beim Übernehmen), bleibt der Stapel unverändert. Ein zweites Absenden dieser Vorschau führt die Aktion nicht erneut aus.</p>
+</section>
+{% endblock %}

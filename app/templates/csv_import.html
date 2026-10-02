@@ -38,6 +38,16 @@
   </form>
 </section>
 
+{% if queue %}
+<section class="card" style="margin-top:16px" id="zuerst">
+  <div class="card-head"><h2>Zuerst prüfen</h2><span class="badge warn">{{ queue|length }}</span></div>
+  <p class="hint">Reihenfolge: neue Quellen (noch nichts übernommen) und Vorgänge ohne Gegenstück im Bestand zuerst – dort fehlen am ehesten Buchungen. Dubletten und Ergänzungen lassen sich im Prüf-Stapel gesammelt verknüpfen.</p>
+  <ul class="plain queue">{% for q in queue %}{% set b = q.b %}
+    <li><a href="/journal/csv/{{ b.id }}#pruefung"><b>{{ b.filename }}</b></a>{% if q.fresh %} <span class="badge info" title="Aus dieser Quelle wurde noch nichts übernommen oder verknüpft">neue Quelle</span>{% endif %}
+      <div class="hint">{{ q.open }} zu entscheiden{% if q.neu %} · <b>{{ q.neu }} neu</b>{% endif %}{% if q.linkable %} · {{ q.linkable }} Dubletten/Ergänzungen{% endif %}{% if q.manual %} · {{ q.manual }} manuell prüfen{% endif %}{% if q.gaps %} · <b>{{ q.gaps }} vor dem Stichtag nicht im Bestand</b> (mögliche Lücken){% endif %}</div></li>
+  {% endfor %}</ul>
+</section>{% endif %}
+
 <section class="card" style="margin-top:16px">
   <div class="card-head"><h2>Importe</h2></div>
   {% if batches %}

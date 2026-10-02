@@ -142,6 +142,25 @@
 </section>
 {% endif %}
 
+{% if ds and quality %}{% set q = quality %}
+<section class="card quality" id="vollstaendigkeit">
+  <div class="card-head"><h2>Vollständigkeit der Historie</h2>
+    <span class="badge {{ 'crit' if q.proven else 'warn' if q.plausible else 'good' }}">{{ q.proven|length }} nachgewiesen · {{ q.plausible|length }} plausibel</span></div>
+  <p class="hint">Nur belegte Aussagen: Pagination, Pflichtfelder, Saldoverlauf (asset_balance_after), Abgleich mit /portfolio und der letzte vollständige Abruf. Eine erfolgreiche API-Antwort allein gilt nicht als Beleg. Nichts wird automatisch korrigiert.{% if q.history %} Letzter vollständiger Abruf: {{ q.history.at|datetime_de }} – {{ q.history.events }} Vorgänge{% if q.history.first %} vom {{ q.history.first|date_de }} bis {{ q.history.last|date_de }}{% endif %}.{% endif %}</p>
+  {% for title, items, badge in (('Nachgewiesene Fehler', q.proven, 'crit'), ('Plausible Datenlücken', q.plausible, 'warn'), ('Nicht verifizierbar', q.unverifiable, '')) %}
+  <h3 style="margin-top:12px">{{ title }} <span class="badge {{ badge if items else 'good' }}">{{ items|length }}</span></h3>
+  {% if items %}<ul class="plain quality-list">{% for f in items %}<li><b>{{ f.title }}</b>{% if f.detail %}<div class="hint">{{ f.detail }}</div>{% endif %}{% if f.examples %}<div class="hint mono wrap-any">{% for e in f.examples %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div>{% endif %}</li>{% endfor %}</ul>
+  {% else %}<p class="hint">{{ 'Keine – die geprüften Belege sind stimmig.' if badge == 'crit' else 'Keine Hinweise.' if badge == 'warn' else 'Nichts offen.' }}</p>{% endif %}
+  {% endfor %}
+  {% if q.years %}
+  <details class="box" style="margin-top:10px"><summary>Vorgänge je Monat (letzter vollständiger Abruf)</summary>
+    <div class="table-wrap"><table class="compact months"><thead><tr><th>Jahr</th>{% for m in ('Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez') %}<th class="num">{{ m }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for y, row in q.years %}<tr><td>{{ y }}</td>{% for n in row %}<td class="num{{ ' zero' if n == 0 }}">{{ '' if n is none else n }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+    <p class="hint">Leere Felder: außerhalb des abgerufenen Zeitraums; hervorgehoben: Monate ohne Vorgänge.</p>
+  </details>{% endif %}
+</section>
+{% endif %}
+
 {% set chain = data.get('provider') if kind == 'wallet' else '' %}{% set ci = chain_info.get(chain) %}
 <section class="card">
   <div class="card-head"><h2>{{ 'Einstellungen' if ds else ('Börse anlegen' if kind == 'exchange' else 'Wallet-Konto anlegen') }}</h2>

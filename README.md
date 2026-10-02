@@ -40,7 +40,8 @@ für Smartphones (≈390 px) optimiert.
 2. [Erste Schritte](#erste-schritte)
 3. [Datenvertrag (Import-ZIP)](#datenvertrag-import-zip)
 4. [Buchungen in Portfolia erfassen](#buchungen-in-portfolia-erfassen)
-5. [CSV-Import aus Börsen und Wallets](#csv-import-aus-börsen-und-wallets)
+5. [CSV-Import aus Börsen und Wallets](#csv-import-aus-börsen-und-wallets) ·
+   [Importprüfung: Abgleich, Stapelaktionen, Verknüpfen](#importprüfung-abgleich-je-zeile-stapelaktionen-verknüpfen)
 6. [Datenquellen: Börsen und Wallet-Adressen](#datenquellen-börsen-und-wallet-adressen) ·
    [Wallets (read-only, sechs Chains)](#wallets-read-only-sechs-chains) ·
    [Diagnose: Datenqualität und Bestandsabgleich](#diagnose-datenqualität-und-bestandsabgleich)
@@ -481,6 +482,82 @@ bekommen keinen Kurs-Vorschlag; KRC-20 wird nur gefunden, wenn der Katalog den T
   und können über „Eigenes Format“ oder manuell erfasst werden. Rückfragen zu Formaten bitte mit einer
   anonymisierten Beispielzeile.
 
+### Importprüfung: Abgleich je Zeile, Stapelaktionen, Verknüpfen
+
+Hunderte mögliche Dubletten lassen sich in wenigen Schritten abarbeiten, ohne dass eine vorhandene Buchung
+verändert wird. Hintergrund und Plan: [`docs/RECONCILIATION.md`](docs/RECONCILIATION.md).
+
+**Ergebnis je Zeile** – jede Zeile wird gegen ihre beste vorhandene Buchung Feld für Feld bewertet (Kennung,
+Blockchain-Hash, Konto, Asset, Menge, Gebühr, Zeitpunkt, Art, EUR-Wert); gleiche Beträge oder Zeitpunkte allein gelten
+nie als derselbe Vorgang:
+
+| Ergebnis | Bedeutung | Vorschlag |
+|---|---|---|
+| Eindeutige Dublette | derselbe Vorgang, die neue Quelle bringt nichts hinzu | verknüpfen |
+| Ergänzende Informationen | derselbe Vorgang, die Quelle ergänzt z. B. Hash, genaue Uhrzeit, Zeitpunkt bzw. EUR-Wert der Originalquelle, Kennung | verknüpfen |
+| Neue Transaktion | kein Gegenstück im Bestand | übernehmen |
+| Widersprüchlich / unklar | Gegenstück, aber abweichende Menge, Asset, Konto, Gebühr, Zeit oder EUR-Wert – oder nur gleiche Menge | einzeln prüfen |
+| Komplexe Zuordnung | 1:n bzw. n:1: Teil eines Vorgangs, Hash mit fehlenden Teilen, rekonstruierte Buchung, Gegenbuchung nur im Import, mehrere Kandidaten | einzeln prüfen |
+
+Die **Sicherheit** ist qualitativ (*sicher* = gleiche Kennung bzw. Blockchain-Transaktion und gleiche Werte, *hoch* =
+alle Merkmale stimmen bis auf geringe Abweichungen, *mittel*, *niedrig* = nur gleiche Menge); keine Scheingenauigkeit
+in Prozent. Unter jeder Zeile steht der Abgleich mit Belegen (✓), Abweichungen (≠ relevant, ~ gering), Ergänzungen,
+Gebührenprüfung, Quellenvorrang und gegebenenfalls einem Korrekturvorschlag – Vorschläge werden nie ausgeführt.
+
+**Gebührenprüfung.** Verglichen wird der Gesamtabgang, wie der Ledger bucht (Menge + Gebühr im selben Asset), dazu der
+Beleg der Quelle (Bitpanda: Saldoverlauf `asset_balance_after`): *zusätzlich belastet* und vorhandene Buchung ebenso →
+stimmig; *nicht belegbar* → offene Frage mit dem Gesamtabgang der vorhandenen Buchung; *im Betrag enthalten*, aber
+vorhanden zusätzlich gebucht → Widerspruch mit Differenz und Korrekturvorschlag. Eine anders dargestellte Gebühr
+(netto/brutto) gilt bei der Erkennung als derselbe Abgang, damit keine zweite Abbuchung entsteht.
+
+**Weitere Schutzregeln der Erkennung:** zwei verschiedene Blockchain-Transaktionen sind nie Dubletten (auch bei gleicher
+Menge und Zeit); weitere Zeilen eines Ereignisses, dessen Hauptzeile bereits vorhanden ist (z. B. Gebührenzeile), gehen
+nie still in die Buchungen (Schutz vor doppelten Gebühren); gleiche Menge, Konto und Zeit mit **anderem Asset** →
+Widerspruch („Asset-Zuordnung prüfen“); ein EUR-Wert, der stark vom vorhandenen abweicht → Widerspruch („Kurs- bzw.
+Asset-Zuordnung prüfen“). Zeilen **vor dem Stichtag** werden mitgeprüft, ohne ihren Status zu ändern: gefunden →
+im Bestand; nicht gefunden → *mögliche Lücke im kuratierten Import* (Hinweis, Übernahme nur ausdrücklich).
+
+**Vorschlag: Importprüfung** (Karte oben im Prüf-Stapel): Zahlen je Gruppe (Eindeutige Dubletten, Ergänzungen, Neu,
+Manuell prüfen), Gruppen an- bzw. abwählen, *Alle auswählen*, *Vorauswahl* (Dubletten und Ergänzungen mit hoher
+Sicherheit), *Leeren*; einzelne Zeilen in der Liste zusätzlich ab- oder anwählen (gespeichert, gilt über Seiten
+hinweg), *Diese Seite* bzw. *Alle gefilterten* auswählen. Filter: Ergebnis, Sicherheit, Abweichungsart, Entscheidung,
+Konto/Wallet, Zeitraum, dazu die Status-Reiter.
+
+**Vorschau → Ausführen → Verlauf.** Die Vorschau zeigt je Aktion (Vorschlag anwenden, Verknüpfen, Übernehmen, Auslassen,
+Dauerhaft ignorieren, Vorschlag wiederherstellen) die Wirkung je Zeile, die **Bestandswirkung** je Konto und Asset
+(jetzt → danach, negative Bestände markiert), den Schutz vor Doppelbuchung (was sonst gebucht würde), offene Fragen,
+Korrekturvorschläge und alle **Ausschlüsse mit Grund**. Ausgeführt wird genau einmal je Vorschau und alles oder nichts
+in einer Transaktion; eine inzwischen veraltete Vorschau wird abgewiesen. Jede Aktion steht mit Vorher-Zustand im
+*Verlauf der Stapelaktionen* und lässt sich rückgängig machen (nur, was seitdem unverändert ist; übernommene Buchungen
+werden wie beim Rückgängigmachen eines Imports zurückgenommen).
+
+Feste Regeln: Dubletten und Ergänzungen werden per Stapel nie gebucht, nur verknüpft; *Übernehmen* per Stapel nur für
+„neu“ ohne Prüfhinweis – Widersprüche, komplexe Fälle und Vorgänge vor dem Stichtag nur mit ausdrücklicher Bestätigung;
+Transfer-Paare nur gemeinsam.
+
+**Verknüpfen statt verwerfen.** Die vorhandene Buchung bleibt unverändert. Die Zeile wird als verknüpfter
+Quelldatensatz mit ihren Werten (Zeitpunkt, Beine, Gebühr samt Beleg, EUR-Wert samt Herkunft, Hash, Kennungen,
+Rohdaten) und dem Abgleich zum Zeitpunkt der Verknüpfung gespeichert; unter *Buchungen* zeigt „+1 Quelle“ beide
+Werte nebeneinander (z. B. EUR-Wert laut Koinly und laut Bitpanda). Künftige Abrufe bzw. Importe derselben Quelle
+erkennen die Zeile wieder (Zeilenkennung; bei 1:1-Ereignissen auch die Anbieter-ID). Verknüpfungen gehören zum
+Gesamtexport. Verschwindet die verknüpfte Buchung (gelöscht, nicht mehr im Import), erscheint die Zeile wieder zur
+Prüfung.
+
+**Quellenvorrang je Feld** (nur Vorschlag, nie automatisch überschrieben; manuelle Korrekturen gehen immer vor):
+
+| Feld | Vorrang |
+|---|---|
+| Transaktions-Hash, Netzwerkgebühr | Blockchain → Börse → Steuertool |
+| Zeitpunkt, Börsengebühr, EUR-Wert der Ausführung | Börse → Blockchain → Steuertool |
+| Einordnung, Verknüpfungen (z. B. Transfer zwischen eigenen Wallets), Gegenkonto | Steuertool bzw. Nutzer → Blockchain → Börse |
+
+**Bearbeitungsreihenfolge:** Die Import-Übersicht listet unter *Zuerst prüfen* offene Prüf-Stapel – neue Quellen
+(noch nichts übernommen oder verknüpft) und Vorgänge ohne Gegenstück zuerst, dort fehlen am ehesten Buchungen.
+
+Grenzen: Die Bewertung stützt sich auf die Daten beider Seiten; fehlen Angaben (z. B. Bitpanda liefert keinen
+Empfänger und keinen Hash), bleibt die Sicherheit entsprechend niedriger. Werte der neuen Quelle werden nicht in die
+vorhandene Buchung übernommen – dafür gibt es den Korrekturvorschlag und „Bearbeiten“.
+
 ---
 
 ## Datenquellen: Börsen und Wallet-Adressen
@@ -756,6 +833,24 @@ enthält, dürfen sie nicht doppelt zählen:
 * **Ohne Zeitpunkt:** Vorgänge ohne `credited_at` (z. B. noch nicht gutgeschrieben) bleiben ungeklärt, bis Bitpanda
   den Zeitpunkt liefert; inkrementelle Läufe sehen sie erst wieder, wenn er innerhalb des Abfragefensters liegt –
   sonst „Vollständig neu abrufen“.
+
+### Vollständigkeit der Historie (Bericht je Datenquelle)
+
+*Einstellungen → Datenquellen → Bitpanda → Vollständigkeit der Historie* bewertet nur Belege, nie eine erfolgreiche
+Antwort allein:
+
+* **Nachgewiesene Fehler:** Abruf unvollständig (Pagination/Fehler), fehlende Pflichtfelder, Brüche im Saldoverlauf
+  (`asset_balance_after` passt nicht zum Betrag), Bestand laut `/portfolio` ≠ Summe der Vorgänge in jeder Lesart,
+  übernommene bzw. verknüpfte Vorgänge, die der letzte **vollständige** Abruf nicht mehr liefert (Buchungen bleiben
+  unverändert).
+* **Plausible Datenlücken:** Monate ohne Vorgänge in sonst aktiven Zeiträumen, Buchungen des kuratierten Imports auf
+  dem Bitpanda-Konto ohne Gegenstück in der API, Vorgänge mit älterer Auswertung.
+* **Nicht verifizierbar:** Zeitraum vor dem ersten Vorgang laut API, Vorgänge ohne Zeitpunkt, Zeitraum seit dem
+  letzten vollständigen Abruf (nur inkrementell), Bestand ohne vollständige Historie.
+
+Dazu eine Tabelle *Vorgänge je Monat*. Grundlage sind die Kennzahlen, die jeder vollständige Abruf seit 0.17.0
+festhält – nach dem Update einmal *Vollständig neu abrufen*. Ob ältere Vorgänge nach der API-Umstellung bei Bitpanda
+fehlen, lässt sich nur so weit beurteilen, wie diese Belege reichen; der Bericht unterscheidet das ausdrücklich.
 
 ## Wallets (read-only, sechs Chains)
 
