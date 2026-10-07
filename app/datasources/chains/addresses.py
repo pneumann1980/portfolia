@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import re
 
-from app.datasources.chains.codec import b58decode, eip55, kaspa_decode
+from app.datasources.chains.codec import (
+    b58decode,
+    cardano_decode,
+    eip55,
+    kaspa_decode,
+    ss58_decode,
+    ss58_encode,
+    xrpl_decode,
+)
 
 _HEX40 = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
@@ -52,4 +60,42 @@ def bitcoin(v: str) -> tuple[str | None, str | None]:
         return None, f"Bitcoin-Adresse ungültig ({e})."
 
 
-VALIDATORS = {"ethereum": evm, "bsc": evm, "avalanche": evm, "solana": solana, "kaspa": kaspa, "bitcoin": bitcoin}
+def xrpl(v: str) -> tuple[str | None, str | None]:
+    if v[:1] == "X" or v[:1] == "T":
+        return None, ("X-Adresse (mit eingebettetem Destination Tag) – bitte die klassische Adresse r… angeben; den "
+                      "Tag braucht Portfolia nicht.")
+    try:
+        xrpl_decode(v)
+    except ValueError as e:
+        return None, f"XRP-Ledger-Adresse ungültig ({e})."
+    return v, None
+
+
+def cardano(v: str) -> tuple[str | None, str | None]:
+    a = v.lower()
+    try:
+        _, _, net, _ = cardano_decode(a)
+    except ValueError as e:
+        return None, f"Cardano-Adresse ungültig ({e})."
+    if net != 1:
+        return None, "Keine Mainnet-Adresse (Testnetz)."
+    return a, None
+
+
+def polkadot(v: str) -> tuple[str | None, str | None]:
+    """SS58: Polkadot-Format (Präfix 0, beginnt mit 1); das generische Substrate-Format (Präfix 42, beginnt mit 5)
+    wird in das Polkadot-Format umgerechnet – dasselbe Konto. Andere Netze (z. B. Kusama) werden abgelehnt."""
+    try:
+        prefix, acc = ss58_decode(v)
+    except ValueError as e:
+        return None, f"Polkadot-Adresse ungültig ({e})."
+    if prefix == 0:
+        return v, None
+    if prefix == 42:
+        return ss58_encode(acc, 0), None
+    return None, (f"SS58-Adresse eines anderen Netzes (Präfix {prefix}, z. B. Kusama = 2) – bitte die Polkadot-Adresse "
+                  "(beginnt mit 1) angeben.")
+
+
+VALIDATORS = {"ethereum": evm, "bsc": evm, "avalanche": evm, "polygon": evm, "solana": solana, "kaspa": kaspa,
+              "bitcoin": bitcoin, "xrp": xrpl, "cardano": cardano, "polkadot": polkadot}

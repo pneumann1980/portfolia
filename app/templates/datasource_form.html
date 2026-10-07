@@ -42,7 +42,7 @@
   {% if chk %}
   <div style="margin-top:10px"><div class="hint">Letzte Verbindungsprüfung{% if chk.at %} · {{ chk.at|datetime_de }}{% endif %}</div>
     <div class="alert {{ 'good' if chk.ok else 'crit' }}" style="margin-top:4px"><span class="icon">{{ '✓' if chk.ok else '!' }}</span><div>{{ chk.message }}
-      {% if chk.details %}<ul class="small" style="margin:6px 0 0 16px">{% for name, d in chk.details.items() %}<li>{{ {'transaction': 'Vorgänge', 'balances': 'Bestände', 'assets': 'Asset-Stammdaten', 'chain': 'Chain', 'balance': 'Bestand', 'history': 'Historie', 'nft': 'NFTs', 'tokens': 'Tokens', 'addresses': 'Adressen', 'krc20': 'KRC-20'}.get(name, name) }}: {{ '✓' if d.ok else '✗' }} {{ d.text }}</li>{% endfor %}</ul>{% endif %}</div></div>
+      {% if chk.details %}<ul class="small" style="margin:6px 0 0 16px">{% for name, d in chk.details.items() %}<li>{{ check_labels.get(name, name) }}: {{ '✓' if d.ok else '✗' }} {{ d.text }}</li>{% endfor %}</ul>{% endif %}</div></div>
   </div>{% endif %}
   <div class="row" style="margin-top:12px">
     {% if ds.key_mode %}<form method="post" action="/settings/datasources/{{ ds.id }}/check" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit">Verbindung testen</button></form>{% endif %}
@@ -136,7 +136,7 @@
   {% if ds.is_wallet and ds.check %}{% set chk = ds.check %}
   <div style="margin-top:10px"><div class="hint">Letzte Verbindungsprüfung{% if chk.at %} · {{ chk.at|datetime_de }}{% endif %}</div>
     <div class="alert {{ 'good' if chk.ok else 'crit' }}" style="margin-top:4px"><span class="icon">{{ '✓' if chk.ok else '!' }}</span><div class="wrap-any">{{ chk.message }}
-      {% if chk.details %}<ul class="small" style="margin:6px 0 0 16px">{% for name, d in chk.details.items() %}<li>{{ {'chain': 'Chain', 'balance': 'Bestand', 'history': 'Historie', 'nft': 'NFTs', 'tokens': 'Tokens', 'addresses': 'Adressen', 'krc20': 'KRC-20'}.get(name, name) }}: {{ '✓' if d.ok else '✗' }} {{ d.text }}</li>{% endfor %}</ul>{% endif %}</div></div>
+      {% if chk.details %}<ul class="small" style="margin:6px 0 0 16px">{% for name, d in chk.details.items() %}<li>{{ check_labels.get(name, name) }}: {{ '✓' if d.ok else '✗' }} {{ d.text }}</li>{% endfor %}</ul>{% endif %}</div></div>
   </div>{% endif %}
   <div class="row" style="margin-top:12px">
     {% if ds.supported and ds.enabled %}
@@ -179,11 +179,12 @@
     <a href="/settings/datasources/new?kind=exchange" class="{{ 'active' if kind == 'exchange' }}">Börse</a>
   </div>{% endif %}
   {% if kind == 'wallet' and not ds and not chain %}
-  <p class="hint">1 · Chain wählen. Für jede Chain legst du ein eigenes Konto an – dieselbe 0x-Adresse auf Ethereum, BNB Chain
-    und Avalanche ergibt drei Konten, deren Vorgänge und Tokens getrennt bleiben.</p>
+  <p class="hint">1 · Chain wählen. Für jede Chain legst du ein eigenes Konto an – dieselbe 0x-Adresse auf Ethereum, BNB Chain,
+    Polygon und Avalanche ergibt vier Konten, deren Vorgänge und Tokens getrennt bleiben. Mehrere Chain-Konten lassen sich in
+    einer Gruppe (z. B. „Ledger“) zusammenfassen – nur zur Übersicht, ohne Zusammenlegung.</p>
   <div class="chain-grid">
     {% for p in providers %}{% if p.id in supported_ids %}
-    <a class="btn chain-btn" href="/settings/datasources/new?kind=wallet&amp;provider={{ p.id }}{% if data.get('wallet_group') %}&amp;group={{ data.get('wallet_group')|urlencode }}{% endif %}">{{ p.label }}</a>
+    <a class="btn chain-btn" href="/settings/datasources/new?kind=wallet&amp;provider={{ p.id }}{% if data.get('wallet_group') %}&amp;group={{ data.get('wallet_group')|urlencode }}{% endif %}"><span class="chain-icon chain-{{ p.id }}" aria-hidden="true">{{ chain_ticker.get(p.id, p.id[:3]|upper) }}</span>{{ p.label }}</a>
     {% endif %}{% endfor %}
   </div>
   <details class="box" style="margin-top:12px"><summary>Andere Chain (nur CSV-Import)</summary>
@@ -207,7 +208,7 @@
         </select></label>
       {% endif %}
       <label class="field">Name (frei wählbar)
-        <input type="text" name="name" maxlength="60" required value="{{ data.get('name', '') }}" placeholder="{{ 'z. B. Bitpanda Hauptkonto' if kind == 'exchange' else ('z. B. Ledger BTC' if chain == 'bitcoin' else 'z. B. MetaMask BNB' if chain == 'bsc' else 'z. B. Ledger ETH') }}" autocomplete="off"></label>
+        <input type="text" name="name" maxlength="60" required value="{{ data.get('name', '') }}" placeholder="{{ 'z. B. Bitpanda Hauptkonto' if kind == 'exchange' else 'z. B. Ledger ' ~ chain_ticker.get(chain, '') }}" autocomplete="off"></label>
       {% if kind == 'wallet' %}
       {% if chain == 'bitcoin' %}
       <label class="field" style="grid-column:1/-1">Öffentliche Adressen und/oder Kontoschlüssel
@@ -221,19 +222,23 @@
       <label class="field">Gap-Limit
         <input type="number" name="gap" min="5" max="200" value="{{ data.get('gap') or gap_default }}">
         <span class="hint">So viele ungenutzte Adressen in Folge, bevor die Suche endet (Standard {{ gap_default }}).</span></label>
+      {% elif chain == 'cardano' %}
+      <label class="field" style="grid-column:1/-1">Stake-Adresse oder Adresse(n)
+        <textarea name="address" rows="3" required class="mono" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="stake1… (ganzes Konto) oder addr1… (eine je Zeile)">{{ data.get('address', '') }}</textarea>
+        <span class="hint">Empfohlen: die <b>Stake-Adresse</b> (stake1…) oder eine beliebige <b>Empfangsadresse</b> (addr1q…) der Wallet – Portfolia leitet daraus das Konto ab und erfasst alle Adressen mit demselben Stake-Teil inklusive Wechselgeld und Rewards. Adressen ohne Stake-Teil (addr1v…) werden einzeln geführt.</span></label>
       {% else %}
       <label class="field" style="grid-column:1/-1">Öffentliche Adresse
-        <input type="text" name="address" required value="{{ data.get('address', '') }}" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="text" class="mono" placeholder="{{ 'kaspa:q…' if chain == 'kaspa' else ('Base58, 32–44 Zeichen' if chain == 'solana' else '0x…') }}">
-        <span class="hint">Nur die öffentliche Adresse. <b>Niemals</b> privaten Schlüssel, Seed-Phrase oder Signatur eingeben – solche Eingaben werden abgelehnt.{% if chain in ('ethereum', 'bsc', 'avalanche') %} Groß-/Kleinschreibung wird als Prüfsumme (EIP-55) geprüft.{% endif %}</span></label>
+        <input type="text" name="address" required value="{{ data.get('address', '') }}" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="text" class="mono" placeholder="{{ {'kaspa': 'kaspa:q…', 'solana': 'Base58, 32–44 Zeichen', 'xrp': 'r… (klassische Adresse)', 'polkadot': '1… (Polkadot-Format)'}.get(chain, '0x…') }}">
+        <span class="hint">Nur die öffentliche Adresse. <b>Niemals</b> privaten Schlüssel, Seed-Phrase oder Signatur eingeben – solche Eingaben werden abgelehnt.{% if chain in ('ethereum', 'bsc', 'polygon', 'avalanche') %} Groß-/Kleinschreibung wird als Prüfsumme (EIP-55) geprüft.{% elif chain == 'xrp' %} Destination Tags gehören nicht zur Adresse (sie stehen später in den Vorgängen).{% elif chain == 'polkadot' %} Adressen im generischen Substrate-Format (5…) werden umgerechnet; Kusama-Adressen werden abgelehnt.{% endif %}</span></label>
       {% endif %}
       {% if ci %}
       <label class="field">Anbieter
         <select name="chain_provider">{% for e in ci.endpoints %}<option value="{{ e.id }}" {% if data.get('chain_provider') == e.id or (not data.get('chain_provider') and loop.first) %}selected{% endif %}>{{ e.label }}{% if loop.first %} (Standard){% endif %}</option>{% endfor %}</select>
         <span class="hint">{% for e in ci.endpoints %}<b>{{ e.label }}:</b> {{ e.terms }}{% if e.key_provider %} – Schlüssel: {% set pk = provider_keys.get(e.key_provider) %}{% if pk and pk.mode %}vorhanden{% elif e.key_required %}<a href="/settings/datasources#anbieter">nötig, unter „Anbieter-Schlüssel“ hinterlegen</a>{% else %}optional{% endif %}{% endif %}.{% if not loop.last %}<br>{% endif %}{% endfor %}</span></label>
-      {% if chain in ('ethereum', 'bsc', 'avalanche', 'solana', 'kaspa') %}
+      {% if chain in ('ethereum', 'bsc', 'polygon', 'avalanche', 'solana', 'kaspa') %}
       <input type="hidden" name="tokens_shown" value="1">
       <label class="check" style="grid-column:1/-1"><input type="checkbox" name="tokens" value="1" {% if data.get('tokens') in ('1', 'on') %}checked{% endif %}>
-        Tokens mit abrufen ({{ 'ERC-20/BEP-20' if chain in ('ethereum', 'bsc', 'avalanche') else ('SPL-Tokens' if chain == 'solana' else 'KRC-20 über den Kasplex-Indexer') }}) – Tokens werden über Contract/Mint identifiziert, nie über das Symbol</label>
+        Tokens mit abrufen ({{ 'ERC-20/BEP-20' if chain in ('ethereum', 'bsc', 'polygon', 'avalanche') else ('SPL-Tokens' if chain == 'solana' else 'KRC-20 über den Kasplex-Indexer') }}) – Tokens werden über Contract/Mint identifiziert, nie über das Symbol</label>
       {% endif %}
       <div class="alert" style="grid-column:1/-1"><span class="icon">i</span><div><b>Abdeckung:</b> {{ ci.limits|join(' · ') }}. Der gewählte Anbieter sieht die abgefragten Adressen.</div></div>
       {% endif %}

@@ -1,6 +1,7 @@
 """Kodierungen öffentlicher Adressen (ohne Abhängigkeiten): Base58(Check), Bech32/Bech32m (BIP173/BIP350),
 Kaspa-Adressen (CashAddr-Prüfsumme), Keccak-256 und EIP-55, RIPEMD-160 (Fallback, falls OpenSSL ihn nicht
-anbietet).
+anbietet), XRP-Ledger-Adressen (Base58Check mit XRPL-Alphabet), Cardano-Adressen (CIP-19, Bech32 ohne
+Längengrenze) und SS58 (Polkadot, Blake2b-Prüfsumme).
 
 Alle Funktionen arbeiten nur mit öffentlichen Daten. Prüfsummen verhindern Tippfehler, bevor eine Adresse an einen
 Anbieter geht.
@@ -130,6 +131,137 @@ def segwit_encode(hrp: str, ver: int, prog: bytes) -> str:
     pm = _polymod(_hrp_expand(hrp) + data + [0] * 6) ^ const
     checksum = [(pm >> 5 * (5 - i)) & 31 for i in range(6)]
     return hrp + "1" + "".join(CHARSET[d] for d in data + checksum)
+
+
+def bech32_decode(addr: str, max_len: int = 1023) -> tuple[str, list[int]]:
+    """(HRP, 5-Bit-Daten ohne Prüfsumme) – Bech32 (BIP173) ohne die 90-Zeichen-Grenze von BIP173 (Cardano, CIP-19)."""
+    if addr.lower() != addr and addr.upper() != addr:
+        raise ValueError("gemischte Groß-/Kleinschreibung")
+    a = addr.lower()
+    pos = a.rfind("1")
+    if pos < 1 or pos + 7 > len(a) or len(a) > max_len:
+        raise ValueError("Format ungültig")
+    hrp, data = a[:pos], []
+    for ch in a[pos + 1:]:
+        if ch not in CHARSET:
+            raise ValueError("ungültiges Zeichen")
+        data.append(CHARSET.find(ch))
+    if _polymod(_hrp_expand(hrp) + data) != _BECH32_CONST:
+        raise ValueError("Prüfsumme ungültig")
+    return hrp, data[:-6]
+
+
+def bech32_encode(hrp: str, payload: bytes) -> str:
+    data = convertbits(payload, 8, 5)
+    pm = _polymod(_hrp_expand(hrp) + data + [0] * 6) ^ _BECH32_CONST
+    return hrp + "1" + "".join(CHARSET[d] for d in data + [(pm >> 5 * (5 - i)) & 31 for i in range(6)])
+
+
+# ----------------------------------------------------------------------------------------------------
+# Cardano (CIP-19): Kopfbyte = Adresstyp (obere 4 Bit) + Netzwerk (untere 4 Bit, 1 = Mainnet)
+# ----------------------------------------------------------------------------------------------------
+
+def cardano_decode(addr: str) -> tuple[str, int, int, bytes]:
+    """(HRP, Typ, Netzwerk, Nutzdaten ohne Kopfbyte) einer Shelley-Adresse (``addr1…``/``stake1…``)."""
+    hrp, data = bech32_decode(addr)
+    raw = bytes(convertbits(data, 5, 8, False))
+    if not raw:
+        raise ValueError("leer")
+    typ, net, body = raw[0] >> 4, raw[0] & 0x0F, raw[1:]
+    if hrp == "stake":
+        if typ not in (14, 15) or len(body) != 28:
+            raise ValueError("keine Stake-Adresse")
+    elif hrp == "addr":
+        if typ in (0, 1, 2, 3) and len(body) != 56:
+            raise ValueError("Basisadresse mit falscher Länge")
+        if typ in (6, 7) and len(body) != 28:
+            raise ValueError("Enterprise-Adresse mit falscher Länge")
+        if typ in (4, 5) and len(body) < 29:
+            raise ValueError("Pointer-Adresse zu kurz")
+        if typ > 7:
+            raise ValueError("Adresstyp nicht unterstützt")
+    else:
+        raise ValueError("Präfix nicht addr1/stake1")
+    return hrp, typ, net, body
+
+
+def cardano_stake_of(addr: str) -> str | None:
+    """Stake-Adresse (Konto) zu einer Basisadresse; None für Enterprise-/Pointer-Adressen (ohne Stake-Teil)."""
+    hrp, typ, net, body = cardano_decode(addr)
+    if hrp == "stake":
+        return addr.lower()
+    if typ not in (0, 1, 2, 3):
+        return None
+    script = typ in (2, 3)  # Typ 2/3: Stake-Teil ist ein Skript-Hash
+    return bech32_encode("stake", bytes([(0xF0 if script else 0xE0) | net]) + body[28:56])
+
+
+# ----------------------------------------------------------------------------------------------------
+# XRP Ledger: Base58Check mit eigenem Alphabet, Konto-ID = Versionsbyte 0x00 + 20 Byte
+# ----------------------------------------------------------------------------------------------------
+
+XRPL_B58 = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz"
+_XRPL_IDX = {c: i for i, c in enumerate(XRPL_B58)}
+
+
+def xrpl_decode(addr: str) -> bytes:
+    """Konto-ID (20 Byte) einer klassischen Adresse ``r…`` – prüft Alphabet, Versionsbyte und Prüfsumme."""
+    n = 0
+    for ch in addr:
+        if ch not in _XRPL_IDX:
+            raise ValueError("ungültiges Zeichen")
+        n = n * 58 + _XRPL_IDX[ch]
+    raw = n.to_bytes((n.bit_length() + 7) // 8, "big") if n else b""
+    raw = b"\x00" * (len(addr) - len(addr.lstrip("r"))) + raw
+    if len(raw) != 25 or raw[0] != 0:
+        raise ValueError("keine Konto-Adresse")
+    if sha256d(raw[:21])[:4] != raw[21:]:
+        raise ValueError("Prüfsumme ungültig")
+    return raw[1:21]
+
+
+def xrpl_encode(account_id: bytes) -> str:
+    payload = b"\x00" + account_id
+    raw = payload + sha256d(payload)[:4]
+    n = int.from_bytes(raw, "big")
+    out = ""
+    while n:
+        n, r = divmod(n, 58)
+        out = XRPL_B58[r] + out
+    return "r" * (len(raw) - len(raw.lstrip(b"\x00"))) + out
+
+
+# ----------------------------------------------------------------------------------------------------
+# SS58 (Substrate/Polkadot): Präfix + 32-Byte-Konto + 2 Byte Blake2b-512("SS58PRE" ‖ Daten)
+# ----------------------------------------------------------------------------------------------------
+
+def ss58_decode(addr: str) -> tuple[int, bytes]:
+    """(Netzwerk-Präfix, Konto-ID 32 Byte) – prüft die Prüfsumme."""
+    raw = b58decode(addr)
+    if len(raw) < 3:
+        raise ValueError("zu kurz")
+    if raw[0] < 64:
+        prefix, plen = raw[0], 1
+    elif raw[0] < 128:
+        lower = ((raw[0] << 2) | (raw[1] >> 6)) & 0xFF
+        upper = raw[1] & 0x3F
+        prefix, plen = lower | (upper << 8), 2
+    else:
+        raise ValueError("Präfix ungültig")
+    body = raw[plen:]
+    if len(body) != 34:
+        raise ValueError("keine 32-Byte-Konto-Adresse")
+    check = hashlib.blake2b(b"SS58PRE" + raw[:-2], digest_size=64).digest()[:2]
+    if check != raw[-2:]:
+        raise ValueError("Prüfsumme ungültig")
+    return prefix, body[:32]
+
+
+def ss58_encode(account_id: bytes, prefix: int = 0) -> str:
+    if len(account_id) != 32 or not 0 <= prefix < 64:
+        raise ValueError("nur 32-Byte-Konten mit einfachem Präfix")
+    data = bytes([prefix]) + account_id
+    return b58encode(data + hashlib.blake2b(b"SS58PRE" + data, digest_size=64).digest()[:2])
 
 
 # ----------------------------------------------------------------------------------------------------

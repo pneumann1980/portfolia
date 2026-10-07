@@ -23,7 +23,8 @@ def _load_modules() -> None:
     for mod in ("app.news.module", "app.tax.module", "app.plans.module", "app.journal.module", "app.csvimport.module",
                 "app.jobs.maintenance", "app.jobs.exports", "app.prices.sources_web", "app.datasources.web",
                 "app.datasources.bitpanda", "app.datasources.chains.evm", "app.datasources.chains.bitcoin",
-                "app.datasources.chains.solana", "app.datasources.chains.kaspa", "app.diagnosis.web"):
+                "app.datasources.chains.solana", "app.datasources.chains.kaspa", "app.datasources.chains.xrpl",
+                "app.datasources.chains.cardano", "app.datasources.chains.polkadot", "app.diagnosis.web"):
         with contextlib.suppress(ModuleNotFoundError):
             __import__(mod)
 

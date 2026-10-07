@@ -17,10 +17,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+from app.datasources import overview as OV
 from app.datasources.chainhttp import ENDPOINTS
 from app.datasources.connector import CREDENTIAL_RE, connector_for, supported
 from app.datasources.providers import EXCHANGE, INTERVALS, KIND_LABEL, WALLET, contains_secret, providers
-from app.datasources.service import PROVIDER_KEYS, RUN_STATUS_LABEL, STATUS_LABEL, datasource_service
+from app.datasources.service import CHAIN_TICKER, PROVIDER_KEYS, RUN_STATUS_LABEL, STATUS_LABEL, datasource_service
 from app.datasources.wallet import GAP_DEFAULT, SCRIPT_TYPES
 from app.jobs.scheduler import Scheduler, extra_jobs
 from app.web.app import register_router
@@ -30,7 +31,13 @@ log = logging.getLogger(__name__)
 
 FORM_FIELDS = ("kind", "provider", "name", "account", "address", "credential_ref", "sync_interval_min", "auto_commit",
                "note", "key_expires_on", "wallet_group", "script", "gap", "chain_provider", "tokens", "tokens_shown")
-WALLET_CHAINS = ("bitcoin", "ethereum", "bsc", "avalanche", "solana", "kaspa")  # mit Anbindung (Reihenfolge)
+WALLET_CHAINS = ("bitcoin", "ethereum", "bsc", "polygon", "avalanche", "solana", "xrp", "cardano", "polkadot",
+                 "kaspa")  # mit Anbindung (Reihenfolge der Auswahl)
+CHECK_LABELS = {"transaction": "Vorgänge", "balances": "Bestände", "assets": "Asset-Stammdaten", "chain": "Chain",
+                "balance": "Bestand", "history": "Historie", "nft": "NFTs", "tokens": "Tokens", "addresses": "Adressen",
+                "krc20": "KRC-20", "native": "Nativer Coin", "xpub": "Kontoschlüssel",
+                "chain_polkadot": "Relay Chain", "chain_assethub-polkadot": "Asset Hub",
+                "history_polkadot": "Historie Relay Chain", "history_assethub-polkadot": "Historie Asset Hub"}
 
 
 @extra_jobs
@@ -94,7 +101,8 @@ def _form_page(request: Request, data: dict[str, Any], errors: list[str], sid: i
                   holdings=svc.holdings(ds) if ds is not None and (ds.is_wallet or svc.balances(int(ds.id))) else None,
                   outdated=svc.outdated(int(ds.id)) if ds is not None else 0, quality=_quality(ctx, ds),
                   acct_sug=svc.account_suggestion(ds) if ds is not None else None,
-                  acct_sw=svc.account_switch(int(ds.id)) if ds is not None else None)
+                  acct_sw=svc.account_switch(int(ds.id)) if ds is not None else None, chain_ticker=CHAIN_TICKER,
+                  check_labels=CHECK_LABELS)
 
 
 def _quality(ctx: Any, ds: Any) -> Any:
@@ -111,21 +119,82 @@ def make_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/settings/datasources", response_class=HTMLResponse)
-    def index(request: Request, msg: str = "", error: str = "") -> HTMLResponse:
+    def index(request: Request, msg: str = "", error: str = "", q: str = "", sort: str = "name",
+              desc: str = "") -> HTMLResponse:
         ctx = get_ctx(request)
         svc = datasource_service(ctx)
         items = svc.list()
         pending = {ds.id: svc.pending_batches(ds.id) for ds in items}
         opens = {ds.id: svc.open_counts(ds.id) for ds in items}
-        wallets = [ds for ds in items if ds.is_wallet]
+        all_wallets = [ds for ds in items if ds.is_wallet]
+        values = OV.account_values(ctx, all_wallets)
+        overlap = OV.overlaps(all_wallets)
+        holdings = {ds.id: svc.holdings(ds) for ds in all_wallets}
+        sort = sort if sort in OV.SORTS else "name"
+        q = q.strip()[:80]
+        wallets = sorted((ds for ds in all_wallets if OV.matches(ds, q)), key=OV.sort_key(sort, values),
+                         reverse=bool(desc))
         groups: dict[str, list[Any]] = {}
-        for ds in sorted(wallets, key=lambda d: (d.group.lower() or "~", d.name.lower())):
-            groups.setdefault(ds.group or "Ohne Gruppe", []).append(ds)
-        holdings = {ds.id: svc.holdings(ds) for ds in wallets}
+        for ds in sorted(wallets, key=lambda d: d.group.lower() or "~"):  # stabil: Sortierung innerhalb der Gruppe
+            groups.setdefault(ds.group or "", []).append(ds)
+        sums = {g: OV.group_summary([d for d in all_wallets if (d.group or "") == g], values, overlap) for g in groups}
+        total = OV.group_summary(all_wallets, values, overlap)
+        states = {ds.id: OV.sync_state(ds) for ds in all_wallets}
+        notes = {ds.id: OV.data_notes(ds, values.get(int(ds.id)), opens.get(ds.id) or {}, holdings.get(ds.id),
+                                      overlap.get(int(ds.id))) for ds in all_wallets}
         return render(request, "datasources.html", active="settings", items=items, pending=pending, opens=opens,
                       msg=msg, error=error, status_label=STATUS_LABEL, keys=svc.key_stats(),
                       exchanges=[ds for ds in items if not ds.is_wallet], groups=groups, holdings=holdings,
-                      provider_keys=svc.provider_keys())
+                      provider_keys=svc.provider_keys(), values=values, overlap=overlap, sums=sums, total=total,
+                      states=states, state_label=OV.STATE_LABEL, state_badge=OV.STATE_BADGE, notes=notes, q=q,
+                      sort=sort, desc=bool(desc), sorts=OV.SORTS, n_wallets=len(all_wallets),
+                      group_names=svc.groups(), batch=svc.batch_progress(), age_text=OV.age_text)
+
+    @router.post("/settings/datasources/sync-many")
+    async def sync_many(request: Request) -> Response:
+        """Alle Wallets bzw. alle Konten einer Gruppe nacheinander im Hintergrund aktualisieren."""
+        svc = datasource_service(get_ctx(request))
+        f = await request.form()
+        group = str(f.get("group") or "")
+        scope = str(f.get("scope") or "all")
+        wallets = [ds for ds in svc.list() if ds.is_wallet]
+        if scope == "group":
+            ids = [int(ds.id) for ds in wallets if ds.group == group.strip()]
+            label = f"Gruppe „{group.strip() or 'Ohne Gruppe'}“"
+        else:
+            ids = [int(ds.id) for ds in wallets]
+            label = "alle Wallets"
+        res = await run_in_threadpool(svc.start_sync_many, ids, label)
+        if res.get("error"):
+            return _back(request, _list_url(error=res["error"]))
+        return _back(request, _list_url(msg=f"Aktualisierung gestartet: {label} ({res['count']} Konten) – nacheinander "
+                                            "im Hintergrund; Fehler einzelner Konten halten die übrigen nicht auf."))
+
+    @router.get("/settings/datasources/batch-progress", response_class=HTMLResponse)
+    def batch_progress(request: Request) -> Response:
+        svc = datasource_service(get_ctx(request))
+        b = svc.batch_progress()
+        if not b.get("running"):
+            return Response(status_code=204, headers={"HX-Redirect": _list_url()})
+        return render(request, "partials/ds_batch.html", batch=b)
+
+    @router.post("/settings/datasources/groups/rename")
+    async def rename_group(request: Request) -> Response:
+        svc = datasource_service(get_ctx(request))
+        f = await request.form()
+        errs = await run_in_threadpool(svc.rename_group, str(f.get("old") or ""), str(f.get("new") or ""))
+        if errs:
+            return _back(request, _list_url(error=" ".join(errs)))
+        return _back(request, _list_url(msg="Gruppe umbenannt – Konten, Adressen und Vorgänge bleiben unverändert."))
+
+    @router.post("/settings/datasources/{sid}/group")
+    async def set_group(request: Request, sid: int) -> Response:
+        svc = datasource_service(get_ctx(request))
+        f = await request.form()
+        errs = await run_in_threadpool(svc.set_group, sid, str(f.get("group") or ""))
+        if errs:
+            return _back(request, _list_url(sid, error=" ".join(errs)))
+        return _back(request, _list_url(sid, msg="Gruppe geändert."))
 
     @router.get("/settings/datasources/new", response_class=HTMLResponse)
     def new_form(request: Request, kind: str = EXCHANGE, provider: str = "", group: str = "") -> HTMLResponse:

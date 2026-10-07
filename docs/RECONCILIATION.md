@@ -103,6 +103,7 @@ neu bewertet (typisch: mögliche Dublette, Vorschlag „nicht übernehmen“); n
 | 6 | Bitpanda-Vollständigkeit: Bericht „nachgewiesen / plausibel / nicht verifizierbar“ | umgesetzt (`app/datasources/quality.py`) |
 | 7 | Feldweises Übernehmen einzelner Werte in die vorhandene Buchung | **offen** – bewusst nicht automatisch; heute über „Bearbeiten“ anhand des Korrekturvorschlags |
 | 8 | Transferseite bei verzögerter Auszahlung bzw. anderem Kontonamen – im Prüf-Stapel und für bereits gebuchte App-Buchungen (0.17.1) | umgesetzt (`app/csvimport/transfer_side.py`, Abschnitt 5) |
+| 9 | Mehrere Datenquellen desselben Anbieters (z. B. zwei Bitcoin-Wallets, neu angelegte Quelle): Hash-Abgleich auch gegen Buchungen der anderen Quelle – gleiche Seite **und** Menge → mögliche Dublette; Transfer A → B bzw. gemeinsame Ausgabe bleiben getrennt. Behoben: scheinbare UUID aus Transaktions-Hashes (Fehltreffer „bereits vorhanden“) (0.18.0) | umgesetzt (`app/csvimport/service._same_events`, `events.identity_keys`) |
 
 Details zu Regeln, Grenzen und Tests: README, Abschnitte „Importprüfung: Abgleich je Zeile, Stapelaktionen,
 Verknüpfen“ und „Vollständigkeit der Historie“; Meilenstein M19 in `docs/MILESTONES.md`.

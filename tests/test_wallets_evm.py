@@ -432,14 +432,15 @@ def test_observed_vs_explained_balances(client, evm):
 
 def test_wallet_pages_offer_sync_only_for_supported_chains(client, evm):
     sid = eth_wallet(client)
-    post(client, "/settings/datasources", kind="wallet", provider="cardano", name="Yoroi ADA", account="Yoroi",
-         address="addr1" + "q" * 98, sync_interval_min="0")
+    post(client, "/settings/datasources", kind="wallet", provider="tron", name="TronLink TRX", account="TronLink",
+         address="T" + "9" * 33, sync_interval_min="0")
     page = client.get("/settings/datasources").text
     assert page.count("Erstabruf starten") == 1 and "Ledger" in page and "Ohne Gruppe" in page
     detail = client.get(f"/settings/datasources/{sid}").text
     assert "Etherscan API V2" in detail and "Routescan" in detail
     new = client.get("/settings/datasources/new?kind=wallet").text
-    for chain in ("Bitcoin", "Ethereum", "BNB Smart Chain", "Avalanche C-Chain"):
+    for chain in ("Bitcoin", "Ethereum", "BNB Smart Chain", "Polygon PoS", "Avalanche C-Chain", "XRP Ledger",
+                  "Cardano", "Polkadot"):
         assert chain in new
 
 

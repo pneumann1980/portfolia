@@ -316,12 +316,13 @@ def test_crud_exchange_and_wallet(client):
     w = int(re.search(r"/settings/datasources/(\d+)", r.headers["location"]).group(1))
     assert source(c, w)["address"] == "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"
 
-    r = post(c, "/settings/datasources", kind="wallet", provider="cardano", name="Yoroi ADA", account="Yoroi",
-             address="addr1" + "q" * 98, sync_interval_min="0", wallet_group="Yoroi")
+    # Chain ohne Anbindung (nur CSV-Import): TRON
+    r = post(c, "/settings/datasources", kind="wallet", provider="tron", name="TronLink TRX", account="TronLink",
+             address="T" + "9" * 33, sync_interval_min="0", wallet_group="TronLink")
     assert r.status_code == 303, r.text[:500]
     page = c.get("/settings/datasources").text
     for s in ("Kraken Hauptkonto", "Ledger ETH", "angelegt", "Manuell / noch nicht unterstützt", KEY, "fehlt",
-              "0x5aaeb6", "Ohne Gruppe", "Yoroi ADA", "Anbieter-Schlüssel"):
+              "0x5aaeb6", "Ohne Gruppe", "TronLink TRX", "Anbieter-Schlüssel"):
         assert s in page, s
     assert "Jetzt synchronisieren" not in page  # ohne Connector bzw. ohne Lauf keine Synchronisierung anbieten
 

@@ -524,6 +524,41 @@ table.journal td.actions { white-space: normal; min-width: 7.5rem; }
 .ds-card h3 { font-size: 1rem; }
 div.box, .ds-card.box { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; background: var(--surface); }
 .ds-progress .progress { height: 8px; }
+.btn.xs { padding: 3px 7px; min-height: 26px; font-size: 0.75rem; }
+.ds-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.ds-toolbar input[type="search"] { flex: 1 1 14em; min-width: 0; }
+.ds-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; }
+.ds-card { min-width: 0; }
+.ds-card-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; }
+.ds-card-title { min-width: 0; }
+.ds-card-title h3 { margin: 0; }
+.ds-card-value { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin-top: 8px; }
+.ds-value { font-size: 1.1rem; white-space: nowrap; }
+.ds-addr { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.ds-addr code { background: var(--surface-2); border-radius: 6px; padding: 2px 6px; overflow-wrap: anywhere; }
+.ds-status { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.ds-notes { margin-top: 8px; padding: 6px 10px; border-left: 3px solid var(--warn-mark); background: var(--surface-2);
+  border-radius: 6px; }
+.ds-notes ul { margin: 2px 0 0; padding-left: 18px; }
+details.ds-more > summary, details.ds-rename > summary { list-style: none; cursor: pointer; }
+details.ds-more > summary::-webkit-details-marker, details.ds-rename > summary::-webkit-details-marker { display: none; }
+details.ds-more[open] { flex-basis: 100%; }
+.ds-more-body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 8px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--surface-2); }
+.chain-icon { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px;
+  border-radius: 50%; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.02em; color: #fff;
+  background: #5f5e5a; flex: none; }
+.chain-btn .chain-icon { width: 30px; height: 30px; font-size: 0.6rem; margin-right: 6px; }
+.chain-bitcoin { background: #c96d00; }
+.chain-ethereum { background: #4f5fa8; }
+.chain-bsc { background: #a07700; }
+.chain-polygon { background: #7340d6; }
+.chain-avalanche { background: #c4302f; }
+.chain-solana { background: #6b3fb8; }
+.chain-xrp { background: #23292f; }
+.chain-cardano { background: #0033ad; }
+.chain-polkadot { background: #c8006b; }
+.chain-kaspa { background: #1f8f7f; }
 
 /* Diagnose (nur lesend): Befunde, Gegenüberstellung, Szenario */
 .diag .seg a { white-space: normal; text-align: left; }

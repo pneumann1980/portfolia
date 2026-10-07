@@ -313,11 +313,12 @@ class WalletConnector(K.Connector):
         return ENDPOINTS[eid]
 
     def http(self, cfg: K.SourceConfig, secret: K.Secret, *, usage: Callable[[int], None] | None = None,
-             max_requests: int | None = None, deadline_s: float | None = None) -> ChainHttp:
+             max_requests: int | None = None, deadline_s: float | None = None,
+             network: str | None = None) -> ChainHttp:
         ep = self.endpoint(cfg)
         key = secret.reveal() if secret.present else None
-        return ChainHttp(ep, key=key, chain_id=self.chain_id, transport=self.transport, sleep=self.sleep,
-                         clock=self.clock, max_requests=max_requests or self.max_requests,
+        return ChainHttp(ep, key=key, chain_id=self.chain_id, network=network, transport=self.transport,
+                         sleep=self.sleep, clock=self.clock, max_requests=max_requests or self.max_requests,
                          deadline_s=self.deadline_s if deadline_s is None else deadline_s, usage=usage or self.usage)
 
     def watch(self, cfg: K.SourceConfig) -> WatchConfig:

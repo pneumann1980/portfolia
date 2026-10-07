@@ -87,7 +87,9 @@ def identity_keys(event_key: str | None, aliases: set[str] | list[str] | tuple[s
     out |= derive_aliases(external_id)
     for k in list(out):  # UUID-Form der Ereignis-ID selbst (Schreibweise vereinheitlichen)
         p, _, native = k.partition(":")
-        u = uuid_key(p, native)
+        # nur Anbieter mit UUID-Kennungen: aus Transaktions-Hashes (Wallets: 64 Hex-Zeichen) darf keine „UUID“
+        # entstehen – sonst gälten verschiedene Vorgänge mit gleichem Hash-Anfang als dasselbe Ereignis
+        u = uuid_key(p, native) if p in NATIVE_ID_PREFIXES else None
         if u:
             out.add(u)
     return out

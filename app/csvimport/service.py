@@ -971,7 +971,8 @@ class CsvImportService:
         probe = [rc for rc in open_rows if rc.status == "before" and rc.row is not None]
         for rc in probe:
             rc.status = "new"
-        self._same_events([rc for rc in open_rows if rc.status in ("new", "invalid", "unclear", "before")], source)
+        self._same_events([rc for rc in open_rows if rc.status in ("new", "invalid", "unclear", "before")], source,
+                          batch["datasource_id"])
         self._duplicates([rc for rc in open_rows if rc.status == "new"], pf, source, batch["datasource_id"])
         self._same_qty([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._reconstructed([rc for rc in open_rows if rc.status == "new"], pf)
@@ -1296,7 +1297,7 @@ class CsvImportService:
             rc.warnings.append(f"Gebühr {fee_q.normalize():f} {fee_a} ohne EUR-Wert (wird mit 0 € angesetzt)")
 
     # -- Dubletten ----------------------------------------------------------------------------------------
-    def _same_events(self, rows: list[RowCtx], source: str) -> None:
+    def _same_events(self, rows: list[RowCtx], source: str, ds_id: int | None = None) -> None:
         """Dasselbe Ereignis aus einer anderen Quelle (CSV-Import ↔ Datenquelle ↔ kuratierter Import): Treffer über
         Anbieter-ID bzw. Alias (Bitpanda-UUIDs) oder dieselbe Kennung derselben Quelle in einer Import-Buchung →
         „bekannt“ (geht nicht erneut in Bewertung und Lots ein); Treffer über den Transaktions-Hash nur bei gleicher
@@ -1341,9 +1342,13 @@ class CsvImportService:
                 wanted[rc.idx] = (ids, h)
         if not wanted:
             return
-        for r in self.db.q("SELECT tx_id, source, status, external_id, event_key, tx_hash, type, from_asset, to_asset "
-                           "FROM journal_tx WHERE status IN ('active', 'merged', 'deleted') AND source <> 'transfer' "
-                           "AND source <> ?", (source,)):
+        # andere Quellen sowie – bei Datenquellen – Buchungen *anderer* Datenquellen desselben Anbieters (z. B. ein
+        # zweites Konto mit überschneidender Adresse oder eine neu angelegte Quelle): gleicher Hash und gleiche
+        # Buchungsseite → mögliche Dublette statt stiller Doppelbuchung
+        for r in self.db.q("SELECT tx_id, source, status, external_id, event_key, tx_hash, type, from_asset, to_asset, "
+                           "from_qty, to_qty FROM journal_tx WHERE status IN ('active', 'merged', 'deleted') AND "
+                           "source <> 'transfer' AND (source <> ? OR (? IS NOT NULL AND datasource_id IS NOT NULL AND "
+                           "datasource_id <> ?))", (source, ds_id, ds_id)):
             for k in identity_keys(r["event_key"], aliases.get(r["tx_id"], set()), r["external_id"]):
                 by_id[k].append(r)
             h = normalize_hash(r["tx_hash"] or derive_tx_hash(r["external_id"]))
@@ -1369,10 +1374,14 @@ class CsvImportService:
             row = rc.row
             if not h or rc.status != "new" or row is None:
                 continue
+            # andere Datenquelle desselben Anbieters: zusätzlich gleiche Mengen – zwei eigene Wallets, die in
+            # derselben Transaktion je einen Teil ausgeben, sind keine Dublette
             hits = list(dict.fromkeys(
                 r["tx_id"] for r in by_hash.get(h, ())
                 if (r["type"], r["from_asset"] or "", r["to_asset"] or "") == (row["type"], row["from_asset"],
-                                                                                 row["to_asset"])))
+                                                                                 row["to_asset"])
+                and (r["source"] != source or (_qty_eq(_row_d(row["from_qty"]), _row_d(r["from_qty"]))
+                                               and _qty_eq(_row_d(row["to_qty"]), _row_d(r["to_qty"]))))))
             if hits:
                 rc.status, rc.basis = "duplicate", "hash"
                 rc.dup_of = hits

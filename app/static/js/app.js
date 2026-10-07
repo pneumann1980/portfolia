@@ -49,6 +49,30 @@
     });
   }
 
+  // --- Kopieren (öffentliche Adressen) -------------------------------------------------------------------
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-copy]");
+    if (!b) return;
+    var text = b.getAttribute("data-copy") || "";
+    var done = function () { toast("Adresse kopiert", "good"); };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+    } else {
+      fallbackCopy(text, done);
+    }
+  });
+  function fallbackCopy(text, done) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); done(); } catch (err) { toast("Kopieren nicht möglich", "crit"); }
+    document.body.removeChild(ta);
+  }
+
   // --- Mehr-Menü (mobil) ------------------------------------------------------------------------------
   document.addEventListener("click", function (e) {
     var menu = document.getElementById("more-menu");

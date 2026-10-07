@@ -57,6 +57,7 @@ import httpx
 from app.datasources import connector as K
 from app.datasources.catalog import Catalog
 from app.datasources.chainhttp import ENDPOINTS
+from app.datasources.overview import conflict, identity, is_xpub
 from app.datasources.providers import (
     EXCHANGE,
     INTERVALS,
@@ -78,6 +79,11 @@ STATUS_LABEL = {"created": "angelegt", "connected": "verbunden", "synced": "sync
                 "partial": "teilweise synchronisiert", "error": "Fehler"}
 STATUS_BADGE = {"created": "", "connected": "info", "synced": "good", "partial": "warn", "error": "crit"}
 RUN_STATUS_LABEL = {"running": "läuft", "ok": "erfolgreich", "partial": "teilweise", "error": "Fehler"}
+CHAIN_TICKER = {"bitcoin": "BTC", "ethereum": "ETH", "bsc": "BNB", "polygon": "POL", "avalanche": "AVAX",
+                "solana": "SOL", "xrp": "XRP", "cardano": "ADA", "polkadot": "DOT", "kaspa": "KAS", "tron": "TRX",
+                "litecoin": "LTC", "dogecoin": "DOGE", "arbitrum": "ARB", "optimism": "OP", "base": "BASE",
+                "pulsechain": "PLS", "other_chain": "…"}
+MULTI_ADDRESS = ("bitcoin", "cardano")  # Chains mit mehreren Adressen je Konto (UTXO)
 MAX_EVENTS = 50_000
 KEY_WARN_DAYS = 14
 DONE = ("known", "ignored", "committed", "merged", "linked")
@@ -90,6 +96,8 @@ _GROUP_RE = re.compile(r"^[^\x00-\x1f<>]{1,40}$")
 PROGRESS_STALE_S = 600  # ohne Lebenszeichen gilt ein Lauf als abgebrochen (Neustart des Containers)
 BACKFILL_NEXT_S = 90  # Etappen des Erstabrufs: nächster Lauf nach so vielen Sekunden
 MAX_ROUNDS = 40  # Etappen je manuell gestartetem Hintergrundlauf
+MANY_ROUNDS = 3  # Etappen je Konto beim Aktualisieren mehrerer Konten (Erstabrufe setzt der Zeitplan fort)
+BATCH_KEY = "datasources.batch_sync"
 # Anbieter-Schlüssel (je Anbieter, nicht je Datenquelle) – nur Anbieter aus dem geprüften Katalog
 PROVIDER_KEYS = {e.key_provider: e for e in ENDPOINTS.values() if e.key_provider}
 _SECRETISH = re.compile(r"(?i)\b(authorization|x-api-key|api[-_ ]?key|apikey|secret|signature|passphrase|token|"
@@ -275,6 +283,31 @@ class DataSource:
     @property
     def connector(self) -> K.Connector | None:
         return K.connector_for(self.row["provider"])
+
+    @property
+    def copy_address(self) -> str:
+        """Kennung zum Kopieren (erste Adresse; ein Bitcoin-Kontoschlüssel nur, wenn es nichts anderes gibt)."""
+        a = self.addresses
+        xpubs = set(self.watch.xpubs)
+        plain = [x for x in a if x not in xpubs]
+        return (plain or a or [""])[0]
+
+    @property
+    def explorer_url(self) -> str | None:
+        """Explorer-Link der Adresse (öffnet der Nutzer selbst; Portfolia ruft ihn nie ab)."""
+        c = self.connector
+        a = self.copy_address
+        if c is None or not getattr(c, "explorer_addr", "") or not a or a in self.watch.xpubs or \
+                (self.row["provider"] == "bitcoin" and is_xpub(a)):
+            return None  # Kontoschlüssel (xpub/zpub) zeigt kein Explorer an
+        if self.row["provider"] == "cardano" and a.startswith("stake1"):
+            return f"https://cardanoscan.io/stakekey/{a}"
+        return str(c.explorer_addr).format(a)  # type: ignore[attr-defined]
+
+    @property
+    def icon(self) -> str:
+        """Kürzel für das Chain-Symbol der Oberfläche (CSS ``chain-icon--<provider>``)."""
+        return CHAIN_TICKER.get(self.row["provider"], (self.row["provider"] or "?")[:3].upper())
 
     @property
     def endpoint(self) -> Any:
@@ -616,17 +649,40 @@ class DataSourceService:
                 errors.append("Ablaufdatum des API-Keys ungültig (TT.MM.JJJJ bzw. Datumsauswahl).")
                 expires = None
         note = str(data.get("note") or "").strip()[:300] or None
-        if address and not errors:
+        if address and not errors and kind != WALLET:
             dup = self.db.q1("SELECT id, name FROM data_source WHERE kind=? AND provider=? AND address=? AND id<>?",
                              (kind, pid, address, current.row["id"] if current else 0))
             if dup is not None:
                 errors.append(f"Diese Adresse ist bereits als „{dup['name']}“ angelegt.")
+        if kind == WALLET and watch is not None and not errors:
+            errors += self._overlap_errors(pid, watch, address, current)
         vals = {"kind": kind, "provider": pid, "name": name, "account": account, "address": address,
                 "credential_ref": credential_ref, "sync_interval_min": max(interval, 0),
                 "auto_commit": 1 if str(data.get("auto_commit") or "") in ("1", "on", "true") else 0, "note": note,
                 "key_expires_on": expires, "wallet_group": group,
                 "watch_json": watch.dump() if watch is not None else None}
         return vals, errors
+
+    def _overlap_errors(self, pid: str, watch: WatchConfig, address: str | None,
+                        current: DataSource | None) -> list[str]:
+        """Konten derselben Chain dürfen sich nicht überschneiden (gleiche Adresse, Adresse im Kontoschlüssel eines
+        anderen Kontos): sonst würden dieselben Vorgänge zweimal gebucht. Andere Chains sind getrennt – dieselbe
+        0x-Adresse auf Ethereum und Polygon sind zwei Konten."""
+        mine = identity(pid, watch, address)
+        errors = []
+        for other in self.list():
+            if not other.is_wallet or other.provider != pid or (current is not None and other.id == current.id):
+                continue
+            theirs = identity(pid, other.watch, other.address, other.row["cursor_json"])
+            why = conflict(mine, theirs)
+            if why and mine[0] & theirs[0]:
+                errors.append(f"Diese Adresse ist bereits als „{other.name}“ angelegt (gleiche Chain) – dieselben "
+                              "Vorgänge würden doppelt gebucht.")
+            elif why:
+                errors.append(f"Überschneidung mit „{other.name}“: {why}. Dieselben Vorgänge würden doppelt gebucht – "
+                              "die Adresse nur in einem Konto führen (bei Bitcoin bevorzugt im Konto mit "
+                              "Kontoschlüssel).")
+        return errors
 
     @staticmethod
     def _wallet_fields(prov: Any, data: Mapping[str, Any], current: DataSource | None) \
@@ -643,7 +699,7 @@ class DataSourceService:
                                 "eingeben. Benötigt werden nur öffentliche Adressen bzw. der öffentliche "
                                 "Kontoschlüssel (xpub/ypub/zpub)."]
         raw_lines = [x for x in re.split(r"[\s,;]+", raw_text) if x]
-        if len(raw_lines) > 1 and prov.id != "bitcoin":
+        if len(raw_lines) > 1 and prov.id not in MULTI_ADDRESS:
             errors.append("Bitte genau eine Adresse eingeben – für weitere Adressen ein eigenes Konto anlegen.")
         if len(raw_lines) > MAX_ADDRESSES:
             errors.append(f"Höchstens {MAX_ADDRESSES} Adressen je Konto.")
@@ -654,13 +710,20 @@ class DataSourceService:
             if err:
                 errors.append(err)
                 continue
-            if norm and norm[1:4] == "pub":
+            if norm and prov.id == "bitcoin" and is_xpub(norm):
                 xpubs.append(norm)
             elif norm and norm not in addrs:
                 addrs.append(norm)
         if not raw_lines:
             errors.append("Adresse fehlt." if prov.id != "bitcoin" else
                           "Mindestens eine Adresse oder einen öffentlichen Kontoschlüssel (xpub/ypub/zpub) angeben.")
+        if prov.id == "cardano" and addrs:
+            from app.datasources.chains.codec import cardano_stake_of
+
+            stakes = {st for st in (cardano_stake_of(a) for a in addrs) if st}
+            if len(stakes) > 1:
+                errors.append("Die Adressen gehören zu verschiedenen Cardano-Konten (verschiedene Stake-Teile) – je "
+                              "Konto ein eigenes Wallet-Konto anlegen.")
         if len(xpubs) > 1:
             errors.append("Bitte nur einen Kontoschlüssel je Konto – für weitere Konten ein eigenes Konto anlegen.")
         script = str(data.get("script") or "").strip() or None
@@ -1114,6 +1177,104 @@ class DataSourceService:
             finally:
                 _SYNC_LOCK.release()
                 self.db.close_thread_conn()
+
+    # -- Mehrere Konten nacheinander (Gruppe, alle Wallets) ------------------------------------------------
+    def start_sync_many(self, ids: list[int], label: str, trigger: str = "manual") -> dict[str, Any]:
+        """Konten nacheinander im Hintergrund aktualisieren (eine Synchronisierung zur Zeit). Ein Fehler betrifft nur
+        das jeweilige Konto – die übrigen laufen weiter; bisher übernommene Daten bleiben unverändert."""
+        todo = [i for i in ids if (ds := self.get(i)) is not None and ds.supported and ds.enabled]
+        if not todo:
+            return {"error": "Keine aktiven Konten mit automatischer Anbindung ausgewählt."}
+        if not _SYNC_LOCK.acquire(blocking=False):
+            return {"error": "Eine Synchronisierung läuft bereits – bitte kurz warten."}
+        self.ctx.settings.set(BATCH_KEY, {"running": True, "label": label[:80], "total": len(todo), "done": 0,
+                                          "errors": [], "started_at": iso(_now()), "updated_at": iso(_now())})
+        t = threading.Thread(target=self._background_many, args=(todo, trigger), name="ds-sync-many", daemon=True)
+        try:
+            t.start()
+        except Exception:  # pragma: no cover - Thread-Start fehlgeschlagen
+            _SYNC_LOCK.release()
+            raise
+        return {"started": True, "count": len(todo)}
+
+    def _background_many(self, ids: list[int], trigger: str) -> None:
+        state = dict(self.batch_progress())
+        try:
+            for n, sid in enumerate(ids, 1):
+                ds = self.get(sid)
+                state.update(current=ds.name if ds else str(sid), updated_at=iso(_now()))
+                self.ctx.settings.set(BATCH_KEY, state)
+                res: dict[str, Any] = {}
+                try:
+                    self._set_progress(sid, {"running": True, "stage": "Start", "done": 0, "total": None, "text": "",
+                                             "started_at": iso(_now())}, force=True)
+                    for _ in range(MANY_ROUNDS):
+                        res = self._sync(sid, trigger, background=True)
+                        cur = self.get(sid)
+                        if res.get("error") or cur is None or not cur.backfill_pending:
+                            break
+                except Exception as e:  # ein Konto darf die übrigen nie aufhalten
+                    log.exception("Datenquelle %s: Aktualisierung fehlgeschlagen", sid)
+                    res = {"error": describe_error(e)[1]}
+                finally:
+                    cur = self.get(sid)
+                    if cur is not None:
+                        p = dict(cur.progress)
+                        p.update({"running": False, "finished_at": iso(_now()), "ok": not res.get("error"),
+                                  "result": res.get("error") or res.get("message") or "",
+                                  "batch_id": res.get("batch_id")})
+                        self._set_progress(sid, p, force=True)
+                if res.get("error"):
+                    state["errors"] = [*state.get("errors", []), f"{ds.name if ds else sid}: {res['error']}"][-10:]
+                state.update(done=n, updated_at=iso(_now()))
+                self.ctx.settings.set(BATCH_KEY, state)
+        finally:
+            state.update(running=False, current=None, finished_at=iso(_now()))
+            try:
+                self.ctx.settings.set(BATCH_KEY, state)
+            finally:
+                _SYNC_LOCK.release()
+                self.db.close_thread_conn()
+
+    def batch_progress(self) -> dict[str, Any]:
+        """Stand der Aktualisierung mehrerer Konten; ohne Lebenszeichen gilt sie als abgebrochen."""
+        v = self.ctx.settings.get(BATCH_KEY)
+        p = dict(v) if isinstance(v, dict) else {}
+        if p.get("running"):
+            seen = parse_iso(p.get("updated_at"))
+            if seen is None or (_now() - seen).total_seconds() > PROGRESS_STALE_S:
+                p.update(running=False, stale=True)
+        return p
+
+    # -- Gruppen -------------------------------------------------------------------------------------------
+    def groups(self) -> list[str]:
+        return sorted({d.group for d in self.list() if d.is_wallet and d.group}, key=str.lower)
+
+    def rename_group(self, old: str, new: str) -> list[str]:
+        """Gruppe umbenennen bzw. mit einer bestehenden zusammenführen – nur die Zuordnung, Konten bleiben
+        unverändert (eigene Chain, Adressen, Vorgänge, Synchronisierung)."""
+        old = re.sub(r"\s+", " ", old or "").strip()
+        new = re.sub(r"\s+", " ", new or "").strip()
+        if not old:
+            return ["Gruppe nicht gefunden."]
+        if new and not _GROUP_RE.match(new):
+            return ["Gruppenname ungültig (höchstens 40 Zeichen)."]
+        cur = self.db.x("UPDATE data_source SET wallet_group=?, updated_at=? WHERE kind='wallet' AND wallet_group=?",
+                        (new or None, iso(_now()), old))
+        if not cur.rowcount:
+            return ["Gruppe nicht gefunden."]
+        log.info("Wallet-Gruppe umbenannt: %s → %s (%d Konten)", old, new or "–", cur.rowcount)
+        return []
+
+    def set_group(self, sid: int, group: str) -> list[str]:
+        ds = self.get(sid)
+        if ds is None or not ds.is_wallet:
+            return ["Wallet-Konto nicht gefunden."]
+        g = re.sub(r"\s+", " ", group or "").strip()
+        if g and not _GROUP_RE.match(g):
+            return ["Gruppenname ungültig (höchstens 40 Zeichen)."]
+        self.db.x("UPDATE data_source SET wallet_group=?, updated_at=? WHERE id=?", (g or None, iso(_now()), sid))
+        return []
 
     def _set_progress(self, sid: int, data: dict[str, Any], force: bool = False) -> None:
         now = _now()

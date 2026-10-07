@@ -1,0 +1,7 @@
+{# Aktualisierung mehrerer Konten – fragt alle 3 s nach; danach lädt die Übersicht neu (HX-Redirect). #}
+{% set total = batch.total or 0 %}{% set pct = ((batch.done or 0) * 100 / total)|round|int if total else 0 %}
+<div class="alert info ds-batch" hx-get="/settings/datasources/batch-progress" hx-trigger="every 3s" hx-swap="outerHTML" role="status" aria-live="polite">
+  <span class="icon">↻</span><div style="flex:1;min-width:0"><b>Aktualisierung {{ batch.label }}</b>: {{ batch.done or 0 }} von {{ total }} Konten{% if batch.current %} · jetzt „{{ batch.current }}“{% endif %}
+    <div class="progress" style="margin-top:6px"><div style="width:{{ pct }}%"></div></div>
+    {% if batch.errors %}<div class="hint" style="margin-top:4px">Fehler bisher: {{ batch.errors|length }} – die übrigen Konten laufen weiter.</div>{% endif %}</div>
+</div>

@@ -330,3 +330,226 @@ class FakeKaspa(Recorder):
                                              "prev": page[0]["opScore"] if page else None,
                                              "next": page[-1]["opScore"] if page else None})
         return httpx.Response(404, json={"message": "not found"})
+
+
+class FakeBlockscout(Recorder):
+    """Blockscout Polygon (Etherscan-kompatibel, ohne Key): ``block/eth_block_number``, ``getblocknobytime`` als
+    Objekt, ``proxy`` unbekannt; ``status`` 2 für interne Transaktionen auf Wunsch."""
+
+    def __init__(self, data: dict[str, Any], internal_partial: bool = False) -> None:
+        super().__init__()
+        self.d = data
+        self.internal_partial = internal_partial
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        self.calls.append(req)
+        assert req.method == "GET" and req.url.host == "polygon.blockscout.com" and req.url.path == "/api"
+        assert "apikey" not in req.url.params and "chainid" not in req.url.params
+        inj = self.injected(req)
+        if inj is not None:
+            return inj
+        p = req.url.params
+        mod, act = p["module"], p["action"]
+        if mod == "proxy":
+            return httpx.Response(200, json={"message": "Unknown module", "result": None, "status": "0"})
+        if mod == "block" and act == "eth_block_number":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "result": hex(self.d["tip"]), "id": 1})
+        if act == "balance":
+            return httpx.Response(200, json={"status": "1", "message": "OK", "result": self.d.get("balance", "0")})
+        if act == "tokenbalance":
+            res = self.d.get("tokenbalance", {}).get(p["contractaddress"].lower(), "0")
+            return httpx.Response(200, json={"status": "1", "message": "OK", "result": res})
+        if act in ("tokennfttx", "token1155tx"):
+            return httpx.Response(200, json={"status": "1", "message": "OK", "result": []})
+        if act in ("txlist", "txlistinternal", "tokentx"):
+            addr = p["address"].lower()
+            start, end = int(p["startblock"]), int(p["endblock"])
+            page, off = int(p["page"]), int(p["offset"])
+            rows = sorted((r for r in self.d.get(act, []) if start <= int(r["blockNumber"]) <= end
+                           and addr in (r["from"].lower(), r["to"].lower())), key=lambda r: int(r["blockNumber"]))
+            chunk = rows[(page - 1) * off: page * off]
+            if act == "txlistinternal" and self.internal_partial:
+                return httpx.Response(200, json={"message": "Some internal transactions within this block range have "
+                                                            "not yet been processed", "result": chunk, "status": "2"})
+            return httpx.Response(200, json={"status": "1", "message": "OK", "result": chunk} if chunk else NO_TX)
+        return httpx.Response(200, json={"status": "0", "message": "NOTOK", "result": "Error! Invalid action"})
+
+
+class FakeXrpl(Recorder):
+    """rippled JSON-RPC (xrplcluster.com bzw. s2.ripple.com): ``account_tx`` aufsteigend mit ``marker``,
+    ``account_info``/``account_lines``, ``server_info``."""
+
+    def __init__(self, txs: list[dict[str, Any]], tip: int, accounts: dict[str, dict[str, Any]],
+                 lines: dict[str, list[dict[str, Any]]] | None = None, first_ledger: int = 32570) -> None:
+        super().__init__()
+        self.txs, self.tip, self.accounts, self.lines = txs, tip, accounts, lines or {}
+        self.first_ledger = first_ledger
+
+    @staticmethod
+    def involves(t: dict[str, Any], a: str) -> bool:
+        return a in json.dumps(t)
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        self.calls.append(req)
+        assert req.method == "POST" and req.url.host in ("xrplcluster.com", "s2.ripple.com")
+        inj = self.injected(req)
+        if inj is not None:
+            return inj
+        body = json.loads(req.content)
+        m, p = body["method"], body["params"][0]
+        assert p.get("api_version") == 2
+
+        def ok(result: dict[str, Any]) -> httpx.Response:
+            return httpx.Response(200, json={"result": {**result, "status": "success"}})
+
+        if m == "server_info":
+            return ok({"info": {"complete_ledgers": f"{self.first_ledger}-{self.tip}", "validated_ledger": {
+                "seq": self.tip, "reserve_base_xrp": 1, "reserve_inc_xrp": 0.2}}})
+        a = p.get("account")
+        if m in ("account_info", "account_lines") and a not in self.accounts:
+            return httpx.Response(200, json={"result": {"error": "actNotFound", "status": "error",
+                                                        "error_message": "Account not found."}})
+        if m == "account_info":
+            return ok({"account_data": {"Account": a, **self.accounts[a]}, "validated": True})
+        if m == "account_lines":
+            return ok({"account": a, "lines": self.lines.get(a, [])})
+        if m == "account_tx":
+            lo, hi = int(p["ledger_index_min"]), int(p["ledger_index_max"])
+            lo = self.first_ledger if lo == -1 else lo
+            rows = [t for t in self.txs if lo <= t["ledger_index"] <= hi and self.involves(t, a)]
+            rows.sort(key=lambda t: (t["ledger_index"], t["meta"]["TransactionIndex"]), reverse=not p.get("forward"))
+            start = int((p.get("marker") or {}).get("i", 0))
+            limit = int(p.get("limit") or 200)
+            chunk = rows[start:start + limit]
+            res: dict[str, Any] = {"account": a, "ledger_index_min": lo, "ledger_index_max": hi, "limit": limit,
+                                   "transactions": chunk, "validated": True}
+            if start + limit < len(rows):
+                res["marker"] = {"i": start + limit}
+            return ok(res)
+        return httpx.Response(200, json={"result": {"error": "unknownCmd", "status": "error"}})
+
+
+class FakeKoios(Recorder):
+    """Koios v1 (api.koios.rest): PostgREST-Seiten über ``offset``/``limit``, ``order`` nach Blockhöhe."""
+
+    def __init__(self, txs: list[dict[str, Any]], tip: dict[str, Any], rewards: list[dict[str, Any]] | None = None,
+                 accounts: dict[str, dict[str, Any]] | None = None, assets: list[dict[str, Any]] | None = None,
+                 key: str | None = None) -> None:
+        super().__init__()
+        self.txs = {t["tx_hash"]: t for t in txs}
+        self.tip, self.rewards, self.accounts, self.assets = tip, rewards or [], accounts or {}, assets or []
+        self.key = key
+
+    @staticmethod
+    def _touch(t: dict[str, Any], stake: str | None = None, addrs: set[str] | None = None) -> bool:
+        for io in [*t["inputs"], *t["outputs"]]:
+            if stake and io.get("stake_addr") == stake:
+                return True
+            if addrs and (io.get("payment_addr") or {}).get("bech32") in addrs:
+                return True
+        return any(stake and w.get("stake_addr") == stake for w in t.get("withdrawals") or [])
+
+    def _page(self, rows: list[Any], q: Any) -> httpx.Response:
+        off, lim = int(q.get("offset", 0)), int(q.get("limit", 1000))
+        assert lim <= 1000
+        return httpx.Response(200, json=rows[off:off + lim])
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        self.calls.append(req)
+        assert req.url.host == "api.koios.rest" and req.url.path.startswith("/api/v1/")
+        auth = req.headers.get("authorization")
+        if self.key:
+            assert auth == f"Bearer {self.key}"
+        else:
+            assert auth is None
+        inj = self.injected(req)
+        if inj is not None:
+            return inj
+        path, q = req.url.path.removeprefix("/api/v1"), req.url.params
+        body = json.loads(req.content) if req.content else {}
+        if path == "/tip":
+            return httpx.Response(200, json=[self.tip])
+        if path in ("/account_txs", "/address_txs"):
+            if path == "/account_txs":
+                stake, addrs, after = q["_stake_address"], None, int(q.get("_after_block_height", 0))
+            else:
+                stake, addrs, after = None, set(body["_addresses"]), int(body.get("_after_block_height", 0))
+            assert q.get("order") == "block_height.asc,tx_hash.asc"
+            rows = sorted(({"tx_hash": h, "epoch_no": t["epoch_no"], "block_height": t["block_height"],
+                            "block_time": t["tx_timestamp"]} for h, t in self.txs.items()
+                           if t["block_height"] >= after and self._touch(t, stake, addrs)),
+                          key=lambda r: (r["block_height"], r["tx_hash"]))
+            return self._page(rows, q)
+        if path == "/tx_info":
+            assert body["_inputs"] and body["_assets"] and body["_withdrawals"] and body["_certs"]
+            return httpx.Response(200, json=[self.txs[h] for h in body["_tx_hashes"] if h in self.txs])
+        if path == "/account_reward_history":
+            return self._page([r for r in self.rewards if r["stake_address"] in body["_stake_addresses"]], q)
+        if path == "/account_info":
+            return httpx.Response(200, json=[{"stake_address": s, **self.accounts[s]}
+                                             for s in body["_stake_addresses"] if s in self.accounts])
+        if path == "/account_assets":
+            return self._page([a for a in self.assets if a.get("stake_address") in body["_stake_addresses"]], q)
+        if path == "/account_addresses":
+            return httpx.Response(200, json=[{"stake_address": s, "addresses": sorted({
+                (io.get("payment_addr") or {}).get("bech32") for t in self.txs.values()
+                for io in [*t["inputs"], *t["outputs"]] if io.get("stake_addr") == s})}
+                for s in body["_stake_addresses"]])
+        if path in ("/address_info", "/address_assets"):
+            return httpx.Response(200, json=[])
+        return httpx.Response(404, json={"message": "not found"})
+
+
+class FakeSubscan(Recorder):
+    """Subscan über das PubFi-Gateway (``/v1/gateway/subscan/<netz>/api/…:free``, Bearer) bzw. direkt
+    (``<netz>.api.subscan.io``, ``X-API-Key``): Listen im Blockbereich, aufsteigend, ``page``/``row``."""
+
+    def __init__(self, nets: dict[str, dict[str, Any]], key: str) -> None:
+        super().__init__()
+        self.nets, self.key = nets, key
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        self.calls.append(req)
+        assert req.method == "POST" and not req.url.params, "PubFi verbietet Query-Parameter"
+        if req.url.host == "api.pubfi.ai":
+            m = re.match(r"^/v1/gateway/subscan/([a-z-]+)/api/(.+):free$", req.url.path)
+            assert m, req.url.path
+            assert req.headers.get("authorization") == f"Bearer {self.key}"
+            net, route = m.group(1), m.group(2)
+        else:
+            m = re.match(r"^([a-z-]+)\.api\.subscan\.io$", req.url.host)
+            assert m and req.url.path.startswith("/api/") and not req.url.path.endswith(":free")
+            assert req.headers.get("x-api-key") == self.key
+            net, route = m.group(1), req.url.path.removeprefix("/api/")
+        inj = self.injected(req)
+        if inj is not None:
+            return inj
+        d = self.nets[net]
+        body = json.loads(req.content or b"{}")
+
+        def ok(data: Any) -> httpx.Response:
+            return httpx.Response(200, json={"code": 0, "message": "Success", "generated_at": 1, "data": data})
+
+        if route == "scan/metadata":
+            return ok({"blockNum": str(d["tip"] + 5), "finalized_blockNum": str(d["tip"])})
+        addr = body.get("address")
+        lo, _, hi = str(body.get("block_range") or "0-999999999").partition("-")
+        row, page = int(body.get("row") or 10), int(body.get("page") or 0)
+        assert row <= 100
+
+        def sel(rows: list[dict[str, Any]], who: Any) -> list[dict[str, Any]]:
+            out = [r for r in rows if who(r) and int(lo) <= int(r.get("block_num") or 0) <= int(hi)]
+            out.sort(key=lambda r: (int(r.get("block_num") or 0), str(r.get("extrinsic_index") or r.get(
+                "event_index") or "")))
+            return out[page * row:(page + 1) * row]
+
+        if route == "v2/scan/transfers":
+            rows = sel(d.get("transfers", []), lambda r: addr in (r["from"], r["to"]))
+            return ok({"count": len(rows), "transfers": rows or None})
+        if route == "v2/scan/extrinsics":
+            return ok({"count": 0, "extrinsics": sel(d.get("extrinsics", []), lambda r: r["signer"] == addr)})
+        if route == "v2/scan/account/reward_slash":
+            return ok({"count": 0, "list": sel(d.get("rewards", []), lambda r: r["account"] == addr)})
+        if route == "v2/scan/account/tokens":
+            return ok({"count": len(d.get("tokens", [])), "list": d.get("tokens", [])})
+        return httpx.Response(404, json={"code": 404, "message": "not found"})

@@ -939,6 +939,69 @@ Datenquelle weiter auf deren Konto, bis die Konten angeglichen sind (Konto der D
 bearbeiten, oder im kuratierten Import vereinheitlichen). Auszahlungen, die später als 7 Tage gutgeschrieben werden,
 und Teilgutschriften (andere Menge) werden nicht als Transferseite erkannt.
 
+## M20 – Wallets: Polygon, XRP Ledger, Cardano, Polkadot; Gruppen und Übersicht (0.18.0)
+
+Anlass (03.10.2026): Ledger- und weitere Wallet-Konten über öffentliche Adressen verfolgen; vier zusätzliche Chains
+wie in der Referenz-Wallet; Gruppen („Ledger“, „MetaMask“) mit Summen; Übersicht mit Suche, Sortierung, Wert und
+Zuständen; Doppelbuchungen und falsche Asset-/Kurszuordnungen künftig verhindern bzw. sichtbar machen.
+
+**Ist/Soll vor der Umsetzung** (Belege im Code des Stands 0.17.1)
+
+| Bereich | Stand 0.17.1 | Beleg | Ergebnis 0.18.0 |
+|---|---|---|---|
+| Chain-Auswahl | teilweise: Polygon, XRP Ledger, Cardano, Polkadot nur Katalogeinträge (Regex) ohne Connector → „manuell/CSV“ | `providers.PROVIDERS`, `web.WALLET_CHAINS` | vier Connectoren, Auswahl mit Symbol |
+| Adressprüfung | vorhanden für BTC/EVM/SOL/KAS (Prüfsummen); XRPL/ADA/DOT nur Regex | `chains/addresses.VALIDATORS` | XRPL-Base58Check, CIP-19-Bech32 (inkl. Stake-Ableitung), SS58-Blake2b |
+| Mehrere Adressen | nur Bitcoin (≤ 50 Adressen + xpub) | `service._wallet_fields` | zusätzlich Cardano (Stake-Konto bzw. Adressmodus) |
+| Doppelte Konten | teilweise: nur gleiche Primäradresse je Chain | `service.validate` | Identität je Chain inkl. xpub-Ableitung und Stake-Teil, Ablehnung mit Begründung |
+| Anbieter/HTTP | vorhanden (GET/JSON-RPC, Budgets, Retry-After) | `chainhttp.ChainHttp` | + JSON-POST, Bearer, `{network}`, HTTP 402; Endpunkte Blockscout, XRPL, Koios, PubFi, Subscan |
+| Import/Kennungen | vorhanden (`<chain>:<tx>:<konto>#<bewegung>`) | `wallet.event`, `classify` | unverändert genutzt; UUID-Fehltreffer aus Hashes behoben |
+| Bestand/Werte | Bestandsabgleich ja, EUR-Wert in der Übersicht nein | `service.holdings` | Wert je Konto/Gruppe/gesamt, „unbekannt“ bzw. „mind.“, letzter bekannter Wert |
+| Gruppen | teilweise: Feld, Anlegen in Gruppe | `wallet_group`, `datasources.html` | + Umbenennen/Zusammenführen, Zuordnen, Summe, Gruppe aktualisieren |
+| Übersicht | teilweise: Karten je Gruppe, Status | `datasources.html` | + Suche, Sortierung, Symbol, Kopieren, Explorer, Zustände, Datenhinweise, alle aktualisieren |
+| Doppelbuchungsschutz | teilweise: Buchungen derselben Quelle vom Hash-Abgleich ausgenommen | `csvimport._same_events` | andere Datenquellen desselben Anbieters einbezogen (gleiche Seite und Menge → mögliche Dublette) |
+
+**Entscheidungen**
+
+* **Polygon** nutzt den EVM-Adapter (Chain-ID 137): Etherscan API V2 (kostenloser Key, Standard) oder Blockscout
+  ohne Key (Blockhöhe über `block/eth_block_number`, `status` 2 = sichtbare Lücke). Die Spiegelung nativer
+  Überweisungen als Token-Transfer des Systemvertrags `0x…1010` wird übersprungen. Nativer Coin bis Block
+  62.278.656 (Hardfork „Ahmedabad“, PIP-45) als MATIC, danach POL; Umstellung einmal als Vorschlag (Konvertierung
+  „migration“) über den aus der Historie berechneten Bestand, im Fortsetzungspunkt über Etappen mitgeführt.
+* **XRP Ledger** über öffentliche Full-History-Server (xrplcluster.com, s2.ripple.com): Bewegungen aus den
+  Saldoänderungen validierter Ledger (`AccountRoot`, `RippleState`), Gebühr herausgerechnet; Tokens je Währung und
+  Emittent; Reserve als gesperrter Bestand; Lücke, wenn die Historie nicht mit der Kontoeröffnung beginnt.
+* **Cardano** über Koios: Konto über die Stake-Adresse (aus Basisadressen abgeleitet) – Wechselgeld ist kein
+  Abgang; Pfand als prüfbedürftige Bewegung, Reward-Abhebung als Umbuchung, Rewards je Epoche ab Verfügbarkeit;
+  Assets über den CIP-14-Fingerabdruck; fremde Eingänge ohne Gebühr zur Prüfung.
+* **Polkadot** über Subscan (PubFi-Gateway kostenlos bzw. Subscan direkt bezahlt; ohne Schlüssel kein Abruf):
+  Relay Chain und Asset Hub getrennt, Gebühr nur aus eigenen Extrinsics, Staking nur Gebühr, Rewards als Ertrag,
+  Migration/XCM/Pools zur Prüfung; Einheiten-Annahme mit Prüfung `amount` ↔ `amount_v2` je Vorgang.
+* **Überschneidungen** werden beim Anlegen/Ändern abgelehnt (gleiche Chain): gleiche Adresse, Einzeladresse im
+  Kontoschlüssel eines anderen Kontos (Empfang/Wechselgeld bis zum geprüften Index bzw. Gap-Limit), gleicher
+  Cardano-Stake-Teil. Bestehende Überschneidungen: Hinweis, Summen zählen das jüngere Konto nicht.
+* **Abgleich über Datenquellen hinweg:** Buchungen anderer Datenquellen desselben Anbieters gehen in den
+  Hash-Abgleich ein (gleiche Seite und Menge → mögliche Dublette, z. B. neu angelegte Quelle). Dabei fiel ein
+  verdeckter Fehler auf: Aus 64-stelligen Transaktions-Hashes wurde eine scheinbare UUID abgeleitet – Vorgänge
+  verschiedener Wallets mit gleichem Hash hätten als „bereits vorhanden“ gegolten. UUID-Aliase entstehen jetzt nur
+  noch für Anbieter mit UUID-Kennungen (Bitpanda, Coinbase, Kraken).
+* **Übersicht:** Wert = beobachteter Bestand × aktueller Kurs; fehlender Kurs/Zuordnung → „mind.“, ohne Bestand
+  „unbekannt“, nach Fehlern letzter bekannter Wert mit Alter; Abrufzustand und Datenhinweise getrennt; Aktualisieren
+  je Konto, Gruppe, alle – nacheinander, Fehler isoliert. Keine Migration (Gruppen nutzen `wallet_group`).
+
+**Tests:** Adressprüfung je Chain (Prüfsummen, Formate, Netze), Chain-Trennung derselben 0x-Adresse, wiederholter
+Abruf ohne Duplikate, mehrere Ereignisse je Transaktion, Gebühren, UTXO-Wechselgeld, Pfand, Reward-Abhebung,
+Token gleicher Symbole, MATIC/POL-Umstellung über Etappen, Paginierung, abgebrochene Läufe mitten in Ledger bzw.
+Blockbereich, Provider- und Drosselfehler ohne Vorrücken des Fortschritts, Schlüsselpflicht, Überschneidungen
+(xpub ↔ Einzeladresse, Stake ↔ Basisadresse), Gruppen ohne Doppelzählung, Werte ohne irreführende 0,00 €, Suche/
+Sortierung, Aktualisieren mehrerer Konten mit isoliertem Fehler, neu angelegte Quelle → mögliche Dublette,
+Transfer zwischen eigenen Wallets bleibt getrennt. Alle mit synthetischen Daten und nachgebildeten Anbietern.
+
+**Grenzen:** Subscan/PubFi nicht live geprüft (Schlüssel nötig); Einheiten der Subscan-Felder nicht dokumentiert.
+Polygon-Bridge-Einzahlungen per State-Sync ggf. nicht in der Historie; Blockscout-Interntransaktionen teils
+unvollständig (Lücke angezeigt). XRPL: MPT, AMM-/DEX-Positionen nur als Prüfvorgang. Cardano: ungültige
+Plutus-Transaktionen nicht gekennzeichnet. Polkadot: Nomination Pools, XCM, Proxy/Multisig, Vesting und andere
+Parachains nicht automatisch abgebildet. Bridges/Cross-Chain-Transfers werden nicht als Transfer gepaart.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
@@ -975,6 +1038,10 @@ und Teilgutschriften (andere Menge) werden nicht als Transferseite erkannt.
   Probleme nur als Korrekturvorschlag – siehe M19.
 * **Gekoppelte Buchung bei verzögerter Auszahlung** (02.10.2026): Wallet-Zugang als Seite eines Import-Transfers
   erkennen – auch verzögert und unter anderem Kontonamen; bereits gebuchte Fälle zur Entscheidung – siehe M19.1.
+* **Wallet-Erweiterung** (03.10.2026): Polygon, XRP Ledger, Cardano, Polkadot als reguläre Datenquellen; Gruppen
+  (z. B. „Ledger“) nur als Zuordnung; Übersicht mit Suche, Sortierung, Werten und Zuständen; keine
+  Geräteverbindung, Signaturen, Seeds oder privaten Schlüssel; bestehende Buchungen nicht automatisch ändern – siehe
+  M20.
 
 ## Offene Fragen an den Auftraggeber
 

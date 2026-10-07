@@ -5,7 +5,8 @@ Sicherheit (kein SSRF)
     Pfadteile stammen nur aus formatgeprüften Werten (Adressen, Hashes, Signaturen). Vor dem Senden wird jede Anfrage
     gegen Schema, Host und Basis-Pfad des Anbieters geprüft; Weiterleitungen werden nicht verfolgt. API-Keys gehen
     nur an den Anbieter, für den sie hinterlegt sind (Header bzw. der dort dokumentierte Parameter), und erscheinen
-    nie in Logs oder Meldungen (URLs werden nie protokolliert).
+    nie in Logs oder Meldungen (URLs werden nie protokolliert). Netzwerk-Platzhalter (``{network}``, z. B. Polkadot
+    Relay-Chain bzw. Asset Hub) werden nur mit Werten aus einer festen Liste (:data:`NETWORKS`) ersetzt.
 
 Genauigkeit
     JSON wird mit ``Decimal`` statt ``float`` gelesen – Beträge werden nie gerundet.
@@ -47,15 +48,19 @@ MAX_BODY = 24 * 1024 * 1024
 _PATH_RE = re.compile(r"^(/[A-Za-z0-9_.:\-]+)*/?$")
 
 
+# erlaubte Werte für den Platzhalter {network} (Subscan: Relay-Chain und Asset Hub von Polkadot)
+NETWORKS = frozenset({"polkadot", "assethub-polkadot"})
+
+
 @dataclass(frozen=True)
 class Endpoint:
     """Ein geprüfter Anbieter-Endpunkt (fester Host und Basis-Pfad)."""
 
     id: str
     label: str
-    base: str  # https://host/pfad – bei Routescan mit Platzhalter {chain}
+    base: str  # https://host/pfad – Platzhalter {chain} (Routescan) bzw. {network} (Subscan)
     rps: float  # höchstens so viele Anfragen je Sekunde (konservativ unter dem dokumentierten Limit)
-    auth: str = "none"  # none | query:<name> | header:<name>
+    auth: str = "none"  # none | query:<name> | header:<name> | bearer (Authorization: Bearer <Schlüssel>)
     key_provider: str | None = None  # Schlüssel in „Anbieter-Schlüssel“ (provider_secret)
     key_required: bool = False
     rps_with_key: float | None = None
@@ -66,12 +71,17 @@ class Endpoint:
     def host(self) -> str:
         return urlsplit(self.base).hostname or ""
 
-    def base_for(self, chain_id: int | None = None) -> str:
-        if "{chain}" in self.base:
+    def base_for(self, chain_id: int | None = None, network: str | None = None) -> str:
+        base = self.base
+        if "{chain}" in base:
             if chain_id is None or not 0 < int(chain_id) < 10**9:
                 raise K.ConnectorError("config", "Chain-ID fehlt für diesen Anbieter.")
-            return self.base.replace("{chain}", str(int(chain_id)))
-        return self.base
+            base = base.replace("{chain}", str(int(chain_id)))
+        if "{network}" in base:
+            if network not in NETWORKS:
+                raise K.ConnectorError("config", "Netzwerk fehlt bzw. ist für diesen Anbieter nicht freigegeben.")
+            base = base.replace("{network}", str(network))
+        return base
 
 
 ENDPOINTS: dict[str, Endpoint] = {e.id: e for e in (
@@ -101,6 +111,28 @@ ENDPOINTS: dict[str, Endpoint] = {e.id: e for e in (
     Endpoint("kasplex", "Kasplex KRC-20-Indexer", "https://api.kasplex.org/v1", rps=2.0,
              docs="https://docs-kasplex.gitbook.io/krc20",
              terms="ohne Key; Verbindungslimit des Betreibers nicht beziffert – höchstens 2×/s"),
+    Endpoint("blockscout_polygon", "Blockscout Polygon PoS (Etherscan-kompatibel, ohne Key)",
+             "https://polygon.blockscout.com/api", rps=2.0, docs="https://docs.blockscout.com/devs/apis/rpc",
+             terms="ohne Key; höchstens 10.000 Einträge je Abfrage; interne Transaktionen älterer Blöcke teils noch "
+                   "nicht verarbeitet (wird als Lücke angezeigt) – Portfolia fragt höchstens 2×/s"),
+    Endpoint("xrplcluster", "XRPL Cluster (xrplcluster.com, vollständige Historie)", "https://xrplcluster.com",
+             rps=2.0, docs="https://xrpl.org/docs/tutorials/public-servers",
+             terms="ohne Key; öffentlicher Full-History-Cluster (Community) – Portfolia fragt höchstens 2×/s"),
+    Endpoint("ripple_s2", "Ripple s2 (vollständige Historie)", "https://s2.ripple.com:51234", rps=1.0,
+             docs="https://xrpl.org/docs/tutorials/public-servers",
+             terms="ohne Key; öffentlicher Full-History-Server von Ripple (Port 51234) – höchstens 1×/s"),
+    Endpoint("koios", "Koios (Cardano, api.koios.rest)", "https://api.koios.rest/api/v1", rps=1.5, auth="bearer",
+             key_provider="koios", rps_with_key=4.0, docs="https://api.koios.rest",
+             terms="ohne Key: öffentlicher Tarif (5.000 Anfragen/Tag, 100 je 10 s); kostenloser Key (Bearer-Token, "
+                   "koios.rest): 50.000 Anfragen/Tag"),
+    Endpoint("pubfi", "PubFi-Gateway für Subscan (kostenloser Key)",
+             "https://api.pubfi.ai/v1/gateway/subscan/{network}", rps=1.5, auth="bearer", key_provider="pubfi",
+             key_required=True, docs="https://support.subscan.io/doc-360177",
+             terms="kostenloser PubFi-Key (pubfi.ai, Bearer); Free-Routen „:free“: 2 Anfragen/s, 20.000/Tag"),
+    Endpoint("subscan", "Subscan direkt (kostenpflichtiger Key)", "https://{network}.api.subscan.io", rps=4.0,
+             auth="header:X-API-Key", key_provider="subscan", key_required=True, docs="https://support.subscan.io",
+             terms="nur mit kostenpflichtigem Subscan-Plan (neue kostenlose Keys gibt es nur über PubFi); Limit je "
+                   "Plan"),
 )}
 
 
@@ -159,6 +191,7 @@ class ChainHttp:
     """HTTP-Zugriff auf genau einen Anbieter-Endpunkt (GET/JSON und JSON-RPC)."""
 
     def __init__(self, ep: Endpoint, *, key: str | None = None, chain_id: int | None = None,
+                 network: str | None = None,
                  transport: httpx.BaseTransport | None = None, sleep: Callable[[float], None] = time.sleep,
                  clock: Callable[[], float] = time.monotonic, max_requests: int = 3000,
                  wait_budget_s: float = 240.0, deadline_s: float | None = None,
@@ -167,7 +200,8 @@ class ChainHttp:
             raise K.ConnectorError("config", f"{ep.label} verlangt einen Schlüssel des Anbieters – unter "
                                              "„Anbieter-Schlüssel“ hinterlegen.")
         self.ep = ep
-        self.base = ep.base_for(chain_id)
+        self.network = network
+        self.base = ep.base_for(chain_id, network)
         parts = urlsplit(self.base)
         if parts.scheme != "https" or not parts.hostname:
             raise K.ConnectorError("config", "Anbieter-Endpunkt ungültig.")  # pragma: no cover - fester Katalog
@@ -180,7 +214,7 @@ class ChainHttp:
         self.wait_budget = wait_budget_s
         self.deadline = clock() + deadline_s if deadline_s else None
         self.interval = 1.0 / ((ep.rps_with_key or ep.rps) if key else ep.rps)
-        self._limiter = _limiter(f"{ep.id}:{'key' if key else 'anon'}")
+        self._limiter = _limiter(f"{ep.id}:{'key' if key else 'anon'}")  # je Anbieter (auch über Netzwerke hinweg)
         self._usage = usage
         self._lock = threading.Lock()
         self.requests = 0
@@ -243,6 +277,8 @@ class ChainHttp:
             q[self.ep.auth.split(":", 1)[1]] = self._key
         elif self._key and self.ep.auth.startswith("header:"):
             headers[self.ep.auth.split(":", 1)[1]] = self._key
+        elif self._key and self.ep.auth == "bearer":
+            headers["Authorization"] = f"Bearer {self._key}"
         url = self.base + (path if path not in ("", "/") else "")
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -297,6 +333,9 @@ class ChainHttp:
             if code in (401, 403):
                 raise K.ConnectorError("auth", f"{self.ep.label} verweigert {what} (HTTP {code}) – Schlüssel unter "
                                                "„Anbieter-Schlüssel“ prüfen.")
+            if code == 402:
+                raise K.ConnectorError("scope", f"{self.ep.label} verlangt für {what} einen Tarif bzw. Kontingent "
+                                                "(HTTP 402) – Kontingent oder Tarif beim Anbieter prüfen.")
             raw = resp.content
             if len(raw) > MAX_BODY:
                 raise K.ConnectorError("data", f"Antwort von {self.ep.label} zu groß ({what}).")
@@ -312,6 +351,17 @@ class ChainHttp:
             allow_status: Iterable[int] = ()) -> Any:
         """GET → JSON. 4xx-Antworten sind Fehler, außer ``allow_status`` (dann :class:`_HttpProblem`)."""
         out = self._send("GET", path, params, None, what)
+        if isinstance(out, _HttpProblem):
+            if out.status in set(allow_status):
+                return out
+            raise K.ConnectorError("data", f"{self.ep.label} antwortete bei {what} mit HTTP {out.status}"
+                                           + (f": {out.text}" if out.text else "") + ".")
+        return out
+
+    def post(self, path: str = "", body: Any = None, params: Mapping[str, Any] | None = None, *, what: str,
+             allow_status: Iterable[int] = ()) -> Any:
+        """POST mit JSON-Rumpf → JSON (z. B. Koios, Subscan, XRPL). 4xx wie bei :meth:`get`."""
+        out = self._send("POST", path, params, body if body is not None else {}, what)
         if isinstance(out, _HttpProblem):
             if out.status in set(allow_status):
                 return out

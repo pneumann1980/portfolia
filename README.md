@@ -43,7 +43,7 @@ für Smartphones (≈390 px) optimiert.
 5. [CSV-Import aus Börsen und Wallets](#csv-import-aus-börsen-und-wallets) ·
    [Importprüfung: Abgleich, Stapelaktionen, Verknüpfen](#importprüfung-abgleich-je-zeile-stapelaktionen-verknüpfen)
 6. [Datenquellen: Börsen und Wallet-Adressen](#datenquellen-börsen-und-wallet-adressen) ·
-   [Wallets (read-only, sechs Chains)](#wallets-read-only-sechs-chains) ·
+   [Wallets (read-only, zehn Chains)](#wallets-read-only-zehn-chains) ·
    [Diagnose: Datenqualität und Bestandsabgleich](#diagnose-datenqualität-und-bestandsabgleich)
 7. [Berechnungen](#berechnungen)
 8. [Sparpläne](#sparpläne)
@@ -82,10 +82,11 @@ Package settings → Change visibility → Public*; es enthält nur den öffentl
    | `/run/secrets/portfolia` | `/boot/config/portfolia` | **ro** | Master-Key (`master.key`) für in der App gespeicherte API-Keys von Datenquellen – bewusst außerhalb von appdata (siehe [Master-Key](#master-key-für-api-keys)) |
 
 3. Optional API-Schlüssel für Kurse und News eintragen (Umgebungsvariablen, nie angezeigt oder geloggt).
-4. Nur für Datenquellen mit API-Key (Bitpanda; bei Wallets Etherscan, Routescan oder Helius): einmalig den
+4. Nur für Datenquellen mit API-Key (Bitpanda; bei Wallets Etherscan, Routescan, Helius, Koios, PubFi oder Subscan): einmalig den
    Master-Key anlegen (Unraid-Terminal), danach bleibt er unverändert – Einzelheiten, Backup und Rotation unter
    [Master-Key](#master-key-für-api-keys). Wallets über mempool.space/Blockstream (Bitcoin), Routescan (Avalanche),
-   den öffentlichen Solana-RPC und api.kaspa.org brauchen keinen Schlüssel:
+   Blockscout (Polygon), die öffentlichen XRPL-Server, Koios (Cardano), den öffentlichen Solana-RPC und api.kaspa.org
+   brauchen keinen Schlüssel:
    ```sh
    mkdir -p /boot/config/portfolia
    openssl rand -base64 32 > /boot/config/portfolia/master.key
@@ -169,6 +170,7 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 | `PORTFOLIA_MASTER_KEY` | – | alternativ der Master-Key selbst (sichtbar in `docker inspect` – Datei bevorzugen) |
 | `PORTFOLIA_MASTER_KEY_OLD_FILE` / `_OLD` | – | nur während einer Rotation: der bisherige Master-Key |
 | `PORTFOLIA_DS_<NAME>` | – | bisheriger Weg für Zugangsdaten einer [Datenquelle](#datenquellen-börsen-und-wallet-adressen) (API-Schlüssel mit Leserechten), alternativ `PORTFOLIA_DS_<NAME>_FILE` = Pfad einer Secret-Datei; in Portfolia steht nur der Variablenname. Funktioniert weiter, ein in der App gespeicherter Schlüssel hat Vorrang. |
+| `PORTFOLIA_DS_ETHERSCAN`, `…_ROUTESCAN`, `…_HELIUS`, `…_KOIOS`, `…_PUBFI`, `…_SUBSCAN` | – | optional: [Anbieter-Schlüssel](#wallets-read-only-zehn-chains) für Wallet-Abrufe als Container-Variable (bzw. `…_FILE`), falls nicht in der App gespeichert. Nötig: Etherscan (Ethereum, Polygon), PubFi **oder** Subscan (Polkadot); optional: Routescan, Koios. |
 
 ---
 
@@ -880,7 +882,7 @@ Dazu eine Tabelle *Vorgänge je Monat*. Grundlage sind die Kennzahlen, die jeder
 festhält – nach dem Update einmal *Vollständig neu abrufen*. Ob ältere Vorgänge nach der API-Umstellung bei Bitpanda
 fehlen, lässt sich nur so weit beurteilen, wie diese Belege reichen; der Bericht unterscheidet das ausdrücklich.
 
-## Wallets (read-only, sechs Chains)
+## Wallets (read-only, zehn Chains)
 
 *Einstellungen → Datenquellen → „+ Wallet-Konto“*: Chain wählen, Namen vergeben (z. B. „Ledger BTC“, „Ledger ETH“,
 „MetaMask BNB“), optional einer **Wallet-Gruppe** zuordnen („Ledger“, „MetaMask“), öffentliche Adresse eintragen –
@@ -890,8 +892,41 @@ Bestände, holt mit „Erstabruf starten“ die Historie (im Hintergrund, mit Fo
 danach inkrementell. **Nie** werden Seed-Phrase, privater Schlüssel, Wallet-Signatur oder eine Verbindung zum
 Ledger-Gerät verlangt – solche Eingaben werden abgelehnt. Portfolia schreibt nichts in eine Wallet.
 
-**Jede Chain ist ein eigenes Konto:** Dieselbe 0x-Adresse auf Ethereum, BNB Chain und Avalanche ergibt drei Konten;
-Vorgänge (`ethereum:…`, `bsc:…`, `avalanche:…`) und Tokens (`USDC@ETH:0xa0b8…`, `USDC@BSC:…`) bleiben getrennt.
+**Jede Chain ist ein eigenes Konto:** Dieselbe 0x-Adresse auf Ethereum, BNB Chain, Polygon und Avalanche ergibt
+vier Konten; Vorgänge (`ethereum:…`, `bsc:…`, `polygon:…`, `avalanche:…`) und Tokens (`USDC@ETH:0xa0b8…`,
+`USDC@POLYGON:0x3c49…`) bleiben getrennt – es wird nie automatisch zusammengelegt.
+
+### Wallet-Gruppen und Übersicht
+
+Eine **Gruppe** („Ledger“, „MetaMask“, „Meine Hardware-Wallet“) ist nur eine Zuordnung: Ein Ledger mit BTC-, ETH-,
+POL-, XRP-, ADA- und DOT-Konto sind sechs Konten in einer Gruppe – jedes mit eigener Chain, eigenen Adressen,
+Vorgängen und eigener Synchronisierung. Neue Konten lassen sich direkt in einer Gruppe anlegen („+ Konto in
+„Ledger““), bestehende über *Mehr … → Gruppe speichern* zuordnen; Gruppenname (*Gruppe umbenennen*, auch zum
+Zusammenführen) und Kontoname sind unabhängig.
+
+Die Übersicht zeigt je Konto Chain-Symbol, Name, Netzwerk und Anbieter, die gekürzte **kopierbare Adresse** mit
+**Explorer-Link** (öffnest du selbst), den **EUR-Wert** des beobachteten Bestands, den Abrufzustand (*noch nicht
+synchronisiert, läuft, erfolgreich, teilweise, Fehler*) mit letzter erfolgreicher Synchronisierung sowie getrennt
+davon **Datenhinweise** (ungeklärte/nicht unterstützte Vorgänge, fehlende Kurse oder Zuordnungen,
+Bestandsabweichungen, Überschneidungen). Je Gruppe und gesamt steht die Summe. **Suche** über Konto-, Gruppen- und
+Portfolia-Kontoname, Netzwerk und Adresse; **Sortierung** nach Name, Wert, Hinzufügedatum oder letzter erfolgreicher
+Synchronisierung. Aktualisieren geht je Konto, je Gruppe und für alle Wallets – nacheinander im Hintergrund; ein
+fehlgeschlagenes Konto hält die übrigen nicht auf.
+
+* **Kein irreführendes 0,00 €:** Ohne beobachteten Bestand steht „unbekannt“; fehlt für ein Asset Kurs oder
+  Zuordnung, steht der bekannte Teil als „mind. …“ mit Liste der fehlenden Assets. Schlägt ein Abruf fehl, bleibt der
+  letzte bekannte Bestand mit Zeitpunkt stehen („letzter bekannter Wert“) – übernommene Daten werden nie geleert.
+* **Keine Doppelzählung:** Konten derselben Chain dürfen sich nicht überschneiden – gleiche Adresse, eine
+  Einzeladresse, die ein Bitcoin-Kontoschlüssel desselben Kontos bereits abdeckt (abgeleitete Empfangs- und
+  Wechselgeldadressen bis zum zuletzt geprüften Index bzw. Gap-Limit), oder eine Cardano-Adresse, deren Stake-Teil
+  schon als Konto geführt wird. Solche Eingaben werden mit Begründung abgelehnt; ältere Überschneidungen werden
+  angezeigt und in Summen nur einmal gezählt. Legt man eine Datenquelle für dieselbe Wallet neu an, erscheinen
+  bereits übernommene Vorgänge (gleicher Hash, gleiche Buchungsseite und Menge) als **mögliche Dublette** statt
+  erneut gebucht zu werden; zwei verschiedene eigene Wallets in derselben Transaktion (Transfer A → B, gemeinsame
+  Ausgabe) bleiben dagegen getrennte Vorgänge.
+* **Einzeladressen vs. Konto:** Bitcoin mit Kontoschlüssel (xpub/ypub/zpub) und Cardano über die Stake-Adresse
+  erfassen alle Adressen inklusive Wechselgeld; reine Einzeladressen sind am Konto als eingeschränkte Abdeckung
+  gekennzeichnet („Wechselgeld an nicht eingetragene Adressen erscheint als Abgang“).
 
 ### Abdeckung je Chain
 
@@ -900,7 +935,11 @@ Vorgänge (`ethereum:…`, `bsc:…`, `avalanche:…`) und Tokens (`USDC@ETH:0xa
 | **Bitcoin** | Einzeladressen P2PKH (1…), P2SH (3…), P2WPKH/P2WSH (bc1q…), P2TR (bc1p…), mehrere je Konto; Kontoschlüssel xpub/ypub/zpub mit wählbarem Typ (Legacy, Nested/Native SegWit, Taproot nach BIP44/49/84/86), Empfang + Wechselgeld bis Gap-Limit (Standard 20) | BTC | vollständig je Adresse (Esplora, 25 je Seite) | je Transaktion (`fee`), nur wenn alle Eingänge eigen | mempool.space · Blockstream Esplora | keine | kein Key; Limit nicht beziffert, Portfolia ≤ 1 Anfrage/s | Einzeladressen: Wechselgeld an nicht eingetragene Adressen zählt als Abgang (angezeigt); Adressen jenseits des Gap-Limits; Lightning, Multisig, Ordinals/Runes; CoinJoin/PayJoin nur als Saldo zur Prüfung |
 | **Ethereum** | eine 0x-Adresse je Konto | ETH; ERC-20 (Contract-genau) | vollständig, Blockfenster ≤ 1.000 Einträge, nie mitten im Block | gasUsed × gasPrice der eigenen Transaktion | Etherscan API V2 · Routescan | Etherscan: kostenloser Key nötig | 3–5 Anfragen/s, 100.000/Tag, ≤ 1.000 Einträge je Anfrage | NFTs (ERC-721/1155) nicht gebucht (Prüfung zeigt, ob vorhanden); Positionen in Verträgen nicht sichtbar; interne Bewegungen laut Indexer-Trace |
 | **BNB Chain** | wie Ethereum | BNB; BEP-20 | wie Ethereum | wie Ethereum | Etherscan API V2 · Routescan | Etherscan: **kostenpflichtiger Plan** | BscScan-API laut BNB Chain seit Ende 2025 abgekündigt; Etherscan liefert Chain 56 nur bezahlt (ab ca. 49 USD/Monat); Routescan ohne Key – Abdeckung zeigt „Verbindung testen“ | wie Ethereum; ohne passenden Anbieter keine Synchronisierung (klare Meldung, CSV-Weg bleibt) |
+| **Polygon PoS** | wie Ethereum | **MATIC bis Block 62.278.656, danach POL** (siehe unten); ERC-20 (Contract-genau) | wie Ethereum; native Überweisungen, die Polygon zusätzlich als Token-Transfer des Systemvertrags `0x…1010` meldet, werden nur einmal gezählt | wie Ethereum | Etherscan API V2 · Blockscout | Etherscan: kostenloser Key; Blockscout: keiner | Etherscan wie oben (Polygon im kostenlosen Plan); Blockscout ohne Key, ≤ 10.000 Einträge je Abfrage | wie Ethereum; Blockscout meldet interne Transaktionen älterer Blöcke teils als „noch nicht verarbeitet“ (→ angezeigte Lücke); Einzahlungen über die PoS-Bridge per State-Sync ggf. nicht in der Historie (Bestandsprüfung) |
 | **Avalanche C-Chain** | wie Ethereum | AVAX; ERC-20 | wie Ethereum | wie Ethereum | Routescan (Snowtrace) · Etherscan (bezahlt) | optional (Routescan-Key) | ohne Key 2/s, 10.000/Tag; kostenloser Key 5/s, 100.000/Tag | wie Ethereum; X-/P-Chain nicht erfasst |
+| **XRP Ledger** | eine klassische Adresse r… je Konto (X-Adressen werden abgelehnt – Destination Tags gehören nicht zur Adresse) | XRP; Trustline-Tokens je Währung **und** Emittent (`USD@XRPL:USD.r…`) | `account_tx` aufsteigend über `marker`, nur validierte Ledger; Lücke, wenn die Historie nicht mit der Kontoeröffnung beginnt | `Fee` der eigenen Transaktion (aus dem Saldo herausgerechnet); fehlgeschlagene `tec…` = nur Gebühr | xrplcluster.com · s2.ripple.com (beide Full History) | keine | kein Key; öffentliche Server, Portfolia ≤ 2/s | Bewegungen aus Saldoänderungen (auch Teilzahlungen, DEX-Ausführungen); DEX, AMM, Escrow, Payment Channels, NFTs zur Prüfung; MPT nicht gebucht (ungeklärt); Reserve bleibt Bestand (als gesperrt ausgewiesen); Destination/Source Tag in Notiz und Rohdaten |
+| **Cardano** | **Stake-Adresse** stake1… (ganzes Konto) oder Adresse(n) addr1…; aus einer Basisadresse wird die Stake-Adresse abgeleitet (CIP-19); Enterprise-Adressen ohne Stake-Teil im Adressmodus | ADA; native Assets je Policy + Name über den CIP-14-Fingerabdruck (`HOSKY@CARDANO:asset1…`) | Koios `account_txs` (bzw. `address_txs`) in Seiten zu 1.000, Details über `tx_info`; ab 15 Bestätigungen | Gebühr nur, wenn alle Eingänge eigene sind | Koios (api.koios.rest) | optional (kostenloser Bearer-Token) | ohne Key 5.000 Anfragen/Tag, 100 je 10 s; mit kostenlosem Key 50.000/Tag | Wechselgeld an eigene Adressen ist kein Abgang (Stake-Konto); Pfand für Stake-Registrierung/Governance als prüfbedürftige Bewegung; Reward-Abhebung = Umbuchung, Rewards je Epoche als Ertrag (ab Verfügbarkeit); DEX/Smart Contracts und fremde Eingänge zur Prüfung; ungültige Plutus-Transaktionen nicht gekennzeichnet |
+| **Polkadot** | SS58-Adresse 1… (generisches Format 5… wird umgerechnet, Kusama abgelehnt) | DOT auf Relay Chain **und** Asset Hub; Asset-Hub-Tokens (`USDT@DOTAH:…`) | Subscan: Überweisungen, eigene Extrinsics, Rewards/Slashes je Netz in Blockbereichen, Seiten zu 100 | `fee_used` (sonst `fee`) der vom Konto signierten Extrinsics | PubFi-Gateway für Subscan · Subscan direkt | **Key nötig**: PubFi kostenlos bzw. Subscan bezahlt | PubFi-Free-Routen 2 Anfragen/s, 20.000/Tag | Einheiten der Subscan-Felder nicht dokumentiert (Prüfung `amount` ↔ `amount_v2`, Abweichung → Prüfung); Asset-Hub-Migration nicht gebucht (ungeklärt); Staking bindet nur (nur Gebühr), Rewards als Ertrag, Slashes zur Prüfung; Nomination Pools, XCM, Proxy/Multisig zur Prüfung; andere Parachains nicht erfasst |
 | **Solana** | eine Adresse je Konto | SOL (inkl. Miete der Token-Konten); SPL- und Token-2022-Tokens (Mint-genau) | Signaturen der Wallet **und** aller Token-Konten (aktuelle + frühere aus Transaktionen) | `meta.fee`, wenn die Wallet zahlt | öffentlicher RPC (Solana Foundation) · Helius | Helius: Key nötig | öffentlich 100/10 s je IP, 40/10 s je Methode, nicht für Dauerbetrieb; Helius frei 10/s | Native Staking/Inflations-Rewards nicht als Vorgang; mehrere Bewegungen desselben Tokens je Transaktion saldiert; NFTs gezählt, nicht gebucht; Token-Konten, die der Wallet nur per Autoritätswechsel gehörten und heute anderen gehören, nicht auffindbar |
 | **Kaspa** | eine Adresse je Konto | KAS; KRC-20 über Kasplex | KAS vollständig (Blockzeit-Seiten, 30 min Überlappung); KRC-20-Operationen je Adresse | aus Eingängen − Ausgängen; KRC-20-Commit/Reveal als nur Gebühr | api.kaspa.org (KAS) · api.kasplex.org (KRC-20) | keine | kein Key; Limits nicht beziffert, Portfolia ≤ 2/s | KRC-20 abhängig vom Kasplex-Indexer (Ausfall/„nicht synchron“ = sichtbare Lücke, KAS bleibt vollständig, Ergänzung per CSV); KRC-721 nicht erfasst |
 
@@ -908,18 +947,20 @@ Vorgänge (`ethereum:…`, `bsc:…`, `avalanche:…`) und Tokens (`USDC@ETH:0xa
 
 * **Nur geprüfte Endpunkte:** Anbieter sind fest hinterlegt (HTTPS, kein Freitext-URL-Feld, keine Weiterleitungen,
   Host-Prüfung vor jeder Anfrage) – kein Server-Side-Request-Forgery. Beträge werden exakt als `Decimal` gelesen.
-* **Anbieter-Schlüssel** (Etherscan, Routescan, Helius) gelten je Anbieter, werden unter *Datenquellen →
-  Anbieter-Schlüssel* verschlüsselt gespeichert (derselbe [Master-Key](#master-key-für-api-keys)), nie angezeigt,
-  nie exportiert; alternativ `PORTFOLIA_DS_ETHERSCAN`, `PORTFOLIA_DS_ROUTESCAN`, `PORTFOLIA_DS_HELIUS` (bzw.
-  `…_FILE`).
+* **Anbieter-Schlüssel** (Etherscan, Routescan, Helius, Koios, PubFi, Subscan) gelten je Anbieter, werden unter
+  *Datenquellen → Anbieter-Schlüssel* verschlüsselt gespeichert (derselbe [Master-Key](#master-key-für-api-keys)),
+  nie angezeigt, nie exportiert; alternativ `PORTFOLIA_DS_ETHERSCAN`, `PORTFOLIA_DS_ROUTESCAN`,
+  `PORTFOLIA_DS_HELIUS`, `PORTFOLIA_DS_KOIOS`, `PORTFOLIA_DS_PUBFI`, `PORTFOLIA_DS_SUBSCAN` (bzw. `…_FILE`). Fehlt
+  ein nötiger Schlüssel, zeigt das Konto „Schlüssel fehlt“ mit Anbieter und Konditionen – es wird nichts abgerufen.
 * **Datenschutz:** Der gewählte Anbieter sieht die abgefragten öffentlichen Adressen und die IP des Servers und
   kann sie verknüpfen. Ein Kontoschlüssel (xpub) legt alle Adressen des Kontos offen – ausgeben lässt sich damit
   nichts. Stückzahlen, Werte oder Kontonamen verlassen den Server nie.
 * **Lückenlos und wiederholbar:** Abrufe in Seiten mit Mindestabstand, Wiederholung bei 429/5xx mit Backoff und
   `Retry-After`, begrenzte Parallelität, Anfrage- und Zeitbudget je Lauf. Der Fortsetzungspunkt rückt nur über
   vollständig verarbeitete Daten vor (Blöcke, Seiten, Signatur-Blöcke); ein abgebrochener Erstabruf setzt sich in
-  Etappen selbst fort, auch nach Fehlern. Nur bestätigte Daten werden gebucht (Ethereum 64, BNB 20, Avalanche 6
-  Blöcke, Bitcoin 3 Bestätigungen, Solana „finalized“, Kaspa akzeptiert); Unbestätigtes wird gezählt.
+  Etappen selbst fort, auch nach Fehlern. Nur bestätigte Daten werden gebucht (Ethereum 64, BNB 20, Polygon 128,
+  Avalanche 6 Blöcke, Bitcoin 3 Bestätigungen, Cardano 15 Blöcke, XRP Ledger validiert, Polkadot finalisiert laut
+  Indexer, Solana „finalized“, Kaspa akzeptiert); Unbestätigtes wird gezählt.
 * **Stabile Kennungen:** Ereignis `<chain>:<tx>:<eigenes Konto>`, je Bewegung eine feste Unterkennung (z. B.
   `#n:out`, `#t:<fingerabdruck>#1` für den zweiten gleichartigen Token-Transfer im selben Hash, `#fee`) – wiederholte
   und überlappende Läufe erzeugen keine Doppelungen.
@@ -939,10 +980,23 @@ Vorgänge (`ethereum:…`, `bsc:…`, `avalanche:…`) und Tokens (`USDC@ETH:0xa
   sind. Erkannte Lücken (Anbieterfehler, nicht abrufbare Transaktion, Indexer nicht synchron) stehen als Warnung am
   Konto; dauerhafte Abdeckungsgrenzen sind am Konto aufgeführt.
 
-**Nicht live verifiziert:** Ohne Netzzugang beim Bau wurden alle sechs Anbindungen mit Fixtures gegen
-nachgebildete Anbieter-APIs geprüft (Paginierung, Drosselung, Abbruch/Fortsetzung). Endpunkte und Felder folgen der
-jeweiligen Dokumentation bzw. dem Quellcode der Indexer (kaspa-rest-server, go-krc20d). Beim ersten echten Abruf
-bitte „Verbindung testen“, die Bestandsprüfung und den Prüf-Stapel ansehen.
+### MATIC → POL auf Polygon PoS
+
+Seit dem 04.09.2024 ist POL der native Coin von Polygon PoS (1:1 aus MATIC, automatisch, ohne Transaktion des
+Nutzers); on-chain wurde der Ticker mit dem Hardfork „Ahmedabad“ (Block 62.278.656, 26.09.2024, PIP-45)
+umbenannt. Portfolia bucht den nativen Coin bis zu diesem Block als `MATIC`, danach als `POL` und schlägt **einmal**
+eine Umstellung `MATIC → POL` (Unternehmensereignis „migration“) über den aus der Historie berechneten Bestand vor –
+nie automatisch, mit Hinweis, wenn die Historie nicht ab Block 0 vorliegt. Ist die Umstellung schon im kuratierten
+Import erfasst, den Vorschlag ignorieren. Kurse: CoinGecko `matic-network` (MATIC) bzw. `polygon-ecosystem-token`
+(POL).
+
+**Was live geprüft wurde und was nicht:** Alle zehn Anbindungen sind mit synthetischen Fixtures gegen nachgebildete
+Anbieter-APIs getestet (Paginierung, Drosselung, Abbruch/Fortsetzung, Wiederholung ohne Doppelungen). Für XRP Ledger
+(xrplcluster.com), Koios und Blockscout (Polygon) wurden zusätzlich die Antwortformate der dokumentierten Methoden
+mit öffentlichen Beispieladressen der Dokumentation abgeglichen. **Subscan/PubFi konnte nicht live geprüft werden**
+(jede Anfrage verlangt einen Schlüssel); dort beruhen Feldnamen auf der veröffentlichten OpenAPI-Beschreibung, die
+Einheiten sind eine gekennzeichnete Annahme mit Prüfung je Vorgang. Beim ersten echten Abruf bitte „Verbindung
+testen“, die Bestandsprüfung und den Prüf-Stapel ansehen.
 
 ---
 

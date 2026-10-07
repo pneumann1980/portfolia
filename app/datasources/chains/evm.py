@@ -1,11 +1,22 @@
-"""EVM-Chains (Ethereum, BNB Smart Chain, Avalanche C-Chain) – ein Adapter mit expliziter Chain-ID.
+"""EVM-Chains (Ethereum, BNB Smart Chain, Polygon PoS, Avalanche C-Chain) – ein Adapter mit expliziter Chain-ID.
 
 Anbieter (Etherscan-kompatible Konto-API, nur lesend)
     * **Etherscan API V2** (``api.etherscan.io/v2/api?chainid=…``) – API-Key nötig. Kostenloser Plan: Ethereum;
       BNB Chain und Avalanche verlangen laut Etherscan einen kostenpflichtigen Plan.
     * **Routescan** (``api.routescan.io/v2/network/mainnet/evm/<chain-id>/etherscan/api``) – ohne Key nutzbar
       (2 Anfragen/s, 10.000/Tag), optional mit kostenlosem Key. Standard für Avalanche (Snowtrace).
+    * **Blockscout** (``polygon.blockscout.com/api``, Etherscan-kompatibel) – ohne Key, nur Polygon. Meldet
+      Blockscout für einen Bereich noch nicht verarbeitete interne Transaktionen (``status`` 2), wird das als Lücke
+      angezeigt („vollständig synchronisiert“ gilt dann nicht).
     Welche Chain ein Anbieter tatsächlich liefert, zeigt „Verbindung testen“ (Fehlermeldung des Anbieters).
+
+Polygon PoS: MATIC → POL
+    Der native Coin von Polygon PoS ist seit dem 04.09.2024 POL (1:1 aus MATIC, automatisch, ohne Transaktion des
+    Nutzers); on-chain wurde der Ticker mit dem Hardfork „Ahmedabad“ (Block 62.278.656, 26.09.2024, PIP-45)
+    umbenannt. Portfolia bucht den nativen Coin bis zu diesem Block als ``MATIC``, danach als ``POL`` und schlägt am
+    Hardfork-Block eine Umstellung (``conversion``, nie automatisch) über den aus der Historie berechneten Bestand
+    vor. Polygon meldet native Überweisungen zusätzlich als Token-Transfer des Systemvertrags ``0x…1010`` – diese
+    Spiegelung wird übersprungen (sonst doppelt gezählt).
 
 Abruf
     ``txlist`` (normale Transaktionen inkl. tatsächlich bezahlter Gebühr ``gasUsed × gasPrice``), ``txlistinternal``
@@ -34,6 +45,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, ClassVar
 
+from app.csvimport import model as M
+from app.csvimport.model import Rec
 from app.datasources import connector as K
 from app.datasources.chainhttp import ChainHttp, Stop
 from app.datasources.wallet import (
@@ -65,6 +78,10 @@ class EvmConnector(WalletConnector):
 
     chain_tag: ClassVar[str] = ""
     confirmations: ClassVar[int] = 12
+    # Token-Verträge, deren Transfers nur die native Bewegung spiegeln (Polygon: MRC20 0x…1010) – nie doppelt zählen
+    mirror_contracts: ClassVar[frozenset[str]] = frozenset()
+    # Umbenennung des nativen Coins: (erster Block mit neuem Symbol, altes Symbol, Zeitpunkt des Blocks, Hinweis)
+    native_switch: ClassVar[tuple[int, str, datetime, str] | None] = None
     limits = ("NFTs (ERC-721/1155) werden nicht gebucht – „Verbindung testen“ zeigt, ob welche vorhanden sind",
               "Positionen in Verträgen (Staking, Liquidität, Bridges) sind nicht sichtbar – nur Bewegungen der Adresse",
               "Interne Bewegungen laut Trace des Indexers; Gebühren aus gasUsed × gasPrice der Transaktion")
@@ -83,6 +100,9 @@ class EvmConnector(WalletConnector):
             if "jsonrpc" in body and "error" not in body:
                 return result  # proxy-Modul (JSON-RPC-Hülle)
             if status == "1":
+                return result
+            if status == "2" and isinstance(result, list):  # Blockscout: Bereich noch nicht vollständig verarbeitet
+                self._incomplete.add(what)
                 return result
             text = result if isinstance(result, str) else msg
             low = f"{msg} {text}".lower()
@@ -113,19 +133,38 @@ class EvmConnector(WalletConnector):
         raise K.ConnectorError("rate_limit", f"{http.ep.label} drosselt Anfragen ({what}).", retry_after_s=60)
 
     def _tip(self, http: ChainHttp) -> int:
-        try:
-            res = self._call(http, {"module": "proxy", "action": "eth_blockNumber"}, "Blockhöhe")
-            if isinstance(res, str) and res.startswith("0x"):
-                return int(res, 16)
-        except K.ConnectorError as e:
-            if e.kind in ("auth", "scope", "rate_limit"):
-                raise
+        # Etherscan/Routescan: proxy-Modul; Blockscout: block/eth_block_number (beide JSON-RPC-Hülle)
+        calls = ({"module": "block", "action": "eth_block_number"}, {"module": "proxy", "action": "eth_blockNumber"}) \
+            if http.ep.id.startswith("blockscout") else ({"module": "proxy", "action": "eth_blockNumber"},)
+        for q in calls:
+            try:
+                res = self._call(http, q, "Blockhöhe")
+                if isinstance(res, str) and res.startswith("0x"):
+                    return int(res, 16)
+            except K.ConnectorError as e:
+                if e.kind in ("auth", "scope", "rate_limit"):
+                    raise
         res = self._call(http, {"module": "block", "action": "getblocknobytime",
                                 "timestamp": int(datetime.now(UTC).timestamp()), "closest": "before"}, "Blockhöhe")
+        if isinstance(res, dict):  # Blockscout: {"blockNumber": "…"}
+            res = res.get("blockNumber")
         try:
             return int(str(res))
         except ValueError:
             raise K.ConnectorError("data", f"{http.ep.label}: Blockhöhe nicht lesbar.") from None
+
+    def native_at(self, block: int) -> str:
+        """Symbol des nativen Coins in einem Block (Polygon: MATIC vor, POL ab dem Hardfork-Block)."""
+        sw = self.native_switch
+        return sw[1] if sw is not None and 0 <= block < sw[0] else self.native
+
+    @property
+    def _incomplete(self) -> set[str]:
+        """In diesem Lauf als unvollständig gemeldete Abfragen (Blockscout ``status`` 2) – je Instanz."""
+        v = self.__dict__.get("_incomplete_set")
+        if v is None:
+            v = self.__dict__["_incomplete_set"] = set()
+        return v
 
     def _page(self, http: ChainHttp, action: str, addr: str, start: int, end: int, page: int = 1) -> list[dict]:
         res = self._call(http, {"module": "account", "action": action, "address": addr, "startblock": start,
@@ -144,6 +183,8 @@ class EvmConnector(WalletConnector):
             details["chain"] = {"ok": True, "text": f"{self.chain_label} erreichbar, Block {tip:,}".replace(",", ".")}
             bal = self._native_balance(http, addr)
             details["balance"] = {"ok": True, "text": f"Bestand {bal.normalize():f} {self.native}"}
+            if self.native_switch is not None:
+                details["native"] = {"ok": True, "text": self.native_switch[3]}
             last = self._call(http, {"module": "account", "action": "txlist", "address": addr, "startblock": 0,
                                      "endblock": tip, "page": 1, "offset": 1, "sort": "desc"}, "Transaktionen")
             if isinstance(last, list) and last:
@@ -191,6 +232,7 @@ class EvmConnector(WalletConnector):
         cur = dict(cursor or {})
         start = int(cur.get("block", 0) or 0)
         tokens_seen: dict[str, dict[str, Any]] = dict(cur.get("tokens") or {})
+        switch = dict(cur.get("switch") or {}) if self.native_switch is not None else {}
         actions = ACTIONS if w.tokens else ACTIONS[:2]
         res = K.FetchResult(complete=True)
         with self.http(cfg, secret) as http:
@@ -232,18 +274,26 @@ class EvmConnector(WalletConnector):
             if stopped and through < start:
                 raise K.ConnectorError("unavailable", f"{stopped} ohne Fortschritt – der nächste Lauf versucht es "
                                                       "erneut.", retry_after_s=600)
-            events, skipped = self._events(addr, records, through, tokens_seen)
+            events, skipped, native_delta = self._events(addr, records, through, tokens_seen)
+            if self.native_switch is not None:
+                conv = self._switch_event(addr, start, through, native_delta, switch)
+                if conv is not None:
+                    events.append(conv)
             res.events = events
             res.skipped = dict(skipped)
+            for what in sorted(self._incomplete):
+                res.gaps.append(f"{http.ep.label} meldet {what} im abgefragten Bereich als noch nicht vollständig "
+                                "verarbeitet – Bewegungen können fehlen (vollständig: anderen Anbieter wählen)")
             complete = through >= safe and stopped is None
             res.complete = complete
+            extra = {"switch": switch} if switch else {}
             if through >= start:
-                res.cursor = {"v": 1, "block": through + 1, "tokens": _trim_tokens(tokens_seen)}
+                res.cursor = {"v": 1, "block": through + 1, "tokens": _trim_tokens(tokens_seen), **extra}
                 res.resume = not complete
             elif not complete:
                 res.cursor = None
             else:  # keine neuen bestätigten Blöcke
-                res.cursor = {"v": 1, "block": start, "tokens": _trim_tokens(tokens_seen)}
+                res.cursor = {"v": 1, "block": start, "tokens": _trim_tokens(tokens_seen), **extra}
             if stopped:
                 res.warnings.append(f"{stopped} – Fortsetzung ab Block {through + 1:,}".replace(",", "."))
             try:
@@ -283,8 +333,48 @@ class EvmConnector(WalletConnector):
         return out
 
     # -- Einordnung ---------------------------------------------------------------------------------------
+    def _switch_event(self, addr: str, start: int, through: int, delta: Decimal, state: dict[str, Any]) \
+            -> K.SourceEvent | None:
+        """Umstellung des nativen Coins (Polygon: MATIC → POL) als Vorschlag am Umstellungsblock.
+
+        Der Bestand vor dem Block wird aus der abgerufenen Historie summiert (Zu-/Abgänge, interne Bewegungen,
+        Gebühren) und im Fortsetzungspunkt mitgeführt; vorgeschlagen wird die Umstellung genau einmal – nur bei
+        lückenlosem Abruf ab Block 0, sonst mit ausdrücklichem Hinweis. Nie automatisch übernommen."""
+        sw = self.native_switch
+        assert sw is not None
+        block, old, when, why = sw
+        if state.get("done") or start > block:
+            state["done"] = True
+            return None
+        if start == 0 and "pre" not in state:
+            state["pre"] = "0"
+            state["from_zero"] = True
+        try:
+            pre = Decimal(str(state.get("pre") or "0")) + delta
+        except ArithmeticError:
+            pre = delta
+        state["pre"] = format(pre.normalize(), "f") if pre else "0"
+        if through < block:
+            return None  # Umstellungsblock noch nicht erreicht (nächste Etappe)
+        state["done"] = True
+        if pre <= 0:
+            return None
+        partial = not state.get("from_zero")
+        rec = Rec(line=0, ts=when, kind=M.CONVERSION, out_sym=old, out_qty=pre, in_sym=self.native, in_qty=pre,
+                  tag="migration", label=f"{old} → {self.native}",
+                  note=f"{why} – Bestand vor dem Block aus der abgerufenen Historie berechnet",
+                  review=(f"Umstellung {old} → {self.native} 1:1 – Menge aus der abgerufenen Historie berechnet"
+                          + (" (Historie nicht ab Block 0 abgerufen – Menge unsicher)" if partial else
+                             "; Brücken-Einzahlungen ohne eigene Transaktion fehlen darin") + ". Mit dem Bestand laut "
+                          "Explorer bzw. einer schon erfassten Umstellung vergleichen"),
+                  raw={"chain": self.provider, "block": block, "computed_pre": format(pre.normalize(), "f"),
+                       "from_block_0": not partial})
+        rec.ext_id = "switch"
+        return K.SourceEvent(f"{self.provider}:switch-{old.lower()}-{self.native.lower()}:{addr}", when, [rec],
+                             f"{old} → {self.native}")
+
     def _events(self, addr: str, records: dict[str, list[dict]], through: int,
-                tokens_seen: dict[str, dict[str, Any]]) -> tuple[list[K.SourceEvent], Counter[str]]:
+                tokens_seen: dict[str, dict[str, Any]]) -> tuple[list[K.SourceEvent], Counter[str], Decimal]:
         by_hash: dict[str, dict[str, Any]] = defaultdict(lambda: {"n": None, "i": [], "t": []})
         skipped: Counter[str] = Counter()
         for action, key in (("txlist", "n"), ("txlistinternal", "i"), ("tokentx", "t")):
@@ -307,18 +397,23 @@ class EvmConnector(WalletConnector):
                 else:
                     slot[key].append(r)
         events = []
+        sw_block = self.native_switch[0] if self.native_switch is not None else -1
+        native_delta = Decimal(0)  # Summe der nativen Bewegungen vor dem Umstellungsblock (Polygon)
         for h, slot in sorted(by_hash.items(), key=lambda kv: (kv[1]["block"], kv[0])):
             tx = self._view(addr, h, slot, skipped, tokens_seen)
             if tx is None:
                 continue
+            if slot["block"] < sw_block:
+                native_delta += sum((m.qty for m in tx.moves if m.asset == tx.fee_asset), Decimal(0)) - tx.fee
             recs = classify(tx)
             if recs:
                 events.append(event(self.provider, h, addr, tx.ts, recs, tx.label))
-        return events, skipped
+        return events, skipped, native_delta
 
     def _view(self, addr: str, h: str, slot: dict[str, Any], skipped: Counter[str],
               tokens_seen: dict[str, dict[str, Any]]) -> TxView | None:
         n = slot["n"]
+        native = self.native_at(int(slot.get("block") or 0))
         try:
             ts = ts_from_unix(slot.get("ts") or 0)
         except (TypeError, ValueError, OverflowError):
@@ -354,9 +449,9 @@ class EvmConnector(WalletConnector):
                     hints.append("Wert der Transaktion nicht lesbar")
                 if value:
                     if frm == addr:
-                        moves.append(Move(self.native, -value, "n:out"))
+                        moves.append(Move(native, -value, "n:out"))
                     if to == addr:
-                        moves.append(Move(self.native, value, "n:in"))
+                        moves.append(Move(native, value, "n:in"))
                     raw_moves.append({"kind": "native", "from": frm, "to": to, "value": str(n.get("value"))})
         if not failed:
             seen_i: Counter[str] = Counter()
@@ -377,9 +472,9 @@ class EvmConnector(WalletConnector):
                 seen_i[base] += 1
                 both = frm == addr and to == addr
                 if to == addr:
-                    moves.append(Move(self.native, value, _sub(base + (":in" if both else ""), k)))
+                    moves.append(Move(native, value, _sub(base + (":in" if both else ""), k)))
                 if frm == addr:
-                    moves.append(Move(self.native, -value, _sub(base + (":out" if both else ""), k)))
+                    moves.append(Move(native, -value, _sub(base + (":out" if both else ""), k)))
                 raw_moves.append({"kind": "internal", "from": frm, "to": to, "value": str(r.get("value")),
                                   "trace": tid or None})
             seen_t: Counter[str] = Counter()
@@ -389,6 +484,10 @@ class EvmConnector(WalletConnector):
                 raw_v = str(r.get("value") or "0").strip()
                 if not _ADDR.match(contract):
                     hints.append("Token-Transfer ohne gültigen Contract")
+                    continue
+                if contract in self.mirror_contracts:
+                    skipped["native Überweisung zusätzlich als Token-Transfer des Systemvertrags gemeldet (nur einmal "
+                            "gezählt)"] += 1
                     continue
                 if raw_v in ("0", ""):
                     skipped["Token-Transfers mit Menge 0 (u. a. Address-Poisoning)"] += 1
@@ -422,7 +521,7 @@ class EvmConnector(WalletConnector):
         raw = {"block": slot.get("block"), "from": (n or {}).get("from"), "to": (n or {}).get("to"),
                "fee": f"{fee.normalize():f}" if fee else None, "status": "failed" if failed else "ok",
                "confirmed": True, "min_confirmations": self.confirmations, "moves": raw_moves[:20]}
-        return TxView(self.provider, h, ts, moves, fee=fee, fee_asset=self.native, initiated=initiated,
+        return TxView(self.provider, h, ts, moves, fee=fee, fee_asset=native, initiated=initiated,
                       failed=failed, plain=plain, hint="; ".join(dict.fromkeys(hints)) or None, label=label, raw=raw)
 
 
@@ -479,3 +578,30 @@ class AvalancheConnector(EvmConnector):
     explorer_tx = "https://snowtrace.io/tx/{}"
     explorer_addr = "https://snowtrace.io/address/{}"
     explorer_token = "https://snowtrace.io/token/{}"  # noqa: S105 - Link-Muster
+
+
+POLYGON_NATIVE = "0x0000000000000000000000000000000000001010"  # MRC20-Systemvertrag des nativen Coins
+
+
+@K.register
+class PolygonConnector(EvmConnector):
+    provider = "polygon"
+    label = "Polygon PoS (Etherscan/Blockscout)"
+    chain_label = "Polygon PoS"
+    chain_id = 137
+    chain_tag = "POLYGON"
+    native = "POL"
+    confirmations = 128  # Bor-Blöcke ≈ 2 s; Puffer bis zur Checkpoint-Finalität des Indexers
+    endpoints = ("etherscan", "blockscout_polygon")
+    mirror_contracts = frozenset({POLYGON_NATIVE})
+    native_switch = (62_278_656, "MATIC", datetime(2024, 9, 26, 0, 42, 49, tzinfo=UTC),
+                     "Polygon PoS: nativer Coin seit 04.09.2024 POL (1:1 aus MATIC); Ticker on-chain ab Block "
+                     "62.278.656 (Hardfork Ahmedabad, 26.09.2024) – davor als MATIC gebucht")
+    limits = (*EvmConnector.limits,
+              "Natives MATIC/POL: bis Block 62.278.656 als MATIC, danach als POL; die Umstellung wird einmal zur "
+              "Prüfung vorgeschlagen (Menge aus der Historie berechnet)",
+              "Einzahlungen über die PoS-Bridge (State-Sync, ohne eigene Transaktion) sind in der Historie der "
+              "Anbieter ggf. nicht enthalten – Abgleich über die Bestandsprüfung")
+    explorer_tx = "https://polygonscan.com/tx/{}"
+    explorer_addr = "https://polygonscan.com/address/{}"
+    explorer_token = "https://polygonscan.com/token/{}"  # noqa: S105 - Link-Muster
