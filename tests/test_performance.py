@@ -69,3 +69,18 @@ def test_annualize_and_drawdown():
     assert annualize(0.05, 100) is None
     dd = drawdown(np.array([100.0, 120.0, 90.0, 130.0]))
     assert dd.tolist() == pytest.approx([0.0, 0.0, -0.25, 0.0])
+
+
+def test_xirr_with_multiple_solutions_is_flagged_not_guessed():
+    """AP4: −100 / +230 / −132 hat zwei Lösungen (≈ 10 % und 20 %) – keine davon still ausgeben."""
+    from datetime import date
+
+    from app.analytics.performance import xirr_detail, xirr_roots
+
+    flows = [(date(2021, 1, 1), -100.0), (date(2022, 1, 1), 230.0), (date(2023, 1, 1), -132.0)]
+    roots = xirr_roots(flows)
+    assert len(roots) == 2 and abs(roots[0] - 0.1) < 1e-6 and abs(roots[1] - 0.2) < 1e-6
+    assert xirr_detail(flows) == (None, True)
+    # eindeutiger Fall bleibt unverändert
+    rate, ambiguous = xirr_detail([(date(2021, 1, 1), -100.0), (date(2022, 1, 1), 110.0)])
+    assert not ambiguous and abs(rate - 0.1) < 1e-9

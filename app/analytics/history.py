@@ -54,6 +54,10 @@ class History:
     unvalued_past: list[str] = field(default_factory=list)  # nur früher zeitweise ohne gültigen Kurs
     asset_kind: np.ndarray | None = None  # (M, N) Herkunft des Kurses je Tag (app.analytics.quality, Codes)
     quality: dict[str, AssetQuality] = field(default_factory=dict)  # Kursqualität je Asset (ohne Fiat)
+    # Bewertungslücken (Position ohne Kurs, 0 €): neutrale Ein-/Ausgänge nur für Renditekennzahlen – eine fehlende
+    # Kursinformation ist kein Wertverlust (echter Verlust: Ausbuchung). (M, N) je Asset, ≥ 0
+    asset_gap_in: np.ndarray | None = None
+    asset_gap_out: np.ndarray | None = None
     computed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
@@ -80,6 +84,20 @@ class History:
             return z, z, z
         return (self.asset_value[rows].sum(axis=0), self.asset_in[rows].sum(axis=0),
                 self.asset_out[rows].sum(axis=0))
+
+    def gaps(self, asset_ids: list[str] | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """Neutrale Ein-/Ausgänge wegen Bewertungslücken (Summe aller bzw. ausgewählter Assets)."""
+        if self.asset_gap_in is None or self.asset_gap_out is None or not len(self.asset_ids):
+            z = np.zeros(self.n)
+            return z, z
+        if asset_ids is None:
+            return self.asset_gap_in.sum(axis=0), self.asset_gap_out.sum(axis=0)
+        idx = self.asset_index()
+        rows = [idx[a] for a in asset_ids if a in idx]
+        if not rows:
+            z = np.zeros(self.n)
+            return z, z
+        return self.asset_gap_in[rows].sum(axis=0), self.asset_gap_out[rows].sum(axis=0)
 
 
 def _ffill(n: int, start: date, points: list[tuple[date, float]]) -> tuple[np.ndarray, int]:
@@ -110,6 +128,13 @@ def _ffill(n: int, start: date, points: list[tuple[date, float]]) -> tuple[np.nd
     filled = arr[idx]
     filled[:first] = np.nan
     return filled, first
+
+
+def _ffill_valid(values: np.ndarray, ok: np.ndarray) -> np.ndarray:
+    """Letzter gültiger Wert je Tag (0 vor dem ersten)."""
+    idx = np.where(ok, np.arange(len(values)), -1)
+    np.maximum.accumulate(idx, out=idx)
+    return np.where(idx >= 0, values[np.maximum(idx, 0)], 0.0)
 
 
 def _row_get(row: Any, key: str) -> Any:
@@ -332,11 +357,42 @@ def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, seri
         if 0 <= i < n:
             fees[i] += float(fe.eur)
 
+    # -- Bewertungslücken: Übergang in/aus „kein Kurs“ und Zu-/Abflüsse unbewerteter Positionen ----------------
+    g_in = np.zeros((m, n))
+    g_out = np.zeros((m, n))
+    lost: dict[tuple[str, int], float] = defaultdict(float)  # ausdrücklich ausgebucht (Verlust, Diebstahl, Burn)
+    for d in ledger.disposals:
+        if d.kind == "lost" and 0 <= (d.date - start).days < n:
+            lost[(d.asset, (d.date - start).days)] += float(d.qty)
+    for k in range(m):
+        if not np.any(kinds[k] == Q.NONE):
+            continue
+        q = qty[k]
+        ok = kinds[k] != Q.NONE
+        held_prev = np.concatenate([[False], q[:-1] != 0])
+        ok_prev = np.concatenate([[True], ok[:-1]])
+        q_prev = np.concatenate([[0.0], q[:-1]])
+        p_prev = np.concatenate([[0.0], price[k][:-1]])
+        enter = ok_prev & ~ok & held_prev  # Kurs fällt weg: bisheriger Wert verlässt die bewertete Menge
+        leave = ~ok_prev & ok & held_prev  # Kurs kommt zurück: Wert tritt wieder ein (keine Scheinrendite)
+        g_out[k] += np.where(enter, q_prev * p_prev, 0.0)
+        g_in[k] += np.where(leave, q_prev * price[k], 0.0)
+        g_out[k] += np.where(~ok, a_in[k], 0.0)  # Wert fließt in eine unbewertete Position
+        g_in[k] += np.where(~ok, a_out[k], 0.0)  # … bzw. aus ihr heraus (Verkaufserlös)
+        # Ausbuchung einer unbewerteten Position: echter Verlust zum letzten bekannten Kurs (Wert tritt kurz ein
+        # und geht verloren) – sonst bliebe die ausdrücklich gebuchte Wertberichtigung ohne Wirkung auf die Rendite
+        aid = asset_ids[k]
+        last_ok = _ffill_valid(price[k], ok)
+        for (a_id, t), lq in lost.items():
+            if a_id == aid and not ok[t]:
+                g_in[k][t] += lq * last_ok[t]
+
     return History(start=start, dates=dates, value=value_a.sum(axis=0), inflow=inflow, outflow=outflow,
                    invested=invested, income=income, fees=fees, asset_ids=asset_ids, asset_qty=qty,
                    asset_price=price, asset_value=value_a, asset_in=a_in, asset_out=a_out,
                    estimated_days=estimated, fallback_days=fallback_days, unvalued_assets=unvalued,
-                   unvalued_past=unvalued_past, asset_kind=kinds, quality=quality)
+                   unvalued_past=unvalued_past, asset_kind=kinds, quality=quality, asset_gap_in=g_in,
+                   asset_gap_out=g_out)
 
 
 def persist_snapshots(db: Database, hist: History, import_id: int | None, kind: str = "backfill",

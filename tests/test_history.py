@@ -104,10 +104,13 @@ def test_history_fallback_expires_like_current_valuation(db):
     assert h.asset_price[k][h.index_of(date(2024, 1, 31))] == pytest.approx(0.1)
     assert h.asset_price[k][h.index_of(date(2024, 2, 1))] == 0.0
     assert h.unvalued_assets == ["DEAD"]
-    # Wertberichtigung am Ablauftag: Totalverlust der Position (wie die aktuelle Bewertung mit 0 €)
+    # Ablauf des Ersatzkurses: Position unbewertet (0 €, markiert) – eine fehlende Kursinformation ist aber kein
+    # Wertverlust: Renditen behandeln die Lücke neutral (seit 0.21; vorher −100 %). Echter Verlust = Ausbuchung.
     s = P.group_series(h, ["DEAD"])
     a, b, inc = P.bounds(h, "MAX")
-    assert P.metrics(h, s, a, b, inc)["ttwror"] == pytest.approx(-1.0)
+    m = P.metrics(h, s, a, b, inc)
+    assert m["ttwror"] == pytest.approx(0.0) and m["valuation_gaps"] and m["gain"] == pytest.approx(0.0)
+    assert P.metrics(h, P.total_series(h), a, b, inc)["ttwror"] == pytest.approx(0.0)
 
 
 def test_history_fallback_is_split_aware(db):
@@ -150,3 +153,79 @@ def test_usd_prices_are_converted_with_daily_fx(db):
     led = run_ledger(pf)
     h = compute_history(pf, led, store, _series_for, FlowValuer(store, _series_for), end=d0 + timedelta(1))
     assert h.value.tolist() == pytest.approx([1000.0, 1100.0])
+
+
+def _gap_portfolio(extra=()):
+    """BTC mit Marktkursen (konstant) + Token ohne Kursquelle, dessen Ersatzkurs nach 30 Tagen abläuft."""
+    return portfolio([
+        tx("b1", "2024-01-01", "buy", frm=("Ex", "EUR", 1000), to=("Ex", "BTC", "0.1"), value=1000),
+        tx("b2", "2024-01-01", "buy", frm=("Ex", "EUR", 100), to=("Ex", "DEAD", 1000), value=100),
+        *extra,
+    ], assets=_no_source("DEAD"))
+
+
+def _flat_btc(store, end):
+    d = date(2024, 1, 1)
+    bars = []
+    while d <= end:
+        bars.append(Bar(d, 10000.0))
+        d += timedelta(days=1)
+    store.upsert_daily("cg:bitcoin", bars, "coingecko", "EUR")
+
+
+def test_valuation_gap_is_not_a_loss_and_stays_visible(db):
+    """AP4: Ablauf des Ersatzkurses → Position 0 € (sichtbar), Portfolio-Rendite bleibt 0 % bei konstanten Kursen."""
+    store = PriceStore(db)
+    end = date(2024, 3, 1)
+    _flat_btc(store, end)
+    pf = _gap_portfolio()
+    led = run_ledger(pf)
+    h = compute_history(pf, led, store, _series_for, FlowValuer(store, _series_for), end=end)
+    assert h.unvalued_assets == ["DEAD"] and h.value[-1] == pytest.approx(1000.0)  # 0 € für DEAD, sichtbar
+    a, b, inc = P.bounds(h, "MAX")
+    m = P.metrics(h, P.total_series(h), a, b, inc)
+    assert m["ttwror"] == pytest.approx(0.0) and m["gain"] == pytest.approx(0.0) and m["valuation_gaps"]
+    assert m["inflows"] == pytest.approx(1100.0)  # echte Zahlungsströme unverändert
+    _dates, idx = P.index_series(h, P.total_series(h), a, b, inc)
+    assert min(idx) == pytest.approx(0.0) and P.metrics(h, P.total_series(h), a, b, inc)["max_drawdown"] == 0.0
+    # reproduzierbar: gleiche Buchungen und Kursreihen → identische Kennzahlen
+    h2 = compute_history(pf, run_ledger(pf), store, _series_for, FlowValuer(store, _series_for), end=end)
+    assert P.metrics(h2, P.total_series(h2), a, b, inc) == m
+
+
+def test_buying_more_of_unvalued_token_is_not_a_loss(db):
+    store = PriceStore(db)
+    end = date(2024, 3, 10)
+    _flat_btc(store, end)
+    pf = _gap_portfolio([tx("b3", "2024-03-05", "buy", frm=("Ex", "EUR", 50), to=("Ex", "DEAD", 500), value=50)])
+    h = compute_history(pf, run_ledger(pf), store, _series_for, FlowValuer(store, _series_for), end=end)
+    a, b, inc = P.bounds(h, "MAX")
+    m = P.metrics(h, P.total_series(h), a, b, inc)
+    # der neue Kauf setzt einen frischen Transaktionskurs (0,10 €) – vorher lag eine Lücke: keine Scheinrendite
+    assert m["ttwror"] == pytest.approx(0.0, abs=1e-12) and m["gain"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_write_off_of_unvalued_token_is_a_real_loss(db):
+    store = PriceStore(db)
+    end = date(2024, 3, 10)
+    _flat_btc(store, end)
+    pf = _gap_portfolio([tx("w", "2024-03-05", "withdrawal", tag="lost", frm=("Ex", "DEAD", 1000), value=0)])
+    h = compute_history(pf, run_ledger(pf), store, _series_for, FlowValuer(store, _series_for), end=end)
+    a, b, inc = P.bounds(h, "MAX")
+    m = P.metrics(h, P.total_series(h), a, b, inc)
+    # Ausbuchung zum letzten bekannten Kurs (0,10 € × 1000 = 100 €): echter Verlust von 100 € auf 1.100 € Einsatz
+    assert m["gain"] == pytest.approx(-100.0)
+    assert m["ttwror"] == pytest.approx(1000 / 1100 - 1, rel=1e-9)
+
+
+def test_valuation_state_distinguishes_complete_estimated_incomplete(db):
+    store = PriceStore(db)
+    end = date(2024, 3, 1)
+    _flat_btc(store, end)
+    pf = _gap_portfolio()
+    h = compute_history(pf, run_ledger(pf), store, _series_for, FlowValuer(store, _series_for), end=end)
+    assert P.valuation_state(h, 0, h.n - 1, ["BTC"])["state"] == "complete"
+    early = P.valuation_state(h, 0, h.index_of(date(2024, 1, 20)), ["DEAD"])
+    assert early["state"] == "estimated" and early["estimated_days"] == 20  # Transaktionskurs als Schätzung
+    full = P.valuation_state(h, 0, h.n - 1)
+    assert full["state"] == "incomplete" and full["missing_days"] > 0

@@ -63,6 +63,7 @@ def _kpis(ctx: Any, val: Any, hist: Any) -> dict[str, Any]:
     a, b, inc = P.bounds(hist, "MAX")
     mx = P.metrics(hist, s, a, b, inc)
     k["irr"] = mx.get("irr")
+    k["irr_ambiguous"] = mx.get("irr_ambiguous")
     k["ttwror_max"] = mx.get("ttwror")
     return k
 
@@ -283,6 +284,7 @@ def performance(request: Request, period: str = "1J", scope: str = "total", star
         a, b, inc = P.bounds(hist, period)
         sel = P.metrics(hist, s, a, b, inc)
         sel_label = P.PERIOD_LABELS.get(period.upper(), period)
+    sel["quality"] = P.valuation_state(hist, a, b, assets)
     est = {k: v for k, v in hist.estimated_days.items() if v and (assets is None or k in assets)}
     val = ctx.valuation()
     # nur heute gehaltene Positionen ohne gültigen Kurs (wie Übersicht); verkaufte stehen unter Datenqualität

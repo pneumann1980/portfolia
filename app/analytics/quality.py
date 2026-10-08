@@ -143,3 +143,24 @@ def summarize(asset_id: str, segs: list[Segment], failed: str | None = None,
     for s in segs:
         q.days[s.kind] = q.days.get(s.kind, 0) + s.days
     return q
+
+
+# -- Zustand einer Bewertung über einen Zeitraum ------------------------------------------------------------------
+STATE_LABEL = {"complete": "✓ Marktdaten vollständig", "estimated": "⚠ teilweise geschätzt",
+               "incomplete": "✕ unvollständig – Positionen ohne Kurs"}
+
+
+def period_state(codes: np.ndarray, held: np.ndarray, start_i: int, end_i: int) -> dict[str, Any]:
+    """Zustand der Bewertung im Zeitraum [start_i, end_i] aus der Kursherkunft je Asset und Tag (``price_kind``).
+
+    ``complete``: an allen gehaltenen Tagen Marktkurse (Haupt- oder geprüfter Ersatzanbieter); ``estimated``: an
+    einzelnen Tagen fortgeschriebene, Transaktions-, manuelle oder rückwirkende Kurse; ``incomplete``: Tage ohne
+    Kurs (Position mit 0 € angesetzt, in Renditen neutral)."""
+    if codes is None or not len(codes):
+        return {"state": "complete", "label": STATE_LABEL["complete"], "estimated_days": 0, "missing_days": 0}
+    c = codes[:, start_i:end_i + 1]
+    h = held[:, start_i:end_i + 1]
+    missing = int(np.sum(h & (c == NONE)))
+    est = int(np.sum(h & np.isin(c, (INTERP, TX, MANUAL, FIRST))))
+    state = "incomplete" if missing else "estimated" if est else "complete"
+    return {"state": state, "label": STATE_LABEL[state], "estimated_days": est, "missing_days": missing}

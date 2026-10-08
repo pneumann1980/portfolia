@@ -15,6 +15,7 @@ Zahlungsströme mit Datum, Endwert als Auszahlung zum Periodenende; Lösung von
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections.abc import Sequence
 from datetime import date
@@ -78,6 +79,62 @@ def xnpv(rate: float, flows: Sequence[tuple[date, float]]) -> float:
     return sum(cf / (1.0 + rate) ** ((d - t0).days / 365.0) for d, cf in flows)
 
 
+def xirr_roots(flows: Sequence[tuple[date, float]]) -> list[float]:
+    """Alle Lösungen von NPV(r) = 0 im Bereich −99 % … 10.000 % p. a. (Gitter + Bisektion je Vorzeichenwechsel)."""
+    flows = sorted([(d, float(cf)) for d, cf in flows if abs(cf) > 1e-9], key=lambda x: x[0])
+    if len(flows) < 2:
+        return []
+    t0 = flows[0][0]
+    ts = np.array([(d - t0).days / 365.0 for d, _ in flows])
+    cfs = np.array([cf for _, cf in flows])
+
+    def f(r: float) -> float:
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+            return float(np.sum(cfs / np.power(1.0 + r, ts)))
+
+    grid = np.concatenate([np.linspace(-0.99, 1.0, 4000, endpoint=False), np.geomspace(1.0, 100.0, 1500)])
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        vals = np.array([np.sum(cfs / np.power(1.0 + r, ts)) for r in grid])
+    roots: list[float] = []
+    for i in range(len(grid) - 1):
+        a, b, fa, fb = grid[i], grid[i + 1], vals[i], vals[i + 1]
+        if not (math.isfinite(fa) and math.isfinite(fb)):
+            continue
+        if fa == 0:
+            roots.append(float(a))
+            continue
+        if fa * fb < 0:
+            for _ in range(100):
+                mid = (a + b) / 2
+                fm = f(mid)
+                if fa * fm <= 0:
+                    b = mid
+                else:
+                    a, fa = mid, fm
+            roots.append(float((a + b) / 2))
+    out: list[float] = []
+    for r in roots:
+        if not out or abs(r - out[-1]) > 1e-6:
+            out.append(r)
+    return out
+
+
+def sign_changes(flows: Sequence[tuple[date, float]]) -> int:
+    signs = [cf > 0 for _, cf in sorted(flows, key=lambda x: x[0]) if abs(cf) > 1e-9]
+    return sum(1 for a, b in itertools.pairwise(signs) if a != b)
+
+
+def xirr_detail(flows: Sequence[tuple[date, float]], guess: float = 0.1) -> tuple[float | None, bool]:
+    """(Zinsfuß, mehrdeutig). Bei mehr als einem Vorzeichenwechsel der Zahlungsreihe kann es mehrere Lösungen geben
+    (Descartes); dann werden alle gesucht – gibt es mehr als eine, ist die IRR nicht eindeutig bestimmbar und wird
+    nicht ausgegeben (statt still eine vom Startwert abhängige Lösung zu zeigen)."""
+    if sign_changes(flows) > 1:
+        roots = xirr_roots(flows)
+        if len(roots) > 1:
+            return None, True
+    return xirr(flows, guess), False
+
+
 def xirr(flows: Sequence[tuple[date, float]], guess: float = 0.1) -> float | None:
     """Interner Zinsfuß p. a.; None, wenn keine Lösung existiert (kein Vorzeichenwechsel)."""
     flows = sorted([(d, float(cf)) for d, cf in flows if abs(cf) > 1e-9], key=lambda x: x[0])
@@ -138,7 +195,13 @@ def xirr(flows: Sequence[tuple[date, float]], guess: float = 0.1) -> float | Non
 
 def irr_for_period(dates: Sequence[date], values: np.ndarray, flows_by_day: np.ndarray, start: int,
                    end: int) -> float | None:
-    """IRR über (start, end]: −V_start, −Flüsse (Zufluss ins Depot = Auszahlung des Anlegers), +V_end."""
+    """IRR über (start, end]: −V_start, −Flüsse (Zufluss ins Depot = Auszahlung des Anlegers), +V_end.
+    None auch bei mehrdeutiger Lösung (siehe :func:`irr_period_detail`)."""
+    return irr_period_detail(dates, values, flows_by_day, start, end)[0]
+
+
+def irr_period_detail(dates: Sequence[date], values: np.ndarray, flows_by_day: np.ndarray, start: int,
+                      end: int) -> tuple[float | None, bool]:
     cfs: list[tuple[date, float]] = []
     if values[start] > 0:
         cfs.append((dates[start], -float(values[start])))
@@ -147,4 +210,4 @@ def irr_for_period(dates: Sequence[date], values: np.ndarray, flows_by_day: np.n
         if abs(f) > 1e-9:
             cfs.append((dates[t], -f))
     cfs.append((dates[end], float(values[end])))
-    return xirr(cfs)
+    return xirr_detail(cfs)

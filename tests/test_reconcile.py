@@ -309,7 +309,7 @@ def test_reconcile_rules():
 
 
 def test_reconcile_several_events_in_one_blockchain_transaction():
-    """AP3: verschiedene Vorgänge derselben Blockchain-Transaktion verschmelzen nicht; jede Gegenbuchung zählt einmal."""
+    """AP3: Vorgänge derselben Blockchain-Transaktion verschmelzen nicht; jede Gegenbuchung zählt einmal."""
     h = "0x" + "22" * 32
     D = Decimal
     # Swap in einer Transaktion: Abgang USDC, Zugang ETH, Gebühr ETH – je Bein genau ein Gegenstück
