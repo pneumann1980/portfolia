@@ -106,6 +106,15 @@ _SECRETISH = re.compile(r"(?i)\b(authorization|x-api-key|api[-_ ]?key|apikey|sec
 _URL_QUERY = re.compile(r"(https?://[^\s?#]+)\?[^\s]*")
 
 
+def _mask_secretish(m: re.Match) -> str:
+    """Wert hinter „API-Key“/„token“ … maskieren; nach bloßem Leerzeichen nur schlüsselartige Werte (Ziffern,
+    Sonderzeichen oder lang) – sonst würde z. B. „Kein API-Key hinterlegt“ zu „Kein API-Key ***“."""
+    val = m.group(3)
+    if m.group(2).strip() or len(val) >= 16 or not val.isalpha():
+        return f"{m.group(1)}{m.group(2)}***"
+    return m.group(0)
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -116,7 +125,7 @@ def sanitize_error(msg: str, secrets: Iterable[str] = ()) -> str:
     for s in sorted({x for x in secrets if x and len(x) >= 4}, key=len, reverse=True):
         text = text.replace(s, "***")
     text = get_redactor().redact(text)
-    text = _SECRETISH.sub(lambda m: f"{m.group(1)}{m.group(2)}***", text)
+    text = _SECRETISH.sub(_mask_secretish, text)
     text = _URL_QUERY.sub(lambda m: f"{m.group(1)}?…", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:300] + ("…" if len(text) > 300 else "")

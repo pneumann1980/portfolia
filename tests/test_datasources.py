@@ -777,3 +777,9 @@ def test_sync_robustness_lock_retry_after_and_pipeline_errors(client, fake, monk
     assert source(c, sid)["status"] == "error"
     assert {r["status"] for r in svc.runs(sid)} == {"error"}
     assert not S._SYNC_LOCK.locked()
+
+
+def test_sanitize_error_keeps_plain_words_after_key_label():
+    assert sanitize_error("Kein API-Key hinterlegt – bitte eingeben.") == "Kein API-Key hinterlegt – bitte eingeben."
+    assert "Abc123xyz" not in sanitize_error("API-Key Abc123xyz abgelehnt")
+    assert "ABCDEFGHIJKLMNOPQR" not in sanitize_error("token ABCDEFGHIJKLMNOPQR")
