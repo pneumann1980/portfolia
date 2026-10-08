@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Steuerdaten je Jahr{% endblock %}
+{% block heading %}Steuerdaten je Jahr{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/tax">← Steuern &amp; Haltefristen</a> · Externe Steuerberichte (JSON bevorzugt, CSV als Austauschformat) je
+    Steuerjahr. Steuerdateien verweisen nur auf Buchungen – sie legen <b>nie</b> Buchungen an und ändern keine.</p>
+
+  {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+  {% if scan %}
+  <div class="alert {{ 'good' if not scan.rejected else 'warn' }}" role="status"><span class="icon">{{ '✓' if not scan.rejected else '!' }}</span><div>
+    {% if scan.skipped %}{{ scan.skipped }}.{% else %}
+    {{ scan.checked }} Datei{{ 'en' if scan.checked != 1 }} im Ordner geprüft{% if scan.unchanged %}, {{ scan.unchanged }} unverändert{% endif %}.
+    {% for n in scan.new %}<br>Neue Steuerdatei erkannt: Steuerjahr {{ n.year }} („{{ n.file }}“) – übernommen.{% endfor %}
+    {% for n in scan.pending %}<br>Neue Steuerdatei erkannt: Steuerjahr {{ n.year or 'unbekannt' }} („{{ n.file }}“) – <a href="/tax/data/file/{{ n.id }}">bitte prüfen</a>.{% endfor %}
+    {% for n in scan.rejected %}<br>„{{ n.file }}“ abgelehnt: {{ n.errors|join('; ') }}{% endfor %}
+    {% if not scan.new and not scan.pending and not scan.rejected %}<br>Keine neuen Steuerdateien.{% endif %}
+    {% endif %}</div></div>
+  {% endif %}
+
+  {% if pending %}
+  <section class="card">
+    <div class="card-head"><h2>Wartet auf Bestätigung</h2><span class="hint">nichts wird ohne Bestätigung ersetzt</span></div>
+    <div class="table-wrap"><table class="compact">
+      <thead><tr><th>Steuerjahr</th><th>Datei</th><th>Herkunft</th><th class="num">Datensätze</th><th></th></tr></thead>
+      <tbody>{% for f in pending %}
+        <tr><td>{{ f.tax_year or 'unbekannt' }}</td><td class="wrap-any">{{ f.filename }}</td><td>{{ origin.get(f.origin, f.origin) }}</td>
+          <td class="num">{{ '{:,}'.format(f.records).replace(',', '.') }}</td>
+          <td><a class="btn sm primary" href="/tax/data/file/{{ f.id }}">Prüfen</a></td></tr>
+      {% endfor %}</tbody></table></div>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>Steuerjahre</h2>
+      <form method="post" action="/tax/data/scan" style="margin:0"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn sm" type="submit">Steuerdateien prüfen</button></form></div>
+    {% set rows = years | selectattr('active') | list %}
+    {% if rows %}
+    <div class="table-wrap"><table class="compact">
+      <thead><tr><th>Jahr</th><th>Aktive Datei</th><th class="num">Datensätze</th><th class="num">zugeordnet</th>
+        <th class="num">nicht zugeordnet</th><th class="num">Konflikte</th><th>Übernommen</th><th>Quelle</th><th></th></tr></thead>
+      <tbody>{% for y in rows %}{% set f = y.active %}
+        <tr><td><b>{{ y.year }}</b></td><td class="wrap-any"><a href="/tax/data/file/{{ f.id }}">{{ f.filename }}</a>
+            {% if y.pending %}<span class="badge warn">neue Fassung wartet</span>{% endif %}
+            {% if y.history %}<span class="hint">· {{ y.history|length }} frühere Fassung{{ 'en' if y.history|length != 1 }}</span>{% endif %}</td>
+          <td class="num">{{ f.records }}</td><td class="num">{{ f.matched }}</td>
+          <td class="num">{% if f.unmatched %}<a href="/tax/data/file/{{ f.id }}?match=unmatched">{{ f.unmatched }}</a>{% else %}0{% endif %}</td>
+          <td class="num">{% if f.conflicts %}<a href="/tax/data/file/{{ f.id }}?match=conflict"><span class="badge warn">{{ f.conflicts }}</span></a>{% else %}0{% endif %}</td>
+          <td class="nowrap">{{ (f.imported_at or f.created_at)[:10]|date_de }}</td><td>{{ origin.get(f.origin, f.origin) }}</td>
+          <td class="nowrap"><a class="btn sm" href="/tax/data/file/{{ f.id }}/export.csv">Export</a></td></tr>
+      {% endfor %}</tbody></table></div>
+    {% else %}<p class="hint">Noch keine Steuerdaten übernommen.</p>{% endif %}
+  </section>
+
+  <section class="card" id="upload">
+    <div class="card-head"><h2>Steuerdatei hinzufügen</h2><span class="hint">Vorschau vor der Übernahme</span></div>
+    <form method="post" action="/tax/data/upload" enctype="multipart/form-data" class="stack" style="gap:10px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="field">JSON- oder CSV-Datei (höchstens {{ max_mb }} MB)<input type="file" name="file" accept=".json,.csv,.txt,application/json,text/csv" required></label>
+      <div><button class="btn primary" type="submit">Hochladen und prüfen</button></div>
+    </form>
+    <details class="box" style="margin-top:10px"><summary>Ordner und Format</summary>
+      <p class="hint">Dateien im Ordner <code>{{ folder }}</code> werden beim Start{% if auto_scan %}, alle 15 Minuten{% endif %} und mit „Steuerdateien prüfen“ erkannt
+        (Dateiname, Prüfsumme, Größe, Steuerjahr). Ein neues Steuerjahr wird direkt übernommen; gibt es für das Jahr schon eine aktive Datei,
+        wartet die neue Fassung auf Bestätigung. Gleicher Inhalt wird nie doppelt übernommen.</p>
+      <p class="hint">Felder: <code>taxYear, transactionId, externalId, asset, quantity, acquisitionDate, disposalDate, acquisitionCost,
+        disposalValue, holdingPeriod, taxable, gainLoss, taxCategory, source, comment</code> – JSON als Liste oder
+        <code>{"taxYear": 2025, "records": [...]}</code>; CSV mit Kopfzeile (auch deutsche Bezeichnungen, Dezimalkomma).</p>
+      <form method="post" action="/tax/data/settings" class="row" style="gap:8px;align-items:center">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="row" style="gap:6px"><input type="checkbox" name="auto_scan" value="1" {% if auto_scan %}checked{% endif %}> Ordner alle 15 Minuten prüfen</label>
+        <button class="btn sm" type="submit">Speichern</button>
+      </form>
+    </details>
+  </section>
+
+  {% set hist = [] %}{% for y in years %}{% for h in y.history %}{% set _ = hist.append(h) %}{% endfor %}{% endfor %}
+  {% if hist %}
+  <section class="card">
+    <div class="card-head"><h2>Verlauf</h2><span class="hint">ersetzte, entfernte und abgelehnte Fassungen bleiben erhalten</span></div>
+    <div class="table-wrap"><table class="compact">
+      <thead><tr><th>Jahr</th><th>Datei</th><th>Status</th><th class="num">Datensätze</th><th>Erkannt</th><th>Herkunft</th></tr></thead>
+      <tbody>{% for f in hist %}
+        <tr><td>{{ f.tax_year or '–' }}</td><td class="wrap-any"><a href="/tax/data/file/{{ f.id }}">{{ f.filename }}</a></td>
+          <td class="nowrap" style="min-width:6.5em"><span class="badge {{ status[f.status][0] }}">{{ status[f.status][1] }}</span></td><td class="num">{{ f.records }}</td>
+          <td class="nowrap">{{ f.created_at[:10]|date_de }}</td><td>{{ origin.get(f.origin, f.origin) }}</td></tr>
+      {% endfor %}</tbody></table></div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

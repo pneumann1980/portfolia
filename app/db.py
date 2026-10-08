@@ -521,6 +521,72 @@ CREATE TABLE IF NOT EXISTS watchlist_item (
 );
 CREATE INDEX IF NOT EXISTS ix_watchlist_item_list ON watchlist_item(list_id, position);
 """),
+    (16, """
+-- Steuerdaten je Steuerjahr (externe Steuerberichte, z. B. Blockpit/Koinly/eigene JSON/CSV): genau eine aktive Datei
+-- je Jahr (Unique-Index), ersetzte bzw. entfernte Fassungen bleiben zur Nachvollziehbarkeit erhalten.
+CREATE TABLE IF NOT EXISTS tax_file (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  tax_year      INTEGER,                           -- NULL, solange das Jahr nicht eindeutig ist (pending)
+  filename      TEXT NOT NULL,
+  origin        TEXT NOT NULL,                     -- folder | upload
+  path          TEXT,                              -- gespeicherte Datei (Ordner bzw. Upload-Ablage)
+  sha256        TEXT NOT NULL,
+  size          INTEGER NOT NULL,
+  format        TEXT NOT NULL,                     -- json | csv
+  parser        TEXT NOT NULL,
+  status        TEXT NOT NULL,                     -- pending | active | replaced | removed | rejected
+  records       INTEGER NOT NULL DEFAULT 0,
+  matched       INTEGER NOT NULL DEFAULT 0,
+  unmatched     INTEGER NOT NULL DEFAULT 0,
+  conflicts     INTEGER NOT NULL DEFAULT 0,
+  years_json    TEXT,                              -- erkannte Jahre (Inhalt, Dateiname)
+  warnings_json TEXT,
+  errors_json   TEXT,
+  created_at    TEXT NOT NULL,                     -- erkannt bzw. hochgeladen
+  imported_at   TEXT,                              -- aktiviert
+  replaced_at   TEXT,
+  replaced_by   INTEGER,
+  seen_at       TEXT,                              -- Hinweis „neue Steuerdatei erkannt“ gesehen
+  note          TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_tax_file_active ON tax_file(tax_year) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS ix_tax_file_sha ON tax_file(sha256);
+CREATE TABLE IF NOT EXISTS tax_record (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_id             INTEGER NOT NULL REFERENCES tax_file(id) ON DELETE CASCADE,
+  line                INTEGER,
+  tax_year            INTEGER,
+  transaction_id      TEXT,
+  external_id         TEXT,
+  asset               TEXT,
+  quantity            TEXT,                        -- exakt (Decimal als Text)
+  acquisition_date    TEXT,
+  disposal_date       TEXT,
+  acquisition_cost    TEXT,
+  disposal_value      TEXT,
+  holding_period_days INTEGER,
+  taxable             INTEGER,                     -- 1 | 0 | NULL (unbekannt)
+  gain_loss           TEXT,
+  tax_category        TEXT,
+  source              TEXT,
+  comment             TEXT,
+  match_status        TEXT NOT NULL DEFAULT 'unmatched',  -- matched | unmatched | conflict
+  match_tx            TEXT,
+  match_method        TEXT,                        -- external_id | transaction_id | heuristic
+  match_note          TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_tax_record_file ON tax_record(file_id, match_status);
+-- Ordnerprüfung: bekannte Dateien (kein erneutes Einlesen bei unveränderter Größe/Änderungszeit)
+CREATE TABLE IF NOT EXISTS tax_scan (
+  path     TEXT PRIMARY KEY,
+  size     INTEGER NOT NULL,
+  mtime    TEXT NOT NULL,
+  sha256   TEXT,
+  file_id  INTEGER,
+  seen_at  TEXT NOT NULL,
+  message  TEXT
+);
+"""),
 ]
 
 

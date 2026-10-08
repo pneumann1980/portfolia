@@ -51,6 +51,12 @@ def global_alerts(ctx: AppContext) -> list[dict[str, str]]:
                                                     "fehlen im aktuellen Import.", "href": "/plans#confirmed"})
     except Exception as e:  # Tabelle erst nach Migration vorhanden
         log.debug("Sparplan-Hinweise nicht verfügbar: %s", e)
+    try:
+        from app.taxdata.module import tax_alerts
+
+        alerts.extend(tax_alerts(ctx))
+    except Exception as e:
+        log.debug("Steuerdaten-Hinweise nicht verfügbar: %s", e)
     return alerts
 
 

@@ -41,6 +41,7 @@
 {% block content %}
 <div class="alert"><span class="icon">i</span><div><b>Informativ – keine Steuerberatung.</b> Berechnung nach Regelwerk
   „{{ pack.name }}“ (Version {{ pack.version }}). Maßgeblich sind amtliche Vordrucke/ELSTER und Steuerbescheinigungen.</div></div>
+<p class="hint"><a href="/tax/data">Steuerdaten je Jahr</a> – externe Steuerberichte (JSON/CSV) je Steuerjahr verwalten und Buchungen zuordnen.</p>
 {% if override_error %}<div class="alert crit"><span class="icon">!</span><div>Lokale Steuerparameter ignoriert: {{ override_error }}</div></div>{% endif %}
 {% if saved %}<div class="alert good"><span class="icon">✓</span><div>{% if saved.startswith('report') %}Bericht erzeugt – Download unten.{% else %}Gespeichert.{% endif %}</div></div>{% endif %}
 

@@ -191,6 +191,20 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 
 Ausprobieren ohne Internet: `DEMO_MODE=true` (deutlich gekennzeichnete synthetische Kurse).
 
+### Übersicht, Positionsdetail und Watchlist
+
+* **Top-Bewegungen** mit Umschalter **% | €**: nach prozentualer oder absoluter Tagesänderung sortiert, beide Werte
+  sichtbar; die Wahl bleibt im Browser gespeichert.
+* **Allokation als Treemap** (neben Ring/Liste): Fläche = Positionswert, Farbe = Tages- oder Gesamtperformance;
+  Positionen unter der Schwelle (*Einstellungen*, Standard 1 %) je Segment als „Sonstige (n)“, per Klick aufklappbar.
+* **Positionsdetail:** Zeiträume 1T | 7T | 1M | 3M | 1J | MAX, Linie oder Kerzen, Kauf-/Verkaufsmarker,
+  Einstandslinie, Kennzahlen (Bestand, Investiert, Ø Einstand, Gewinn/Verlust), Kursqualität und
+  **Schnellkauf/-verkauf** ([−]/[+], auch in der Positionsliste).
+* **Watchlist** (*Mehr → Watchlist*): Symbol, Name, Kurs, 24 h, 7 Tage, Marktkapitalisierung, Sparkline;
+  hinzufügen (CoinGecko-ID/Link/Symbol, Yahoo-Symbol oder Portfolio-Asset), entfernen, sortieren, eigene
+  Reihenfolge, Detailansicht mit Kursverlauf und „Position erstellen“ (öffnet die normale Kauferfassung, legt nichts
+  ohne Speichern an). Datenmodell für mehrere Listen vorbereitet.
+
 ---
 
 ## Datenvertrag (Import-ZIP)
@@ -300,6 +314,9 @@ Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Port
 * **EUR-Werte:** Fremdwährungen per EZB-Devisenkurs des Tages; bei Tausch, Erträgen und Zu-/Abgängen ohne
   Angabe Tageskurs × Menge (Schlusskurs, am laufenden Tag aktueller Kurs, ersatzweise manueller Kurs oder
   letzter Transaktionskurs der letzten 31 Tage). Die Herkunft des Werts wird gespeichert.
+* **Schnellkauf/-verkauf** (Positionsliste, Positionsdetail, Watchlist): kompakter Dialog über **dieselbe**
+  Erfassung und Validierung wie die Vorlagen Kauf/Verkauf; ohne Preisangabe gilt der Marktkurs des Tages
+  (`price_source = market`, Herkunft gespeichert).
 * **Prüfung:** derselbe Validator wie beim Import (Pflichtbeine, `value_eur`, Transfers …). Hinweise, wenn
   ein Abgang den Bestand eines Kontos ins Minus drückt oder eine manuelle Buchung einer Import-Buchung stark
   ähnelt (gleiche Konten und Assets, ±2 Tage, Menge ±1 % → „Dublette?“, auch unter *Datenqualität*). Unter der
@@ -792,6 +809,11 @@ funktioniert unverändert und braucht keinen Master-Key; ein in der App gespeich
 3. **Prüfen und übernehmen** (*Synchronisierung prüfen*). Übernommene Buchungen heißen `PF-S-…`, tragen Quelle
    „Datenquelle · <Anbieter>“, Ereignis-ID, Zeile und Datenquelle und sind unter *Buchungen* bearbeitbar.
 
+**Fortschritt:** Alle Wege (Datenquellen-Sync, Erstabruf, CSV-Import, Import-ZIP, Kurshistorie) melden über
+denselben Mechanismus (`app/progress.py`) mit festen Phasen *Vorbereitung → Daten abrufen → Verarbeiten → Abgleichen
+→ Kurse ergänzen → Speichern → Fertig*, z. B. „Synchronisierung 63 %“ und „Bitpanda – 1.284 / 2.013 Datensätze
+verarbeitet“. Der Prozentwert steigt nur; ein Balken oben auf jeder Seite zeigt laufende Vorgänge.
+
 Regeln:
 
 * **Abrufstand (Cursor):** rückt nur nach nachweislich vollständigem Abruf vor und wird erst gespeichert, wenn die
@@ -979,6 +1001,21 @@ fehlgeschlagenes Konto hält die übrigen nicht auf.
 * **Status:** „vollständig synchronisiert“ nur, wenn die unterstützten Daten des Kontos ohne erkannte Lücke abgerufen
   sind. Erkannte Lücken (Anbieterfehler, nicht abrufbare Transaktion, Indexer nicht synchron) stehen als Warnung am
   Konto; dauerhafte Abdeckungsgrenzen sind am Konto aufgeführt.
+
+### Fehlerarten und KRC-20 (Kasplex)
+
+Fehler einer Datenquelle werden einzeln benannt: *API-Key fehlt*, *Zugangsdaten abgelehnt*, *Zugriff verweigert
+(HTTP 403)*, *Anbieter drosselt Anfragen*, *nicht erreichbar*, *Endpunkt nicht mehr unterstützt*, *keine Daten*.
+Ein 403 hinter Cloudflare (Bot-Schutz) wird als solcher erkannt.
+
+**KRC-20 / HTTP 403:** Der Kasplex-Indexer (go-krc20d, API v1) beantwortet auch **Anwendungszustände** mit HTTP 403
+und einer Meldung im JSON-Rumpf – u. a. `unsynced` (Indexer hinter der Chain) und `internal error`. Bisher wurde das
+als Zugriffsfehler behandelt und der KRC-20-Abruf abgebrochen. Jetzt: vorübergehende Zustände → bis zu zwei
+Wiederholungen mit Pause (5 s, 10 s), danach „Indexer vorübergehend nicht synchron“ als sichtbare Lücke; KAS bleibt
+vollständig. Echte Sperren (Cloudflare, Zugriff verweigert) werden ohne Wiederholung gemeldet. Fallback-Kette:
+Kasplex → (weitere Indexer, sobald ein dokumentierter verfügbar ist) → CSV-Ergänzung. Welcher Rumpf beim gemeldeten
+Fehler konkret kam, ist nicht protokolliert – die Zuordnung zu `unsynced`/`internal error` ist eine begründete
+Annahme.
 
 ### MATIC → POL auf Polygon PoS
 
@@ -1294,6 +1331,28 @@ Import, täglich um 06:40 und auf Knopfdruck im CoinGecko-Katalog gesucht.
 * Zuordnungen gelten über dem Import, fließen in den Gesamtexport (`assets.csv`) ein und lassen sich jederzeit
   zurücknehmen; danach werden Kurse und Historie neu geladen.
 
+**Kursqualität der Historie** (*Datenqualität → Kursqualität der Historie*, Badge im Positionsdetail): Jeder
+gehaltene Tag trägt die Herkunft seines Kurses – *Marktkurs*, *alternativer Kursanbieter*, *letzter Kurs
+fortgeschrieben (interpoliert)*, *Transaktionskurs/manueller Kurs als Schätzung*, *erster Marktkurs rückwirkend*,
+*kein Kurs*. Zusammengefasst je Asset: „✓ Marktdaten vollständig“, „⚠ Historische Kursdaten teilweise geschätzt“,
+„⚠ 24 Tage ohne Marktdaten“, „✕ Historie konnte nicht geladen werden“; gespeichert je Abschnitt mit Asset,
+Zeitraum, Tagen, Ersatzmethode und Datenquelle (Tabelle `price_gap`).
+
+* **Ursache geschätzter Historie:** Die CoinGecko-Demo-API liefert nur 365 Tage. Davor fehlten Marktkurse; die Lücke
+  wurde bisher mit Transaktionskursen oder dem ersten Marktkurs gefüllt.
+* **Behebung:** Für Krypto ohne ausdrückliche Zuordnung sucht Portfolia automatisch ein Yahoo-Paar
+  (`SYMBOL-EUR`, sonst `SYMBOL-USD` mit EZB-Umrechnung) – übernommen nur nach bestandener Identitätsprüfung:
+  im Überlappungszeitraum Median-Abweichung zu CoinGecko ≤ 6 % und ≥ 60 % der Tage innerhalb ± 10 %; ohne
+  Überlappung gegen die eigenen Transaktionskurse (≥ 5 Punkte, Median ≤ 15 %). Abgelehnte Kandidaten erscheinen mit
+  Grund („keine Daten“, „weicht ab“, „zu wenige Vergleichswerte“) und werden nicht verwendet. Ausschalten unter
+  *Einstellungen → Kurse* (`prices.crypto_history_auto`).
+* Grenze: Yahoo ist eine inoffizielle Schnittstelle; Symbole sind nicht eindeutig (gleiches Kürzel, anderer Coin) –
+  deshalb die Prüfung. Coins ohne Yahoo-Paar bleiben geschätzt und sind als solche markiert.
+
+**Gemeinsame Marktdaten:** Dashboard, Positionsdetail und Watchlist lesen Kurse, 24 h/7 Tage, Marktkapitalisierung
+und Sparklines aus derselben Ablage (`app/prices/market.py`); Watchlist-Coins laufen im gebündelten CoinGecko-Abruf
+mit, Marktkapitalisierung/7 Tage/Sparkline werden höchstens alle 15 Minuten nachgeladen.
+
 ---
 
 ## News und YouTube
@@ -1395,6 +1454,32 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
 
   Fehlerhafte Overrides werden ignoriert und auf der Steuerseite gemeldet. Jeder Bericht dokumentiert
   Regelwerk-, Parameter-Version und einen Fingerabdruck der verwendeten Parameter.
+
+### Steuerdaten je Jahr (externe Steuerberichte)
+
+*Steuern & Haltefristen → Steuerdaten je Jahr* (`/tax/data`) verwaltet Steuerberichte aus anderen Werkzeugen bzw.
+eigene Aufstellungen je Steuerjahr – **ohne** eigene Steuerberechnung und **ohne** Buchungen anzulegen oder zu ändern.
+
+* **Wege:** Ordner `/data/tax` (geprüft beim Start, alle 15 Minuten – abschaltbar – und mit „Steuerdateien prüfen“;
+  kein dauerhafter Dateiwächter) oder Upload im Browser. Beide laufen durch dieselbe Pipeline: Format erkennen →
+  Parser → Steuerjahr bestimmen → prüfen → Vorschau („1.245 Datensätze erkannt“) → übernehmen.
+* **Formate:** JSON bevorzugt (Liste oder `{"taxYear": 2025, "records": [...]}`), CSV als Austauschformat
+  (Trennzeichen/Kodierung automatisch, Dezimalkomma, deutsche Spaltennamen). Felder: `taxYear, transactionId,
+  externalId, asset, quantity, acquisitionDate, disposalDate, acquisitionCost, disposalValue, holdingPeriod,
+  taxable, gainLoss, taxCategory, source, comment`. Unlesbare Werte werden als Warnung je Zeile gemeldet, nie geraten.
+  Anbieterformate (Blockpit, Koinly, CoinTracking) lassen sich als weitere Parser ergänzen.
+* **Steuerjahr:** aus dem Dateikopf, sonst aus den Datensätzen (`taxYear` bzw. Veräußerungsdatum), sonst aus dem
+  Dateinamen. Mehrdeutig (z. B. Datensätze aus 2024 und 2025) → der Nutzer wählt.
+* **Genau eine aktive Datei je Jahr** (von der Datenbank erzwungen). Ein neues Jahr aus dem Ordner wird direkt
+  übernommen und als „Neue Steuerdatei erkannt: Steuerjahr 2026“ gemeldet; Uploads werden erst nach der Vorschau
+  aktiv. Gibt es für das Jahr schon Daten, wartet die neue Datei: „Für 2025 existieren bereits Steuerdaten.“ mit
+  Gegenüberstellung (Datensätze, Gewinn/Verlust, hinzugekommen/entfallen/geändert) und *Aktualisieren / Ersetzen* bzw.
+  *Abbrechen*. Nie stilles Überschreiben; ersetzte und entfernte Fassungen bleiben mit allen Datensätzen im Verlauf.
+* **Idempotent:** unveränderte Dateien (Größe, Änderungszeit) werden nicht erneut gelesen, gleicher Inhalt
+  (SHA-256) wird nie doppelt übernommen; Dateien, die gerade geschrieben werden (< 5 s alt), folgen im nächsten Lauf.
+* **Zuordnung zu Buchungen** (nur Verweis): externe ID → Portfolia-Buchungs-ID → Asset + Datum + Menge (+ Betrag
+  ± 1 %) → sonst „nicht zugeordnet“; mehrere Kandidaten → „Konflikt“. Je Jahr: Anzahl, zugeordnet, nicht zugeordnet,
+  Konflikte, Warnungen; Export als CSV, *Zuordnung neu prüfen*, Entfernen nur nach Bestätigung.
 
 ---
 

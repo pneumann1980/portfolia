@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Steuerdatei {{ f.tax_year or '' }}{% endblock %}
+{% block heading %}Steuerdatei {{ f.tax_year or '' }}{% endblock %}
+{% macro n(v) %}{{ '{:,}'.format(v).replace(',', '.') }}{% endmacro %}
+{% macro money(v) %}{% if v is not none and v != '' %}{{ v|float|eur }}{% else %}–{% endif %}{% endmacro %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/tax/data">← Steuerdaten je Jahr</a></p>
+  {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+
+  <section class="card">
+    <div class="card-head"><h2 class="wrap-any">{{ f.filename }}</h2><span class="badge {{ status[f.status][0] }}">{{ status[f.status][1] }}</span></div>
+    {% if f.status == 'pending' %}<p><b>{{ n(f.records) }} Datensätze erkannt</b>{% if f.tax_year %} für Steuerjahr {{ f.tax_year }}{% if year_source %} (laut {{ year_source }}){% endif %}{% endif %}.</p>{% endif %}
+    <dl class="kv">
+      <dt>Steuerjahr</dt><dd>{{ f.tax_year or 'nicht eindeutig' }}</dd>
+      <dt>Herkunft</dt><dd>{{ origin.get(f.origin, f.origin) }}</dd>
+      <dt>Format</dt><dd>{{ f.format|upper }} ({{ f.parser }})</dd>
+      <dt>Größe</dt><dd>{{ n(f.size) }} Byte · SHA-256 <code>{{ f.sha256[:12] }}…</code></dd>
+      <dt>Erkannt</dt><dd>{{ f.created_at|datetime_de }}</dd>
+      {% if f.imported_at %}<dt>Übernommen</dt><dd>{{ f.imported_at|datetime_de }}</dd>{% endif %}
+      {% if f.replaced_at %}<dt>{{ 'Ersetzt' if f.status == 'replaced' else 'Entfernt' }}</dt><dd>{{ f.replaced_at|datetime_de }}{% if f.replaced_by %} · <a href="/tax/data/file/{{ f.replaced_by }}">neue Fassung</a>{% endif %}</dd>{% endif %}
+      <dt>Datensätze</dt><dd>{{ n(f.records) }} · zugeordnet {{ f.matched }} · nicht zugeordnet {{ f.unmatched }} · Konflikte {{ f.conflicts }}</dd>
+      {% if f.note %}<dt>Hinweis</dt><dd>{{ f.note }}</dd>{% endif %}
+    </dl>
+    {% for e in file_errors %}<div class="alert crit"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+    {% if warnings %}
+    <details class="box"><summary>{{ warnings|length }} Warnung{{ 'en' if warnings|length != 1 }}</summary>
+      <ul class="hint">{% for w in warnings[:50] %}<li>{{ w }}</li>{% endfor %}</ul>
+      {% if warnings|length > 50 %}<p class="hint">… und {{ warnings|length - 50 }} weitere.</p>{% endif %}</details>
+    {% endif %}
+
+    {% if f.status == 'pending' %}
+      {% if not f.tax_year or candidates|length > 1 %}
+      <form method="post" action="/tax/data/file/{{ f.id }}/year" class="row" style="gap:8px;align-items:end;margin-top:10px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="field">Steuerjahr{% if candidates|length > 1 %} (Datei nennt {{ candidates|join(', ') }}){% endif %}
+          <select name="year">{% for y in (candidates or [f.tax_year]) if y %}<option value="{{ y }}" {% if y == f.tax_year %}selected{% endif %}>{{ y }}</option>{% endfor %}
+            {% if not candidates %}{% for y in range(2015, 2031) %}<option value="{{ y }}">{{ y }}</option>{% endfor %}{% endif %}</select></label>
+        <button class="btn sm" type="submit">Jahr festlegen</button>
+      </form>
+      {% endif %}
+
+      {% if existing %}
+      <div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div>
+        <b>Für {{ f.tax_year }} existieren bereits Steuerdaten.</b> Aktiv: „{{ existing.filename }}“ ({{ n(existing.records) }} Datensätze,
+        übernommen {{ (existing.imported_at or existing.created_at)|datetime_de }}). Die bisherige Fassung bleibt im Verlauf erhalten.</div></div>
+      {% if cmp %}
+      <dl class="kv">
+        <dt>Datensätze</dt><dd>{{ n(cmp.old.records) }} → <b>{{ n(cmp.new.records) }}</b></dd>
+        <dt>Gewinn/Verlust</dt><dd>{{ cmp.gain_old|float|eur }} → <b>{{ cmp.gain_new|float|eur }}</b></dd>
+        <dt>Datei</dt><dd>{{ cmp.old.filename }} → <b>{{ cmp.new.filename }}</b></dd>
+      </dl>
+      <p class="hint">Unverändert {{ cmp.same }} · hinzugekommen {{ cmp.added }} · entfallen {{ cmp.removed }} · geändert {{ cmp.changed }}</p>
+      {% endif %}
+      {% endif %}
+
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+        {% if f.tax_year %}
+        <form method="post" action="/tax/data/file/{{ f.id }}/activate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          {% if existing %}<input type="hidden" name="replace" value="1"><button class="btn primary" type="submit">Aktualisieren / Ersetzen</button>
+          {% else %}<button class="btn primary" type="submit">Übernehmen</button>{% endif %}</form>
+        {% endif %}
+        <form method="post" action="/tax/data/file/{{ f.id }}/discard"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="btn" type="submit">Abbrechen</button></form>
+      </div>
+    {% elif f.status == 'rejected' %}
+      <form method="post" action="/tax/data/file/{{ f.id }}/discard" style="margin-top:10px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn" type="submit">Aus der Liste entfernen</button></form>
+    {% else %}
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+        <a class="btn sm" href="/tax/data/file/{{ f.id }}/export.csv">Export (CSV)</a>
+        <form method="post" action="/tax/data/file/{{ f.id }}/match"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="btn sm" type="submit">Zuordnung neu prüfen</button></form>
+        {% if f.status == 'active' %}<a class="btn sm" href="/tax/data#upload">Aktualisieren (neue Fassung hochladen)</a>
+        <a class="btn sm danger" href="/tax/data/file/{{ f.id }}?confirm=remove">Entfernen …</a>{% endif %}
+      </div>
+      {% if confirm == 'remove' and f.status == 'active' %}
+      <div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div>
+        Steuerdaten {{ f.tax_year }} wirklich entfernen? Die Datei bleibt im Verlauf erhalten; Buchungen sind nicht betroffen.
+        <form method="post" action="/tax/data/file/{{ f.id }}/remove" class="row" style="gap:8px;margin-top:8px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="confirm" value="1">
+          <button class="btn sm danger" type="submit">Entfernen</button><a class="btn sm" href="/tax/data/file/{{ f.id }}">Abbrechen</a></form></div></div>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  {% if f.records %}
+  <section class="card">
+    <div class="card-head"><h2>Datensätze</h2>
+      <div class="seg" role="group" aria-label="Zuordnung">
+        <a href="/tax/data/file/{{ f.id }}" class="{{ 'active' if not match }}" {% if not match %}aria-current="true"{% endif %}>alle</a>
+        {% for k, label in matches.items() %}<a href="/tax/data/file/{{ f.id }}?match={{ k }}" class="{{ 'active' if match == k }}" {% if match == k %}aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}
+      </div></div>
+    <div class="table-wrap"><table class="compact">
+      <thead><tr><th class="num">Zeile</th><th>Asset</th><th class="num">Menge</th><th>Erwerb</th><th>Veräußerung</th>
+        <th class="num">Haltedauer</th><th class="num">Kosten</th><th class="num">Erlös</th><th class="num">Gewinn/Verlust</th>
+        <th>steuerpfl.</th><th>Kategorie</th><th>Zuordnung</th></tr></thead>
+      <tbody>{% for r in records %}
+        <tr><td class="num">{{ r.line }}</td><td>{{ r.asset or '–' }}</td><td class="num nowrap">{{ r.quantity or '–' }}</td>
+          <td class="nowrap">{{ r.acquisition_date|date_de if r.acquisition_date else '–' }}</td>
+          <td class="nowrap">{{ r.disposal_date|date_de if r.disposal_date else '–' }}</td>
+          <td class="num">{{ r.holding_period_days if r.holding_period_days is not none else '–' }}</td>
+          <td class="num nowrap">{{ money(r.acquisition_cost) }}</td><td class="num nowrap">{{ money(r.disposal_value) }}</td>
+          <td class="num nowrap">{% if r.gain_loss %}<span class="delta {{ r.gain_loss|float|tone }}">{{ r.gain_loss|float|eur }}</span>{% else %}–{% endif %}</td>
+          <td>{{ 'ja' if r.taxable == 1 else ('nein' if r.taxable == 0 else '–') }}</td><td>{{ r.tax_category or '–' }}</td>
+          <td class="wrap-any">{% if r.match_status == 'matched' %}<span class="badge good">zugeordnet</span> <span class="hint mono">{{ r.match_tx }}</span>
+            {% elif r.match_status == 'conflict' %}<span class="badge warn">Konflikt</span>{% else %}<span class="badge">nicht zugeordnet</span>{% endif %}
+            {% if r.match_note %}<div class="hint">{{ r.match_note }}</div>{% endif %}</td></tr>
+      {% else %}<tr><td colspan="12" class="hint">Keine Datensätze in dieser Auswahl.</td></tr>{% endfor %}</tbody></table></div>
+    {% if total > limit %}<p class="hint">{{ limit }} von {{ n(total) }} Datensätzen angezeigt – vollständig im Export.</p>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if history %}
+  <section class="card">
+    <div class="card-head"><h2>Weitere Fassungen {{ f.tax_year or '' }}</h2></div>
+    <div class="table-wrap"><table class="compact">
+      <tbody>{% for h in history %}
+        <tr><td class="wrap-any"><a href="/tax/data/file/{{ h.id }}">{{ h.filename }}</a></td><td class="nowrap" style="min-width:6.5em"><span class="badge {{ status[h.status][0] }}">{{ status[h.status][1] }}</span></td>
+          <td class="num">{{ n(h.records) }}</td><td class="nowrap">{{ h.created_at|datetime_de }}</td></tr>
+      {% endfor %}</tbody></table></div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1002,6 +1002,46 @@ unvollständig (Lücke angezeigt). XRPL: MPT, AMM-/DEX-Positionen nur als Prüfv
 Plutus-Transaktionen nicht gekennzeichnet. Polkadot: Nomination Pools, XCM, Proxy/Multisig, Vesting und andere
 Parachains nicht automatisch abgebildet. Bridges/Cross-Chain-Transfers werden nicht als Transfer gepaart.
 
+## M21 – Kursqualität, KRC-20-Fehler, einheitlicher Fortschritt, Portfolio-UX, Watchlist, Steuerdaten je Jahr (0.19.0)
+
+Anlass (07./08.10.2026): Portfolia systematisch weiterentwickeln – zuerst Ist-Analyse, dann Ursachen statt
+Symptome (historische Kurslücken, KRC-20 HTTP 403), danach UX und neue Funktionen; vorhandene Modelle erweitern statt
+neu bauen; Nutzerdaten nie ungefragt ändern.
+
+**Ursachen und Behebung**
+
+* **Historische Kurslücken:** CoinGecko-Demo liefert 365 Tage; davor wurde mit Transaktionskursen bzw. dem ersten
+  Marktkurs geschätzt. Neu: automatischer Yahoo-Ersatz (`SYMBOL-EUR`/`-USD` + EZB) nur nach Identitätsprüfung
+  (Überlappung: Median ≤ 6 %, ≥ 60 % der Tage ± 10 %; sonst gegen eigene Transaktionskurse), Ergebnis je Reihe in
+  `series_meta.alt_*`. Kursqualität je Tag (`snapshot_asset_daily.price_kind`) und Abschnitt (`price_gap`), Anzeige
+  unter Datenqualität, im Positionsdetail und in der Diagnose. Zusätzlich lokal mit einem echten Export
+  geprüft (Daten und Ergebnisse bewusst nicht im Repository).
+* **KRC-20 HTTP 403:** Kasplex (go-krc20d) liefert Anwendungszustände (`unsynced`, `internal error`) als HTTP 403;
+  das galt bisher als Zugriffsfehler. Neu: Auswertung des Rumpfs, Wiederholung mit Pause, sonst sichtbare Lücke mit
+  Fehlerart; Cloudflare-Sperren erkannt; Fehlerarten *API-Key fehlt, ungültig, 403, Rate Limit, nicht erreichbar,
+  Endpunkt nicht mehr unterstützt, keine Daten*; Fallback-Kette Kasplex → (weitere Indexer) → CSV. Der konkrete
+  Rumpf des gemeldeten Fehlers ist nicht belegt (Annahme).
+
+**Neu**
+
+* **Fortschritt** (`app/progress.py`): ein Mechanismus für Sync, Erstabruf, CSV-Import, Import-ZIP, Kurshistorie;
+  feste Phasen mit Gewichten, Prozent nur steigend, globaler Balken.
+* **Marktdaten-Fassade** (`app/prices/market.py`) für Dashboard, Positionsdetail und Watchlist.
+* **Portfolio-UX:** Top-Bewegungen % | € (gespeichert), Treemap mit „Sonstige (n)“, Positionsdetail 1T–MAX,
+  Schnellkauf/-verkauf über die normale Erfassung (Marktkurs als Vorgabe, `price_source`).
+* **Watchlist** (Migration 15): mehrere Listen vorbereitet, Reihenfolge, Detail, „Position erstellen“.
+* **Steuerdaten je Jahr** (Migration 16: `tax_file`, `tax_record`, `tax_scan`): Ordner `/data/tax` und Upload über
+  dieselbe Pipeline (`TaxImportService`, `TaxJsonParser`, `TaxCsvParser`), Jahreserkennung, genau eine aktive Datei
+  je Jahr (Unique-Index), Ersetzen nur nach Bestätigung mit Gegenüberstellung, Verlauf bleibt, Zuordnung externe ID →
+  Buchungs-ID → Asset/Datum/Menge → nicht zugeordnet/Konflikt; nie neue Buchungen.
+
+**Migrationen:** 14 (`series_meta.alt_*`, `price_gap`), 15 (`watchlist`, `watchlist_item`), 16 (`tax_file`,
+`tax_record`, `tax_scan`) – nur neue Tabellen/Spalten, keine Änderung bestehender Daten.
+
+**Grenzen:** Kein zweiter dokumentierter KRC-20-Indexer verfügbar; Yahoo ist inoffiziell; Coins ohne Yahoo-Paar
+bleiben geschätzt (markiert); Steuerdaten und Watchlist sind nicht Teil des Gesamtexports (Ordnerdateien bleiben auf
+dem Datenträger); Anbieterformate Blockpit/Koinly/CoinTracking für Steuerdaten noch nicht als Parser.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
@@ -1042,6 +1082,9 @@ Parachains nicht automatisch abgebildet. Bridges/Cross-Chain-Transfers werden ni
   (z. B. „Ledger“) nur als Zuordnung; Übersicht mit Suche, Sortierung, Werten und Zuständen; keine
   Geräteverbindung, Signaturen, Seeds oder privaten Schlüssel; bestehende Buchungen nicht automatisch ändern – siehe
   M20.
+* **Weiterentwicklung 0.19.0** (07.10.2026): Ursachen historischer Kurslücken und KRC-20-403 beheben, einheitlicher
+  Fortschritt, Treemap, Top-Bewegungen % | €, Positionsdetail, Schnellbuchung, Watchlist, Steuerdaten je Jahr ohne
+  stilles Ersetzen und ohne neue Buchungen – siehe M21.
 
 ## Offene Fragen an den Auftraggeber
 

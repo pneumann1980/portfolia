@@ -92,7 +92,7 @@
       <a class="list-item" href="{{ asset_url(p.asset_id) }}" data-panel="{{ panel_url(p.asset_id) }}" data-title="{{ p.asset.name }}">
         <span class="dot" style="background:{{ p.colors.light }}" data-color-light="{{ p.colors.light }}" data-color-dark="{{ p.colors.dark }}"></span>
         <span class="grow"><span class="title">{{ p.asset.name }}</span><span class="meta">{{ p.value|eur }}</span></span>
-        <span class="delta {{ 'up' if up else 'down' }}">{{ '▲' if up else '▼' }} {{ p.day_change_pct|pct }} · {{ p.day_change|eur(0, true) }}</span>
+        <span class="delta mv-delta {{ 'up' if up else 'down' }}"><span>{{ '▲' if up else '▼' }} {{ p.day_change_pct|pct }}</span><span class="mv-eur">{{ p.day_change|eur(0, true) }}</span></span>
       </a>
     {%- endmacro %}
     <div class="card-head"><h2 id="movers-h">Top-Bewegungen heute</h2>

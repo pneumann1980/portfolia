@@ -119,6 +119,11 @@ class Config:
         return self.data_dir / "tax_rules"
 
     @property
+    def tax_data_dir(self) -> Path:
+        """Ordner für Steuerdaten-Dateien je Jahr (JSON/CSV); Uploads liegen im Unterordner ``uploads``."""
+        return self.data_dir / "tax"
+
+    @property
     def log_dir(self) -> Path:
         return self.data_dir / "logs"
 

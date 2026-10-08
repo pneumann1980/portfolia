@@ -58,6 +58,7 @@ DEFAULTS: dict[str, Any] = {
     "tax.asset_types": {},  # {asset_id: share|etf_equity|etf_mixed|etf_other|fund_realestate|bond|other}
     "tax.options": {},  # je Regelwerk/Jahr, siehe tax.service
     "tax.profile": {"name": "", "tax_id": "", "tax_number": ""},
+    "taxdata.auto_scan": True,  # Steuerdaten-Ordner alle 15 Minuten prüfen (zusätzlich beim Start und auf Knopfdruck)
     # Betrieb
     "backup.keep": 14,
     "backup.hour": 3,

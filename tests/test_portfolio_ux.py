@@ -53,7 +53,7 @@ def ctx(c):
 
 def test_top_movers_percent_and_absolute(client):
     html = client.get("/").text
-    assert 'data-movers-toggle' in html and 'data-movers="pct"' in html and 'data-movers="eur"' in html
+    assert 'data-movers-toggle' in html and 'data-movers="pct"' in html and 'data-movers="eur" hidden' in html
     val = ctx(client).valuation()
     movers = [p for p in val.positions if p.day_change is not None and not p.asset.is_fiat and p.value > 0]
     by_eur = sorted([p for p in movers if p.day_change > 0], key=lambda p: -p.day_change)
