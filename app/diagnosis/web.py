@@ -137,6 +137,9 @@ def make_router() -> APIRouter:
         if not fid:
             raise HTTPException(400)
         res = await run_in_threadpool(A.dismiss, ctx, fid, str(form.get("note") or ""))
+        if str(form.get("back") or "") == "/quality/integrity":
+            q = urlencode({"msg": res.message} if res.ok else {"err": "; ".join(res.errors)})
+            return _back(f"/quality/integrity?{q}#items")
         return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="checked" if res.ok else ""))
 
     @router.post("/quality/diagnose/decision/{did}/undo")

@@ -28,7 +28,7 @@ def _dec(v: float, q: Decimal = Q8) -> Decimal:
 
 
 class _Gen:
-    def __init__(self, seed: int) -> None:
+    def __init__(self, seed: int, extra_coins: int = 0) -> None:
         self.rng = random.Random(seed)
         self.bal: dict[tuple[str, str], Decimal] = {}
         self.rows: list[dict[str, Any]] = []
@@ -36,11 +36,12 @@ class _Gen:
         self.stocks = [f"S{i:03d}" for i in range(40)]
         self.etfs = [f"E{i:02d}" for i in range(8)]
         self.bonds = ["B01", "B02"]
-        self.coins = ["BTC", "ETH", "SOL", "BNB", "ADA", "DOT"] + [f"C{i:03d}" for i in range(112)]
+        self.coins = ["BTC", "ETH", "SOL", "BNB", "ADA", "DOT"] + [f"C{i:03d}" for i in range(112)] + [
+            f"X{i:03d}" for i in range(extra_coins)]
         securities = self.stocks + self.etfs + self.bonds
         start = {a: self.rng.uniform(20, 300) for a in securities}
         start.update({"BTC": 3500.0, "ETH": 120.0, "SOL": 1.0, "BNB": 6.0, "ADA": 0.04, "DOT": 3.0})
-        start.update({c: self.rng.uniform(0.001, 20) for c in self.coins if c.startswith("C")})
+        start.update({c: self.rng.uniform(0.001, 20) for c in self.coins if c.startswith(("C", "X"))})
         days = (END - START).days + 1
         self.paths: dict[str, list[float]] = {}
         for aid in securities + self.coins:
@@ -165,8 +166,9 @@ class _Gen:
                      hour=2)
 
 
-def generate(seed: int = 42) -> dict[str, Any]:
-    g = _Gen(seed)
+def generate(seed: int = 42, scale: int = 1) -> dict[str, Any]:
+    """``scale`` > 1: mehr Handel, Transfers und Coins (Lasttest der Integritätsprüfung); 1 = unverändert."""
+    g = _Gen(seed, extra_coins=0 if scale <= 1 else 60)
     rng = g.rng
     days = [START + timedelta(days=i) for i in range((END - START).days + 1)]
     trading = [x for x in days if x.weekday() < 5]
@@ -184,7 +186,7 @@ def generate(seed: int = 42) -> dict[str, Any]:
     for i in range(0, len(trading), 21):
         for e in g.etfs:
             push(trading[i], g.savings_plan, e)
-    for _ in range(900):
+    for _ in range(900 * scale):
         push(rng.choice(trading), g.stock_trade)
     push(date(2021, 3, 1), lambda d: [g.add(d, "buy", frm=("Depot Ausland", "EUR", 5000),
                                              to=("Depot Ausland", b, 50), value=5000) for b in g.bonds])
@@ -197,9 +199,9 @@ def generate(seed: int = 42) -> dict[str, Any]:
                     push(date(y, m, 15), g.dividend, s)
     push(date(2022, 7, 18), g.split, "S004", 4)
     push(date(2024, 6, 10), g.split, "S011", 10)
-    for _ in range(2600):
+    for _ in range(2600 * scale):
         push(rng.choice(days), g.crypto)
-    for _ in range(170):
+    for _ in range(170 * scale):
         push(rng.choice(days), g.transfer)
     for c in ("ETH", "SOL", "ADA", "DOT", "C001", "C002"):
         d = date(2019, 2, 1)
@@ -227,7 +229,7 @@ def generate(seed: int = 42) -> dict[str, Any]:
         assets.append({"asset_id": b, "name": f"Anleihe {b}", "asset_class": "security", "quote_source": "none",
                        "quote_id": "", "isin": f"DE00000{b[1:]}00001", "category": "Anleihen", "tax_type": "bond"})
     for c in g.coins:
-        idx = int(c[1:]) if c.startswith("C") else -1
+        idx = int(c[1:]) if c.startswith("C") else (int(c[1:]) % 100 if c.startswith("X") else -1)
         src = "coingecko" if idx < 90 else ("manual" if idx < 100 else "none")
         assets.append({"asset_id": c, "name": f"Coin {c}", "asset_class": "crypto", "quote_source": src,
                        "quote_id": c.lower() if src == "coingecko" else "",
@@ -245,13 +247,17 @@ def generate(seed: int = 42) -> dict[str, Any]:
     return {"assets": assets, "accounts": accounts, "rows": g.rows, "manual": manual}
 
 
-def write_zip(path: Path, seed: int = 42) -> tuple[Path, int, int]:
+def write_zip(path: Path, seed: int = 42, scale: int = 1,
+              mutate: Any = None) -> tuple[Path, int, int]:
+    """``mutate(rows)``: Zeilen vor dem Schreiben ergänzen/ändern (z. B. Dubletten für Lasttests)."""
     from app.importer.validate import parse_decimal
     from app.ledger.engine import run_ledger
     from app.ledger.models import AccountInfo, AssetInfo, Portfolio, Tx
     from app.util.timeutil import parse_tx_datetime, to_local_date
 
-    g = generate(seed)
+    g = generate(seed, scale)
+    if mutate is not None:
+        mutate(g["rows"])
     txs = []
     for seq, r in enumerate(g["rows"]):
         ts, date_only = parse_tx_datetime(r["datetime"])

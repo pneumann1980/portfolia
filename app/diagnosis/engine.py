@@ -306,7 +306,8 @@ def diagnose(snap: Snapshot) -> Report:
     idx = None
     if snap.pf is not None and snap.ledger is not None:
         idx = _Index(snap)
-        for rule in (_dup_same_hash, _dup_same_qty, _dup_same_id, _dup_transfer_side, _transfers, _assets, _history,
+        for rule in (_dup_same_hash, _dup_same_qty, _dup_same_id, _dup_identical, _dup_transfer_side, _transfers,
+                     _assets, _history,
                      _estimated, _prices, _price_history, _migrations):
             findings += rule(idx, stats)
         rows, hf = _holdings(idx, stats)
@@ -499,6 +500,75 @@ def _dup_cross_source(idx: _Index) -> list[Finding]:
                     data={"type": "import_vs_app", "imports": [ti.tx_id], "journals": [tj.tx_id], "hashes": [h]})
                 f.txs = [idx.ref(ti), idx.ref(tj)]
                 out.append(idx.attach(f))
+    return out
+
+
+def _dup_identical(idx: _Index, stats: dict[str, int]) -> list[Finding]:
+    """Vollständig gleiche Buchungen (Zeitpunkt, Art, Konten, Assets, Mengen, Gebühr, EUR-Wert) ohne Beleg, dass es
+    verschiedene Vorgänge sind (verschiedene Hashes, verschiedene Ereignisindizes oder verschiedene Kennungen derselben
+    Quelle). Bleibt ein **Verdacht**: zwei gleiche Käufe in derselben Sekunde sind möglich – Portfolia schlägt nur vor,
+    welche Buchung entfiele, und ändert nichts ohne Bestätigung."""
+    groups: dict[tuple[Any, ...], list[Tx]] = defaultdict(list)
+    for t in idx.txs:
+        if t.origin == "plan" or t.tx_id in idx.dup_txs or "SAVINGS_PLAN" in _flags(t) \
+                or (t.source_ref or "").startswith("sparplan|"):
+            continue
+        groups[_signature(t)].append(t)
+    legit = 0
+    clusters: dict[tuple[Any, ...], list[list[Tx]]] = defaultdict(list)
+    for _sig, txs in sorted(groups.items(), key=lambda kv: (kv[1][0].ts, kv[1][0].tx_id)):
+        if len(txs) < 2 or any(idx.manual(t) for t in txs):
+            continue  # manuell + importiert: Regel „gleiche Menge“ (_dup_same_qty)
+        hs = [frozenset(idx.hashes[t.tx_id]) for t in txs]
+        ix = [idx.event_index(t) for t in txs]
+        refs = [(idx.source_label(t), (t.source_ref or "").strip()) for t in txs]
+        if (all(hs) and len(set(hs)) == len(hs)) or (all(i is not None for i in ix) and len(set(ix)) == len(ix)) \
+                or (all(r[1] for r in refs) and len(set(refs)) == len(refs) and len({r[0] for r in refs}) == 1):
+            legit += 1  # verschiedene Blockchain-Transaktionen bzw. Ereignisse bzw. Kennungen derselben Quelle
+            continue
+        clusters[tuple(sorted(_effect([txs[0]])))].append(txs)
+    stats["identical_legit"] = legit
+    out: list[Finding] = []
+    for pos, groups_ in sorted(clusters.items()):
+        pairs: list[tuple[TxRef, TxRef, str]] = []
+        pair_ids: list[list[str]] = []
+        extra: list[Tx] = []
+        all_tx: list[Tx] = []
+        for txs in groups_:
+            first = txs[0]
+            all_tx += txs
+            for t in txs[1:]:
+                extra.append(t)
+                pair_ids.append([first.tx_id, t.tx_id])
+                pairs.append((idx.ref(first), idx.ref(t),
+                              "alle Buchungsangaben gleich (Zeitpunkt, Art, Konten, Assets, Mengen, Gebühr, EUR-Wert); "
+                              f"Kennungen {first.tx_id} ≠ {t.tx_id}; kein Hash bzw. Ereignisindex, der sie "
+                              "unterscheidet"))
+        idx.dup_txs.update(t.tx_id for t in all_tx)
+        accs = sorted({p[0] for p in pos})
+        assets = sorted({p[1] for p in pos})
+        n = len(pairs)
+        f = Finding(
+            kind="duplicate", status="verdacht", priority=1,
+            title=f"{n} {'Paar' if n == 1 else 'Paare'} vollständig gleicher Buchungen – {', '.join(accs)} · "
+                  f"{', '.join(assets)}",
+            known=[f"{len(all_tx)} Buchungen mit identischen Angaben bilden {n} {'Paar' if n == 1 else 'Paare'}.",
+                   "Keine Kennung, kein Hash und kein Ereignisindex belegt, dass es verschiedene Vorgänge sind.",
+                   "Alle Buchungen gehen unverändert in Bestand, Lots und Performance ein."],
+            suspected=["Derselbe Vorgang wurde mehrfach erfasst (z. B. Datei doppelt importiert, Zeile kopiert)."],
+            uncertainty=["Zwei gleiche Ausführungen in derselben Sekunde sind möglich (z. B. Teilausführungen ohne "
+                         "eigene Kennung) – nur der Kontoauszug bzw. die Transaktionsliste der Quelle entscheidet."],
+            pairs=pairs[:MAX_PAIRS_SHOWN],
+            scenario=_scenario_without(idx, extra, "Szenario (hypothetisch): je Paar nur die erste Buchung gezählt – "
+                                                   "es wird nichts gebucht."),
+            decision="Kontoauszug bzw. Transaktionsliste prüfen; nur bei einem Vorgang die zusätzliche Buchung "
+                     "ausblenden. Portfolia ändert nichts automatisch.",
+            key="ident|" + "|".join(sorted(t.tx_id for t in all_tx)),
+            weight=sum((abs(v) for v in _effect(extra).values()), ZERO),
+            data={"type": "identical", "pairs": pair_ids, "accounts": accs})
+        f.txs = [idx.ref(t) for t in all_tx[:2 * MAX_PAIRS_SHOWN]]
+        out.append(idx.attach(f))
+    stats["identical_pairs"] = sum(len(f.data["pairs"]) for f in out)
     return out
 
 

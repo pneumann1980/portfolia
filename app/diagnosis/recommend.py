@@ -344,6 +344,40 @@ def _hash_pairs(facts: Facts, f: Finding) -> Recommendation | None:
                           options=opts, links=_journal_links(d["accounts"][0] if d.get("accounts") else None, None))
 
 
+def _identical(facts: Facts, f: Finding) -> Recommendation | None:
+    """Vollständig gleiche Buchungen: bevorzugt je Paar die spätere Kennung ausblenden (die erste behält Anschaffungs-
+    datum und Einstand) – aber erst nach Prüfung des Kontoauszugs (Verdacht, keine Kennung entscheidet)."""
+    choices, defaults, txs = [], [], []
+    for a_id, b_id in f.data["pairs"]:
+        a, b = facts.tx(a_id), facts.tx(b_id)
+        if a is None or b is None:
+            continue
+        how, drop, keep = pair_choice(facts, a, b)
+        if how == "hide" and not facts.hideable(drop):
+            continue
+        txs.append(a)
+        val = f"{a_id}|{b_id}"
+        act = f"{drop.tx_id} als „im Import enthalten“ markieren" if how == "cover" else f"{drop.tx_id} ausblenden"
+        choices.append((val, f"{_date(a)} · {_what(a)}: {act}, {keep.tx_id} bleibt"))
+        defaults.append(val)
+    if not choices:
+        return None
+    text = ("Im Kontoauszug bzw. in der Transaktionsliste der Quelle prüfen, ob der Vorgang einmal oder mehrfach "
+            "stattfand. Nur bei einem Vorgang: je Paar die zusätzliche Buchung ausblenden – die erste bleibt mit "
+            "Anschaffungsdatum und Einstand unverändert. Fanden mehrere gleiche Vorgänge statt: als unabhängig "
+            "bestätigen.")
+    opts = [Option("hide_second", "Je Paar die zusätzliche Buchung ausblenden",
+                   "Die erste Buchung je Paar bleibt; die zusätzliche zählt nicht mehr (Import-Buchung: Überlagerung "
+                   "„gelöscht“, rückgängig machbar).", recommended=True,
+                   params=[Param("pairs", "Paare", "multi", default=defaults, choices=choices,
+                                 hint="Nur Paare auswählen, die laut Kontoauszug ein einziger Vorgang sind.")]),
+            _dismiss("Mehrere gleiche Vorgänge – als geprüft markieren")]
+    accounts = f.data.get("accounts") or []
+    return Recommendation(text=text, conditional=True,
+                          checks=[(f"Transaktionsliste von {', '.join(accounts)} prüfen", [])], options=opts,
+                          links=_journal_links(accounts[0] if accounts else None, None))
+
+
 def _import_vs_app(facts: Facts, f: Finding) -> Recommendation | None:
     d = f.data
     imps = [t for x in d["imports"] if (t := facts.tx(x)) is not None]
@@ -611,7 +645,8 @@ def _holding(facts: Facts, f: Finding) -> Recommendation | None:
 
 
 _BUILDERS = {
-    "same_qty": _same_qty, "hash_pairs": _hash_pairs, "import_vs_app": _import_vs_app, "transfer": _transfer,
+    "same_qty": _same_qty, "hash_pairs": _hash_pairs, "identical": _identical, "import_vs_app": _import_vs_app,
+    "transfer": _transfer,
     "provider_quote": _provider_quote, "contracts": _contracts, "unvalued": _unvalued,
     "price_fallback": _price_fallback, "stale": _stale, "migration": _migration, "holding": _holding,
 }

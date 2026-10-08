@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Integritätsprüfung{% endblock %}
+{% block heading %}Datenqualität · Integritätsprüfung{% endblock %}
+{% from "partials/progress.html" import bar %}
+{% macro iurl(category=None, severity=None) -%}
+/quality/integrity?{% if category %}category={{ category }}{% elif f.category %}category={{ f.category }}{% endif %}&amp;{% if severity %}severity={{ severity }}{% elif f.severity %}severity={{ f.severity }}{% endif %}
+{%- endmacro %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>Finanzielle Integritätsprüfung</h2>
+    <div class="row"><a class="btn sm" href="/quality">Datenqualität</a><a class="btn sm" href="/quality/diagnose">Diagnose</a><a class="btn sm" href="/quality/diagnose/bulk">Sammelbearbeitung</a>
+      <form method="post" action="/quality/integrity/run" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm primary" type="submit"{% if running %} disabled{% endif %}>Prüfung starten</button></form></div>
+  </div>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  {% if running %}{% include "partials/integrity_progress.html" with context %}{% endif %}
+  <div class="alert"><span class="icon">i</span><div><strong>Die Prüfung liest nur.</strong> Sie vergleicht Buchungen, Bestände, Lots und Kostenbasis, Dubletten und Transfers, Kurse und die steuerliche Datenqualität auf einem gemeinsamen Datenstand und speichert nur ihr Ergebnis. Korrekturen laufen über die Vorschau der Diagnose bzw. die Sammelbearbeitung – erst nach deiner Bestätigung und jederzeit rückgängig zu machen.</div></div>
+  {% if run %}
+  {% set c = run.counts() %}
+  <p class="hint">Letzte Prüfung {{ run.finished_at|datetime_de }} ({{ (run.duration_ms / 1000)|round(1) }} s) · {{ run.txs }} Buchungen, {{ run.assets }} Assets · {{ c.open }} offene von {{ c.total }} Befunden
+    · <a href="/quality/integrity/export.csv">CSV</a> · <a href="/quality/integrity/export.json">JSON</a></p>
+  {% if not run.ok %}<div class="alert crit" role="alert"><span class="icon">!</span><div><b>Prüfung fehlgeschlagen:</b> {{ run.error }} – das Ergebnis ist unvollständig.</div></div>{% endif %}
+  {% if run.stale %}<div class="alert warn"><span class="icon">!</span><div>Die Daten haben sich seit (bzw. während) dieser Prüfung geändert – Ergebnis ist überholt. Bitte erneut prüfen.</div></div>{% endif %}
+  <ul class="diag-counts">
+    {% for k, label in categories.items() %}<li><a href="{{ iurl(category=k) }}">{{ label }}</a><span class="row">{% set n = c.category.get(k, 0) %}{% if n %}<span class="badge">{{ n }} offen</span>{% else %}<span class="muted">keine</span>{% endif %}</span></li>{% endfor %}
+  </ul>
+  <div class="row" style="gap:6px;margin-top:6px">{% for s, badge in severities.items() %}{% set n = c.severity.get(s, 0) %}<a class="badge {{ badge }}" href="{{ iurl(severity=s) }}">{{ n }} {{ s }}</a>{% endfor %}</div>
+  {% else %}
+  <p class="hint">Noch keine Prüfung durchgeführt.</p>
+  {% endif %}
+</section>
+
+{% if run %}
+<section class="card" id="items">
+  <div class="card-head"><h2>Befunde ({{ items|length }})</h2></div>
+  <form method="get" action="/quality/integrity" class="filters row" style="gap:8px;flex-wrap:wrap">
+    <select name="category" aria-label="Kategorie"><option value="">alle Kategorien</option>{% for k, label in categories.items() %}<option value="{{ k }}"{% if f.category == k %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+    <select name="severity" aria-label="Schweregrad"><option value="">jeder Schweregrad</option>{% for s in severities %}<option value="{{ s }}"{% if f.severity == s %} selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+    <select name="status" aria-label="Status"><option value="">jeder Status</option>{% for s in statuses %}<option value="{{ s }}"{% if f.status == s %} selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+    <select name="asset" aria-label="Asset"><option value="">alle Assets</option>{% for a in all_assets %}<option value="{{ a }}"{% if f.asset == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select>
+    <select name="account" aria-label="Konto"><option value="">alle Konten</option>{% for a in all_accounts %}<option value="{{ a }}"{% if f.account == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select>
+    <select name="sort" aria-label="Sortierung"><option value="">Schweregrad</option><option value="impact"{% if f.sort == 'impact' %} selected{% endif %}>betroffener Wert</option><option value="confidence"{% if f.sort == 'confidence' %} selected{% endif %}>Konfidenz</option></select>
+    <button class="btn sm" type="submit">Anwenden</button>
+  </form>
+  {% if not items %}<p class="hint">Keine Befunde für diese Auswahl.</p>{% endif %}
+  <div class="stack" style="gap:10px">
+  {% for it in items %}
+  <details class="finding" id="{{ it.id }}">
+    <summary>
+      <div class="row"><span class="badge {{ severities[it.severity] }}">{{ it.severity }}</span><span class="badge">{{ categories[it.category] }}</span><span class="badge {{ statuses[it.status] }}">{{ it.status }}</span>{% if it.confidence %}<span class="badge info">{{ it.confidence }}</span>{% endif %}</div>
+      <div class="f-title">{{ it.title }}</div>
+      <div class="f-meta">{{ causes.get(it.cause_kind, it.cause_kind) }}{% if it.accounts %} · {{ it.accounts[:4]|join(', ') }}{% endif %}{% if it.assets %} · {{ it.assets[:6]|join(', ') }}{% endif %}{% if it.impact_eur %} · betroffener Wert {{ it.impact_eur|eur }}{% endif %}</div>
+    </summary>
+    <div class="finding-body">
+      <dl class="kv">
+        <dt>Ursache</dt><dd>{{ causes.get(it.cause_kind, it.cause_kind) }}: {{ it.cause }}</dd>
+        {% if it.impact %}<dt>Auswirkung</dt><dd>{{ it.impact }}</dd>{% endif %}
+        {% if it.recommendation %}<dt>Empfehlung</dt><dd>{{ it.recommendation }}</dd>{% endif %}
+        {% if it.preferred %}<dt>Bevorzugte Lösung</dt><dd><b>{{ it.preferred }}</b>{% if it.confidence %} ({{ it.confidence }}){% endif %}</dd>{% endif %}
+        {% if it.alternatives %}<dt>Alternativen</dt><dd>{{ it.alternatives|join(' · ') }}</dd>{% endif %}
+        {% if it.tx_ids %}<dt>Buchungen</dt><dd class="mono">{% for t in it.tx_ids[:12] %}<a href="/journal/{{ t|urlencode }}/edit">{{ t }}</a>{{ ' · ' if not loop.last }}{% endfor %}{% if it.tx_ids|length > 12 %} …{% endif %}</dd>{% endif %}
+        <dt>Befund-ID</dt><dd class="mono">{{ it.id }}</dd>
+      </dl>
+      {% if it.finding_id and it.status == 'offen' %}
+      <div class="row" style="gap:6px;margin-top:8px">
+        {% if it.preferred_key %}<a class="btn sm primary" href="/quality/diagnose/plan?f={{ it.finding_id }}&amp;o={{ it.preferred_key }}">Vorschau der empfohlenen Lösung</a>{% endif %}
+        <a class="btn sm" href="/quality/diagnose?f={{ it.finding_id }}#{{ it.finding_id }}">Alternativen in der Diagnose</a>
+        {% if it.confidence %}<form method="post" action="/quality/diagnose/dismiss" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ it.finding_id }}"><input type="hidden" name="note" value="{{ independent_note }}"><input type="hidden" name="back" value="/quality/integrity"><button class="btn sm ghost" type="submit">Als unabhängige Buchung bestätigen</button></form>{% endif %}
+        <form method="post" action="/quality/diagnose/dismiss" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ it.finding_id }}"><input type="hidden" name="back" value="/quality/integrity"><button class="btn sm ghost" type="submit">Als geprüft markieren</button></form>
+      </div>
+      <p class="hint">„Später prüfen“: Befund einfach offen lassen – er erscheint bei der nächsten Prüfung wieder.</p>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+  </div>
+</section>
+{% if run.timings %}<details class="card"><summary>Laufzeit je Prüfung</summary><p class="hint">{% for k, v in run.timings.items() %}{{ k }} {{ v }} ms{{ ' · ' if not loop.last }}{% endfor %}</p><p class="hint">Geprüft: {% for k, v in run.checks.items() %}{{ k }} {{ v }}{{ ' · ' if not loop.last }}{% endfor %}</p></details>{% endif %}
+{% endif %}
+</div>
+{% endblock %}

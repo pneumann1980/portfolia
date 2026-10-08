@@ -1,0 +1,3 @@
+{# Fortschritt der Integritätsprüfung (htmx-Abfrage alle 2 s; fertig → Seite neu laden). #}
+{% from "partials/progress.html" import bar %}
+<div id="integrity-progress" hx-get="/quality/integrity/progress" hx-trigger="every 2s" hx-swap="outerHTML">{{ bar(p) }}</div>
