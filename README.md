@@ -372,11 +372,21 @@ Seite):
    Verhältnis mehr als gebucht (± 1 %).
 4. Kursstillstand: seit über 30 Tagen kein Marktkurs, während andere Kurse aktuell sind (Nachfolger unbekannt).
 
-Jeder Schritt hat eine Vorschau und lässt sich unter `/changes` rückgängig machen (Buchungen werden gelöscht und sind
-im Journal wiederherstellbar). Hinweise lassen sich ausblenden. Für Aktien gibt es kein Register: Bei neuem Kürzel
+Jeder Schritt hat eine Vorschau und lässt sich unter `/changes` rückgängig machen (die Umstellungsbuchungen erhalten
+den Status „rückgängig gemacht“ und bleiben im Journal-Protokoll nachvollziehbar). Hinweise lassen sich ausblenden.
+
+**Sicherheit beim Übernehmen:** Vorschau und Übernahme tragen eine Prüfsumme über den betroffenen Bestand; hat er sich
+zwischenzeitlich geändert (neue Buchung, zweiter Tab, Datenquelle), wird nicht gebucht, sondern die Vorschau neu
+angezeigt. Alle Buchungen, das Ziel-Asset und der Änderungsdatensatz entstehen in **einer** Datenbank-Transaktion –
+scheitert ein Schritt, bleibt nichts zurück („es wurde nichts geändert“). Gleichzeitige oder doppelte Anfragen buchen
+nur einmal. Rückgängig wird abgelehnt, wenn eine Umstellungsbuchung inzwischen geändert/gelöscht wurde oder der neue
+Bestand bereits verwendet ist (sonst entstünde ein negativer Bestand); ein dafür angelegtes Ziel-Asset wird nur
+entfernt, wenn nichts anderes es nutzt. Für Aktien gibt es kein Register: Bei neuem Kürzel
 die Umbenennung mit dem neuen Yahoo-Symbol erfassen; bei Fusion/Umtausch in ein anderes Wertpapier die Umstellung.
-Grenze: Ob eine Token-Umstellung steuerlich keine Veräußerung ist, hängt vom Einzelfall ab – Portfolia behandelt sie
-wie die Kapitalmaßnahme „Migration“ (Anschaffungsdaten bleiben).
+Grenze: Ob eine Token-Umstellung steuerlich keine Veräußerung ist, hängt vom Einzelfall ab – Portfolia führt sie
+technisch wie die Kapitalmaßnahme „Migration“ (Anschaffungsdaten bleiben), kennzeichnet betroffene Veräußerungen in
+der Steueraufstellung aber mit „über Umstellung“ und einem Prüfhinweis (*steuerliche Behandlung nicht automatisch
+geklärt*).
 
 ### Positionen ausbuchen (Verlust, Diebstahl)
 
@@ -1106,7 +1116,7 @@ Jeder Befund nennt betroffene Buchungen, Konten, Quellen und Kennungen und trenn
 | Möglicher interner Transfer | Abgang und Zugang desselben Assets auf verschiedenen eigenen Konten ohne Verknüpfung, Zugang −2 h … +72 h, 90–100,1 % der Menge oder gleicher Hash – beide Seiten nebeneinander mit Begründung (Zeit, Menge, Gebühr, Hash, eigene Adresse) |
 | Falsche oder mehrdeutige Asset-Zuordnung | Anbieter-Kürzel mit Kursquelle eines anderen Coins (Bitpanda „TH“), mehrere Token-Contracts für ein Asset, dieselbe Kursquelle für mehrere Assets, Kurszuordnungen nur über das Symbol |
 | Bestand: beobachtet ≠ berechnet | Differenz zur Börse bzw. Blockchain (aktueller, vollständiger Abruf) oder zum Soll des kuratierten Imports |
-| Unvollständige Transaktionshistorie | negativer Bestand, Abgang ohne Anschaffung, Koinly-Kennzeichen (z. B. `KOINLY_NEG_BALANCE`), Lücken einer Datenquelle, offene Prüf-Stapel, Anfangsbestände ohne Einzelbelege |
+| Unvollständige Transaktionshistorie | negativer Bestand, Abgang ohne Anschaffung, Transfer mit Mehrempfang, Koinly-Kennzeichen (z. B. `KOINLY_NEG_BALANCE`), Lücken einer Datenquelle, offene Prüf-Stapel, Anfangsbestände ohne Einzelbelege |
 | Rekonstruiert oder geschätzt | Quelle `reconstructed` bzw. Kennzeichen `RECONSTRUCTED_*`/`AVG_PRICE` (Ausgleichsbuchungen, rekonstruierte Sparpläne, Lücken), Sparplan-Schätzungen, Buchungen ohne EUR-Kurs – mit betroffenen Lots, Veräußerungen je Jahr, Haltefrist und Performance |
 | Fehlender oder veralteter Kurs | gehaltene Positionen ohne gültigen Kurs (mit Kursquelle und Alter des letzten Kurspunkts), Bewertung mit manuellem bzw. Transaktionskurs (kein Marktkurs), veraltete Marktkurse |
 | Möglicher Token-Migrationsvorgang | gleiches Symbol auf demselben Konto, Mengenverhältnis 10^3/10^6/10^9/10^12/10^18 : 1 (± 0,01 %), Spam-Markierung und Contract-Adressen als Belege |
@@ -1215,6 +1225,10 @@ Gesamtexport nimmt geprüfte Befunde mit.
 * **Bestände** je Asset und Konto aus dem Ledger (inkl. Gebühren); `holdings_check` dient nur dem Abgleich.
 * **Lots/FIFO:** global je Asset (Kontozuordnung wird bei Transfers konsistent gehalten) oder je Konto
   (Einstellung). Erträge (Staking etc.) werden mit dem Marktwert bei Zufluss als Lot angelegt.
+  Buchungen mit identischem Zeitpunkt werden unabhängig von ihrer Reihenfolge in der Datei verarbeitet (zuerst die,
+  deren Abgang durch den Bestand gedeckt ist). Kommt bei einem internen Transfer mehr an als abging (nur bei
+  Altbuchungen möglich; Import und Journal lehnen das ab), wird die Differenz ohne Anschaffung geführt und als Befund
+  gemeldet. Lots ohne nachgewiesene Anschaffung gelten steuerlich nie als steuerfrei.
 * **Zahlungsströme:** Konten mit Cash-Führung (Fiat-Ein-/Auszahlungen im Import) werden automatisch erkannt;
   bei Depots ohne Verrechnungskonto gelten Käufe als Einzahlung und Verkaufserlöse als Auszahlung
   (übersteuerbar unter *Einstellungen → Ledger*).
@@ -1230,6 +1244,13 @@ Gesamtexport nimmt geprüfte Befunde mit.
   längst verkaufte – werden mit [Ersatzkursen](#kurse-und-datenquellen) bewertet statt mit 0 € (sonst
   entstünden Scheinverluste bis hin zu −100 % TTWROR). Hinweise auf unbewertete Positionen betreffen nur heute
   gehaltene; frühere stehen unter *Datenqualität → Historie*.
+* **Bewertungslücken** (ab 0.21.0): Hat eine Position an einzelnen Tagen gar keinen Kurs (auch keinen Ersatzkurs),
+  zählt ihr Wegfall bzw. ihr Wiederauftauchen nicht als Verlust bzw. Gewinn: TTWROR, IRR, Gewinn, Index und Drawdown
+  rechnen sie in diesen Tagen wie eine Aus- bzw. Einbuchung heraus. Die Performance-Seite zeigt den
+  Bewertungszustand des Zeitraums („vollständig“, „teilweise geschätzt“, „unvollständig“) und den Hinweis
+  „ohne Bewertungslücken“. Früher fiel die Kennzahl in solchen Fällen auf bis zu −100 %.
+* **Mehrdeutige IRR:** Wechseln die Zahlungsströme mehrfach das Vorzeichen und hat die Gleichung mehrere Lösungen,
+  zeigt Portfolia keinen IRR-Wert, sondern „nicht eindeutig“ (TTWROR bleibt maßgeblich).
 
 ---
 
@@ -1559,7 +1580,11 @@ Der Gesamtexport enthält alles, was eine neue Installation für denselben Stand
 | `portfolia/state.json` | alle Einstellungen, Kursquellen-Zuordnungen samt Status (auch abgelehnte Vorschläge), Sparplan-Wahl und verworfene Ausführungen, Datenquellen (**ohne** API-Keys), „dauerhaft ignoriert“, Anbieter-IDs, CSV-Zuordnungen (Symbole, Konten, eigene Formate), Kennungen gelöschter CSV-/Sync-Buchungen, als „geprüft“ markierte Befunde der Diagnose (übernommene Korrekturen stecken bereits in Buchungen und Zuordnungen) |
 | `portfolia/price_daily.csv`, `series_meta.csv` | Kurshistorie – wichtig, weil die CoinGecko-Demo-API nur 365 Tage nachliefert |
 | `portfolia/usage.json` | API-Verbrauch des Monats (das CoinGecko-Kontingent läuft weiter) |
-| `portfolia/files/` | `sources.yaml` (News-Quellen) und lokale Steuerregeln (`tax_rules/`) |
+| `portfolia/taxdata.json` | Steuerdaten je Jahr: Dateien mit Status, Datensätzen, Zuordnungen und Ersetzungen (ab 0.21.0); Originaldateien unter `files/tax/` |
+| `portfolia/files/` | `sources.yaml` (News-Quellen), lokale Steuerregeln (`tax_rules/`), Original-Steuerberichte |
+
+`state.json` enthält außerdem Watchlists und die Entscheidungen zu alternativen Kursreihen (ab 0.21.0); ältere
+Exporte ohne diese Teile bleiben übernehmbar.
 
 Nie enthalten sind API-Keys, Master-Key, Passwörter und Protokolle. Andere Werkzeuge ignorieren den Ordner
 `portfolia/`; die Prüfsummen stehen im Manifest unter `extra_files`.
@@ -1569,7 +1594,10 @@ Datei aus `EXPORT_DIR`) in den **Importordner** der neuen Installation legen. Au
 keine Buchungen, Einstellungen oder Datenquellen) übernimmt Portfolia die Zusatzdaten automatisch, sonst erscheint in
 Übersicht und Einstellungen die Rückfrage „Übernehmen / Nicht übernehmen“. Übernehmen löscht nichts: Einstellungen
 werden überschrieben, Zuordnungen, Entscheidungen und Kurshistorie ergänzt, gleichnamige Datenquellen übersprungen,
-ersetzte Dateien als `.bak-…` gesichert. Danach nur noch API-Keys der Datenquellen neu eingeben (und ggf. den
+ersetzte Dateien als `.bak-…` gesichert. Die Übernahme läuft in einer Datenbank-Transaktion; Dateien werden erst
+danach ersetzt – scheitert ein Schritt, bleibt der vorige Stand vollständig erhalten. Eine zweite Übernahme derselben
+Datei ergänzt nichts doppelt. Steuerdaten, deren Jahr bereits aktive Daten hat, warten zur Entscheidung. Datenquellen
+ohne API-Key zeigen „Kein API-Key hinterlegt“, bis er eingegeben ist. Danach nur noch API-Keys der Datenquellen neu eingeben (und ggf. den
 [Master-Key](#master-key-für-api-keys) einrichten). Ein erneuter CSV-Import oder Abgleich einer Datenquelle erkennt
 die übernommenen Buchungen an ihrer Kennung bzw. Anbieter-ID („bereits vorhanden“).
 

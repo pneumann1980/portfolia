@@ -617,3 +617,22 @@ def test_automatic_price_source_respects_provider_identity():
     assert d2 is not None and d2.coin_id == "threshold-network-token" and d2.confidence == "niedrig"
     assert SourceService._provider_identity(th, {"Wallet Z"}) is None
     assert SourceService._provider_identity(AssetInfo("BTC", "Bitcoin", "crypto"), {"Bitpanda"}) is None
+
+
+def test_transfer_excess_is_reported_with_position_and_booking(cfg):
+    """AP8: Transfer mit mehr Eingang als Ausgang → eigener Befund (Konto/Asset, Buchung, Ursache, Maßnahme)."""
+    rows = [tx("b", "2025-01-10", "buy", frm=("Börse", "EUR", "100"), to=("Börse", "TOKA", "10"), value=100)]
+    ctx = make_ctx(cfg, rows, [*ASSETS, asset("TOKA")])
+    # Import und Journal lehnen das inzwischen ab – Altbuchung aus einer früheren Version direkt in der Test-DB
+    ctx.db.x("INSERT INTO journal_tx(tx_id, source, status, ts_utc, date_only, type, from_account, from_asset, "
+             "from_qty, to_account, to_asset, to_qty, created_at, updated_at) VALUES ('PF-M-000001', 'manual', "
+             "'active', '2025-02-01T10:00:00Z', 0, 'transfer', 'Börse', 'TOKA', '10', 'Wallet', 'TOKA', '12', "
+             "'2025-02-01', '2025-02-01')")
+    ctx.invalidate_overlay()
+    before = fingerprint(ctx.db)
+    rep = report_for(ctx)
+    f = next(f for f in by_kind(rep, "history") if f.title.startswith("Transfer: mehr empfangen als gesendet"))
+    assert f.status == "belegt" and ("Wallet", "TOKA") in f.positions
+    assert len(f.txs) == 1 and f.txs[0].type == "transfer" and any("2 mehr empfangen" in k for k in f.known)
+    assert f.decision and "nichts automatisch" in f.decision
+    assert fingerprint(ctx.db) == before  # read-only

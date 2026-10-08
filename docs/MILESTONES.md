@@ -1062,6 +1062,40 @@ auf jeder Seite; Gesamtexport enthält die Änderungen.
 **Grenzen:** Register enthält nur belegte Fälle (MATIC → POL); Katalog liefert kein Verhältnis und keinen Stichtag;
 für Aktien keine automatische Nachfolger-Erkennung (Yahoo bietet dafür keine dokumentierte Schnittstelle).
 
+## M23 – Finanzielle Korrektheit: Atomarität, Invarianten, Bewertungslücken, Wiederherstellung (0.21.0)
+
+Anlass (08.10.2026): Prüfung der finanziellen Korrektheit (AP1–AP8) auf Basis des Repository-Stands; nur synthetische
+Daten und temporäre Datenbanken.
+
+**Behobene Fehler:**
+
+* Token-Umstellung nicht atomar (Buchungen einzeln gespeichert, Fehler danach ließ Teilbuchungen zurück) → eine
+  Transaktion, Prüfsumme Vorschau ↔ Übernahme, Sperre gegen gleichzeitige Anfragen, Rückgängig atomar und nur bei
+  unverändertem/ungenutztem Bestand.
+* Mengen mit genau drei Nachkommastellen (z. B. `61.725`) wurden beim Bearbeiten von Import-/Sync-Buchungen, beim
+  Ausbuchen und bei Umstellungen als Tausenderpunkt gelesen (×1000) → Formularwerte mit Dezimalkomma (`forms.s_de`).
+* FIFO abhängig von der Dateireihenfolge bei identischem Zeitstempel → gedeckte Abgänge zuerst.
+* Transfer mit Mehrempfang verschwand still → Lot ohne Anschaffung + Befund `transfer_excess` (auch in der Diagnose).
+* Lots ohne Anschaffung (Zugang per Transfer ohne Lots) nach einem Jahr als steuerfrei gewertet → nie steuerfrei.
+* Doppelte Haltefrist-Regel außerhalb des Regelpakets entfernt (nur noch das Steuer-Regelpaket).
+* Mehrere Zeilen eines Prüf-Stapels konnten unscharf auf dieselbe Buchung als „Dublette“ passen → „komplex“, prüfen.
+* Fehlender Kurs wirkte in TTWROR/IRR/G/V als Verlust (bis −100 %) → Bewertungslücken als Aus-/Einbuchung
+  neutralisiert, Bewertungszustand je Zeitraum (**Verhaltensänderung**).
+* Mehrdeutige IRR (mehrere Nullstellen) wurde als eine Zahl gezeigt → „nicht eindeutig“.
+* Gesamtexport ohne Steuerdaten, Watchlists und Entscheidungen zu alternativen Kursreihen → ergänzt (rückwärts-
+  kompatibel); Übernahme in einer Transaktion, Dateien erst danach.
+* Fehlermaskierung machte aus „Kein API-Key hinterlegt“ „Kein API-Key ***“ → nur schlüsselartige Werte maskiert.
+
+**Tests:** `test_assetchange_atomic` (Fehlerinjektion, Nebenläufigkeit, Wiederholung), `test_number_roundtrip`,
+`test_ledger_invariants` (parametrisiert/zufallsbasiert mit festem Seed: Mengen- und Kostenerhaltung, Unabhängigkeit
+von Quell- und Listenreihenfolge, Splits, Migration mit Gebühr, Überverkauf, Jahresgrenze, nachträgliche Buchung), `test_tax_reference` (feste Erwartungswerte), `test_restore_roundtrip` (fachlicher
+Vergleich, Idempotenz, Fehler mitten in der Übernahme, beschädigte Archive, Schema ab Version 1).
+
+**Grenzen:** steuerliche Einordnung von Token-Umstellungen bleibt Einzelfall (nur gekennzeichnet); Reihenfolge
+taggenauer (ohne Uhrzeit) gegenüber minutengenauen Buchungen desselben Tages bleibt eine Annahme; die Sperre gegen
+gleichzeitige Umstellungen gilt je Prozess (SQLite-Transaktion schützt zusätzlich); nach einer Neueinrichtung sind
+frühere Umstellungen nicht mehr rückgängig zu machen (ihre Buchungen sind Import-Buchungen).
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

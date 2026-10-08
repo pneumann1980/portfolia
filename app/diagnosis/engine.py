@@ -1038,6 +1038,9 @@ _ISSUE_TEXT = {
                         "Beim konto-übergreifenden FIFO ließen sich Lots nicht vollständig umbuchen."),
     "ca_without_from": ("Kapitalmaßnahme ohne Abgangsbein", "hinweis", 3,
                         "Zugang aus einer Kapitalmaßnahme ohne zugehörigen Abgang."),
+    "transfer_excess": ("Transfer: mehr empfangen als gesendet", "belegt", 2,
+                        "Bei einem internen Transfer kam mehr an, als abging. Die Differenz wird ohne Anschaffung "
+                        "geführt (Einstand 0 €, Haltedauer unbekannt, steuerlich nie als steuerfrei gewertet)."),
 }
 _HISTORY_FLAGS = {
     "KOINLY_NEG_BALANCE": "Koinly meldete einen negativen Bestand (fehlende Zugänge)",
