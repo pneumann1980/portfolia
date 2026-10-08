@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Sammelbearbeitung{% endblock %}
+{% block heading %}Datenqualität · Sammelbearbeitung{% endblock %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>Dubletten und Transfers gesammelt bearbeiten</h2>
+    <div class="row"><a class="btn sm" href="/quality/integrity">Integritätsprüfung</a><a class="btn sm" href="/quality/diagnose">Diagnose</a></div></div>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  <div class="alert"><span class="icon">i</span><div>Je Befund ist die <strong>bevorzugte Lösung</strong> vorausgewählt (Konfidenz: eindeutig → hoch plausibel → prüfbedürftig → widersprüchlich; erklärbare Stufen, keine Wahrscheinlichkeiten). Die Sammelvorschau rechnet alle Änderungen gemeinsam durch, schließt widersprüchliche, sich überschneidende und gemeinsam zu negativen Beständen führende Fälle aus und übernimmt erst nach deiner Bestätigung – in einer Transaktion, je Befund einzeln protokolliert und rückgängig zu machen.</div></div>
+  <form method="get" action="/quality/diagnose/bulk" class="filters row" style="gap:8px;flex-wrap:wrap">
+    <select name="conf" aria-label="Konfidenz"><option value="">jede Konfidenz</option>{% for c in confs %}<option value="{{ c }}"{% if f.conf == c %} selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+    <select name="account" aria-label="Konto"><option value="">alle Konten</option>{% for a in acc_all %}<option value="{{ a }}"{% if f.account == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select>
+    <select name="asset" aria-label="Asset"><option value="">alle Assets</option>{% for a in asset_all %}<option value="{{ a }}"{% if f.asset == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select>
+    <select name="source" aria-label="Datenquelle"><option value="">alle Quellen</option>{% for a in src_all %}<option value="{{ a }}"{% if f.source == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select>
+    <select name="sort" aria-label="Sortierung"><option value="">nach Konfidenz</option><option value="impact"{% if f.sort == 'impact' %} selected{% endif %}>nach betroffenem Wert</option></select>
+    <button class="btn sm" type="submit">Anwenden</button>
+  </form>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Befunde ({{ rows|length }})</h2></div>
+  {% if not rows %}<p class="hint">Keine offenen Dubletten- oder Transfer-Befunde.</p>{% else %}
+  <form method="get" action="/quality/diagnose/bulk/preview" class="stack" style="gap:8px">
+    {% for r in rows %}{% set x = r.f %}
+    <label class="finding row" style="gap:8px;align-items:flex-start;padding:8px">
+      <input type="checkbox" name="f" value="{{ x.id }}"{% if r.conf in ('eindeutig', 'hoch plausibel') %} checked{% endif %}{% if r.conf == 'widersprüchlich' %} disabled{% endif %}>
+      <span style="flex:1">
+        <span class="row"><span class="badge {{ 'good' if r.conf == 'eindeutig' else ('info' if r.conf == 'hoch plausibel' else ('warn' if r.conf == 'prüfbedürftig' else 'crit')) }}">{{ r.conf }}</span><span class="badge {{ status_badge[x.status] }}">{{ x.status }}</span>{% if r.value %}<span class="hint">betroffener Wert {{ r.value|eur }}</span>{% endif %}</span>
+        <span class="f-title">{{ x.title }}</span>
+        <span class="hint">Bevorzugt: {{ r.label or '– (nur einzeln entscheidbar)' }}{% if x.sources %} · Quellen: {{ x.sources|join(', ') }}{% endif %} · <a href="/quality/diagnose?f={{ x.id }}#{{ x.id }}">einzeln / Alternativen</a></span>
+      </span>
+    </label>{% endfor %}
+    <label class="row" style="gap:6px"><input type="checkbox" name="review" value="1"> auch <b>prüfbedürftige</b> Fälle einbeziehen (nur nach eigener Prüfung, z. B. Kontoauszug)</label>
+    <div><button class="btn primary" type="submit">Sammelvorschau</button></div>
+  </form>
+  {% endif %}
+</section>
+
+{% if recent %}
+<section class="card"><h2>Letzte Sammelkorrekturen</h2>
+  <ul class="plain-list">{% for b in recent %}<li><span class="mono">{{ b.bulk_id }}</span> · {{ b.created_at|datetime_de }} · {{ b.n }} Befund(e), {{ b.active }} aktiv
+    {% if b.active %}<form method="post" action="/quality/diagnose/bulk/{{ b.bulk_id }}/undo" class="inline" data-confirm="Sammelkorrektur als Ganzes zurücknehmen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endif %}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+</div>
+{% endblock %}

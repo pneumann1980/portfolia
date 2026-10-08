@@ -1545,6 +1545,7 @@ class DataSourceService:
         n_waiting = len({r.event_key for r in recs if present.get(r.event_key or "")})
         counts: dict[str, int] = defaultdict(int)
         committed = 0
+        linked = 0
         bid = None
         try:
             if fresh:
@@ -1557,6 +1558,10 @@ class DataSourceService:
                 rows = [rc for rc in csv.rows(bid) if rc.rec.event_key in keys]
                 for rc in rows:
                     counts[rc.status] += 1
+                if ds.auto_commit:  # Stufe A vor dem Verwerfen: bereits vorhandene Vorgänge mit Herkunft verknüpfen
+                    from app.csvimport.batch import auto_link
+
+                    linked += auto_link(csv, bid)
                 open_rows = self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status NOT IN "
                                            "('known', 'ignored', 'committed', 'merged', 'linked')", (bid,), default=0)
                 if not open_rows and not self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status "
@@ -1569,8 +1574,12 @@ class DataSourceService:
                     ds = self.get(sid) or ds
             prog.phase("save", text="Übernehmen und speichern")
             if ds.auto_commit:  # je Ereignis – auch in offenen Stapeln, sobald sie eindeutig geworden sind
+                from app.csvimport.batch import auto_link
+
                 for b in self.pending_batches(sid):
                     csv.ensure_current(int(b["id"]))  # nie nach überholter Auswertung übernehmen
+                    # Stufe A: technisch identische Vorgänge nur verknüpfen (Herkunft/Kennungen, keine Buchung)
+                    linked += auto_link(csv, int(b["id"]))
                     eligible = self._auto_eligible(csv.rows(int(b["id"])))
                     if eligible:
                         out = csv.commit(int(b["id"]), only_idx=eligible)
@@ -1605,6 +1614,8 @@ class DataSourceService:
             parts.append(f"wartet bereits auf Prüfung {n_waiting}")
         if committed:
             parts.append(f"übernommen {committed}")
+        if linked:
+            parts.append(f"automatisch verknüpft {linked} (bereits vorhanden)")
         if res.skipped:
             parts.append("ohne Buchung " + ", ".join(f"{n}× {k}" for k, n in sorted(res.skipped.items())))
         msg = " · ".join(parts) + ("; " + "; ".join(notes) if notes else "")
@@ -1642,7 +1653,8 @@ class DataSourceService:
                          detail_json=json.dumps({"skipped": res.skipped, "warnings": notes, "coverage": coverage,
                                                  "waiting": n_waiting}, ensure_ascii=False, default=str))
         log.info("Datenquelle %s synchronisiert: %s", ds.name, msg)
-        return {"status": status, "batch_id": bid, "message": msg, "committed": committed, **counts}
+        return {"status": status, "batch_id": bid, "message": msg, "committed": committed, "linked": linked,
+                **counts}
 
     def _history(self, sid: int, recs: list[Any], stamp: str) -> dict[str, Any]:
         """Kennzahlen eines vollständigen Abrufs der Historie: Zeitraum, Vorgänge je Monat, Vorgänge ohne Zeitpunkt

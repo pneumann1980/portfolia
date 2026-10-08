@@ -377,6 +377,7 @@ def _dup_same_hash(idx: _Index, stats: dict[str, int]) -> list[Finding]:
     clusters: dict[tuple[Any, ...], list[tuple[str, list[Tx], str]]] = defaultdict(list)
     legit = 0
     for (h, _sig), txs in sorted(groups.items(), key=lambda kv: (kv[1][0].ts, kv[0][0])):
+        txs = sorted(txs, key=lambda t: t.tx_id)  # gleiche Angaben, gleicher Zeitpunkt: nach Kennung, nicht Datei
         ids = frozenset(t.tx_id for t in txs)
         if len(ids) < 2 or ids in seen:
             continue
@@ -517,6 +518,7 @@ def _dup_identical(idx: _Index, stats: dict[str, int]) -> list[Finding]:
     legit = 0
     clusters: dict[tuple[Any, ...], list[list[Tx]]] = defaultdict(list)
     for _sig, txs in sorted(groups.items(), key=lambda kv: (kv[1][0].ts, kv[1][0].tx_id)):
+        txs = sorted(txs, key=lambda t: t.tx_id)  # bleibende Buchung unabhängig von der Dateireihenfolge
         if len(txs) < 2 or any(idx.manual(t) for t in txs):
             continue  # manuell + importiert: Regel „gleiche Menge“ (_dup_same_qty)
         hs = [frozenset(idx.hashes[t.tx_id]) for t in txs]

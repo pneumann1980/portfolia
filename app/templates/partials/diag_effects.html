@@ -1,0 +1,62 @@
+{# Berechnete Auswirkungen einer Korrektur bzw. Sammelkorrektur (actions.Effects). Erwartet: effects, status_badge. #}
+{% macro arrow(a, b) %}{% if a == b %}<span class="muted">unverändert</span>{% else %}{{ a }} → <strong>{{ b }}</strong>{% endif %}{% endmacro %}
+<section class="card">
+  <h2>Auswirkungen (berechnet)</h2>
+  {% if bulk %}{% elif effects.target_resolved %}<div class="alert good"><span class="icon">✓</span><div>Der Befund ist danach erledigt.</div></div>
+  {% elif effects.target_pending %}<div class="alert"><span class="icon">i</span><div>Der Befund wird nach dem Kursabruf neu bewertet: Er verschwindet, sobald für die neue Kursquelle ein gültiger Kurs vorliegt. Bitte danach den Kurs prüfen.</div></div>
+  {% else %}<div class="alert warn"><span class="icon">!</span><div>Der Befund bleibt danach{% if effects.successors %} in geänderter Form{% endif %} bestehen – z. B. weil nur ein Teil ausgewählt ist{% for x in effects.successors %}: „{{ x.title }}“{% endfor %}.</div></div>{% endif %}
+  {% for n in effects.notes %}<p class="hint">{{ n }}</p>{% endfor %}
+
+  <h3>Bestände und Einstand je Konto</h3>
+  {% if effects.positions %}
+  <div class="table-wrap cards-wrap"><table class="cards">
+    <thead><tr><th>Konto · Asset</th><th class="num">Bestand</th><th class="num">Einstand offener Lots</th><th class="num">Wert (aktueller Kurs)</th><th>Bestandsabgleich</th></tr></thead>
+    <tbody>{% for p in effects.positions %}<tr>
+      <td data-label="Konto · Asset">{{ p.account }} · {{ p.asset }}</td>
+      <td class="num" data-label="Bestand">{{ arrow(p.bal[0]|qty_exact, p.bal[1]|qty_exact) }}{% if p.delta %}<div class="hint">Δ {{ '+' if p.delta > 0 }}{{ (p.delta|qty_exact)|replace('-', '−') }}</div>{% endif %}</td>
+      <td class="num" data-label="Einstand">{{ arrow(p.cost[0]|eur, p.cost[1]|eur) }}</td>
+      <td class="num" data-label="Wert">{% if p.value[0] is none and p.value[1] is none %}<span class="muted">{{ p.note or 'ohne Kurs' }}</span>{% else %}{{ arrow(p.value[0]|eur if p.value[0] is not none else 'ohne Kurs', p.value[1]|eur if p.value[1] is not none else (p.note or 'ohne Kurs')) }}{% endif %}</td>
+      <td data-label="Bestandsabgleich">{{ arrow(p.status[0] or '–', p.status[1] or '–') }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="hint">Keine Änderung an Beständen oder Einstand.</p>{% endif %}
+
+  {% if effects.lot_dates %}
+  <h3>Anschaffungsdaten offener Lots <span class="hint">(Grundlage der Haltefristen)</span></h3>
+  <div class="table-wrap cards-wrap"><table class="cards">
+    <thead><tr><th>Konto · Asset</th><th>vorher</th><th>nachher</th></tr></thead>
+    <tbody>{% for acc, a, before, after in effects.lot_dates %}<tr><td data-label="Konto · Asset">{{ acc }} · {{ a }}</td><td data-label="vorher">{{ before }}</td><td data-label="nachher"><strong>{{ after }}</strong></td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+  {% if effects.negative_new %}<div class="alert crit"><span class="icon">!</span><div>Danach entstünde ein negativer Bestand: {% for acc, a in effects.negative_new %}{{ a }} auf {{ acc }}{{ ', ' if not loop.last }}{% endfor %}.</div></div>{% endif %}
+
+  <h3>Realisierte Ergebnisse und Erträge je Jahr <span class="hint">(Portfolia-Ansicht: Einstellungen zur Verbrauchsfolge, vor Steuerregeln)</span></h3>
+  {% if effects.years %}
+  <div class="table-wrap cards-wrap"><table class="cards">
+    <thead><tr><th>Jahr</th><th class="num">realisierter Gewinn/Verlust</th><th class="num">Erträge (Staking, Rewards …)</th></tr></thead>
+    <tbody>{% for y in effects.years %}<tr><td data-label="Jahr">{{ y.year }}</td>
+      <td class="num" data-label="realisiert">{{ arrow(y.realized[0]|eur, y.realized[1]|eur) }}</td>
+      <td class="num" data-label="Erträge">{{ arrow(y.income[0]|eur, y.income[1]|eur) }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="hint">Keine Änderung.</p>{% endif %}
+
+  {% if effects.tax or effects.tax_note %}
+  <h3>Steuerbericht{% if effects.tax_pack %} ({{ effects.tax_pack }}){% endif %} <span class="hint">– Zusammenfassung je betroffenem Jahr, mit den Optionen des Regelwerks</span></h3>
+  {% if effects.tax_note %}<p class="hint">{{ effects.tax_note }}</p>{% endif %}
+  {% if effects.tax %}<div class="table-wrap cards-wrap"><table class="cards">
+    <thead><tr><th>Jahr</th><th>Posten</th><th class="num">vorher</th><th class="num">nachher</th></tr></thead>
+    <tbody>{% for t in effects.tax %}<tr><td data-label="Jahr">{{ t.year }}</td><td data-label="Posten">{{ t.label }}</td>
+      <td class="num" data-label="vorher">{{ t.before|eur if t.before is not none else '–' }}</td><td class="num" data-label="nachher">{% if t.after is not none %}<strong>{{ t.after|eur }}</strong>{% else %}–{% endif %}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <p class="hint">Vorläufige Werte; maßgeblich bleibt der Steuerbericht nach dem Übernehmen.</p>{% endif %}
+  {% endif %}
+
+  <h3>Diagnose danach</h3>
+  <ul class="plain-list">
+    <li>erledigt: {{ effects.resolved|length }}{% for x in effects.resolved[:12] %}<div class="hint">✓ {{ x.title }}</div>{% endfor %}</li>
+    <li>neu oder geändert: {{ effects.new|length }}{% for x in effects.new[:12] %}<div class="hint">• <span class="badge {{ status_badge[x.status] }}">{{ x.status }}</span> {{ x.title }}</div>{% endfor %}</li>
+    {% if effects.pending %}<li>erst nach dem Kursabruf bewertbar: {{ effects.pending|length }}{% for x in effects.pending %}<div class="hint">• {{ x.title }}</div>{% endfor %}</li>{% endif %}
+    {% if effects.issues_new %}<li>neue Ledger-Hinweise:{% for m in effects.issues_new %}<div class="hint">⚠ {{ m }}</div>{% endfor %}</li>{% endif %}
+    {% if effects.issues_gone %}<li>entfallende Ledger-Hinweise:{% for m in effects.issues_gone %}<div class="hint">✓ {{ m }}</div>{% endfor %}</li>{% endif %}
+  </ul>
+</section>

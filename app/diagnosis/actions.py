@@ -575,6 +575,8 @@ class Effects:
     target_resolved: bool = False
     target_pending: bool = False  # Kursbefund: entscheidet sich erst mit dem Kursabruf nach dem Übernehmen
     successors: list[Finding] = field(default_factory=list)  # Befund besteht in geänderter Form weiter
+    negative_new: list[tuple[str, str]] = field(default_factory=list)  # (Konto, Asset) mit neuem negativem Bestand
+    lot_dates: list[tuple[str, str, str, str]] = field(default_factory=list)  # Anschaffungsdaten vorher/nachher
 
 
 def hypothetical(pf: Portfolio, plan: Plan) -> Portfolio:
@@ -647,6 +649,31 @@ def _year_sig(led: LedgerResult) -> dict[int, tuple[Any, ...]]:
     return {y: tuple(sorted(map(repr, v))) for y, v in out.items()}
 
 
+def _lot_date_changes(led: LedgerResult, led2: LedgerResult) -> list[tuple[str, str, str, str]]:
+    """Je Position: Anschaffungsdaten der offenen Lots vorher/nachher (frühestes – spätestes, Anzahl), nur wenn sie
+    sich ändern – maßgeblich für Haltefristen; die steuerliche Wertung bleibt dem Regelpaket vorbehalten."""
+    def sig(led_: LedgerResult) -> dict[tuple[str, str], list[Any]]:
+        out: dict[tuple[str, str], list[Any]] = defaultdict(list)
+        for lot in led_.lots:
+            if lot.qty > DUST:
+                out[(lot.account, lot.asset)].append(lot.acq_date)
+        return out
+
+    def text(ds: list[Any]) -> str:
+        if not ds:
+            return "keine offenen Lots"
+        lo, hi = min(ds), max(ds)
+        span = f"{lo:%d.%m.%Y}" + (f" – {hi:%d.%m.%Y}" if hi != lo else "")
+        return f"{span} ({len(ds)} Lot{'s' if len(ds) != 1 else ''})"
+
+    a, b = sig(led), sig(led2)
+    out = []
+    for k in sorted(set(a) | set(b)):
+        if sorted(a.get(k, [])) != sorted(b.get(k, [])):
+            out.append((k[0], k[1], text(a.get(k, [])), text(b.get(k, []))))
+    return out[:40]
+
+
 def _tax_effects(ctx: Any, pf2: Portfolio, eff: Effects) -> None:
     """Steuerwerte des Regelwerks je betroffenem Jahr (Zusammenfassung des Steuerberichts) vorher/nachher."""
     try:
@@ -717,6 +744,8 @@ def preview(ctx: Any, report: Report, plan: Plan) -> Effects:
                                         (a[1].quantize(CENT), b[1].quantize(CENT))))
     i1, i2 = _issue_keys(led), _issue_keys(led2)
     eff.issues_new = [m for k, m in i2.items() if k not in i1][:20]
+    eff.negative_new = sorted({(k[3], k[2]) for k in i2 if k not in i1 and k[0] == "negative_balance"})
+    eff.lot_dates = _lot_date_changes(led, led2)
     eff.issues_gone = [m for k, m in i1.items() if k not in i2][:20]
     ids1 = {f.id for f in report.findings}
     ids2 = {f.id for f in rep2.findings}
@@ -740,6 +769,8 @@ def preview(ctx: Any, report: Report, plan: Plan) -> Effects:
                          "und Abrufen (der Token geht dann in die Prüfung).")
     if any(op.kind in ("hide", "cover", "create") for op in plan.ops):
         _tax_effects(ctx, pf2, eff)
+        eff.notes.append("Historische Performance (TTWROR/IRR, Verlauf) wird nach dem Übernehmen neu berechnet – die "
+                         "Vorschau rechnet die Tageshistorie nicht vorab durch.")
     return eff
 
 

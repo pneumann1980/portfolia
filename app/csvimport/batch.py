@@ -604,6 +604,46 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
     return {"action_id": aid, "counts": p.counts(), "created": res["created"], "errors": []}
 
 
+def safe_link_rows(rows: list[RowCtx]) -> set[int]:
+    """Stufe A: Zeilen, deren Identität mit einer vorhandenen Buchung technisch feststeht (gleiche Kennung bzw.
+    Blockchain-Transaktion, Sicherheit „sicher“, Ergebnis Dublette/Ergänzung, ohne offene Gebührenfrage) – eine
+    Verknüpfung ergänzt nur Herkunft und Kennungen, ändert keine Mengen, Gebühren, Lots oder Kostenbasis."""
+    out: set[int] = set()
+    for rc in rows:
+        m = rc.match or {}
+        if not rc.open or rc.status not in ("duplicate", "known") or rc.decision is not None:
+            continue  # eigene Entscheidung des Nutzers hat Vorrang
+        if m.get("conf") != "sicher" or m.get("cat") not in ("dublette", "ergaenzung") or not m.get("target"):
+            continue
+        if m.get("basis") not in A.IDENTITY or m.get("basis") in A.SAME_SOURCE:
+            continue
+        if (m.get("fee") or {}).get("state") in ("open", "conflict"):
+            continue
+        out.add(rc.idx)
+    return out
+
+
+def auto_link(svc: Any, bid: int) -> int:
+    """Sichere technische Verknüpfungen eines Prüf-Stapels automatisch ausführen (protokolliert als Stapelaktion,
+    rückgängig wie jede andere). Idempotent: bereits verknüpfte Zeilen sind erledigt. Rückgabe: Anzahl."""
+    rows = svc.rows(bid)
+    idxs = safe_link_rows(rows)
+    if not idxs:
+        return 0
+    p = plan(svc, bid, "link", idxs, rows=rows)
+    ok = {i.rc.idx for i in p.todo if i.act == "link"} - {rc.idx for rc, _t in p.questions}
+    if not ok:
+        return 0
+    if ok != {i.rc.idx for i in p.todo}:
+        p = plan(svc, bid, "link", ok)
+    res = execute(svc, bid, "link", ok, token=new_token(), fingerprint=p.fingerprint(),
+                  params={"auto": True, "stage": "A"})
+    if res.get("errors"):
+        log.info("Automatische Verknüpfung in Stapel %s übersprungen: %s", bid, "; ".join(res["errors"]))
+        return 0
+    return int((res.get("counts") or {}).get("link", 0))
+
+
 def _revert_txs(c: Any, svc: Any, bid: int, tx_ids: list[str], stamp: str) -> int:
     """Buchungen einer Stapelaktion zurücknehmen (wie „Import rückgängig“, aber nur diese)."""
     js = svc.journal

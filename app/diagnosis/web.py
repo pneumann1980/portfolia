@@ -152,6 +152,76 @@ def make_router() -> APIRouter:
         res = await run_in_threadpool(A.reopen, get_ctx(request), did)
         return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="findings"))
 
+    @router.get("/quality/diagnose/bulk", response_class=HTMLResponse)
+    def bulk_page(request: Request, conf: str = "", account: str = "", asset: str = "", source: str = "",
+                  sort: str = "", msg: str = "", err: str = "") -> HTMLResponse:
+        """Sammelbearbeitung: Befunde des Abgleichs mit bevorzugter Lösung (nur Anzeige und Auswahl)."""
+        from app.diagnosis import bulk as B
+        from app.diagnosis.integrity import CONFIDENCE, _value_of
+
+        ctx = get_ctx(request)
+        report = report_for(ctx)
+        marks = A.active_dismissals(ctx.db)
+        rows = []
+        for f, c, label in B.candidates(report):
+            d = marks.get(f.id)
+            if d is not None and d.fingerprint == A.fingerprint(f):
+                continue  # geprüft bzw. als unabhängig bestätigt – Nutzerentscheidung gilt
+            rows.append({"f": f, "conf": c, "label": label, "value": _value_of(report, f) or 0.0})
+        acc_all = sorted({a for r in rows for a in r["f"].accounts})
+        asset_all = sorted({a for r in rows for a in r["f"].assets})
+        src_all = sorted({s for r in rows for s in r["f"].sources})
+        shown = [r for r in rows if (not conf or r["conf"] == conf) and (not account or account in r["f"].accounts)
+                 and (not asset or asset in r["f"].assets) and (not source or source in r["f"].sources)]
+        rank = {c: i for i, c in enumerate(CONFIDENCE)}
+        if sort == "impact":
+            shown.sort(key=lambda r: (-r["value"], rank.get(r["conf"], 9)))
+        else:
+            shown.sort(key=lambda r: (rank.get(r["conf"], 9), -r["value"]))
+        return render(request, "diagnosis_bulk.html", active="quality", rows=shown, confs=CONFIDENCE,
+                      f={"conf": conf, "account": account, "asset": asset, "source": source, "sort": sort},
+                      acc_all=acc_all, asset_all=asset_all, src_all=src_all, recent=B.recent(ctx.db), msg=msg,
+                      err=err, **_common())
+
+    def _bulk_preview(request: Request, ids: list[str], review: bool, errors: list[str] | None = None,
+                      status_code: int = 200) -> HTMLResponse:
+        from app.diagnosis import bulk as B
+
+        ctx = get_ctx(request)
+        bp = B.plan(ctx, ids, include_review=review)
+        return render(request, "diagnosis_bulk_preview.html", active="quality", bp=bp, ids=ids, review=review,
+                      errors=errors or [], effects=bp.effects, bulk=True, status_code=status_code, **_common())
+
+    @router.get("/quality/diagnose/bulk/preview", response_class=HTMLResponse)
+    def bulk_preview(request: Request) -> HTMLResponse:
+        ids = [str(x) for x in request.query_params.getlist("f") if x]
+        if not ids:
+            return _back("/quality/diagnose/bulk?" + urlencode({"err": "Bitte mindestens einen Befund auswählen."}))
+        return _bulk_preview(request, ids, request.query_params.get("review") == "1")
+
+    @router.post("/quality/diagnose/bulk/apply")
+    async def bulk_apply(request: Request) -> Response:
+        from app.diagnosis import bulk as B
+
+        ctx = get_ctx(request)
+        form = await request.form()
+        ids = [str(x) for x in form.getlist("f") if x]
+        review, token = str(form.get("review") or "") == "1", str(form.get("token") or "")
+        if not ids or not token:
+            raise HTTPException(400)
+        res = await run_in_threadpool(B.execute, ctx, ids, token, include_review=review)
+        if not res.ok:
+            return await run_in_threadpool(_bulk_preview, request, ids, review, res.errors, 409)
+        return _back("/quality/diagnose/bulk?" + urlencode({"msg": res.message}))
+
+    @router.post("/quality/diagnose/bulk/{bulk_id}/undo")
+    async def bulk_undo(request: Request, bulk_id: str) -> Response:
+        from app.diagnosis import bulk as B
+
+        res = await run_in_threadpool(B.undo, get_ctx(request), bulk_id)
+        q = {"msg": res.message} if res.ok else {"err": "; ".join(res.errors)}
+        return _back("/quality/diagnose/bulk?" + urlencode(q))
+
     return router
 
 

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% import "partials/diag_macros.html" as dm with context %}
+{% block title %}Sammelvorschau{% endblock %}
+{% block heading %}Datenqualität · Sammelvorschau{% endblock %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>Sammelvorschau – noch nichts geändert</h2><div class="row"><a class="btn sm" href="/quality/diagnose/bulk">Zurück zur Auswahl</a></div></div>
+  {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+  {% for n in bp.notes %}<div class="alert warn"><span class="icon">!</span><div>{{ n }}</div></div>{% endfor %}
+  <p class="hint">{{ bp.ready|length }} ausführbar · {{ bp.excluded|length }} ausgeschlossen{% if bp.conflicts %} · {{ bp.conflicts|length }} mit Überschneidung{% endif %}{% if review %} · prüfbedürftige Fälle einbezogen{% endif %}</p>
+</section>
+
+{% if bp.ready %}
+<section class="card"><h2>Geplante Korrekturen ({{ bp.ready|length }})</h2>
+  <ol class="op-list">{% for it in bp.ready %}<li class="op">
+    <div class="row"><span class="badge info">{{ it.confidence }}</span><b>{{ it.finding.title }}</b></div>
+    <div class="hint">Lösung: {{ it.plan.option.label }}</div>
+    <ul class="plain-list">{% for op in it.plan.ops %}<li><span class="badge">{{ op.badge }}</span> {{ op.label }}</li>{% endfor %}</ul>
+  </li>{% endfor %}</ol>
+</section>
+{% endif %}
+
+{% if bp.excluded %}
+<section class="card"><h2>Ausgeschlossen ({{ bp.excluded|length }})</h2>
+  <ul class="plain-list">{% for it in bp.excluded %}<li><b>{{ it.finding.title }}</b><div class="hint">{{ it.reason }} · <a href="/quality/diagnose?f={{ it.finding.id }}#{{ it.finding.id }}">einzeln bearbeiten</a></div></li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if effects %}{% include "partials/diag_effects.html" with context %}{% endif %}
+
+{% if bp.ready %}
+<section class="card"><h2>Übernehmen</h2>
+  <p class="hint">Alle {{ bp.ready|length }} Korrekturen in einer Transaktion. Haben sich Daten oder Auswahl seit dieser Vorschau geändert, wird nichts übernommen. Rückgängig je Befund (Diagnose → Entscheidungen) oder als Ganzes (Sammelbearbeitung).</p>
+  <form method="post" action="/quality/diagnose/bulk/apply" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="token" value="{{ bp.token }}">{% if review %}<input type="hidden" name="review" value="1">{% endif %}
+    {% for fid in ids %}<input type="hidden" name="f" value="{{ fid }}">{% endfor %}
+    <button class="btn primary" type="submit">{{ bp.ready|length }} Korrektur(en) übernehmen</button>
+    <a class="btn ghost" href="/quality/diagnose/bulk">Abbrechen</a>
+  </form>
+</section>
+{% endif %}
+</div>
+{% endblock %}
