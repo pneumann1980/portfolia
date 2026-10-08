@@ -27,10 +27,17 @@ Datenquellen übersprungen, vorhandene Dateien vorher als ``.bak-…`` gesichert
 
 from __future__ import annotations
 
+import contextlib
 import csv
+import hashlib
 import io
 import json
 import logging
+import os
+import shutil
+import threading
+import uuid
+from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -244,38 +251,195 @@ def status(ctx: Any) -> dict[str, Any] | None:
     if info is None:
         return None
     done = ctx.db.get_state(f"restore.{iid}") or {}
-    return {"import_id": iid, "summary": info, "state": done.get("state", "pending"), "at": done.get("at"),
-            "counts": done.get("counts")}
+    out = {"import_id": iid, "summary": info, "state": done.get("state", "pending"), "at": done.get("at"),
+           "counts": done.get("counts")}
+    j = pending(ctx.db)
+    if j is not None:  # unterbrochene Wiederherstellung (auch eines früheren Imports) hat Vorrang in der Anzeige
+        out.update(state="incomplete", files_open=len(j.get("files") or []), error=j.get("error"),
+                   attempts=j.get("attempts") or 0, restore_id=j.get("id"))
+    return out
 
 
 def dismiss(ctx: Any, import_id: int) -> None:
     ctx.db.set_state(f"restore.{import_id}", {"state": "dismissed", "at": iso(datetime.now(UTC))})
 
 
-def apply(ctx: Any, import_id: int) -> dict[str, int]:
-    """Zusatzdaten eines importierten Portfolia-Exports übernehmen (idempotent, löscht nichts)."""
-    db = ctx.db
-    extras = extras_for(db, import_id)
-    st = _state(extras)
-    if st is None:
-        raise ValueError("Keine gültigen Portfolia-Zusatzdaten in diesem Import.")
-    now = iso(datetime.now(UTC)) or ""
-    counts: dict[str, int] = {}
-    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-    # Dateien erst vorbereiten (temporär), dann Datenbank, dann umbenennen: scheitert die Datenbank, bleiben die
-    # bisherigen Dateien unverändert; scheitert das Vorbereiten, wird nichts übernommen
-    staged = _stage_files(ctx, extras, stamp)
+class RestoreError(RuntimeError):
+    """Übernahme abgelehnt, bevor etwas geändert wurde (ungültige/widersprüchliche Daten, Speicherplatz, Rechte)."""
+
+
+class RestoreIncomplete(RuntimeError):
+    """Datenbankteil übernommen, Dateien noch nicht vollständig – wird fortgesetzt (Start, „Fortsetzen“)."""
+
+
+JOURNAL_KEY = "restore.journal"  # laufende Wiederherstellung: Dateien, die nach dem DB-Commit noch zu ersetzen sind
+_RESTORE_LOCK = threading.Lock()
+_LIST_KEYS = ("asset_sources", "plans", "plan_dismissed", "datasources", "event_decisions", "event_aliases",
+              "tx_links", "csv_symbols", "csv_accounts", "csv_mappings", "deleted_journal", "diag_dismissed",
+              "asset_changes", "watchlists", "watchlist_items")
+_TMP_MARK = ".restore-"
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def validate(extras: dict[str, bytes], st: dict[str, Any]) -> list[str]:
+    """Zusatzdaten vor jeder Änderung prüfen: Struktur, Lesbarkeit, Widersprüche (z. B. zwei aktive Steuerdateien
+    für dasselbe Jahr). Leere Liste = übernehmbar."""
+    errs: list[str] = []
+    if not isinstance(st.get("settings") or {}, dict):
+        errs.append("Einstellungen: unerwartetes Format")
+    for key in _LIST_KEYS:
+        v = st.get(key)
+        if v is not None and not (isinstance(v, list) and all(isinstance(x, dict) for x in v)):
+            errs.append(f"{key}: unerwartetes Format")
+    raw = extras.get(TAXDATA)
+    if raw:
+        try:
+            files = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            files = None
+        if not isinstance(files, list) or not all(isinstance(f, dict) for f in files):
+            errs.append("Steuerdaten: nicht lesbar")
+        else:
+            active: dict[Any, int] = defaultdict(int)
+            for f in files:
+                if f.get("status") == "active":
+                    active[f.get("tax_year")] += 1
+                if not f.get("sha256") or not f.get("filename"):
+                    errs.append("Steuerdaten: Datei ohne Prüfsumme oder Namen")
+                    break
+            errs += [f"Steuerdaten: {n} aktive Dateien für {y} (widersprüchlich)" for y, n in active.items() if n > 1]
+    for name in (PRICES, META):
+        if extras.get(name):
+            try:
+                head = extras[name].decode("utf-8").split("\n", 1)[0].strip().split(",")
+            except UnicodeDecodeError:
+                errs.append(f"{name}: nicht lesbar")
+                continue
+            need = ("series", "date", "close") if name == PRICES else ("series", "history_from")
+            if not set(need) <= set(head):
+                errs.append(f"{name}: Spalten fehlen")
+    for name, data in extras.items():
+        if name.startswith(FILES) and len(data) > MAX_FILE_BYTES:
+            errs.append(f"{name}: Datei zu groß")
+    return errs
+
+
+def _file_targets(ctx: Any, extras: dict[str, bytes]) -> list[tuple[str, Path, bytes]]:
+    """(Name im Export, Zieldatei, Inhalt) – nur Dateien, deren Inhalt sich ändert; unsichere Pfade nie."""
+    cfg = ctx.config
+    out: list[tuple[str, Path, bytes]] = []
+    for name, data in sorted(extras.items()):
+        if not name.startswith(FILES):
+            continue
+        rel = Path(name[len(FILES):])
+        if rel.is_absolute() or ".." in rel.parts or any(p.startswith(".") for p in rel.parts):
+            continue
+        if rel.as_posix() == "sources.yaml":
+            target = cfg.sources_path
+        elif rel.parts and rel.parts[0] == "tax_rules" and len(rel.parts) > 1:
+            target = cfg.tax_rules_dir.joinpath(*rel.parts[1:])
+        elif rel.parts and rel.parts[0] == "tax" and len(rel.parts) == 2:
+            target = cfg.tax_data_dir / "uploads" / rel.parts[1]
+        else:
+            continue
+        if target.is_file() and target.read_bytes() == data:
+            continue
+        out.append((name, target, data))
+    return out
+
+
+def _write_synced(path: Path, data: bytes) -> None:
+    """Datei schreiben und auf den Datenträger bringen (übersteht einen Absturz direkt danach)."""
+    with open(path, "wb") as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def _stage(targets: list[tuple[str, Path, bytes]], rid: str) -> list[dict[str, str]]:
+    """Inhalte als temporäre Dateien neben dem Ziel ablegen. Fehler (Rechte, Speicherplatz) → alles Vorbereitete
+    entfernen, nichts übernommen."""
+    staged: list[dict[str, str]] = []
+    need: dict[Path, int] = defaultdict(int)
     try:
-        counts.update(_apply_db(ctx, import_id, st, extras, now))
+        for _name, target, data in targets:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            need[target.parent] += len(data)
+        for d, n in need.items():
+            free = shutil.disk_usage(d).free
+            if free < n + 1024 * 1024:
+                raise RestoreError(f"Nicht genug Speicherplatz in {d} ({free // 1024} KB frei, {n // 1024} KB "
+                                   "benötigt) – nichts übernommen.")
+        for name, target, data in targets:
+            tmp = target.with_name(f".{target.name}{_TMP_MARK}{rid}")
+            staged.append({"name": name, "target": str(target), "tmp": str(tmp),
+                           "bak": str(target.with_name(f"{target.name}.bak-{rid}")), "sha": _sha(data)})
+            _write_synced(tmp, data)
     except BaseException:
-        for tmp, _target in staged:
-            tmp.unlink(missing_ok=True)
-        ctx.invalidate_data()
+        for f in staged:
+            Path(f["tmp"]).unlink(missing_ok=True)
         raise
-    counts["files"] = sum(_commit_file(tmp, target, stamp) for tmp, target in staged)
-    db.set_state(f"restore.{import_id}", {"state": "applied", "at": now, "counts": counts})
+    return staged
+
+
+def apply(ctx: Any, import_id: int) -> dict[str, int]:
+    """Zusatzdaten eines importierten Portfolia-Exports übernehmen (idempotent, löscht nichts).
+
+    Ablauf (SQLite und Dateisystem bilden keine gemeinsame Transaktion):
+
+    1. prüfen (:func:`validate`) – Fehler → nichts geändert;
+    2. Dateien temporär neben dem Ziel vorbereiten (Speicherplatz, Rechte) – Fehler → nichts geändert;
+    3. alle Datenbankänderungen **und** das Wiederherstellungs-Journal (welche Dateien noch zu ersetzen sind) in
+       *einer* Transaktion – Fehler/Abbruch → Rollback, vorbereitete Dateien werden entfernt;
+    4. Dateien ersetzen (bisherige als ``.bak-<id>``), Inhalt per Prüfsumme bestätigen, Journal schließen.
+
+    Bricht Schritt 4 ab (Fehler, Prozess-/Container-Neustart), steht der Vorgang als „unvollständig“ im Journal und
+    wird deterministisch fortgesetzt (:func:`resume`: beim Start, beim nächsten Übernehmen oder per „Fortsetzen“) –
+    fehlende temporäre Dateien werden aus den in der Datenbank gespeicherten Zusatzdaten neu erzeugt. Erst danach
+    gilt die Übernahme als abgeschlossen.
+    """
+    with _RESTORE_LOCK:
+        _resume_locked(ctx)
+        db = ctx.db
+        extras = extras_for(db, import_id)
+        st = _state(extras)
+        if st is None:
+            raise RestoreError("Keine gültigen Portfolia-Zusatzdaten in diesem Import.")
+        errs = validate(extras, st)
+        if errs:
+            raise RestoreError("Zusatzdaten unvollständig oder widersprüchlich – nichts übernommen: "
+                               + "; ".join(errs[:5]))
+        now = iso(datetime.now(UTC)) or ""
+        rid = datetime.now(UTC).strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6]
+        staged = _stage(_file_targets(ctx, extras), rid)
+        journal = {"id": rid, "import_id": import_id, "at": now, "files": staged, "attempts": 0}
+        try:
+            counts = _apply_db(ctx, import_id, st, extras, now, journal)
+        except BaseException:
+            for f in staged:
+                Path(f["tmp"]).unlink(missing_ok=True)
+            ctx.invalidate_data()
+            raise
+        _reload(ctx)
+        try:
+            counts["files"] = _finish(ctx, journal, counts) if staged else 0
+        except RestoreIncomplete:
+            _after_apply(ctx)  # Datenbankteil gilt – Folgejobs trotzdem anstoßen
+            raise
+    _after_apply(ctx)
+    log.info("Portfolia-Export übernommen (Import %s, Wiederherstellung %s): %s", import_id, rid, counts)
+    return counts
+
+
+def _reload(ctx: Any) -> None:
     ctx.settings.reload()
     ctx.invalidate_data()
+
+
+def _after_apply(ctx: Any) -> None:
     sched = getattr(ctx, "scheduler", None)
     if sched is not None:
         sched.reschedule_prices()
@@ -288,12 +452,12 @@ def apply(ctx: Any, import_id: int) -> dict[str, int]:
         for job, delay in (("history_backfill", 5), ("plans_update", 20), ("prices_crypto", 3),
                            ("prices_securities", 4)):
             sched.trigger(job, delay)
-    log.info("Portfolia-Export übernommen (Import %s): %s", import_id, counts)
-    return counts
 
 
-def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, bytes], now: str) -> dict[str, int]:
-    """Alle Datenbank-Änderungen der Übernahme in *einer* Transaktion (ganz oder gar nicht)."""
+def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, bytes], now: str,
+              journal: dict[str, Any] | None = None) -> dict[str, int]:
+    """Alle Datenbank-Änderungen der Übernahme in *einer* Transaktion (ganz oder gar nicht) – samt Journal der noch
+    zu ersetzenden Dateien und Status (``incomplete`` bis die Dateien ersetzt sind)."""
     db = ctx.db
     counts: dict[str, int] = {}
     with db.transaction() as c:
@@ -327,46 +491,110 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
         counts["taxdata"] = _taxdata(c, extras.get(TAXDATA), ctx.config.tax_data_dir / "uploads", now)
         c.execute("INSERT INTO journal_log(at, action, ref, before_json, after_json) VALUES (?,?,?,?,?)",
                   (now, "restore_apply", f"import {import_id}", None, json.dumps(counts)))
+        pending = bool(journal and journal.get("files"))
+        if pending:
+            _put_state(c, JOURNAL_KEY, {**(journal or {}), "counts": counts})
+        _put_state(c, f"restore.{import_id}", {"state": "incomplete" if pending else "applied", "at": now,
+                                               "counts": counts, "restore_id": (journal or {}).get("id")})
     return counts
 
 
-def _stage_files(ctx: Any, extras: dict[str, bytes], stamp: str) -> list[tuple[Path, Path]]:
-    """Dateien des Exports als temporäre Dateien neben dem Ziel ablegen (nur unveränderte werden übersprungen)."""
-    cfg = ctx.config
-    staged: list[tuple[Path, Path]] = []
+def _put_state(c: Any, key: str, value: Any) -> None:
+    c.execute("INSERT INTO app_state(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+              (key, json.dumps(value)))
+
+
+def _finish(ctx: Any, journal: dict[str, Any], counts: dict[str, int] | None = None) -> int:
+    """Dateien des Journals ersetzen – idempotent: bereits ersetzte (gleiche Prüfsumme) werden übersprungen, fehlende
+    temporäre Dateien aus den gespeicherten Zusatzdaten neu erzeugt. Fehler → Journal bleibt offen
+    (:class:`RestoreIncomplete`), nichts wird zurückgedreht."""
+    db = ctx.db
+    extras: dict[str, bytes] | None = None
+    done, errors = 0, []
+    for f in journal.get("files") or []:
+        target, tmp, bak = Path(f["target"]), Path(f["tmp"]), Path(f["bak"])
+        try:
+            if target.is_file() and _sha(target.read_bytes()) == f["sha"]:
+                tmp.unlink(missing_ok=True)
+                continue
+            if not (tmp.is_file() and _sha(tmp.read_bytes()) == f["sha"]):
+                if extras is None:
+                    extras = extras_for(db, int(journal["import_id"]))
+                data = extras.get(f["name"])
+                if data is None or _sha(data) != f["sha"]:
+                    errors.append(f"{target.name}: Inhalt in den gespeicherten Zusatzdaten nicht mehr vorhanden")
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                _write_synced(tmp, data)
+            if target.exists() and not bak.exists():
+                target.replace(bak)  # bisherige Fassung sichern (nur einmal je Wiederherstellung)
+            tmp.replace(target)
+            done += 1
+        except OSError as e:
+            errors.append(f"{target.name}: {e.strerror or type(e).__name__}")
+    iid = int(journal["import_id"])
+    now = iso(datetime.now(UTC)) or ""
+    counts = {**(journal.get("counts") or {}), **(counts or {})}
+    if errors:
+        journal = {**journal, "attempts": int(journal.get("attempts") or 0) + 1, "error": "; ".join(errors[:5]),
+                   "failed_at": now}
+        db.set_state(JOURNAL_KEY, journal)
+        log.error("Wiederherstellung %s unvollständig (Dateien): %s", journal.get("id"), journal["error"])
+        raise RestoreIncomplete("Wiederherstellung unvollständig: Datenbank übernommen, Dateien noch nicht ersetzt ("
+                                + "; ".join(errors[:3]) + "). Wird beim nächsten Start bzw. mit „Fortsetzen“ "
+                                "fortgesetzt.")
+    counts["files"] = int(counts.get("files") or 0) + done
+    with db.transaction() as c:
+        c.execute("DELETE FROM app_state WHERE key=?", (JOURNAL_KEY,))
+        _put_state(c, f"restore.{iid}", {"state": "applied", "at": now, "counts": counts,
+                                         "restore_id": journal.get("id")})
+        c.execute("INSERT INTO journal_log(at, action, ref, before_json, after_json) VALUES (?,?,?,?,?)",
+                  (now, "restore_files", f"import {iid}", None, json.dumps({"files": done, "id": journal.get("id")})))
+    return done
+
+
+def pending(db: Any) -> dict[str, Any] | None:
+    """Offene (unterbrochene) Wiederherstellung oder None."""
+    j = db.get_state(JOURNAL_KEY)
+    return j if isinstance(j, dict) and j.get("files") else None
+
+
+def resume(ctx: Any) -> int | None:
+    """Unterbrochene Wiederherstellung fortsetzen (Anzahl ersetzter Dateien) bzw. None, wenn keine offen ist."""
+    with _RESTORE_LOCK:
+        return _resume_locked(ctx)
+
+
+def _resume_locked(ctx: Any) -> int | None:
+    j = pending(ctx.db)
+    if j is None:
+        return None
+    n = _finish(ctx, j)
+    log.info("Unterbrochene Wiederherstellung %s abgeschlossen (%d Dateien)", j.get("id"), n)
+    return n
+
+
+def recover(ctx: Any) -> None:
+    """Beim Start: unterbrochene Wiederherstellung fortsetzen und verwaiste temporäre Dateien entfernen (nur
+    ``.<name>.restore-<id>`` in den Zielordnern, die kein offenes Journal mehr braucht). Fehler blockieren den Start
+    nie – der Vorgang bleibt sichtbar „unvollständig“."""
     try:
-        for name, data in extras.items():
-            if not name.startswith(FILES):
-                continue
-            rel = Path(name[len(FILES):])
-            if rel.is_absolute() or ".." in rel.parts:
-                continue
-            if rel.as_posix() == "sources.yaml":
-                target = cfg.sources_path
-            elif rel.parts and rel.parts[0] == "tax_rules" and len(rel.parts) > 1:
-                target = cfg.tax_rules_dir.joinpath(*rel.parts[1:])
-            elif rel.parts and rel.parts[0] == "tax" and len(rel.parts) == 2:
-                target = cfg.tax_data_dir / "uploads" / rel.parts[1]
-            else:
-                continue
-            if target.exists() and target.read_bytes() == data:
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_name(f".{target.name}.restore-{stamp}")
-            tmp.write_bytes(data)
-            staged.append((tmp, target))
-    except BaseException:
-        for tmp, _target in staged:
-            tmp.unlink(missing_ok=True)
-        raise
-    return staged
-
-
-def _commit_file(tmp: Path, target: Path, stamp: str) -> int:
-    if target.exists():
-        target.replace(target.with_name(f"{target.name}.bak-{stamp}"))
-    tmp.replace(target)
-    return 1
+        resume(ctx)
+    except Exception as e:
+        log.error("Wiederherstellung konnte nicht fortgesetzt werden: %s", e)
+    keep = {f["tmp"] for f in (pending(ctx.db) or {}).get("files") or []}
+    cfg = ctx.config
+    dirs = {cfg.sources_path.parent, cfg.tax_data_dir / "uploads"}
+    if cfg.tax_rules_dir.is_dir():
+        dirs |= {p for p in cfg.tax_rules_dir.rglob("*") if p.is_dir()} | {cfg.tax_rules_dir}
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for p in d.glob(f".*{_TMP_MARK}*"):
+            if p.is_file() and str(p) not in keep:
+                with contextlib.suppress(OSError):
+                    p.unlink()
+                    log.info("Verwaiste Datei einer abgebrochenen Wiederherstellung entfernt: %s", p.name)
 
 
 def _watchlists(c: Any, lists: list[dict[str, Any]], items: list[dict[str, Any]], now: str) -> int:

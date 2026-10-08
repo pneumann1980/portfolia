@@ -79,6 +79,9 @@ class AppContext:
     def startup(self) -> None:
         self.config.ensure_dirs()
         self.db.migrate()
+        from app.fullexport import recover
+
+        recover(self)  # unterbrochene Wiederherstellung fortsetzen, verwaiste temporäre Dateien entfernen
         if self.prices.cg is not None:
             self.prices.cg.monthly_limit = int(self.settings.get("prices.coingecko_monthly_limit", 10000))
 

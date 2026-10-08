@@ -233,13 +233,25 @@ def make_router() -> APIRouter:
             iid = int(str(f.get("import_id") or "0"))
         except ValueError:
             iid = 0
-        if st is None or st["import_id"] != iid or action not in ("apply", "dismiss"):
+        if action == "resume":
+            if fullexport.pending(ctx.db) is None:
+                raise HTTPException(404)
+        elif st is None or st["import_id"] != iid or action not in ("apply", "dismiss"):
             raise HTTPException(404)
-        if action == "apply":
-            await run_in_threadpool(fullexport.apply, ctx, iid)
-        else:
-            fullexport.dismiss(ctx, iid)
         target = f"/settings?saved=restore_{action}#export"
+        try:
+            if action == "apply":
+                await run_in_threadpool(fullexport.apply, ctx, iid)
+            elif action == "resume":
+                await run_in_threadpool(fullexport.resume, ctx)
+                target = "/settings?saved=restore_apply#export"
+            else:
+                fullexport.dismiss(ctx, iid)
+        except (fullexport.RestoreError, fullexport.RestoreIncomplete, OSError, ValueError) as e:
+            from urllib.parse import quote
+
+            log.warning("Übernahme der Zusatzdaten: %s", e)
+            target = f"/settings?err={quote(str(e)[:300])}#export"
         if request.headers.get("hx-request") == "true":
             return Response(status_code=204, headers={"HX-Redirect": target})
         return Response(status_code=303, headers={"Location": target})

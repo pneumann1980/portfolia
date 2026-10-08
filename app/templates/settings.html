@@ -154,7 +154,8 @@
       <button class="btn sm" hx-post="/actions/export" hx-target="#export-msg" hx-indicator="#ex-spin">Jetzt sichern</button>
       <span id="ex-spin" class="htmx-indicator spinner"></span><span id="export-msg"></span></div></div>
   {% if saved == 'restore_apply' %}<div class="alert good"><span class="icon">✓</span><div>Zusatzdaten aus dem Export übernommen{% if restore and restore.counts %}: {{ restore.counts.settings }} Einstellungen, {{ restore.counts.asset_sources }} Kursquellen, {{ restore.counts.prices|num(0) }} Tageskurse, {{ restore.counts.datasources }} Datenquellen{% endif %}. API-Keys unter Datenquellen neu eingeben.</div></div>{% endif %}
-  {% if restore and restore.state == 'pending' %}{% include "partials/restore_notice.html" %}{% endif %}
+  {% if err %}<div class="alert crit"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  {% if restore and restore.state == 'pending' %}{% include "partials/restore_notice.html" %}{% elif restore and restore.state == 'incomplete' %}{% include "partials/restore_incomplete.html" %}{% endif %}
   <p class="hint">Nach jeder Änderung an Buchungen oder Einstellungen entsteht – gebündelt nach zwei Minuten Ruhe – eine datierte Datei
     <code>portfolia-export-JJJJ-MM-TT_HHMMSS.zip</code> im einheitlichen Import-Format (Datenvertrag, Schema 1.1). Sie enthält
     <b>alles für eine Neueinrichtung</b>: alle Buchungen in ihrer wirksamen Fassung (Import mit Änderungen und Löschungen in der App,

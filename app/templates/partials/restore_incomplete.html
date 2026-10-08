@@ -1,0 +1,8 @@
+{# Unterbrochene Wiederherstellung (Datenbank übernommen, Dateien offen). Erwartet: restore (fullexport.status). #}
+<div class="alert crit" id="restore" style="margin:8px 0"><span class="icon">!</span><div>
+  <b>Wiederherstellung unvollständig</b>: Einstellungen, Zuordnungen und Kurshistorie sind übernommen, {{ restore.files_open }} Datei(en)
+  (z. B. News-Quellen, Steuerregeln, Steuerberichte) noch nicht ersetzt{% if restore.error %} – letzter Fehler: {{ restore.error }}{% endif %}.
+  <div class="hint">Portfolia setzt den Vorgang beim nächsten Start automatisch fort; bisherige Dateien bleiben bis dahin unverändert bzw. als
+    <code>.bak-…</code> gesichert. Ursache beheben (z. B. Schreibrechte, Speicherplatz) und dann fortsetzen.</div>
+  <form method="post" action="/actions/restore/resume" class="inline" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm primary" type="submit">Jetzt fortsetzen</button></form>
+</div></div>
