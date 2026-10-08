@@ -113,7 +113,7 @@
   function buildUrl(el) {
     var src = el.dataset.src;
     var u = new URL(src, location.origin);
-    ["range", "kind", "mode", "level", "expand"].forEach(function (k) {
+    ["range", "kind", "mode", "level", "expand", "color"].forEach(function (k) {
       if (el.dataset[k] !== undefined && el.dataset[k] !== "") u.searchParams.set(k, el.dataset[k]);
     });
     return u.pathname + u.search;
@@ -382,18 +382,19 @@
     var r = x.map(function (v, i) { return Math.round(v + (y[i] - v) * f); });
     return "#" + r.map(function (v) { return ("0" + v.toString(16)).slice(-2); }).join("");
   }
-  function divColor(t, v) {
+  function divColor(t, v, scale) {
     if (v === null || v === undefined) return t.mid;
-    var f = Math.min(1, Math.abs(v) / 4);
+    var f = Math.min(1, Math.abs(v) / (scale || 4));
     return mix(t.mid, v >= 0 ? t.pos : t.neg, 0.25 + 0.75 * f);
   }
   function treemap(el, d) {
     var t = tok();
     if (!d.data || !d.data.length) return empty(el, "Keine Positionen.");
     var inst = getInstance(el);
+    var label = d.metric === "total" ? "G/V gesamt" : "Heute";
     var data = d.data.map(function (g) {
       return { name: g.name, children: g.children.map(function (c) {
-        return { name: c.name, value: c.value, _c: c, itemStyle: { color: divColor(t, c.change_pct) } };
+        return { name: c.name, value: c.value, _c: c, itemStyle: { color: divColor(t, c.change_pct, d.scale) } };
       }) };
     });
     inst.setOption({
@@ -401,12 +402,15 @@
         formatter: function (p) {
           var c = p.data && p.data._c;
           if (!c) return "<b>" + esc(p.name) + "</b>" + row(null, "Wert", eur(p.value));
-          return "<b>" + esc(c.full_name) + "</b>" + row(null, "Wert", eur(c.value)) + row(null, "Gewicht", share(c.weight)) +
-            row(null, "Heute", c.change_pct === null ? "–" : pct(c.change_pct) + " (" + eur(c.change_eur) + ")");
+          var html = "<b>" + esc(c.full_name) + "</b>" + row(null, "Wert", eur(c.value)) + row(null, "Gewicht", share(c.weight)) +
+            row(null, label, c.change_pct === null ? "–" : pct(c.change_pct) + " (" + eur(c.change_eur) + ")");
+          if (c.members) html += "<div style='max-width:240px;white-space:normal'>" + esc(c.members.join(", ")) + "</div>";
+          return html;
         },
       }),
       series: [{
         type: "treemap", roam: false, nodeClick: false, breadcrumb: { show: false }, top: 4, left: 4, right: 4, bottom: 4,
+        visibleMin: 80, childrenVisibleMin: 40,
         itemStyle: { borderColor: t.surface, borderWidth: 2, gapWidth: 2 },
         upperLabel: { show: true, height: 20, color: t.ink, fontWeight: 600, fontSize: 11 },
         label: { show: true, fontSize: 11, color: t.ink, overflow: "truncate",
@@ -419,6 +423,11 @@
     inst.off("click");
     inst.on("click", function (p) {
       var c = p.data && p.data._c;
+      if (c && c.other) {  // „Sonstige“ aufklappen
+        el.dataset.expand = "all";
+        load(el, true);
+        return;
+      }
       if (c && window.PortfoliaPanel) {
         var q = encodeURIComponent(c.id);
         window.PortfoliaPanel.open("/panel/asset/" + q, c.full_name, "/asset/" + q);

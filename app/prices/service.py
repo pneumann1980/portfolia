@@ -374,11 +374,13 @@ class PriceService:
     def update_crypto(self, pf: Portfolio, ledger: LedgerResult, force: bool = False) -> UpdateResult:
         res = UpdateResult("coingecko")
         assets = [a for a in self.held_assets(pf, ledger) if a.is_crypto and self.series_for(a)]
-        if not assets:
+        watch = self.watch_ids("coingecko")  # Watchlist: im selben gebündelten Aufruf, kein Zusatzkontingent
+        if not assets and not watch:
             res.skipped = "keine Krypto-Positionen mit Kursquelle"
             return res
         if self.demo:
-            quotes = [q for a in assets if (q := self.demo.quote(self.series_for(a)))]  # type: ignore[arg-type]
+            series = {self.series_for(a) for a in assets} | {f"demo:cg:{w}" for w in watch}
+            quotes = [q for s in sorted(x for x in series if x) if (q := self.demo.quote(s))]
             res.updated = self.store.upsert_quotes(quotes)
             self._bump()
             return res
@@ -392,7 +394,7 @@ class PriceService:
         if not self.guard.allowed("price:coingecko") and not force:
             res.skipped = "Quelle gedrosselt (vorherige Fehler)"
             return res
-        ids = sorted({a.quote_id for a in assets if a.quote_id})
+        ids = sorted({a.quote_id for a in assets if a.quote_id} | set(watch))
         try:
             quotes, errors = self.cg.quotes(ids)
         except BudgetExceeded as e:
@@ -411,6 +413,14 @@ class PriceService:
         elif errors:
             self.guard.failure("price:coingecko", "price", "; ".join(errors[:3]), "CoinGecko")
         return res
+
+    def watch_ids(self, source: str) -> list[str]:
+        """Kennungen der Watchlist-Einträge eines Anbieters (für gebündelte Kursabrufe)."""
+        try:
+            return [r["quote_id"] for r in self.db.q("SELECT DISTINCT quote_id FROM watchlist_item WHERE "
+                                                     "quote_source=?", (source,))]
+        except Exception:  # Datenbank vor Migration 15
+            return []
 
     def fx_currencies(self, pf: Portfolio, ledger: LedgerResult | None = None) -> set[str]:
         ccys = {a.asset_id.upper() for a in pf.assets.values() if a.is_fiat and a.asset_id.upper() != "EUR"}
@@ -437,7 +447,7 @@ class PriceService:
         if self.yahoo is None:
             res.skipped = "Yahoo nicht konfiguriert"
             return res
-        symbols = [a.quote_id for a in assets if a.quote_id]
+        symbols = sorted({a.quote_id for a in assets if a.quote_id} | set(self.watch_ids("yahoo")))
         if not force:
             symbols = [s for s in symbols if in_window(exchange_group(s), now_local)]
         fx_syms = [f"EUR{c}=X" for c in sorted(self.fx_currencies(pf, ledger))]

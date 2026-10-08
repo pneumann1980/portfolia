@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 from urllib.parse import quote
@@ -11,6 +10,7 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 
 from app.context import AppContext
+from app.progress import view as progress_view
 
 log = logging.getLogger(__name__)
 
@@ -51,13 +51,6 @@ def global_alerts(ctx: AppContext) -> list[dict[str, str]]:
                                                     "fehlen im aktuellen Import.", "href": "/plans#confirmed"})
     except Exception as e:  # Tabelle erst nach Migration vorhanden
         log.debug("Sparplan-Hinweise nicht verfügbar: %s", e)
-    job = ctx.db.q1("SELECT running, progress_json FROM job_status WHERE job='history_backfill'")
-    if job is not None and job["running"]:
-        p = json.loads(job["progress_json"] or "{}")
-        done, total = p.get("done", 0), p.get("total", 0)
-        alerts.append({"level": "info", "text": f"Historische Kurse werden geladen ({done}/{total}) – Charts "
-                                                "vervollständigen sich im Hintergrund.", "href": "/quality#jobs",
-                       "progress": str(int(done / total * 100)) if total else "0"})
     return alerts
 
 
@@ -82,6 +75,7 @@ def render(request: Request, template: str, status_code: int = 200, **kw: Any) -
         "has_import": ctx.active_import_id() is not None,
         "estimated_assets": _estimated_assets(ctx),
         "is_htmx": request.headers.get("hx-request") == "true",
+        "progress_view": progress_view,
     }
     base.update(kw)
     return tpl.TemplateResponse(request, template, base, status_code=status_code)

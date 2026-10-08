@@ -70,6 +70,7 @@ from app.datasources.providers import (
 from app.datasources.vault import Vault, VaultError
 from app.datasources.wallet import GAP_DEFAULT, GAP_MAX, MAX_ADDRESSES, SCRIPT_TYPES, WatchConfig, new_watch_id, short
 from app.logging_setup import get_redactor
+from app.progress import Progress, view
 from app.util.http import Quota
 from app.util.timeutil import iso, local_tz, parse_iso, to_local_date
 
@@ -1098,7 +1099,7 @@ class DataSourceService:
         stamp = iso(_now())
         secret = K.Secret(None)
         conn.catalog = Catalog(self.db, ds.provider)
-        self._prepare(ds, conn)
+        self._prepare(ds, conn, track=False)
         try:
             secret = self._secret(ds, conn)
             with get_redactor().temporary(secret.values()):
@@ -1202,7 +1203,7 @@ class DataSourceService:
         try:
             for n, sid in enumerate(ids, 1):
                 ds = self.get(sid)
-                state.update(current=ds.name if ds else str(sid), updated_at=iso(_now()))
+                state.update(current=ds.name if ds else str(sid), current_id=sid, updated_at=iso(_now()))
                 self.ctx.settings.set(BATCH_KEY, state)
                 res: dict[str, Any] = {}
                 try:
@@ -1244,6 +1245,17 @@ class DataSourceService:
             seen = parse_iso(p.get("updated_at"))
             if seen is None or (_now() - seen).total_seconds() > PROGRESS_STALE_S:
                 p.update(running=False, stale=True)
+        # Gesamtfortschritt: erledigte Konten + Anteil des laufenden (einheitliche Anzeige, app.progress)
+        total = int(p.get("total") or 0)
+        cur_pct = 0.0
+        cur = self.get(int(p["current_id"])) if p.get("running") and p.get("current_id") else None
+        if cur is not None and cur.progress.get("running"):
+            cur_pct = float(view(cur.progress).get("pct") or 0)
+            p["current_phase"] = cur.progress.get("phase_label") or cur.progress.get("stage")
+        done = int(p.get("done") or 0)
+        p["pct"] = round(min(100.0, (done + cur_pct / 100) / total * 100), 1) if total else 0.0
+        if not p.get("running") and total and done >= total:
+            p["pct"] = 100.0
         return p
 
     # -- Gruppen -------------------------------------------------------------------------------------------
@@ -1286,15 +1298,27 @@ class DataSourceService:
         self.db.x("UPDATE data_source SET progress_json=? WHERE id=?",
                   (json.dumps(data, ensure_ascii=False, default=str), sid))
 
-    def _prepare(self, ds: DataSource, conn: K.Connector) -> None:
-        """Fortschritt und Nutzungszähler an den Connector anbinden."""
+    def _prepare(self, ds: DataSource, conn: K.Connector, track: bool = True) -> Progress | None:
+        """Fortschritt (einheitlich, app.progress) und Nutzungszähler an den Connector anbinden. ``track=False``
+        (Verbindungstest): nur Nutzungszähler, kein Fortschritt."""
         sid = int(ds.id)
-        base = {"running": True, "started_at": iso(_now())}
+        if not track:
+            self._bind_usage(ds, conn)
+            return None
+        prog = Progress(lambda p: self._set_progress(sid, p, force=True), "Synchronisierung", source=ds.name,
+                        unit="Vorgänge", phases=["prepare", "fetch", "process", "reconcile", "save"])
+        prog.phase("prepare", text="Zugang und Abrufstand")
 
         def progress(stage: str, done: int, total: int | None, text: str) -> None:
-            self._set_progress(sid, {**base, "stage": stage, "done": done, "total": total, "text": text[:200]})
+            if prog.phase_key != "fetch":
+                prog.phase("fetch")
+            prog.update(done, total, f"{stage}: {text}" if text else stage)
 
         conn.progress = progress
+        self._bind_usage(ds, conn)
+        return prog
+
+    def _bind_usage(self, ds: DataSource, conn: K.Connector) -> None:
         if conn.wallet:
             ep = conn.endpoint(ds.config())  # type: ignore[attr-defined]
             quota = Quota(self.db, f"wallet:{ep.id}", "day")
@@ -1485,16 +1509,19 @@ class DataSourceService:
         nxt = next_run(bool(ds.enabled), True, int(ds.sync_interval_min or 0), started, started)
         secret = K.Secret(None)
         conn.catalog = Catalog(self.db, ds.provider)
-        self._prepare(ds, conn)
+        prog = self._prepare(ds, conn)
+        assert prog is not None
         try:
             secret = self._secret(ds, conn)
             cursor = json.loads(ds.cursor_json) if ds.cursor_json else None
+            prog.phase("fetch", text=f"Abruf bei {ds.provider_label}")
             with get_redactor().temporary(secret.values()):
                 res = conn.fetch(ds.config(), secret, cursor)
+            prog.phase("process", len(res.events), "Vorgänge werden ausgewertet")
             recs = self._normalize(ds, res)
+            prog.update(len(res.events), len(res.events))
         except Exception as e:  # Anbieter-/Netzwerk-/Vertragsfehler → Anzeige ohne Geheimnisse
             return self._fail(ds, run_id, e, secret.values(), started, nxt)
-        conn.report("Prüfung", len(res.events), len(res.events), "Vorgänge werden ausgewertet")
         from app.csvimport.service import csv_service, rec_to_json
 
         csv = csv_service(self.ctx)
@@ -1505,6 +1532,7 @@ class DataSourceService:
             return self._fail(ds, run_id, e, secret.values(), started, nxt)
         present = self._present(sid)
         fresh = [r for r in recs if (r.event_key or "") not in present]
+        prog.phase("reconcile", len({r.event_key for r in fresh}), "Abgleich mit Buchungen und Prüf-Stapel")
         n_waiting = len({r.event_key for r in recs if present.get(r.event_key or "")})
         counts: dict[str, int] = defaultdict(int)
         committed = 0
@@ -1530,6 +1558,7 @@ class DataSourceService:
                 switched = self.adopt_account(ds)
                 if switched:
                     ds = self.get(sid) or ds
+            prog.phase("save", text="Übernehmen und speichern")
             if ds.auto_commit:  # je Ereignis – auch in offenen Stapeln, sobald sie eindeutig geworden sind
                 for b in self.pending_batches(sid):
                     csv.ensure_current(int(b["id"]))  # nie nach überholter Auswertung übernehmen

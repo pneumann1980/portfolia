@@ -77,11 +77,15 @@ def dashboard(request: Request) -> HTMLResponse:
     movers = [p for p in val.positions if p.day_change_pct is not None and not p.asset.is_fiat and p.value > 0]
     gainers = sorted([p for p in movers if p.day_change_pct > 0], key=lambda p: -p.day_change_pct)[:5]
     losers = sorted([p for p in movers if p.day_change_pct < 0], key=lambda p: p.day_change_pct)[:5]
+    # absolut: tatsächliche Wertänderung der Position (Menge × Kursänderung), nicht die Kursänderung je Stück
+    gainers_eur = sorted([p for p in movers if (p.day_change or 0) > 0], key=lambda p: -(p.day_change or 0))[:5]
+    losers_eur = sorted([p for p in movers if (p.day_change or 0) < 0], key=lambda p: p.day_change or 0)[:5]
     news = _latest_news(ctx, int(ctx.settings.get("news.dashboard_count", 5)))
     from app.fullexport import status as restore_status
 
     return render(request, "dashboard.html", active="dashboard", val=val, kpi=_kpis(ctx, val, hist), gainers=gainers,
-                  losers=losers, news=news, threshold=ctx.settings.get("allocation.other_threshold_pct", 1.0),
+                  losers=losers, gainers_eur=gainers_eur, losers_eur=losers_eur, news=news,
+                  threshold=ctx.settings.get("allocation.other_threshold_pct", 1.0),
                   default_range=ctx.settings.get("ui.default_range", "1J"), restore=restore_status(ctx))
 
 
@@ -201,6 +205,14 @@ def asset_context(ctx: Any, asset_id: str) -> dict[str, Any]:
         "colors": asset_colors(asset_id, a.segment), "account_scope": ctx.settings.get("ledger.scope", "global"),
         "tax_pack": pack_name, "quality": hist.quality.get(asset_id) if hist is not None else None,
     }
+
+
+@router.get("/progress/active", response_class=HTMLResponse)
+def progress_active(request: Request) -> HTMLResponse:
+    """Laufende Synchronisierungen und Importe (einheitliche Anzeige, app.progress)."""
+    from app.progress import active
+
+    return render(request, "partials/progress_active.html", items=active(get_ctx(request)))
 
 
 @router.get("/asset/{asset_id:path}", response_class=HTMLResponse)

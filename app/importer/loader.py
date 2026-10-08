@@ -6,6 +6,7 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -275,9 +276,12 @@ def _store_failure(db: Database, path: Path, sha: str, report: Report, duration_
 
 
 def import_file(db: Database, path: Path, opts: EngineOptions, trigger: str = "manual",
-                force: bool = False) -> ImportOutcome:
+                force: bool = False, progress: Callable[[], Any] | None = None) -> ImportOutcome:
+    """``progress``: Fabrik für einen :class:`app.progress.Progress` – erst angelegt, wenn die Datei tatsächlich
+    verarbeitet wird (nicht bei unveränderter Datei, damit die regelmäßige Prüfung keinen Fortschritt meldet)."""
     if not _import_lock.acquire(blocking=False):
         return ImportOutcome("busy", "Ein Import läuft bereits.")
+    prog = None
     try:
         t0 = time.perf_counter()
         sha = sha256_file(path)
@@ -289,14 +293,21 @@ def import_file(db: Database, path: Path, opts: EngineOptions, trigger: str = "m
                 row = db.q1("SELECT report_json FROM imports WHERE id=?", (prev["id"],))
                 return ImportOutcome("failed", "Diese Datei wurde bereits geprüft und abgelehnt.", prev["id"],
                                      path.name, report=json.loads(row["report_json"]) if row else None)
+        if progress is not None:
+            prog = progress()
+            prog.phase("process", text=f"{path.name} lesen und prüfen")
         report, parsed = validate_zip(path)
         if parsed is None:
+            if prog is not None:
+                prog.finish(False, f"Import abgelehnt: {len(report.errors)} Fehler")
             ms = int((time.perf_counter() - t0) * 1000)
             iid = _store_failure(db, path, sha, report, ms, trigger)
             log.warning("Import abgelehnt: %s (%d Fehler)", path.name, len(report.errors),
                         extra={"import_id": iid, "file": path.name})
             return ImportOutcome("failed", f"Import abgelehnt: {len(report.errors)} Fehler", iid, path.name,
                                  report=json.loads(report.to_json()), duration_ms=ms)
+        if prog is not None:
+            prog.phase("reconcile", len(parsed.transactions), "Bestände berechnen, mit aktivem Stand vergleichen")
         new_pf = portfolio_from_parsed(parsed)
         new_res = run_ledger(new_pf, opts)
         old_id = active_import_id(db)
@@ -315,21 +326,29 @@ def import_file(db: Database, path: Path, opts: EngineOptions, trigger: str = "m
             if iss.severity == "warning":
                 report.warn(f"ledger_{iss.code}", iss.message, file="transactions.csv")
         ms = int((time.perf_counter() - t0) * 1000)
+        if prog is not None:
+            prog.phase("save", len(parsed.transactions), "Import speichern und aktivieren")
         iid = _store(db, path, parsed, report, diff, check, ms, trigger)
+        if prog is not None:
+            prog.finish(True, f"{len(parsed.transactions)} Transaktionen importiert")
         log.info("Import aktiviert: %s (id=%s, %d Tx, %d ms)", path.name, iid, len(parsed.transactions), ms,
                  extra={"import_id": iid})
         return ImportOutcome("imported", f"Import erfolgreich ({len(parsed.transactions)} Transaktionen)", iid,
                              path.name, report=json.loads(report.to_json()), diff=diff, check=check, duration_ms=ms)
+    except Exception:
+        if prog is not None:
+            prog.finish(False, "Abbruch")
+        raise
     finally:
         _import_lock.release()
 
 
 def check_import_dir(db: Database, import_dir: Path, opts: EngineOptions, trigger: str = "poll",
-                     force: bool = False) -> ImportOutcome:
+                     force: bool = False, progress: Callable[[], Any] | None = None) -> ImportOutcome:
     path, note = find_candidate(import_dir)
     if path is None:
         return ImportOutcome("none", note or "Keine Datei gefunden")
     if note == "pending":
         return ImportOutcome("pending", f"{path.name} wurde gerade geändert – Import beim nächsten Durchlauf "
                                         f"(Datei wird evtl. noch kopiert).", filename=path.name)
-    return import_file(db, path, opts, trigger=trigger, force=force)
+    return import_file(db, path, opts, trigger=trigger, force=force, progress=progress)

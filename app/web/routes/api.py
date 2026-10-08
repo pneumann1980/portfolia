@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.analytics import periods as P
 from app.analytics.allocation import donut, sunburst, treemap
+from app.prices.market import market_data
 from app.util.timeutil import local_tz, parse_iso, today_local
 from app.web.deps import get_ctx
 from app.web.routes.pages import parse_d, scope_assets
@@ -54,10 +55,13 @@ def allocation(request: Request, mode: str = "sunburst", level: str = "position"
 
 
 @router.get("/treemap")
-def treemap_api(request: Request, account: str = "") -> JSONResponse:
+def treemap_api(request: Request, account: str = "", color: str = "day", expand: str = "",
+                group: int = 1) -> JSONResponse:
     ctx = get_ctx(request)
     val = ctx.valuation(account or None)
-    return JSONResponse(treemap(val) if val else {"data": []})
+    thr = float(ctx.settings.get("allocation.other_threshold_pct", 1.0)) if group else 0.0
+    exp = {e for e in expand.split(",") if e}
+    return JSONResponse(treemap(val, color, thr, exp) if val else {"data": []})
 
 
 @router.get("/history")
@@ -109,7 +113,7 @@ def _ohlc_from_intraday(points: list[Any], bucket_min: int) -> list[list[Any]]:
 def asset_chart(request: Request, asset_id: str, range: str = "1J", kind: str = "line") -> JSONResponse:
     ctx = get_ctx(request)
     pf, a = _asset_or_404(ctx, asset_id)
-    rng = range.upper()
+    rng = {"7T": "1W"}.get(range.upper(), range.upper())  # 7 Tage = Intraday-Woche
     s = ctx.prices.series_for(a)
     val = ctx.valuation()
     pos = val.by_id().get(asset_id) if val else None
@@ -138,29 +142,18 @@ def asset_chart(request: Request, asset_id: str, range: str = "1J", kind: str = 
         first = min((t.date for t in pf.txs if asset_id in (t.to_asset, t.from_asset)), default=today)
         start = min(first, today) - timedelta(days=7) if rng == "MAX" else _range_start(rng, today, date(1990, 1, 1))
         since = start
-        rows = ctx.store.daily_range(s, start, today) if s else []
-        fx_cache: dict[str, dict[str, float]] = {}
+        md = market_data(ctx)
+        series_pts = md.eur_series(s, start, today) if s else []
         pts, candles = [], []
         ccy = None
-        for r in rows:
+        for d, close, native, _src, r in series_pts:
             ccy = (r["ccy"] or "EUR").upper()
-            rate = 1.0
-            if ccy != "EUR":
-                if ccy not in fx_cache:
-                    fx_cache[ccy] = ctx.store.fx_series_map(ccy)
-                fx = fx_cache[ccy].get(r["date"]) or ctx.store.fx_on_or_before(ccy, date.fromisoformat(r["date"]))
-                val_fx = fx if isinstance(fx, float) else (fx[0] if fx else None)
-                if not val_fx:
-                    continue
-                rate = 1.0 / val_fx
-            sf = r["split_factor"] or 1.0
-            close = r["close"] * rate / sf
-            pts.append([r["date"], _r(close, 6), _r(r["close"] / sf, 6)])
+            pts.append([d.isoformat(), _r(close, 6), _r(native, 6)])
             if kind == "candle":
-                o = (r["open"] or r["close"]) * rate / sf
-                h = (r["high"] or r["close"]) * rate / sf
-                lo = (r["low"] or r["close"]) * rate / sf
-                candles.append([r["date"], _r(o, 6), _r(close, 6), _r(lo, 6), _r(h, 6)])
+                f = close / r["close"] if r["close"] else 1.0  # Devisenkurs und Split-Faktor des Tages
+                candles.append([d.isoformat(), _r((r["open"] or r["close"]) * f, 6), _r(close, 6),
+                                _r((r["low"] or r["close"]) * f, 6), _r((r["high"] or r["close"]) * f, 6)])
+        rows = [x[4] for x in series_pts]
         # Heute: Live-Kurs anhängen
         pi = ctx.prices.latest_eur_many([a], pf).get(asset_id)
         if pi and pi.valued and pi.kind == "quote" and (not pts or pts[-1][0] < today.isoformat()):
@@ -226,22 +219,9 @@ def _scope_series(ctx: Any, hist: Any, scope: str) -> Any:
 def _bench_series(ctx: Any, series: str, dates: list[date]) -> list[float | None]:
     if ctx.config.demo_mode and not series.startswith("demo:"):
         series = f"demo:{series}"
-    rows = ctx.store.daily_closes(series)
-    if not rows:
+    pts = [(x[0], x[1]) for x in market_data(ctx).eur_series(series)]
+    if not pts:
         return [None] * len(dates)
-    fx_cache: dict[str, dict[str, float]] = {}
-    pts: list[tuple[date, float]] = []
-    for d, close, ccy in rows:
-        c = (ccy or "EUR").upper()
-        rate = 1.0
-        if c != "EUR":
-            if c not in fx_cache:
-                fx_cache[c] = ctx.store.fx_series_map(c)
-            fx = fx_cache[c].get(d)
-            if not fx:
-                continue
-            rate = 1.0 / fx
-        pts.append((date.fromisoformat(d), close * rate))
     out: list[float | None] = []
     j = 0
     last = None

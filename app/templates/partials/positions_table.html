@@ -30,6 +30,7 @@
       {{ sort_link('gain_pct', '%', 'num') }}
       {{ sort_link('weight', 'Gewicht', 'num') }}
       <th>30 Tage</th>
+      <th class="sr-only">Schnellbuchung</th>
     </tr></thead>
     <tbody>
     {% for p in rows %}
@@ -48,9 +49,12 @@
         <td class="num" colspan="2"><span class="delta {{ p.unrealized|tone }}">{{ p.unrealized|eur(2, true) if not p.asset.is_fiat else '–' }}</span>{% if p.unrealized_pct is not none %}<br><small class="delta {{ p.unrealized_pct|tone }}">{{ p.unrealized_pct|pct }}</small>{% endif %}</td>
         <td class="num">{{ (p.weight)|pct(1, false) }}</td>
         <td>{{ sparks.get(p.asset_id, '') }}</td>
+        <td class="nowrap quick-btns">{% if not p.asset.is_fiat %}{% set q = urlq(p.asset_id) %}
+          <a class="icon-btn qt-sell" href="/journal/quick?asset={{ q }}&amp;side=sell" data-panel="/journal/quick?asset={{ q }}&amp;side=sell" data-title="Verkauf · {{ p.asset.name }}" aria-label="{{ p.asset.name }} verkaufen" title="Verkauf erfassen">−</a>
+          <a class="icon-btn qt-buy" href="/journal/quick?asset={{ q }}&amp;side=buy" data-panel="/journal/quick?asset={{ q }}&amp;side=buy" data-title="Kauf · {{ p.asset.name }}" aria-label="{{ p.asset.name }} kaufen" title="Kauf erfassen">+</a>{% endif %}</td>
       </tr>
     {% else %}
-      <tr><td colspan="10" class="hint">Keine Positionen für diese Auswahl.</td></tr>
+      <tr><td colspan="11" class="hint">Keine Positionen für diese Auswahl.</td></tr>
     {% endfor %}
     </tbody>
     <tfoot><tr>
@@ -59,7 +63,7 @@
       <td class="num"><span class="delta {{ totals.day|tone }}">{{ totals.day|eur(2, true) }}</span></td>
       <td class="num">{{ totals.cost|eur }}</td>
       <td class="num" colspan="2"><span class="delta {{ totals.gain|tone }}">{{ totals.gain|eur(2, true) }}</span>{% if totals.cost %}<br><small class="delta {{ totals.gain|tone }}">{{ (totals.gain / totals.cost)|pct }}</small>{% endif %}</td>
-      <td class="num">{{ totals.weight|pct(1, false) }}</td><td></td>
+      <td class="num">{{ totals.weight|pct(1, false) }}</td><td></td><td></td>
     </tr></tfoot>
   </table>
   </div>

@@ -102,17 +102,42 @@ def donut(val: Valuation, level: str = "position", threshold_pct: float = 1.0,
     return {"total": round(total, 2), "level": level, "data": items}
 
 
-def treemap(val: Valuation) -> dict[str, Any]:
-    """Fläche = Wert, Farbe = Tagesänderung (divergierend, Mitte neutral)."""
+def treemap(val: Valuation, color: str = "day", threshold_pct: float = 0.0, expand: set[str] | None = None) \
+        -> dict[str, Any]:
+    """Fläche = Positionswert, Farbe = Tagesänderung (``day``) bzw. Gesamt-G/V in % (``total``), divergierend.
+
+    Viele kleine Positionen: unter ``threshold_pct`` Gewicht je Segment zu „Sonstige (n)“ zusammengefasst (per
+    ``expand`` = {"all"} wieder einzeln); winzige Kacheln bleiben beschriftungslos (Anzeige)."""
+    total_mode = color == "total"
     groups: dict[str, list[Any]] = defaultdict(list)
+    small: dict[str, list[Any]] = defaultdict(list)
     for p in val.positions:
         if p.value <= 0 or p.asset.is_fiat:
             continue
-        groups[p.segment].append({
-            "name": p.asset.symbol, "full_name": p.asset.name, "id": p.asset_id, "value": round(p.value, 2),
-            "change_pct": round(p.day_change_pct * 100, 2) if p.day_change_pct is not None else None,
-            "change_eur": round(p.day_change, 2) if p.day_change is not None else None,
-            "weight": p.weight * 100,
-        })
-    return {"data": [{"name": s, "children": sorted(ch, key=lambda x: -x["value"])}
+        if total_mode:
+            chg = round(p.unrealized_pct * 100, 2) if p.unrealized_pct is not None else None
+            chg_eur = round(p.unrealized, 2)
+        else:
+            chg = round(p.day_change_pct * 100, 2) if p.day_change_pct is not None else None
+            chg_eur = round(p.day_change, 2) if p.day_change is not None else None
+        node = {"name": p.asset.symbol, "full_name": p.asset.name, "id": p.asset_id, "value": round(p.value, 2),
+                "change_pct": chg, "change_eur": chg_eur, "weight": p.weight * 100}
+        if p.weight * 100 < threshold_pct and "all" not in (expand or set()):
+            small[p.segment].append(node)
+        else:
+            groups[p.segment].append(node)
+    for seg, nodes in small.items():
+        if len(nodes) == 1:
+            groups[seg].append(nodes[0])
+            continue
+        v = sum(n["value"] for n in nodes)
+        ce = sum(n["change_eur"] or 0 for n in nodes)
+        base = v - ce
+        groups[seg].append({"name": f"Sonstige ({len(nodes)})", "full_name": f"Sonstige {seg} ({len(nodes)})",
+                            "id": "other:all", "other": True, "value": round(v, 2),
+                            "change_pct": round(ce / base * 100, 2) if base > 0 else None,
+                            "change_eur": round(ce, 2), "weight": sum(n["weight"] for n in nodes),
+                            "members": [n["full_name"] for n in sorted(nodes, key=lambda n: -n["value"])][:30]})
+    return {"metric": "total" if total_mode else "day", "scale": 50 if total_mode else 4,
+            "data": [{"name": s, "children": sorted(ch, key=lambda x: -x["value"])}
                      for s, ch in sorted(groups.items(), key=lambda x: SEGMENT_ORDER.get(x[0], 9))]}

@@ -56,7 +56,12 @@
       <div class="seg" role="group" aria-label="Diagrammtyp" data-alloc-toggle>
         <button type="button" data-mode="sunburst" aria-pressed="true">Sunburst</button>
         <button type="button" data-mode="donut" aria-pressed="false">Donut</button>
+        <button type="button" data-mode="treemap" aria-pressed="false">Treemap</button>
       </div>
+    </div>
+    <div class="seg" role="group" aria-label="Treemap-Farbe" data-tm-color style="display:none;margin-bottom:6px">
+      <button type="button" data-color="day" aria-pressed="true">Farbe: 24h</button>
+      <button type="button" data-color="total" aria-pressed="false">Farbe: G/V gesamt</button>
     </div>
     <div class="seg" role="group" aria-label="Donut-Ebene" data-alloc-level style="display:none;margin-bottom:6px">
       <button type="button" data-level="segment" aria-pressed="false">Segment</button>
@@ -65,7 +70,7 @@
     </div>
     <div id="alloc-chart" class="chart tall" data-chart="allocation" data-src="/api/allocation" data-mode="sunburst" data-level="position"
          role="img" aria-label="Allokation nach Segment, Kategorie und Position"></div>
-    <p class="hint">Klick auf eine Position öffnet die Detailansicht; „Sonstige“ (&lt; {{ threshold|num(1) }} %) per Klick aufklappen. Tabellenansicht: <a href="/positions">Positionen</a>.</p>
+    <p class="hint">Klick auf eine Position öffnet die Detailansicht; „Sonstige“ (&lt; {{ threshold|num(1) }} %) per Klick aufklappen. Treemap: Fläche = Positionswert, Farbe = Veränderung. Tabellenansicht: <a href="/positions">Positionen</a>.</p>
   </section>
 
   <section class="card" aria-labelledby="hist-h">
@@ -83,33 +88,31 @@
 
 <div class="grid-2" style="margin-top:16px">
   <section class="card" aria-labelledby="movers-h">
-    <div class="card-head"><h2 id="movers-h">Top-Bewegungen heute</h2></div>
-    <div class="movers">
+    {% macro mover(p, up) -%}
+      <a class="list-item" href="{{ asset_url(p.asset_id) }}" data-panel="{{ panel_url(p.asset_id) }}" data-title="{{ p.asset.name }}">
+        <span class="dot" style="background:{{ p.colors.light }}" data-color-light="{{ p.colors.light }}" data-color-dark="{{ p.colors.dark }}"></span>
+        <span class="grow"><span class="title">{{ p.asset.name }}</span><span class="meta">{{ p.value|eur }}</span></span>
+        <span class="delta {{ 'up' if up else 'down' }}">{{ '▲' if up else '▼' }} {{ p.day_change_pct|pct }} · {{ p.day_change|eur(0, true) }}</span>
+      </a>
+    {%- endmacro %}
+    <div class="card-head"><h2 id="movers-h">Top-Bewegungen heute</h2>
+      <div class="seg" role="group" aria-label="Sortierung nach" data-movers-toggle>
+        <button type="button" data-unit="pct" aria-pressed="true" title="nach Kursänderung in Prozent">%</button>
+        <button type="button" data-unit="eur" aria-pressed="false" title="nach Wertänderung der Position in Euro">€</button>
+      </div></div>
+    {% for unit, g, l in [('pct', gainers, losers), ('eur', gainers_eur, losers_eur)] %}
+    <div class="movers" data-movers="{{ unit }}"{% if unit == 'eur' %} hidden{% endif %}>
       <div>
         <h3 class="muted" style="margin-bottom:4px">Gewinner</h3>
-        <div class="list">
-        {% for p in gainers %}
-          <a class="list-item" href="{{ asset_url(p.asset_id) }}" data-panel="{{ panel_url(p.asset_id) }}" data-title="{{ p.asset.name }}">
-            <span class="dot" style="background:{{ p.colors.light }}" data-color-light="{{ p.colors.light }}" data-color-dark="{{ p.colors.dark }}"></span>
-            <span class="grow"><span class="title">{{ p.asset.name }}</span><span class="meta">{{ p.value|eur }}</span></span>
-            <span class="delta up">▲ {{ p.day_change_pct|pct }}</span>
-          </a>
-        {% else %}<p class="hint">Keine Gewinner heute.</p>{% endfor %}
-        </div>
+        <div class="list">{% for p in g %}{{ mover(p, True) }}{% else %}<p class="hint">Keine Gewinner heute.</p>{% endfor %}</div>
       </div>
       <div>
         <h3 class="muted" style="margin-bottom:4px">Verlierer</h3>
-        <div class="list">
-        {% for p in losers %}
-          <a class="list-item" href="{{ asset_url(p.asset_id) }}" data-panel="{{ panel_url(p.asset_id) }}" data-title="{{ p.asset.name }}">
-            <span class="dot" style="background:{{ p.colors.light }}" data-color-light="{{ p.colors.light }}" data-color-dark="{{ p.colors.dark }}"></span>
-            <span class="grow"><span class="title">{{ p.asset.name }}</span><span class="meta">{{ p.value|eur }}</span></span>
-            <span class="delta down">▼ {{ p.day_change_pct|pct }}</span>
-          </a>
-        {% else %}<p class="hint">Keine Verlierer heute.</p>{% endfor %}
-        </div>
+        <div class="list">{% for p in l %}{{ mover(p, False) }}{% else %}<p class="hint">Keine Verlierer heute.</p>{% endfor %}</div>
       </div>
     </div>
+    {% endfor %}
+    <p class="hint">% = Kursänderung seit dem Vortagesschluss; € = Wertänderung der Position (Menge × Kursänderung).</p>
   </section>
   <section class="card" aria-labelledby="news-h">
     <div class="card-head"><h2 id="news-h">Neueste relevante News</h2><a class="btn sm ghost" href="/news">Alle</a></div>

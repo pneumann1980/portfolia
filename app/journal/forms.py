@@ -74,7 +74,7 @@ TYPE_LABEL = {"buy": "Kauf", "sell": "Verkauf", "trade": "Tausch", "deposit": "E
               "withdrawal": "Auszahlung", "transfer": "Übertrag", "corporate_action": "Kapitalmaßnahme"}
 FORM_FIELDS = ("kind", "date", "time", "note", "account", "asset", "qty", "amount", "price", "ccy", "fee",
                "value_eur", "from_account", "to_account", "from_asset", "from_qty", "to_asset", "to_qty",
-               "fee_asset", "fee_qty", "fee_eur", "tag", "related_asset", "wht", "type")
+               "fee_asset", "fee_qty", "fee_eur", "tag", "related_asset", "wht", "type", "price_source")
 
 _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$")
 _DE_DATE_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
@@ -271,6 +271,15 @@ def _buy_sell(f: _Form, d: Draft, when: str, note: str, price: PriceFn, fx: FxFn
     unit = f.num("price", "Kurs je Stück", required=False)
     if amount is None and unit is not None and qty is not None:
         amount = (qty * unit).quantize(CENT)
+    market_src = None
+    if amount is None and not f.raw("amount") and not f.raw("price") and f.raw("price_source") == "market" \
+            and asset and qty is not None and d.local_date is not None and ccy == "EUR":
+        # Schnellkauf/-verkauf: ohne Kurs und Betrag gilt der historische Marktkurs des Tages (wie bei Tausch)
+        p = price(asset, d.local_date)
+        if p is None:
+            d.errors.append(f"Kein Kurs für {asset} zum {fmt_de_date(d.local_date)} – Kurs oder Betrag angeben.")
+            return
+        amount, market_src = (qty * p[0]).quantize(CENT), f"{p[1]} × Menge"
     if amount is None and not f.raw("amount") and not f.raw("price"):
         d.errors.append("Betrag oder Kurs je Stück angeben.")
     fee = f.num("fee", "Gebühr", required=False, allow_zero=True) or Decimal(0)
@@ -280,6 +289,8 @@ def _buy_sell(f: _Form, d: Draft, when: str, note: str, price: PriceFn, fx: FxFn
     override = f.num("value_eur", "Gegenwert in EUR", required=False)
     if override is not None:
         value, src = override, "Eingabe"
+    elif market_src is not None:
+        value, src = amount, market_src
     else:
         conv = _money(f, d, amount, ccy, "Betrag", fx)
         if conv is None:

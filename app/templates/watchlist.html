@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Watchlist{% endblock %}
+{% block heading %}Watchlist{% endblock %}
+{% macro spark(it) -%}
+  {%- set pts = sparkline(it.snap.sparkline if it.snap else []) -%}
+  {%- if pts %}<svg class="spark {{ (it.snap.sparkline[-1] - it.snap.sparkline[0])|tone }}" viewBox="0 0 96 28" width="96" height="28" role="img" aria-label="Kursverlauf {{ 7 if it.quote_source == 'coingecko' else 30 }} Tage"><polyline points="{{ pts }}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>{% else %}<span class="muted">–</span>{% endif -%}
+{%- endmacro %}
+{% block content %}
+{% if errors %}<div class="alert crit"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+
+<section class="card">
+  <div class="card-head">
+    <h2>{% for l in lists if l.id == list_id %}{{ l.name }}{% endfor %} <span class="badge">{{ items|length }}</span></h2>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      {% if lists|length > 1 %}<div class="seg" role="group" aria-label="Liste">{% for l in lists %}<a class="{{ 'active' if l.id == list_id }}" href="/watchlist?list={{ l.id }}" aria-pressed="{{ 'true' if l.id == list_id else 'false' }}">{{ l.name }}</a>{% endfor %}</div>{% endif %}
+      <form method="get" action="/watchlist" class="row" style="gap:6px"><input type="hidden" name="list" value="{{ list_id }}">
+        <label class="sr-only" for="wl-sort">Sortierung</label>
+        <select id="wl-sort" name="sort" data-autosubmit>{% for k, v in sorts.items() %}<option value="{{ k }}" {{ 'selected' if k == sort }}>{{ v }}</option>{% endfor %}</select>
+        <noscript><button class="btn sm" type="submit">Sortieren</button></noscript></form>
+    </div>
+  </div>
+  {% if loading %}<p class="hint">Marktdaten werden aktualisiert – Seite in Kürze neu laden.</p>{% endif %}
+  {% if items %}
+  <div class="table-wrap cards-wrap"><table class="compact cards watchlist">
+    <thead><tr><th>Wert</th><th class="num">Kurs</th><th class="num">24h</th><th class="num">7 Tage</th><th class="num">Marktkap.</th><th>Verlauf</th><th></th></tr></thead>
+    <tbody>
+    {% for it in items %}
+      <tr id="wl-{{ it.id }}">
+        <td data-label="Wert"><a href="/watchlist/item/{{ it.id }}"><b>{{ it.sym }}</b></a> <span class="hint">{{ it.label }}</span>
+          <div class="hint">{{ it.snap.provider_label if it.snap else it.quote_source }}{% if it.held %} · <span class="badge good">im Portfolio</span>{% endif %}{% if it.snap and it.snap.stale %} · <span class="badge warn">veraltet</span>{% endif %}</div></td>
+        <td class="num nowrap" data-label="Kurs">{{ it.snap.price_eur|price if it.snap and it.snap.price_eur else '–' }}</td>
+        <td class="num nowrap" data-label="24h">{% if it.snap and it.snap.change_24h is not none %}<span class="delta {{ it.snap.change_24h|tone }}">{{ it.snap.change_24h|arrow }} {{ it.snap.change_24h|pct }}</span>{% else %}–{% endif %}</td>
+        <td class="num nowrap" data-label="7 Tage">{% if it.snap and it.snap.change_7d is not none %}<span class="delta {{ it.snap.change_7d|tone }}">{{ it.snap.change_7d|arrow }} {{ it.snap.change_7d|pct }}</span>{% else %}–{% endif %}</td>
+        <td class="num nowrap" data-label="Marktkap.">{{ it.snap.market_cap_eur|eur_compact if it.snap and it.snap.market_cap_eur else '–' }}</td>
+        <td data-label="Verlauf">{{ spark(it) }}</td>
+        <td class="nowrap actions">
+          <a class="btn sm ghost" href="/watchlist/item/{{ it.id }}">Details</a>
+          <form method="post" action="/watchlist/item/{{ it.id }}/position" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit" title="Kauf erfassen (normale Buchungserfassung)">Position erstellen</button></form>
+          {% if sort == 'manual' %}
+          <form method="post" action="/watchlist/item/{{ it.id }}/move" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="dir" value="up"><button class="icon-btn" type="submit" aria-label="nach oben" title="nach oben" {{ 'disabled' if loop.first }}>↑</button></form>
+          <form method="post" action="/watchlist/item/{{ it.id }}/move" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="dir" value="down"><button class="icon-btn" type="submit" aria-label="nach unten" title="nach unten" {{ 'disabled' if loop.last }}>↓</button></form>
+          {% endif %}
+          <form method="post" action="/watchlist/item/{{ it.id }}/remove" class="inline" data-confirm="{{ it.sym }} aus der Watchlist entfernen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="icon-btn" type="submit" aria-label="Entfernen" title="Entfernen">×</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="hint">Noch keine Einträge – unten einen Wert hinzufügen.</p>{% endif %}
+  <p class="hint">Kurse und 24h laufen mit dem regulären Kursabruf (CoinGecko gebündelt, Yahoo); 7 Tage, Marktkapitalisierung und Verlauf höchstens alle 15 Minuten (ein gebündelter CoinGecko-Aufruf). An die Anbieter gehen nur Kennungen.</p>
+</section>
+
+<section class="card" id="add">
+  <div class="card-head"><h2>Hinzufügen</h2></div>
+  <form method="post" action="/watchlist/add" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="list" value="{{ list_id }}">
+    <label class="field">Art<select name="kind">{% for k, v in kinds.items() %}<option value="{{ k }}" {{ 'selected' if form.kind == k }}>{{ v }}</option>{% endfor %}</select></label>
+    <label class="field">Symbol, CoinGecko-ID/-Link bzw. Yahoo-Symbol<input name="value" value="{{ form.value or '' }}" list="wl-assets" placeholder="z. B. kaspa, BONK, SAP.DE" autocomplete="off"></label>
+    <datalist id="wl-assets">{% for a in assets %}<option value="{{ a.asset_id }}">{{ a.name }}</option>{% endfor %}</datalist>
+    <div class="row" style="align-self:end"><button class="btn primary" type="submit">Hinzufügen</button></div>
+  </form>
+  {% if choices %}
+  <p class="hint" style="margin-top:8px">Mehrere Coins mit diesem Symbol – bitte wählen:</p>
+  <div class="row" style="gap:6px;flex-wrap:wrap">
+    {% for c in choices %}<form method="post" action="/watchlist/add" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="list" value="{{ list_id }}"><input type="hidden" name="kind" value="crypto"><input type="hidden" name="value" value="{{ c.id }}"><button class="btn sm" type="submit">{{ c.symbol }} · {{ c.name }} <span class="hint">({{ c.id }})</span></button></form>{% endfor %}
+  </div>{% endif %}
+  <details class="box" style="margin-top:12px"><summary>Weitere Liste anlegen</summary>
+    <form method="post" action="/watchlist/lists" class="row" style="gap:8px;margin-top:8px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="field" style="flex:1">Name<input name="name" maxlength="40"></label><button class="btn" type="submit" style="align-self:end">Anlegen</button></form>
+  </details>
+</section>
+{% endblock %}

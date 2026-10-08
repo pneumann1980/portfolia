@@ -1,0 +1,7 @@
+{# Alle laufenden Synchronisierungen/Importe – fragt bei laufenden Vorgängen alle 2 s nach, sonst alle 20 s. #}
+{% from "partials/progress.html" import bar %}
+<div id="progress-active" class="progress-active" hx-get="/progress/active" hx-trigger="every {{ '2s' if items else '20s' }}" hx-swap="outerHTML">
+  {% for p in items %}
+  <div class="alert info">{% if p.href %}<a class="pg-link" href="{{ p.href }}">{{ bar(p, compact=True) }}</a>{% else %}{{ bar(p, compact=True) }}{% endif %}</div>
+  {% endfor %}
+</div>

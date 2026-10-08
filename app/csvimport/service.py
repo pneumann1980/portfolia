@@ -502,11 +502,15 @@ class CsvImportService:
         return gzip.decompress(batch["raw_gz"])
 
     def upload(self, data: bytes, filename: str, profile_id: str, account: str,
-               options: Mapping[str, Any]) -> tuple[int | None, list[str]]:
+               options: Mapping[str, Any], progress: Any = None) -> tuple[int | None, list[str]]:
+        """Datei einlesen und als Prüf-Stapel anlegen. ``progress``: :class:`app.progress.Progress` (optional)."""
         if len(data) > MAX_UPLOAD:
             return None, [f"Datei zu groß ({len(data) // 1024 // 1024} MB, höchstens 25 MB)."]
         name = (filename or "upload.csv").replace("\\", "/").rsplit("/", 1)[-1][:120] or "upload.csv"
         extra = self.mapping_profiles()
+        if progress is not None:
+            progress.source = name
+            progress.phase("prepare", text="Datei lesen, Format erkennen")
         try:
             table = read_table(data, header_matcher(extra))
         except CsvError as e:
@@ -526,7 +530,7 @@ class CsvImportService:
              prof.id if prof else "unknown", acc, json.dumps(opts, ensure_ascii=False), status, stamp, stamp))
         bid = int(cur.lastrowid)  # type: ignore[arg-type]
         if prof is not None:
-            self.process(bid)
+            self.process(bid, progress)
         log.info("CSV-Datei hochgeladen: %s (Stapel %s, Profil %s)", name, bid, prof.id if prof else "unbekannt")
         return bid, []
 
@@ -732,7 +736,7 @@ class CsvImportService:
 
     # -- Einlesen -----------------------------------------------------------------------------------------
     @_locked
-    def process(self, bid: int) -> None:
+    def process(self, bid: int, progress: Any = None) -> None:
         """Datei mit dem Profil des Stapels (neu) lesen und die Vorschauzeilen ersetzen."""
         batch = self.batch(bid)
         if batch is None:
@@ -747,6 +751,8 @@ class CsvImportService:
         recs: list[Rec] = []
         try:
             table = self.table(batch)
+            if progress is not None:
+                progress.phase("process", len(table.rows), f"Zeilen auswerten (Format {prof.label})")
             res = prof.parse(table, self.parse_options(batch, prof))
             recs = sorted(res.recs, key=lambda r: (r.ts, r.line))
             summary = {"rows_read": res.rows_read, "recs": len(recs), "skipped": dict(res.skipped),
@@ -763,7 +769,11 @@ class CsvImportService:
                           [(bid, i, r.line, rec_to_json(r)) for i, r in enumerate(recs) if i not in done])
             c.execute("UPDATE csv_batch SET summary_json=?, updated_at=? WHERE id=?",
                       (json.dumps(summary, ensure_ascii=False, default=str), _now(), bid))
+        if progress is not None:
+            progress.phase("reconcile", len(recs), "Abgleich mit Buchungen, Import und Datenquellen")
         self.evaluate(bid)
+        if progress is not None:
+            progress.phase("save", len(recs), "Prüf-Stapel speichern")
 
     # -- Zuordnungen --------------------------------------------------------------------------------------
     def saved_symbols(self) -> dict[str, str | None]:
@@ -1884,7 +1894,7 @@ class CsvImportService:
 
     # -- Übernehmen ---------------------------------------------------------------------------------------
     @_locked
-    def commit(self, bid: int, only_idx: set[int] | None = None) -> dict[str, Any]:
+    def commit(self, bid: int, only_idx: set[int] | None = None, progress: Any = None) -> dict[str, Any]:
         """Ausgewählte Zeilen übernehmen. ``only_idx``: nur diese Zeilen (automatische Übernahme einer Datenquelle
         je eindeutigem Ereignis) – alle übrigen bleiben zur Prüfung offen. Validierung wie immer."""
         batch = self.batch(bid)
@@ -1895,6 +1905,8 @@ class CsvImportService:
         plan = self.commit_plan(rows, only_idx)
         if plan.get("errors"):
             return plan
+        if progress is not None:
+            progress.phase("save", len(plan["chosen"]), "Buchungen anlegen")
         stamp = _now()
         with self.db.transaction() as c:
             res = self.commit_apply(c, batch, rows, plan, only_idx, stamp)
@@ -2088,10 +2100,21 @@ class CsvImportService:
                                                        C.ISO_CURRENCIES else "crypto") for aid in used}
         pf = Portfolio(import_id=None, txs=txs, assets=pf_assets, accounts={})
         led = run_ledger(pf, self.ctx.engine_options())
-        res = self.ctx.prices.backfill(pf, led, progress=lambda p: self.ctx.job_progress("csv_prices", p))
-        self.ctx.invalidate_history()
-        self.evaluate(bid)
-        return res
+        from app.jobs.tasks import backfill_progress
+        from app.progress import job_progress
+
+        prog = job_progress(self.ctx, "csv_prices", "Kurse für Import ergänzen", unit="Kursreihen",
+                            phases=["prices", "reconcile"])
+        try:
+            res = self.ctx.prices.backfill(pf, led, progress=backfill_progress(prog))
+            prog.phase("reconcile", text="Stapel neu bewerten")
+            self.ctx.invalidate_history()
+            self.evaluate(bid)
+            prog.finish(True, f"{res.get('rows', 0)} Kurse")
+            return res
+        except Exception:
+            prog.finish(False, "Abbruch")
+            raise
 
     # -- Aufräumen ----------------------------------------------------------------------------------------
     def symbol_rows(self) -> list[Any]:

@@ -1,0 +1,15 @@
+{# Einheitliche Fortschrittsanzeige (app.progress.view): „Synchronisierung 63 %“, Zählerzeile, Phasen. #}
+{% macro bar(p, compact=False) %}
+<div class="pg{{ ' compact' if compact }}" role="status" aria-live="polite">
+  <div class="pg-head">
+    <b>{{ p.label or 'Vorgang' }}{% if p.pct is not none %} {{ p.pct_int }} %{% endif %}</b>
+    {% if p.phase_label %}<span class="badge info">{{ p.phase_label }}</span>{% endif %}
+  </div>
+  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ p.pct_int }}"><div style="width:{{ [p.pct_int, 2]|max }}%"></div></div>
+  {% if p.source or p.count %}<div class="hint wrap-any">{% if p.source %}{{ p.source }}{% if p.count %} – {% endif %}{% endif %}{% if p.count %}{{ p.count }}{% if p.total %} verarbeitet{% endif %}{% endif %}</div>{% endif %}
+  {% if p.text and not compact %}<div class="hint wrap-any">{{ p.text }}</div>{% endif %}
+  {% if p.steps and not compact %}
+  <ol class="pg-steps" aria-label="Phasen">{% for s in p.steps %}<li class="{{ s.state }}">{{ s.label }}</li>{% endfor %}</ol>
+  {% endif %}
+</div>
+{% endmacro %}

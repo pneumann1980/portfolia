@@ -495,6 +495,32 @@ CREATE TABLE IF NOT EXISTS price_gap (
   PRIMARY KEY (asset_id, date_from, kind)
 );
 """),
+    (15, """
+-- Watchlists (mehrere möglich, eine Standardliste) – beobachtete Werte ohne Bestand; Kurse über dieselbe
+-- Marktdaten-Ablage wie das Portfolio (quote_latest, price_daily, series_meta).
+CREATE TABLE IF NOT EXISTS watchlist (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  position    INTEGER NOT NULL DEFAULT 0,
+  is_default  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS watchlist_item (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  list_id      INTEGER NOT NULL REFERENCES watchlist(id) ON DELETE CASCADE,
+  quote_source TEXT NOT NULL,                     -- coingecko | yahoo
+  quote_id     TEXT NOT NULL,                     -- CoinGecko-ID bzw. Yahoo-Symbol
+  asset_class  TEXT NOT NULL DEFAULT 'crypto',    -- crypto | security
+  asset_id     TEXT,                              -- zugehöriges Portfolio-Asset (falls vorhanden)
+  symbol       TEXT,
+  name         TEXT,
+  position     INTEGER NOT NULL DEFAULT 0,
+  note         TEXT,
+  added_at     TEXT NOT NULL,
+  UNIQUE (list_id, quote_source, quote_id)
+);
+CREATE INDEX IF NOT EXISTS ix_watchlist_item_list ON watchlist_item(list_id, position);
+"""),
 ]
 
 

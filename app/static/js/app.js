@@ -222,12 +222,19 @@
       if (target) { target.dataset.kind = btn.dataset.kind; pressIn(group, btn); window.PortfoliaCharts.reload(target); }
     } else if (group.hasAttribute("data-alloc-toggle")) {
       target = document.getElementById("alloc-chart");
-      target.dataset.mode = btn.dataset.mode;
-      target.dataset.expand = "";
+      setAllocMode(target, btn.dataset.mode);
       pressIn(group, btn);
-      var lv = document.querySelector("[data-alloc-level]");
-      if (lv) lv.style.display = btn.dataset.mode === "donut" ? "" : "none";
+      store("portfolia.alloc", btn.dataset.mode);
       window.PortfoliaCharts.reload(target);
+    } else if (group.hasAttribute("data-tm-color")) {
+      target = document.getElementById("alloc-chart");
+      target.dataset.color = btn.dataset.color;
+      pressIn(group, btn);
+      store("portfolia.tmcolor", btn.dataset.color);
+      window.PortfoliaCharts.reload(target);
+    } else if (group.hasAttribute("data-movers-toggle")) {
+      setMovers(btn.dataset.unit);
+      store("portfolia.movers", btn.dataset.unit);
     } else if (group.hasAttribute("data-alloc-level")) {
       target = document.getElementById("alloc-chart");
       target.dataset.level = btn.dataset.level;
@@ -236,6 +243,49 @@
       window.PortfoliaCharts.reload(target);
     }
   });
+
+  // Allokation: Sunburst | Donut | Treemap (Treemap: eigene Daten, Farbe Heute bzw. G/V gesamt)
+  function setAllocMode(target, mode) {
+    if (!target) return;
+    var tm = mode === "treemap";
+    target.dataset.mode = mode;
+    target.dataset.expand = "";
+    target.dataset.chart = tm ? "treemap" : "allocation";
+    target.dataset.src = tm ? "/api/treemap" : "/api/allocation";
+    var lv = document.querySelector("[data-alloc-level]");
+    if (lv) lv.style.display = mode === "donut" ? "" : "none";
+    var tc = document.querySelector("[data-tm-color]");
+    if (tc) tc.style.display = tm ? "" : "none";
+  }
+  // Top-Bewegungen: Prozent | Euro (Auswahl bleibt im Browser gespeichert)
+  function setMovers(unit) {
+    document.querySelectorAll("[data-movers]").forEach(function (el) { el.hidden = el.getAttribute("data-movers") !== unit; });
+    document.querySelectorAll("[data-movers-toggle] button").forEach(function (b) {
+      b.setAttribute("aria-pressed", b.dataset.unit === unit ? "true" : "false");
+    });
+  }
+  function store(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* privat/gesperrt – ignorieren */ } }
+  function stored(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function restoreChoices() {
+    var unit = stored("portfolia.movers");
+    if (unit === "eur" || unit === "pct") setMovers(unit);
+    var alloc = document.getElementById("alloc-chart");
+    var mode = stored("portfolia.alloc");
+    if (alloc && (mode === "treemap" || mode === "donut" || mode === "sunburst")) {
+      setAllocMode(alloc, mode);
+      document.querySelectorAll("[data-alloc-toggle] button").forEach(function (b) {
+        b.setAttribute("aria-pressed", b.dataset.mode === mode ? "true" : "false");
+      });
+      var color = stored("portfolia.tmcolor");
+      if (color === "day" || color === "total") {
+        alloc.dataset.color = color;
+        document.querySelectorAll("[data-tm-color] button").forEach(function (b) {
+          b.setAttribute("aria-pressed", b.dataset.color === color ? "true" : "false");
+        });
+      }
+    }
+  }
+  restoreChoices();  // vor dem ersten Laden der Diagramme (charts.js initialisiert bei DOMContentLoaded)
 
   // --- Hinweise ---------------------------------------------------------------------------------------
   function toast(text, level) {

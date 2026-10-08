@@ -31,6 +31,7 @@ from app.jobs.scheduler import Scheduler, extra_jobs
 from app.journal import forms
 from app.journal.service import TAX_TYPES, journal_service, source_label
 from app.prices.sources import catalog_state, source_service
+from app.progress import job_progress
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -312,8 +313,13 @@ def make_router() -> APIRouter:
         opts = {k: form[k] for k in ("tz", "decimal", "dayfirst", "default_asset", "accounts_from_file") if form[k]}
         if form["cutoff"] or f.get("cutoff_set") == "1":
             opts["cutoff"] = form["cutoff"]
-        bid, errors = await run_in_threadpool(svc.upload, data, file.filename, profile if profile != "mapping:new"
-                                              else "auto", form["account"], opts)
+        prog = job_progress(ctx, "csv_upload", "CSV-Import", unit="Zeilen",
+                            phases=["prepare", "process", "reconcile", "save"])
+        try:
+            bid, errors = await run_in_threadpool(svc.upload, data, file.filename, profile if profile != "mapping:new"
+                                                  else "auto", form["account"], opts, prog)
+        finally:
+            prog.finish(True, "eingelesen")
         if bid is None:
             return _index(request, errors, 400, form)
         b = svc.batch(bid)
@@ -667,8 +673,16 @@ def make_router() -> APIRouter:
 
     @router.post("/journal/csv/{bid}/commit")
     async def commit(request: Request, bid: int) -> Response:
-        svc = csv_service(get_ctx(request))
-        res = await run_in_threadpool(svc.commit, bid)
+        ctx = get_ctx(request)
+        svc = csv_service(ctx)
+        b = svc.batch(bid)
+        prog = job_progress(ctx, "csv_commit", "Übernahme", source=b["filename"] if b is not None else None,
+                            unit="Zeilen", phases=["reconcile", "save"])
+        prog.phase("reconcile", text="Zeilen prüfen und validieren")
+        try:
+            res = await run_in_threadpool(svc.commit, bid, None, prog)
+        finally:
+            prog.finish(True, "übernommen")
         if res.get("errors"):
             return _batch_page(request, bid, errors=res["errors"])
         q = urlencode({"msg": "commit", "n": res["created"], "t": res["transfers"]})
@@ -713,8 +727,11 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         job = ctx.db.q1("SELECT running, progress_json FROM job_status WHERE job='csv_prices'")
         if job is not None and job["running"]:
-            p = json.loads(job["progress_json"] or "{}")
-            return HTMLResponse(_price_status_html(bid, running=True, done=p.get("done", 0), total=p.get("total", 0)))
+            from app.progress import view
+
+            v = view(json.loads(job["progress_json"] or "{}"))
+            return HTMLResponse(_price_status_html(bid, running=True, done=v.get("done") or 0,
+                                                   total=v.get("total") or 0, pct=v["pct_int"]))
         return Response(status_code=204, headers={"HX-Redirect": f"/journal/csv/{bid}?msg=prices"})
 
     @router.get("/journal/csv/{bid}/mapping", response_class=HTMLResponse)
@@ -787,11 +804,11 @@ def _catalog_status_html(bid: int) -> str:
             f'hx-swap="outerHTML"><span class="badge info">CoinGecko-Katalog wird geladen …</span></span>')
 
 
-def _price_status_html(bid: int, running: bool, done: int = 0, total: int = 0) -> str:
-    pct = int(done / total * 100) if total else 5
+def _price_status_html(bid: int, running: bool, done: int = 0, total: int = 0, pct: int | None = None) -> str:
+    pct = pct if pct is not None else (int(done / total * 100) if total else 2)
     return (f'<div hx-get="/journal/csv/{bid}/prices/status" hx-trigger="every 3s" hx-swap="outerHTML">'
-            f'<span class="badge info">Kurse werden geladen … {done}/{total or "?"}</span>'
-            f'<div class="progress" style="margin-top:6px"><div style="width:{pct}%"></div></div></div>')
+            f'<span class="badge info">Kurse ergänzen {pct} % · {done}/{total or "?"} Kursreihen</span>'
+            f'<div class="progress" style="margin-top:6px"><div style="width:{max(pct, 2)}%"></div></div></div>')
 
 
 @extra_jobs

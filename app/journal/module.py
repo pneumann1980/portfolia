@@ -15,7 +15,7 @@ from app.journal import forms
 from app.journal.service import TAX_TYPES, editable, journal_service, source_label, tx_form_data
 from app.journal.writeoff import TAGS as WRITE_OFF_TAGS
 from app.journal.writeoff import writeoff_service
-from app.util.timeutil import today_local
+from app.util.timeutil import now_local, today_local
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -57,6 +57,29 @@ def _form_page(request: Request, data: dict[str, Any], errors: list[str], tx_id:
         action=f"/journal/{tx_id}/edit" if tx_id else "/journal/new", saved_tx=saved_tx, warnings=warnings or [],
         import_edit=import_source is not None, import_source=import_source,
     )
+
+
+def _quick_page(request: Request, data: dict[str, Any], errors: list[str] | None = None,
+                status_code: int = 200) -> HTMLResponse:
+    ctx = get_ctx(request)
+    svc = journal_service(ctx)
+    assets = svc.known_assets()
+    aid = str(data.get("asset") or "")
+    a = assets.get(aid)
+    if a is None or a.is_fiat:
+        raise HTTPException(404, "Asset nicht gefunden")
+    led = ctx.ledger()
+    bal = {acc: q for (acc, x), q in (led.balances.items() if led else []) if x == aid and q > 0}
+    accounts = svc.known_accounts()
+    if not data.get("account"):
+        data["account"] = max(bal, key=lambda k: bal[k]) if bal else (accounts[0] if accounts else "")
+    now = now_local()
+    data.setdefault("date", now.date().isoformat())
+    data.setdefault("time", now.strftime("%H:%M"))
+    pi = ctx.prices.latest_eur_many([a], ctx.portfolio()).get(aid) if ctx.portfolio() is not None else None
+    return render(request, "partials/quick_trade.html" if request.headers.get("hx-request") == "true"
+                  else "journal_quick.html", status_code=status_code, active="journal", a=a, data=data,
+                  errors=errors or [], accounts=accounts, balances=bal, held=sum(bal.values()), pi=pi)
 
 
 def _asset_page(request: Request, data: dict[str, Any], errors: list[str], orig_id: str | None,
@@ -149,10 +172,12 @@ def make_router() -> APIRouter:
 
     @router.get("/journal/new", response_class=HTMLResponse)
     def new_form(request: Request, kind: str = "buy", copy: str = "", account: str = "",
-                 saved: str = "") -> HTMLResponse:
+                 saved: str = "", asset: str = "") -> HTMLResponse:
         ctx = get_ctx(request)
         svc = journal_service(ctx)
         data: dict[str, Any] = {"kind": kind, "date": today_local().isoformat(), "ccy": "EUR"}
+        if asset:
+            data["asset"] = asset
         if copy:
             row = svc.get(copy)
             if row is not None:
@@ -183,6 +208,27 @@ def make_router() -> APIRouter:
             q = urlencode([("kind", data.get("kind") or "buy"), ("account", data.get("account") or ""),
                            ("saved", res.tx_ids[0]), *warn])
             return _back(request, f"/journal/new?{q}")
+        return _back(request, "/journal?" + urlencode([("saved", "created"), ("tx", res.tx_ids[0]), *warn]))
+
+    @router.get("/journal/quick", response_class=HTMLResponse)
+    def quick_form(request: Request, asset: str, side: str = "buy") -> HTMLResponse:
+        """Schnellkauf/-verkauf aus einer Position: kompakter Dialog, vorbelegt (Asset, Art, Datum, Uhrzeit, Konto).
+        Gespeichert wird über dieselbe Buchungserfassung wie „Neue Buchung“ (gleiche Validierung und Berechnung)."""
+        return _quick_page(request, {"asset": asset, "kind": "sell" if side == "sell" else "buy"})
+
+    @router.post("/journal/quick")
+    async def quick_save(request: Request) -> Response:
+        svc = journal_service(get_ctx(request))
+        f = await request.form()
+        data = {k: f.get(k) for k in forms.FORM_FIELDS}
+        data["kind"] = "sell" if data.get("kind") == "sell" else "buy"
+        data["ccy"] = data.get("ccy") or "EUR"
+        data["price_source"] = "market"  # ohne Kurs und Betrag: historischer Marktkurs des Tages
+        res = await run_in_threadpool(svc.save, data)
+        if res.errors:
+            return _quick_page(request, {k: v for k, v in data.items() if v not in (None, "")}, res.errors, 400)
+        log.info("Schnellbuchung angelegt: %s", ", ".join(res.tx_ids))
+        warn = [("w", w) for w in res.warnings[:5]]
         return _back(request, "/journal?" + urlencode([("saved", "created"), ("tx", res.tx_ids[0]), *warn]))
 
     @router.get("/journal/asset", response_class=HTMLResponse)

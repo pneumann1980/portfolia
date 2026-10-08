@@ -115,14 +115,21 @@ class CoinGeckoProvider:
         return [c for c in data if isinstance(c, dict) and c.get("id") and c.get("symbol")] if isinstance(data, list) \
             else []
 
-    def markets(self, ids: list[str]) -> dict[str, dict[str, Any]]:
-        """Marktdaten (Kurs, Marktkapitalisierung, Volumen, Allzeithoch/-tief in EUR) für Kandidaten-IDs."""
+    def markets(self, ids: list[str], sparkline: bool = False, changes: str | None = None) -> dict[str, dict[str, Any]]:
+        """Marktdaten (Kurs, Marktkapitalisierung, Volumen, Allzeithoch/-tief in EUR) für bis zu 250 IDs je Aufruf.
+
+        ``sparkline``: Kursverlauf der letzten 7 Tage (``sparkline_in_7d.price``); ``changes``: zusätzliche
+        Veränderungen, z. B. ``"24h,7d"`` (``price_change_percentage_7d_in_currency``) – beides dokumentierte
+        Parameter von ``/coins/markets``."""
         out: dict[str, dict[str, Any]] = {}
         uniq = sorted(set(ids))
         for i in range(0, len(uniq), 250):
             chunk = uniq[i:i + 250]
-            data = self._get("/coins/markets", {"vs_currency": "eur", "ids": ",".join(chunk), "per_page": "250",
-                                                "page": "1", "sparkline": "false"})
+            params = {"vs_currency": "eur", "ids": ",".join(chunk), "per_page": "250", "page": "1",
+                      "sparkline": "true" if sparkline else "false"}
+            if changes:
+                params["price_change_percentage"] = changes
+            data = self._get("/coins/markets", params)
             for rec in data if isinstance(data, list) else []:
                 if isinstance(rec, dict) and rec.get("id"):
                     out[str(rec["id"])] = rec

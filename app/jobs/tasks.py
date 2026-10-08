@@ -10,6 +10,7 @@ from typing import Any
 from app.context import AppContext
 from app.importer.loader import ImportOutcome, check_import_dir
 from app.plans.service import plan_service
+from app.progress import Progress, job_progress
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +35,9 @@ def import_check(ctx: AppContext, trigger: str = "poll", force: bool = False) ->
     from app import fullexport
 
     fresh = fullexport.is_fresh(ctx.db)
-    out = check_import_dir(ctx.db, ctx.config.import_dir, ctx.engine_options("global"), trigger=trigger, force=force)
+    out = check_import_dir(ctx.db, ctx.config.import_dir, ctx.engine_options("global"), trigger=trigger, force=force,
+                           progress=lambda: job_progress(ctx, "import", "Import", unit="Transaktionen",
+                                                         phases=["process", "reconcile", "save"]))
     if out.status == "imported" and fresh and out.import_id is not None:
         # Neue Installation + Portfolia-Export: Einstellungen, Zuordnungen und Kurshistorie gleich mit übernehmen
         try:
@@ -99,14 +102,33 @@ def backfill(ctx: AppContext, force: bool = False) -> dict[str, Any]:
     led = ctx.ledger()
     if pf is None or led is None:
         return {"skipped": "kein Import"}
-    res = ctx.prices.backfill(pf, led, progress=lambda p: ctx.job_progress("history_backfill", p), force=force)
-    try:  # Kurse für Sparplan-Termine sind jetzt verfügbar
-        res["plans"] = plan_service(ctx).update()
-    except Exception as e:
-        log.warning("Sparplan-Aktualisierung fehlgeschlagen: %s", e)
-    hist = ctx.recompute_history(persist=True)
-    res["days"] = hist.n if hist else 0
-    return res
+    prog = job_progress(ctx, "history_backfill", "Historische Kurse laden", unit="Kursreihen",
+                        phases=["prepare", "prices", "save"])
+    prog.phase("prepare", text="Zeiträume je Asset bestimmen")
+    try:
+        res = ctx.prices.backfill(pf, led, progress=backfill_progress(prog), force=force)
+        try:  # Kurse für Sparplan-Termine sind jetzt verfügbar
+            res["plans"] = plan_service(ctx).update()
+        except Exception as e:
+            log.warning("Sparplan-Aktualisierung fehlgeschlagen: %s", e)
+        prog.phase("save", text="Historie und Kursqualität neu berechnen")
+        hist = ctx.recompute_history(persist=True)
+        res["days"] = hist.n if hist else 0
+        prog.finish(True, f"{res.get('rows', 0)} Kurse")
+        return res
+    except Exception:
+        prog.finish(False, "Abbruch")
+        raise
+
+
+def backfill_progress(prog: Progress) -> Callable[[dict[str, Any]], None]:
+    """Rückruf von PriceService.backfill (done/total/current) → Phase „Kurse ergänzen“."""
+    def cb(p: dict[str, Any]) -> None:
+        if prog.phase_key != "prices":
+            prog.phase("prices", p.get("total"))
+        cur = p.get("current")
+        prog.update(int(p.get("done") or 0), p.get("total"), f"{cur}" if cur else None)
+    return cb
 
 
 def eod_snapshot(ctx: AppContext) -> dict[str, Any]:

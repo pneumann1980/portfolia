@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ it.sym }} – Watchlist{% endblock %}
+{% block heading %}{{ it.label }}{% endblock %}
+{% block content %}
+<div class="stack">
+  <div class="asset-head">
+    <div style="flex:1;min-width:0"><h1 style="font-size:1.2rem">{{ it.label }}</h1>
+      <div class="hint">{{ it.sym }} · {{ 'Krypto' if it.asset_class == 'crypto' else 'Wertpapier' }} · Quelle {{ it.snap.provider_label if it.snap else it.quote_source }} ({{ it.quote_id }}) · <a href="/watchlist?list={{ it.list_id }}">Watchlist</a></div></div>
+    <div style="text-align:right">
+      <div class="price">{{ it.snap.price_eur|price if it.snap and it.snap.price_eur else '–' }}</div>
+      <div class="hint">{% if it.snap and it.snap.change_24h is not none %}<span class="delta {{ it.snap.change_24h|tone }}">24h {{ it.snap.change_24h|pct }}</span>{% endif %}
+        {% if it.snap and it.snap.change_7d is not none %} · <span class="delta {{ it.snap.change_7d|tone }}">7T {{ it.snap.change_7d|pct }}</span>{% endif %}</div>
+      {% if it.snap and it.snap.market_cap_eur %}<div class="hint">Marktkap. {{ it.snap.market_cap_eur|eur_compact }}</div>{% endif %}
+      <form method="post" action="/watchlist/item/{{ it.id }}/position" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm primary" type="submit">Position erstellen</button></form>
+    </div>
+  </div>
+  <section class="card">
+    <div class="card-head"><h2>Kursverlauf</h2>
+      <div class="seg" role="group" aria-label="Zeitraum" data-range-group="wl-{{ it.id }}">
+        {% for r in ['1M','3M','6M','1J','MAX'] %}<button type="button" data-range="{{ r }}" aria-pressed="{{ 'true' if r == '1J' else 'false' }}">{{ 'Max' if r == 'MAX' else r }}</button>{% endfor %}
+      </div></div>
+    {% if loading %}<p class="hint">Historie wird geladen (einmalig, bis zu ein Jahr) – Seite in Kürze neu laden.</p>{% endif %}
+    <div id="wl-{{ it.id }}" class="chart" data-chart="price" data-src="/api/watchlist/{{ it.id }}/chart" data-range="1J" data-kind="line" role="img" aria-label="Kursverlauf in EUR"></div>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Schnellbuchung{% endblock %}
+{% block heading %}{{ 'Verkauf' if data.kind == 'sell' else 'Kauf' }} erfassen{% endblock %}
+{% block content %}
+<section class="card" style="max-width:640px">{% include "partials/quick_trade.html" %}</section>
+{% endblock %}

@@ -1,0 +1,30 @@
+{# Schnellkauf/-verkauf: kompakter Dialog, gleiche Buchungserfassung wie „Neue Buchung“ (Kauf/Verkauf). #}
+{% set sell = data.kind == 'sell' %}
+<form method="post" action="/journal/quick" class="quick-trade stack" hx-post="/journal/quick" hx-target="this" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="asset" value="{{ a.asset_id }}"><input type="hidden" name="ccy" value="EUR">
+  <div class="seg" role="radiogroup" aria-label="Art">
+    <label class="{{ 'active' if not sell }}"><input type="radio" name="kind" value="buy" {{ 'checked' if not sell }}> + Kauf</label>
+    <label class="{{ 'active' if sell }}"><input type="radio" name="kind" value="sell" {{ 'checked' if sell }}> − Verkauf</label>
+  </div>
+  <div class="hint"><b>{{ a.name }}</b> ({{ a.symbol }}){% if pi and pi.valued %} · aktuell {{ pi.price_eur|price }}{% endif %}{% if held %} · Bestand {{ held|qty }}{% endif %}</div>
+  {% if errors %}<div class="alert crit"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+  <div class="form-grid">
+    <label class="field">Menge<input name="qty" inputmode="decimal" required value="{{ data.qty or '' }}" autofocus></label>
+    <label class="field">Datum<input type="date" name="date" required value="{{ data.date }}"></label>
+    <label class="field">Uhrzeit<input type="time" name="time" value="{{ data.time or '' }}"></label>
+  </div>
+  <details {{ 'open' if data.price or data.amount or data.fee or data.note }}><summary>Kurs, Betrag, Gebühren, Konto (optional)</summary>
+    <div class="form-grid" style="margin-top:8px">
+      <label class="field">Kurs je Stück (EUR)<input name="price" inputmode="decimal" value="{{ data.price or '' }}" placeholder="leer = Marktkurs des Tages"></label>
+      <label class="field">Gesamtbetrag (EUR)<input name="amount" inputmode="decimal" value="{{ data.amount or '' }}"></label>
+      <label class="field">Gebühren (EUR)<input name="fee" inputmode="decimal" value="{{ data.fee or '' }}"></label>
+      <label class="field">Börse/Wallet (Konto)<input name="account" list="qt-accounts" required value="{{ data.account or '' }}"></label>
+      <label class="field" style="grid-column:1/-1">Notiz<input name="note" maxlength="200" value="{{ data.note or '' }}"></label>
+    </div>
+    <datalist id="qt-accounts">{% for acc in accounts %}<option value="{{ acc }}">{% endfor %}</datalist>
+  </details>
+  {% if not data.price and not data.amount %}<p class="hint">Ohne Kurs und Betrag wird der historische Marktkurs des gewählten Tages verwendet (Herkunft wird an der Buchung vermerkt).</p>{% endif %}
+  <div class="row" style="gap:8px"><button class="btn primary" type="submit">{{ 'Verkauf' if sell else 'Kauf' }} speichern</button>
+    <a class="btn ghost" href="/journal/new?kind={{ data.kind }}&amp;asset={{ urlq(a.asset_id) }}">Vollständiges Formular</a></div>
+</form>

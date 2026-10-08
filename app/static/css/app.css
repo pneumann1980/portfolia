@@ -689,3 +689,30 @@ ul.assess-list li.add > span[aria-hidden], ul.assess-list li.prio > span[aria-hi
 ul.quality-list { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
 table.months td.zero { background: var(--warn-bg); color: var(--warn-ink); }
 table.months td, table.months th { padding: 2px 6px; }
+
+/* Einheitlicher Fortschritt (app.progress) */
+.pg { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.pg-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pg .progress { height: 8px; }
+.pg-steps { display: flex; flex-wrap: wrap; gap: 4px 10px; list-style: none; margin: 2px 0 0; padding: 0; font-size: .75rem; color: var(--muted); }
+.pg-steps li::before { content: "○ "; }
+.pg-steps li.done { color: var(--ink-2); }
+.pg-steps li.done::before { content: "✓ "; color: var(--good, var(--accent)); }
+.pg-steps li.active { color: var(--ink); font-weight: 600; }
+.pg-steps li.active::before { content: "● "; color: var(--accent); }
+.progress-active .alert { margin-bottom: 8px; }
+.progress-active .pg-link { display: flex; flex: 1; min-width: 0; color: inherit; text-decoration: none; }
+
+/* Schnellkauf/-verkauf, Watchlist */
+.quick-btns .icon-btn { width: 28px; height: 28px; font-weight: 700; font-size: 1rem; border: 1px solid var(--line, var(--grid)); border-radius: 6px; }
+.quick-btns .qt-buy { color: var(--up); }
+.quick-btns .qt-sell { color: var(--down); }
+.quick-trade .seg label { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; cursor: pointer; }
+.quick-trade .seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.quick-trade .seg label:has(input:checked) { background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.08); font-weight: 600; }
+.quick-trade .seg label:has(input:focus-visible) { outline: 2px solid var(--accent); }
+.spark { display: block; }
+.spark.up { color: var(--up); }
+.spark.down { color: var(--down); }
+.spark.neutral { color: var(--ink-2); }
+.watchlist td.actions form.inline { display: inline; }

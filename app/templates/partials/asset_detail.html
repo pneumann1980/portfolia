@@ -24,7 +24,13 @@
         <div class="price muted">–</div><span class="badge crit" title="{{ pi.note if pi and pi.note else 'kein Kurs' }}">unbewertet</span>
         {% if pi and pi.note %}<div class="hint">{{ pi.note }}</div>{% endif %}
       {% endif %}
-      {% if pos and not a.is_fiat %}<div style="margin-top:6px"><a class="btn sm ghost" href="/journal/writeoff?asset={{ aid_q }}" title="Bestand als Verlust (Totalverlust) ausbuchen">Ausbuchen …</a></div>{% endif %}
+      {% if pos and pos.qty and not a.is_fiat %}<div class="hint pos-line">Position <b>{{ pos.value|eur }}</b> · {{ pos.qty|qty }} {{ a.symbol }}
+        {% if pos.day_change is not none %} · 24h <span class="delta {{ pos.day_change|tone }}">{{ pos.day_change|eur(2, true) }}</span>{% endif %}
+        · G/V <span class="delta {{ pos.unrealized|tone }}">{{ pos.unrealized|eur(2, true) }}{% if pos.unrealized_pct is not none %} ({{ pos.unrealized_pct|pct }}){% endif %}</span></div>{% endif %}
+      {% if not a.is_fiat %}<div class="row quick-btns" style="margin-top:6px;gap:6px;justify-content:flex-end">
+        <a class="btn sm qt-sell" href="/journal/quick?asset={{ aid_q }}&amp;side=sell" title="Verkauf erfassen">− Verkauf</a>
+        <a class="btn sm qt-buy" href="/journal/quick?asset={{ aid_q }}&amp;side=buy" title="Kauf erfassen">+ Kauf</a>
+        {% if pos %}<a class="btn sm ghost" href="/journal/writeoff?asset={{ aid_q }}" title="Bestand als Verlust (Totalverlust) ausbuchen">Ausbuchen …</a>{% endif %}</div>{% endif %}
     </div>
   </div>
 
@@ -33,7 +39,7 @@
       <h2>Kursverlauf</h2>
       <div class="row">
         <div class="seg" role="group" aria-label="Zeitraum" data-range-group="price-{{ aid_q }}">
-          {% for r in ['1T','1W','1M','6M','1J','MAX'] %}<button type="button" data-range="{{ r }}" aria-pressed="{{ 'true' if r == '1J' else 'false' }}">{{ 'Max' if r == 'MAX' else r }}</button>{% endfor %}
+          {% for r in ['1T','7T','1M','3M','1J','MAX'] %}<button type="button" data-range="{{ r }}" aria-pressed="{{ 'true' if r == '1J' else 'false' }}">{{ 'Max' if r == 'MAX' else r }}</button>{% endfor %}
         </div>
         <div class="seg" role="group" aria-label="Darstellung" data-kind-group="price-{{ aid_q }}">
           <button type="button" data-kind="line" aria-pressed="true">Linie</button>
@@ -64,7 +70,7 @@
       <div class="fact"><div class="k">Bestand</div><div class="v">{{ pos.qty|qty if pos else '0' }} {{ a.symbol }}</div></div>
       <div class="fact"><div class="k">Wert</div><div class="v">{{ pos.value|eur if pos else '–' }}</div></div>
       <div class="fact"><div class="k">Gewicht</div><div class="v">{{ pos.weight|pct(2, false) if pos else '–' }}</div></div>
-      <div class="fact"><div class="k">Einstand (offene Lots)</div><div class="v">{{ pos.cost|eur if pos else '–' }}</div></div>
+      <div class="fact"><div class="k">Investiert (Einstand offener Lots)</div><div class="v">{{ pos.cost|eur if pos else '–' }}</div></div>
       <div class="fact"><div class="k">Ø Einstand je Einheit</div><div class="v">{{ pos.avg_cost|price if pos and pos.avg_cost else '–' }}</div></div>
       <div class="fact"><div class="k">Unrealisierter G/V</div><div class="v"><span class="delta {{ pos.unrealized|tone if pos else 'neutral' }}">{{ pos.unrealized|eur(2, true) if pos else '–' }}{% if pos and pos.unrealized_pct is not none %} ({{ pos.unrealized_pct|pct }}){% endif %}</span></div></div>
       <div class="fact"><div class="k">Realisierter G/V</div><div class="v"><span class="delta {{ realized|tone }}">{{ realized|eur(2, true) }}</span></div></div>
@@ -79,7 +85,7 @@
   <section class="card">
     <div class="card-head"><h2>Positionsverlauf</h2>
       <div class="seg" role="group" aria-label="Zeitraum" data-range-group="pos-{{ aid_q }}">
-        {% for r in ['6M','1J','3J','MAX'] %}<button type="button" data-range="{{ r }}" aria-pressed="{{ 'true' if r == 'MAX' else 'false' }}">{{ 'Max' if r == 'MAX' else r }}</button>{% endfor %}
+        {% for r in ['1M','3M','6M','1J','3J','MAX'] %}<button type="button" data-range="{{ r }}" aria-pressed="{{ 'true' if r == 'MAX' else 'false' }}">{{ 'Max' if r == 'MAX' else r }}</button>{% endfor %}
       </div></div>
     <div id="pos-{{ aid_q }}" class="chart" data-chart="position" data-src="/api/asset/{{ aid_q }}/position" data-range="MAX" role="img" aria-label="Stückzahl und Wert der Position über die Zeit"></div>
   </section>
