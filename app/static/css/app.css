@@ -190,7 +190,11 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
   display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--surface); border-top: 1px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom);
+  transform: translateZ(0); /* eigene Ebene: kein Nachziehen beim Scrollen (iOS/Android) */
 }
+/* Ein- bzw. Ausblenden der Browser-Adressleiste verschiebt fixierte Elemente kurzzeitig nach oben; die Fläche darunter
+   in Leistenfarbe füllen, damit kein Inhalt durch den Spalt scheint */
+.bottom-nav::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 120px; background: var(--surface); }
 .bottom-nav a, .bottom-nav button {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 8px 2px 7px; font-size: 0.7rem; color: var(--ink-2);
@@ -309,12 +313,17 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 .seg button[aria-pressed="true"], .seg a.active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
 .seg a:hover { text-decoration: none; }
 
-select, input[type="text"], input[type="number"], input[type="date"], input[type="time"], input[type="search"], input[type="password"], textarea {
+select, input:not([type]), input[type="text"], input[type="number"], input[type="date"], input[type="time"], input[type="search"], input[type="password"], input[type="email"], input[type="url"], textarea {
   font: inherit; font-size: 0.9rem; color: var(--ink); background: var(--surface);
   border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 9px; min-height: 36px; max-width: 100%;
 }
 textarea { width: 100%; min-height: 90px; }
 label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--ink-2); min-width: 0; max-width: 100%; }
+/* Formularraster (Watchlist „Hinzufügen“, Schnellkauf/-verkauf): Felder nebeneinander, mobil untereinander */
+.form-grid { display: grid; gap: 10px 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); align-items: end; }
+.form-grid > * { min-width: 0; }
+.form-grid label.field > input, .form-grid label.field > select { width: 100%; }
+.form-grid > .row { align-self: end; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 12px; }
 .filters > * { min-width: 0; max-width: 100%; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 0.9rem; max-width: 100%; overflow-wrap: anywhere; }
@@ -721,3 +730,6 @@ table.months td, table.months th { padding: 2px 6px; }
 .spark.down { color: var(--down); }
 .spark.neutral { color: var(--ink-2); }
 .watchlist td.actions form.inline { display: inline; }
+
+/* Abbrechen eines laufenden Abrufs */
+.ds-cancel { display: flex; justify-content: flex-end; margin-top: 6px; }

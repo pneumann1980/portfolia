@@ -73,10 +73,11 @@ BASIS_LABEL = {
     "counterpart": "Gegenbuchung im kuratierten Import",
     "jpair": "Transfer mit bereits übernommener Buchung",
     "asset_mismatch": "gleiche Menge, Konto und Zeit, aber anderes Asset",
+    "conversion_twin": "derselbe Umtausch aus einem anders benannten Ausgangs-Asset (Ticker-Umbenennung?)",
 }
 IDENTITY = frozenset({"ext", "event", "link", "ref", "id", "hash", "hash_full", "file_dup"})
 SAME_SOURCE = frozenset({"ext", "event", "file_dup", "link"})  # nichts zu verknüpfen: bereits entschieden/übernommen
-COMPLEX = frozenset({"hash_partial", "reconstructed", "event_part", "counterpart", "jpair"})
+COMPLEX = frozenset({"hash_partial", "reconstructed", "event_part", "counterpart", "jpair", "conversion_twin"})
 
 # Quellarten und feldbezogener Vorrang
 KIND_LABEL = {"exchange": "Börse", "chain": "Blockchain/Wallet", "taxtool": "Steuertool", "manual": "manuell",

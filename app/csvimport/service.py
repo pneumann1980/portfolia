@@ -987,6 +987,7 @@ class CsvImportService:
         self._same_qty([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._reconstructed([rc for rc in open_rows if rc.status == "new"], pf)
         self._asset_mismatch([rc for rc in open_rows if rc.status == "new"], pf, source)
+        self._conversion_twins([rc for rc in open_rows if rc.status == "new"], pf, source)
         self._event_parts(open_rows)
         for rc in open_rows:
             if rc.idx in reopened:
@@ -1589,6 +1590,44 @@ class CsvImportService:
                 rc.warnings.insert(0, f"gleiche Menge und Zeit wie {t.tx_id} auf demselben Konto, aber {other} statt "
                                       f"{asset} – Asset-Zuordnung prüfen")
                 break
+
+    @staticmethod
+    def _conversion_twins(rows: list[RowCtx], pf: Portfolio | None, source: str) -> None:
+        """Umtausch (Krypto → Krypto, gleiches Konto), den eine andere Quelle schon mit exakt gleichen Mengen und
+        gleichem Ziel-Asset gebucht hat – aber aus einem anderen Ausgangs-Asset, bis 36 h Abstand. Typisch für eine
+        Ticker-Umbenennung: die Börse liefert ``OLD`` → ``NEW``, das Steuertool führt den Altbestand schon unter dem
+        neuen Symbol (``NEW#…`` → ``NEW``). Nie still zusätzlich buchen (``NEW`` zählte doppelt, ``OLD`` würde
+        negativ), sondern prüfen. Gegenstück zur Diagnose-Regel „Umtausch doppelt gebucht“."""
+        if pf is None or not rows:
+            return
+        index: dict[tuple[str, str, Decimal, Decimal], list[Tx]] = defaultdict(list)
+        for t in pf.txs:
+            if (t.origin == "journal" and (t.source or "") == source) or t.origin == "plan":
+                continue
+            if t.type in ("trade", "corporate_action") and t.from_asset and t.to_asset and t.from_qty and t.to_qty \
+                    and t.from_account and t.from_account == t.to_account and t.from_asset != t.to_asset \
+                    and C.ISO_CURRENCIES.isdisjoint((t.from_asset, t.to_asset)):
+                index[(t.to_account or "", t.to_asset, t.to_qty, t.from_qty)].append(t)
+        if not index:
+            return
+        for rc in rows:
+            row = rc.row
+            if row is None or rc.status != "new" or row["type"] not in ("trade", "corporate_action"):
+                continue
+            fq, tq = _row_d(row["from_qty"]), _row_d(row["to_qty"])
+            if fq is None or tq is None or not row["from_account"] or row["from_account"] != row["to_account"]:
+                continue
+            cands = index.get((row["to_account"], row["to_asset"], tq, fq), [])
+            hit = next((t for t in cands if t.from_asset != row["from_asset"]
+                        and abs(t.ts - rc.ts) <= timedelta(hours=36)), None)
+            if hit is None:
+                continue
+            rc.status, rc.basis = "duplicate", "conversion_twin"
+            rc.dup_same_account = True
+            rc.dup_of, rc.roles = [hit.tx_id], {hit.tx_id: "same"}
+            rc.warnings.insert(0, f"derselbe Umtausch ist bereits als {hit.tx_id} gebucht ({hit.from_asset} → "
+                                  f"{hit.to_asset}, gleiche Mengen) – Ticker-Umbenennung? {row['from_asset']} "
+                                  f"entspricht vermutlich {hit.from_asset}; nicht zusätzlich übernehmen")
 
     @staticmethod
     def _covered_by_transfer(rc: RowCtx, transfers: TS.TransferIndex, ds_id: int | None = None) -> bool:

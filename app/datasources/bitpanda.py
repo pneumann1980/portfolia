@@ -60,7 +60,6 @@ import hashlib
 import json
 import logging
 import re
-import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -308,6 +307,7 @@ class _Api:
                  budget_s: float = WAIT_BUDGET_S) -> None:
         self._key = key
         self.client = client
+        self._cancel = K.current_cancel()
         self.sleep = sleep
         self.budget = budget_s
         self.waited = 0.0
@@ -322,12 +322,14 @@ class _Api:
             return False
         self.waited += s
         self.sleep(s)
+        K.check_cancel(self._cancel)
         return True
 
     def get(self, path: str, params: dict[str, Any] | None, what: str) -> Any:
         attempt = 0
         while True:
             attempt += 1
+            K.check_cancel(self._cancel)
             self.requests += 1
             try:
                 resp = self.client.get(path, params=params, headers={"x-api-key": self._key})
@@ -814,7 +816,7 @@ class BitpandaConnector(K.Connector):
     parser_version = PARSER_VERSION
     base_url: ClassVar[str] = BASE_URL
     transport: ClassVar[httpx.BaseTransport | None] = None  # nur Tests (synthetische Fixtures)
-    sleep: ClassVar[Callable[[float], None]] = staticmethod(time.sleep)
+    sleep: ClassVar[Callable[[float], None]] = staticmethod(K.interruptible_sleep)
 
     def _client(self) -> httpx.Client:
         return httpx.Client(base_url=self.base_url, timeout=TIMEOUT, follow_redirects=False,

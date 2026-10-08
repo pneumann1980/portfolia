@@ -6,5 +6,7 @@
                           "source": ("jetzt „" ~ batch.current ~ "“") if batch.current else ''}) %}
 <div class="alert info ds-batch" hx-get="/settings/datasources/batch-progress" hx-trigger="every 3s" hx-swap="outerHTML">
   <div style="flex:1;min-width:0">{{ bar(v) }}
-    {% if batch.errors %}<div class="hint" style="margin-top:4px">Fehler bisher: {{ batch.errors|length }} – die übrigen Konten laufen weiter.</div>{% endif %}</div>
+    {% if batch.errors %}<div class="hint" style="margin-top:4px">Fehler bisher: {{ batch.errors|length }} – die übrigen Konten laufen weiter.</div>{% endif %}
+    <form method="post" action="/settings/datasources/sync-many/cancel" class="ds-cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% if batch.cancel_requested %}<span class="hint">Wird abgebrochen …</span>{% else %}<button class="btn ghost sm" type="submit">Abbrechen</button>{% endif %}</form></div>
 </div>

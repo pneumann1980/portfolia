@@ -163,7 +163,7 @@
     {% if ds.limits %}<details style="margin-top:6px"><summary class="hint">Abdeckungsgrenzen ({{ ds.limits|length }})</summary><ul class="small" style="margin:4px 0 0 16px">{% for l in ds.limits %}<li>{{ l }}</li>{% endfor %}</ul></details>{% endif %}
     <div class="row" style="margin-top:10px">
       {% if ds.supported and ds.enabled %}
-        <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary sm" type="submit" {% if ds.progress.running or batch.running %}disabled{% endif %}>{{ '↻ Aktualisieren' if ds.last_success_at else 'Erstabruf starten' }}</button></form>
+        <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary sm" type="submit" {% if ds.progress.running %}disabled{% endif %}>{{ '↻ Aktualisieren' if ds.last_success_at else 'Erstabruf starten' }}</button></form>
         <form method="post" action="/settings/datasources/{{ ds.id }}/check" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Verbindung testen</button></form>
       {% endif %}
       <a class="btn sm" href="/settings/datasources/{{ ds.id }}">Details</a>

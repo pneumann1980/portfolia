@@ -56,7 +56,7 @@
     <label class="field">Art<select name="kind">{% for k, v in kinds.items() %}<option value="{{ k }}" {{ 'selected' if form.kind == k }}>{{ v }}</option>{% endfor %}</select></label>
     <label class="field">Symbol, CoinGecko-ID/-Link bzw. Yahoo-Symbol<input name="value" value="{{ form.value or '' }}" list="wl-assets" placeholder="z. B. kaspa, BONK, SAP.DE" autocomplete="off"></label>
     <datalist id="wl-assets">{% for a in assets %}<option value="{{ a.asset_id }}">{{ a.name }}</option>{% endfor %}</datalist>
-    <div class="row" style="align-self:end"><button class="btn primary" type="submit">Hinzufügen</button></div>
+    <div class="row"><button class="btn primary" type="submit">Hinzufügen</button></div>
   </form>
   {% if choices %}
   <p class="hint" style="margin-top:8px">Mehrere Coins mit diesem Symbol – bitte wählen:</p>
@@ -64,8 +64,8 @@
     {% for c in choices %}<form method="post" action="/watchlist/add" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="list" value="{{ list_id }}"><input type="hidden" name="kind" value="crypto"><input type="hidden" name="value" value="{{ c.id }}"><button class="btn sm" type="submit">{{ c.symbol }} · {{ c.name }} <span class="hint">({{ c.id }})</span></button></form>{% endfor %}
   </div>{% endif %}
   <details class="box" style="margin-top:12px"><summary>Weitere Liste anlegen</summary>
-    <form method="post" action="/watchlist/lists" class="row" style="gap:8px;margin-top:8px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label class="field" style="flex:1">Name<input name="name" maxlength="40"></label><button class="btn" type="submit" style="align-self:end">Anlegen</button></form>
+    <form method="post" action="/watchlist/lists" class="form-grid" style="margin-top:8px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="field">Name<input name="name" maxlength="40"></label><div class="row"><button class="btn" type="submit">Anlegen</button></div></form>
   </details>
 </section>
 {% endblock %}

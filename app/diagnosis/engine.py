@@ -136,6 +136,7 @@ class _Index:
             (h.get("account"), h["asset_id"]): h for h in self.pf.holdings_check}
         self.findings_by_pos: dict[tuple[str, str], list[Finding]] = defaultdict(list)
         self.dup_txs: set[str] = set()
+        self.twin_weak: set[str] = set()
 
     # -- Buchungen ------------------------------------------------------------------------------------
     def _hashes(self, t: Tx) -> set[str]:
@@ -306,9 +307,10 @@ def diagnose(snap: Snapshot) -> Report:
     idx = None
     if snap.pf is not None and snap.ledger is not None:
         idx = _Index(snap)
-        for rule in (_dup_same_hash, _dup_same_qty, _dup_same_id, _dup_identical, _dup_transfer_side, _transfers,
+        for rule in (_dup_same_hash, _dup_same_qty, _dup_same_id, _dup_identical, _dup_conversion_twin,
+                     _dup_transfer_side, _transfers,
                      _assets, _history,
-                     _estimated, _prices, _price_history, _migrations):
+                     _estimated, _prices, _price_history, _migrations, _rename_trades):
             findings += rule(idx, stats)
         rows, hf = _holdings(idx, stats)
         holdings = rows
@@ -572,6 +574,130 @@ def _dup_identical(idx: _Index, stats: dict[str, int]) -> list[Finding]:
         out.append(idx.attach(f))
     stats["identical_pairs"] = sum(len(f.data["pairs"]) for f in out)
     return out
+
+
+def _is_conversion(idx: _Index, t: Tx) -> bool:
+    """Tausch bzw. Kapitalmaßnahme Krypto → Krypto (Abgangs- und Zugangsbein auf demselben Konto, kein Fiat)."""
+    return (t.origin != "plan" and t.type in ("trade", "corporate_action") and bool(t.from_asset and t.to_asset)
+            and bool(t.from_qty and t.to_qty) and t.from_asset != t.to_asset
+            and bool(t.from_account) and t.from_account == t.to_account
+            and not idx.asset(t.from_asset).is_fiat and not idx.asset(t.to_asset).is_fiat)
+
+
+def _balance_before(idx: _Index, account: str, aid: str, t: Tx) -> Decimal:
+    """Bestand (Konto, Asset) unmittelbar vor ``t`` – Reihenfolge wie im Ledger (Zeitpunkt, Folge, Kennung)."""
+    q = ZERO
+    stop = (t.ts, t.seq, t.tx_id)
+    for x in idx.txs:
+        if (x.ts, x.seq, x.tx_id) >= stop:
+            break
+        q += _effect([x]).get((account, aid), ZERO)
+    return q
+
+
+def same_instrument(idx: _Index, a: str, b: str) -> list[str]:
+    """Belege, dass zwei Asset-IDs dasselbe Instrument bezeichnen (gleiche Kurszuordnung bzw. gleiches Symbol)."""
+    if a == b:
+        return ["dasselbe Asset"]
+    x, y = idx.asset(a), idx.asset(b)
+    out = []
+    if x.quote_source not in ("", "none") and x.quote_id and (x.quote_source, x.quote_id) == (y.quote_source,
+                                                                                               y.quote_id):
+        out.append(f"gleiche Kurszuordnung {x.quote_source} „{x.quote_id}“")
+    if x.symbol.upper() == y.symbol.upper():
+        out.append(f"gleiches Symbol {x.symbol.upper()}")
+    return out
+
+
+def _dup_conversion_twin(idx: _Index, stats: dict[str, int]) -> list[Finding]:
+    """Derselbe Umtausch zweimal gebucht – unter verschiedenen Ausgangs-Assets bzw. Buchungsarten, z. B. die
+    Ticker-Umbenennung AITECH → ACN: im kuratierten Import als Tausch des (dort schon umbenannten) Altbestands
+    ``ACN#…`` → ``ACN``, aus der Börsen-API als Kapitalmaßnahme ``AITECH`` → ``ACN``. Gleiches Konto, gleiches
+    Ziel-Asset, exakt gleiche Mengen auf beiden Seiten, Abstand ≤ 36 h, verschiedene Quellen.
+
+    Die Buchung, deren Ausgangs-Asset vorher keinen ausreichenden Bestand hatte (Ursache von „Bestand zeitweise
+    negativ“), ist die zusätzliche. Ändert nichts – Lösungen erst nach Vorschau und Bestätigung."""
+    groups: dict[tuple[str, str, Decimal, Decimal], list[Tx]] = defaultdict(list)
+    for t in idx.txs:
+        if _is_conversion(idx, t) and t.tx_id not in idx.dup_txs:
+            groups[(t.to_account or "", t.to_asset or "", t.to_qty, t.from_qty)].append(t)  # type: ignore[index]
+    out: list[Finding] = []
+    for (acc, new, q_to, q_from), txs in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1], str(kv[0][2]))):
+        if len(txs) < 2:
+            continue
+        txs = sorted(txs, key=lambda t: (t.ts, t.seq, t.tx_id))
+        for i, a in enumerate(txs):
+            for b in txs[i + 1:]:
+                if b.ts - a.ts > DUP_WINDOW or a.tx_id in idx.dup_txs or b.tx_id in idx.dup_txs:
+                    continue
+                if idx.source_label(a) == idx.source_label(b) and a.source_ref and b.source_ref:
+                    continue  # zwei Vorgänge derselben Quelle mit eigenen Kennungen
+                ha, hb = idx.hashes[a.tx_id], idx.hashes[b.tx_id]
+                if ha and hb and not (ha & hb):
+                    continue  # verschiedene Blockchain-Transaktionen
+                f = _twin_finding(idx, acc, new, q_to, q_from, a, b)
+                if f is not None:
+                    idx.dup_txs.update((a.tx_id, b.tx_id))
+                    out.append(f)
+    stats["conversion_twins"] = len(out)
+    return out
+
+
+def _twin_finding(idx: _Index, acc: str, new: str, q_to: Decimal, q_from: Decimal, a: Tx, b: Tx) -> Finding | None:
+    before = {t.tx_id: _balance_before(idx, acc, t.from_asset or "", t) for t in (a, b)}
+    short = {t.tx_id: before[t.tx_id] < q_from - max(DUST, q_from * Decimal("1e-9")) for t in (a, b)}
+    inst = same_instrument(idx, a.from_asset or "", b.from_asset or "")
+    distinct = _sig_digits(q_from) >= DISTINCT_DIGITS and _sig_digits(q_to) >= DISTINCT_DIGITS
+    if not (inst or short[a.tx_id] != short[b.tx_id]) and not distinct:
+        return None  # runde Mengen ohne weiteren Beleg: gleichartige Umtausche sind plausibel
+    if short[a.tx_id] != short[b.tx_id]:
+        weak, strong = (a, b) if short[a.tx_id] else (b, a)
+    elif a.origin == "journal" and b.origin == "import":
+        weak, strong = a, b
+    else:
+        weak, strong = b, a
+    old_w, old_s = weak.from_asset or "", strong.from_asset or ""
+    status = "wahrscheinlich" if distinct and (inst or short[weak.tx_id]) else "verdacht"
+    rename = old_w != old_s
+    known = [f"Zwei Umtausche auf {acc} ergeben jeweils exakt {_q(q_to)} {new} aus exakt {_q(q_from)} "
+             f"{'des Ausgangs-Assets' if not rename else old_s + ' bzw. ' + old_w} (Abstand {_dur(abs(b.ts - a.ts))}).",
+             idx.describe(strong), idx.describe(weak),
+             f"Bestand {old_s} auf {acc} vor {strong.tx_id}: {_q(before[strong.tx_id])}; "
+             f"Bestand {old_w} vor {weak.tx_id}: {_q(before[weak.tx_id])}."]
+    evidence = [f"Mengen mit {_sig_digits(q_from)} bzw. {_sig_digits(q_to)} signifikanten Stellen auf beiden Seiten "
+                "identisch" + (" – zufällige Gleichheit ist unwahrscheinlich" if distinct else "")]
+    if short[weak.tx_id]:
+        evidence.append(f"{weak.tx_id} tauscht {_q(q_from)} {old_w}, vorher waren nur {_q(before[weak.tx_id])} "
+                        "gebucht – der Bestand wird negativ (Ursache von „Bestand zeitweise negativ“).")
+    evidence += [f"{old_s} / {old_w}: {x}" for x in inst if rename]
+    if rename:
+        evidence.append(f"Typisch für eine Ticker-Umbenennung: Die eine Quelle führt den Altbestand unter "
+                        f"{old_s}, die andere unter {old_w}.")
+    f = Finding(
+        kind="duplicate", status=status, priority=1,
+        title=f"Umtausch doppelt gebucht: {_q(q_from)} {old_w if rename else old_s} → {_q(q_to)} {new} auf {acc}",
+        known=known,
+        suspected=[f"{weak.tx_id} ({idx.source_label(weak)}) bildet denselben Umtausch ein zweites Mal ab wie "
+                   f"{strong.tx_id} ({idx.source_label(strong)}); {new} zählt dadurch doppelt."
+                   + (f" {old_w} ist vermutlich das Börsen-Symbol des Altbestands, den der Import als {old_s} führt."
+                      if rename else "")],
+        evidence=evidence,
+        uncertainty=["Zwei gleiche Umtausche in kurzer Folge sind möglich – der Kontoauszug der Quelle entscheidet.",
+                     "Ob der Umtausch steuerlich ein Tausch oder eine steuerneutrale Umbenennung ist, beantwortet "
+                     "diese Prüfung nicht (siehe Befund „Umbenennung als Tausch gebucht“)."],
+        pairs=[(idx.ref(weak), idx.ref(strong), "gleiches Konto und Ziel-Asset, exakt gleiche Mengen, "
+                                                f"Abstand {_dur(abs(b.ts - a.ts))}")],
+        scenario=_scenario_without(idx, [weak], f"Szenario (hypothetisch): ohne die Buchung {weak.tx_id}. Es wird "
+                                                "nichts gebucht und nichts ausgeschlossen."),
+        decision=f"Kontoauszug prüfen; bei einem Vorgang {weak.tx_id} nicht mehr zählen lassen (App-Buchung neben "
+                 "Import-Buchung: „im Import enthalten“). Portfolia ändert nichts automatisch.",
+        key=f"twin|{'|'.join(sorted((a.tx_id, b.tx_id)))}", weight=abs(q_to),
+        positions=[(acc, new), (acc, old_w), (acc, old_s)] if rename else [(acc, new), (acc, old_s)],
+        data={"type": "conversion_twin", "weak": weak.tx_id, "strong": strong.tx_id, "account": acc, "asset": new,
+              "old_weak": old_w, "old_strong": old_s, "short": short[weak.tx_id]})
+    f.txs = [idx.ref(strong), idx.ref(weak)]
+    idx.twin_weak.add(weak.tx_id)
+    return idx.attach(f, derive_positions=False)
 
 
 def _dup_same_qty(idx: _Index, stats: dict[str, int]) -> list[Finding]:
@@ -1129,14 +1255,17 @@ def _history(idx: _Index, stats: dict[str, int]) -> list[Finding]:
     for (code, aid, acc), issues in sorted(grouped.items()):
         label, status, prio, expl = _ISSUE_TEXT[code]
         txs = [idx.by_id[i.tx_id] for i in issues if i.tx_id in idx.by_id]
+        twins = [t.tx_id for t in txs if t.tx_id in idx.twin_weak]
         f = Finding(
             kind="history", status=status, priority=prio,
             title=f"{label}: {aid or '–'}{' auf ' + acc if acc else ''}" + (f" ({len(issues)}×)" if len(issues) > 1
                                                                            else ""),
             known=[expl, *(i.message for i in issues[:10])] + ([f"… und {len(issues) - 10} weitere"]
                                                                if len(issues) > 10 else []),
-            suspected=["Die Transaktionshistorie dieses Kontos ist unvollständig (fehlender Import, nicht erfasster "
-                       "Transfer oder falsche Reihenfolge)."] if status != "hinweis" else [],
+            suspected=([f"Ursache wahrscheinlich ein doppelt gebuchter Umtausch ({', '.join(twins)}): siehe Befund "
+                        "„Umtausch doppelt gebucht“ – dort lösen, nicht hier ausblenden."] if twins else
+                       ["Die Transaktionshistorie dieses Kontos ist unvollständig (fehlender Import, nicht erfasster "
+                        "Transfer oder falsche Reihenfolge)."]) if status != "hinweis" else [],
             uncertainty=["Ursache und fehlende Buchung lassen sich aus den vorhandenen Daten nicht bestimmen."],
             decision="Fehlende Zugänge belegen (Export der Quelle, Explorer) und im kuratierten Import ergänzen. "
                      "Portfolia ergänzt nichts automatisch.",
@@ -1608,6 +1737,90 @@ def _migrations(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                     idx.findings_by_pos[pos].append(f)
                 out.append(f)
     stats["migration_findings"] = len(out)
+    return out
+
+
+def _rename_ratio(q_from: Decimal, q_to: Decimal) -> int | None:
+    """Verhältnis 1 : 1 bzw. 10^k : 1 (Redenominierung) – sonst ``None``."""
+    if q_from <= 0 or q_to <= 0:
+        return None
+    if abs(q_from / q_to - 1) <= MIGRATION_TOL:
+        return 0
+    return _ratio_power(q_from, q_to)
+
+
+def _rename_trades(idx: _Index, stats: dict[str, int]) -> list[Finding]:
+    """Ticker-Umbenennung bzw. Redenominierung, die als steuerpflichtiger **Tausch** gebucht ist (z. B. vom Steuertool
+    Koinly: ``ACN#…`` → ``ACN`` 1 : 1): Ausgangs- und Ziel-Asset bezeichnen dasselbe Instrument (gleiche
+    Kurszuordnung bzw. gleiches Symbol), Mengenverhältnis 1 : 1 bzw. 10^k : 1, der Altbestand des Kontos geht
+    vollständig über. Der Tausch realisiert dann einen Scheingewinn bzw. -verlust und setzt Anschaffungsdatum und
+    Haltedauer neu. Lösung (nach Vorschau): als Kapitalmaßnahme „migration“ buchen – Einstand und Anschaffungsdatum
+    gehen über."""
+    weak = idx.twin_weak  # zusätzliche Buchung eines doppelten Umtauschs: dort zu lösen
+    disp: dict[str, list[Disposal]] = defaultdict(list)
+    for d in idx.led.disposals:
+        disp[d.tx_id].append(d)
+    out: list[Finding] = []
+    for t in idx.txs:
+        if t.type != "trade" or t.tx_id in weak or not _is_conversion(idx, t):
+            continue
+        old, new, acc = t.from_asset or "", t.to_asset or "", t.from_account or ""
+        k = _rename_ratio(t.from_qty, t.to_qty)  # type: ignore[arg-type]
+        inst = same_instrument(idx, old, new)
+        if k is None or not inst:
+            continue
+        rest = _balance_before(idx, acc, old, t) - t.from_qty - (t.fee_qty if t.fee_asset == old and t.fee_qty
+                                                                 else ZERO)
+        if abs(rest) > max(DUST, t.from_qty * Decimal("1e-6")):  # type: ignore[operator]
+            continue  # Altbestand geht nicht vollständig über – eher ein gewöhnlicher (Teil-)Tausch
+        ds = [d for d in disp.get(t.tx_id, []) if d.asset == old]
+        gain = sum((d.gain for d in ds), ZERO)
+        cost = sum((d.cost for d in ds), ZERO)
+        proceeds = sum((d.proceeds for d in ds), ZERO)
+        acq = sorted({p.acq_date for d in ds for p in d.parts if p.acq_date})
+        later_old = any(x.ts > t.ts and old in (x.from_asset, x.to_asset) and acc in (x.from_account, x.to_account)
+                        for x in idx.txs)
+        ratio = "1 : 1" if k == 0 else f"10^{abs(k)} : 1"
+        status = "wahrscheinlich" if len(inst) >= 2 and not later_old else "verdacht"
+        known = [idx.describe(t),
+                 f"Der gesamte Bestand {old} auf {acc} geht über (danach 0); Mengenverhältnis {ratio}.",
+                 f"Gebucht als Tausch: Veräußerung von {_q(t.from_qty)} {old} zum Erlös {eur(proceeds)} bei Einstand "
+                 f"{eur(cost)} – realisiert {eur(gain)}; {new} beginnt mit Anschaffungsdatum {_d(t.ts)}."
+                 if ds else "Gebucht als Tausch (Veräußerung und Neuanschaffung)."]
+        if acq:
+            known.append(f"Anschaffungsdaten des Altbestands: {_d(acq[0])}" + (f" … {_d(acq[-1])}" if len(acq) > 1
+                                                                               else ""))
+        evidence = [*inst, f"Mengenverhältnis {ratio}"]
+        if not later_old:
+            evidence.append(f"{old} kommt auf {acc} danach nicht mehr vor")
+        f = Finding(
+            kind="migration", status=status, priority=2,
+            title=f"Umbenennung als Tausch gebucht: {old} → {new} auf {acc} ({_d(t.ts)})",
+            known=known,
+            suspected=[f"{new} ist derselbe Token wie {old} unter neuem Ticker bzw. neuer Kennung. Als Tausch gebucht "
+                       "entstehen ein Scheingewinn bzw. -verlust und eine neue Haltedauer (bei Krypto: neue "
+                       "Jahresfrist)."],
+            evidence=evidence,
+            uncertainty=["Ob es eine reine Umbenennung (steuerneutral, gleicher Token) oder ein Umtausch in einen "
+                         "neuen Token (Vertragswechsel, ggf. steuerlich ein Tausch) war, zeigen nur die Angaben des "
+                         "Projekts bzw. der Börse – im Zweifel steuerlich beraten lassen.",
+                         "Ein Steuertool kann den Vorgang bewusst als Tausch führen; die Steuerberichte des Tools "
+                         "weichen nach einer Umbuchung in Portfolia dann ab."],
+            scenario=Scenario(text=f"Szenario (hypothetisch): als Kapitalmaßnahme gebucht gingen Einstand "
+                                   f"{eur(cost)} und Anschaffungsdaten von {old} auf {new} über; der realisierte "
+                                   f"Betrag {eur(gain)} entfiele. Es wird nichts gebucht.",
+                              rows=[("realisiert durch den Tausch", eur(gain), eur(ZERO)),
+                                    (f"Anschaffungsdatum {new}", _d(t.ts),
+                                     _d(acq[0]) + (" …" if len(acq) > 1 else "") if acq else "wie Altbestand")]),
+            decision="Angaben der Börse bzw. des Projekts prüfen; bei einer Umbenennung als Kapitalmaßnahme "
+                     "(Migration) buchen. Portfolia ändert nichts automatisch.",
+            key=f"rename-trade|{t.tx_id}", weight=abs(gain),
+            data={"type": "rename_trade", "tx": t.tx_id, "account": acc, "old": old, "new": new,
+                  "gain": str(gain), "ratio": k})
+        f.txs = [idx.ref(t)]
+        f.positions = [(acc, old), (acc, new)]
+        out.append(idx.attach(f, derive_positions=False))
+    stats["rename_trades"] = len(out)
     return out
 
 

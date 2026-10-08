@@ -389,6 +389,23 @@ technisch wie die Kapitalmaßnahme „Migration“ (Anschaffungsdaten bleiben), 
 der Steueraufstellung aber mit „über Umstellung“ und einem Prüfhinweis (*steuerliche Behandlung nicht automatisch
 geklärt*).
 
+#### Dieselbe Umbenennung aus zwei Quellen (z. B. AITECH → ACN)
+
+Benennt eine Börse einen Token um, liefern Quellen den Vorgang oft verschieden: das Steuertool führt den Altbestand
+schon unter dem neuen Symbol mit eigener Kennung (`ACN#…`) und bucht die Umstellung als **Tausch** `ACN#…` → `ACN`;
+die Börsen-API liefert eine Kapitalmaßnahme `AITECH` → `ACN`. Ohne Korrektur zählt `ACN` doppelt, `AITECH` wird
+negativ, und der Tausch realisiert einen Scheingewinn bzw. -verlust mit neuer Haltedauer. Portfolia erkennt das:
+
+* **Diagnose „Umtausch doppelt gebucht“** – gleiches Konto und Ziel-Asset, exakt gleiche Mengen auf beiden Seiten,
+  ≤ 36 h, verschiedene Quellen; die Buchung, deren Ausgangs-Asset vorher keinen Bestand hatte, ist die zusätzliche.
+  Lösung: App-Buchung „im Import enthalten“ (bzw. ausblenden). Der Befund „Bestand zeitweise negativ“ verweist darauf.
+* **Diagnose „Umbenennung als Tausch gebucht“** – Tausch zwischen zwei Asset-IDs desselben Instruments (gleiche
+  Kurszuordnung bzw. gleiches Symbol), Verhältnis 1 : 1 bzw. 10^k : 1, Altbestand geht vollständig über. Lösung
+  nach Vorschau: als Kapitalmaßnahme „migration“ buchen (Einstand und Anschaffungsdaten gehen über). Steuerlich nur
+  richtig bei reiner Umbenennung; Berichte des Steuertools weichen danach ab.
+* **Prüf-Stapel:** Liefert eine weitere Quelle denselben Umtausch aus einem anders benannten Ausgangs-Asset, wird er
+  nicht übernommen, sondern als „komplex“ zur Prüfung vorgelegt.
+
 ### Positionen ausbuchen (Verlust, Diebstahl)
 
 *Buchungen → Ausbuchen* (auch aus der Übersicht, der Performance-Seite und der Detailansicht einer Position)
@@ -656,6 +673,14 @@ anlegen, ansehen, bearbeiten, deaktivieren und entfernen – auch auf dem Smartp
 > nicht live** – siehe [Grenzen der Bitpanda-Anbindung](#grenzen-der-bitpanda-anbindung) und
 > [Wallets](#wallets-read-only-sechs-chains). Alle anderen Börsen und Chains zeigen ehrlich **„Manuell / noch
 > nicht unterstützt“** und verweisen auf den CSV-Import.
+
+**Unabhängige Abrufe und Abbrechen (0.21.2):** Jede Datenquelle hat ihre eigene Sperre – ein langsamer Abruf (z. B.
+KRC-20 mit Ratenlimit) blockiert Bitpanda und andere Wallets nicht; dieselbe Quelle läuft nie doppelt. Abrufe beim
+Anbieter laufen parallel, Abgleich und Übernahme nacheinander (quellenübergreifende Dublettenerkennung sieht so stets
+den vollständigen Stand). Der Zeitplan startet fällige Quellen je in eigenem Thread. Laufende Abrufe zeigen
+*Abbrechen*: der Abruf endet an der nächsten Prüfstelle (Anfrage, Wartezeit, Fortschritt), der Abrufstand bleibt
+unverändert, die Quelle geht nicht in den Fehlerzustand. Eine verwaiste Anzeige „Abruf läuft“ (z. B. nach Neustart)
+setzt *Abbrechen* sofort zurück. Ein bereits abgerufenes Ergebnis wird nicht mitten im Einbuchen unterbrochen.
 
 **Datensatz:** Art (Börse oder Wallet-Adresse), Anbieter bzw. Chain, frei wählbarer Name, Konto in Portfolia (auf
 das gebucht wird – bei vorhandenen Buchungen aus Import oder CSV dasselbe Konto wählen), öffentliche Adresse bzw.

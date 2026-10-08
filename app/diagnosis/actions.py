@@ -448,6 +448,26 @@ def _migration(st: _State, plan: Plan) -> None:
         _hide(st, r, plan)
 
 
+def _trade_to_migration(st: _State, plan: Plan) -> None:
+    """Tausch durch eine Kapitalmaßnahme „migration“ mit denselben Konten, Mengen und Zeitpunkt ersetzen."""
+    d = plan.finding.data
+    t = st.tx(d.get("tx") or "")
+    if t is None or t.type != "trade" or not t.from_qty or not t.to_qty:
+        plan.errors.append("Der Tausch ist nicht (mehr) vorhanden.")
+        return
+    acc = t.from_account or ""
+    row = {"datetime": _dt(t), "type": "corporate_action", "tag": "migration",
+           "from_account": acc, "from_asset": t.from_asset or "", "from_qty": _s(t.from_qty), "to_account": acc,
+           "to_asset": t.to_asset or "", "to_qty": _s(t.to_qty), "fee_asset": t.fee_asset or "",
+           "fee_qty": _s(t.fee_qty) if t.fee_qty else "", "fee_eur": _s(t.fee_eur) if t.fee_eur else "",
+           "value_eur": "", "orig_price": "", "orig_ccy": "", "related_asset": "",
+           "note": f"Umbenennung {t.from_asset} → {t.to_asset} (Korrektur aus der Diagnose; ersetzt den Tausch "
+                   f"{t.tx_id})"}
+    if _create(st, row, f"Migration {qty_exact(t.from_qty)} {t.from_asset} → {qty_exact(t.to_qty)} {t.to_asset} "
+                        f"auf {acc}", plan, refs=t.tx_id) is not None:
+        _hide(st, t, plan)
+
+
 def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
                params: Mapping[str, list[str]] | None = None, *, given: bool = False) -> Plan:
     """Plan für eine Lösung. ``given`` = Eingaben wurden abgeschickt (leere Mehrfachauswahl bleibt leer);
@@ -482,6 +502,10 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
                 _cover(st, drop, keep, plan)
             else:
                 _hide(st, drop, plan)
+    elif key == "cover_twin":
+        _cover(st, st.tx(d["weak"]), st.tx(d["strong"]), plan)
+    elif key == "trade_to_migration":
+        _trade_to_migration(st, plan)
     elif key == "cover":
         imp = st.tx(d["imports"][0])
         for j in d["journals"]:

@@ -324,10 +324,10 @@ def test_background_sync_reports_progress_and_continues(client, evm, monkeypatch
     r = post(client, f"/settings/datasources/{sid}/sync")
     assert r.status_code == 303 and "Abruf+gestartet" in r.headers["location"]
     for _ in range(400):
-        if not S._SYNC_LOCK.locked():
+        if not S.is_busy(sid):
             break
         time.sleep(0.02)
-    assert not S._SYNC_LOCK.locked()
+    assert not S.is_busy(sid)
     ds = datasource_service(ctx(client)).get(sid)
     assert ds.progress["running"] is False and ds.progress["ok"]
     assert ds.row["status"] == "synced"  # Etappen bis zum Ende fortgesetzt

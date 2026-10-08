@@ -44,7 +44,8 @@ CHECK_LABELS = {"transaction": "Vorgänge", "balances": "Bestände", "assets": "
 def _register(s: Scheduler) -> None:
     from apscheduler.triggers.interval import IntervalTrigger
 
-    s.register("datasources_sync", lambda ctx: datasource_service(ctx).run_due(), IntervalTrigger(minutes=5))
+    s.register("datasources_sync", lambda ctx: datasource_service(ctx).run_due(wait=False),
+               IntervalTrigger(minutes=5))
 
 
 def _back(request: Request, target: str) -> Response:
@@ -169,6 +170,12 @@ def make_router() -> APIRouter:
             return _back(request, _list_url(error=res["error"]))
         return _back(request, _list_url(msg=f"Aktualisierung gestartet: {label} ({res['count']} Konten) – nacheinander "
                                             "im Hintergrund; Fehler einzelner Konten halten die übrigen nicht auf."))
+
+    @router.post("/settings/datasources/sync-many/cancel")
+    async def sync_many_cancel(request: Request) -> Response:
+        svc = datasource_service(get_ctx(request))
+        text = await run_in_threadpool(svc.cancel_many)
+        return _back(request, _list_url(msg=text) + "#wallets")
 
     @router.get("/settings/datasources/batch-progress", response_class=HTMLResponse)
     def batch_progress(request: Request) -> Response:
@@ -365,16 +372,30 @@ def make_router() -> APIRouter:
         text = res.get("error") or res.get("unsupported") or res.get("message") or "Keine neuen Vorgänge."
         return _back(request, _list_url(sid, **{key: text}))
 
+    @router.post("/settings/datasources/{sid}/cancel")
+    async def cancel(request: Request, sid: int) -> Response:
+        """Laufenden Abruf abbrechen (bzw. eine verwaiste Anzeige „Abruf läuft“ beenden)."""
+        svc = datasource_service(get_ctx(request))
+        if svc.get(sid) is None:
+            raise HTTPException(404)
+        text = await run_in_threadpool(svc.cancel, sid)
+        f = await request.form()
+        if str(f.get("back") or "") == "detail":
+            return _back(request, _detail_url(sid, msg=text) + "#status")
+        return _back(request, _list_url(sid, msg=text))
+
     @router.get("/settings/datasources/{sid}/progress", response_class=HTMLResponse)
-    def progress(request: Request, sid: int) -> Response:
+    def progress(request: Request, sid: int, back: str = "") -> Response:
         """Fortschritt (für HTMX-Abfrage alle 2 s); nach dem Lauf lädt die Seite neu."""
         svc = datasource_service(get_ctx(request))
         ds = svc.get(sid)
         if ds is None:
             raise HTTPException(404)
+        back = "detail" if back == "detail" else "list"
         if not ds.progress.get("running"):
-            return Response(status_code=204, headers={"HX-Redirect": _detail_url(sid) + "#status"})
-        return render(request, "partials/ds_progress.html", ds=ds, p=ds.progress)
+            target = _detail_url(sid) + "#status" if back == "detail" else _list_url(sid)
+            return Response(status_code=204, headers={"HX-Redirect": target})
+        return render(request, "partials/ds_progress.html", ds=ds, p=ds.progress, back=back)
 
     @router.post("/settings/datasources/provider-keys/{provider}")
     async def set_provider_key(request: Request, provider: str) -> Response:

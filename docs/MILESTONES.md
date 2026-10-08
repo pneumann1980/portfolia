@@ -1144,6 +1144,25 @@ Vorauswahl, Bestätigung); Bewertungslücken: Abrechnung zum zuletzt bekannten K
 Wertänderung in der Lücke unbekannt); Restore: Dateien und Datenbank bleiben zwei Systeme – zwischen Commit und
 Abschluss kann der Zustand „unvollständig“ sichtbar bestehen, wird aber nie als abgeschlossen gemeldet.
 
+## M24.1 – Nachbesserungen aus dem Betrieb (0.21.2)
+
+Anlass (08.10.2026): vier vom Auftraggeber gemeldete, bisher nicht erkannte Probleme.
+
+1. **AITECH → ACN (Ticker-Umbenennung):** Ursache: Steuertool-Import bucht die Umstellung als Tausch
+   `ACN#…` → `ACN`, die Bitpanda-API (`merger_crypto`) zusätzlich als Kapitalmaßnahme `AITECH` → `ACN`; `AITECH` ist
+   ein eigenes Asset ohne Bestand → doppelter `ACN`-Bestand, negativer `AITECH`-Bestand, Scheinverlust. Neu:
+   Diagnose-Regeln „Umtausch doppelt gebucht“ (Lösung: im Import enthalten/ausblenden) und „Umbenennung als Tausch
+   gebucht“ (Lösung: Kapitalmaßnahme „migration“ statt Tausch), Hinweis im Befund „Bestand zeitweise negativ“,
+   Schutzregel im Prüf-Stapel (`conversion_twin`, nie automatisch). Analyse der echten Daten nur lokal und lesend;
+   Tests bilden die Struktur synthetisch nach (`tests/test_rename_conversion.py`).
+2. **Watchlist-Layout:** Klasse `form-grid` hatte kein CSS, Eingabefelder ohne `type` waren ungestylt (betraf auch
+   Schnellkauf/-verkauf). Raster und Feldstil ergänzt; mobil (390 px) per Screenshot geprüft.
+3. **Synchronisierung:** globale Sperre durch Sperren je Datenquelle ersetzt; Einbuchen serialisiert; Zeitplan je
+   Quelle in eigenem Thread; *Abbrechen* je Quelle und für „Alle aktualisieren“ (`tests/test_datasource_concurrency.py`).
+4. **Untere Leiste:** eigene Compositing-Ebene und Füllfläche unterhalb der Leiste gegen den sichtbaren Spalt beim
+   Ein-/Ausblenden der Browser-Adressleiste. **Nicht auf einem echten Gerät geprüft** – Headless-Chromium bildet die
+   dynamische Adressleiste nicht nach; geprüft ist nur Lage und Füllfläche der Leiste.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

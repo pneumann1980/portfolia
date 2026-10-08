@@ -749,12 +749,12 @@ def test_sync_robustness_lock_retry_after_and_pipeline_errors(client, fake, monk
     sid = create_source(c, sync_interval_min="60")
     fake.events = [deposit("kraken:L1", "2024-03-01T10:00:00", "EUR", "1000")]
 
-    # ein Lauf zur Zeit
-    assert S._SYNC_LOCK.acquire(blocking=False)
+    # ein Lauf zur Zeit je Quelle
+    assert S._acquire(sid) is not None
     try:
         assert "läuft bereits" in svc.sync(sid)["error"]
     finally:
-        S._SYNC_LOCK.release()
+        S._release(sid)
     assert fake.cursors == [] and not svc.runs(sid)
 
     # Drosselung: nächster Lauf frühestens nach der Wartezeit des Anbieters
@@ -776,7 +776,7 @@ def test_sync_robustness_lock_retry_after_and_pipeline_errors(client, fake, monk
     assert "Unerwarteter Fehler (RuntimeError)" in res["error"]
     assert source(c, sid)["status"] == "error"
     assert {r["status"] for r in svc.runs(sid)} == {"error"}
-    assert not S._SYNC_LOCK.locked()
+    assert not S.is_busy(sid)
 
 
 def test_sanitize_error_keeps_plain_words_after_key_label():

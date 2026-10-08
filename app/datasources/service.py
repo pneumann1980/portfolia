@@ -88,7 +88,46 @@ MULTI_ADDRESS = ("bitcoin", "cardano")  # Chains mit mehreren Adressen je Konto 
 MAX_EVENTS = 50_000
 KEY_WARN_DAYS = 14
 DONE = ("known", "ignored", "committed", "merged", "linked")
-_SYNC_LOCK = threading.Lock()  # ein Lauf zur Zeit (Zeitplan und „Jetzt synchronisieren“ nicht parallel)
+# Je Datenquelle ein Lauf zur Zeit (Zeitplan und „Jetzt synchronisieren“ nie doppelt); verschiedene Quellen laufen
+# unabhängig – ein langsamer Wallet-Abruf hält die Börse nicht auf. Abrufe beim Anbieter laufen parallel; Abgleich und
+# Übernahme in den Prüf-Stapel bzw. ins Journal (_INGEST_LOCK) nacheinander, damit quellenübergreifende Dubletten- und
+# Transfer-Erkennung stets den vollständigen Stand der anderen Quelle sieht.
+_LOCKS: dict[int, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+_INGEST_LOCK = threading.RLock()
+_BATCH_LOCK = threading.Lock()  # „Mehrere Konten aktualisieren“: eine Sammelaktualisierung zur Zeit
+_CANCEL: dict[int, threading.Event] = {}  # Abbruchsignal je laufender Quelle
+_BATCH_CANCEL = threading.Event()
+BUSY_TEXT = "Für diese Datenquelle läuft bereits ein Abruf – abwarten oder abbrechen."
+
+
+def _source_lock(sid: int) -> threading.Lock:
+    with _LOCKS_GUARD:
+        lock = _LOCKS.get(sid)
+        if lock is None:
+            lock = _LOCKS[sid] = threading.Lock()
+        return lock
+
+
+def _acquire(sid: int) -> threading.Event | None:
+    """Sperre der Quelle nehmen (ohne Warten) und ein frisches Abbruchsignal anlegen – ``None``: läuft bereits."""
+    if not _source_lock(sid).acquire(blocking=False):
+        return None
+    ev = threading.Event()
+    with _LOCKS_GUARD:
+        _CANCEL[sid] = ev
+    return ev
+
+
+def _release(sid: int) -> None:
+    with _LOCKS_GUARD:
+        _CANCEL.pop(sid, None)
+    _source_lock(sid).release()
+
+
+def is_busy(sid: int) -> bool:
+    """Läuft in diesem Prozess gerade ein Abruf der Quelle?"""
+    return _source_lock(sid).locked()
 _NAME_RE = re.compile(r"^[^\x00-\x1f<>]{1,60}$")
 ACCOUNT_MIN_MATCHES = 3  # automatische Konto-Umstellung: mindestens so viele Treffer im kuratierten Import …
 ACCOUNT_SHARE = 0.9  # … und dieser Anteil unter einem Konto
@@ -1140,40 +1179,71 @@ class DataSourceService:
 
     def sync(self, sid: int, trigger: str = "manual") -> dict[str, Any]:
         """Vorgänge abrufen und zur Prüfung aufnehmen (bzw. eindeutige neue Ereignisse automatisch übernehmen)."""
-        if not _SYNC_LOCK.acquire(blocking=False):
-            return {"error": "Eine Synchronisierung läuft bereits – bitte kurz warten."}
+        ev = _acquire(sid)
+        if ev is None:
+            return {"error": BUSY_TEXT, "busy": True}
         try:
-            return self._sync(sid, trigger)
+            with K.cancel_scope(ev):
+                return self._sync(sid, trigger)
         finally:
-            _SYNC_LOCK.release()
+            _release(sid)
 
     def start_sync(self, sid: int, trigger: str = "manual") -> dict[str, Any]:
         """Abruf im Hintergrund starten (Wallets: Erstabruf in Etappen mit Fortschritt). Kehrt sofort zurück."""
         ds = self.get(sid)
         if ds is None:
             return {"error": "Datenquelle nicht gefunden."}
-        if not _SYNC_LOCK.acquire(blocking=False):
-            return {"error": "Eine Synchronisierung läuft bereits – bitte kurz warten."}
+        ev = _acquire(sid)
+        if ev is None:
+            return {"error": BUSY_TEXT, "busy": True}
         self._set_progress(sid, {"running": True, "stage": "Start", "done": 0, "total": None, "text": "",
                                  "started_at": iso(_now())}, force=True)
-        t = threading.Thread(target=self._background, args=(sid, trigger), name=f"ds-sync-{sid}", daemon=True)
+        t = threading.Thread(target=self._background, args=(sid, trigger, ev), name=f"ds-sync-{sid}", daemon=True)
         try:
             t.start()
         except Exception:  # pragma: no cover - Thread-Start fehlgeschlagen
-            _SYNC_LOCK.release()
+            _release(sid)
             raise
         return {"started": True}
 
-    def _background(self, sid: int, trigger: str) -> None:
-        """Hintergrundlauf: so lange Etappen, bis der Erstabruf vollständig ist, ein Fehler auftritt oder die
-        Etappengrenze erreicht ist (dann setzt der Zeitplan fort)."""
+    def cancel(self, sid: int) -> str:
+        """Laufenden Abruf abbrechen. Wirkt an der nächsten Prüfstelle (Anfrage, Wartezeit, Fortschritt); das
+        Einbuchen eines bereits abgerufenen Ergebnisses wird nicht mittendrin unterbrochen. Läuft in diesem Prozess
+        nichts (z. B. Anzeige „Abruf läuft“ nach einem Neustart), wird nur die Anzeige beendet."""
+        ds = self.get(sid)
+        if ds is None:
+            return "Datenquelle nicht gefunden."
+        with _LOCKS_GUARD:
+            ev = _CANCEL.get(sid)
+        if ev is not None:
+            ev.set()
+            p = dict(ds.progress)
+            p.update(cancel_requested=True, text="Wird abgebrochen …")
+            self._set_progress(sid, p, force=True)
+            log.info("Datenquelle %s: Abbruch angefordert", ds.name)
+            return "Abbruch angefordert – der Abruf endet an der nächsten Prüfstelle."
+        raw = ds.row["progress_json"]
+        try:
+            p = json.loads(raw) if raw else {}
+        except ValueError:
+            p = {}
+        if p.get("running"):
+            p.update(running=False, finished_at=iso(_now()), ok=False, result=K.CANCEL_TEXT, stale=True)
+            self._set_progress(sid, p, force=True)
+            return "Kein laufender Abruf gefunden – Anzeige zurückgesetzt."
+        return "Es läuft kein Abruf."
+
+    def _background(self, sid: int, trigger: str, ev: threading.Event) -> None:
+        """Hintergrundlauf: so lange Etappen, bis der Erstabruf vollständig ist, ein Fehler auftritt, der Nutzer
+        abbricht oder die Etappengrenze erreicht ist (dann setzt der Zeitplan fort)."""
         res: dict[str, Any] = {}
         try:
-            for _ in range(MAX_ROUNDS):
-                res = self._sync(sid, trigger, background=True)
-                ds = self.get(sid)
-                if res.get("error") or ds is None or not ds.backfill_pending:
-                    break
+            with K.cancel_scope(ev):
+                for _ in range(MAX_ROUNDS):
+                    res = self._sync(sid, trigger, background=True)
+                    ds = self.get(sid)
+                    if res.get("error") or ds is None or not ds.backfill_pending or ev.is_set():
+                        break
         except Exception as e:  # pragma: no cover - Absicherung: Hintergrundlauf darf nie hängen bleiben
             log.exception("Datenquelle %s: Hintergrundlauf abgebrochen", sid)
             res = {"error": describe_error(e)[1]}
@@ -1182,10 +1252,11 @@ class DataSourceService:
                 p = dict(self.get(sid).progress) if self.get(sid) is not None else {}  # type: ignore[union-attr]
                 p.update({"running": False, "finished_at": iso(_now()),
                           "result": res.get("error") or res.get("message") or "", "ok": not res.get("error"),
-                          "batch_id": res.get("batch_id")})
+                          "batch_id": res.get("batch_id"), "cancelled": ev.is_set()})
+                p.pop("cancel_requested", None)
                 self._set_progress(sid, p, force=True)
             finally:
-                _SYNC_LOCK.release()
+                _release(sid)
                 self.db.close_thread_conn()
 
     # -- Mehrere Konten nacheinander (Gruppe, alle Wallets) ------------------------------------------------
@@ -1195,55 +1266,91 @@ class DataSourceService:
         todo = [i for i in ids if (ds := self.get(i)) is not None and ds.supported and ds.enabled]
         if not todo:
             return {"error": "Keine aktiven Konten mit automatischer Anbindung ausgewählt."}
-        if not _SYNC_LOCK.acquire(blocking=False):
-            return {"error": "Eine Synchronisierung läuft bereits – bitte kurz warten."}
+        if not _BATCH_LOCK.acquire(blocking=False):
+            return {"error": "Eine Aktualisierung mehrerer Konten läuft bereits – abwarten oder abbrechen."}
         self.ctx.settings.set(BATCH_KEY, {"running": True, "label": label[:80], "total": len(todo), "done": 0,
                                           "errors": [], "started_at": iso(_now()), "updated_at": iso(_now())})
         t = threading.Thread(target=self._background_many, args=(todo, trigger), name="ds-sync-many", daemon=True)
         try:
             t.start()
         except Exception:  # pragma: no cover - Thread-Start fehlgeschlagen
-            _SYNC_LOCK.release()
+            _BATCH_LOCK.release()
             raise
         return {"started": True, "count": len(todo)}
 
+    def cancel_many(self) -> str:
+        """Sammelaktualisierung abbrechen: das laufende Konto bricht ab, die übrigen werden nicht mehr gestartet."""
+        if not _BATCH_LOCK.locked():
+            p = dict(self.batch_progress())
+            if p.get("running") or (self.ctx.settings.get(BATCH_KEY) or {}).get("running"):
+                raw = dict(self.ctx.settings.get(BATCH_KEY) or {})
+                raw.update(running=False, finished_at=iso(_now()), cancelled=True)
+                self.ctx.settings.set(BATCH_KEY, raw)
+                return "Keine laufende Aktualisierung gefunden – Anzeige zurückgesetzt."
+            return "Es läuft keine Aktualisierung mehrerer Konten."
+        _BATCH_CANCEL.set()
+        state = dict(self.ctx.settings.get(BATCH_KEY) or {})
+        cur = state.get("current_id")
+        if cur:
+            self.cancel(int(cur))
+        state.update(cancel_requested=True)
+        self.ctx.settings.set(BATCH_KEY, state)
+        return "Abbruch angefordert – weitere Konten werden nicht mehr gestartet."
+
     def _background_many(self, ids: list[int], trigger: str) -> None:
         state = dict(self.batch_progress())
+        _BATCH_CANCEL.clear()
         try:
             for n, sid in enumerate(ids, 1):
+                if _BATCH_CANCEL.is_set():
+                    state["skipped"] = len(ids) - n + 1
+                    break
                 ds = self.get(sid)
                 state.update(current=ds.name if ds else str(sid), current_id=sid, updated_at=iso(_now()))
                 self.ctx.settings.set(BATCH_KEY, state)
                 res: dict[str, Any] = {}
+                ev = _acquire(sid)
+                if ev is None:  # läuft gerade einzeln – nicht doppelt abrufen, die übrigen Konten nicht aufhalten
+                    state["errors"] = [*state.get("errors", []),
+                                       f"{ds.name if ds else sid}: läuft bereits separat – übersprungen"][-10:]
+                    state.update(done=n, updated_at=iso(_now()))
+                    self.ctx.settings.set(BATCH_KEY, state)
+                    continue
                 try:
                     self._set_progress(sid, {"running": True, "stage": "Start", "done": 0, "total": None, "text": "",
                                              "started_at": iso(_now())}, force=True)
-                    for _ in range(MANY_ROUNDS):
-                        res = self._sync(sid, trigger, background=True)
-                        cur = self.get(sid)
-                        if res.get("error") or cur is None or not cur.backfill_pending:
-                            break
+                    with K.cancel_scope(ev):
+                        for _ in range(MANY_ROUNDS):
+                            res = self._sync(sid, trigger, background=True)
+                            cur = self.get(sid)
+                            if res.get("error") or cur is None or not cur.backfill_pending or ev.is_set():
+                                break
                 except Exception as e:  # ein Konto darf die übrigen nie aufhalten
                     log.exception("Datenquelle %s: Aktualisierung fehlgeschlagen", sid)
                     res = {"error": describe_error(e)[1]}
                 finally:
-                    cur = self.get(sid)
-                    if cur is not None:
-                        p = dict(cur.progress)
-                        p.update({"running": False, "finished_at": iso(_now()), "ok": not res.get("error"),
-                                  "result": res.get("error") or res.get("message") or "",
-                                  "batch_id": res.get("batch_id")})
-                        self._set_progress(sid, p, force=True)
+                    try:
+                        cur = self.get(sid)
+                        if cur is not None:
+                            p = dict(cur.progress)
+                            p.update({"running": False, "finished_at": iso(_now()), "ok": not res.get("error"),
+                                      "result": res.get("error") or res.get("message") or "",
+                                      "batch_id": res.get("batch_id"), "cancelled": ev.is_set()})
+                            p.pop("cancel_requested", None)
+                            self._set_progress(sid, p, force=True)
+                    finally:
+                        _release(sid)
                 if res.get("error"):
                     state["errors"] = [*state.get("errors", []), f"{ds.name if ds else sid}: {res['error']}"][-10:]
                 state.update(done=n, updated_at=iso(_now()))
                 self.ctx.settings.set(BATCH_KEY, state)
         finally:
-            state.update(running=False, current=None, finished_at=iso(_now()))
+            state.update(running=False, current=None, finished_at=iso(_now()), cancelled=_BATCH_CANCEL.is_set())
+            state.pop("cancel_requested", None)
             try:
                 self.ctx.settings.set(BATCH_KEY, state)
             finally:
-                _SYNC_LOCK.release()
+                _BATCH_LOCK.release()
                 self.db.close_thread_conn()
 
     def batch_progress(self) -> dict[str, Any]:
@@ -1347,6 +1454,13 @@ class DataSourceService:
         """Lauf als Fehler abschließen – Meldung ohne Geheimnisse, Wartezeit des Anbieters beachten. Der
         Abrufstand bleibt unverändert: der nächste Lauf holt dieselben Vorgänge erneut."""
         kind, msg = describe_error(e, secrets)
+        if kind == "cancelled":  # vom Nutzer abgebrochen: kein Fehlerzustand der Quelle, Zeitplan läuft weiter
+            stamp = iso(started)
+            self.db.x("UPDATE data_source SET last_run_at=?, next_run_at=?, updated_at=? WHERE id=?",
+                      (stamp, iso(nxt) if nxt else None, stamp, ds.id))
+            self._finish_run(run_id, "error", msg)
+            log.info("Datenquelle %s: Abruf abgebrochen", ds.name)
+            return {"error": msg, "kind": kind, "cancelled": True}
         if ds.backfill_pending and ds.enabled:  # Erstabruf nicht liegen lassen: nach einer Pause erneut versuchen
             nxt = max(nxt or started, started + timedelta(minutes=10))
         if isinstance(e, K.ConnectorError) and e.retry_after_s and nxt is not None:
@@ -1531,6 +1645,13 @@ class DataSourceService:
             prog.update(len(res.events), len(res.events))
         except Exception as e:  # Anbieter-/Netzwerk-/Vertragsfehler → Anzeige ohne Geheimnisse
             return self._fail(ds, run_id, e, secret.values(), started, nxt)
+        with _INGEST_LOCK:  # Abgleich/Übernahme quellenübergreifend nacheinander (Abrufe laufen parallel)
+            return self._process(sid, ds, conn, res, recs, run_id, secret, started, stamp, nxt, prog)
+
+    def _process(self, sid: int, ds: DataSource, conn: K.Connector, res: K.FetchResult, recs: list[Any],
+                 run_id: int, secret: K.Secret, started: datetime, stamp: str, nxt: datetime | None,
+                 prog: Progress) -> dict[str, Any]:
+        """Abgerufene Vorgänge abgleichen, in den Prüf-Stapel legen bzw. übernehmen und den Lauf abschließen."""
         from app.csvimport.service import csv_service, rec_to_json
 
         csv = csv_service(self.ctx)
@@ -1747,12 +1868,44 @@ class DataSourceService:
                 out.append(ds)
         return out
 
-    def run_due(self) -> dict[str, Any]:
-        done = {}
+    def run_due(self, wait: bool = True) -> dict[str, Any]:
+        """Fällige Quellen abrufen – je Quelle ein eigener Thread, damit ein langsamer Abruf (z. B. Wallet mit
+        Ratenlimit) die übrigen nicht aufhält. ``wait=False`` (Zeitplan): nur starten; eine noch laufende Quelle
+        wird übersprungen und beim nächsten Takt wieder geprüft."""
+        done: dict[str, Any] = {}
+        threads: list[threading.Thread] = []
         for ds in self.due():
-            res = self.sync(int(ds.id), "schedule")
-            done[ds.name] = res.get("status") or res.get("error") or res.get("skipped") or res.get("unsupported")
-        return {"ran": len(done), "results": done}
+            sid = int(ds.id)
+            ev = _acquire(sid)
+            if ev is None:
+                done[ds.name] = "läuft bereits"
+                continue
+
+            def run(sid: int = sid, ev: threading.Event = ev, name: str = ds.name) -> None:
+                try:
+                    with K.cancel_scope(ev):
+                        res = self._sync(sid, "schedule")
+                    done[name] = res.get("status") or res.get("error") or res.get("skipped") or res.get(
+                        "unsupported")
+                except Exception as e:  # pragma: no cover - Absicherung: eine Quelle hält die übrigen nie auf
+                    log.exception("Datenquelle %s: geplanter Abruf fehlgeschlagen", sid)
+                    done[name] = describe_error(e)[1]
+                finally:
+                    _release(sid)
+                    self.db.close_thread_conn()
+
+            t = threading.Thread(target=run, name=f"ds-due-{sid}", daemon=True)
+            try:
+                t.start()
+            except Exception:  # pragma: no cover - Thread-Start fehlgeschlagen
+                _release(sid)
+                raise
+            threads.append(t)
+            done.setdefault(ds.name, "gestartet")
+        if wait:
+            for t in threads:
+                t.join()
+        return {"ran": len(threads), "results": done}
 
 
 DONE_ROWS = ("known", "ignored", "committed", "merged", "linked")  # Zeilen ohne offene Entscheidung

@@ -602,6 +602,66 @@ def _migration(facts: Facts, f: Finding) -> Recommendation | None:
                           links=_journal_links(acc, new))
 
 
+def _conversion_twin(facts: Facts, f: Finding) -> Recommendation | None:
+    """Doppelt gebuchter Umtausch: die zusätzliche Buchung (Ausgangs-Asset ohne Bestand) nicht mehr zählen – neben
+    einer Import-Buchung als „im Import enthalten“, sonst ausblenden."""
+    d = f.data
+    weak, strong = facts.tx(d["weak"]), facts.tx(d["strong"])
+    if weak is None or strong is None:
+        return None
+    acc, new = d["account"], d["asset"]
+    cover = weak.origin == "journal" and strong.origin == "import"
+    opts = []
+    if cover:
+        opts.append(Option("cover_twin", f"{weak.tx_id} als „im Import enthalten“ markieren",
+                           f"Verknüpfung mit {strong.tx_id} (wie unter Journal → Abgleich): die App-Buchung zählt "
+                           "nicht mehr, bleibt aber mit Herkunft erhalten.", recommended=True))
+    elif facts.hideable(weak):
+        opts.append(Option("hide_weak", f"{weak.tx_id} ausblenden", hide_text(weak) + f"; {strong.tx_id} bleibt.",
+                           recommended=True))
+    if facts.hideable(strong):
+        opts.append(Option("hide_strong", f"Stattdessen {strong.tx_id} ausblenden",
+                           hide_text(strong) + f"; {weak.tx_id} bleibt."
+                           + (f" Nur sinnvoll, wenn vorher Bestand {d['old_weak']} gebucht war – sonst bleibt der "
+                              "Bestand negativ." if d.get("short") else "")))
+    opts.append(_dismiss("Zwei Umtausche – als geprüft markieren"))
+    rename = d["old_weak"] != d["old_strong"]
+    text = (f"{weak.tx_id} {'als „im Import enthalten“ markieren' if cover else 'ausblenden'}: Der Umtausch ist in "
+            f"{strong.tx_id} bereits gebucht, {new} zählt sonst doppelt."
+            + (f" {d['old_weak']} hatte vor dem Umtausch keinen Bestand – {d['old_weak']} ist das Börsen-Symbol "
+               f"des Altbestands, den der Import als {d['old_strong']} führt (Ticker-Umbenennung)." if rename and
+               d.get("short") else "")
+            + " Bucht der Import den Vorgang als Tausch, erscheint dazu der Befund „Umbenennung als Tausch gebucht“.")
+    return Recommendation(text=text, conditional=f.status != "wahrscheinlich",
+                          checks=[(f"Kontoauszug bzw. Transaktionsliste von {acc}: ein oder zwei Umtausche?", [])],
+                          options=opts, links=[Link("Journal → Abgleich", "/journal/abgleich"),
+                                               *_journal_links(acc, new)])
+
+
+def _rename_trade(facts: Facts, f: Finding) -> Recommendation | None:
+    d = f.data
+    t = facts.tx(d["tx"])
+    if t is None:
+        return None
+    opts = []
+    if facts.hideable(t):
+        opts.append(Option(
+            "trade_to_migration", f"Als Kapitalmaßnahme (Migration) buchen: {d['old']} → {d['new']}",
+            f"Neue Kapitalmaßnahme „migration“ am {_date(t)} auf {d['account']} mit denselben Mengen; Einstand und "
+            f"Anschaffungsdaten gehen von {d['old']} auf {d['new']} über, der Tausch {t.tx_id} zählt nicht mehr "
+            f"({origin_text(t)}).", recommended=f.status == "wahrscheinlich",
+            caution="Steuerlich nur richtig, wenn es eine reine Umbenennung bzw. Redenominierung desselben Tokens war. "
+                    "Steuerberichte eines externen Steuertools weichen danach ab."))
+    opts.append(_dismiss("Echter Tausch – als geprüft markieren"))
+    text = (f"Angaben der Börse bzw. des Projekts prüfen. War {d['new']} nur der neue Ticker bzw. die neue Einheit "
+            f"von {d['old']}: als Kapitalmaßnahme (Migration) buchen – der Scheingewinn entfällt, Anschaffungsdaten "
+            "und Haltedauer bleiben erhalten. War es ein Umtausch in einen neuen Token: als geprüft markieren.")
+    return Recommendation(text=text, conditional=True,
+                          checks=[("Mitteilung der Börse bzw. des Projekts zur Umstellung (Ticker, Verhältnis, "
+                                   "Contract)", [])],
+                          options=opts, links=_journal_links(d["account"], d["new"]))
+
+
 def _holding(facts: Facts, f: Finding) -> Recommendation | None:
     d = f.data
     acc, aid, st = d["account"], d["asset"], d["status"]
@@ -649,4 +709,5 @@ _BUILDERS = {
     "transfer": _transfer,
     "provider_quote": _provider_quote, "contracts": _contracts, "unvalued": _unvalued,
     "price_fallback": _price_fallback, "stale": _stale, "migration": _migration, "holding": _holding,
+    "conversion_twin": _conversion_twin, "rename_trade": _rename_trade,
 }

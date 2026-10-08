@@ -1,6 +1,12 @@
-{# Fortschritt eines laufenden Abrufs – fragt alle 2 s nach; nach dem Lauf lädt die Seite neu (HX-Redirect). #}
+{# Fortschritt eines laufenden Abrufs – fragt alle 2 s nach; nach dem Lauf lädt die Seite neu (HX-Redirect).
+   „Abbrechen“ beendet den Abruf an der nächsten Prüfstelle; der Abrufstand bleibt unverändert. #}
 {% from "partials/progress.html" import bar %}
 {% set v = progress_view(p) %}
-<div class="ds-progress" hx-get="/settings/datasources/{{ ds.id }}/progress" hx-trigger="every 2s" hx-swap="outerHTML">
+<div class="ds-progress" hx-get="/settings/datasources/{{ ds.id }}/progress?back={{ back or 'list' }}" hx-trigger="every 2s" hx-swap="outerHTML">
   {{ bar(v) }}
+  <form method="post" action="/settings/datasources/{{ ds.id }}/cancel" class="ds-cancel">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="{{ back or 'list' }}">
+    {% if p.cancel_requested %}<span class="hint">Wird abgebrochen …</span>
+    {% else %}<button class="btn ghost sm" type="submit">Abbrechen</button>{% endif %}
+  </form>
 </div>

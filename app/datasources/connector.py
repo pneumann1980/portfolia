@@ -42,8 +42,11 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -62,7 +65,7 @@ ERROR_KINDS = {"auth": "Zugangsdaten abgelehnt", "scope": "Berechtigung fehlt", 
                "rate_limit": "Anbieter drosselt Anfragen", "unavailable": "Anbieter vorübergehend nicht erreichbar",
                "gone": "Endpunkt nicht mehr unterstützt", "no_data": "Keine Daten beim Anbieter",
                "config": "Einstellung unvollständig", "data": "Unerwartete Antwort des Anbieters",
-               "unsupported": "Nicht unterstützt"}
+               "unsupported": "Nicht unterstützt", "cancelled": "Abgebrochen"}
 
 
 class ConnectorError(Exception):
@@ -73,6 +76,45 @@ class ConnectorError(Exception):
         self.kind = kind if kind in ERROR_KINDS else "data"
         self.message = message
         self.retry_after_s = retry_after_s
+
+
+# -- Abbrechen ----------------------------------------------------------------------------------------------
+# Ein laufender Abruf prüft an festen Stellen (Fortschrittsmeldung, jede HTTP-Anfrage, jede Wartezeit), ob der Nutzer
+# ihn abgebrochen hat. Das Signal gilt je Lauf (Thread des Abrufs); HTTP-Clients übernehmen es beim Anlegen, damit es
+# auch in ihren Hilfsthreads wirkt. Ein Abbruch endet wie ein Fehler: der Abrufstand rückt nicht vor.
+_CANCEL = threading.local()
+CANCEL_TEXT = "Abruf abgebrochen – der Abrufstand bleibt unverändert, der nächste Lauf holt dieselben Vorgänge."
+
+
+@contextmanager
+def cancel_scope(event: threading.Event | None) -> Iterator[None]:
+    prev = getattr(_CANCEL, "event", None)
+    _CANCEL.event = event
+    try:
+        yield
+    finally:
+        _CANCEL.event = prev
+
+
+def current_cancel() -> threading.Event | None:
+    """Abbruchsignal des laufenden Abrufs (``None`` außerhalb eines Laufs)."""
+    return getattr(_CANCEL, "event", None)
+
+
+def check_cancel(event: threading.Event | None = None) -> None:
+    ev = event if event is not None else current_cancel()
+    if ev is not None and ev.is_set():
+        raise ConnectorError("cancelled", CANCEL_TEXT)
+
+
+def interruptible_sleep(seconds: float, event: threading.Event | None = None) -> None:
+    """Warten, das ein Abbruch sofort beendet (sonst wie :func:`time.sleep`)."""
+    ev = event if event is not None else current_cancel()
+    if ev is None:
+        time.sleep(seconds)
+        return
+    if ev.wait(max(0.0, seconds)):
+        raise ConnectorError("cancelled", CANCEL_TEXT)
 
 
 @dataclass(frozen=True)
@@ -195,6 +237,7 @@ class Connector(ABC):
         """Vorgänge seit ``cursor`` (bzw. vollständig) abrufen und normalisiert liefern."""
 
     def report(self, stage: str, done: int = 0, total: int | None = None, text: str = "") -> None:
+        check_cancel()
         if self.progress is not None:
             self.progress(stage, done, total, text)
 

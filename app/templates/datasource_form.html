@@ -70,7 +70,7 @@
   <div class="card-head"><h2>Synchronisierung</h2><span class="badge {{ ds.sync_state[1] }}">{{ ds.sync_state[0] }}</span></div>
   {% if ds.is_wallet %}
   <div class="hint wrap-any" style="margin-bottom:8px">{{ ds.provider_label }}{% if ds.group %} · Gruppe „{{ ds.group }}“{% endif %}{% if ds.endpoint %} · Anbieter: {{ ds.endpoint.label }}{% endif %}</div>
-  {% if ds.progress.running %}{% with p=ds.progress %}{% include "partials/ds_progress.html" %}{% endwith %}
+  {% if ds.progress.running %}{% with p=ds.progress, back='detail' %}{% include "partials/ds_progress.html" %}{% endwith %}
   {% elif ds.progress.finished_at %}<div class="alert {{ 'good' if ds.progress.ok else 'crit' }}" style="margin-bottom:8px"><span class="icon">{{ '✓' if ds.progress.ok else '!' }}</span><div>Letzter Abruf beendet {{ ds.progress.finished_at|datetime_de }}{% if ds.progress.result %}: {{ ds.progress.result }}{% endif %}{% if ds.progress.batch_id %} – <a href="/journal/csv/{{ ds.progress.batch_id }}">Prüf-Stapel öffnen</a>{% endif %}</div></div>{% endif %}
   {% for g in ds.gaps %}<div class="alert warn" style="margin-bottom:8px"><span class="icon">!</span><div><b>Erkannte Lücke:</b> {{ g }}</div></div>{% endfor %}
   {% if ds.backfill_pending %}<div class="alert" style="margin-bottom:8px"><span class="icon">i</span><div>Erstabruf noch nicht vollständig – Portfolia setzt ihn in Etappen automatisch fort{% if ds.coverage.to_block is defined %} (abgerufen bis Block {{ ds.coverage.to_block }}){% endif %}. „Vollständig synchronisiert“ erst danach.</div></div>{% endif %}

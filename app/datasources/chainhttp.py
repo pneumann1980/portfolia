@@ -192,7 +192,7 @@ class ChainHttp:
 
     def __init__(self, ep: Endpoint, *, key: str | None = None, chain_id: int | None = None,
                  network: str | None = None,
-                 transport: httpx.BaseTransport | None = None, sleep: Callable[[float], None] = time.sleep,
+                 transport: httpx.BaseTransport | None = None, sleep: Callable[[float], None] | None = None,
                  clock: Callable[[], float] = time.monotonic, max_requests: int = 3000,
                  wait_budget_s: float = 240.0, deadline_s: float | None = None,
                  usage: Callable[[int], None] | None = None) -> None:
@@ -208,7 +208,8 @@ class ChainHttp:
         self._host = parts.hostname
         self._base_path = parts.path.rstrip("/")
         self._key = key or None
-        self.sleep = sleep
+        self._cancel = K.current_cancel()  # Abbruchsignal des Laufs – wirkt auch in Hilfsthreads (pmap)
+        self.sleep = sleep if sleep is not None else (lambda s: K.interruptible_sleep(s, self._cancel))
         self.clock = clock
         self.max_requests = max_requests
         self.wait_budget = wait_budget_s
@@ -249,6 +250,7 @@ class ChainHttp:
 
     # -- Budgets ------------------------------------------------------------------------------------------
     def _count(self) -> None:
+        K.check_cancel(self._cancel)
         with self._lock:
             if self.requests >= self.max_requests:
                 raise Stop(f"Anfragebudget des Laufs erreicht ({self.max_requests})")
@@ -266,6 +268,7 @@ class ChainHttp:
                 return False
             self.waited += seconds
         self.sleep(seconds)
+        K.check_cancel(self._cancel)
         return True
 
     # -- Anfragen -----------------------------------------------------------------------------------------
