@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Vorschau {{ a.symbol }}{% endblock %}
+{% block heading %}Vorschau: {{ 'Umstellung' if p.kind == 'migration' else 'Umbenennung' }} {{ a.asset_id }}{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="{{ asset_url(a.asset_id) }}">← {{ a.name }}</a></p>
+  <section class="card">
+    <div class="card-head"><h2>{% if p.kind == 'migration' %}{{ a.asset_id }} → {{ p.new_asset }} (1 : {{ p.form().ratio }}){% else %}{{ a.asset_id }} umbenennen{% endif %}</h2>
+      <span class="hint">Stichtag {{ p.effective|date_de }}</span></div>
+    {% for w in p.warnings %}<div class="alert warn"><span class="icon">!</span><div>{{ w }}</div></div>{% endfor %}
+    {% if p.kind == 'migration' %}
+    <div class="table-wrap"><table class="compact">
+      <thead><tr><th>Konto</th><th>Buchung am</th><th class="num">{{ a.asset_id }} (ab)</th><th class="num">{{ p.new_asset }} (zu)</th></tr></thead>
+      <tbody>{% for r in p.rows %}
+        <tr><td>{{ r.account }}</td><td class="nowrap">{{ r.when.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td class="num nowrap">−{{ r.qty_old|qty }}</td><td class="num nowrap">+{{ r.qty_new|qty }}</td></tr>
+      {% endfor %}</tbody></table></div>
+    {% for s in p.skipped %}<p class="hint">Nicht umgestellt: {{ s }}</p>{% endfor %}
+    {% else %}
+    <dl class="kv">
+      <dt>Kursquelle</dt><dd>{{ a.quote_source }}{% if a.quote_id %}: {{ a.quote_id }}{% endif %} → {% if p.quote_source %}<b>{{ p.quote_source }}: {{ p.quote_id }}</b>{% else %}unverändert{% endif %}</dd>
+      <dt>Name</dt><dd>{{ a.name }}{% if p.new_name %} → <b>{{ p.new_name }}</b>{% endif %}</dd>
+      {% if p.new_ticker %}<dt>Kürzel</dt><dd>{{ a.symbol }} → <b>{{ p.new_ticker }}</b></dd>{% endif %}
+    </dl>
+    {% endif %}
+    <ul class="hint" style="margin-top:10px">{% for i in p.info %}<li>{{ i }}</li>{% endfor %}</ul>
+    <form method="post" action="/changes/apply" class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="asset" value="{{ a.asset_id }}">
+      <input type="hidden" name="hint" value="{{ hint_key }}">
+      {% for k, v in p.form().items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+      <button class="btn primary" type="submit">Übernehmen</button>
+      <a class="btn" href="{{ back_url }}">Zurück</a>
+    </form>
+    <p class="hint">Lässt sich unter <a href="/changes">Ticker-/Token-Änderungen</a> jederzeit rückgängig machen.</p>
+  </section>
+</div>
+{% endblock %}

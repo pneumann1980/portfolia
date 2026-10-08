@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Ticker- und Token-Änderungen{% endblock %}
+{% block heading %}Ticker- und Token-Änderungen{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/quality">← Datenqualität</a> · Umbenennungen (gleiches Asset, neues Kürzel/neue Kursquelle) und Umstellungen
+    auf ein neues Asset (z. B. MATIC → POL). Erkannte Fälle sind nur Hinweise – geändert wird erst nach Vorschau und Bestätigung.</p>
+  {% if done %}<div class="alert good" role="status"><span class="icon">✓</span><div>Änderung übernommen. Kurse und Historie werden im Hintergrund aktualisiert.</div></div>{% endif %}
+
+  <section class="card" id="hints">
+    <div class="card-head"><h2>Erkannte Hinweise</h2><span class="hint">Register bekannter Umstellungen, CoinGecko-Katalog, Anbieter-Bestände, Kursstillstand</span></div>
+    {% if hints %}
+    <div class="list">{% for h in hints %}
+      <div class="list-item" style="align-items:flex-start">
+        <span class="grow"><span class="title">{% if h.kind == 'unknown' %}{{ h.old_asset }}: Kurs/Ticker prüfen{% else %}{{ h.old_asset }} → {{ h.target }}{% if h.ratio is not none %} (1 : {{ h.ratio|qty }}){% else %} (Verhältnis prüfen){% endif %}{% endif %}</span>
+          <span class="meta">{{ h.old_name }} · Bestand {{ h.qty|qty }} · Sicherheit <span class="badge {{ {'hoch': 'warn', 'mittel': 'info', 'niedrig': ''}[h.confidence] }}">{{ h.confidence }}</span>{% if h.effective %} · ab {{ h.effective|date_de }}{% endif %}</span>
+          {% for r in h.reasons %}<span class="meta" style="display:block">{{ r }}</span>{% endfor %}</span>
+        <span class="row" style="gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end">
+          <a class="btn sm primary" href="/changes/new?{{ h.query() }}">Prüfen …</a>
+          <form method="post" action="/changes/dismiss"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="hint" value="{{ h.key }}"><input type="hidden" name="asset" value="{{ h.old_asset }}">
+            <button class="btn sm ghost" type="submit" title="Hinweis ausblenden">Ausblenden</button></form>
+        </span>
+      </div>
+    {% endfor %}</div>
+    {% else %}<p class="hint">Keine Hinweise auf geänderte Ticker oder umgestellte Token.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Änderung erfassen</h2></div>
+    <form method="get" action="/changes/new" class="row" style="gap:8px;align-items:end;flex-wrap:wrap">
+      <label class="field" style="flex:1;min-width:14em">Asset<select name="asset" required>
+        {% for a in assets %}<option value="{{ a.asset_id }}" {% if a.asset_id == asset %}selected{% endif %}>{{ a.name }} ({{ a.asset_id }})</option>{% endfor %}</select></label>
+      <button class="btn" type="submit">Weiter</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Durchgeführte Änderungen{% if asset %} – {{ asset }}{% endif %}</h2>{% if asset %}<a class="btn sm ghost" href="/changes">alle</a>{% endif %}</div>
+    {% if changes %}
+    <div class="list">{% for c in changes %}
+      <div class="list-item" id="c{{ c.id }}" style="align-items:flex-start">
+        <span class="grow"><span class="title">{% if c.kind == 'migration' %}Umstellung {{ c.old_asset }} → {{ c.new_asset }} (1 : {{ c.ratio }}){% else %}Umbenennung {{ c.old_asset }}{% if c.new_quote_id %} → {{ c.new_quote_source }}: {{ c.new_quote_id }}{% endif %}{% if c.new_ticker %} · Kürzel {{ c.new_ticker }}{% endif %}{% endif %}</span>
+          <span class="meta">Stichtag {{ c.effective_date|date_de if c.effective_date else '–' }} · erfasst {{ c.created_at|datetime_de }}{% if c.kind == 'migration' %} · {{ txs[c.id]|length }} Buchung{{ 'en' if txs[c.id]|length != 1 }}{% endif %}{% if c.note %} · {{ c.note }}{% endif %}</span>
+          {% if c.kind == 'migration' and txs[c.id] %}<span class="meta" style="display:block">{% for t in txs[c.id] %}<a href="/journal?q={{ urlq(t) }}" class="mono">{{ t }}</a>{{ ' · ' if not loop.last }}{% endfor %}</span>{% endif %}</span>
+        <span class="row" style="gap:6px;flex:none">
+          <span class="badge {{ {'applied': 'good', 'reverted': '', 'replaced': ''}.get(c.status, '') }}">{{ {'applied': 'aktiv', 'reverted': 'zurückgenommen', 'replaced': 'ersetzt'}.get(c.status, c.status) }}</span>
+          {% if c.status == 'applied' %}<a class="btn sm ghost" href="/changes?confirm={{ c.id }}#c{{ c.id }}">Rückgängig …</a>{% endif %}
+        </span>
+      </div>
+      {% if confirm == c.id and c.status == 'applied' %}
+      <div class="alert warn"><span class="icon">!</span><div>
+        {% if c.kind == 'migration' %}Die {{ txs[c.id]|length }} Umstellungsbuchung(en) werden gelöscht (im Journal wiederherstellbar); {{ c.old_asset }} steht danach wieder im Bestand.
+        {% else %}Kursquelle, Name und Kürzel gelten wieder wie vorher; übernommene bisherige Tageskurse werden entfernt.{% endif %}
+        <form method="post" action="/changes/{{ c.id }}/revert" class="row" style="gap:8px;margin-top:8px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="confirm" value="1">
+          <button class="btn sm danger" type="submit">Rückgängig machen</button><a class="btn sm" href="/changes">Abbrechen</a></form></div></div>
+      {% endif %}
+    {% endfor %}</div>
+    {% else %}<p class="hint">Noch keine Änderungen.</p>{% endif %}
+  </section>
+
+  {% if dismissed %}
+  <details class="box"><summary>{{ dismissed|length }} ausgeblendete Hinweis{{ 'e' if dismissed|length != 1 }}</summary>
+    <div class="list">{% for d in dismissed %}
+      <div class="list-item"><span class="grow mono">{{ d.hint_key }}</span>
+        <form method="post" action="/changes/undismiss"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="hint" value="{{ d.hint_key }}">
+          <button class="btn sm ghost" type="submit">Wieder anzeigen</button></form></div>
+    {% endfor %}</div>
+  </details>
+  {% endif %}
+</div>
+{% endblock %}

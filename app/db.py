@@ -587,6 +587,35 @@ CREATE TABLE IF NOT EXISTS tax_scan (
   message  TEXT
 );
 """),
+    (17, """
+-- Ticker-/Token-Änderungen je Asset: Umbenennung (gleiches Asset, neue Kursquelle/Bezeichnung – wirkt als Overlay)
+-- bzw. Umstellung auf ein neues Asset (Kapitalmaßnahme „migration“ je Konto als App-Buchungen, IDs in tx_ids_json).
+-- Ausgeblendete Hinweise der Erkennung stehen hier mit kind='hint' und status='dismissed'.
+CREATE TABLE IF NOT EXISTS asset_change (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind             TEXT NOT NULL,                  -- rename | migration | hint
+  old_asset        TEXT NOT NULL,
+  new_asset        TEXT,                           -- migration: Ziel-Asset
+  ratio            TEXT,                           -- neue Menge je bisheriger Einheit (Decimal als Text)
+  effective_date   TEXT,
+  old_quote        TEXT,                           -- bisherige Kursquelle (source:id) zur Nachvollziehbarkeit
+  new_quote_source TEXT,
+  new_quote_id     TEXT,
+  new_name         TEXT,
+  new_ticker       TEXT,
+  status           TEXT NOT NULL,                  -- applied | reverted | dismissed
+  origin           TEXT NOT NULL,                  -- user | hint
+  hint_key         TEXT,
+  tx_ids_json      TEXT,
+  alias_created    INTEGER NOT NULL DEFAULT 0,     -- Symbol-Zuordnung (csv_symbol) von dieser Änderung angelegt
+  asset_created    INTEGER NOT NULL DEFAULT 0,     -- Ziel-Asset von dieser Änderung angelegt
+  note             TEXT,
+  created_at       TEXT NOT NULL,
+  reverted_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_asset_change_old ON asset_change(old_asset, status);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_change_created ON asset_change(kind, old_asset, created_at);
+"""),
 ]
 
 

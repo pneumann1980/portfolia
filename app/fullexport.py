@@ -96,6 +96,9 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
                                                                                     "datasource_id")),
         "diag_dismissed": _rows(db, "SELECT finding_id, kind, title, fingerprint, note, created_at FROM diag_decision "
                                     "WHERE action='dismiss' AND status='active' ORDER BY id", drop=()),
+        # Ticker-/Token-Änderungen: Umbenennungen (Overlay), Umstellungen (Verweis auf exportierte Buchungen),
+        # ausgeblendete Hinweise
+        "asset_changes": _rows(db, "SELECT * FROM asset_change ORDER BY id"),
     }
     out = {
         STATE: json.dumps(state, ensure_ascii=False, sort_keys=True, indent=1).encode("utf-8"),
@@ -157,6 +160,7 @@ def summary(extras: dict[str, bytes]) -> dict[str, Any] | None:
                                                                                              or []),
         "deleted": len(st.get("deleted_journal") or []),
         "checked": len(st.get("diag_dismissed") or []),
+        "asset_changes": len(st.get("asset_changes") or []),
         "prices": max(0, prices.count(b"\n") - 1),
         "files": sorted(n[len(FILES):] for n in extras if n.startswith(FILES)),
     }
@@ -247,6 +251,7 @@ def apply(ctx: Any, import_id: int) -> dict[str, int]:
         counts["deleted"] = _insert(c, "journal_tx", [{**r, "status": "deleted"} for r in
                                                       st.get("deleted_journal") or []], "OR IGNORE")
         counts["checked"] = _dismissed(c, st.get("diag_dismissed") or [])
+        counts["asset_changes"] = _insert(c, "asset_change", st.get("asset_changes"), "OR IGNORE")
         counts["usage"] = _usage(c, extras.get(USAGE))
         counts["prices"] = _prices(c, extras.get(PRICES))
         counts["series_meta"] = _meta(c, extras.get(META))

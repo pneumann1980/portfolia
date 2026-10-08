@@ -782,7 +782,9 @@ class PriceService:
             if check is None:
                 notes.append(why)
                 continue
-            old = [b for d, b in sorted(conv.items()) if d < first_prim]
+            # Tage mit übernommenen Kursen einer Umbenennung (prev:…) behalten – das ist derselbe Wert
+            kept = {d for d, _c, _ccy, src in points if src.startswith("prev:")}
+            old = [b for d, b in sorted(conv.items()) if d < first_prim and d.isoformat() not in kept]
             if not old:
                 notes.append(f"{sym}: keine Kurse vor {first_prim:%d.%m.%Y}")
                 continue

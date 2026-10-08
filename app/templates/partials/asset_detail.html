@@ -7,6 +7,11 @@
       <h1 style="font-size:1.2rem">{{ a.name }}</h1>
       <div class="hint">{{ a.symbol }}{% if a.wkn %} · WKN {{ a.wkn }}{% endif %}{% if a.isin %} · {{ a.isin }}{% endif %} · {{ a.category_label }}
         {% if series %} · Quelle {{ series.split(':')[0]|replace('cg','CoinGecko')|replace('yahoo','Yahoo')|replace('demo','Demo') }}{% endif %}</div>
+      {% set tc = a.extra.get('ticker_change') %}
+      {% if tc %}<div class="hint">Umbenannt{% if tc.since %} am {{ tc.since|date_de }}{% endif %} (bisher {{ tc.old_quote }}{% if tc.old_name and tc.old_name != a.name %}, „{{ tc.old_name }}“{% endif %}) · <a href="/changes?asset={{ aid_q }}">Änderungen</a></div>{% endif %}
+      {% set th = ticker_hint(a.asset_id) if not a.is_fiat else none %}
+      {% if th %}<div class="hint"><span class="badge {{ 'warn' if th.confidence != 'niedrig' else '' }}">{% if th.kind == 'unknown' %}Kurs/Ticker prüfen{% else %}mögliche Umstellung → {{ th.target }}{% endif %}</span>
+        {{ th.reasons[0] }} <a href="/changes/new?{{ th.query() }}">Prüfen …</a></div>{% endif %}
     </div>
     <div style="text-align:right">
       {% if pi and pi.valued %}
@@ -30,7 +35,8 @@
       {% if not a.is_fiat %}<div class="row quick-btns" style="margin-top:6px;gap:6px;justify-content:flex-end">
         <a class="btn sm qt-sell" href="/journal/quick?asset={{ aid_q }}&amp;side=sell" title="Verkauf erfassen">− Verkauf</a>
         <a class="btn sm qt-buy" href="/journal/quick?asset={{ aid_q }}&amp;side=buy" title="Kauf erfassen">+ Kauf</a>
-        {% if pos %}<a class="btn sm ghost" href="/journal/writeoff?asset={{ aid_q }}" title="Bestand als Verlust (Totalverlust) ausbuchen">Ausbuchen …</a>{% endif %}</div>{% endif %}
+        {% if pos %}<a class="btn sm ghost" href="/journal/writeoff?asset={{ aid_q }}" title="Bestand als Verlust (Totalverlust) ausbuchen">Ausbuchen …</a>{% endif %}
+        <a class="btn sm ghost" href="/changes/new?asset={{ aid_q }}" title="Ticker geändert, Token umgestellt (z. B. MATIC → POL)">Ticker/Umstellung …</a></div>{% endif %}
     </div>
   </div>
 

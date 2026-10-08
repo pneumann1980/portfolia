@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Ticker/Umstellung {{ a.symbol }}{% endblock %}
+{% block heading %}Ticker/Umstellung: {{ a.name }}{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="{{ asset_url(a.asset_id) }}">← {{ a.name }}</a> · <a href="/changes">Alle Ticker-/Token-Änderungen</a></p>
+  {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+  {% if hint %}
+  <div class="alert {{ 'warn' if hint.confidence != 'niedrig' else '' }}"><span class="icon">i</span><div>
+    <b>Erkannt (Sicherheit {{ hint.confidence }}):</b> {% for r in hint.reasons %}{{ r }} {% endfor %}
+    {% if hint.ratio is none and hint.kind != 'unknown' %}<br><b>Verhältnis prüfen</b> – steht nicht in der Quelle; vorbelegt ist 1.{% endif %}</div></div>
+  {% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>{{ a.asset_id }} · {{ a.name }}</h2><span class="hint">Kursquelle {{ a.quote_source }}{% if a.quote_id %}: {{ a.quote_id }}{% endif %}</span></div>
+    {% if held %}<p class="hint">Bestand: {% for acc, q in held.items() %}{{ q|qty }} auf „{{ acc }}“{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+    <form method="post" action="/changes/preview" class="stack" style="gap:12px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="asset" value="{{ a.asset_id }}">
+      <input type="hidden" name="hint" value="{{ hint_key }}">
+      <fieldset class="box" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px">
+        <legend class="hint">Art der Änderung</legend>
+        {% for k, label in kinds.items() %}
+        <label class="row" style="gap:8px;align-items:flex-start;margin:4px 0"><input type="radio" name="kind" value="{{ k }}" {% if form.kind == k %}checked{% endif %}>
+          <span><b>{{ label }}</b><br><span class="hint">{% if k == 'migration' %}Neuer Token/neues Wertpapier ersetzt den Bestand in festem Verhältnis (z. B. MATIC → POL 1:1). Je Konto eine Buchung „Kapitalmaßnahme – Migration“; Anschaffungsdaten bleiben erhalten.{% else %}Nur Kürzel, Name oder Kurs-ID ändern sich (z. B. neues Börsenkürzel). Keine Buchungen; Kurshistorie wird verkettet.{% endif %}</span></span></label>
+        {% endfor %}
+      </fieldset>
+      <div class="grid-3">
+        <label class="field">Stichtag<input type="date" name="date" value="{{ form.date }}" required>
+          <span class="hint">Umstellung: frühestens gebucht nach der letzten Bewegung je Konto</span></label>
+        <label class="field">Verhältnis (nur Umstellung)<input type="text" name="ratio" value="{{ form.ratio or '1' }}" inputmode="decimal" placeholder="1 oder 1:1000">
+          <span class="hint">neue Einheiten je bisheriger Einheit</span></label>
+        <label class="field">Neues Asset (nur Umstellung)<input type="text" name="new_asset" value="{{ form.new_asset }}" list="dl-assets" autocomplete="off" placeholder="z. B. POL">
+          <span class="hint">vorhandenes wählen oder neues Kürzel – wird dann angelegt</span></label>
+      </div>
+      <div class="grid-3">
+        <label class="field">Kursquelle (neu)<select name="quote_source">
+            <option value="" {% if not form.quote_source %}selected{% endif %}>unverändert / keine</option>
+            <option value="coingecko" {% if form.quote_source == 'coingecko' %}selected{% endif %}>CoinGecko</option>
+            <option value="yahoo" {% if form.quote_source == 'yahoo' %}selected{% endif %}>Yahoo</option></select></label>
+        <label class="field">Kurs-ID (neu)<input type="text" name="quote_id" value="{{ form.quote_id }}" placeholder="z. B. polygon-ecosystem-token, META" autocomplete="off"></label>
+        <label class="field">Name (neu, optional)<input type="text" name="new_name" value="{{ form.new_name }}" maxlength="80"></label>
+      </div>
+      <div class="grid-3">
+        <label class="field">Neues Kürzel (nur Umbenennung, optional)<input type="text" name="new_ticker" value="{{ form.new_ticker }}" maxlength="40" placeholder="z. B. META">
+          <span class="hint">CSV-Importe/Datenquellen mit diesem Kürzel werden diesem Asset zugeordnet</span></label>
+        <label class="field">Notiz (optional)<input type="text" name="note" value="{{ form.note }}" maxlength="200"></label>
+      </div>
+      <div><button class="btn primary" type="submit">Vorschau</button> <a class="btn" href="{{ asset_url(a.asset_id) }}">Abbrechen</a></div>
+    </form>
+  </section>
+
+  {% if changes %}
+  <section class="card">
+    <div class="card-head"><h2>Bisherige Änderungen</h2></div>
+    <ul class="hint">{% for c in changes %}<li>{{ c.created_at|datetime_de }} – {{ 'Umstellung' if c.kind == 'migration' else 'Umbenennung' }} {{ c.old_asset }}{% if c.new_asset %} → {{ c.new_asset }}{% endif %} ({{ {'applied': 'aktiv', 'reverted': 'zurückgenommen', 'replaced': 'ersetzt'}.get(c.status, c.status) }})</li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+</div>
+<datalist id="dl-assets">{% for x in assets if x.asset_id != a.asset_id %}<option value="{{ x.asset_id }}">{{ x.name }}</option>{% endfor %}</datalist>
+{% endblock %}

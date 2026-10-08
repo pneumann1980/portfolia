@@ -52,12 +52,31 @@ def global_alerts(ctx: AppContext) -> list[dict[str, str]]:
     except Exception as e:  # Tabelle erst nach Migration vorhanden
         log.debug("Sparplan-Hinweise nicht verfügbar: %s", e)
     try:
+        from app.assetchange.detect import hints
+
+        for h in [h for h in hints(ctx) if h.confidence == "hoch"][:2]:
+            ratio = f" (1 : {h.ratio.normalize():f})" if h.ratio is not None else ""
+            alerts.append({"level": "warn", "text": f"Mögliche Token-Umstellung: {h.old_asset} → {h.target}{ratio} – "
+                                                    "Restbestand prüfen und umstellen.", "href": "/changes"})
+    except Exception as e:
+        log.debug("Hinweise zu Ticker-Änderungen nicht verfügbar: %s", e)
+    try:
         from app.taxdata.module import tax_alerts
 
         alerts.extend(tax_alerts(ctx))
     except Exception as e:
         log.debug("Steuerdaten-Hinweise nicht verfügbar: %s", e)
     return alerts
+
+
+def _ticker_hint(ctx: AppContext, asset_id: str) -> Any:
+    """Hinweis auf eine mögliche Ticker-/Token-Änderung dieses Assets (oder None)."""
+    try:
+        from app.assetchange.detect import hints
+
+        return next((h for h in hints(ctx) if h.old_asset == asset_id), None)
+    except Exception:
+        return None
 
 
 def _estimated_assets(ctx: AppContext) -> set[str]:
@@ -82,6 +101,7 @@ def render(request: Request, template: str, status_code: int = 200, **kw: Any) -
         "estimated_assets": _estimated_assets(ctx),
         "is_htmx": request.headers.get("hx-request") == "true",
         "progress_view": progress_view,
+        "ticker_hint": lambda aid: _ticker_hint(ctx, aid),
     }
     base.update(kw)
     return tpl.TemplateResponse(request, template, base, status_code=status_code)

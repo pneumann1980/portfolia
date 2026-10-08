@@ -116,7 +116,8 @@
 
 <section class="card" id="prices">
   <div class="card-head"><h2>Kurse: unbewertet &amp; veraltet</h2>
-    <a class="btn sm" href="/quality/sources">Kursquellen zuordnen{% if src_suggested %} <span class="badge warn">{{ src_suggested }}</span>{% endif %}</a></div>
+    <span class="row" style="gap:6px;flex-wrap:wrap"><a class="btn sm" href="/changes">Ticker/Umstellungen</a>
+    <a class="btn sm" href="/quality/sources">Kursquellen zuordnen{% if src_suggested %} <span class="badge warn">{{ src_suggested }}</span>{% endif %}</a></span></div>
   {% if val %}
     {% set problems = val.positions|selectattr('price.stale')|list + val.unvalued %}
     {% if problems %}

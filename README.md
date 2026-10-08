@@ -346,6 +346,38 @@ Buchungen lassen sich ergänzend zum Import oder ganz ohne Import direkt in Port
 * **Ohne Import:** Alle Ansichten (Positionen, Performance, Steuern, Sparpläne) funktionieren auch nur mit
   manuell erfassten Buchungen. Steuerberichte weisen manuell erfasste Buchungen des Jahres aus.
 
+### Ticker- und Token-Änderungen (z. B. MATIC → POL)
+
+*Datenqualität → Ticker/Umstellungen* (`/changes`) bzw. im Positionsdetail *Ticker/Umstellung …*. Zwei Arten, weil sie
+wirtschaftlich Verschiedenes bedeuten:
+
+* **Umbenennung** – dasselbe Wertpapier bzw. derselbe Token, nur neues Kürzel, neuer Name oder neue Kurs-ID (z. B.
+  neues Börsenkürzel). Asset-ID, Buchungen, Lots und Haltefristen bleiben unverändert; die Änderung gilt als Overlay.
+  Die Kurshistorie wird verkettet: Tage ohne Kurs der neuen Quelle übernehmen die bisherigen Kurse (als Ersatzkurs
+  gekennzeichnet), Kurse der neuen Quelle haben Vorrang. Ein neues Kürzel ordnet künftige CSV-Importe/Datenquellen
+  diesem Asset zu.
+* **Umstellung** – ein neuer Token ersetzt den bisherigen in festem Verhältnis (MATIC → POL 1:1; auch `1:1000`).
+  Je Konto mit **Restbestand** entsteht eine App-Buchung „Kapitalmaßnahme – Migration“ (gleiche Erfassung und
+  Validierung wie im Journal): Anschaffungsdaten und Haltefristen gehen auf den neuen Bestand über. Gebucht wird
+  frühestens nach der letzten Bewegung des Kontos – bereits umgestellte Bestände (Börse, Wallet-Vorschlag) werden so
+  nicht doppelt umgestellt; ein zweiter Lauf findet nichts mehr. Das Ziel-Asset wird bei Bedarf angelegt.
+
+**Erkennung** (nur Hinweise, Sicherheit hoch/mittel/niedrig; hohe Sicherheit zusätzlich als Hinweis oben auf jeder
+Seite):
+
+1. Register bekannter Umstellungen mit Verhältnis und Stichtag (`app/assetchange/known.py`; derzeit MATIC → POL).
+2. CoinGecko-Katalog (lokal, ohne Abruf): CoinGecko benennt ersetzte Coins um – „MATIC (migrated to POL)“,
+   „… [OLD]“, „… (Legacy)“; Nachfolger nur, wenn eindeutig. Das Verhältnis steht nicht im Katalog → prüfen.
+3. Anbieter-Bestände der Datenquellen: Konto meldet 0 des bisherigen Assets und vom neuen genau Restbestand ×
+   Verhältnis mehr als gebucht (± 1 %).
+4. Kursstillstand: seit über 30 Tagen kein Marktkurs, während andere Kurse aktuell sind (Nachfolger unbekannt).
+
+Jeder Schritt hat eine Vorschau und lässt sich unter `/changes` rückgängig machen (Buchungen werden gelöscht und sind
+im Journal wiederherstellbar). Hinweise lassen sich ausblenden. Für Aktien gibt es kein Register: Bei neuem Kürzel
+die Umbenennung mit dem neuen Yahoo-Symbol erfassen; bei Fusion/Umtausch in ein anderes Wertpapier die Umstellung.
+Grenze: Ob eine Token-Umstellung steuerlich keine Veräußerung ist, hängt vom Einzelfall ab – Portfolia behandelt sie
+wie die Kapitalmaßnahme „Migration“ (Anschaffungsdaten bleiben).
+
 ### Positionen ausbuchen (Verlust, Diebstahl)
 
 *Buchungen → Ausbuchen* (auch aus der Übersicht, der Performance-Seite und der Detailansicht einer Position)
@@ -1024,7 +1056,8 @@ Nutzers); on-chain wurde der Ticker mit dem Hardfork „Ahmedabad“ (Block 62.2
 umbenannt. Portfolia bucht den nativen Coin bis zu diesem Block als `MATIC`, danach als `POL` und schlägt **einmal**
 eine Umstellung `MATIC → POL` (Unternehmensereignis „migration“) über den aus der Historie berechneten Bestand vor –
 nie automatisch, mit Hinweis, wenn die Historie nicht ab Block 0 vorliegt. Ist die Umstellung schon im kuratierten
-Import erfasst, den Vorschlag ignorieren. Kurse: CoinGecko `matic-network` (MATIC) bzw. `polygon-ecosystem-token`
+Import erfasst, den Vorschlag ignorieren. Bestände außerhalb der Wallet-Anbindung (Börsen, kuratierter Import) stellt
+[Ticker- und Token-Änderungen](#ticker--und-token-änderungen-z-b-matic--pol) um – der Hinweis erscheint automatisch. Kurse: CoinGecko `matic-network` (MATIC) bzw. `polygon-ecosystem-token`
 (POL).
 
 **Was live geprüft wurde und was nicht:** Alle zehn Anbindungen sind mit synthetischen Fixtures gegen nachgebildete

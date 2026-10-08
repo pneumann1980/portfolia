@@ -1042,6 +1042,26 @@ neu bauen; Nutzerdaten nie ungefragt ändern.
 bleiben geschätzt (markiert); Steuerdaten und Watchlist sind nicht Teil des Gesamtexports (Ordnerdateien bleiben auf
 dem Datenträger); Anbieterformate Blockpit/Koinly/CoinTracking für Steuerdaten noch nicht als Parser.
 
+## M22 – Ticker- und Token-Änderungen (0.20.0)
+
+Anlass (08.10.2026): Ticker ändern sich (Coins, Tokens, Aktien), z. B. MATIC → POL – automatisch erkennen oder als
+Funktion umsetzen.
+
+**Bestand vorher:** manuelle Buchung „Kapitalmaßnahme“ (Art Migration/Umbenennung) je Konto; MATIC → POL nur im
+Polygon-Wallet-Adapter (On-Chain-Bestand); Bitpanda-Umstellungen zur Prüfung. Keine asset-weite Funktion, keine
+Erkennung, keine verkettete Kurshistorie.
+
+**Neu:** Migration 17 (`asset_change`); `app/assetchange` mit Umbenennung (Overlay: Kursquelle, Name, Kürzel; Kurse
+der bisherigen Reihe als `prev:`-Ersatzkurse bis zum Stichtag, von Ersatzanbietern nicht überschrieben) und Umstellung
+(Kapitalmaßnahme „migration“ je Konto über `JournalService.save`, Restbestand, nach letzter Bewegung, idempotent,
+Rückgängig); Erkennung aus Register, CoinGecko-Katalog (Namensmuster „migrated to“, „[OLD]“, „(Legacy)“ – Stand
+08.10.2026: 2 bzw. rund 140 Coins, Nachfolger bei „[OLD]“ in gut 60 % eindeutig), Anbieter-Beständen und
+Kursstillstand; Seiten `/changes`, Formular, Vorschau; Hinweis im Positionsdetail und – bei hoher Sicherheit – oben
+auf jeder Seite; Gesamtexport enthält die Änderungen.
+
+**Grenzen:** Register enthält nur belegte Fälle (MATIC → POL); Katalog liefert kein Verhältnis und keinen Stichtag;
+für Aktien keine automatische Nachfolger-Erkennung (Yahoo bietet dafür keine dokumentierte Schnittstelle).
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
@@ -1085,6 +1105,8 @@ dem Datenträger); Anbieterformate Blockpit/Koinly/CoinTracking für Steuerdaten
 * **Weiterentwicklung 0.19.0** (07.10.2026): Ursachen historischer Kurslücken und KRC-20-403 beheben, einheitlicher
   Fortschritt, Treemap, Top-Bewegungen % | €, Positionsdetail, Schnellbuchung, Watchlist, Steuerdaten je Jahr ohne
   stilles Ersetzen und ohne neue Buchungen – siehe M21.
+* **Ticker-/Token-Änderungen** (08.10.2026): erkennen (Register, CoinGecko-Katalog, Anbieter-Bestände,
+  Kursstillstand) und per Vorschau umstellen bzw. umbenennen, rückgängig machbar – siehe M22.
 
 ## Offene Fragen an den Auftraggeber
 
