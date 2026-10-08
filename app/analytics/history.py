@@ -321,11 +321,23 @@ def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, seri
     # -- Flüsse -------------------------------------------------------------------------------
     inflow = np.zeros(n)
     outflow = np.zeros(n)
+    aidx = {a: i for i, a in enumerate(asset_ids)}
+    # Kurs für Zu-/Abgänge ohne EUR-Betrag: Tageskurs, in einer Bewertungslücke der zuletzt bekannte (mitgeführte)
+    # Kurs – Gesamt- und Positionssicht verwenden denselben Wert, sonst entstünde eine Scheinrendite
+    valid_m = kinds != Q.NONE if m else np.zeros((0, n), dtype=bool)
+    carry = np.array([_ffill_valid(price[k], valid_m[k]) for k in range(m)]) if m else np.zeros((0, n))
+    flow_px = np.where(valid_m, price, carry) if m else price
     for f in ledger.flows:
         i = (f.date - start).days
         if i < 0 or i >= n:
             continue
-        amt = valuer.amount(f, pf)
+        k = aidx.get(f.asset or "") if f.amount is None else None
+        if k is not None and f.qty:
+            # Zu-/Abgang ohne EUR-Betrag: derselbe Tageskurs wie für den Bestand (auch Schätzung bzw. 0 €) – sonst
+            # stünde z. B. einem Token-Zugang vor dem ersten Marktkurs ein Wert ohne Zufluss gegenüber (Scheingewinn)
+            amt = float(f.qty) * float(flow_px[k][i])
+        else:
+            amt = valuer.amount(f, pf)
         if amt >= 0:
             inflow[i] += amt
         else:
@@ -334,17 +346,18 @@ def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, seri
 
     a_in = np.zeros((m, n))
     a_out = np.zeros((m, n))
-    aidx = {a: i for i, a in enumerate(asset_ids)}
+    q_out = np.zeros((m, n))  # Abgangsmengen (Abrechnung von Bewertungslücken gegen den letzten bekannten Wert)
     for af in ledger.asset_flows:
         k = aidx.get(af.asset)
         i = (af.date - start).days
         if k is None or i < 0 or i >= n:
             continue
-        amt = float(af.amount) if af.amount is not None else float(af.qty) * price[k][i]
-        if amt >= 0:
+        amt = float(af.amount) if af.amount is not None else float(af.qty) * flow_px[k][i]
+        if amt >= 0 and float(af.qty) >= 0:
             a_in[k][i] += amt
         else:
             a_out[k][i] += -amt
+            q_out[k][i] += -float(af.qty)
 
     income = np.zeros(n)
     for e in ledger.income:
@@ -373,16 +386,25 @@ def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, seri
         ok_prev = np.concatenate([[True], ok[:-1]])
         q_prev = np.concatenate([[0.0], q[:-1]])
         p_prev = np.concatenate([[0.0], price[k][:-1]])
+        # Während einer Lücke gilt der letzte bekannte Kurs als „mitgeführter“ Wert (nur für die Abrechnung, die
+        # Anzeige bleibt 0 €): Ein- und Austritt zu diesem Wert sind neutral; was beim Verkauf in der Lücke bzw. bei
+        # Rückkehr des Kurses davon abweicht, ist echte Wertänderung und bleibt sichtbar. Ohne je bekannten Kurs gibt
+        # es keinen Vergleichswert – dann ist die erste Bewertung neutral (keine Scheinrendite).
+        last_ok = carry[k]
+        last_prev = np.concatenate([[0.0], last_ok[:-1]])
+        carried = last_ok > 0
         enter = ok_prev & ~ok & held_prev  # Kurs fällt weg: bisheriger Wert verlässt die bewertete Menge
-        leave = ~ok_prev & ok & held_prev  # Kurs kommt zurück: Wert tritt wieder ein (keine Scheinrendite)
+        leave = ~ok_prev & ok & held_prev  # Kurs kommt zurück: Wert tritt wieder ein
         g_out[k] += np.where(enter, q_prev * p_prev, 0.0)
-        g_in[k] += np.where(leave, q_prev * price[k], 0.0)
-        g_out[k] += np.where(~ok, a_in[k], 0.0)  # Wert fließt in eine unbewertete Position
-        g_in[k] += np.where(~ok, a_out[k], 0.0)  # … bzw. aus ihr heraus (Verkaufserlös)
-        # Ausbuchung einer unbewerteten Position: echter Verlust zum letzten bekannten Kurs (Wert tritt kurz ein
-        # und geht verloren) – sonst bliebe die ausdrücklich gebuchte Wertberichtigung ohne Wirkung auf die Rendite
+        g_in[k] += np.where(leave, q_prev * np.where(last_prev > 0, last_prev, price[k]), 0.0)
+        # Zugänge in eine unbewertete Position: Kauf zum EUR-Betrag, ohne Betrag zum mitgeführten Wert
+        g_out[k] += np.where(~ok, a_in[k], 0.0)
+        # Abgänge (Verkauf, Transfer) aus ihr: zum mitgeführten Wert – der Erlös fließt real ab, die Differenz ist
+        # Gewinn bzw. Verlust; ohne bekannten Wert neutral zum Erlös
+        g_in[k] += np.where(~ok, np.where(carried, q_out[k] * last_ok, a_out[k]), 0.0)
+        # Ausbuchung einer unbewerteten Position (Verlust, Diebstahl, Burn – kein Positions-Zahlungsstrom): echter
+        # Verlust zum mitgeführten Wert – sonst bliebe die gebuchte Wertberichtigung ohne Wirkung auf die Rendite
         aid = asset_ids[k]
-        last_ok = _ffill_valid(price[k], ok)
         for (a_id, t), lq in lost.items():
             if a_id == aid and not ok[t]:
                 g_in[k][t] += lq * last_ok[t]
