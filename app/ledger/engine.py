@@ -20,6 +20,7 @@ import bisect
 import decimal
 import itertools
 from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -605,6 +606,14 @@ class _Engine:
                     self.issue("info", "implicit_fee",
                                f"Transfer {fasset}: Differenz {implicit.normalize():f} als Transfergebühr behandelt",
                                tx, fasset, fa)
+                elif tq > fq > 0:
+                    # mehr empfangen als gesendet: Herkunft der Differenz unbekannt – sichtbar ohne Einstand führen
+                    excess = tq - fq
+                    self._new_lot(tasset, ta, excess, ZERO, tx.ts, tx.date, tx.tx_id, "phantom")  # type: ignore[arg-type]
+                    self.issue("warning", "transfer_excess",
+                               f"Transfer {fasset}: {excess.normalize():f} mehr empfangen als gesendet – ohne "
+                               "Anschaffung (Einstand 0 €, Haltedauer unbekannt) geführt; fehlt eine Buchung?",
+                               tx, fasset, ta)
             else:
                 src_cash = self.cash.get(fa or "", False)
                 dst_cash = self.cash.get(ta or "", False)
@@ -709,13 +718,51 @@ class _Engine:
         out.sort(key=Lot.sort_key)
         return out
 
+    def _outflows(self, t: Tx) -> list[tuple[str, str, Decimal]]:
+        """Abgänge nicht-fiater Bestände einer Buchung: (Konto, Asset, Menge)."""
+        out = []
+        if t.from_account and t.from_asset and t.from_qty and not self.is_fiat(t.from_asset):
+            out.append((t.from_account, t.from_asset, t.from_qty))
+        acc = t.from_account or t.to_account
+        if acc and t.fee_asset and t.fee_qty and not self.is_fiat(t.fee_asset):
+            out.append((acc, t.fee_asset, t.fee_qty))
+        return out
+
+    def _covered(self, t: Tx) -> bool:
+        need: dict[tuple[str, str], Decimal] = defaultdict(lambda: ZERO)
+        for acc, asset, q in self._outflows(t):
+            need[(acc, asset)] += q
+        return all(self.bal[k] + DUST >= q for k, q in need.items())
+
+    def _same_time_order(self, txs: list[Tx]) -> Iterator[Tx]:
+        """Buchungen in Zeitfolge; bei *identischem* Zeitstempel zuerst die, deren Abgänge der Bestand deckt.
+
+        Die tatsächliche Reihenfolge gleichzeitiger Buchungen ist unbekannt (Teilausführungen, nur Datum). Ohne diese
+        Regel hinge das Ergebnis von der Reihenfolge in der Quelle ab: Verkauf vor Kauf im selben Moment ergäbe eine
+        Veräußerung ohne Einstand und einen verwaisten Lot. Gedeckte Buchungen behalten ihre Reihenfolge (``seq``);
+        ist keine gedeckt, gilt die bisherige Reihenfolge. Wird beim Verarbeiten ausgewertet (aktueller Bestand)."""
+        i = 0
+        n = len(txs)
+        while i < n:
+            j = i + 1
+            while j < n and txs[j].ts == txs[i].ts:
+                j += 1
+            if j - i == 1 or j - i > 500:  # sehr große Gruppen: bisherige Reihenfolge (Laufzeit)
+                yield from txs[i:j]
+            else:
+                rest = list(txs[i:j])
+                while rest:
+                    k = next((x for x, t in enumerate(rest) if self._covered(t)), 0)
+                    yield rest.pop(k)
+            i = j
+
     def run(self) -> LedgerResult:
         txs = sorted(self.pf.txs, key=lambda t: (t.ts, t.seq))
         if self.opts.until is not None:
             txs = [t for t in txs if t.date <= self.opts.until]
         pending = sorted(set(self.opts.snapshot_dates))
         snapshots: dict[date, list[Lot]] = {}
-        for t in txs:
+        for t in self._same_time_order(txs):
             while pending and t.date > pending[0]:
                 snapshots[pending.pop(0)] = self._snapshot()
             self.process(t)

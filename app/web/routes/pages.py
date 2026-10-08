@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -16,7 +16,7 @@ from app.analytics.colors import asset_colors
 from app.ledger.engine import DUST, REALIZED_KINDS
 from app.prices.fallback import DEFAULT_MAX_AGE as FB_DEFAULT
 from app.prices.fallback import SETTING_KEYS as FB_KEYS
-from app.util.timeutil import add_years, local_tz, parse_iso, today_local
+from app.util.timeutil import local_tz, parse_iso, today_local
 from app.web.deps import get_ctx, render
 from app.web.svg import sparkline
 
@@ -131,11 +131,6 @@ def positions(request: Request, account: str = "", segment: str = "", category: 
 
 # -- Detailansicht ---------------------------------------------------------------------------------
 
-def tax_free_date(acq: date) -> date:
-    """§ 23 EStG: Veräußerung nach Ablauf eines Jahres steuerfrei → Anschaffung + 1 Jahr + 1 Tag."""
-    return add_years(acq, 1) + timedelta(days=1)
-
-
 def tax_lots(ctx: Any, a: Any) -> tuple[list[Any], Any, str | None]:
     """Lots und Haltefrist-Regel des aktiven Steuer-Regelwerks (z. B. FIFO je Wallet); Fallback: Anzeige-Ledger."""
     try:
@@ -148,8 +143,8 @@ def tax_lots(ctx: Any, a: Any) -> tuple[list[Any], Any, str | None]:
     except Exception as e:  # Steuermodul optional – Detailansicht darf nicht daran scheitern
         log.debug("Steuer-Lots nicht verfügbar: %s", e)
         led = ctx.ledger()
-        return (led.lots_for(a.asset_id) if led else [],
-                lambda asset, acq: tax_free_date(acq) if asset.is_crypto else None, None)
+        # keine eigene Haltefrist-Regel neben dem Regelwerk: ohne Regelwerk kein Steuerfrei-Datum
+        return (led.lots_for(a.asset_id) if led else [], lambda asset, acq: None, None)
 
 
 def asset_context(ctx: Any, asset_id: str) -> dict[str, Any]:

@@ -297,7 +297,9 @@ class GermanyPack(RulePack):
                 share = p.qty / d.qty if d.qty else ZERO
                 wk = d.fee_eur * share
                 gain = p.proceeds - p.cost
-                if p.missing_basis or p.acq_date is None:
+                if p.missing_basis or p.acq_date is None or p.origin == "phantom":
+                    # ohne nachgewiesene Anschaffung (Fehlbestand, Zugang ohne Lots): Haltedauer unbekannt –
+                    # nie als steuerfrei einstufen, Einstand 0 € (konservativ), im Bericht ausgewiesen
                     free_from, taxable = None, True
                     missing += 1
                 else:
