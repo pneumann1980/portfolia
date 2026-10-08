@@ -199,7 +199,7 @@ def asset_context(ctx: Any, asset_id: str) -> dict[str, Any]:
         "realized": realized, "income": float(income), "fees": fees, "txs": txs[:60], "tx_total": len(txs),
         "info": info or {}, "info_at": info_at, "series": series, "meta": meta, "perf": perf, "news": news,
         "colors": asset_colors(asset_id, a.segment), "account_scope": ctx.settings.get("ledger.scope", "global"),
-        "tax_pack": pack_name,
+        "tax_pack": pack_name, "quality": hist.quality.get(asset_id) if hist is not None else None,
     }
 
 
@@ -312,8 +312,12 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
     next_runs = ctx.scheduler.next_runs() if ctx.scheduler else {}
     hist = ctx.history()
     pf = ctx.portfolio()
-    meta_rows = ctx.db.q("SELECT series, history_from, history_to, history_status, history_error, last_history_fetch "
-                         "FROM series_meta WHERE history_status IS NOT NULL ORDER BY history_status DESC, series")
+    meta_rows = ctx.db.q("SELECT series, history_from, history_to, history_status, history_error, last_history_fetch, "
+                         "alt_series, alt_status, alt_note, alt_checked_at FROM series_meta "
+                         "WHERE history_status IS NOT NULL ORDER BY history_status DESC, series")
+    price_quality = sorted((q for q in (hist.quality.values() if hist else []) if q.state != "complete" or q.alt_days),
+                           key=lambda q: ({"failed": 0, "estimated": 1, "gaps": 2}.get(q.state, 3),
+                                          -(q.estimated_days + q.gap_days), q.asset_id))
     usage = ctx.db.q("SELECT * FROM api_usage ORDER BY period DESC, provider LIMIT 40")
     journal: dict[str, Any] | None = None
     try:
@@ -332,6 +336,7 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
                   report=report, diff=diff, check=check, issues=issues, val=val, ledger_issues=ledger_issues[:300],
                   sources=sources, events=events, jobs=jobs, next_runs=next_runs, cg=ctx.prices.cg_budget(),
                   hist=hist, meta_rows=meta_rows, usage=usage, secrets=ctx.config.secrets.status(),
+                  price_quality=price_quality,
                   cash_tracked=(led.cash_tracked if led else {}),
                   asset_name=lambda aid: pf.asset(aid).name if pf else aid,
                   src_suggested=ctx.db.scalar("SELECT COUNT(*) FROM asset_source WHERE status='suggested'", default=0),

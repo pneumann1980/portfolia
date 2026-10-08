@@ -50,6 +50,11 @@ class PriceStore:
         return [(r["date"], r["close"], r["ccy"]) for r in
                 self.db.q("SELECT date, close, ccy FROM price_daily WHERE series=? ORDER BY date", (series,))]
 
+    def daily_points(self, series: str) -> list[tuple[str, float, str | None, str]]:
+        """Wie :meth:`daily_closes`, zusätzlich mit Herkunft je Tag (``source``: Anbieter bzw. Ersatzreihe)."""
+        return [(r["date"], r["close"], r["ccy"], r["source"] or "") for r in
+                self.db.q("SELECT date, close, ccy, source FROM price_daily WHERE series=? ORDER BY date", (series,))]
+
     def close_on_or_before(self, series: str, d: date) -> Any:
         return self.db.q1(
             "SELECT date, close, ccy, split_factor FROM price_daily WHERE series=? AND date<=? "

@@ -20,8 +20,8 @@
 
 {% if unvalued %}<div class="alert"><span class="icon">i</span><div>{{ unvalued|length }} gehaltene Position{{ 'en' if unvalued|length != 1 }} ohne gültigen Kurs, mit 0 € bewertet:
   {{ unvalued[:8]|join(', ') }}{% if unvalued|length > 8 %} …{% endif %} · <a href="/journal/writeoff">als Verlust ausbuchen</a></div></div>{% endif %}
-{% if estimated %}<div class="alert"><span class="icon">i</span><div>Für einige Zeiträume fehlen historische Kurse; dort wird mit Transaktionskursen geschätzt:
-  {% for n, d in estimated[:8] %}{{ n }} ({{ d }} Tage){{ ', ' if not loop.last }}{% endfor %}{% if estimated|length > 8 %} …{% endif %}</div></div>{% endif %}
+{% if estimated %}<div class="alert"><span class="icon">i</span><div>⚠ Historische Kursdaten teilweise geschätzt (vor dem ersten verfügbaren Marktkurs mit Transaktions- bzw. erstem Marktkurs):
+  {% for n, d in estimated[:8] %}{{ n }} ({{ d }} Tage){{ ', ' if not loop.last }}{% endfor %}{% if estimated|length > 8 %} …{% endif %} · <a href="/quality#price-quality">Zeiträume, Methode und Quelle</a></div></div>{% endif %}
 
 <section class="kpis six" aria-label="Kennzahlen {{ sel_label }}">
   <div class="kpi hero">

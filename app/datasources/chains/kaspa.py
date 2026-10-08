@@ -27,18 +27,32 @@ from collections import Counter
 from typing import Any, ClassVar
 
 from app.datasources import connector as K
-from app.datasources.chainhttp import ENDPOINTS, ChainHttp, Stop
+from app.datasources.chainhttp import ENDPOINTS, ChainHttp, Stop, _HttpProblem
 from app.datasources.chains.codec import kaspa_decode
 from app.datasources.wallet import Move, TxView, WalletConnector, classify, event, short, token_key, ts_from_unix, units
 
 SOMPI = 8
 PAGE = 500
+KRC_RETRY_S = 5.0  # Pause vor erneuter Anfrage bei vorübergehendem Indexer-Zustand (403 „unsynced“/„internal error“)
+# vorübergehende Zustände des Indexers (HTTP 403 mit dieser Meldung) → Anzeige
+KRC_TRANSIENT = {"unsynced": "Indexer vorübergehend nicht synchron",
+                 "internal error": "Indexer meldet einen internen Fehler"}
+# KRC-20-Indexer in Reihenfolge (Fallback-Kette). Ein zweiter öffentlicher, dokumentierter Indexer ist nicht bekannt
+# (Stand Okt. 2026); freie URLs sind aus Sicherheitsgründen nicht vorgesehen. Danach: CSV-Import.
+KRC20_INDEXERS = ("kasplex",)
 OP_PAGE = 50
 OVERLAP_MS = 30 * 60 * 1000
 OP_MIN_AGE_MS = 10 * 60 * 1000
 COINBASE_SUBNET = "0100000000000000000000000000000000000000"
 _TXID = re.compile(r"^[0-9a-f]{64}$")
 _TICK = re.compile(r"^[A-Za-z0-9]{1,10}$|^[0-9a-f]{64}$")
+
+
+class KrcUnsynced(K.ConnectorError):
+    """Indexer nicht synchron – vorübergehend, als Lücke (KAS bleibt vollständig)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__("unavailable", message)
 
 
 @K.register
@@ -70,8 +84,8 @@ class KaspaConnector(WalletConnector):
             raise K.ConnectorError("config", "Kaspa-Adresse ungültig – bitte neu eingeben.") from None
         return a
 
-    def _krc_http(self, cfg: K.SourceConfig, http: ChainHttp) -> ChainHttp:
-        return ChainHttp(ENDPOINTS["kasplex"], transport=self.transport, sleep=self.sleep, clock=self.clock,
+    def _krc_http(self, cfg: K.SourceConfig, http: ChainHttp, indexer: str = KRC20_INDEXERS[0]) -> ChainHttp:
+        return ChainHttp(ENDPOINTS[indexer], transport=self.transport, sleep=self.sleep, clock=self.clock,
                          max_requests=max(http.max_requests // 4, 40), deadline_s=self.deadline_s, usage=self.usage)
 
     # -- KAS ----------------------------------------------------------------------------------------------
@@ -115,7 +129,10 @@ class KaspaConnector(WalletConnector):
                                                                "Kasplex-Indexer meldet „nicht synchron“ – KRC-20 "
                                                                "evtl. unvollständig")}
                 except (K.ConnectorError, Stop) as e:
-                    details["krc20"] = {"ok": False, "text": f"KRC-20 nicht abrufbar: {getattr(e, 'message', e)}"}
+                    kind = getattr(e, "kind", "unavailable")
+                    details["krc20"] = {"ok": False, "kind": kind,
+                                        "text": f"KRC-20 nicht abrufbar ({K.ERROR_KINDS.get(kind, kind)}): "
+                                                f"{getattr(e, 'message', e)} – KAS ist davon nicht betroffen"}
                 finally:
                     krc.close()
         return K.CheckResult(True, f"Kaspa: Adresse {short(a, 10)} über {http.ep.label} lesbar.", details,
@@ -163,28 +180,7 @@ class KaspaConnector(WalletConnector):
             # KRC-20: eigener Fortsetzungspunkt – ein Ausfall blockiert KAS nicht, wird aber als Lücke gezeigt
             krc_more = False
             if self.watch(cfg).tokens and stopped is None:
-                krc = self._krc_http(cfg, http)
-                try:
-                    synced, toks = self._krc_state(krc, a)
-                    if not synced:
-                        res.gaps.append("KRC-20: Kasplex-Indexer meldet „nicht synchron“ – KRC-20-Bewegungen "
-                                        "können fehlen; später erneut synchronisieren oder per CSV ergänzen")
-                    st, krc_events, krc_more = self._krc_ops(krc, a, dict(cur.get("krc20") or {}), skipped)
-                    res.events += krc_events
-                    res.cursor["krc20"] = st
-                    if bal is not None:
-                        bal += toks
-                    if krc_more:
-                        res.warnings.append("KRC-20: Budget des Laufs erreicht – Fortsetzung beim nächsten Lauf")
-                except Stop as e:
-                    res.gaps.append(f"KRC-20: {e} – Fortsetzung beim nächsten Lauf")
-                    krc_more = True
-                except K.ConnectorError as e:
-                    res.gaps.append(f"KRC-20 nicht abrufbar ({e.message}) – KAS ist vollständig, KRC-20-Bewegungen "
-                                    "fehlen in diesem Lauf; Ergänzung per CSV-Import möglich")
-                finally:
-                    res.coverage.update({"krc20_requests": krc.requests})
-                    krc.close()
+                krc_more = self._krc_fetch(cfg, http, a, cur, res, bal, skipped)
             res.balances = bal
             res.skipped = dict(skipped)
             res.complete = stopped is None and not res.gaps and not krc_more
@@ -194,6 +190,40 @@ class KaspaConnector(WalletConnector):
                 res.warnings.append(f"{stopped} – Fortsetzung beim nächsten Lauf")
             res.coverage.update(http.stats())
         return res
+
+    def _krc_fetch(self, cfg: K.SourceConfig, http: ChainHttp, a: str, cur: dict[str, Any], res: K.FetchResult,
+                   bal: list[K.Balance] | None, skipped: Counter[str]) -> bool:
+        """KRC-20 über die Indexer der Fallback-Kette (:data:`KRC20_INDEXERS`); ein Ausfall blockiert KAS nie, wird
+        aber als konkrete Lücke mit Fehlerart gezeigt (``coverage.krc20``). Rückgabe: Fortsetzung nötig."""
+        errors: list[str] = []
+        for indexer in KRC20_INDEXERS:
+            krc = self._krc_http(cfg, http, indexer)
+            try:
+                self.report("KRC-20", 0, None, f"Token-Bestände und -Vorgänge ({krc.ep.label})")
+                _synced, toks = self._krc_state(krc, a)
+                st, krc_events, more = self._krc_ops(krc, a, dict(cur.get("krc20") or {}), skipped)
+                res.events += krc_events
+                res.cursor["krc20"] = st
+                if bal is not None:
+                    bal += toks
+                if more:
+                    res.warnings.append("KRC-20: Budget des Laufs erreicht – Fortsetzung beim nächsten Lauf")
+                res.coverage["krc20"] = {"status": "ok", "indexer": krc.ep.label}
+                return more
+            except Stop as e:
+                res.gaps.append(f"KRC-20: {e} – Fortsetzung beim nächsten Lauf")
+                res.coverage["krc20"] = {"status": "budget", "indexer": krc.ep.label}
+                return True
+            except K.ConnectorError as e:
+                errors.append(e.message)
+                res.coverage["krc20"] = {"status": e.kind, "indexer": krc.ep.label, "message": e.message[:300]}
+            finally:
+                res.coverage["krc20_requests"] = res.coverage.get("krc20_requests", 0) + krc.requests
+                krc.close()
+        kind = res.coverage.get("krc20", {}).get("status", "unavailable")
+        res.gaps.append(f"KRC-20 nicht abrufbar ({K.ERROR_KINDS.get(kind, kind)}: {'; '.join(errors)}) – KAS ist "
+                        "vollständig, KRC-20-Bewegungen fehlen in diesem Lauf; Ergänzung per CSV-Import möglich")
+        return False
 
     def _kas_events(self, a: str, txs: list[dict[str, Any]], skipped: Counter[str]) -> list[K.SourceEvent]:
         uniq: dict[str, dict[str, Any]] = {}
@@ -287,7 +317,38 @@ class KaspaConnector(WalletConnector):
     # -- KRC-20 -------------------------------------------------------------------------------------------
     @staticmethod
     def _krc_get(krc: ChainHttp, path: str, params: dict[str, Any] | None, what: str) -> dict[str, Any]:
-        body = krc.get(path, params, what=what)
+        """Anfrage an den KRC-20-Indexer mit Auswertung seiner Statusmeldungen.
+
+        go-krc20d (Kasplex, API v1) antwortet auf Anwendungsfehler mit **HTTP 403** und einer Meldung im JSON-Rumpf
+        (Quelltext ``api/v1op.go``, ``v1address.go``, ``v1info.go``): ``unsynced`` (Indexer hinter dem Netz, > 99
+        DAA ≈ 10 s), ``internal error`` (Speicherfehler), ``address invalid``, ``tick invalid``, ``data expired``
+        (ältere Daten nicht mehr vorgehalten). Kasplex verlangt keinen Schlüssel – ein 403 ist nie ein
+        Schlüsselproblem. Vorübergehende Zustände werden im Lauf bis zu zweimal nach kurzer Pause wiederholt."""
+        for attempt in range(3):
+            body = krc.get(path, params, what=what, allow_status=(403,))
+            if not isinstance(body, _HttpProblem):
+                break
+            msg = (body.text or "").strip().lower()
+            if body.blocked:
+                raise K.ConnectorError("forbidden", f"{krc.ep.label} verweigert {what}: {body.blocked} (HTTP 403) – "
+                                                    "später erneut versuchen.")
+            if msg in KRC_TRANSIENT:
+                if path == "/info" and msg == "unsynced":
+                    return {"message": "unsynced", "result": None}  # Zustand, kein Fehler – Aufrufer entscheidet
+                if attempt < 2 and krc.backoff(KRC_RETRY_S * (attempt + 1)):
+                    continue
+                raise K.ConnectorError("unavailable", f"{krc.ep.label}: {KRC_TRANSIENT[msg]} (HTTP 403 „{msg}“, "
+                                                      f"{what}) – der nächste Lauf versucht es erneut.")
+            if msg == "address invalid":
+                raise K.ConnectorError("config", f"{krc.ep.label} lehnt die Adresse ab (HTTP 403 „address invalid“, "
+                                                 f"{what}) – Adresse prüfen.")
+            if msg == "data expired":
+                raise K.ConnectorError("no_data", f"{krc.ep.label} hält diese älteren Vorgänge nicht mehr vor "
+                                                  f"(HTTP 403 „data expired“, {what}) – ältere KRC-20-Vorgänge per "
+                                                  "CSV-Import ergänzen.")
+            raise K.ConnectorError("forbidden", f"{krc.ep.label} verweigert {what} (HTTP 403"
+                                                + (f" „{body.text}“" if body.text else "") + ") – der Indexer "
+                                                "verlangt keinen Schlüssel; die Anfrage wurde abgelehnt.")
         if not isinstance(body, dict):
             raise K.ConnectorError("data", f"{krc.ep.label}: Antwort nicht lesbar ({what}).")
         msg = str(body.get("message") or "")
@@ -298,6 +359,18 @@ class KaspaConnector(WalletConnector):
     def _krc_state(self, krc: ChainHttp, a: str) -> tuple[bool, list[K.Balance]]:
         info = self._krc_get(krc, "/info", None, "Status")
         synced = str(info.get("message") or "") != "unsynced"
+        if not synced:
+            # Indexer nicht synchron: seit API 3.x lehnt er dann jede Abfrage mit 403 ab – kurz warten, sonst Lücke
+            for wait in (KRC_RETRY_S, 2 * KRC_RETRY_S):
+                if not krc.backoff(wait):
+                    break
+                info = self._krc_get(krc, "/info", None, "Status")
+                synced = str(info.get("message") or "") != "unsynced"
+                if synced:
+                    break
+            if not synced:
+                raise KrcUnsynced(f"{krc.ep.label} meldet „nicht synchron“ (Indexer hinter dem Netz) – KRC-20-"
+                                  "Bewegungen können fehlen; der nächste Lauf versucht es erneut")
         out: list[K.Balance] = []
         nxt: str | None = None
         for _ in range(20):

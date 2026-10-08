@@ -119,7 +119,13 @@ async def save_settings(request: Request) -> Response:
                 k, _, v = line.partition("=")
                 if k.strip() and v.strip():
                     mapping[k.strip().upper()] = v.strip()
+        auto_hist = f.get("crypto_history_auto") == "1"
+        if mapping != (s.get("prices.crypto_history_fallback") or {}) \
+                or auto_hist != bool(s.get("prices.crypto_history_auto", True)):
+            # geänderte Zuordnung: Ersatzhistorie beim nächsten Backfill neu prüfen (statt erst nach 7 Tagen)
+            ctx.db.x("UPDATE series_meta SET alt_checked_at=NULL WHERE alt_checked_at IS NOT NULL")
         s.set("prices.crypto_history_fallback", mapping)
+        s.set("prices.crypto_history_auto", auto_hist)
         benches = []
         for i, line in enumerate(str(f.get("benchmarks") or "").splitlines()):
             if "|" in line:

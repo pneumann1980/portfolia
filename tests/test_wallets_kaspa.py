@@ -197,3 +197,64 @@ def test_kas_pages_with_equal_block_times_resume_and_overlap(client, kas, monkey
     assert res.get("new", 0) == 0 and len(all_rows(client, sid)) == 1300
     afters = [int(r.url.params["after"]) for r in kas.calls if "full-transactions-page" in r.url.path]
     assert afters and afters[0] < T0 + (1299 // 3) * 1000
+
+
+# -- KRC-20: HTTP 403 des Kasplex-Indexers (go-krc20d) ------------------------------------------------------------
+# Laut Quelltext von go-krc20d (api/v1op.go, v1address.go, v1info.go) antwortet der Indexer auf Anwendungsfehler mit
+# HTTP 403 und einer Meldung im JSON-Rumpf; Kasplex verlangt keinen Schlüssel.
+
+def _oplist(r: httpx.Request) -> bool:
+    return r.url.host == "api.kasplex.org" and r.url.path.endswith("/krc20/oplist")
+
+
+def _gaps(c, sid) -> list[str]:
+    return json.loads(source(c, sid)["coverage_json"])["gaps"]
+
+
+def test_krc20_403_unsynced_is_transient_retried_and_never_a_key_problem(client, kas):
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS")
+    kas.fail_next(httpx.Response(403, json={"message": "unsynced", "result": None}), _oplist)
+    assert sync(client, sid)["status"] == "synced"  # nach kurzer Pause wiederholt – erfolgreich
+    assert rows_for(client, sid, 5001, krc=True) and 5.0 in kas.sleeps
+    for _ in range(3):
+        kas.fail_next(httpx.Response(403, json={"message": "unsynced", "result": None}), _oplist)
+    datasource_service(ctx(client)).reset_cursor(sid)
+    sync(client, sid)
+    gaps = _gaps(client, sid)
+    assert any("nicht synchron" in g and "HTTP 403" in g for g in gaps), gaps
+    assert not any("Schlüssel" in g for g in gaps)
+    cov = json.loads(source(client, sid)["coverage_json"])
+    assert cov["krc20"]["status"] == "unavailable" and rows_for(client, sid, 2)  # KAS vollständig
+
+
+def test_krc20_api3_unsynced_on_all_endpoints_is_a_gap(client, kas):
+    kas.krc_status = "unsynced403"
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS")
+    res = sync(client, sid)
+    assert res["status"] == "partial" and rows_for(client, sid, 2)
+    gaps = _gaps(client, sid)
+    assert any("nicht synchron" in g for g in gaps) and not any("Schlüssel" in g for g in gaps)
+
+
+@pytest.mark.parametrize(("resp", "kind", "text"), [
+    (httpx.Response(403, json={"message": "internal error", "result": None}), "unavailable", "internen Fehler"),
+    (httpx.Response(403, json={"message": "address invalid", "result": None}), "config", "lehnt die Adresse ab"),
+    (httpx.Response(403, json={"message": "data expired", "result": None}), "no_data", "nicht mehr vor"),
+    (httpx.Response(403, json={"message": "something new", "result": None}), "forbidden", "„something new“"),
+    (httpx.Response(403, text="<html>Attention Required! | Cloudflare</html>",
+                    headers={"content-type": "text/html", "server": "cloudflare", "cf-ray": "8f1e2d3c4b5a-FRA"}),
+     "forbidden", "Cloudflare"),
+    (httpx.Response(404, json={"message": "not found"}), "gone", "nicht gefunden"),
+])
+def test_krc20_error_classes(client, kas, resp, kind, text):
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS")
+    for _ in range(4):
+        kas.fail_next(resp, _oplist)
+    sync(client, sid)
+    cov = json.loads(source(client, sid)["coverage_json"])
+    assert cov["krc20"]["status"] == kind, cov["krc20"]
+    gaps = cov["gaps"]
+    assert any(text in g for g in gaps), gaps
+    assert not any("Schlüssel unter" in g for g in gaps)  # Kasplex hat keine Schlüssel
+    assert rows_for(client, sid, 2) and not rows_for(client, sid, 5001, krc=True)  # KAS ja, KRC-20 nicht
+    assert json.loads(source(client, sid)["cursor_json"]).get("krc20") in ({}, None)  # KRC-Zeiger nicht vorgerückt

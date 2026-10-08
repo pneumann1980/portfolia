@@ -58,7 +58,9 @@ CREDENTIAL_RE = re.compile(r"^PORTFOLIA_DS_[A-Z0-9_]{1,50}$")
 
 # Fehlerarten → Anzeige (ergänzt die Meldung des Connectors)
 ERROR_KINDS = {"auth": "Zugangsdaten abgelehnt", "scope": "Berechtigung fehlt", "expired": "API-Key abgelaufen",
+               "key_missing": "API-Key fehlt", "forbidden": "Zugriff verweigert (HTTP 403)",
                "rate_limit": "Anbieter drosselt Anfragen", "unavailable": "Anbieter vorübergehend nicht erreichbar",
+               "gone": "Endpunkt nicht mehr unterstützt", "no_data": "Keine Daten beim Anbieter",
                "config": "Einstellung unvollständig", "data": "Unerwartete Antwort des Anbieters",
                "unsupported": "Nicht unterstützt"}
 

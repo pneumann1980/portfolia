@@ -98,9 +98,19 @@ def daily(pts: list[Point], n: int, start: date, splits: list[tuple[date, float]
     """Ersatzkurs je Tag des Rasters (NaN = kein gültiger Kurs) und Index des ersten Kurspunkts (n = keiner).
 
     ``backfill``: vor dem ersten Kurspunkt gilt dieser als Schätzung (sonst NaN)."""
+    out, first, _manual = daily_detail(pts, n, start, splits, age, backfill)
+    return out, first
+
+
+def daily_detail(pts: list[Point], n: int, start: date, splits: list[tuple[date, float]],
+                 age: int | None, backfill: bool = False) -> tuple[np.ndarray, int, np.ndarray]:
+    """Wie :func:`daily`, zusätzlich je Tag, ob der geltende Kurspunkt ein manueller Kurs ist (sonst
+    Transaktionskurs) – für die Herkunft in der Kursqualität."""
     arr = np.full(n, np.nan)
+    manual = np.zeros(n, dtype=bool)
     if not pts or n <= 0:
-        return arr, n
+        return arr, n, manual
+    is_manual = np.zeros(n, dtype=bool)
     level = np.ones(n)
     base = 1.0
     for sd, ratio in splits:
@@ -111,33 +121,37 @@ def daily(pts: list[Point], n: int, start: date, splits: list[tuple[date, float]
             level[i:] *= ratio
     level *= base
     first = n
-    before: float | None = None
+    before: tuple[float, bool] | None = None
     for p in pts:
         norm = p.price * _split_level(splits, p.date)  # auf Stückbasis „vor allen Splits“
         i = (p.date - start).days
         if i < 0:
-            before = norm
+            before = (norm, p.kind == "manual")
             continue
         if i >= n:
             continue
         arr[i] = norm
+        is_manual[i] = p.kind == "manual"
         first = min(first, i)
     if before is not None:
         if np.isnan(arr[0]):
-            arr[0] = before
+            arr[0], is_manual[0] = before
         first = 0
     if first >= n:
-        return np.full(n, np.nan), n
+        return np.full(n, np.nan), n, manual
     valid = ~np.isnan(arr)
     idx = np.where(valid, np.arange(n), 0)
     np.maximum.accumulate(idx, out=idx)
     out = arr[idx] / level
+    manual = is_manual[idx]
     out[:first] = arr[first] / level[:first] if backfill else np.nan
+    manual[:first] = is_manual[first] if backfill else False
     if age is not None:
         cut = (pts[-1].date - start).days + age + 1
         if cut < n:
             out[max(cut, 0):] = np.nan
-    return out, first
+            manual[max(cut, 0):] = False
+    return out, first, manual
 
 
 class FallbackPrices:
@@ -191,3 +205,9 @@ class FallbackPrices:
               backfill: bool = False) -> tuple[np.ndarray, int]:
         return daily(self.points(asset.asset_id), n, start, self.splits.get(asset.asset_id, []),
                      self.max_age(asset) if expire else None, backfill)
+
+    def daily_detail(self, asset: AssetInfo, n: int, start: date, expire: bool = True,
+                     backfill: bool = False) -> tuple[np.ndarray, int, np.ndarray]:
+        """Wie :meth:`daily`, zusätzlich je Tag: manueller Kurs (True) oder Transaktionskurs (False)."""
+        return daily_detail(self.points(asset.asset_id), n, start, self.splits.get(asset.asset_id, []),
+                            self.max_age(asset) if expire else None, backfill)

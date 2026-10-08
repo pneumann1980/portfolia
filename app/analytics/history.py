@@ -19,6 +19,8 @@ from typing import Any
 
 import numpy as np
 
+from app.analytics import quality as Q
+from app.analytics.quality import AssetQuality
 from app.analytics.valuation import FlowValuer
 from app.db import Database
 from app.ledger.engine import LedgerResult
@@ -50,6 +52,8 @@ class History:
     fallback_days: dict[str, int] = field(default_factory=dict)  # Tage mit Ersatzkurs (ohne Marktkurse)
     unvalued_assets: list[str] = field(default_factory=list)  # heute gehalten, ohne gültigen Kurs (0 €)
     unvalued_past: list[str] = field(default_factory=list)  # nur früher zeitweise ohne gültigen Kurs
+    asset_kind: np.ndarray | None = None  # (M, N) Herkunft des Kurses je Tag (app.analytics.quality, Codes)
+    quality: dict[str, AssetQuality] = field(default_factory=dict)  # Kursqualität je Asset (ohne Fiat)
     computed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
@@ -108,6 +112,76 @@ def _ffill(n: int, start: date, points: list[tuple[date, float]]) -> tuple[np.nd
     return filled, first
 
 
+def _row_get(row: Any, key: str) -> Any:
+    try:
+        return row[key] if row is not None else None
+    except (IndexError, KeyError):  # ältere Datenbank ohne Spalte
+        return None
+
+
+def _market_prices(n: int, start: date, points: list[tuple[str, float, str | None, str]], fx_arr: Any,
+                   max_carry: int) -> tuple[np.ndarray, np.ndarray, list[str | None], int]:
+    """Marktkurse einer Reihe auf dem Tagesraster: Wert in EUR (NaN vor dem ersten Kurs), Herkunft je Tag, Quelle je
+    Tag und Index des ersten Kurses.
+
+    Je Währung wird der zuletzt bekannte Schlusskurs fortgeschrieben und mit dem Devisenkurs *des Tages* umgerechnet
+    (wie bisher); gibt es Kurse in mehreren Währungen (z. B. Ersatzanbieter in USD), gilt je Tag der jüngste Kurs.
+    Herkunft: Hauptanbieter → Marktkurs, sonst alternativer Anbieter; älter als ``max_carry`` Tage → fortgeschrieben."""
+    from app.prices.service import PRIMARY_SOURCES
+
+    by_ccy: dict[str, list[tuple[int, float, str]]] = defaultdict(list)
+    for d, close, ccy, src in points:
+        by_ccy[(ccy or "EUR").upper()].append(((date.fromisoformat(d) - start).days, close, src))
+    best_val = np.full(n, np.nan)
+    best_day = np.full(n, np.iinfo(np.int64).min, dtype=np.int64)
+    best_src = np.full(n, -1, dtype=np.int64)
+    sources: list[str] = []
+    for ccy, pts in by_ccy.items():
+        pid = np.full(n, -1, dtype=np.int64)
+        before = -1
+        for j, (i, _c, _s) in enumerate(pts):
+            if i < 0:
+                before = j
+            elif i < n:
+                pid[i] = j
+        if before >= 0 and pid[0] < 0:
+            pid[0] = before
+        has = pid >= 0
+        if not has.any():
+            continue
+        idx = np.where(has, np.arange(n), 0)
+        np.maximum.accumulate(idx, out=idx)
+        fill = pid[idx]
+        fill[: int(np.argmax(has))] = -1
+        ok = fill >= 0
+        closes = np.array([c for _i, c, _s in pts], dtype=float)
+        pdays = np.array([i for i, _c, _s in pts], dtype=np.int64)
+        base = len(sources)
+        sources += [s for _i, _c, s in pts]
+        vals = np.where(ok, closes[np.maximum(fill, 0)], np.nan) * fx_arr(ccy)
+        pday = np.where(ok, pdays[np.maximum(fill, 0)], np.iinfo(np.int64).min)
+        take = ok & ~np.isnan(vals) & (pday > best_day)
+        best_val = np.where(take, vals, best_val)
+        best_day = np.where(take, pday, best_day)
+        best_src = np.where(take, fill + base, best_src)
+    valid = ~np.isnan(best_val)
+    code = np.full(n, Q.NONE, dtype=np.int8)
+    srcs: list[str | None] = [None] * n
+    if not valid.any():
+        return best_val, code, srcs, n
+    first = int(np.argmax(valid))
+    age = np.where(valid, np.arange(n) - np.where(valid, best_day, 0), 0)
+    primary = np.array([x in PRIMARY_SOURCES for x in sources], dtype=bool)
+    code[valid] = Q.ALT
+    code[valid & primary[np.maximum(best_src, 0)]] = Q.MARKET
+    code[valid & (age > max_carry)] = Q.INTERP
+    for i in np.nonzero(valid & (code != Q.MARKET))[0]:  # nur Tage ohne Marktkurs (selten)
+        src = sources[int(best_src[i])]
+        srcs[i] = (f"Kurs vom {(start + timedelta(days=int(best_day[i]))):%d.%m.%Y} ({src or '–'})"
+                   if code[i] == Q.INTERP else src)
+    return best_val, code, srcs, first
+
+
 def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, series_for: Any,
                     valuer: FlowValuer, end: date | None = None, settings: Any = None) -> History | None:
     if ledger.first_date is None:
@@ -155,49 +229,67 @@ def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, seri
         return fx_cache[c]
 
     price = np.zeros((m, n))
+    kinds = np.zeros((m, n), dtype=np.int8)  # Herkunft des Kurses je Tag (app.analytics.quality)
     estimated: dict[str, int] = {}
     fallback_days: dict[str, int] = {}
     unvalued: list[str] = []
     unvalued_past: list[str] = []
+    quality: dict[str, AssetQuality] = {}
     days = np.arange(n)
     for k, aid in enumerate(asset_ids):
         a: AssetInfo = pf.asset(aid)
         if a.is_fiat:
             fx = fx_arr(aid)
             price[k] = np.where(np.isnan(fx), 0.0, fx)
+            kinds[k] = Q.MARKET
             continue
         s = series_for(a)
         arr = np.full(n, np.nan)
+        code = np.full(n, Q.NONE, dtype=np.int8)
+        srcs: list[str | None] = [None] * n
         first = n
-        if s:
-            by_ccy: dict[str, list[tuple[date, float]]] = defaultdict(list)
-            for d, close, ccy in store.daily_closes(s):
-                by_ccy[(ccy or "EUR").upper()].append((date.fromisoformat(d), close))
-            for ccy, pts in by_ccy.items():
-                a_arr, f = _ffill(n, start, pts)
-                arr = np.where(np.isnan(arr), a_arr * fx_arr(ccy), arr)
-                first = min(first, f)
+        first_src = "erster Marktkurs"
         held = qty[k] != 0
+        meta = store.meta(s) if s else None
+        if s:
+            arr, code, srcs, first = _market_prices(n, start, store.daily_points(s), fx_arr,
+                                                    Q.MAX_CARRY["crypto" if a.is_crypto else "security"])
         if first < n:
             if first > 0:
                 # vor dem ersten Marktkurs: Ersatzkurs (ohne Ablauf – der Marktkurs folgt), sonst erster Marktkurs
-                est, _ = fb.daily(a, n, start, expire=False)
+                est, _, manual = fb.daily_detail(a, n, start, expire=False)
                 gap = days < first
+                has_est = gap & ~np.isnan(est)
                 arr = np.where(gap, np.where(np.isnan(est), arr[first], est), arr)
+                code[gap] = Q.FIRST
+                code[has_est] = np.where(manual[has_est], Q.MANUAL, Q.TX)
+                first_src = f"erster Marktkurs {(start + timedelta(days=first)):%d.%m.%Y}"
                 estimated[aid] = int(np.sum(gap & held))
         else:
             # keine Marktkurse: Ersatzkurse mit begrenzter Gültigkeit (wie die aktuelle Bewertung); vor dem
             # ersten Kurspunkt gilt dieser als Schätzung
-            arr, _ = fb.daily(a, n, start, backfill=True)
-            n_fb = int(np.sum(held & ~np.isnan(arr)))
+            arr, _, manual = fb.daily_detail(a, n, start, backfill=True)
+            ok = ~np.isnan(arr)
+            code[:] = Q.NONE
+            code[ok] = np.where(manual[ok], Q.MANUAL, Q.TX)
+            n_fb = int(np.sum(held & ok))
             if n_fb:
                 fallback_days[aid] = n_fb
         valid = ~np.isnan(arr)
+        code[~valid] = Q.NONE
         if held[-1] and not valid[-1]:
             unvalued.append(aid)
         elif np.any(held & ~valid):
             unvalued_past.append(aid)
         price[k] = np.where(valid, arr, 0.0)
+        kinds[k] = code
+        labels = {Q.TX: "Transaktionen", Q.MANUAL: "manuelle Kurse", Q.FIRST: first_src}
+        srcs = [x if x is not None else labels.get(c) for x, c in zip(srcs, code.tolist(), strict=True)]
+        # „konnte nicht geladen werden“ nur, wenn auch keine früher geladenen Marktkurse vorliegen
+        failed = (meta["history_error"] or "Abruf fehlgeschlagen") if s and first >= n and meta is not None \
+            and meta["history_status"] == "error" else None
+        alt_note = _row_get(meta, "alt_note")
+        quality[aid] = Q.summarize(aid, Q.segments(aid, code, held, start, srcs), failed, alt_note)
 
     value_a = qty * price
 
@@ -244,7 +336,7 @@ def compute_history(pf: Portfolio, ledger: LedgerResult, store: PriceStore, seri
                    invested=invested, income=income, fees=fees, asset_ids=asset_ids, asset_qty=qty,
                    asset_price=price, asset_value=value_a, asset_in=a_in, asset_out=a_out,
                    estimated_days=estimated, fallback_days=fallback_days, unvalued_assets=unvalued,
-                   unvalued_past=unvalued_past)
+                   unvalued_past=unvalued_past, asset_kind=kinds, quality=quality)
 
 
 def persist_snapshots(db: Database, hist: History, import_id: int | None, kind: str = "backfill",
@@ -256,17 +348,24 @@ def persist_snapshots(db: Database, hist: History, import_id: int | None, kind: 
              len(hist.unvalued_assets), int(sum(1 for v in hist.estimated_days.values() if v)), now,
              kind) for i in rng]
     arows = []
+    kinds = hist.asset_kind
     for k, aid in enumerate(hist.asset_ids):
         q = hist.asset_qty[k]
         for i in rng:
             flow = hist.asset_in[k][i] - hist.asset_out[k][i]
             if q[i] != 0 or flow != 0:
+                kind = Q.CODES.get(int(kinds[k][i])) if kinds is not None else None
                 arows.append((hist.dates[i].isoformat(), aid, float(q[i]), float(hist.asset_price[k][i]),
-                              float(hist.asset_value[k][i]), float(flow), None))
+                              float(hist.asset_value[k][i]), float(flow), kind))
+    gaps = [(sg.asset_id, sg.kind, sg.method, sg.source, sg.start.isoformat(), sg.end.isoformat(), sg.days, now)
+            for aq in hist.quality.values() for sg in aq.segments]
     with db.transaction() as c:
         if not only_last:
             c.execute("DELETE FROM snapshot_daily")
             c.execute("DELETE FROM snapshot_asset_daily")
+            c.execute("DELETE FROM price_gap")
+            c.executemany("INSERT OR REPLACE INTO price_gap(asset_id, kind, method, source, date_from, date_to, days, "
+                          "computed_at) VALUES (?,?,?,?,?,?,?,?)", gaps)
         else:
             d = hist.dates[-1].isoformat()
             c.execute("DELETE FROM snapshot_asset_daily WHERE date=?", (d,))

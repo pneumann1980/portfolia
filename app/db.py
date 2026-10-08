@@ -473,6 +473,28 @@ CREATE TABLE IF NOT EXISTS tx_link (
 CREATE INDEX IF NOT EXISTS ix_tx_link_tx ON tx_link(tx_id, status);
 CREATE INDEX IF NOT EXISTS ix_tx_link_src ON tx_link(source, ext_id);
 """),
+    (14, """
+-- Kursqualität der Historie (additiv): Ersatzanbieter für die Zeit vor dem Fenster des Hauptanbieters (z. B. CoinGecko-
+-- Demo: 365 Tage) mit Ergebnis der Identitätsprüfung im Überlappungszeitraum.
+ALTER TABLE series_meta ADD COLUMN alt_series TEXT;      -- z. B. yahoo:ADA-EUR
+ALTER TABLE series_meta ADD COLUMN alt_status TEXT;      -- ok | rejected | none | error
+ALTER TABLE series_meta ADD COLUMN alt_note TEXT;
+ALTER TABLE series_meta ADD COLUMN alt_checked_at TEXT;
+-- Abschnitte gehaltener Positionen ohne Marktkurs des Hauptanbieters (bei jeder vollständigen Neuberechnung der
+-- Historie ersetzt): alternativer Anbieter, fortgeschrieben, Schätzung (Transaktions-/manueller/erster Marktkurs),
+-- kein Kurs.
+CREATE TABLE IF NOT EXISTS price_gap (
+  asset_id    TEXT NOT NULL,
+  kind        TEXT NOT NULL,                     -- alt | interp | tx | manual | first | none
+  method      TEXT NOT NULL,                     -- Anzeige der Ersatzmethode
+  source      TEXT,                              -- Datenquelle (z. B. yahoo:ADA-EUR, Transaktionen)
+  date_from   TEXT NOT NULL,
+  date_to     TEXT NOT NULL,
+  days        INTEGER NOT NULL,                  -- gehaltene Tage im Abschnitt
+  computed_at TEXT NOT NULL,
+  PRIMARY KEY (asset_id, date_from, kind)
+);
+"""),
 ]
 
 

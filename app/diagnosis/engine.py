@@ -307,7 +307,7 @@ def diagnose(snap: Snapshot) -> Report:
     if snap.pf is not None and snap.ledger is not None:
         idx = _Index(snap)
         for rule in (_dup_same_hash, _dup_same_qty, _dup_same_id, _dup_transfer_side, _transfers, _assets, _history,
-                     _estimated, _prices, _migrations):
+                     _estimated, _prices, _price_history, _migrations):
             findings += rule(idx, stats)
         rows, hf = _holdings(idx, stats)
         holdings = rows
@@ -1405,6 +1405,56 @@ def _ratio_power(a: Decimal, b: Decimal) -> int | None:
             if abs(r / target - 1) <= MIGRATION_TOL:
                 return sign * k
     return None
+
+
+def _price_history(idx: _Index, stats: dict[str, int]) -> list[Finding]:
+    """Historische Bewertung ohne Marktkurs des Kursanbieters (Tabelle ``price_gap`` der letzten Neuberechnung):
+    geschätzt (Transaktions-, manueller, erster Marktkurs), fortgeschrieben oder ohne Kurs – je Asset mit Zeitraum,
+    Tagen, Methode, Quelle und dem Ergebnis der Suche nach einem Ersatzanbieter."""
+    from app.analytics.quality import KIND_LABEL
+
+    by_asset: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for g in idx.snap.price_gaps:
+        if g.get("kind") in ("tx", "manual", "first", "none", "interp"):
+            by_asset[str(g["asset_id"])].append(g)
+    if not by_asset:
+        return []
+    lines: list[tuple[int, str]] = []
+    est_days = gap_days = 0
+    for aid, gs in by_asset.items():
+        a = idx.asset(aid)
+        series = (f"cg:{a.quote_id}" if a.quote_source == "coingecko" else f"yahoo:{a.quote_id}") if a.quote_id else ""
+        meta = idx.snap.series_meta.get(series) or idx.snap.series_meta.get(f"demo:{series}") or {}
+        days = sum(int(g["days"]) for g in gs)
+        est_days += sum(int(g["days"]) for g in gs if g["kind"] in ("tx", "manual", "first"))
+        gap_days += sum(int(g["days"]) for g in gs if g["kind"] in ("none", "interp"))
+        parts = [f"{_d(date.fromisoformat(g['date_from']))}–{_d(date.fromisoformat(g['date_to']))}: {g['days']} Tage "
+                 f"{KIND_LABEL.get(g['kind'], g['kind'])}" + (f" ({g['source']})" if g.get("source") else "")
+                 for g in gs[:4]]
+        why = ""
+        if meta.get("alt_status") in ("rejected", "none") and meta.get("alt_note"):
+            why = f" – Ersatzanbieter: {meta['alt_note']}"
+        elif not a.quote_id or a.quote_source in ("none", "manual"):
+            why = " – keine Kursquelle zugeordnet"
+        lines.append((days, f"{aid}: " + "; ".join(parts) + (" …" if len(gs) > 4 else "") + why))
+    lines.sort(key=lambda x: (-x[0], x[1]))
+    f = Finding(
+        kind="price", status="hinweis", priority=3,
+        title=f"Historische Kurse: {len(by_asset)} Asset(s) zeitweise ohne Marktkurs",
+        known=[f"An {est_days} gehaltenen Tagen ist der Kurs geschätzt, an {gap_days} Tagen fortgeschrieben bzw. "
+               "nicht vorhanden (Summe über Assets).",
+               "Häufigste Ursache: Der Kursanbieter liefert ältere Kurse im Tarif nicht (CoinGecko-Demo: 365 Tage). "
+               "Portfolia ergänzt diese Zeit über einen Ersatzanbieter (Yahoo), aber nur nach bestandenem Abgleich im "
+               "Überlappungszeitraum; sonst bleibt es bei der gekennzeichneten Schätzung."],
+        evidence=[line for _d0, line in lines[:80]] + ([f"… und {len(lines) - 80} weitere"] if len(lines) > 80 else []),
+        uncertainty=["Geschätzte Tage beeinflussen Wertverlauf und Rendite (TTWROR/IRR), nicht Bestände oder "
+                     "Einstandswerte."],
+        decision="Ersatzanbieter je Symbol ausdrücklich zuordnen (Einstellungen → Kurse) oder hinnehmen. Portfolia "
+                 "ändert dabei keine Buchungen.",
+        key="price-history|" + "|".join(sorted(by_asset)), data={"type": "price_history"},
+        assets=sorted(by_asset))
+    stats["price_history_assets"] = len(by_asset)
+    return [f]
 
 
 def _migrations(idx: _Index, stats: dict[str, int]) -> list[Finding]:

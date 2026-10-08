@@ -107,6 +107,9 @@ class Snapshot:
     settings: Any = None
     base: Portfolio | None = None  # kuratierter Import ohne Änderungen in der App (Soll-Bestände beziehen sich darauf)
     saved_symbols: dict[str, str | None] = field(default_factory=dict)  # gespeicherte Symbol-Zuordnungen (csv_symbol)
+    # Kursqualität der Historie (Tabelle price_gap, letzte vollständige Neuberechnung) und Ersatzanbieter je Reihe
+    price_gaps: list[dict[str, Any]] = field(default_factory=list)
+    series_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _dec(v: Any) -> Decimal | None:
@@ -167,6 +170,12 @@ def collect(ctx: Any, now: datetime | None = None) -> Snapshot:
             if o.key.upper() not in (k.upper() for k in lst):
                 lst.append(o.key)
     snap.open_rows = _open_rows(db, resolver)
+    try:
+        snap.price_gaps = [dict(r) for r in db.q("SELECT * FROM price_gap ORDER BY asset_id, date_from")]
+        snap.series_meta = {r["series"]: dict(r) for r in db.q(
+            "SELECT series, history_status, history_error, alt_series, alt_status, alt_note FROM series_meta")}
+    except Exception as e:  # Datenbank vor Migration 14
+        log.debug("Kursqualität nicht verfügbar: %s", e)
     return snap
 
 

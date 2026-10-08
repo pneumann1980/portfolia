@@ -40,8 +40,10 @@ DEFAULTS: dict[str, Any] = {
     "prices.coingecko_monthly_limit": 10000,
     "prices.coingecko_throttle_pct": 80,
     "prices.coingecko_history_days": 365,  # Demo-API: Historie max. 365 Tage
-    # Yahoo-Symbole für Krypto-Historie vor dem CoinGecko-Fenster (nur eindeutige Paare, nie geraten)
+    # Yahoo-Symbole für Krypto-Historie vor dem CoinGecko-Fenster (ausdrückliche Zuordnung, Vorrang)
     "prices.crypto_history_fallback": {"BTC": "BTC-EUR", "ETH": "ETH-EUR"},
+    # übrige Krypto-Historie automatisch über Yahoo (SYMBOL-EUR/-USD) – nur nach bestandenem Abgleich mit CoinGecko
+    "prices.crypto_history_auto": True,
     # News
     "news.min_relevance": 0.2,
     "news.dashboard_count": 5,

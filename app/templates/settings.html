@@ -102,7 +102,10 @@
     <label class="field" style="margin-top:10px"><span>Benchmarks (eine Zeile je Benchmark: <code>Name | Quelle:Symbol</code>, z. B. <code>MSCI World | yahoo:EUNL.DE</code>)</span>
       <textarea name="benchmarks">{% for b in s['performance.benchmarks'] %}{{ b.name }} | {{ b.series }}
 {% endfor %}</textarea></label>
-    <label class="field" style="margin-top:10px"><span>Krypto-Historie vor dem CoinGecko-Fenster (365 Tage) aus Yahoo (<code>SYMBOL=YAHOO-SYMBOL</code>, nur eindeutige EUR-Paare)</span>
+    <label class="check" style="margin-top:10px"><input type="checkbox" name="crypto_history_auto" value="1" {% if s['prices.crypto_history_auto'] %}checked{% endif %}>
+      Krypto-Historie vor dem CoinGecko-Fenster (Demo: 365 Tage) automatisch über Yahoo Finance ergänzen</label>
+    <p class="hint">Gesucht werden <code>SYMBOL-EUR</code> bzw. <code>SYMBOL-USD</code> (USD mit EZB-Devisenkurs umgerechnet). Übernommen wird nur, was im Überlappungszeitraum mit den CoinGecko-Kursen übereinstimmt – gleich lautende Symbole anderer Coins werden so abgelehnt. Ergebnis je Reihe unter <a href="/quality#prices">Datenqualität → Kursqualität</a>; an Yahoo gehen nur Symbole.</p>
+    <label class="field" style="margin-top:10px"><span>Ausdrückliche Zuordnung (Vorrang vor der automatischen Suche; <code>SYMBOL=YAHOO-SYMBOL</code>, z. B. <code>UNI=UNI7083-USD</code>)</span>
       <textarea name="crypto_history_fallback">{% for k, v in s['prices.crypto_history_fallback'].items() %}{{ k }}={{ v }}
 {% endfor %}</textarea></label>
     {{ save('prices') }}

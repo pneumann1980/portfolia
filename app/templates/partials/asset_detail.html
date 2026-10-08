@@ -48,6 +48,14 @@
       <span><span style="color:var(--series-2)">▲</span> Kauf</span><span><span style="color:var(--series-3)">▼</span> Verkauf</span>
       <span><i style="background:var(--ink-2)"></i>Ø Einstand</span>
     </div>
+    {% if quality and not a.is_fiat %}
+    <div class="row quality-line" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+      <span class="badge {{ quality.badge }}">{{ quality.label }}</span>
+      {% if quality.estimated_days %}<span class="hint">{{ quality.estimated_days }} Tage geschätzt</span>{% endif %}
+      {% if quality.alt_days %}<span class="hint">{{ quality.alt_days }} Tage von {{ (quality.segments|selectattr('kind', 'equalto', 'alt')|first).source|replace('yahoo:', 'Yahoo ') }}</span>{% endif %}
+      {% if quality.state != 'complete' or quality.alt_days %}<a class="hint" href="/quality#price-quality">Details</a>{% endif %}
+    </div>
+    {% endif %}
   </section>
 
   <section class="card">

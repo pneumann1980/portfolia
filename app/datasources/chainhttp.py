@@ -197,8 +197,8 @@ class ChainHttp:
                  wait_budget_s: float = 240.0, deadline_s: float | None = None,
                  usage: Callable[[int], None] | None = None) -> None:
         if ep.key_required and not key:
-            raise K.ConnectorError("config", f"{ep.label} verlangt einen Schlüssel des Anbieters – unter "
-                                             "„Anbieter-Schlüssel“ hinterlegen.")
+            raise K.ConnectorError("key_missing", f"{ep.label} verlangt einen Schlüssel des Anbieters – unter "
+                                                  "„Anbieter-Schlüssel“ hinterlegen.")
         self.ep = ep
         self.network = network
         self.base = ep.base_for(chain_id, network)
@@ -217,6 +217,7 @@ class ChainHttp:
         self._limiter = _limiter(f"{ep.id}:{'key' if key else 'anon'}")  # je Anbieter (auch über Netzwerke hinweg)
         self._usage = usage
         self._lock = threading.Lock()
+        self._tls = threading.local()  # erlaubte Statuscodes des laufenden Aufrufs (thread-sicher bei pmap)
         self.requests = 0
         self.throttled = 0
         self.retries = 0
@@ -331,8 +332,10 @@ class ChainHttp:
                 raise K.ConnectorError("data", f"{self.ep.label} leitet {what} um (HTTP {code}) – aus "
                                                "Sicherheitsgründen nicht gefolgt.")
             if code in (401, 403):
-                raise K.ConnectorError("auth", f"{self.ep.label} verweigert {what} (HTTP {code}) – Schlüssel unter "
-                                               "„Anbieter-Schlüssel“ prüfen.")
+                raw = resp.content[:MAX_EXCERPT_BODY]
+                if code in self._allow:  # Connector wertet die Antwort selbst aus (z. B. Kasplex: 403 = Status)
+                    return _HttpProblem(code, _excerpt(raw), _blocked(resp))
+                raise self._denied(code, what, resp, raw)
             if code == 402:
                 raise K.ConnectorError("scope", f"{self.ep.label} verlangt für {what} einen Tarif bzw. Kontingent "
                                                 "(HTTP 402) – Kontingent oder Tarif beim Anbieter prüfen.")
@@ -340,7 +343,7 @@ class ChainHttp:
             if len(raw) > MAX_BODY:
                 raise K.ConnectorError("data", f"Antwort von {self.ep.label} zu groß ({what}).")
             if code >= 400:
-                return _HttpProblem(code, _excerpt(raw))
+                return _HttpProblem(code, _excerpt(raw), _blocked(resp))
             try:
                 return loads(raw)
             except ValueError:
@@ -349,25 +352,68 @@ class ChainHttp:
 
     def get(self, path: str = "", params: Mapping[str, Any] | None = None, *, what: str,
             allow_status: Iterable[int] = ()) -> Any:
-        """GET → JSON. 4xx-Antworten sind Fehler, außer ``allow_status`` (dann :class:`_HttpProblem`)."""
-        out = self._send("GET", path, params, None, what)
+        """GET → JSON. 4xx-Antworten sind Fehler, außer ``allow_status`` (dann :class:`_HttpProblem`, auch für
+        401/403 – der Connector wertet dann selbst aus, z. B. Kasplex: 403 = „nicht synchron“)."""
+        allow = frozenset(allow_status)
+        out = self._with_allow(allow, lambda: self._send("GET", path, params, None, what))
         if isinstance(out, _HttpProblem):
-            if out.status in set(allow_status):
+            if out.status in allow:
                 return out
-            raise K.ConnectorError("data", f"{self.ep.label} antwortete bei {what} mit HTTP {out.status}"
-                                           + (f": {out.text}" if out.text else "") + ".")
+            raise self._problem(out, what)
         return out
 
     def post(self, path: str = "", body: Any = None, params: Mapping[str, Any] | None = None, *, what: str,
              allow_status: Iterable[int] = ()) -> Any:
         """POST mit JSON-Rumpf → JSON (z. B. Koios, Subscan, XRPL). 4xx wie bei :meth:`get`."""
-        out = self._send("POST", path, params, body if body is not None else {}, what)
+        allow = frozenset(allow_status)
+        out = self._with_allow(allow, lambda: self._send("POST", path, params, body if body is not None else {},
+                                                         what))
         if isinstance(out, _HttpProblem):
-            if out.status in set(allow_status):
+            if out.status in allow:
                 return out
-            raise K.ConnectorError("data", f"{self.ep.label} antwortete bei {what} mit HTTP {out.status}"
-                                           + (f": {out.text}" if out.text else "") + ".")
+            raise self._problem(out, what)
         return out
+
+    def _with_allow(self, allow: frozenset[int], fn: Callable[[], Any]) -> Any:
+        prev = getattr(self._tls, "allow", frozenset())
+        self._tls.allow = allow
+        try:
+            return fn()
+        finally:
+            self._tls.allow = prev
+
+    @property
+    def _allow(self) -> frozenset[int]:
+        return getattr(self._tls, "allow", frozenset())
+
+    def backoff(self, seconds: float) -> bool:
+        """Kurz warten (im Warte- und Zeitbudget des Laufs) – für vom Connector erkannte vorübergehende Zustände."""
+        return self._pause(seconds)
+
+    def _problem(self, out: _HttpProblem, what: str) -> K.ConnectorError:
+        if out.status in (404, 410):
+            return K.ConnectorError("gone", f"{self.ep.label}: Endpunkt für {what} nicht gefunden (HTTP {out.status})"
+                                            " – Schnittstelle des Anbieters geändert oder eingestellt.")
+        return K.ConnectorError("data", f"{self.ep.label} antwortete bei {what} mit HTTP {out.status}"
+                                        + (f": {out.text}" if out.text else "") + ".")
+
+    def _denied(self, code: int, what: str, resp: httpx.Response, raw: bytes) -> K.ConnectorError:
+        """401/403 unterscheiden: Schlüssel gesendet → abgelehnt; ohne Schlüssel → Zugriff verweigert (Grund laut
+        Antwort bzw. Schutzsystem), nie ein Hinweis auf Schlüssel bei Anbietern ohne Schlüssel."""
+        msg = _excerpt(raw)
+        blocked = _blocked(resp)
+        detail = f"HTTP {code}" + (f": „{msg}“" if msg and not blocked else "")
+        if self._key:
+            return K.ConnectorError("auth", f"{self.ep.label} lehnt den Schlüssel ab ({what}, {detail}) – Schlüssel "
+                                            "unter „Anbieter-Schlüssel“ prüfen.")
+        if blocked:
+            return K.ConnectorError("forbidden", f"{self.ep.label} verweigert {what}: {blocked} (HTTP {code}) – "
+                                                 "später erneut versuchen.")
+        if self.ep.key_provider:
+            return K.ConnectorError("forbidden", f"{self.ep.label} verweigert {what} ({detail}) – ohne Schlüssel "
+                                                 "abgefragt; ein Schlüssel unter „Anbieter-Schlüssel“ kann helfen.")
+        return K.ConnectorError("forbidden", f"{self.ep.label} verweigert {what} ({detail}) – der Anbieter "
+                                             "verlangt keinen Schlüssel; die Anfrage wurde abgelehnt.")
 
     def rpc(self, method: str, params: list[Any], *, what: str) -> Any:
         """JSON-RPC 2.0 (POST). Drosselung des Anbieters (Fehlercodes −32005/−32429, 429) wird wiederholt."""
@@ -416,6 +462,23 @@ class RpcError(K.ConnectorError):
 class _HttpProblem:
     status: int
     text: str
+    blocked: str | None = None  # Schutzsystem (z. B. Cloudflare) statt Antwort des Dienstes
+
+
+MAX_EXCERPT_BODY = 64 * 1024
+
+
+def _blocked(resp: httpx.Response) -> str | None:
+    """HTML-Sperrseite eines vorgeschalteten Schutzsystems (Cloudflare/WAF) statt einer Antwort des Dienstes."""
+    ctype = resp.headers.get("content-type", "").lower()
+    if "html" not in ctype:
+        return None
+    server = resp.headers.get("server", "").lower()
+    ray = resp.headers.get("cf-ray")
+    if "cloudflare" in server or ray:
+        return "Schutzsystem des Anbieters (Cloudflare) blockiert die Anfrage" + (f", Ray-ID {ray[:24]}" if ray
+                                                                                   else "")
+    return "Sperrseite statt Antwort des Dienstes (Schutzsystem/WAF)"
 
 
 def _excerpt(raw: bytes) -> str:

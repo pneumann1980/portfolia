@@ -55,6 +55,9 @@ class AppContext:
                                                           config.fx_frankfurter_fallback_url, config.ecb_hist_url),
             demo=self.demo, guard=self.guard, cg_quota=self.cg_quota,
         )
+        from app.prices.sources import catalog_path
+
+        self.prices.catalog_path = catalog_path(self)  # Coin-Symbole für die Ersatzhistorie (nur lokaler Cache)
         self.valuer = FlowValuer(self.store, self.prices.series_for, self.settings)
         self._lock = threading.RLock()
         self._base_pf: tuple[int, Portfolio] | None = None

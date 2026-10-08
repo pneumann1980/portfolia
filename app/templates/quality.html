@@ -126,18 +126,33 @@
     </tbody></table></div>
     {% else %}<p><span class="badge good">✓</span> Alle Positionen aktuell bewertet.</p>{% endif %}
   {% endif %}
-  {% if hist and (hist.estimated_days or hist.fallback_days or hist.unvalued_past) %}
-  <details class="box"><summary>Historie: geschätzte Kurse und Ersatzkurse</summary>
-    <ul class="small">{% for k, v in hist.estimated_days.items() if v %}<li>{{ asset_name(k) }}: {{ v }} Tage vor dem ersten Marktkurs mit Transaktionskurs geschätzt</li>{% endfor %}</ul>
-    {% if hist.fallback_days %}<p class="small">Ohne Marktkurse, mit manuellen bzw. Transaktionskursen bewertet (gültig bis zum nächsten Kurs, danach Krypto {{ s_age.crypto }}, Wertpapiere {{ s_age.security }}):</p>
-    <ul class="small">{% for k, v in hist.fallback_days|dictsort(by='value', reverse=true) %}<li>{{ asset_name(k) }}: {{ v }} Tage</li>{% endfor %}</ul>{% endif %}
-    {% if hist.unvalued_past %}<p class="small">Früher zeitweise ohne gültigen Kurs (dort mit 0 € angesetzt): {% for k in hist.unvalued_past %}{{ asset_name(k) }}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
-  </details>{% endif %}
+  <h3 id="price-quality" style="margin-top:14px">Kursqualität der Historie</h3>
+  {% set nq = price_quality|rejectattr('state', 'equalto', 'complete')|list %}
+  {% if not hist %}<p class="hint">Noch keine Historie berechnet.</p>
+  {% elif not price_quality %}<p><span class="badge good">✓</span> Marktdaten vollständig – alle gehaltenen Tage mit Schlusskursen des Kursanbieters bewertet.</p>
+  {% else %}
+  <p class="hint">Je Asset: Herkunft der Kurse an gehaltenen Tagen. <b>Marktkurs</b> = Schlusskurs des Kursanbieters (über Wochenende/Feiertage fortgeschrieben), <b>alternativer Anbieter</b> = geprüfte Ersatzhistorie (z. B. Yahoo vor dem CoinGecko-Fenster), <b>fortgeschrieben</b> = letzter Kurs länger als üblich weiterverwendet, <b>Schätzung</b> = Transaktions-, manueller oder erster Marktkurs. {{ nq|length }} von {{ hist.quality|length }} Assets nicht vollständig.</p>
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Asset</th><th>Status</th><th>Zeitraum</th><th class="num">Tage</th><th>Ersatzmethode</th><th>Datenquelle</th></tr></thead><tbody>
+  {% for q in price_quality %}
+    {% for sg in q.segments %}
+    <tr>{% if loop.first %}<td rowspan="{{ q.segments|length }}"><a href="{{ asset_url(q.asset_id) }}">{{ asset_name(q.asset_id) }}</a>{% if q.alt_note %}<div class="hint wrap-any">{{ q.alt_note }}</div>{% endif %}</td>
+      <td rowspan="{{ q.segments|length }}"><span class="badge {{ q.badge }}">{{ q.label }}</span>{% if q.failed %}<div class="hint">{{ q.failed }}</div>{% endif %}</td>{% endif %}
+      <td class="nowrap">{{ sg.start|date_de }} – {{ sg.end|date_de }}</td><td class="num">{{ sg.days }}</td>
+      <td>{{ sg.method }}</td><td class="wrap-any">{{ sg.source or '–' }}</td></tr>
+    {% else %}
+    <tr><td><a href="{{ asset_url(q.asset_id) }}">{{ asset_name(q.asset_id) }}</a></td><td><span class="badge {{ q.badge }}">{{ q.label }}</span>{% if q.failed %}<div class="hint">{{ q.failed }}</div>{% endif %}</td><td colspan="4" class="hint">{{ q.alt_note or '' }}</td></tr>
+    {% endfor %}
+  {% endfor %}
+  </tbody></table></div>
+  {% if hist.fallback_days %}<p class="hint">Ersatzkurse gelten bis zum nächsten Kurspunkt, danach höchstens Krypto {{ s_age.crypto }}, Wertpapiere {{ s_age.security }}; danach „kein Kurs“ (0 €).</p>{% endif %}
+  {% endif %}
   {% if meta_rows %}
   <details class="box"><summary>Historische Kursreihen ({{ meta_rows|length }})</summary><div class="table-wrap"><table>
-    <thead><tr><th>Reihe</th><th>Von</th><th>Bis</th><th>Status</th><th>Abruf</th></tr></thead><tbody>
+    <thead><tr><th>Reihe</th><th>Von</th><th>Bis</th><th>Status</th><th>Ersatzanbieter (vor dem Fenster)</th><th>Abruf</th></tr></thead><tbody>
     {% for m in meta_rows %}<tr><td class="mono">{{ m.series }}</td><td>{{ m.history_from|date_de }}</td><td>{{ m.history_to|date_de }}</td>
-      <td>{% if m.history_status == 'ok' %}<span class="badge good">ok</span>{% elif m.history_status == 'partial' %}<span class="badge warn" title="Demo-API: max. 365 Tage Historie">unvollständig</span>{% else %}<span class="badge crit" title="{{ m.history_error or '' }}">{{ m.history_status }}</span>{% endif %}</td>
+      <td>{% if m.history_status == 'ok' %}<span class="badge good">ok</span>{% elif m.history_status == 'partial' %}<span class="badge warn" title="Hauptanbieter liefert ältere Kurse im Tarif nicht (CoinGecko-Demo: 365 Tage)">unvollständig</span>{% else %}<span class="badge crit" title="{{ m.history_error or '' }}">{{ m.history_status }}</span>{% endif %}</td>
+      <td>{% if m.alt_status == 'ok' %}<span class="badge good">{{ m.alt_series }}</span>{% elif m.alt_status %}<span class="badge {{ 'warn' if m.alt_status == 'rejected' else '' }}">{{ {'rejected': 'abgelehnt', 'none': 'keiner', 'error': 'Fehler'}.get(m.alt_status, m.alt_status) }}</span>{% else %}<span class="muted">–</span>{% endif %}
+        {% if m.alt_note %}<div class="hint wrap-any">{{ m.alt_note }}</div>{% endif %}{% if m.alt_checked_at %}<div class="hint">geprüft {{ m.alt_checked_at|datetime_de }}</div>{% endif %}</td>
       <td>{{ m.last_history_fetch|datetime_de }}</td></tr>{% endfor %}
   </tbody></table></div></details>{% endif %}
 </section>

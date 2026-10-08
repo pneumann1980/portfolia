@@ -306,6 +306,8 @@ class FakeKaspa(Recorder):
                 page += [t for t in rows[limit:] if t["block_time"] == last]
             return httpx.Response(200, json=sorted(page, key=lambda t: -t["block_time"]))
         path = path.removeprefix("/v1")
+        if self.krc_status == "unsynced403":  # API 3.x (go-krc20d): jede Abfrage 403 „unsynced“, auch /info
+            return httpx.Response(403, json={"message": "unsynced", "result": None})
         if path == "/info":
             return httpx.Response(200, json={"message": self.krc_status, "result": {"daaScore": "1"}})
         m = re.match(r"^/krc20/address/(kaspa:[a-z0-9]+)/tokenlist$", path)
