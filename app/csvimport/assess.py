@@ -790,6 +790,28 @@ def assess_rows(ctx: Any, rows: list[Any], source: str, pf: Any) -> None:
                         "role": None, "action": "review", "ok": [], "add": [],
                         "diff": [{"f": "struct", "sev": "relevant", "t": "Abgleich nicht auswertbar – bitte prüfen"}],
                         "why": "Fehler im Abgleich"}
+    _competing(rows)
+
+
+def _competing(rows: list[Any]) -> None:
+    """Mehrere offene Zeilen passen nur unscharf (gleiche Menge/Zeit, ohne Kennung oder Hash) auf *dieselbe*
+    vorhandene Buchung: höchstens eine kann sie sein. Keine davon gilt dann als sichere Dublette – sonst würden zwei
+    echte, gleich große Vorgänge mit einer Buchung verknüpft und einer ginge verloren. → einzeln prüfen."""
+    by_target: dict[str, list[Any]] = {}
+    for rc in rows:
+        m = getattr(rc, "match", None)
+        if not m or not rc.open or m.get("basis") in IDENTITY or not m.get("target"):
+            continue
+        by_target.setdefault(m["target"], []).append(rc)
+    for target, rcs in by_target.items():
+        if len(rcs) < 2:
+            continue
+        for rc in rcs:
+            m = rc.match
+            m.update(cat="komplex", conf="mittel", action="review")
+            m["diff"] = [{"f": "struct", "sev": "relevant",
+                          "t": f"{len(rcs) - 1} weitere Zeile(n) dieses Stapels passen auf dieselbe Buchung {target} "
+                               "– höchstens eine kann diese sein; die anderen sind eigene Vorgänge"}, *m["diff"]][:8]
 
 
 def counts(rows: list[Any]) -> dict[str, int]:

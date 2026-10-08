@@ -579,3 +579,24 @@ def test_partial_batch_include_keeps_csv_batch_open(client, config):
     assert _execute(c, bid, form).status_code == 303
     assert csv_service(ctx(c)).batch(bid)["status"] == "partial"  # die zweite Zeile wartet weiter
     assert "1 Buchung übernehmen" in c.get(f"/journal/csv/{bid}").text
+
+
+def test_two_equal_new_rows_never_both_linked_to_one_booking(client, config):
+    """AP3-Regression: zwei gleich große Vorgänge kurz nacheinander (ohne Kennung/Hash), einer davon bereits
+    gebucht – beide Zeilen passten unscharf auf dieselbe Buchung und wurden je als „Dublette, hoch“ zum Verknüpfen
+    vorgeschlagen; ein echter Vorgang wäre verloren gegangen."""
+    c = client
+    c.get("/settings")
+    _import(config, [tx("IMP-D", "2024-04-01T10:00:00Z", "deposit", to=("Ledger", "ETH", "0.4321"), value="1234")],
+            valuation="2024-01-01")
+    assert tasks.import_check(ctx(c), "test").status == "imported"
+    csv = (KOINLY_HEAD
+           + "2024-04-01 10:00:00 UTC,deposit,,,,,,Ledger,0.4321,ETH,,,,0,1234,0,,,,\n"
+           + "2024-04-01 10:00:40 UTC,deposit,,,,,,Ledger,0.4321,ETH,,,,0,1234,0,,,,\n")
+    bid = _upload_csv(c, "koinly.csv", csv, "Ledger")
+    rows = sorted(csv_service(ctx(c)).rows(bid), key=lambda rc: rc.line)
+    assert all(rc.dup_of == ["IMP-D"] for rc in rows)  # beide passen unscharf auf dieselbe Buchung
+    actions = [rc.match["action"] for rc in rows]
+    assert actions.count("link") == 0 and all(a == "review" for a in actions)
+    assert all(rc.match["conf"] not in ("sicher", "hoch") for rc in rows)  # nicht für Stapelaktionen vorausgewählt
+    assert any("weitere Zeile" in d["t"] for d in rows[0].match["diff"])

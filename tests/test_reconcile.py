@@ -306,3 +306,32 @@ def test_reconcile_rules():
     rows = [_Row(0, kind=M.DEPOSIT, txhash=h, in_sym="USDC@ETH:0xabc", in_qty=D("7.00001"))]
     assert R.reconcile(rows, idx, lambda s: None, ["USDC"]).learned == {"USDC@ETH:0XABC": "USDC"}
     assert R.reconcile(rows, idx, lambda s: None, []).learned == {}
+
+
+def test_reconcile_several_events_in_one_blockchain_transaction():
+    """AP3: verschiedene Vorgänge derselben Blockchain-Transaktion verschmelzen nicht; jede Gegenbuchung zählt einmal."""
+    h = "0x" + "22" * 32
+    D = Decimal
+    # Swap in einer Transaktion: Abgang USDC, Zugang ETH, Gebühr ETH – je Bein genau ein Gegenstück
+    idx = R.HashIndex([_Tx("S1", h, type="trade", from_account="W", from_asset="USDC", from_qty=D("100"),
+                           to_account="W", to_asset="ETH", to_qty=D("0.05"))], [])
+    rows = [_Row(0, kind=M.WITHDRAWAL, txhash=h, out_sym="USDC", out_qty=D("100")),
+            _Row(1, kind=M.DEPOSIT, txhash=h, in_sym="ETH", in_qty=D("0.05")),
+            _Row(2, kind=M.DEPOSIT, txhash=h, in_sym="ETH", in_qty=D("0.05"))]  # zweiter, gleicher Zugang
+    res = R.reconcile(rows, idx, lambda s: s if s in ("USDC", "ETH") else None, ["USDC", "ETH"])
+    assert res.rows[0].state == "full"
+    states = sorted(res.rows[i].state for i in (1, 2) if i in res.rows)
+    # die beiden ETH-Zugänge (zusammen 0,1) passen nicht auf die eine gebuchte Seite (0,05): nicht „vorhanden“
+    assert "full" not in states
+
+
+def test_reconcile_two_identical_events_only_one_booked():
+    """AP3: zwei gleiche Abgänge in einer Transaktion, nur einer gebucht → nicht beide als vorhanden werten."""
+    h = "0x" + "33" * 32
+    D = Decimal
+    idx = R.HashIndex([_Tx("B1", h, type="withdrawal", from_account="W", from_asset="ETH", from_qty=D("1"))], [])
+    rows = [_Row(0, kind=M.WITHDRAWAL, txhash=h, out_sym="ETH", out_qty=D("1")),
+            _Row(1, kind=M.WITHDRAWAL, txhash=h, out_sym="ETH", out_qty=D("1"))]
+    res = R.reconcile(rows, idx, lambda s: s if s == "ETH" else None, ["ETH"])
+    full = [i for i, r in res.rows.items() if r.state == "full"]
+    assert len(full) < 2  # höchstens einer gilt als vorhanden – der zweite wird nicht still verworfen
