@@ -181,3 +181,34 @@ bereits als „Import-Buchung gilt“ entschiedene Seiten sind vergeben, „kein
   Empfänger abgezogen, aber nicht im Import geführt), runde Mengen nach mehr als 72 h.
 * Auswertungsstand 6: offene Prüf-Stapel werden beim Öffnen und vor jeder automatischen Übernahme neu bewertet;
   Status können sich dabei ändern (Zugang → mögliche Dublette). Keine Migration.
+
+---
+
+## 6 · Integritätsprüfung, Sammelbearbeitung, Risikostufen (0.21.1)
+
+**Keine zweite Engine.** Erkennung, Bewertung und Korrekturwege bleiben dort, wo sie waren:
+
+| Aufgabe | Baustein (wiederverwendet) | neu in 0.21.1 |
+|---|---|---|
+| Identität/Ähnlichkeit neuer Zeilen | `csvimport/service.evaluate`, `assess.py` (Ergebnis, Sicherheit, Basis) | – |
+| Konfidenz | `assess.CONF` (Zeilen), Diagnose-Status (`belegt/wahrscheinlich/verdacht/hinweis`) | Abbildung auf eindeutig · hoch plausibel · prüfbedürftig · widersprüchlich (`integrity.confidence_of`) |
+| Lösungsvorschläge | `diagnosis/recommend.py` (bevorzugte Lösung + Alternativen) | Regel „vollständig gleiche Buchungen“ (`engine._dup_identical`, Empfehlung `_identical`) |
+| Auswirkungen | `diagnosis/actions.preview` (Bestand, Einstand, Ergebnisse, Steuer, Diagnose danach) | Anschaffungsdaten offener Lots, neue negative Bestände, Hinweis Historie |
+| Ausführen/Rückgängig | `actions.apply/undo` (Diagnose), `csvimport/batch.execute/undo` (Prüf-Stapel) | `diagnosis/bulk.py` (gemeinsame Vorschau, Konfliktprüfung, eine Transaktion), `batch.auto_link` |
+| Entscheidungen | `diag_decision` (Befund-ID + Prüfsumme), `csv_row.decision`, `event_decision`, `journal_event_alias` | „verworfen“ = als unabhängig bestätigt (Notiz-Kennzeichen) |
+
+**Stufe A (automatisch).** `batch.safe_link_rows`: Zeile offen, Status „mögliche Dublette“/„bereits vorhanden“, keine
+eigene Entscheidung, Sicherheit „sicher“, Ergebnis Dublette/Ergänzung, Basis in `IDENTITY` (Kennung, Ereignis,
+Hash) und nicht derselben Quelle, keine offene Gebührenfrage. Ausgeführt nur bei Datenquellen mit „automatisch
+übernehmen“ (bestehende Freigabe) – vor dem Verwerfen eines Abrufs ohne Neues, damit die Herkunft erhalten bleibt.
+Treffer über Signatur, gleiche Menge oder Transferseite („hoch“) sind nie Stufe A.
+
+**Sammelbearbeitung – Konflikte.** Zwei Befunde, die dieselbe Buchung verändern, behalten oder als Transfer deuten
+(Vereinigung aus Befund-Buchungen und Plan-Zielen), werden beide ausgeschlossen. Entsteht in der gemeinsamen
+Vorschau ein neuer negativer Bestand (auch zwischenzeitlich), werden die beteiligten Befunde ausgeschlossen und neu
+gerechnet. Ausführung: Prüfsumme über Datenstand und alle Plan-Prüfsummen; je Befund eine Entscheidung mit Kennung
+der Sammlung (`params_json.bulk`), erneutes Absenden → keine zweite Ausführung.
+
+**Grenzen.** Gleiche Mengen ohne Kennung und Fälle mit konkurrierenden Deutungen bleiben Einzelentscheidungen.
+Feldweises Übernehmen von Werten der neuen Quelle in eine vorhandene Buchung ist weiterhin nicht automatisiert.
+Die Sammelbearbeitung umfasst Befunde des Abgleichs (Dubletten, Transfers), nicht Kurs- oder Bestandsbefunde.

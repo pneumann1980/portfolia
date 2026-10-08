@@ -44,7 +44,8 @@ für Smartphones (≈390 px) optimiert.
    [Importprüfung: Abgleich, Stapelaktionen, Verknüpfen](#importprüfung-abgleich-je-zeile-stapelaktionen-verknüpfen)
 6. [Datenquellen: Börsen und Wallet-Adressen](#datenquellen-börsen-und-wallet-adressen) ·
    [Wallets (read-only, zehn Chains)](#wallets-read-only-zehn-chains) ·
-   [Diagnose: Datenqualität und Bestandsabgleich](#diagnose-datenqualität-und-bestandsabgleich)
+   [Diagnose: Datenqualität und Bestandsabgleich](#diagnose-datenqualität-und-bestandsabgleich) ·
+   [Finanzielle Integritätsprüfung und Sammelbearbeitung](#finanzielle-integritätsprüfung-und-sammelbearbeitung)
 7. [Berechnungen](#berechnungen)
 8. [Sparpläne](#sparpläne)
 9. [Kurse und Datenquellen](#kurse-und-datenquellen)
@@ -1080,6 +1081,53 @@ testen“, die Bestandsprüfung und den Prüf-Stapel ansehen.
 
 ---
 
+## Finanzielle Integritätsprüfung und Sammelbearbeitung
+
+*Datenqualität → Integritätsprüfung* (`/quality/integrity`) prüft auf **einem** Datenstand (ein Ledger, eine
+Kursliste): alle Befunde der [Diagnose](#diagnose-datenqualität-und-bestandsabgleich) plus Invarianten, die für ein
+korrekt rechnendes Ledger immer gelten müssen – verbleibende Lots = Bestand (je Asset, je Konto), Veräußerung =
+Summe ihrer Lot-Anteile, Anschaffung vor Veräußerung, keine negativen Lots, Token-Umstellungen ohne Restbestand und
+mit wirksamen Buchungen –, die steuerliche Datenqualität aus dem Regelpaket je Jahr (fehlende Anschaffungskosten,
+ungeklärte Umstellungen, Fondstypen …), Abweichungen der Steuerdaten je Jahr zum Journal, ungewöhnliche Kurssprünge
+(z. B. nicht splitbereinigte Reihe) und die Bewertbarkeit der Historie. **Die Prüfung liest nur**; gespeichert wird
+allein ihr Ergebnis.
+
+| Feld | Inhalt |
+|---|---|
+| Befund-ID | stabil (Diagnose-Befunde: aus Art und betroffenen Buchungen; Invarianten: aus Prüfung und Objekt) |
+| Kategorie | Bestand, FIFO & Kostenbasis, Dubletten & Transfers, Kurse & Bewertung, Steuerliche Datenqualität, Historie & Datenquellen |
+| Schweregrad | kritisch, Warnung, Information |
+| Ursache | nachgewiesener Rechenfehler · nachgewiesen · Abweichung aus unvollständigen Quelldaten · Verdacht · Hinweis |
+| Auswirkung, Empfehlung, Alternativen | aus der Diagnose (bevorzugte Lösung + bis zu drei Alternativen) |
+| Konfidenz | Abgleich: eindeutig · hoch plausibel · prüfbedürftig · widersprüchlich (erklärbare Stufen, keine Wahrscheinlichkeiten) |
+| Status | offen · geprüft · korrigiert · verworfen (als unabhängige Buchung bestätigt) – aus den Entscheidungen der Diagnose |
+
+Start als Hintergrundjob mit Fortschritt (nie zwei Läufe gleichzeitig), Filter nach Kategorie, Schweregrad, Konto,
+Asset und Status, Sortierung nach betroffenem Wert bzw. Konfidenz, Export als CSV oder JSON. Ändern sich die Daten
+während bzw. nach dem Lauf, ist das Ergebnis als „überholt“ markiert; ein fehlgeschlagener Lauf wird mit Fehler
+angezeigt. Korrekturen laufen über die Vorschau der Diagnose bzw. die Sammelbearbeitung.
+
+**Sammelbearbeitung** (`/quality/diagnose/bulk`): Dubletten- und Transfer-Befunde mit vorausgewählter bevorzugter
+Lösung, sortiert nach Konfidenz bzw. Wert, filterbar nach Konto, Asset und Quelle. Die Sammelvorschau rechnet alle
+Änderungen gemeinsam auf einer Kopie durch (Bestände, Einstand, Anschaffungsdaten offener Lots, realisierte Ergebnisse
+je Jahr, Steuerwerte, Diagnose danach) und schließt aus: widersprüchliche Fälle, prüfbedürftige (nur nach
+ausdrücklicher Einbeziehung), Befunde, die dieselbe Buchung betreffen, und Änderungen, die zusammen einen negativen
+Bestand erzeugten. Übernommen wird in einer Transaktion, nur bei unveränderter Vorschau (Prüfsumme); jede Korrektur
+ist einzeln protokolliert und rückgängig zu machen, die Sammlung auch als Ganzes. Bereits geprüfte bzw. als
+unabhängig bestätigte Befunde werden nicht erneut vorgeschlagen, solange ihre Daten gleich bleiben.
+
+**Automatisierung nach Risikostufen:**
+
+| Stufe | Was | Wie |
+|---|---|---|
+| A – sichere technische Verknüpfung | Zeile eines Abrufs mit technischer Identität zu einer vorhandenen Buchung (gleiche Kennung bzw. Blockchain-Transaktion, Sicherheit „sicher“, ohne offene Gebührenfrage, ohne eigene Entscheidung) | bei Datenquellen mit „automatisch übernehmen“ automatisch **verknüpft** – nur Herkunft und Kennungen, keine Mengen, Gebühren, Lots oder Kosten; protokolliert als Stapelaktion, rückgängig machbar |
+| B – hoch plausible finanzielle Korrektur | z. B. zusätzliche Buchung ausblenden, zwei Buchungen als Transfer zusammenführen | vorausgewählt, Übernahme nur nach Vorschau und Bestätigung |
+| C – mehrdeutig/widersprüchlich | z. B. gleiche Mengen ohne Kennung, konkurrierende Deutungen | Alternativen mit Auswirkungen, keine Sammelausführung |
+
+Hohe Konfidenz allein löst nie eine wirtschaftlich wirksame Änderung aus. Vollständig gleiche Buchungen ohne
+unterscheidende Kennung erscheinen als Verdacht (zwei gleiche Ausführungen in derselben Sekunde sind möglich); welche
+Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der Datei.
+
 ## Diagnose: Datenqualität und Bestandsabgleich
 
 *Datenqualität → Diagnose öffnen* (`/quality/diagnose`) prüft alle Buchungen, Bestände, Zuordnungen und Kurse und
@@ -1245,12 +1293,18 @@ Gesamtexport nimmt geprüfte Befunde mit.
   entstünden Scheinverluste bis hin zu −100 % TTWROR). Hinweise auf unbewertete Positionen betreffen nur heute
   gehaltene; frühere stehen unter *Datenqualität → Historie*.
 * **Bewertungslücken** (ab 0.21.0): Hat eine Position an einzelnen Tagen gar keinen Kurs (auch keinen Ersatzkurs),
-  zählt ihr Wegfall bzw. ihr Wiederauftauchen nicht als Verlust bzw. Gewinn: TTWROR, IRR, Gewinn, Index und Drawdown
-  rechnen sie in diesen Tagen wie eine Aus- bzw. Einbuchung heraus. Die Performance-Seite zeigt den
+  zählt ihr Wegfall nicht als Verlust: TTWROR, IRR, Gewinn, Index und Drawdown rechnen sie in diesen Tagen wie eine
+  Aus- bzw. Einbuchung zum zuletzt bekannten Wert heraus (ab 0.21.1). Was sich gegenüber diesem Wert ändert – Kurs
+  nach der Lücke, Verkauf oder Ausbuchung in der Lücke –, ist echte Wertänderung und bleibt sichtbar; Zu- und Abgänge
+  ohne EUR-Betrag werden in Gesamt- und Positionssicht mit demselben Tageskurs bewertet (kein Scheingewinn, z. B. bei
+  einem Token-Zugang vor dem ersten Marktkurs). Die Performance-Seite zeigt den
   Bewertungszustand des Zeitraums („vollständig“, „teilweise geschätzt“, „unvollständig“) und den Hinweis
   „ohne Bewertungslücken“. Früher fiel die Kennzahl in solchen Fällen auf bis zu −100 %.
-* **Mehrdeutige IRR:** Wechseln die Zahlungsströme mehrfach das Vorzeichen und hat die Gleichung mehrere Lösungen,
-  zeigt Portfolia keinen IRR-Wert, sondern „nicht eindeutig“ (TTWROR bleibt maßgeblich).
+* **Mehrdeutige IRR:** Wechseln die Zahlungsströme mehrfach das Vorzeichen, sucht Portfolia alle Lösungen zwischen
+  −99,99 % und 10⁸ % p. a. mit Nachweis (Substitution x = ln(1 + r), Intervallschranken auf den Ableitungen, Descartes-
+  Schranke; ab 0.21.1, vorher Raster). Gibt es mehrere oder lassen sie sich numerisch nicht sicher trennen (z. B.
+  doppelte Nullstelle), zeigt Portfolia keinen IRR-Wert, sondern „nicht eindeutig bestimmbar“ (TTWROR bleibt
+  maßgeblich).
 
 ---
 
@@ -1594,8 +1648,13 @@ Datei aus `EXPORT_DIR`) in den **Importordner** der neuen Installation legen. Au
 keine Buchungen, Einstellungen oder Datenquellen) übernimmt Portfolia die Zusatzdaten automatisch, sonst erscheint in
 Übersicht und Einstellungen die Rückfrage „Übernehmen / Nicht übernehmen“. Übernehmen löscht nichts: Einstellungen
 werden überschrieben, Zuordnungen, Entscheidungen und Kurshistorie ergänzt, gleichnamige Datenquellen übersprungen,
-ersetzte Dateien als `.bak-…` gesichert. Die Übernahme läuft in einer Datenbank-Transaktion; Dateien werden erst
-danach ersetzt – scheitert ein Schritt, bleibt der vorige Stand vollständig erhalten. Eine zweite Übernahme derselben
+ersetzte Dateien als `.bak-…` gesichert. Ablauf (ab 0.21.1): Zusatzdaten prüfen (Struktur, Widersprüche wie zwei
+aktive Steuerdateien für ein Jahr) → Dateien temporär vorbereiten (Speicherplatz, Rechte) → alle Datenbankänderungen
+**und** ein Wiederherstellungs-Journal in einer Transaktion → Dateien ersetzen und per Prüfsumme bestätigen. Scheitert
+ein Schritt vor dem Datenbank-Commit, bleibt alles unverändert. Bricht das Ersetzen der Dateien ab (Fehler,
+Prozess- oder Container-Neustart), steht die Wiederherstellung als „unvollständig“ in Übersicht und Einstellungen und
+wird beim nächsten Start bzw. per „Jetzt fortsetzen“ zu Ende geführt (fehlende temporäre Dateien werden aus den
+gespeicherten Zusatzdaten neu erzeugt; verwaiste temporäre Dateien beim Start entfernt). Eine zweite Übernahme derselben
 Datei ergänzt nichts doppelt. Steuerdaten, deren Jahr bereits aktive Daten hat, warten zur Entscheidung. Datenquellen
 ohne API-Key zeigen „Kein API-Key hinterlegt“, bis er eingegeben ist. Danach nur noch API-Keys der Datenquellen neu eingeben (und ggf. den
 [Master-Key](#master-key-für-api-keys) einrichten). Ein erneuter CSV-Import oder Abgleich einer Datenquelle erkennt
