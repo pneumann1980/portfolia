@@ -99,7 +99,8 @@ def main() -> int:
                 from app.diagnosis import bulk as B
 
                 sel = [f.id for f in dups][:25]
-                bp = timed(f"Sammelvorschau ({len(sel)} Dubletten)", lambda: B.plan(ctx, sel), results)
+                bp = timed(f"Sammelvorschau ({len(sel)} Dubletten)",
+                           lambda: B.plan(ctx, sel, include_review=True), results)
                 print(f"  ausführbar {len(bp.ready)}, ausgeschlossen {len(bp.excluded)}, Konflikte {len(bp.conflicts)}")
             except ImportError:
                 print("  (Sammelbearbeitung nicht vorhanden)")

@@ -1096,6 +1096,54 @@ taggenauer (ohne Uhrzeit) gegenüber minutengenauen Buchungen desselben Tages bl
 gleichzeitige Umstellungen gilt je Prozess (SQLite-Transaktion schützt zusätzlich); nach einer Neueinrichtung sind
 frühere Umstellungen nicht mehr rückgängig zu machen (ihre Buchungen sind Import-Buchungen).
 
+## M24 – Financial Integrity Hardening & Intelligent Reconciliation (0.21.1)
+
+Anlass (08.10.2026): Restore absturzsicher machen, zentrale Integritätsprüfung, Abgleich mit bevorzugten Lösungen,
+Sammelbearbeitung, XIRR-Stabilität, Referenzfälle. Nur synthetische Daten und temporäre Datenbanken.
+
+**Bestandsaufnahme (vorher):** Diagnose mit Empfehlungen, Vorschau, Übernehmen/Rückgängig je Befund; Importprüfung
+mit Ergebnis/Sicherheit je Zeile, Stapelaktionen, Verknüpfen; Restore DB-Transaktion + Dateien danach (ohne Journal);
+XIRR-Mehrdeutigkeit über Raster. Fehlend: Wiederanlauf, zentrale Prüfung mit Invarianten, Sammelbearbeitung der
+Diagnose, automatische technische Verknüpfung, nachgewiesene Nullstellensuche.
+
+**Neu:**
+
+* Restore-Journal (`fullexport`): Prüfung vor jeder Änderung, temporäre Dateien mit fsync und Speicherplatzprüfung,
+  DB + Journal in einer Transaktion, Status „unvollständig“ bis alle Dateien per Prüfsumme bestätigt sind;
+  Fortsetzen beim Start, beim nächsten Übernehmen oder per Knopf; verwaiste temporäre Dateien werden beim Start
+  entfernt. Fehler werden angezeigt statt als Serverfehler.
+* Integritätsprüfung (`diagnosis/integrity.py`, `/quality/integrity`): Diagnose-Befunde + Invarianten + steuerliche
+  Datenqualität + Kurssprünge + Bewertbarkeit; Schweregrad, Ursache (Rechenfehler/nachgewiesen/Datenlücke/Verdacht),
+  Konfidenz, Status aus Entscheidungen; Job mit Fortschritt, Filter, Sortierung, CSV/JSON.
+* Sammelbearbeitung (`diagnosis/bulk.py`, `/quality/diagnose/bulk`) mit gemeinsamer Vorschau, Konfliktprüfung,
+  einer Transaktion, Protokoll je Befund, Rückgängig als Ganzes.
+* Stufe A: technische Identität bei Datenquellen mit „automatisch übernehmen“ automatisch verknüpft (keine Buchung).
+* Diagnose-Regel „vollständig gleiche Buchungen“ (Verdacht, bevorzugte Lösung „zusätzliche ausblenden“).
+* Vorschau: Anschaffungsdaten offener Lots vorher/nachher, neue negative Bestände.
+* XIRR: zertifizierte Nullstellensuche (x = ln(1+r), Intervallschranken, Descartes); „nicht eindeutig bestimmbar“
+  auch bei numerisch nicht trennbaren Lösungen.
+
+**Behobene Fehler:**
+
+* Restore konnte nach dem Datenbank-Commit bei Dateifehler/Abbruch unbemerkt inkonsistent bleiben.
+* Exakt doppelte Buchungen ohne Kennung (gleicher Zeitpunkt, gleiche Beine/Werte) wurden nicht erkannt.
+* Bleibende Buchung bei gleichen bzw. hashgleichen Dubletten hing von der Zeilenreihenfolge der Importdatei ab.
+* XIRR-Raster übersah Lösungen < 0,17 Prozentpunkte Abstand; Doppelnullstellen wurden nicht gemeldet.
+* Zu-/Abgänge ohne EUR-Betrag wurden im Gesamtportfolio anders bewertet als im Bestand → Scheingewinn bei Zugang
+  vor dem ersten Marktkurs.
+
+**Messwerte** (synthetisch, 12.637 Buchungen, 230 Assets, 8 Konten, 7,7 Jahre Kurse, 40 eindeutige + 20 mehrdeutige
+Dubletten; Container-CPU, ein Prozess): Ledger 3,6 s · Diagnose 0,4–0,5 s · Integritätsprüfung 2,8–3,4 s (davon
+Steuer 1,9 s für 8 Jahre, Kurssprünge 0,95 s) · Lösungsvorschläge 6 ms · Sammelvorschau 25 Dubletten 4,6 s (ein
+Ledger-Lauf + Diagnose + Steuer auf der Kopie) · Übersicht warm 0,01–0,02 s · RSS max. 362–369 MB.
+Standard-Lasttest (5.725 Buchungen): Übersicht warm 0,008 s, Performance 0,037 s.
+
+**Grenzen:** Integritätsprüfung und Sammelvorschau rechnen das Ledger je Lauf neu (kein inkrementelles Ledger);
+Sammelbearbeitung nur für Dubletten/Transfers; Stufe A nur bei Datenquellen mit automatischer Übernahme (CSV-Uploads:
+Vorauswahl, Bestätigung); Bewertungslücken: Abrechnung zum zuletzt bekannten Kurs ist eine Annahme (Zeitpunkt der
+Wertänderung in der Lücke unbekannt); Restore: Dateien und Datenbank bleiben zwei Systeme – zwischen Commit und
+Abschluss kann der Zustand „unvollständig“ sichtbar bestehen, wird aber nie als abgeschlossen gemeldet.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
