@@ -92,26 +92,32 @@ def xirr_roots(flows: Sequence[tuple[date, float]]) -> list[float]:
         with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
             return float(np.sum(cfs / np.power(1.0 + r, ts)))
 
-    grid = np.concatenate([np.linspace(-0.99, 1.0, 4000, endpoint=False), np.geomspace(1.0, 100.0, 1500)])
+    # Gitter: −99 % … 100 % in Schritten von ~0,17 Prozentpunkten, darüber logarithmisch. Zwei Lösungen innerhalb
+    # einer Gitterzelle bleiben unerkannt – sie wären in der Anzeige ohnehin nicht unterscheidbar.
+    grid = np.concatenate([np.linspace(-0.99, 1.0, 1200, endpoint=False), np.geomspace(1.0, 100.0, 400)])
+    # NPV je Gitterpunkt vektorisiert, blockweise (≤ ~2 Mio. Elemente je Block, auch bei vielen Zahlungen)
+    vals = np.empty(len(grid))
+    step = max(1, 2_000_000 // len(ts))
     with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
-        vals = np.array([np.sum(cfs / np.power(1.0 + r, ts)) for r in grid])
+        for i in range(0, len(grid), step):
+            g = grid[i:i + step]
+            vals[i:i + step] = (cfs[None, :] / np.power(1.0 + g[:, None], ts[None, :])).sum(axis=1)
+    fa_all, fb_all = vals[:-1], vals[1:]
+    ok = np.isfinite(fa_all) & np.isfinite(fb_all)
     roots: list[float] = []
-    for i in range(len(grid) - 1):
-        a, b, fa, fb = grid[i], grid[i + 1], vals[i], vals[i + 1]
-        if not (math.isfinite(fa) and math.isfinite(fb)):
-            continue
+    for i in np.flatnonzero(ok & ((fa_all == 0) | (fa_all * fb_all < 0))):
+        a, b, fa = grid[i], grid[i + 1], fa_all[i]
         if fa == 0:
             roots.append(float(a))
             continue
-        if fa * fb < 0:
-            for _ in range(100):
-                mid = (a + b) / 2
-                fm = f(mid)
-                if fa * fm <= 0:
-                    b = mid
-                else:
-                    a, fa = mid, fm
-            roots.append(float((a + b) / 2))
+        for _ in range(100):
+            mid = (a + b) / 2
+            fm = f(mid)
+            if fa * fm <= 0:
+                b = mid
+            else:
+                a, fa = mid, fm
+        roots.append(float((a + b) / 2))
     out: list[float] = []
     for r in roots:
         if not out or abs(r - out[-1]) > 1e-6:
