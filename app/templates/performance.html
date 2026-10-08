@@ -32,7 +32,7 @@
   </div>
   <div class="kpi"><div class="label">IRR p. a. <span title="Interner Zinsfuß (geldwertgewichtet): Anfangswert als Einzahlung, alle Ein-/Auszahlungen mit Datum, Endwert als Auszahlung.">ⓘ</span></div>
     <div class="value"><span class="delta {{ sel.irr|tone }}">{{ sel.irr|pct if sel.irr is not none else '–' }}</span></div>
-    <div class="sub">{% if sel.irr_ambiguous %}nicht eindeutig: mehrere mathematische Lösungen (Vorzeichenwechsel der Zahlungen){% elif sel.days < 365 %}annualisiert, Zeitraum &lt; 1 Jahr{% else %}geldgewichtet{% endif %}</div></div>
+    <div class="sub">{% if sel.irr_ambiguous %}nicht eindeutig bestimmbar: mehrere bzw. numerisch nicht sicher trennbare Lösungen (Vorzeichenwechsel der Zahlungen) – maßgeblich ist die TTWROR{% elif sel.days < 365 %}annualisiert, Zeitraum &lt; 1 Jahr{% else %}geldgewichtet{% endif %}</div></div>
   <div class="kpi"><div class="label">Absoluter G/V</div><div class="value"><span class="delta {{ sel.gain|tone }}">{{ sel.gain|eur_kpi(true) }}</span></div>
     <div class="sub">inkl. Erträge, nach Gebühren{% if sel.valuation_gaps %} · <span title="Positionen ohne gültigen Kurs (0 €) gehen nicht als Verlust in Rendite und G/V ein; ein echter Verlust wird über „als Verlust ausbuchen“ erfasst.">ohne Bewertungslücken ⓘ</span>{% endif %}</div></div>
   <div class="kpi"><div class="label">Wert Beginn → Ende</div><div class="value" style="font-size:1rem">{{ sel.start_value|eur_compact }} → {{ sel.end_value|eur_compact }}</div>

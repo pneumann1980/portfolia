@@ -40,7 +40,7 @@
     <div class="label">IRR p. a. <span title="Interner Zinsfuß (geldwertgewichtet) seit Beginn: berücksichtigt Zeitpunkt und Höhe aller Ein- und Auszahlungen">ⓘ</span></div>
     {% if kpi.irr is not none %}<div class="value"><span class="delta {{ kpi.irr|tone }}">{{ kpi.irr|pct }}</span></div>
     <div class="sub">TTWROR gesamt {{ kpi.ttwror_max|pct }}</div>
-    {% else %}<div class="value muted">–</div><div class="sub">{{ 'nicht eindeutig (mehrere Lösungen)' if kpi.irr_ambiguous else 'noch keine Historie' }}</div>{% endif %}
+    {% else %}<div class="value muted">–</div><div class="sub">{{ 'nicht eindeutig bestimmbar' if kpi.irr_ambiguous else 'noch keine Historie' }}</div>{% endif %}
   </div>
   <div class="kpi">
     <div class="label">Unrealisiert / Realisiert</div>
