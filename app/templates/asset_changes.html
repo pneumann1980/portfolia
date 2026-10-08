@@ -5,6 +5,7 @@
 <div class="stack">
   <p class="hint"><a href="/quality">← Datenqualität</a> · Umbenennungen (gleiches Asset, neues Kürzel/neue Kursquelle) und Umstellungen
     auf ein neues Asset (z. B. MATIC → POL). Erkannte Fälle sind nur Hinweise – geändert wird erst nach Vorschau und Bestätigung.</p>
+  {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
   {% if done %}<div class="alert good" role="status"><span class="icon">✓</span><div>Änderung übernommen. Kurse und Historie werden im Hintergrund aktualisiert.</div></div>{% endif %}
 
   <section class="card" id="hints">

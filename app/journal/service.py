@@ -831,11 +831,12 @@ def tx_form_data(t: Tx) -> dict[str, str]:
             "time": "" if t.date_only else local.strftime("%H:%M:%S" if local.second else "%H:%M"),
             "note": t.note or "",
             "related_asset": t.related_asset or "", "fee_asset": t.fee_asset or "",
-            "fee_qty": forms.s(t.fee_qty), "fee_eur": forms.s(t.fee_eur), "value_eur": forms.s(t.value_eur)}
+            "fee_qty": forms.s_de(t.fee_qty), "fee_eur": forms.s_de(t.fee_eur),
+            "value_eur": forms.s_de(t.value_eur)}
     for side in ("from", "to"):
         data[f"{side}_account"] = getattr(t, f"{side}_account") or ""
         data[f"{side}_asset"] = getattr(t, f"{side}_asset") or ""
-        data[f"{side}_qty"] = forms.s(getattr(t, f"{side}_qty"))
+        data[f"{side}_qty"] = forms.s_de(getattr(t, f"{side}_qty"))
     return data
 
 

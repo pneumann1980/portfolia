@@ -91,6 +91,15 @@ def s(v: Decimal | None) -> str:
     return "0" if v == 0 else format(v.normalize(), "f")
 
 
+def s_de(v: Decimal | None) -> str:
+    """Dezimalzahl für *Formularfelder* (Komma, exakt, ohne Tausendertrennzeichen und ohne Rundung).
+
+    Formularwerte liest :func:`app.util.numbers.parse_number` – dort gilt „2.125“ als deutsche Tausendertrennung
+    (= 2125). Programmatisch vorbelegte oder weitergereichte Werte müssen deshalb immer mit Komma kommen; :func:`s`
+    (Punkt) ist nur für CSV/Datenvertrag."""
+    return s(v).replace(".", ",")
+
+
 def label_for(t: Any) -> str:
     """Anzeige-Bezeichnung einer Buchung (Typ + Tag)."""
     base = TYPE_LABEL.get(t.type, t.type)

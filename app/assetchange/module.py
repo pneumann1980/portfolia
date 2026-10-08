@@ -19,7 +19,7 @@ from app.assetchange.service import KINDS, asset_change_service
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
-FIELDS = ("kind", "date", "ratio", "new_asset", "new_name", "quote_source", "quote_id", "new_ticker", "note")
+FIELDS = ("kind", "date", "ratio", "new_asset", "new_name", "quote_source", "quote_id", "new_ticker", "note", "fp")
 
 
 def _back(request: Request, target: str) -> Response:
@@ -50,18 +50,24 @@ def _form_page(request: Request, asset_id: str, form: dict[str, str], hint: str 
                   changes=asset_change_service(ctx).changes(asset_id))
 
 
+def _overview(request: Request, asset: str = "", done: int = 0, confirm: int = 0, errors: list[str] | None = None,
+              status_code: int = 200) -> HTMLResponse:
+    ctx = get_ctx(request)
+    svc = asset_change_service(ctx)
+    rows = svc.changes(asset or None)
+    txs = {int(r["id"]): json.loads(r["tx_ids_json"] or "[]") for r in rows}
+    dismissed = ctx.db.q("SELECT * FROM asset_change WHERE kind='hint' AND status='dismissed' ORDER BY id DESC")
+    return render(request, "asset_changes.html", status_code=status_code, active="quality", hints=hints(ctx),
+                  changes=rows, txs=txs, asset=asset, done=done, confirm=confirm, kinds=KINDS, assets=_assets(ctx),
+                  dismissed=dismissed, errors=errors or [])
+
+
 def make_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/changes", response_class=HTMLResponse)
     def overview(request: Request, asset: str = "", done: int = 0, confirm: int = 0) -> HTMLResponse:
-        ctx = get_ctx(request)
-        svc = asset_change_service(ctx)
-        rows = svc.changes(asset or None)
-        txs = {int(r["id"]): json.loads(r["tx_ids_json"] or "[]") for r in rows}
-        dismissed = ctx.db.q("SELECT * FROM asset_change WHERE kind='hint' AND status='dismissed' ORDER BY id DESC")
-        return render(request, "asset_changes.html", active="quality", hints=hints(ctx), changes=rows, txs=txs,
-                      asset=asset, done=done, confirm=confirm, kinds=KINDS, assets=_assets(ctx), dismissed=dismissed)
+        return _overview(request, asset, done, confirm)
 
     @router.get("/changes/new", response_class=HTMLResponse)
     def new(request: Request, asset: str = "", hint: str = "") -> HTMLResponse:
@@ -108,7 +114,7 @@ def make_router() -> APIRouter:
             return _back(request, f"/changes?confirm={cid}#c{cid}")
         errors = await run_in_threadpool(asset_change_service(get_ctx(request)).revert, cid)
         if errors:
-            raise HTTPException(400, errors[0])
+            return _overview(request, errors=errors, status_code=409)
         return _back(request, "/changes")
 
     @router.post("/changes/dismiss")

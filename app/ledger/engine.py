@@ -60,6 +60,9 @@ class Lot:
     acq_tx: str
     origin: str  # buy | trade | income | deposit | corporate_action | phantom
     income_tag: str | None = None
+    # Buchungen asset-wechselnder Kapitalmaßnahmen (Token-Migration, Fusion), über die das Lot fortgeführt wurde –
+    # technische Fortführung mit Anschaffungsdaten; die steuerliche Einordnung bewertet das Regelwerk gesondert
+    via: tuple[str, ...] = ()
 
     @property
     def unit_cost(self) -> Decimal:
@@ -82,6 +85,7 @@ class DisposalPart:
     origin: str
     missing_basis: bool = False
     acq_tx: str | None = None  # anschaffende Buchung des Lots (Rückverfolgung, z. B. für die Diagnose)
+    via: tuple[str, ...] = ()  # Kapitalmaßnahmen mit Asset-Wechsel seit der Anschaffung (siehe Lot.via)
 
     @property
     def gain(self) -> Decimal:
@@ -388,7 +392,7 @@ class _Engine:
             take = min(lot.qty, remaining)
             cost = self._take(lot, take)
             parts.append(DisposalPart(lot.id, lot.root_id, lot.account, take, cost, ZERO, lot.acq_ts, lot.acq_date,
-                                      lot.origin, acq_tx=lot.acq_tx))
+                                      lot.origin, acq_tx=lot.acq_tx, via=lot.via))
             remaining -= take
         if remaining > DUST:
             parts.append(DisposalPart(0, 0, account, remaining, ZERO, ZERO, None, None, "phantom", True))
@@ -433,7 +437,7 @@ class _Engine:
             else:
                 cost = self._take(lot, take)
                 new_lots.append(Lot(next(self.ids), lot.root_id, asset, dst, take, cost, lot.acq_ts, lot.acq_date,
-                                    lot.acq_tx, lot.origin, lot.income_tag))
+                                    lot.acq_tx, lot.origin, lot.income_tag, lot.via))
             remaining -= take
         for lot in new_lots:
             self._insert(lot)
@@ -466,7 +470,8 @@ class _Engine:
             with decimal.localcontext(_CTX):
                 q = take * ratio
             nl = Lot(next(self.ids), lot.root_id, dst_asset, dst_acc, q, cost, lot.acq_ts, lot.acq_date, lot.acq_tx,
-                     lot.origin if lot.origin != "phantom" else "phantom", lot.income_tag)
+                     lot.origin if lot.origin != "phantom" else "phantom", lot.income_tag,
+                     (*lot.via, tx.tx_id) if dst_asset != src_asset else lot.via)
             self._insert(nl)
         if remaining > DUST:
             with decimal.localcontext(_CTX):
@@ -699,7 +704,7 @@ class _Engine:
 
     def _snapshot(self) -> list[Lot]:
         out = [Lot(lot.id, lot.root_id, lot.asset, lot.account, lot.qty, lot.cost, lot.acq_ts, lot.acq_date,
-                   lot.acq_tx, lot.origin, lot.income_tag)
+                   lot.acq_tx, lot.origin, lot.income_tag, lot.via)
                for lst in self.lots.values() for lot in lst if lot.qty > DUST]
         out.sort(key=Lot.sort_key)
         return out

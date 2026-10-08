@@ -309,7 +309,8 @@ class GermanyPack(RulePack):
                        "kind": KIND_LABEL.get(d.kind, d.kind), "acq": p.acq_date, "disp": d.date,
                        "days": (d.date - p.acq_date).days if p.acq_date else None, "qty": p.qty,
                        "price": money(p.proceeds + wk), "cost": money(p.cost), "wk": money(wk), "gain": money(gain),
-                       "origin": ORIGIN_LABEL.get(p.origin, p.origin), "free_from": free_from, "tx": d.tx_id}
+                       "origin": ORIGIN_LABEL.get(p.origin, p.origin) + (" · über Umstellung" if p.via else ""),
+                       "free_from": free_from, "tx": d.tx_id}
                 (rows_tax if taxable else rows_free).append(row)
         net = sum((r["gain"] for r in rows_tax), ZERO)
         fg = _d(P["crypto"]["freigrenze_23"])
@@ -863,6 +864,23 @@ class GermanyPack(RulePack):
         for (aid, y), why in sorted(vp.missing.items()):
             issues.append(Issue("warning", "vp_missing",
                            f"Vorabpauschale {inp.asset(aid).name} {y}: {why} – mit 0 € angesetzt."))
+        # Token-Migration/Fusion: technisch mit Anschaffungsdaten fortgeführt – steuerlich nicht automatisch neutral
+        via: Counter[str] = Counter()
+        for d in inp.ledger.disposals:
+            if d.date.year == year:
+                for part in d.parts:
+                    for t in part.via:
+                        via[t] += 1
+        if via:
+            by_id = {t.tx_id: t for t in inp.pf.txs if t.tx_id in via}
+            labels = sorted({f"{t.from_asset} → {t.to_asset}" for t in by_id.values()})
+            n = sum(via.values())
+            issues.append(Issue("warning", "conversion_unclear",
+                                f"{n} Veräußerungsteile stammen aus Beständen, die über eine Kapitalmaßnahme mit "
+                                f"Asset-Wechsel fortgeführt wurden ({', '.join(labels)}). Angesetzt sind die "
+                                "ursprünglichen Anschaffungsdaten und -kosten (Umstellung nicht als Veräußerung). Ob "
+                                "die Umstellung steuerlich ein Tausch ist, hängt vom Einzelfall ab – nicht geprüft.",
+                                n))
         year_tx = {d.tx_id for d in inp.ledger.disposals if d.date.year == year}
         n_led = sum(1 for li in inp.ledger.issues if li.severity == "warning" and li.tx_id in year_tx)
         if n_led:

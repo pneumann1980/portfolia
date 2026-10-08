@@ -110,7 +110,7 @@ class WriteOffService:
                 errors.append("Eine ausgewählte Position ist nicht mehr im Bestand – bitte die Seite neu laden.")
                 continue
             data = {"kind": "cost", "date": day, "time": TIME, "account": c.account, "asset": c.asset.asset_id,
-                    "qty": forms.s(c.qty), "tag": tag, "value_eur": "0", "note": note}
+                    "qty": forms.s_de(c.qty), "tag": tag, "value_eur": "0", "note": note}
             d = forms.build("cost", data, assets, price, fx, today)
             if d.errors:
                 errors += d.errors

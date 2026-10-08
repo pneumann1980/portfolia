@@ -19,9 +19,11 @@ bestätigt nach der Vorschau. Jede Änderung lässt sich rückgängig machen (Bu
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time, timedelta
@@ -77,12 +79,21 @@ class Plan:
     def ok(self) -> bool:
         return not self.errors
 
+    def fingerprint(self) -> str:
+        """Prüfsumme dessen, was die Vorschau zeigt (Buchungen bzw. Kursquelle). Weicht sie beim Übernehmen ab,
+        hat sich der Bestand inzwischen geändert – dann wird nichts gebucht."""
+        rows = [(r.account, _s(r.qty_old), _s(r.qty_new), r.when.isoformat()) for r in self.rows]
+        raw = json.dumps([self.kind, self.old.asset_id if self.old else None, self.new_asset, _s(self.ratio),
+                          self.effective.isoformat() if self.effective else None, self.quote_source, self.quote_id,
+                          self.new_name, self.new_ticker, rows], ensure_ascii=False)
+        return hashlib.sha256(raw.encode()).hexdigest()[:24]
+
     def form(self) -> dict[str, str]:
-        """Eingaben für das erneute Absenden (Vorschau → Übernehmen)."""
+        """Eingaben für das erneute Absenden (Vorschau → Übernehmen), samt Prüfsumme der Vorschau."""
         return {"kind": self.kind, "date": self.effective.isoformat() if self.effective else "",
                 "ratio": _s(self.ratio), "new_asset": self.new_asset or "", "new_name": self.new_name or "",
                 "quote_source": self.quote_source or "", "quote_id": self.quote_id or "",
-                "new_ticker": self.new_ticker or "", "note": self.note}
+                "new_ticker": self.new_ticker or "", "note": self.note, "fp": self.fingerprint()}
 
 
 def _s(v: Decimal | None) -> str:
@@ -313,9 +324,10 @@ class AssetChangeService:
         if prev is not None:
             p.info.append(f"Bereits am {prev['effective_date']} umgestellt – jetzt wird der seitdem hinzugekommene "
                           "Restbestand umgestellt.")
-        p.info.append("Je Konto eine Buchung „Kapitalmaßnahme – Migration“: Anschaffungsdaten und Haltefristen gehen "
-                      "auf den neuen Bestand über (keine Veräußerung). Die steuerliche Würdigung im Einzelfall bleibt "
-                      "zu prüfen.")
+        p.info.append("Je Konto eine Buchung „Kapitalmaßnahme – Migration“: Bestand, Anschaffungsdaten und -kosten "
+                      "werden technisch auf den neuen Bestand übertragen. Steuerlich ist das nicht automatisch "
+                      "neutral: Der Steuerbericht kennzeichnet spätere Veräußerungen aus diesem Bestand "
+                      "(Einordnung der Umstellung ungeklärt – Tausch oder keine Veräußerung, Einzelfall).")
         if not p.new_exists:
             p.info.append(f"Neues Asset „{p.new_asset}“ ({p.new_name}) wird angelegt"
                           + (f", Kurse über {p.quote_source} „{p.quote_id}“." if p.quote_id else "."))
@@ -323,12 +335,60 @@ class AssetChangeService:
     # -- Übernehmen -----------------------------------------------------------------------------------------
     def apply(self, asset_id: str, data: Mapping[str, Any], hint_key: str | None = None) -> tuple[int | None,
                                                                                                     Plan]:
-        p = self.plan(asset_id, data)
-        if not p.ok:
-            return None, p
-        return (self._apply_rename(p, hint_key) if p.kind == "rename" else self._apply_migration(p, hint_key)), p
+        """Änderung übernehmen – vollständig oder gar nicht.
+
+        Alles (Ziel-Asset, Buchungen je Konto, Symbol-Zuordnung, übernommene Kurse, Änderungsdatensatz) läuft in
+        *einer* Schreibtransaktion (``BEGIN IMMEDIATE``; die Journal-Aufrufe laufen darin mit). Der Plan wird
+        innerhalb dieser Transaktion neu berechnet – also gegen den aktuellen Bestand, nicht gegen den Stand der
+        Vorschau; weicht er von der Vorschau ab (Prüfsumme ``fp``), wird nichts gebucht. Eine Prozess-Sperre
+        serialisiert gleichzeitige Anfragen; eine zweite identische Anfrage findet danach keinen Restbestand mehr."""
+        with _APPLY_LOCK:
+            try:
+                with self.db.transaction():
+                    self.ctx.invalidate_overlay()  # Plan gegen den Stand *in* der Transaktion rechnen
+                    p = self.plan(asset_id, data)
+                    if not p.ok:
+                        raise _Abort()
+                    want = str(data.get("fp") or "").strip()
+                    if want and want != p.fingerprint():
+                        p.errors.append("Der Bestand hat sich seit der Vorschau geändert (neue oder geänderte "
+                                        "Buchungen) – bitte die Vorschau erneut prüfen. Es wurde nichts gebucht.")
+                        raise _Abort()
+                    cid = (self._apply_rename(p, hint_key) if p.kind == "rename"
+                           else self._apply_migration(p, hint_key))
+                    if cid is None:
+                        raise _Abort()
+            except _Abort:
+                self._after_rollback()
+                return None, p
+            except Exception as e:
+                self._after_rollback()
+                log.error("Ticker-/Token-Änderung %s fehlgeschlagen und zurückgerollt: %s", asset_id,
+                          type(e).__name__)
+                p = locals().get("p") or Plan(kind=str(data.get("kind") or "migration"), old=None)
+                p.errors.append(f"Fehler beim Speichern ({type(e).__name__}) – es wurde nichts geändert.")
+                return None, p
+        self.ctx.invalidate_overlay()
+        _bump()
+        self._after_commit(p)
+        return cid, p
+
+    def _after_rollback(self) -> None:
+        # Während der Transaktion gebildete Caches (Portfolio, Ledger) können verworfene Daten enthalten
+        self.ctx.invalidate_overlay()
+        _bump()
+
+    def _after_commit(self, p: Plan) -> None:
+        sched = getattr(self.ctx, "scheduler", None)
+        if sched is None:
+            return
+        sched.trigger("prices_crypto", 2, force=True)
+        sched.trigger("prices_securities", 3, force=True)
+        sched.trigger("history_backfill", 15)
 
     def _apply_migration(self, p: Plan, hint_key: str | None) -> int | None:
+        """Innerhalb der Transaktion von :meth:`apply` – Fehler werden als ``p.errors`` gemeldet (Rollback)."""
+        from app.journal import forms
         from app.journal.service import journal_service
 
         js = journal_service(self.ctx)
@@ -346,12 +406,12 @@ class AssetChangeService:
         tx_ids: list[str] = []
         note = (f"Umstellung {a.asset_id} → {p.new_asset} (1 : {_s(p.ratio)})" + (f" – {p.note}" if p.note else ""))
         for r in p.rows:
+            # Mengen mit Komma: das Formular liest „2.125“ als Tausendertrennung (siehe forms.s_de)
             res = js.save({"kind": "corporate", "tag": "migration", "account": r.account, "date": r.date.isoformat(),
-                           "time": r.when.strftime("%H:%M"), "from_asset": a.asset_id, "from_qty": _s(r.qty_old),
-                           "to_asset": p.new_asset, "to_qty": _s(r.qty_new), "note": note[:200]})
+                           "time": r.when.strftime("%H:%M"), "from_asset": a.asset_id,
+                           "from_qty": forms.s_de(r.qty_old), "to_asset": p.new_asset,
+                           "to_qty": forms.s_de(r.qty_new), "note": note[:200]})
             if res.errors:
-                for tid in tx_ids:  # nichts halb übernehmen
-                    js.delete(tid)
                 p.errors += [f"„{r.account}“: {e}" for e in res.errors]
                 return None
             tx_ids += res.tx_ids
@@ -363,15 +423,17 @@ class AssetChangeService:
             (a.asset_id, p.new_asset, _s(p.ratio), p.effective.isoformat() if p.effective else None,
              f"{a.quote_source}:{a.quote_id or ''}", p.quote_source, p.quote_id, p.new_name,
              "hint" if hint_key else "user", hint_key, json.dumps(tx_ids), int(created), p.note or None, _now()))
-        log.info("Umstellung %s → %s (1:%s) übernommen: %d Buchungen", a.asset_id, p.new_asset, _s(p.ratio),
-                 len(tx_ids))
-        _bump()
+        log.info("Umstellung %s → %s (1:%s): %d Buchungen", a.asset_id, p.new_asset, _s(p.ratio), len(tx_ids))
         return int(cur.lastrowid)  # type: ignore[arg-type]
 
     def _apply_rename(self, p: Plan, hint_key: str | None) -> int | None:
+        """Innerhalb der Transaktion von :meth:`apply`."""
         a = p.old
         assert a is not None
         old_series = self.ctx.prices.series_for(a)
+        new_series = None
+        if p.quote_source and p.quote_id:
+            new_series = self.ctx.prices.series_for(replace(a, quote_source=p.quote_source, quote_id=p.quote_id))
         alias = False
         if p.new_ticker:
             from app.csvimport.service import csv_service
@@ -381,30 +443,19 @@ class AssetChangeService:
                 csv.set_symbol(p.new_ticker, a.asset_id, "umbenennung")
                 alias = True
         stamp = _now()
-        with self.db.transaction() as c:
-            c.execute("UPDATE asset_change SET status='replaced', reverted_at=? WHERE kind='rename' AND "
-                      "status='applied' AND old_asset=?", (stamp, a.asset_id))
-            cur = c.execute(
-                "INSERT INTO asset_change(kind, old_asset, effective_date, old_quote, new_quote_source, new_quote_id, "
-                "new_name, new_ticker, status, origin, hint_key, alias_created, note, created_at) "
-                "VALUES ('rename',?,?,?,?,?,?,?,'applied',?,?,?,?,?)",
-                (a.asset_id, p.effective.isoformat() if p.effective else None,
-                 f"{a.quote_source}:{a.quote_id or ''}", p.quote_source, p.quote_id, p.new_name, p.new_ticker,
-                 "hint" if hint_key else "user", hint_key, int(alias), p.note or None, stamp))
-        cid = int(cur.lastrowid)  # type: ignore[arg-type]
-        self.ctx.invalidate_overlay()
-        new = self.ctx.portfolio().assets.get(a.asset_id)
-        new_series = self.ctx.prices.series_for(new) if new is not None else None
+        self.db.x("UPDATE asset_change SET status='replaced', reverted_at=? WHERE kind='rename' AND "
+                  "status='applied' AND old_asset=?", (stamp, a.asset_id))
+        cur = self.db.x(
+            "INSERT INTO asset_change(kind, old_asset, effective_date, old_quote, new_quote_source, new_quote_id, "
+            "new_name, new_ticker, status, origin, hint_key, alias_created, note, created_at) "
+            "VALUES ('rename',?,?,?,?,?,?,?,'applied',?,?,?,?,?)",
+            (a.asset_id, p.effective.isoformat() if p.effective else None,
+             f"{a.quote_source}:{a.quote_id or ''}", p.quote_source, p.quote_id, p.new_name, p.new_ticker,
+             "hint" if hint_key else "user", hint_key, int(alias), p.note or None, stamp))
         if old_series and new_series and new_series != old_series and p.effective is not None:
             n = self._carry_prices(old_series, new_series, p.effective)
             log.info("Umbenennung %s: %d bisherige Tageskurse für %s übernommen", a.asset_id, n, new_series)
-        _bump()
-        sched = getattr(self.ctx, "scheduler", None)
-        if sched is not None:
-            sched.trigger("prices_crypto", 2, force=True)
-            sched.trigger("prices_securities", 3, force=True)
-            sched.trigger("history_backfill", 15)
-        return cid
+        return int(cur.lastrowid)  # type: ignore[arg-type]
 
     def _carry_prices(self, old_series: str, new_series: str, until: date) -> int:
         """Bisherige Tageskurse bis zum Stichtag in die neue Reihe übernehmen, nur für Tage ohne eigenen Kurs."""
@@ -415,34 +466,84 @@ class AssetChangeService:
         vals = [(new_series, r["date"], r["open"], r["high"], r["low"], r["close"], r["volume"], r["split_factor"],
                  r["ccy"], f"{PREV}{old_series}", now) for r in rows if r["date"] not in have]
         if vals:
-            self.db.xmany("INSERT OR IGNORE INTO price_daily(series, date, open, high, low, close, volume, "
-                          "split_factor, ccy, source, fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", vals)
+            with self.db.transaction() as c:  # läuft in der Transaktion von apply() mit
+                c.executemany("INSERT OR IGNORE INTO price_daily(series, date, open, high, low, close, volume, "
+                              "split_factor, ccy, source, fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", vals)
             self.ctx.prices._bump()
         return len(vals)
 
     # -- Rückgängig -----------------------------------------------------------------------------------------
     def revert(self, cid: int) -> list[str]:
-        r = self.get(cid)
-        if r is None or r["status"] != "applied":
-            return ["Änderung nicht gefunden oder bereits zurückgenommen."]
-        if r["kind"] == "migration":
-            from app.journal.service import journal_service
+        """Änderung zurücknehmen – vollständig oder gar nicht (eine Transaktion).
 
-            js = journal_service(self.ctx)
-            for tid in json.loads(r["tx_ids_json"] or "[]"):
-                js.delete(tid)
-        else:
-            if r["alias_created"] and r["new_ticker"]:
-                self.db.x("DELETE FROM csv_symbol WHERE symbol=? AND asset_id=? AND origin='umbenennung'",
-                          (r["new_ticker"], r["old_asset"]))
-            if r["new_quote_source"] and r["new_quote_id"]:
-                base = f"{'cg' if r['new_quote_source'] == 'coingecko' else 'yahoo'}:{r['new_quote_id']}"
-                self.db.x("DELETE FROM price_daily WHERE source LIKE ? AND series IN (?, ?)",
-                          (f"{PREV}%", base, f"demo:{base}"))
-        self.db.x("UPDATE asset_change SET status='reverted', reverted_at=? WHERE id=?", (_now(), cid))
+        Umstellung: die Umstellungsbuchungen erhalten den Status ``reverted`` (nicht „gelöscht“ – sie lassen sich
+        nicht einzeln wiederherstellen, das Protokoll bleibt); ein von der Umstellung angelegtes Ziel-Asset wird
+        entfernt, wenn keine andere Buchung es mehr verwendet. Abgelehnt wird, wenn der neue Bestand inzwischen
+        verwendet wurde (Rückgängig ergäbe einen negativen Bestand) oder eine Umstellungsbuchung bearbeitet bzw.
+        gelöscht wurde – dann zuerst diese Buchungen klären."""
+        with _APPLY_LOCK:
+            try:
+                with self.db.transaction() as c:
+                    self.ctx.invalidate_overlay()
+                    r = c.execute("SELECT * FROM asset_change WHERE id=?", (cid,)).fetchone()
+                    if r is None or r["status"] != "applied" or r["kind"] not in ("migration", "rename"):
+                        return ["Änderung nicht gefunden oder bereits zurückgenommen."]
+                    errors = (self._revert_migration(c, r) if r["kind"] == "migration" else
+                              self._revert_rename(c, r))
+                    if errors:
+                        raise _Abort(errors)
+                    c.execute("UPDATE asset_change SET status='reverted', reverted_at=? WHERE id=?", (_now(), cid))
+            except _Abort as e:
+                self._after_rollback()
+                return list(e.args[0]) if e.args else ["Rückgängig nicht möglich."]
         self.ctx.invalidate_overlay()
         _bump()
         log.info("Ticker-/Token-Änderung %d (%s %s) zurückgenommen", cid, r["kind"], r["old_asset"])
+        return []
+
+    def _revert_migration(self, c: Any, r: Any) -> list[str]:
+        tx_ids = json.loads(r["tx_ids_json"] or "[]")
+        rows = [c.execute("SELECT * FROM journal_tx WHERE tx_id=?", (t,)).fetchone() for t in tx_ids]
+        changed = [t for t, row in zip(tx_ids, rows, strict=True) if row is None or row["status"] != "active"]
+        if changed:
+            return [f"Umstellungsbuchung(en) {', '.join(changed)} wurden inzwischen gelöscht oder ersetzt – "
+                    "Rückgängig würde den Bestand verfälschen. Bitte die Buchungen im Journal prüfen."]
+        led = self.ctx.ledger()
+        need: dict[str, Decimal] = {}
+        for row in rows:
+            if row["to_asset"] != r["new_asset"] or row["from_asset"] != r["old_asset"]:
+                return [f"Umstellungsbuchung {row['tx_id']} wurde bearbeitet (Asset geändert) – bitte im Journal "
+                        "prüfen."]
+            need[row["to_account"]] = need.get(row["to_account"], Decimal(0)) + Decimal(row["to_qty"] or "0")
+        if led is not None:
+            short = [f"„{acc}“: {_s(led.balances.get((acc, r['new_asset']), Decimal(0)))} von {_s(q)}"
+                     for acc, q in need.items() if led.balances.get((acc, r["new_asset"]), Decimal(0)) < q - DUST]
+            if short:
+                return [f"{r['new_asset']} aus der Umstellung wurde inzwischen verkauft oder übertragen ("
+                        + "; ".join(short) + ") – Rückgängig ergäbe einen negativen Bestand. Zuerst diese "
+                        "Buchungen klären."]
+        stamp = _now()
+        for row in rows:
+            c.execute("UPDATE journal_tx SET status='reverted', updated_at=? WHERE id=?", (stamp, row["id"]))
+            c.execute("INSERT INTO journal_log(at, action, ref, before_json, after_json) VALUES (?,?,?,?,?)",
+                      (stamp, "revert", row["tx_id"], None, json.dumps({"asset_change": r["id"]})))
+        if r["asset_created"]:
+            used = c.execute("SELECT COUNT(*) FROM journal_tx WHERE status NOT IN ('reverted', 'replaced') AND "
+                             "(from_asset=? OR to_asset=? OR fee_asset=? OR related_asset=?)",
+                             (r["new_asset"],) * 4).fetchone()[0]
+            base = self.ctx.base_portfolio()
+            if not used and not (base is not None and r["new_asset"] in base.assets):
+                c.execute("DELETE FROM journal_asset WHERE asset_id=?", (r["new_asset"],))
+        return []
+
+    def _revert_rename(self, c: Any, r: Any) -> list[str]:
+        if r["alias_created"] and r["new_ticker"]:
+            c.execute("DELETE FROM csv_symbol WHERE symbol=? AND asset_id=? AND origin='umbenennung'",
+                      (r["new_ticker"], r["old_asset"]))
+        if r["new_quote_source"] and r["new_quote_id"]:
+            base = f"{'cg' if r['new_quote_source'] == 'coingecko' else 'yahoo'}:{r['new_quote_id']}"
+            c.execute("DELETE FROM price_daily WHERE source LIKE ? AND series IN (?, ?)",
+                      (f"{PREV}%", base, f"demo:{base}"))
         return []
 
 
@@ -473,6 +574,12 @@ def apply_changes(db: Any, assets: dict[str, AssetInfo]) -> dict[str, AssetInfo]
     return out if out is not None else assets
 
 
+class _Abort(Exception):
+    """Fachlicher Abbruch innerhalb der Transaktion (Fehler stehen im Plan) – löst den Rollback aus."""
+
+
+_APPLY_LOCK = threading.Lock()  # serialisiert Übernehmen/Rückgängig im Prozess (Container: ein Prozess)
+
 # Hinweis-Cache (Erkennung) bei jeder Änderung verwerfen
 _VERSION = [0]
 
@@ -486,7 +593,8 @@ def version() -> int:
 
 
 def _now() -> str:
-    return iso(datetime.now(UTC)) or ""
+    # mit Mikrosekunden: created_at ist Teil des Eindeutigkeitsschlüssels (zwei Umstellungen in einer Sekunde)
+    return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 def asset_change_service(ctx: Any) -> AssetChangeService:
