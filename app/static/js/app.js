@@ -4,6 +4,13 @@
 
   var csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
 
+  // --- Installation als App (Chrome/Firefox auf Android; nur über HTTPS bzw. localhost möglich) -------------
+  if ("serviceWorker" in navigator && window.isSecureContext) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("/sw.js", {scope: "/"}).catch(function () { /* ohne Worker weiter */ });
+    });
+  }
+
   // --- HTMX: CSRF-Header an alle Anfragen ---------------------------------------------------
   document.addEventListener("htmx:configRequest", function (e) {
     e.detail.headers["X-CSRF-Token"] = csrf;

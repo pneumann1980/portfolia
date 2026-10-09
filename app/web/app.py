@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
@@ -58,6 +58,12 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
     app.include_router(actions.router)
     for extra in _EXTRA_ROUTERS:
         app.include_router(extra())
+
+    @app.get("/sw.js", include_in_schema=False)
+    def service_worker() -> Response:
+        """Service Worker im Wurzelpfad (Geltungsbereich die ganze App) – für die Installation als App."""
+        return Response((STATIC_DIR / "js" / "sw.js").read_bytes(), media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> JSONResponse:

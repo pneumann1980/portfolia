@@ -42,7 +42,10 @@ CSP = (
     "object-src 'none'"
 )
 CSRF_COOKIE = "portfolia_csrf"
-PUBLIC_PATHS = ("/healthz",)
+PUBLIC_PATHS = ("/healthz", "/sw.js", "/static/manifest.webmanifest")
+# App-Icons ohne Anmeldung: Browser laden Manifest, Icons und Service Worker teils ohne Zugangsdaten
+# (Installation als App, Startbildschirm). Enthalten keine Daten.
+PUBLIC_PREFIXES = ("/static/img/icon", "/static/img/apple-touch-icon")
 
 
 def hash_password(password: str, iterations: int = 390000) -> str:
@@ -111,7 +114,8 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
             self._fails[client].append(time.monotonic())
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        if request.url.path in PUBLIC_PATHS:
+        path = _app_path(request.scope)
+        if path in PUBLIC_PATHS or (path.startswith(PUBLIC_PREFIXES) and ".." not in path):
             return await call_next(request)
         client = request.client.host if request.client else "?"
         if self._throttled(client):

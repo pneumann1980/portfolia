@@ -1209,6 +1209,17 @@ Grundlage: PR #1 (Extraktion, Feldbelege, read-only Vorschau) übernommen und er
 Offen/Grenzen: Anbieterprofile nicht an Originalbelegen validiert; EVM-Explorer (Schlüssel nötig) und
 Wertpapier-Ausführungsdaten nicht recherchierbar; Belege nicht im Vollexport; optionale KI bewusst nicht umgesetzt.
 
+## M25.1 – Installierbar als App auf Android (0.22.1)
+
+Chrome und Firefox auf Android boten nur eine Verknüpfung an. Ursachen: (1) kein Service Worker (Chrome-Kriterium),
+(2) Manifest und Icons bei Basic Auth nur mit Anmeldung abrufbar, (3) Zugriff über `http://<LAN-IP>` – Browser
+installieren Web-Apps nur von sicheren Adressen. Behoben: (1) Service Worker unter `/sw.js` (Geltungsbereich `/`,
+speichert nichts, greift online nicht ein – Basic-Auth-Dialog bleibt erhalten; ohne Netz Hinweisseite), Registrierung
+nur in sicherem Kontext; (2) Manifest, App-Icons und Service Worker ohne Anmeldung, alles andere weiter geschützt;
+Manifest mit `id`. (3) ist Sache der Einrichtung: README beschreibt Reverse Proxy, Tailscale und – nur zum Test – das
+Chrome-Flag. Geprüft mit Headless-Chromium (`Page.getInstallabilityErrors` leer, Worker aktiv); **nicht auf einem
+echten Android-Gerät geprüft**, die Offline-Hinweisseite ließ sich headless nicht auslösen.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

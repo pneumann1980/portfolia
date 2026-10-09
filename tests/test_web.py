@@ -111,3 +111,27 @@ def test_basic_auth(config):
         bad = "Basic " + base64.b64encode(b"anna:falsch").decode()
         codes = [c.get("/", headers={"Authorization": bad}).status_code for _ in range(11)]
         assert codes[0] == 401 and codes[-1] == 429
+
+
+def test_installable_app_assets_public_under_basic_auth(config):
+    """Installation als App: Manifest, Icons und Service Worker auch ohne Zugangsdaten; Daten weiterhin geschützt."""
+    import json as _json
+
+    cfg = replace(config, auth_mode="basic", auth_user="anna", auth_password_hash=hash_password("s3cret"))
+    app = build_app(cfg, start_scheduler=False)
+    with TestClient(app) as c:
+        m = c.get("/static/manifest.webmanifest")
+        assert m.status_code == 200
+        man = _json.loads(m.text)
+        assert man["id"] == "/" and man["start_url"] == "/" and man["display"] == "standalone"
+        sizes = {i["sizes"] for i in man["icons"]}
+        assert {"192x192", "512x512"} <= sizes
+        for icon in man["icons"]:
+            assert c.get(icon["src"]).status_code == 200
+        assert c.get("/static/img/apple-touch-icon.png").status_code == 200
+        sw = c.get("/sw.js")
+        assert sw.status_code == 200 and sw.headers["content-type"].startswith("text/javascript")
+        assert sw.headers["service-worker-allowed"] == "/" and "addEventListener(\"fetch\"" in sw.text
+        assert "caches." not in sw.text  # nichts wird zwischengespeichert
+        for private in ("/", "/static/js/app.js", "/static/css/app.css", "/journal"):
+            assert c.get(private).status_code in (401, 404), private
