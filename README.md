@@ -204,7 +204,8 @@ Ausprobieren ohne Internet: `DEMO_MODE=true` (deutlich gekennzeichnete synthetis
 * **Watchlist** (*Mehr → Watchlist*): Symbol, Name, Kurs, 24 h, 7 Tage, Marktkapitalisierung, Sparkline;
   hinzufügen (CoinGecko-ID/Link/Symbol, Yahoo-Symbol oder Portfolio-Asset), entfernen, sortieren, eigene
   Reihenfolge, Detailansicht mit Kursverlauf und „Position erstellen“ (öffnet die normale Kauferfassung, legt nichts
-  ohne Speichern an). Datenmodell für mehrere Listen vorbereitet.
+  ohne Speichern an). Datenmodell für mehrere Listen vorbereitet. Indizes (`^GSPC` = S&P 500, `^GDAXI`) und
+  Devisen/Futures (`EURUSD=X`, `GC=F`) über Yahoo; Indizes zeigen den Stand in Punkten und sind nicht kaufbar.
 
 ---
 
@@ -661,6 +662,13 @@ Empfänger und keinen Hash), bleibt die Sicherheit entsprechend niedriger. Werte
 vorhandene Buchung übernommen – dafür gibt es den Korrekturvorschlag und „Bearbeiten“.
 
 ---
+
+### Als App auf dem Smartphone
+
+Im Browser *Teilen → Zum Home-Bildschirm* (iOS/Safari) bzw. *Menü → App installieren / Zum Startbildschirm*
+(Android/Chrome). Portfolia startet dann ohne Browserleisten (Web-App-Manifest, `display: standalone`); die untere
+Navigationsleiste springt dort nicht mit der Adressleiste des Browsers. Bei Basic Auth fragt die App beim ersten
+Start einmal nach den Zugangsdaten.
 
 ## Datenquellen: Börsen und Wallet-Adressen
 

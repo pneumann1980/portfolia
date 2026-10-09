@@ -18,7 +18,8 @@ from app.prices.market import MarketSnapshot, market_data
 from app.prices.sources import cached_catalog, catalog_path, parse_coin_id
 from app.util.timeutil import iso
 
-_YAHOO = re.compile(r"^[A-Z0-9][A-Z0-9.\-=^]{0,24}$")
+# Yahoo-Symbole: Aktien/ETFs (SAP.DE), Indizes mit führendem „^“ (^GSPC, ^GDAXI), Devisen/Futures (EURUSD=X, GC=F)
+_YAHOO = re.compile(r"^\^?[A-Z0-9][A-Z0-9.\-=]{0,24}$")
 MAX_ITEMS = 200
 SORTS = {"manual": "eigene Reihenfolge", "name": "Name", "change_24h": "24h", "change_7d": "7 Tage",
          "market_cap": "Marktkapitalisierung"}
@@ -46,6 +47,11 @@ class Item:
     @property
     def sym(self) -> str:
         return (self.symbol or (self.snap.symbol if self.snap else None) or self.quote_id).upper()
+
+    @property
+    def is_index(self) -> bool:
+        """Index (Yahoo „^…“, z. B. ^GSPC = S&P 500): nur beobachten, nicht kaufbar."""
+        return self.quote_source == "yahoo" and self.quote_id.startswith("^")
 
 
 class WatchlistService:
@@ -133,9 +139,11 @@ class WatchlistService:
         if kind == "security":
             sym = raw.upper()
             if not _YAHOO.match(sym):
-                return None, ["Ungültiges Yahoo-Symbol (z. B. SAP.DE, AAPL, EUNL.DE)."], []
+                return None, ["Ungültiges Yahoo-Symbol (z. B. SAP.DE, AAPL, EUNL.DE, ^GSPC)."], []
             return {"quote_source": "yahoo", "quote_id": sym, "asset_class": "security", "symbol": sym.split(".")[0],
                     "asset_id": self._asset_for("yahoo", sym)}, [], []
+        if _yahoo_like(raw):  # „^GSPC“, „EURUSD=X“, „SAP.DE“ sind nie CoinGecko-Kennungen → Yahoo
+            return self.resolve("security", raw)
         cat = cached_catalog(catalog_path(self.ctx))
         cid = parse_coin_id(raw)
         if cid and (cat is None or cid in cat.by_id):
@@ -153,7 +161,8 @@ class WatchlistService:
                     "symbol": str(c.get("symbol") or "").upper(), "name": c.get("name"),
                     "asset_id": self._asset_for("coingecko", c["id"])}, [], []
         if not cands:
-            return None, [f"„{raw}“ nicht im CoinGecko-Katalog gefunden."], []
+            return None, [f"„{raw}“ nicht im CoinGecko-Katalog gefunden – für Aktien, ETFs und Indizes die Art "
+                          "„Wertpapier (Yahoo-Symbol)“ wählen."], []
         return None, [f"„{raw}“ ist nicht eindeutig ({len(cands)} Coins) – bitte auswählen."], [
             {"id": c["id"], "name": c.get("name"), "symbol": str(c.get("symbol") or "").upper()} for c in cands[:20]]
 
@@ -204,6 +213,15 @@ class WatchlistService:
             if s:
                 out.append(s)
         return out
+
+
+def _yahoo_like(raw: str) -> bool:
+    """Eindeutig ein Yahoo-Symbol: Index-Präfix „^“, Devisen/Futures „=X“/„=F“ bzw. Börsenkürzel „.XX“ – Zeichen,
+    die in CoinGecko-IDs, -Links und -Symbolen der Eingabe nicht vorkommen."""
+    s = raw.strip().upper()
+    if "/" in s or not _YAHOO.match(s):
+        return False
+    return s.startswith("^") or "=" in s or bool(re.search(r"\.[A-Z]{1,4}$", s))
 
 
 def watchlist_service(ctx: Any) -> WatchlistService:

@@ -36,6 +36,8 @@ _LOCK = threading.Lock()
 class MarketSnapshot:
     series: str
     price_eur: float | None = None
+    price_native: float | None = None  # Kurs in Handelswährung bzw. Indexpunkten (Yahoo-Indizes: Punkte, nie EUR)
+    ccy: str | None = None
     change_24h: float | None = None  # Anteil (0.043 = +4,3 %)
     change_7d: float | None = None
     market_cap_eur: float | None = None
@@ -105,6 +107,7 @@ class MarketData:
             factor = 1.0
             if q is not None and q["price"]:
                 ccy = (q["ccy"] or "EUR").upper()
+                snap.price_native, snap.ccy = float(q["price"]), ccy
                 f, _src = self.prices.fx_to_eur(ccy)
                 factor = f or 0.0
                 if factor:

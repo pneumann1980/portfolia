@@ -183,6 +183,9 @@ def make_router() -> APIRouter:
         it = svc.get(item_id)
         if it is None:
             raise HTTPException(404)
+        if it.is_index:
+            return _page(request, it.list_id, errors=[f"{it.sym} ist ein Index – nur beobachten, nicht kaufbar (dafür "
+                                                      "einen ETF auf den Index hinzufügen)."], status_code=400)
         aid = it.asset_id
         if not aid:
             from app.journal.service import journal_service

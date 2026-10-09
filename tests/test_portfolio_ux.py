@@ -176,3 +176,39 @@ def test_watchlist_quotes_bundled_with_regular_price_update(client):
 
     tasks.refresh_prices(ctx(client), force=True, which="crypto")
     assert ctx(client).store.latest("demo:cg:dogecoin") is not None
+
+
+def test_watchlist_index_symbols_like_sp500(client):
+    """Indizes (^GSPC = S&P 500), Devisen (EURUSD=X) – auch bei vorausgewählter Art „Krypto“ als Yahoo-Symbol."""
+    assert post(client, "/watchlist/add", {"kind": "security", "value": "^GSPC"}).status_code == 303
+    assert post(client, "/watchlist/add", {"kind": "crypto", "value": "^gdaxi"}).status_code == 303
+    assert post(client, "/watchlist/add", {"kind": "crypto", "value": "EURUSD=X"}).status_code == 303
+    rows = ctx(client).db.q("SELECT quote_source, quote_id, asset_class FROM watchlist_item ORDER BY position")
+    assert [(r["quote_source"], r["quote_id"]) for r in rows] == [("yahoo", "^GSPC"), ("yahoo", "^GDAXI"),
+                                                                  ("yahoo", "EURUSD=X")]
+    for bad in ("^", "^^GSPC", "GS^PC", "^GSPC/../x"):
+        r = post(client, "/watchlist/add", {"kind": "security", "value": bad})
+        assert r.status_code == 400 and "Ungültiges Yahoo-Symbol" in r.text, bad
+    it = ctx(client).db.q1("SELECT id FROM watchlist_item WHERE quote_id='^GSPC'")
+    html = client.get(f"/watchlist/item/{it['id']}").text
+    assert "Index" in html and "Position erstellen" not in html  # nur beobachten, nicht kaufbar
+    assert "Pkt." in html or "–" in html  # Stand in Punkten, nie als Euro-Preis
+    row = client.get("/watchlist").text.split(f'id="wl-{it["id"]}"')[1].split("</tr>")[0]
+    assert ">Position erstellen<" not in row
+    r = post(client, f"/watchlist/item/{it['id']}/position")
+    assert r.status_code == 400 and "Index" in r.text
+
+
+def test_web_app_manifest_for_home_screen(client):
+    """Als Web-App vom Home-Bildschirm (standalone, ohne Browserleisten) – Manifest und Icons sind erreichbar."""
+    html = client.get("/").text
+    assert 'rel="manifest" href="/static/manifest.webmanifest"' in html and "apple-touch-icon" in html
+    r = client.get("/static/manifest.webmanifest")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("application/manifest+json")
+    m = r.json()
+    assert m["display"] == "standalone" and m["start_url"] == "/"
+    sizes = {i["sizes"] for i in m["icons"]}
+    assert {"192x192", "512x512"} <= sizes
+    for i in m["icons"]:
+        assert client.get(i["src"]).status_code == 200
+    assert client.get("/static/img/apple-touch-icon.png").status_code == 200

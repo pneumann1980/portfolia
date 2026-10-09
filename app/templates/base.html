@@ -8,6 +8,15 @@
   <meta name="htmx-config" content='{"allowEval": false, "includeIndicatorStyles": false, "historyCacheSize": 0, "selfRequestsOnly": true}'>
   <title>{% block title %}{{ app_name }}{% endblock %} · {{ app_name }}</title>
   <link rel="icon" href="/static/img/icon.svg" type="image/svg+xml">
+  {# Web-App vom Home-Bildschirm: ohne Browserleisten – die untere Leiste springt dort nicht mit der Adressleiste #}
+  <link rel="manifest" href="/static/manifest.webmanifest" crossorigin="use-credentials">
+  <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Portfolia">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
   <link rel="stylesheet" href="/static/css/app.css?v={{ version }}">
   <script src="/static/js/theme.js?v={{ version }}"></script>
 </head>

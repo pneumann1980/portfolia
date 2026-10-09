@@ -28,14 +28,14 @@
       <tr id="wl-{{ it.id }}">
         <td data-label="Wert"><a href="/watchlist/item/{{ it.id }}"><b>{{ it.sym }}</b></a> <span class="hint">{{ it.label }}</span>
           <div class="hint">{{ it.snap.provider_label if it.snap else it.quote_source }}{% if it.held %} · <span class="badge good">im Portfolio</span>{% endif %}{% if it.snap and it.snap.stale %} · <span class="badge warn">veraltet</span>{% endif %}</div></td>
-        <td class="num nowrap" data-label="Kurs">{{ it.snap.price_eur|price if it.snap and it.snap.price_eur else '–' }}</td>
+        <td class="num nowrap" data-label="{{ 'Stand' if it.is_index else 'Kurs' }}">{% if it.is_index and it.snap and it.snap.price_native %}{{ it.snap.price_native|num }} Pkt.{% else %}{{ it.snap.price_eur|price if it.snap and it.snap.price_eur else '–' }}{% endif %}</td>
         <td class="num nowrap" data-label="24h">{% if it.snap and it.snap.change_24h is not none %}<span class="delta {{ it.snap.change_24h|tone }}">{{ it.snap.change_24h|arrow }} {{ it.snap.change_24h|pct }}</span>{% else %}–{% endif %}</td>
         <td class="num nowrap" data-label="7 Tage">{% if it.snap and it.snap.change_7d is not none %}<span class="delta {{ it.snap.change_7d|tone }}">{{ it.snap.change_7d|arrow }} {{ it.snap.change_7d|pct }}</span>{% else %}–{% endif %}</td>
         <td class="num nowrap" data-label="Marktkap.">{{ it.snap.market_cap_eur|eur_compact if it.snap and it.snap.market_cap_eur else '–' }}</td>
         <td data-label="Verlauf">{{ spark(it) }}</td>
         <td class="nowrap actions">
           <a class="btn sm ghost" href="/watchlist/item/{{ it.id }}">Details</a>
-          <form method="post" action="/watchlist/item/{{ it.id }}/position" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit" title="Kauf erfassen (normale Buchungserfassung)">Position erstellen</button></form>
+          {% if not it.is_index %}<form method="post" action="/watchlist/item/{{ it.id }}/position" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit" title="Kauf erfassen (normale Buchungserfassung)">Position erstellen</button></form>{% endif %}
           {% if sort == 'manual' %}
           <form method="post" action="/watchlist/item/{{ it.id }}/move" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="dir" value="up"><button class="icon-btn" type="submit" aria-label="nach oben" title="nach oben" {{ 'disabled' if loop.first }}>↑</button></form>
           <form method="post" action="/watchlist/item/{{ it.id }}/move" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="dir" value="down"><button class="icon-btn" type="submit" aria-label="nach unten" title="nach unten" {{ 'disabled' if loop.last }}>↓</button></form>
@@ -54,7 +54,7 @@
   <form method="post" action="/watchlist/add" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="list" value="{{ list_id }}">
     <label class="field">Art<select name="kind">{% for k, v in kinds.items() %}<option value="{{ k }}" {{ 'selected' if form.kind == k }}>{{ v }}</option>{% endfor %}</select></label>
-    <label class="field">Symbol, CoinGecko-ID/-Link bzw. Yahoo-Symbol<input name="value" value="{{ form.value or '' }}" list="wl-assets" placeholder="z. B. kaspa, BONK, SAP.DE" autocomplete="off"></label>
+    <label class="field">Symbol, CoinGecko-ID/-Link bzw. Yahoo-Symbol<input name="value" value="{{ form.value or '' }}" list="wl-assets" placeholder="z. B. kaspa, BONK, SAP.DE, ^GSPC" autocomplete="off"></label>
     <datalist id="wl-assets">{% for a in assets %}<option value="{{ a.asset_id }}">{{ a.name }}</option>{% endfor %}</datalist>
     <div class="row"><button class="btn primary" type="submit">Hinzufügen</button></div>
   </form>

@@ -1163,6 +1163,20 @@ Anlass (08.10.2026): vier vom Auftraggeber gemeldete, bisher nicht erkannte Prob
    Ein-/Ausblenden der Browser-Adressleiste. **Nicht auf einem echten Gerät geprüft** – Headless-Chromium bildet die
    dynamische Adressleiste nicht nach; geprüft ist nur Lage und Füllfläche der Leiste.
 
+## M24.2 – Watchlist-Indizes, Web-App (0.21.3)
+
+1. **S&P 500 (`^GSPC`) ließ sich nicht hinzufügen:** Das Yahoo-Muster der Watchlist verbot `^` am Anfang; zudem war
+   „Krypto (CoinGecko)“ vorausgewählt. Jetzt: Indizes (`^GSPC`, `^GDAXI`), Devisen/Futures (`EURUSD=X`, `GC=F`)
+   erlaubt; eindeutige Yahoo-Symbole (`^…`, `…=X`, `….DE`) werden auch bei Art „Krypto“ als Yahoo erkannt. Indizes
+   zeigen den Stand in **Punkten** (nicht in EUR umgerechnet) und bieten kein „Position erstellen“. Grenze:
+   7-Tage-Änderung und Verlauf eines Index basieren weiter auf der EUR-umgerechneten Tagesreihe (enthalten den
+   Wechselkurseffekt); 24h ist in Punkten.
+2. **Untere Leiste springt beim Antippen:** Seitenseitig unverändert (Headless-Messung vor/nach Antippen und
+   Seitenwechsel identisch). Ursache ist die Werkzeugleiste des mobilen Browsers, die beim Antippen am unteren Rand
+   bzw. beim Seitenwechsel wieder eingeblendet wird – im Browser nicht verhinderbar. Neu: Web-App-Manifest
+   (`display: standalone`), Icons 192/512/maskable, Apple-Touch-Icon, Meta-Tags. Vom Home-Bildschirm gestartet läuft
+   Portfolia ohne Browserleisten. **Nicht auf einem echten Gerät geprüft.**
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
