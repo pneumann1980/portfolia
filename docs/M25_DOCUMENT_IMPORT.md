@@ -19,6 +19,15 @@ hashes, and **never** creates, updates or deletes journal transactions.
 - Field evidence includes document digest, page and character offset. Matches are only
   **candidates**, not confirmed asset identity or trade execution facts.
 
+### Evidence resolver (experimental)
+
+`app/documentimport/evidence.py` now provides pure source-aware field decisions,
+keeps competing values, requires verified event identity for provider and journal
+references, and prevents public reference prices from being treated as executed
+prices, fees or cost basis. This is a read-only component, *not yet wired to
+Rec ingestion, provider queries or durable document storage*. Synthetic unit
+tests cover source mismatches, conflicts and financial-estimate guards.
+
 ### Still required before v0.22.0
 
 - Reliable transaction segmentation and provider profiles (including tables, dividends,
