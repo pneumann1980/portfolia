@@ -56,6 +56,9 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
     app.include_router(pages.router)
     app.include_router(api.router)
     app.include_router(actions.router)
+    from app.documentimport.web import router as document_router
+
+    app.include_router(document_router)
     for extra in _EXTRA_ROUTERS:
         app.include_router(extra())
 

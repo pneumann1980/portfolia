@@ -47,6 +47,8 @@ ENV PYTHONUNBUFFERED=1 \
     HOME=/data \
     XDG_CACHE_HOME=/data/cache \
     MALLOC_ARENA_MAX=2
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /install /usr/local
 WORKDIR /opt/portfolia
 COPY app ./app

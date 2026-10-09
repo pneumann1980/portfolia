@@ -3,7 +3,7 @@
 {% block heading %}CSV-Import{% endblock %}
 {% block content %}
 {% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
-<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/csv" aria-current="page">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/csv" aria-current="page">CSV-Import</a><a href="/journal/documents">PDF &amp; Screenshot (Vorschau)</a><a href="/journal/new">Neue Buchung</a></nav>
 
 <section class="card">
   <div class="card-head"><h2>Datei einlesen</h2></div>
