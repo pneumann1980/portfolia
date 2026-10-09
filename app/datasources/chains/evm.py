@@ -83,6 +83,8 @@ class EvmConnector(WalletConnector):
     # Umbenennung des nativen Coins: (erster Block mit neuem Symbol, altes Symbol, Zeitpunkt des Blocks, Hinweis)
     native_switch: ClassVar[tuple[int, str, datetime, str] | None] = None
     first_block: ClassVar[int] = 0  # erster Block dieser Chain (PulseChain: davor Ethereum-Historie)
+    # Blockfenster je Abfrage (None = bis zur Spitze): langsame Indexer antworten auf kleine Bereiche zuverlässig
+    block_window: ClassVar[int | None] = None
     network: ClassVar[str | None] = None  # Netz-Platzhalter des Endpunkts (Subscan: peaq)
     limits = ("NFTs (ERC-721/1155) werden nicht gebucht – „Verbindung testen“ zeigt, ob welche vorhanden sind",
               "Positionen in Verträgen (Staking, Liquidität, Bridges) sind nicht sichtbar – nur Bewegungen der Adresse",
@@ -168,13 +170,25 @@ class EvmConnector(WalletConnector):
             v = self.__dict__["_incomplete_set"] = set()
         return v
 
+    @staticmethod
+    def _range(http: ChainHttp, start: int, end: int) -> dict[str, int]:
+        q = {"startblock": start, "endblock": end}
+        if http.ep.block_param_alias:
+            q |= {"start_block": start, "end_block": end}
+        return q
+
     def _page(self, http: ChainHttp, action: str, addr: str, start: int, end: int, page: int = 1) -> list[dict]:
-        res = self._call(http, {"module": "account", "action": action, "address": addr, "startblock": start,
-                                "endblock": end, "page": page, "offset": PAGE, "sort": "asc"},
-                         _ACTION_LABEL[action])
+        res = self._call(http, {"module": "account", "action": action, "address": addr, **self._range(http, start, end),
+                                "page": page, "offset": PAGE, "sort": "asc"}, _ACTION_LABEL[action])
         if not isinstance(res, list):
             raise K.ConnectorError("data", f"{http.ep.label}: {_ACTION_LABEL[action]} nicht lesbar.")
-        return [r for r in res if isinstance(r, dict)]
+        rows = [r for r in res if isinstance(r, dict)]
+        outside = [r for r in rows if not start <= _block_of(r) <= end]
+        if outside:  # Anbieter ignoriert den Blockbereich – nie fremde Blöcke (z. B. Vor-Fork-Historie) buchen
+            raise K.ConnectorError("data", f"{http.ep.label}: {_ACTION_LABEL[action]} außerhalb des abgefragten "
+                                           f"Blockbereichs geliefert (Block {_block_of(outside[0]):,}) – Abruf "
+                                           "abgebrochen, nichts gebucht.".replace(",", "."))
+        return rows
 
     # -- Prüfen -------------------------------------------------------------------------------------------
     def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
@@ -188,7 +202,7 @@ class EvmConnector(WalletConnector):
             if self.native_switch is not None:
                 details["native"] = {"ok": True, "text": self.native_switch[3]}
             last = self._call(http, {"module": "account", "action": "txlist", "address": addr,
-                                     "startblock": self.first_block, "endblock": tip, "page": 1, "offset": 1,
+                                     **self._range(http, self.first_block, tip), "page": 1, "offset": 1,
                                      "sort": "desc"}, "Transaktionen")
             if isinstance(last, list) and last:
                 when = ts_from_unix(last[0].get("timeStamp", 0)).strftime("%d.%m.%Y")
@@ -204,8 +218,9 @@ class EvmConnector(WalletConnector):
     def _nft_activity(self, http: ChainHttp, addr: str, tip: int) -> bool:
         for action in ("tokennfttx", "token1155tx"):
             try:
-                res = self._call(http, {"module": "account", "action": action, "address": addr, "startblock": 0,
-                                        "endblock": tip, "page": 1, "offset": 1, "sort": "desc"}, "NFT-Transfers")
+                res = self._call(http, {"module": "account", "action": action, "address": addr,
+                                        **self._range(http, self.first_block, tip), "page": 1, "offset": 1,
+                                        "sort": "desc"}, "NFT-Transfers")
             except K.ConnectorError as e:
                 if e.kind in ("auth", "rate_limit"):
                     raise
@@ -252,11 +267,12 @@ class EvmConnector(WalletConnector):
                     action = min((a for a in actions if not finished[a]), key=lambda a: nxt[a])
                     self.report("Abruf", max(min(done.values()) - start + 1, 0), max(safe - start + 1, 1),
                                 f"{_ACTION_LABEL[action]} ab Block {nxt[action]:,}".replace(",", "."))
-                    rows = self._page(http, action, addr, nxt[action], safe)
+                    hi = min(safe, nxt[action] + self.block_window - 1) if self.block_window else safe
+                    rows = self._page(http, action, addr, nxt[action], hi)
                     pages += 1
                     if len(rows) < PAGE:
                         records[action] += rows
-                        done[action], finished[action] = safe, True
+                        done[action], nxt[action], finished[action] = hi, hi + 1, hi >= safe
                         continue
                     blocks = [int(r.get("blockNumber", 0)) for r in rows]
                     last = max(blocks)
@@ -529,6 +545,48 @@ class EvmConnector(WalletConnector):
                       failed=failed, plain=plain, hint="; ".join(dict.fromkeys(hints)) or None, label=label, raw=raw)
 
 
+NR_WINDOW = 100_000  # nr_getAssetTransfers: Blockbereich je Abfrage ≤ 100.000 (Doku)
+NR_PAGE = 1000  # maxCount ≤ 0x3E8
+
+
+def _nr_row(t: Any, a: int, b: int) -> tuple[str, dict[str, Any]] | None:
+    """NodeReal-Transfer → Etherscan-ähnliche Zeile (nur dokumentierte Felder). Außerhalb [a, b] → None."""
+    if not isinstance(t, dict):
+        return None
+    try:
+        block = int(str(t.get("blockNum")), 16)
+        value = int(str(t.get("value") or "0x0"), 16)
+    except ValueError:
+        return None
+    if not a <= block <= b:
+        return None
+    ts = t.get("blockTimeStamp", t.get("blockTimestamp"))
+    base = {"hash": str(t.get("hash") or "").lower(), "blockNumber": str(block), "timeStamp": str(ts or ""),
+            "from": str(t.get("from") or "").lower(), "to": str(t.get("to") or "").lower(), "value": str(value)}
+    cat = str(t.get("category") or "")
+    if cat == "external":
+        ok = t.get("receiptsStatus") in (1, "1", "0x1", None)
+        return "txlist", base | {"gasUsed": str(t.get("gasUsed") or 0), "gasPrice": str(t.get("gasPrice") or 0),
+                                 "isError": "0" if ok else "1", "txreceipt_status": "1" if ok else "0",
+                                 "contractAddress": "", "input": ""}
+    if cat == "internal":
+        return "txlistinternal", base | {"isError": "0", "traceId": ""}
+    if cat == "20":
+        contract = str(t.get("contractAddress") or "").lower()
+        if not _ADDR.match(contract):
+            return None
+        return "tokentx", base | {"contractAddress": contract, "tokenSymbol": str(t.get("asset") or ""),
+                                  "tokenName": str(t.get("asset") or ""), "tokenDecimal": str(t.get("decimal") or "")}
+    return None
+
+
+def _block_of(r: dict[str, Any]) -> int:
+    try:
+        return int(str(r.get("blockNumber", "")).strip())
+    except ValueError:
+        return -1
+
+
 def _sub(base: str, k: int) -> str:
     return base if k == 0 else f"{base}#{k}"
 
@@ -557,16 +615,170 @@ class EthereumConnector(EvmConnector):
 @K.register
 class BscConnector(EvmConnector):
     provider = "bsc"
-    label = "BNB Smart Chain (Etherscan/Routescan)"
+    label = "BNB Smart Chain (Etherscan, bezahlter Plan)"
     chain_label = "BNB Chain"
     chain_id = 56
     chain_tag = "BSC"
     native = "BNB"
     confirmations = 20
-    endpoints = ("etherscan", "routescan")
+    # Routescan führt Chain 56 nicht („chain not supported“, live geprüft 10/2026); Etherscan nur im bezahlten Plan.
+    # Kostenlos: NodeReal BSCTrace (von BNB Chain als Ersatz der BscScan-API empfohlen) – eigener Abrufweg unten.
+    endpoints = ("nodereal_bsc", "etherscan")
     explorer_tx = "https://bscscan.com/tx/{}"
     explorer_addr = "https://bscscan.com/address/{}"
     explorer_token = "https://bscscan.com/token/{}"  # noqa: S105 - Link-Muster
+    nr_window: ClassVar[int] = NR_WINDOW
+    nr_first_block: ClassVar[int] = 0
+
+    def _nr(self, cfg: K.SourceConfig) -> bool:
+        return self.endpoint(cfg).id == "nodereal_bsc"
+
+    @staticmethod
+    def _rpc(http: ChainHttp, method: str, params: list[Any], what: str) -> Any:
+        body = http.post("", {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, what=what)
+        if not isinstance(body, dict):
+            raise K.ConnectorError("data", f"{http.ep.label}: Antwort auf {what} nicht lesbar.")
+        err = body.get("error")
+        if isinstance(err, dict):
+            msg = str(err.get("message") or "")[:160]
+            low = msg.lower()
+            if "limit" in low or "too many" in low or "exceed" in low:
+                raise K.ConnectorError("rate_limit", f"{http.ep.label}: Kontingent bzw. Limit erreicht ({msg}).",
+                                       retry_after_s=3600)
+            if "key" in low or "auth" in low or "unauthorized" in low:
+                raise K.ConnectorError("auth", f"{http.ep.label} lehnt den Schlüssel ab ({msg}).")
+            raise K.ConnectorError("data", f"{http.ep.label} meldet bei {what}: {msg or 'Fehler'}.")
+        return body.get("result")
+
+    def _nr_tip(self, http: ChainHttp) -> int:
+        res = self._rpc(http, "eth_blockNumber", [], "Blockhöhe")
+        if not isinstance(res, str) or not res.startswith("0x"):
+            raise K.ConnectorError("data", f"{http.ep.label}: Blockhöhe nicht lesbar.")
+        return int(res, 16)
+
+    def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
+        if not self._nr(cfg):
+            return super().check(cfg, secret)
+        addr = self._addr(cfg)
+        with self.http(cfg, secret, max_requests=8, deadline_s=60) as http:
+            tip = self._nr_tip(http)
+            bal = units(int(str(self._rpc(http, "eth_getBalance", [addr, "latest"], "Bestand")), 16), 18)
+            probe = self._rpc(http, "nr_getAssetTransfers", [{"category": ["external"], "fromAddress": addr,
+                                                               "fromBlock": hex(max(tip - self.nr_window + 1, 0)),
+                                                               "toBlock": hex(tip), "order": "desc",
+                                                               "maxCount": "0x1"}], "Transfers")
+        details = {"chain": {"ok": True, "text": f"BNB Chain erreichbar, Block {tip:,}".replace(",", ".")},
+                   "balance": {"ok": True, "text": f"Bestand {bal.normalize():f} BNB"},
+                   "history": {"ok": isinstance(probe, dict), "text": "Historie über nr_getAssetTransfers abrufbar"
+                               if isinstance(probe, dict) else "Historie nicht lesbar"}}
+        return K.CheckResult(True, f"BNB Chain: Adresse {short(addr)} über {http.ep.label} lesbar.", details,
+                             balances=[K.Balance("BNB", bal, "BNB Chain")])
+
+    def fetch(self, cfg: K.SourceConfig, secret: K.Secret, cursor: dict[str, Any] | None) -> K.FetchResult:
+        if not self._nr(cfg):
+            return super().fetch(cfg, secret, cursor)
+        addr = self._addr(cfg)
+        w = self.watch(cfg)
+        cur = dict(cursor or {})
+        start = max(int(cur.get("block", 0) or 0), self.nr_first_block)
+        tokens_seen: dict[str, dict[str, Any]] = dict(cur.get("tokens") or {})
+        cats = ["external", "internal", "20"] if w.tokens else ["external", "internal"]
+        res = K.FetchResult(complete=True)
+        records: dict[str, list[dict]] = {a: [] for a in ACTIONS}
+        with self.http(cfg, secret) as http:
+            tip = self._nr_tip(http)
+            safe = tip - self.confirmations
+            through = start - 1
+            stopped = None
+            pages = 0
+            try:
+                a = start
+                while a <= safe:
+                    b = min(a + self.nr_window - 1, safe)
+                    self.report("Abruf", max(a - start, 0), max(safe - start + 1, 1),
+                                f"Blöcke ab {a:,}".replace(",", "."))
+                    part: dict[str, list[dict]] = {x: [] for x in ACTIONS}
+                    for side in ("fromAddress", "toAddress"):
+                        key = None
+                        while True:
+                            q: dict[str, Any] = {"category": cats, side: addr, "fromBlock": hex(a), "toBlock": hex(b),
+                                                 "order": "asc", "maxCount": hex(NR_PAGE)}
+                            if key:
+                                q["pageKey"] = key
+                            body = self._rpc(http, "nr_getAssetTransfers", [q], "Transfers")
+                            pages += 1
+                            body = body if isinstance(body, dict) else {}
+                            for t in body.get("transfers") or []:
+                                row = _nr_row(t, a, b)
+                                if row is None:
+                                    continue
+                                action, r = row
+                                if side == "toAddress" and r["from"] == addr:
+                                    continue  # Eigenüberweisung: schon über fromAddress erfasst
+                                part[action].append(r)
+                            key = body.get("pageKey")
+                            if not key:
+                                break
+                    self._nr_fees(http, addr, part)
+                    for k2 in ACTIONS:
+                        records[k2] += part[k2]
+                    through = b
+                    a = b + 1
+            except Stop as e:
+                stopped = str(e)
+            if stopped and through < start:
+                raise K.ConnectorError("unavailable", f"{stopped} ohne Fortschritt – der nächste Lauf versucht es "
+                                                      "erneut.", retry_after_s=600)
+            events, skipped, _delta = self._events(addr, records, through, tokens_seen)
+            res.events = events
+            res.skipped = dict(skipped)
+            complete = through >= safe and stopped is None
+            res.complete = complete
+            if through >= start:
+                res.cursor = {"v": 1, "block": through + 1, "tokens": _trim_tokens(tokens_seen)}
+                res.resume = not complete
+            elif complete:
+                res.cursor = {"v": 1, "block": start, "tokens": _trim_tokens(tokens_seen)}
+            if stopped:
+                res.warnings.append(f"{stopped} – Fortsetzung ab Block {through + 1:,}".replace(",", "."))
+            try:
+                bal = units(int(str(self._rpc(http, "eth_getBalance", [addr, "latest"], "Bestand")), 16), 18)
+                res.balances = [K.Balance("BNB", bal, "BNB Chain")]
+            except (Stop, K.ConnectorError, ValueError):
+                res.balances = None
+            res.coverage = {"mode": "historisch" if start <= self.nr_first_block
+                            else f"ab Block {start:,}".replace(",", "."),
+                            "from_block": start, "to_block": through, "tip": tip, "confirmations": self.confirmations,
+                            "pages": pages, "operations": len(events), "provider": http.ep.label,
+                            "records": {k3: len(v) for k3, v in records.items()}, **http.stats()}
+        return res
+
+    def _nr_fees(self, http: ChainHttp, addr: str, part: dict[str, list[dict]]) -> None:
+        """Eigene Transaktionen ohne „external“-Eintrag (z. B. Token-Transfer, Swap): Gebühr und Status über die
+        Standard-RPC-Methoden ``eth_getTransactionByHash``/``eth_getTransactionReceipt`` ergänzen – nie schätzen."""
+        have = {r["hash"] for r in part["txlist"]}
+        need: dict[str, dict] = {}
+        for r in (*part["txlistinternal"], *part["tokentx"]):
+            if r["hash"] not in have and r["hash"] not in need:
+                need[r["hash"]] = r
+        for h, ref in need.items():
+            tx = self._rpc(http, "eth_getTransactionByHash", [h], "Transaktion")
+            if not isinstance(tx, dict) or str(tx.get("from") or "").lower() != addr:
+                continue  # fremd ausgelöst: keine eigene Gebühr
+            rc = self._rpc(http, "eth_getTransactionReceipt", [h], "Beleg")
+            if not isinstance(rc, dict):
+                continue
+            try:
+                price = int(str(rc.get("effectiveGasPrice") or tx.get("gasPrice") or "0x0"), 16)
+                part["txlist"].append({
+                    "hash": h, "blockNumber": ref["blockNumber"], "timeStamp": ref["timeStamp"], "from": addr,
+                    "to": str(tx.get("to") or "").lower(), "value": str(int(str(tx.get("value") or "0x0"), 16)),
+                    "gasUsed": str(int(str(rc.get("gasUsed") or "0x0"), 16)), "gasPrice": str(price),
+                    "isError": "0" if str(rc.get("status")) == "0x1" else "1",
+                    "txreceipt_status": "1" if str(rc.get("status")) == "0x1" else "0", "contractAddress": "",
+                    "input": str(tx.get("input") or "")[:10]})
+            except ValueError:
+                continue
 
 
 @K.register
@@ -635,6 +847,7 @@ class PulseChainConnector(EvmConnector):
     confirmations = 32  # Blöcke ≈ 10 s; Puffer bis zur Finalität des Indexers
     endpoints = ("blockscout_pulsechain",)
     first_block = PULSE_FIRST_BLOCK
+    block_window = 1_000_000  # Kaltstart je Adresse bis ~20 s; kleine Bereiche bleiben unter dem Timeout
     explorer_tx = "https://scan.pulsechain.com/tx/{}"
     explorer_addr = "https://scan.pulsechain.com/address/{}"
     explorer_token = "https://scan.pulsechain.com/token/{}"  # noqa: S105 - Link-Muster

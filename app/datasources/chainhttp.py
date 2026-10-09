@@ -60,12 +60,16 @@ class Endpoint:
     label: str
     base: str  # https://host/pfad – Platzhalter {chain} (Routescan) bzw. {network} (Subscan)
     rps: float  # höchstens so viele Anfragen je Sekunde (konservativ unter dem dokumentierten Limit)
-    auth: str = "none"  # none | query:<name> | header:<name> | bearer (Authorization: Bearer <Schlüssel>)
+    auth: str = "none"  # none | query:<name> | header:<name> | bearer (Authorization: Bearer <Schlüssel>) | path
     key_provider: str | None = None  # Schlüssel in „Anbieter-Schlüssel“ (provider_secret)
     key_required: bool = False
     rps_with_key: float | None = None
     docs: str = ""
     terms: str = ""  # Kosten/Limits laut Anbieter (Stand der Recherche)
+    read_timeout_s: float | None = None  # langsame Indexer (Kaltstart einer Adresse): längere Lesezeit
+    # Etherscan-kompatible Blockbereich-Parameter zusätzlich als ``start_block``/``end_block`` senden (Blockscout-
+    # Instanzen, die ``startblock``/``endblock`` live ignorieren – z. B. PulseChain-Explorer, Stand 10/2026)
+    block_param_alias: bool = False
 
     @property
     def host(self) -> str:
@@ -106,17 +110,24 @@ ENDPOINTS: dict[str, Endpoint] = {e.id: e for e in (
     Endpoint("helius", "Helius RPC", "https://mainnet.helius-rpc.com", rps=8.0, auth="query:api-key",
              key_provider="helius", key_required=True, docs="https://www.helius.dev/docs",
              terms="kostenloser Plan mit API-Key: 10 RPC-Anfragen/s"),
+    Endpoint("nodereal_bsc", "NodeReal BSCTrace (MegaNode, kostenloser Key)", "https://bsc-mainnet.nodereal.io/v1",
+             rps=4.0, auth="path", key_provider="nodereal", key_required=True,
+             docs="https://docs.nodereal.io/reference/nr_getassettransfers",
+             terms="kostenloser MegaNode-Key (nodereal.io), von BNB Chain als Ersatz für die BscScan-API empfohlen; "
+                   "Abfragen in Blockfenstern ≤ 100.000; Kontingent in Compute Units laut NodeReal-Tarif"),
     Endpoint("kaspa", "Kaspa REST-API (api.kaspa.org)", "https://api.kaspa.org", rps=2.0,
              docs="https://api.kaspa.org/docs", terms="ohne Key; Limit nicht beziffert – höchstens 2×/s"),
-    Endpoint("kasplex", "Kasplex KRC-20-Indexer", "https://api.kasplex.org/v1", rps=2.0,
+    Endpoint("kasplex", "Kasplex KRC-20-Indexer", "https://api.kasplex.org/v1", rps=5.0,
              docs="https://docs-kasplex.gitbook.io/krc20",
-             terms="ohne Key; Verbindungslimit des Betreibers nicht beziffert – höchstens 2×/s"),
+             terms="ohne Key; Limit laut Antwort-Header x-ratelimit-limit 1000 je Zeitfenster (10/2026, nicht "
+                   "dokumentiert) – Portfolia höchstens 5×/s"),
     Endpoint("blockscout_polygon", "Blockscout Polygon PoS (Etherscan-kompatibel, ohne Key)",
              "https://polygon.blockscout.com/api", rps=2.0, docs="https://docs.blockscout.com/devs/apis/rpc",
              terms="ohne Key; höchstens 10.000 Einträge je Abfrage; interne Transaktionen älterer Blöcke teils noch "
                    "nicht verarbeitet (wird als Lücke angezeigt) – Portfolia fragt höchstens 2×/s"),
     Endpoint("blockscout_pulsechain", "PulseChain-Explorer (Blockscout, Etherscan-kompatibel, ohne Key)",
              "https://api.scan.pulsechain.com/api", rps=2.0, docs="https://docs.blockscout.com/devs/apis/rpc",
+             read_timeout_s=75.0, block_param_alias=True,
              terms="ohne Key; offizieller Explorer scan.pulsechain.com (Blockscout) – Limit nicht beziffert, "
                    "Portfolia fragt höchstens 2×/s"),
     Endpoint("pulsechain_rpc", "PulseChain RPC (rpc.pulsechain.com)", "https://rpc.pulsechain.com", rps=1.0,
@@ -236,7 +247,8 @@ class ChainHttp:
         self.retries = 0
         self.waited = 0.0  # Wartezeit durch Drosselung/Backoff (Budget)
         self.paced = 0.0  # Wartezeit durch den Mindestabstand (nur Anzeige)
-        self._client = httpx.Client(timeout=TIMEOUT, follow_redirects=False, transport=transport,
+        timeout = httpx.Timeout(ep.read_timeout_s, connect=10.0) if ep.read_timeout_s else TIMEOUT
+        self._client = httpx.Client(timeout=timeout, follow_redirects=False, transport=transport,
                                     headers={"Accept": "application/json",
                                              "User-Agent": f"Portfolia/{__version__} (read-only)"})
 
@@ -296,6 +308,10 @@ class ChainHttp:
         elif self._key and self.ep.auth == "bearer":
             headers["Authorization"] = f"Bearer {self._key}"
         url = self.base + (path if path not in ("", "/") else "")
+        if self.ep.auth == "path":  # Schlüssel als Pfadsegment (NodeReal: …/v1/<Key>)
+            if not self._key or not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", self._key):
+                raise K.ConnectorError("auth", f"{self.ep.label}: Schlüssel fehlt oder hat ein ungültiges Format.")
+            url = f"{self.base}/{self._key}" + (path if path not in ("", "/") else "")
         if body is not None:
             headers["Content-Type"] = "application/json"
             req = self._client.build_request(method, url, params=q, headers=headers,

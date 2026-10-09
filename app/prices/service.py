@@ -28,6 +28,7 @@ from app.prices.coingecko import BudgetExceeded, CoinGeckoProvider
 from app.prices.demo import DemoProvider
 from app.prices.ecb import EcbProvider
 from app.prices.fallback import KIND_LABEL, FallbackPrices
+from app.prices.kaspacom import KaspaComProvider, series_id
 from app.prices.market_hours import exchange_group, in_window, trading_days_between
 from app.prices.models import Bar, IntradayBar, PriceInfo, Quote
 from app.prices.store import PriceStore
@@ -77,12 +78,14 @@ def _age_text(d: timedelta) -> str:
 class PriceService:
     def __init__(self, db: Database, settings: Settings, store: PriceStore, *, yahoo: YahooProvider | None,
                  coingecko: CoinGeckoProvider | None, ecb: EcbProvider | None, demo: DemoProvider | None = None,
-                 guard: SourceGuard | None = None, cg_quota: Quota | None = None) -> None:
+                 guard: SourceGuard | None = None, cg_quota: Quota | None = None,
+                 kaspacom: KaspaComProvider | None = None) -> None:
         self.db = db
         self.settings = settings
         self.store = store
         self.yahoo = yahoo
         self.cg = coingecko
+        self.kc = kaspacom
         self.ecb = ecb
         self.demo = demo
         self.guard = guard or SourceGuard(db)
@@ -101,6 +104,8 @@ class PriceService:
             base = f"yahoo:{asset.quote_id}"
         elif asset.quote_source == "coingecko":
             base = f"cg:{asset.quote_id}"
+        elif asset.quote_source == "kaspacom":
+            base = series_id(asset.quote_id)
         else:
             return None
         return f"demo:{base}" if self.demo else base
@@ -412,6 +417,56 @@ class PriceService:
             self._bump()
         elif errors:
             self.guard.failure("price:coingecko", "price", "; ".join(errors[:3]), "CoinGecko")
+        return res
+
+    def kas_rates(self) -> tuple[float, float]:
+        """KAS in EUR und USD (CoinGecko, ein Aufruf) – Umrechnung und Einheitenprüfung der KRC-20-Kurse."""
+        if self.cg is None:
+            raise RuntimeError("CoinGecko nicht konfiguriert")
+        data = self.cg._get("/simple/price", {"ids": "kaspa", "vs_currencies": "eur,usd", "precision": "full"})
+        rec = (data or {}).get("kaspa") or {}
+        eur, usd = float(rec.get("eur") or 0), float(rec.get("usd") or 0)
+        if eur <= 0 or usd <= 0:
+            raise RuntimeError("kein KAS-Kurs")
+        return eur, usd
+
+    def update_krc20(self, pf: Portfolio, ledger: LedgerResult, force: bool = False) -> UpdateResult:
+        """KRC-20-Tokens mit Kursquelle KaspaCom (Tokens ohne CoinGecko-Eintrag)."""
+        res = UpdateResult("kaspacom")
+        assets = [a for a in self.held_assets(pf, ledger) if a.is_crypto and a.quote_source == "kaspacom"
+                  and a.quote_id]
+        if not assets:
+            res.skipped = "keine KRC-20-Positionen mit Kursquelle KaspaCom"
+            return res
+        if self.demo or self.kc is None:
+            res.skipped = "KaspaCom nicht konfiguriert"
+            return res
+        interval = max(30, snap(self.settings.get("prices.crypto_interval_min", 10), CRYPTO_PRESETS, 10))
+        last = parse_iso(self.db.get_state("last_krc20_update"))
+        if not force and last and datetime.now(UTC) - last < timedelta(minutes=interval - 0.75):
+            res.skipped = "Intervall"
+            return res
+        if not force and not self.guard.allowed("price:kaspacom"):
+            res.skipped = "Quelle gedrosselt (vorherige Fehler)"
+            return res
+        try:
+            kas_eur, kas_usd = self.kas_rates()
+            quotes, errors = self.kc.quotes([a.quote_id for a in assets if a.quote_id], kas_eur, kas_usd)
+        except BudgetExceeded as e:
+            res.skipped = str(e)
+            return res
+        except Exception as e:
+            self.guard.failure("price:kaspacom", "price", f"{type(e).__name__}: {e}", "KaspaCom (KRC-20)")
+            res.errors = [str(e)]
+            return res
+        res.errors = errors
+        if quotes:
+            res.updated = self.store.upsert_quotes(quotes.values())
+            self.guard.success("price:kaspacom", "price", "KaspaCom (KRC-20)", items=len(quotes))
+            self.db.set_state("last_krc20_update", iso(datetime.now(UTC)))
+            self._bump()
+        elif errors:
+            self.guard.failure("price:kaspacom", "price", "; ".join(errors[:3]), "KaspaCom (KRC-20)")
         return res
 
     def watch_ids(self, source: str) -> list[str]:

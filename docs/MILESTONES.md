@@ -1245,6 +1245,28 @@ echten Android-Gerät geprüft**, die Offline-Hinweisseite ließ sich headless n
   Signaturprüfung). **Nicht live geprüft:** Binance (kein Konto), peaq (Subscan-Key nötig); PulseChain-Fork-Block,
   Chain-ID und Antwortformate wurden mit öffentlichen Abfragen abgeglichen.
 
+## M26.1 – Rückmeldungen aus dem Betrieb (0.23.1)
+
+* **BNB Chain:** Routescan führt Chain 56 nicht („chain not supported“, live geprüft) – Option entfernt. Neuer
+  Standard **NodeReal BSCTrace** (kostenloser Key, von BNB Chain als BscScan-Ersatz empfohlen):
+  `nr_getAssetTransfers` in Blockfenstern ≤ 100.000, je Richtung, `pageKey`; Gebühren eigener Transaktionen ohne
+  „external“-Eintrag über `eth_getTransactionReceipt`. **Nicht live geprüft** (kein Key), strenger Fake nach Referenz.
+* **PulseChain:** Ursache der Zeitüberschreitung: Der Explorer ignoriert `startblock`/`endblock` (nur
+  `start_block`/`end_block` wirken, live geprüft) und durchsuchte die ganze Historie samt Ethereum-Vorgeschichte
+  (37 s). Jetzt beide Schreibweisen, Fenster zu 1 Mio. Blöcken, Lesezeit 75 s, harter Abbruch bei Zeilen außerhalb
+  des Bereichs (nie Vor-Fork-Vorgänge buchen). Live: Erstabruf einer Beispieladresse 58 s, vollständig.
+* **peaq 0x mit PubFi:** statt irreführender Schlüssel-Meldung löst Subscan (`v2/scan/search`, frei über PubFi)
+  das zugehörige Substrate-Konto auf; abgerufen werden dessen native PEAQ-Bewegungen. EVM-Gas/ERC-20 nur mit
+  direktem Subscan-Key (die EVM-Transaktionsliste hat über PubFi kein dokumentiertes Antwortschema).
+* **KRC-20-Kurse:** neue Kursquelle KaspaCom (`/api/token-info/<TICK>`, ohne Key) für Tokens ohne CoinGecko-Eintrag;
+  `price` ist live KAS (Doku: USD) – Einheit wird je Antwort über `marketCap` gegen KAS/USD geprüft. Live: BRUCE,
+  KASPER, POPKAT bewertet; KEI unbekannt (HTTP 500).
+* **Kaspa/KRC-20:** Kasplex-Abruf 5/s statt 2/s (Antwort-Header: 1.000 je Fenster) mit vollem Budget je Etappe;
+  bei DNS-Fehlern Hinweis auf die Namensauflösung im Container.
+* **RPEPE:** ohne Daten nicht eindeutig zuordenbar (mehrere Token dieses Namens; „Token-ID 44382266“ unbekannt) –
+  Rückfrage; vorhandene Werkzeuge: Umstellung mit Verhältnis, Kursquelle ablehnen, Kurssprung-Befund.
+* Tests: `test_wallets_bsc_nodereal.py`, `test_krc20_prices.py`, erweiterte PulseChain/peaq-Tests.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

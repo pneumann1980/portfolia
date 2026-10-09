@@ -822,9 +822,13 @@ def tx_row(t: Tx) -> dict[str, str]:
 
 
 def asset_row(a: AssetInfo) -> dict[str, str]:
+    # Kursquellen außerhalb des Datenvertrags (z. B. KaspaCom für KRC-20) stehen im App-Zustand (asset_sources) –
+    # im Import-ZIP als „none“, damit der Export ohne Portfolia-Ordner gültig bleibt
+    contract_qs = (a.quote_source or "none") in C.QUOTE_SOURCES
     row = {"asset_id": a.asset_id, "name": a.name, "asset_class": a.asset_class, "wkn": a.wkn or "",
-           "isin": a.isin or "", "koinly_id": a.koinly_id or "", "quote_source": a.quote_source or "none",
-           "quote_id": a.quote_id or "", "status": a.status or "", "note": a.note or "",
+           "isin": a.isin or "", "koinly_id": a.koinly_id or "",
+           "quote_source": (a.quote_source or "none") if contract_qs else "none",
+           "quote_id": (a.quote_id or "") if contract_qs else "", "status": a.status or "", "note": a.note or "",
            "aliases": ";".join(a.aliases), "category": a.category or ""}
     for k, v in (a.extra or {}).items():
         if isinstance(v, str) and k not in row:

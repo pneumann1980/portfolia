@@ -194,8 +194,9 @@ def test_unconfirmed_blocks_are_not_booked_yet(client, evm):
 
 def test_same_address_on_three_chains_stays_separate(client, evm):
     set_provider_key(client, "etherscan", ETHERSCAN_KEY)
+    evm.paid = True  # BNB Chain bei Etherscan nur im bezahlten Plan (Routescan führt Chain 56 nicht)
     eth = create_wallet(client, "ethereum", A, name="MetaMask ETH", group="MetaMask")
-    bsc = create_wallet(client, "bsc", A, name="MetaMask BNB", group="MetaMask", chain_provider="routescan")
+    bsc = create_wallet(client, "bsc", A, name="MetaMask BNB", group="MetaMask", chain_provider="etherscan")
     avax = create_wallet(client, "avalanche", A, name="MetaMask AVAX", group="MetaMask")
     for sid in (eth, bsc, avax):
         assert sync(client, sid).get("status") == "synced"
@@ -207,8 +208,8 @@ def test_same_address_on_three_chains_stays_separate(client, evm):
     assert f"USDC@BSC:{USDC}" in syms[bsc] and f"USDC@ETH:{USDC}" not in syms[bsc]
     assert "BNB" in syms[bsc] and "AVAX" in syms[avax] and "ETH" not in syms[bsc] | syms[avax]
     assert balances(client, bsc).keys() >= {"BNB"} and "ETH" not in balances(client, bsc)
-    hosts = {r.url.host for r in evm.calls if "/43114/" in r.url.path or "/56/" in r.url.path}
-    assert hosts == {"api.routescan.io"}
+    assert {r.url.host for r in evm.calls if "/43114/" in r.url.path} == {"api.routescan.io"}
+    assert any(r.url.params.get("chainid") == "56" for r in evm.calls if r.url.host == "api.etherscan.io")
     batches = ctx(client).db.q("SELECT DISTINCT source FROM csv_batch WHERE kind='sync'")
     assert {b["source"] for b in batches} == {"sync:ethereum", "sync:bsc", "sync:avalanche"}
 

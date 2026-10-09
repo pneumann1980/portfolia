@@ -50,10 +50,11 @@
           {% elif it.status == 'rejected' %}<span class="badge">abgelehnt</span>
           {% else %}<span class="badge">noch nicht gesucht</span>{% endif %}
         </td>
-        <td data-label="Treffer">{% if r and r.quote_id and it.status in ('active', 'suggested') %}{{ cg_link(r.quote_id) }}
+        <td data-label="Treffer">{% if r and r.quote_id and it.status in ('active', 'suggested') and r.quote_source == 'kaspacom' %}<span class="mono">{{ r.quote_id }}</span> <span class="badge">KRC-20 · KaspaCom</span>
+          {% elif r and r.quote_id and it.status in ('active', 'suggested') %}{{ cg_link(r.quote_id) }}
             {% for c in it.candidates if c.id == r.quote_id %}<div class="hint">{{ c.name }} · {{ c.price|price if c.price else 'kein Kurs' }}{% if c.market_cap %} · Marktkap. {{ c.market_cap|eur_compact }}{% endif %}</div>{% endfor %}
           {% else %}–{% endif %}
-          {% if it.candidates|length > (1 if r and r.quote_id else 0) %}
+          {% if it.candidates|length > (1 if r and r.quote_id else 0) and not (r and r.quote_source == 'kaspacom') %}
           <details style="margin-top:4px"><summary class="hint">{{ it.candidates|length }} Coin{{ 's' if it.candidates|length != 1 }} mit diesem Symbol</summary>
             <ul class="small" style="margin:4px 0 0;padding-left:16px">
             {% for c in it.candidates %}<li>{{ cg_link(c.id) }} – {{ c.name }} · {{ c.price|price if c.price else 'kein Kurs' }}{% if c.market_cap %} · {{ c.market_cap|eur_compact }}{% endif %}

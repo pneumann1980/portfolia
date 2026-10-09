@@ -85,6 +85,7 @@ def refresh_prices(ctx: AppContext, force: bool = False, which: str = "all") -> 
     out: dict[str, Any] = {}
     if which in ("all", "crypto"):
         out["crypto"] = ctx.prices.update_crypto(pf, led, force=force).as_dict()
+        out["krc20"] = ctx.prices.update_krc20(pf, led, force=force).as_dict()
     if which in ("all", "securities"):
         out["securities"] = ctx.prices.update_securities(pf, led, force=force).as_dict()
     return out

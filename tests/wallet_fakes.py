@@ -79,6 +79,8 @@ class FakeEvm(Recorder):
             assert m, req.url.path
             assert "chainid" not in p
             chain = int(m.group(1))
+            if chain == 56:  # wie live (10/2026): Routescan führt BNB Chain nicht
+                return httpx.Response(200, json={"status": "0", "message": "chain not supported", "result": None})
         else:  # pragma: no cover - darf nie passieren
             raise AssertionError(f"unerwarteter Host {req.url.host}")
         inj = self.injected(req)
@@ -534,6 +536,11 @@ class FakeSubscan(Recorder):
 
         if route == "scan/metadata":
             return ok({"blockNum": str(d["tip"] + 5), "finalized_blockNum": str(d["tip"])})
+        if route == "v2/scan/search":  # Konto-Auflösung (auch EVM-Adresse → Substrate-Konto)
+            acct = d.get("search", {}).get(body.get("key"))
+            if acct is None:
+                return httpx.Response(200, json={"code": 10004, "message": "Record Not Found", "data": None})
+            return ok({"account": {"address": acct, "evm_account": body.get("key")}})
         addr = body.get("address")
         lo, _, hi = str(body.get("block_range") or "0-999999999").partition("-")
         row, page = int(body.get("row") or 10), int(body.get("page") or 0)

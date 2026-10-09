@@ -85,8 +85,9 @@ class KaspaConnector(WalletConnector):
         return a
 
     def _krc_http(self, cfg: K.SourceConfig, http: ChainHttp, indexer: str = KRC20_INDEXERS[0]) -> ChainHttp:
+        # eigenes Zeit-/Anfragebudget nach dem KAS-Teil: KRC-20-Historien mit vielen Mints brauchen sonst viele Etappen
         return ChainHttp(ENDPOINTS[indexer], transport=self.transport, sleep=self.sleep, clock=self.clock,
-                         max_requests=max(http.max_requests // 4, 40), deadline_s=self.deadline_s, usage=self.usage)
+                         max_requests=max(http.max_requests, 40), deadline_s=self.deadline_s, usage=self.usage)
 
     # -- KAS ----------------------------------------------------------------------------------------------
     def _balance(self, http: ChainHttp, a: str) -> int:
@@ -221,8 +222,11 @@ class KaspaConnector(WalletConnector):
                 res.coverage["krc20_requests"] = res.coverage.get("krc20_requests", 0) + krc.requests
                 krc.close()
         kind = res.coverage.get("krc20", {}).get("status", "unavailable")
+        dns = any("DNS" in e for e in errors)
         res.gaps.append(f"KRC-20 nicht abrufbar ({K.ERROR_KINDS.get(kind, kind)}: {'; '.join(errors)}) – KAS ist "
-                        "vollständig, KRC-20-Bewegungen fehlen in diesem Lauf; Ergänzung per CSV-Import möglich")
+                        "vollständig, KRC-20-Bewegungen fehlen in diesem Lauf; Ergänzung per CSV-Import möglich"
+                        + ("; tritt das wiederholt auf: Namensauflösung von api.kasplex.org im Container prüfen "
+                           "(DNS des Servers, Werbe-/DNS-Filter wie Pi-hole oder AdGuard)" if dns else ""))
         return False
 
     def _kas_events(self, a: str, txs: list[dict[str, Any]], skipped: Counter[str]) -> list[K.SourceEvent]:

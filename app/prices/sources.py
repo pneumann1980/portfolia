@@ -51,7 +51,7 @@ LEVELS = {"hoch": 3, "mittel": 2, "niedrig": 1}
 AUTO_LEVELS = {"hoch": "nur eindeutige Treffer (empfohlen)", "mittel": "auch wahrscheinliche Treffer",
                "aus": "nie automatisch – nur Vorschläge"}
 STATUS_LABEL = {"active": "zugeordnet", "suggested": "Vorschlag", "none": "kein Treffer", "rejected": "abgelehnt"}
-OWN_SOURCES = ("coingecko", "yahoo")
+OWN_SOURCES = ("coingecko", "yahoo", "kaspacom")
 _RUN_LOCK = threading.Lock()  # Job und Knopf „Jetzt suchen“ nicht gleichzeitig
 CATALOG_FILE = "coingecko-coins.json.gz"
 CATALOG_RETRY = timedelta(minutes=30)  # Katalog-Abruf höchstens so oft anstoßen (nie je Seitenaufruf)
@@ -304,6 +304,7 @@ class Decision:
     confidence: str | None
     reason: str
     candidates: list[Candidate] = field(default_factory=list)
+    source: str = "coingecko"  # Kursquelle der Zuordnung (KRC-20 ohne CoinGecko-Eintrag: „kaspacom“)
 
 
 def _f(v: Any) -> float | None:
@@ -399,7 +400,8 @@ class SourceService:
                 if r["status"] in ("active", "rejected"):
                     continue
                 checked = parse_iso(r["checked_at"])
-                if not force and checked and now - checked < RECHECK_AFTER:
+                untried_krc20 = r["quote_source"] != "kaspacom" and self.krc20_tick(aid) is not None
+                if not force and checked and now - checked < RECHECK_AFTER and not untried_krc20:
                     continue
             out.append(a)
         return out
@@ -435,7 +437,9 @@ class SourceService:
                     accounts.setdefault(aid, set()).add(acc)
         fb = FallbackPrices(pf, None, only={a.asset_id for a in targets})
         exact = {a.asset_id: d for a in targets if (d := self._by_contract(catalog, a.asset_id)) is not None}
-        per_asset = {a.asset_id: catalog.candidates(a.symbol) for a in targets if a.asset_id not in exact}
+        krc20 = self._krc20_decisions([a for a in targets if a.asset_id not in exact])
+        per_asset = {a.asset_id: catalog.candidates(a.symbol) for a in targets
+                     if a.asset_id not in exact and a.asset_id not in krc20}
         ids = sorted({c["id"] for cs in per_asset.values() for c in cs})
         try:
             markets = cg.markets(ids) if ids else {}
@@ -451,6 +455,8 @@ class SourceService:
                     d = prov
                 elif a.asset_id in exact:
                     d = exact[a.asset_id]
+                elif a.asset_id in krc20:
+                    d = krc20[a.asset_id]
                 else:
                     pts = [p.price for p in fb.points(a.asset_id)]
                     ref = statistics.median(pts) if pts else None
@@ -468,17 +474,57 @@ class SourceService:
                 c.execute(
                     """INSERT INTO asset_source(asset_id, quote_source, quote_id, status, origin, confidence, reason,
                            candidates_json, checked_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)
-                       ON CONFLICT(asset_id) DO UPDATE SET quote_id=excluded.quote_id, status=excluded.status,
+                       ON CONFLICT(asset_id) DO UPDATE SET quote_source=excluded.quote_source,
+                           quote_id=excluded.quote_id, status=excluded.status,
                            origin=excluded.origin, confidence=excluded.confidence, reason=excluded.reason,
                            candidates_json=excluded.candidates_json, checked_at=excluded.checked_at,
                            updated_at=excluded.updated_at""",
-                    (a.asset_id, "coingecko", d.coin_id, status, "auto", d.confidence, d.reason,
+                    (a.asset_id, d.source, d.coin_id, status, "auto", d.confidence, d.reason,
                      json.dumps([x.as_dict() for x in d.candidates[:12]], ensure_ascii=False), now, now))
         if applied:
             log.info("Kursquellen automatisch zugeordnet: %s", ", ".join(applied))
             self._changed()
         return {"checked": len(targets), "applied": applied, "suggested": len(suggested), "none": len(none),
                 "catalog": len(catalog)}
+
+    def krc20_tick(self, asset_id: str) -> str | None:
+        """KRC-20-Kürzel eines Assets (Token-Kennung ``TICK@KAS:TICK`` aus der Kaspa-Anbindung, Tabelle
+        ``csv_symbol``) – auf Kaspa eindeutig, deshalb keine Zuordnung über ein Symbol anderer Chains nötig."""
+        from app.prices.kaspacom import valid_tick
+
+        for r in self.db.q("SELECT symbol FROM csv_symbol WHERE asset_id=?", (asset_id,)):
+            tok = split_token(r["symbol"])
+            if tok is not None and tok[1] == "KAS" and (t := valid_tick(tok[2])):
+                return t
+        return None
+
+    def _krc20_decisions(self, assets: list[AssetInfo]) -> dict[str, Decision]:
+        """KRC-20-Tokens ohne CoinGecko-Contract: Kurs über KaspaCom, wenn die Antwort die Einheitenprüfung besteht."""
+        from app.prices.kaspacom import interpret
+
+        ticks = {a.asset_id: t for a in assets if (t := self.krc20_tick(a.asset_id))}
+        kc = getattr(self.ctx.prices, "kc", None)
+        if not ticks or kc is None:
+            return {}
+        try:
+            _eur, kas_usd = self.ctx.prices.kas_rates()
+        except Exception as e:
+            log.info("KRC-20-Kursquellen nicht prüfbar (KAS-Kurs): %s", e)
+            return {}
+        out: dict[str, Decision] = {}
+        for aid, tick in sorted(ticks.items()):
+            try:
+                res = interpret(kc.token_info(tick), kas_usd)
+            except Exception as e:  # einzelnes Token gestört: andere trotzdem zuordnen
+                log.info("KaspaCom %s: %s", tick, e)
+                continue
+            if isinstance(res, str):
+                continue
+            out[aid] = Decision(tick, "hoch", f"KRC-20-Kürzel {tick} (auf Kaspa eindeutig) – Kurs vom KaspaCom-"
+                                              f"Marktplatz, Einheit geprüft ({res.unit})",
+                                [Candidate(tick, f"{tick} (KRC-20, KaspaCom)", ["kaspa"], chain_match=True)],
+                                source="kaspacom")
+        return out
 
     @staticmethod
     def _provider_identity(a: AssetInfo, accounts: set[str]) -> Decision | None:
@@ -548,7 +594,8 @@ class SourceService:
         self.db.x(
             """INSERT INTO asset_source(asset_id, quote_source, quote_id, status, origin, confidence, reason,
                    checked_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(asset_id) DO UPDATE SET quote_id=excluded.quote_id, status='active', origin='user',
+               ON CONFLICT(asset_id) DO UPDATE SET quote_source=excluded.quote_source, quote_id=excluded.quote_id,
+                   status='active', origin='user',
                    reason=excluded.reason, updated_at=excluded.updated_at""",
             (asset_id, "coingecko", coin_id, "active", "user", None, reason[:200], now, now))
         log.info("Kursquelle zugeordnet: %s → CoinGecko %s", asset_id, coin_id)

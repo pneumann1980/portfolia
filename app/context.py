@@ -25,6 +25,7 @@ from app.ledger.models import Portfolio
 from app.prices.coingecko import CoinGeckoProvider
 from app.prices.demo import DemoProvider
 from app.prices.ecb import EcbProvider
+from app.prices.kaspacom import KaspaComProvider
 from app.prices.models import PriceInfo
 from app.prices.service import PriceService
 from app.prices.store import PriceStore
@@ -54,6 +55,7 @@ class AppContext:
             ecb=None if config.demo_mode else EcbProvider(self.http, config.fx_frankfurter_url,
                                                           config.fx_frankfurter_fallback_url, config.ecb_hist_url),
             demo=self.demo, guard=self.guard, cg_quota=self.cg_quota,
+            kaspacom=None if config.demo_mode else KaspaComProvider(self.http),
         )
         from app.prices.sources import catalog_path
 

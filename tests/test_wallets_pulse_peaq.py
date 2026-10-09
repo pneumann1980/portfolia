@@ -66,6 +66,7 @@ class FakePulse(FakeEvm):
         self.fork_balance = fork_balance
         self.rpc: list[dict] = []
         self.subscan_key = SUBSCAN_KEY
+        self.windows: list[tuple] = []
 
     def handler(self, req: httpx.Request) -> httpx.Response:
         host = req.url.host
@@ -90,6 +91,10 @@ class FakePulse(FakeEvm):
         else:  # pragma: no cover
             raise AssertionError(f"unerwarteter Host {host}")
         params = dict(req.url.params)
+        if chain == 369 and "startblock" in params:  # wie live: nur start_block/end_block wirken
+            self.windows.append((params.get("start_block"), params.get("end_block")))
+            params["startblock"] = params.pop("start_block", "0")
+            params["endblock"] = params.pop("end_block", "999999999")
         if params.get("module") == "block" and params.get("action") == "eth_block_number":
             params = {"module": "proxy", "action": "eth_blockNumber"}
         if params.get("module") == "block" and params.get("action") == "getblocknobytime":
@@ -164,6 +169,29 @@ def test_pulsechain_starts_at_first_block_and_offers_fork_opening(client, pulse)
     sync(client, sid)
     assert len(pulse.rpc) == 1 and len(all_rows(client, sid)) == n
     assert json.loads(source(client, sid)["cursor_json"])["block"] > FORK + 1
+
+
+def test_pulsechain_queries_block_windows_with_live_parameter_names(client, pulse, monkeypatch):
+    monkeypatch.setattr(E.PulseChainConnector, "block_window", 5_000)
+    sid = create_wallet(client, "pulsechain", A, name="Ledger PLS")
+    assert sync(client, sid)["status"] == "synced"
+    assert {pk(2, "n:in"), pk(3, "n:out")} <= set(all_rows(client, sid))
+    starts = sorted({int(a) for a, _ in pulse.windows if a is not None})
+    assert starts[0] == FORK + 1 and len(starts) >= 4  # 20.000 Blöcke in Fenstern zu 5.000
+    assert all(int(b) - int(a) < 5_000 for a, b in pulse.windows if a is not None)
+
+
+def test_pulsechain_provider_ignoring_block_range_books_nothing(client, pulse, monkeypatch):
+    """Ignoriert ein Explorer den Blockbereich, kämen Ethereum-Vorgänge vor dem Fork – Abbruch statt Buchung."""
+    from app.datasources import chainhttp as CHm
+
+    ep = CHm.ENDPOINTS["blockscout_pulsechain"]
+    monkeypatch.setitem(CHm.ENDPOINTS, "blockscout_pulsechain",
+                        __import__("dataclasses").replace(ep, block_param_alias=False))
+    sid = create_wallet(client, "pulsechain", A, name="Ledger PLS")
+    res = sync(client, sid)
+    assert "außerhalb des abgefragten Blockbereichs" in res.get("error", "")
+    assert not all_rows(client, sid)
 
 
 def test_pulsechain_fork_balance_error_is_only_a_warning(client, pulse):
@@ -262,12 +290,31 @@ def test_peaq_rewards_route_error_is_a_note_not_a_failure(client, subscan):
     assert "Rewards" in run_text(client, sid)
 
 
-def test_peaq_evm_needs_direct_subscan_key(client, pulse):
-    pulse.chains[3338] = pulse_data() | {"tip": FORK + 20_000}
+def test_peaq_evm_address_over_pubfi_resolves_substrate_account(client, subscan):
+    """0x-Adresse mit kostenlosem PubFi-Key: Subscan löst das Substrate-Konto auf, abgerufen wird dieses Konto –
+    nie die Meldung „Subscan-Key nötig“."""
+    subscan.nets["peaq"]["search"] = {A: ss58_encode(b"\x55" * 32, 42)}  # generisches Format → peaq-Präfix
+    set_provider_key(client, "pubfi", KEY)
     sid = create_wallet(client, "peaq", A, name="peaq EVM")  # Standard-Anbieter: PubFi
     res = sync(client, sid)
-    assert "Subscan" in res["error"] and not pulse.calls
-    datasource_service(ctx(client)).delete(sid)
+    assert res["status"] == "synced", res
+    rows = all_rows(client, sid)
+    assert rows[qk("100-2", "tr:4")].rec.in_qty == D("12.5")
+    assert "ERC-20" in run_text(client, sid)
+    search = [c for c in subscan.calls if c.url.path.endswith("v2/scan/search:free")]
+    assert search and json.loads(search[0].content) == {"key": A}
+    assert all(c.url.host == "api.pubfi.ai" for c in subscan.calls)
+
+
+def test_peaq_evm_address_unknown_to_subscan_is_explained(client, subscan):
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "peaq", A, name="peaq EVM")
+    res = sync(client, sid)
+    assert "kein peaq-Konto" in res["error"] and "Subscan direkt" in res["error"]
+
+
+def test_peaq_evm_with_direct_subscan_key(client, pulse):
+    pulse.chains[3338] = pulse_data() | {"tip": FORK + 20_000}
     sid2 = create_wallet(client, "peaq", A, name="peaq EVM 2", chain_provider="subscan")
     res = sync(client, sid2)
     assert "Schlüssel" in res["error"] and not pulse.calls
