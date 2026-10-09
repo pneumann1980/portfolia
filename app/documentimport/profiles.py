@@ -150,9 +150,12 @@ class DocTx:
     lines: list[tuple[int, int]] = field(default_factory=list)  # (Seite, Zeile) der Fundstellen
     decisions: dict[str, FieldDecision] = field(default_factory=dict)
     sources: list[str] = field(default_factory=list)  # weitere Dokumente desselben Vorgangs (SHA-256)
+    # technische Identität (Anbieter-ID/Hash laut Beleg), über die Portfolia-/Datenquellen-Belege verknüpft wurden;
+    # nur Belege mit genau dieser Identität zählen (sonst bloße Ähnlichkeit → verworfen)
+    identity: set[str] = field(default_factory=set)
 
     def resolve(self) -> None:
-        self.decisions = resolve_fields(self.evidence)
+        self.decisions = resolve_fields(self.evidence, event_key=self.identity)
 
     def value(self, name: str) -> str | None:
         d = self.decisions.get(name)
@@ -476,12 +479,19 @@ def _table_txs(doc: DocumentResult, an: Analysis) -> list[DocTx]:
     out: list[DocTx] = []
     for page in doc.pages:
         hdr: dict[int, str] | None = None
+        hdr_ccy: dict[str, tuple[str, Line]] = {}
         width = 0
         for ln in page.lines:
             cells = _cells(ln.text)
             h = _header(cells)
             if h:
                 hdr, width = h, len(cells)
+                # Währung im Spaltenkopf („Betrag (EUR)“, „Gebühr in €“) gilt für alle Zeilen dieser Spalte
+                hdr_ccy = {}
+                for i, col in h.items():
+                    cur = P.currency_of(cells[i]) if col in ("amount", "price", "fee") else None
+                    if cur:
+                        hdr_ccy[col] = (cur, ln)
                 continue
             if hdr is None or len(cells) < 2:
                 continue
@@ -496,12 +506,14 @@ def _table_txs(doc: DocumentResult, an: Analysis) -> list[DocTx]:
             if len(cells) != width:
                 tx.warnings.append(f"Zeile hat {len(cells)} statt {width} Spalten – Zuordnung prüfen "
                                    "(abgeschnittene oder zusammengefasste Spalte)")
-            _row_fields(tx, cells, hdr if len(cells) == width else {}, ln, sha, conv)
+            _row_fields(tx, cells, hdr if len(cells) == width else {}, ln, sha, conv,
+                        hdr_ccy if len(cells) == width else {})
             out.append(tx)
     return out
 
 
-def _row_fields(tx: DocTx, cells: list[str], hdr: dict[int, str], ln: Line, sha: str, conv: P.Convention) -> None:
+def _row_fields(tx: DocTx, cells: list[str], hdr: dict[int, str], ln: Line, sha: str, conv: P.Convention,
+                hdr_ccy: dict[str, tuple[str, Line]] | None = None) -> None:
     """Eine Tabellenzeile: mit Kopf nach Spalten, sonst nach Mustern (Datum, Vorgangswort, Menge+Symbol, Betrag)."""
     ev = tx.evidence
     text = ln.text
@@ -541,8 +553,12 @@ def _row_fields(tx: DocTx, cells: list[str], hdr: dict[int, str], ln: Line, sha:
                 tx.warnings += n2
                 if amts:
                     ev.append(_ev(fld, abs(amts[0].value), ln, sha))
+                    cur_name = "ccy" if fld == "gross" else f"{fld}_ccy"
                     if amts[0].currency:
-                        ev.append(_ev("ccy" if fld == "gross" else f"{fld}_ccy", amts[0].currency, ln, sha))
+                        ev.append(_ev(cur_name, amts[0].currency, ln, sha))
+                    elif hdr_ccy and col in hdr_ccy:
+                        cur, h_ln = hdr_ccy[col]
+                        ev.append(_ev(cur_name, cur, h_ln, sha, reason=f"Währung laut Spaltenkopf „{h_ln.text[:60]}“"))
         for col in ("txhash", "ext_id", "status"):
             if by_col.get(col):
                 v = by_col[col].strip()

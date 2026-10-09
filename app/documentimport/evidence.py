@@ -5,6 +5,7 @@ transaction field. Conflicts are retained instead of silently choosing a value.
 """
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Literal
@@ -59,12 +60,13 @@ def _equivalent(field_name: str, a: str, b: str) -> bool:
 
 
 def resolve_field(field_name: str, evidence: list[FieldEvidence],
-                  *, event_key: str | None = None) -> FieldDecision:
+                  *, event_key: str | Collection[str] | None = None) -> FieldDecision:
     """Select a cited candidate only when identity and financial provenance permit it.
 
     Public price estimates may be displayed as alternatives but are never used
     as real executed prices, fees or acquisition costs.
     """
+    keys = {event_key} if isinstance(event_key, str) else set(event_key or ())
     usable: list[FieldEvidence] = []
     rejected: list[FieldEvidence] = []
     for candidate in evidence:
@@ -74,7 +76,7 @@ def resolve_field(field_name: str, evidence: list[FieldEvidence],
             rejected.append(candidate)
             continue
         if candidate.origin in ("portfolio", "provider") and (
-            not event_key or not candidate.verified_link or candidate.event_key != event_key
+            not keys or not candidate.verified_link or candidate.event_key not in keys
         ):
             rejected.append(candidate)
             continue
@@ -105,7 +107,7 @@ def resolve_field(field_name: str, evidence: list[FieldEvidence],
 
 
 def resolve_fields(evidence: list[FieldEvidence], *,
-                   event_key: str | None = None) -> dict[str, FieldDecision]:
+                   event_key: str | Collection[str] | None = None) -> dict[str, FieldDecision]:
     return {name: resolve_field(name, evidence, event_key=event_key)
             for name in sorted({item.field for item in evidence})}
 

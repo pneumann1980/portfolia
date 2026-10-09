@@ -212,3 +212,21 @@ der Sammlung (`params_json.bulk`), erneutes Absenden → keine zweite Ausführun
 **Grenzen.** Gleiche Mengen ohne Kennung und Fälle mit konkurrierenden Deutungen bleiben Einzelentscheidungen.
 Feldweises Übernehmen von Werten der neuen Quelle in eine vorhandene Buchung ist weiterhin nicht automatisiert.
 Die Sammelbearbeitung umfasst Befunde des Abgleichs (Dubletten, Transfers), nicht Kurs- oder Bestandsbefunde.
+
+---
+
+## 7 · Belege als Quelle (0.22.0, M25)
+
+Belege (PDF/Screenshot) sind eine weitere Quelle im selben Abgleich – keine eigene Engine:
+
+| Aufgabe | Baustein |
+|---|---|
+| Staging | `documentimport/bridge.to_recs` → `Rec` (`DIRECT`/`REVIEW`), `CsvImportService.ingest()` (Quelle `doc:<anbieter|typ>`) |
+| Identität | Ereignis-ID `doc:<anbieter>:<id>` bzw. `doc:h:<hash>`, Aliase = Anbieter-ID des Originalvorgangs → `identity_keys`/`source_ref_keys` erkennen dieselbe Buchung |
+| Bewertung | `evaluate`/`assess` unverändert (neu, Dublette, Ergänzung, Widerspruch, komplex) |
+| Entscheidungen | Prüf-Stapel (`batch.execute/undo`), Sammelaktionen; geschätzte/öffentliche/OCR-unsichere Werte nie „sicher“ |
+| Ergänzen | `diagnosis/actions` Operation `amend` (Overlay bzw. Journalzeile, Prüfsumme, Undo) |
+| Idempotenz | gleicher SHA-256 → bekannt; erneutes Auswerten ersetzt nur unbearbeitete offene Vorschläge desselben Vorgangs |
+
+Feldpriorität innerhalb eines Belegvorgangs: Korrektur > Datenquelle > Beleg > anderer Beleg > Portfolia-Buchung
+(nur gleiche Identität) > öffentlich; geschätzte Werte zuletzt und nie als Buchungswert.

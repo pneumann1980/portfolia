@@ -4,7 +4,8 @@ Portfolia selbst steht unter der [MIT-Lizenz](LICENSE). Das Docker-Image enthäl
 Komponenten Dritter unter deren eigenen Lizenzen. Alle sind mit der MIT-Lizenz vereinbar (keine
 Copyleft-Pflichten für den Portfolia-Code); die Lizenztexte liegen im Image bei den jeweiligen Komponenten.
 
-Stand: 29.09.2026 (Portfolia 0.11.0).
+Stand: 09.10.2026 (Portfolia 0.22.0; Python-Paketliste zuletzt vollständig erzeugt für 0.11.0, seither einzeln
+ergänzt).
 
 ## Weboberfläche (`app/static/vendor/`, unverändert eingebunden)
 
@@ -38,7 +39,9 @@ Erzeugt mit `python scripts/third_party.py` aus `requirements.txt` (Versionen de
 Stand oben; der Image-Build installiert die gepinnten direkten Abhängigkeiten, transitive können abweichen).
 Die Lizenztexte liegen im Image unter `/usr/local/lib/python3.12/site-packages/<paket>.dist-info/licenses/`.
 Einige Wheels enthalten native Bibliotheken: numpy (u. a. OpenBLAS), Pillow (u. a. libjpeg-turbo, zlib),
-lxml (libxml2, libxslt), cryptography (OpenSSL, Apache-2.0) – deren Lizenzen sind in den Lizenzdateien dieser
+lxml (libxml2, libxslt), cryptography (OpenSSL, Apache-2.0), pypdfium2 (PDFium von Google/Foxit, BSD-3-Clause,
+mit Drittkomponenten wie FreeType, libjpeg-turbo, OpenJPEG, lcms2, zlib – aufgeführt in
+`pypdfium2-*.dist-info/LicenseRef-PdfiumThirdParty.txt`) – deren Lizenzen sind in den Lizenzdateien dieser
 Pakete aufgeführt; curl_cffi
 enthält curl-impersonate (libcurl mit BoringSSL), dessen Lizenzhinweise die Projektseite von curl_cffi nennt.
 
@@ -77,6 +80,7 @@ enthält curl-impersonate (libcurl mit BoringSSL), dessen Lizenzhinweise die Pro
 | pandas | 3.0.6 | BSD-3-Clause |
 | peewee | 4.5.1 | MIT |
 | pillow | 12.3.0 | MIT-CMU |
+| pypdfium2 | 4.30.0 | (Apache-2.0 OR BSD-3-Clause) AND LicenseRef-PdfiumThirdParty |
 | platformdirs | 4.12.0 | MIT |
 | protobuf | 7.36.2 | BSD-3-Clause |
 | pycparser | 3.0 | BSD-3-Clause |
@@ -101,6 +105,19 @@ enthält curl-impersonate (libcurl mit BoringSSL), dessen Lizenzhinweise die Pro
 | uvicorn | 0.54.0 | BSD-3-Clause |
 | websockets | 17.1 | BSD-3-Clause |
 | yfinance | 1.7.0 | Apache-2.0 |
+
+## Texterkennung (Belegimport, M25)
+
+| Komponente | Herkunft | Lizenz |
+|---|---|---|
+| [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) 5.3 (`tesseract-ocr`, `libtesseract5`) | Debian bookworm | Apache-2.0 |
+| Sprachdaten Deutsch/Englisch (`tesseract-ocr-deu`, `tesseract-ocr-eng`, tessdata_fast) | Debian bookworm | Apache-2.0 |
+| Leptonica (`liblept5`) | Debian bookworm | BSD-2-Clause (Leptonica-Lizenz) |
+| ICU (`libicu72`), weitere Abhängigkeiten (u. a. HarfBuzz, Pango, Cairo, libarchive) | Debian bookworm | jeweils eigene Lizenzen (`/usr/share/doc/*/copyright` im Image) |
+
+Tesseract wird als eigenständiges Programm aufgerufen (kein Linken mit dem Portfolia-Code). Die Daten zur
+Ausrichtungserkennung (`osd.traineddata`) werden im Image entfernt, da Portfolia sie nicht nutzt. Bewusst **nicht**
+verwendet: PyMuPDF/MuPDF (AGPL-3.0, mit der MIT-Lizenz des Images nicht ohne Weiteres vereinbar).
 
 ## Basis-Image
 

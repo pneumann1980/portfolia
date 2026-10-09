@@ -216,6 +216,12 @@ class DocumentService:
 
     def start(self, sid: str) -> dict[str, Any]:
         if not _LOCK.acquire(blocking=False):
+            # nicht still liegen lassen: Stapel abbrechen, Zwischendateien entfernen (Belege erneut hochladen)
+            docs = self.db.q("SELECT * FROM document WHERE stack_id=? AND status='queued'", (sid,))
+            self.db.x("UPDATE document_stack SET status='cancelled', finished_at=? WHERE id=?", (_now(), sid))
+            self.db.x("UPDATE document SET status='failed', error='parallel zu einem laufenden Import', "
+                      "updated_at=? WHERE stack_id=? AND status='queued'", (_now(), sid))
+            self._cleanup(docs)
             return {"error": "Ein Dokumentimport läuft bereits – bitte warten oder abbrechen."}
         ev = threading.Event()
         _CANCEL[sid] = ev
@@ -399,6 +405,7 @@ class DocumentService:
             docs_of.setdefault(src, set()).update({sha, *e.tx.sources})
         out: list[int] = []
         csv = csv_service(self.ctx)
+        self._replace_open([r.event_key for rs in groups.values() for r in rs if r.event_key], csv)
         for src, recs in groups.items():
             key = src.split(":", 1)[1]
             label = f"Belege · {PROVIDER_LABEL.get(key) or DOC_LABEL.get(key) or key} · Stapel {sid}"
@@ -410,6 +417,33 @@ class DocumentService:
                 self.db.x("UPDATE document SET status='staged', batch_id=?, updated_at=? WHERE sha256=?",
                           (bid, _now(), sha))
         return out
+
+    def _replace_open(self, keys: list[str], csv: Any) -> None:
+        """Idempotenz: unbearbeitete offene Vorschläge desselben Vorgangs aus früheren Belegstapeln entfernen (keine
+        Entscheidung, nichts übernommen). Entschiedene Zeilen bleiben unangetastet – der neue Vorschlag wird vom
+        Abgleich dann als bekannt bzw. Dublette erkannt."""
+        uniq = sorted(set(keys))
+        if not uniq:
+            return
+        touched: set[int] = set()
+        with self.db.transaction() as c:
+            for i in range(0, len(uniq), 500):
+                part = uniq[i:i + 500]
+                marks = ",".join("?" * len(part))
+                rows = c.execute(
+                    f"SELECT r.id, r.batch_id FROM csv_row r JOIN csv_batch b ON b.id=r.batch_id WHERE "
+                    f"b.source LIKE 'doc:%' AND b.status IN ('preview', 'partial') AND r.event_key IN ({marks}) "
+                    "AND r.status IN ('new', 'invalid', 'unclear', 'duplicate', 'before') AND r.decision IS NULL "
+                    "AND r.tx_id IS NULL", part).fetchall()
+                for r in rows:
+                    c.execute("DELETE FROM csv_row WHERE id=?", (r["id"],))
+                    touched.add(int(r["batch_id"]))
+        for bid in sorted(touched):
+            if not self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=?", (bid,), default=0):
+                self.db.x("UPDATE document SET batch_id=NULL WHERE batch_id=?", (bid,))
+                csv.discard(bid, rewind=False)
+            else:
+                csv.evaluate(bid)
 
     def _account(self, e: E.Enriched) -> str:
         """Konto: vorhandene Buchung → deren Konto; Datenquelle desselben Anbieters (genau eine) → deren Konto;

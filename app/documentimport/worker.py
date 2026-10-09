@@ -48,6 +48,8 @@ def extract_isolated(data: bytes, *, language: str = "deu+eng", ocr: bool = True
     """Extraktion im Kindprozess. Fehler (Limit, Zeitüberschreitung, Absturz) → :class:`DocumentError`;
     ``cancel`` (``threading.Event``) beendet den Kindprozess sofort."""
     import time
+    if cancel is not None and cancel.is_set():
+        raise Cancelled("Abgebrochen.")
     with tempfile.TemporaryDirectory(prefix="portfolia-doc-") as d:
         path = Path(d) / "in.bin"
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

@@ -95,6 +95,8 @@ def missing(e: Enriched) -> list[str]:
         need = need | {"symbol"}
     if tx.kind == "dividend" and not (tx.value("isin") or tx.value("asset") or e.asset_id):
         need = need | {"isin"}
+    if tx.kind in ("buy", "sell", "dividend") and not (tx.value("ccy") or tx.value("price_ccy")):
+        need = need | {"ccy"}  # Währung nie annehmen (kein stilles „EUR“)
     return sorted(n for n in need if tx.status(n) not in GOOD)
 
 

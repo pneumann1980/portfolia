@@ -1177,6 +1177,38 @@ Anlass (08.10.2026): vier vom Auftraggeber gemeldete, bisher nicht erkannte Prob
    (`display: standalone`), Icons 192/512/maskable, Apple-Touch-Icon, Meta-Tags. Vom Home-Bildschirm gestartet läuft
    Portfolia ohne Browserleisten. **Nicht auf einem echten Gerät geprüft.**
 
+## M25 – Belegimport: PDF & Screenshot mit belegter Ergänzung (0.22.0)
+
+Grundlage: PR #1 (Extraktion, Feldbelege, read-only Vorschau) übernommen und ersetzt. Details:
+[M25_DOCUMENT_IMPORT.md](M25_DOCUMENT_IMPORT.md).
+
+1. **Lizenz/Architektur:** PyMuPDF (AGPL) → pypdfium2 (Apache-2.0/BSD); Tesseract als Programm; Extraktion im
+   isolierten Kindprozess mit Speicher-/CPU-/Zeitlimit und Abbruch. Keine zweite Ledger-/FIFO-/Dubletten-Engine:
+   Belege → `Rec` → `CsvImportService.ingest()`; Ergänzungen → Diagnose-Operation `amend`.
+2. **Extraktion:** PDF-Text mit Zeilen-Boxen, OCR mit Vorverarbeitung (Dark Mode, kleine Schrift, Scans),
+   gezieltes Nachlesen unsicherer Zahlenzeilen, `Decimal`, Dokument-Zahlenkonvention, mehrdeutige Werte ungelöst.
+3. **Profile:** Wertpapierabrechnung, Dividende (Quellensteuer, Devisenkurs), Krypto-Abrechnung (Anbieter-ID),
+   Wallet-Beleg (Hash), Kontoauszug/Tabelle (Kopfzeilen-Währung), generisch; Plausibilitätsprüfungen; mehrere Belege
+   eines Vorgangs → ein Vorgang.
+4. **Herkunft je Feld:** A belegt / B rekonstruiert / C geschätzt / ungelöst; Kette Beleg → Stapel → Portfolia
+   (nur gleiche Identität) → Datenquellen (Originaldaten) → öffentlich (Bitcoin/Kaspa, nur Hash, opt-in). Schätzungen
+   nie als Buchungswert; fehlende Währung nie angenommen.
+5. **Abgleich:** neu / vorhanden / Ergänzung / Widerspruch / komplex / ungeklärt; bevorzugte Lösung + bis zu 3
+   Alternativen; „Bestehende Buchung ergänzen“ mit Vorschau, Prüfsumme, Rückgängig.
+6. **Oberfläche:** Drag-and-drop, Upload- und Phasenfortschritt, Abbruch, Prüfansicht mit Ausschnitt, Korrektur mit
+   Validierung, Sammelaktionen (neu bewerten, Original löschen), Einstellungen; mobil ohne Überlauf.
+7. **Datenschutz/Betrieb:** lokale Originale (0600, abschaltbar, löschbar inkl. Volltext), keine Inhalte im Log,
+   Aufräumen beim Start, idempotente Wiederholung, Fassungen, Upload-Limit 100 MiB je Stapel.
+8. **Gefundene und behobene Fehler der Grundlage:** Portfolia-/Datenquellen-Belege wurden bei der Feldauflösung stets
+   verworfen (fehlende Ereignis-ID) – Rekonstruktion griff nie; Belege anderer Felder erschienen als „Alternativen“;
+   Bridge setzte fehlende Währung still auf EUR; erneutes Auswerten erzeugte doppelte offene Vorschläge.
+9. **Tests/Messung:** 57 neue Testfälle (49 Pipeline, 8 Oberfläche; gesamt 788), alle synthetisch; Benchmark `scripts/bench_documents.py`
+   (20 Belege gegen 12.577 Buchungen: 8,1 s; RSS 183/132 MB); CI installiert Tesseract und lädt im Docker-Smoke-Test
+   einen Beleg hoch; Image ≈ 434 MB entpackt / ≈ 143 MB komprimiert (Grenze 450 MiB).
+
+Offen/Grenzen: Anbieterprofile nicht an Originalbelegen validiert; EVM-Explorer (Schlüssel nötig) und
+Wertpapier-Ausführungsdaten nicht recherchierbar; Belege nicht im Vollexport; optionale KI bewusst nicht umgesetzt.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

@@ -47,8 +47,11 @@ ENV PYTHONUNBUFFERED=1 \
     HOME=/data \
     XDG_CACHE_HOME=/data/cache \
     MALLOC_ARENA_MAX=2
+# Lokale Texterkennung für Screenshots/Scans (M25, Apache-2.0). Ohne Empfehlungen; die Ausrichtungserkennung (osd,
+# ~10 MB) wird nicht genutzt (nur --psm 6/7). Größter Posten ist libicu72 (harte Abhängigkeit von libtesseract5).
 RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng \
- && rm -rf /var/lib/apt/lists/*
+ && rm -f /usr/share/tesseract-ocr/5/tessdata/osd.traineddata \
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/* /var/cache/debconf/*-old
 COPY --from=builder /install /usr/local
 WORKDIR /opt/portfolia
 COPY app ./app

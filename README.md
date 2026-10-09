@@ -41,7 +41,8 @@ für Smartphones (≈390 px) optimiert.
 3. [Datenvertrag (Import-ZIP)](#datenvertrag-import-zip)
 4. [Buchungen in Portfolia erfassen](#buchungen-in-portfolia-erfassen)
 5. [CSV-Import aus Börsen und Wallets](#csv-import-aus-börsen-und-wallets) ·
-   [Importprüfung: Abgleich, Stapelaktionen, Verknüpfen](#importprüfung-abgleich-je-zeile-stapelaktionen-verknüpfen)
+   [Importprüfung: Abgleich, Stapelaktionen, Verknüpfen](#importprüfung-abgleich-je-zeile-stapelaktionen-verknüpfen) ·
+   [Belege: PDF & Screenshot](#belege-pdf--screenshot)
 6. [Datenquellen: Börsen und Wallet-Adressen](#datenquellen-börsen-und-wallet-adressen) ·
    [Wallets (read-only, zehn Chains)](#wallets-read-only-zehn-chains) ·
    [Diagnose: Datenqualität und Bestandsabgleich](#diagnose-datenqualität-und-bestandsabgleich) ·
@@ -662,6 +663,37 @@ Empfänger und keinen Hash), bleibt die Sicherheit entsprechend niedriger. Werte
 vorhandene Buchung übernommen – dafür gibt es den Korrekturvorschlag und „Bearbeiten“.
 
 ---
+
+### Belege: PDF & Screenshot
+
+**Buchungen → PDF & Screenshot** liest Abrechnungen, Kontoauszüge, Dividendengutschriften, Wallet-Belege und
+Screenshots (PDF, PNG, JPEG, WebP; bis 20 Dateien bzw. 100 MB je Stapel, 25 MB je Datei) **lokal** – eingebetteter
+PDF-Text bzw. Texterkennung mit Tesseract (im Image enthalten). Es wird **nichts gebucht**:
+
+1. Dateien hineinziehen oder auswählen → „Hochladen und auswerten“. Der Fortschritt zeigt Hochladen und die Phasen
+   (Text extrahieren, OCR, Transaktionen erkennen, recherchieren, abgleichen); „Abbrechen“ ist jederzeit möglich.
+2. Die Vorgänge landen im bekannten **Prüf-Stapel** (wie beim CSV-Import): übernehmen, mit vorhandener Buchung
+   verknüpfen, auslassen, Sammelaktionen, Rückgängig.
+3. Die **Prüfansicht je Beleg** zeigt jedes Feld mit Status – **A belegt** (steht im Beleg), **B rekonstruiert**
+   (eindeutig berechnet bzw. aus der Buchung mit derselben Anbieter-ID/demselben Hash), **C geschätzt** (Referenzkurs;
+   nie als Buchungswert), **ungelöst** – samt Fundstelle, Ausschnitt aus dem Beleg, Widersprüchen, Recherche-Protokoll,
+   bevorzugter Lösung und Alternativen. Fehlendes oder Falsches lässt sich korrigieren; der Beleg wird ohne erneute OCR
+   neu bewertet.
+4. Beschreibt der Beleg eine **vorhandene Buchung** (z. B. Bitpanda-Kauf mit Transaktions-ID), schlägt Portfolia
+   „Bestehende Buchung ergänzen“ vor: EUR-Wert, Gebühr, Uhrzeit, Tx-Hash – mit Vorschau der Auswirkungen
+   (Einstand, Ergebnisse, Steuer), Übernehmen und Rückgängig unter Datenqualität. Menge, Asset, Konto und Art werden nie
+   geändert; manuell bearbeitete Buchungen nie überschrieben.
+
+Datenschutz: Originale bleiben unverändert im Datenverzeichnis (`/data/documents`, abschaltbar) und lassen sich samt
+extrahiertem Text löschen; Protokolle enthalten keine Belegdaten; keine KI-Dienste. Öffentliche Blockchain-Explorer
+(Bitcoin: mempool.space, Kaspa: api.kaspa.org) nur nach Freigabe in den Beleg-Einstellungen und je Stapel – übertragen
+wird ausschließlich der Transaktions-Hash. Gleicher Beleg erneut → erkannt; geänderte Fassung → verweist auf die
+frühere. Belege sind nicht Teil des vollständigen Exports (die Buchungen schon). Details, Grenzen und Messwerte:
+[docs/M25_DOCUMENT_IMPORT.md](docs/M25_DOCUMENT_IMPORT.md).
+
+Grenzen: Die Erkennung ist regelbasiert und mit synthetischen Belegen getestet, nicht mit Originalbelegen jedes
+Anbieters; Unbekanntes landet als „ungeklärt“ im Prüf-Stapel. Handschrift und stark verzerrte Fotos werden nicht
+zuverlässig gelesen.
 
 ### Als App auf dem Smartphone
 

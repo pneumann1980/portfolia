@@ -404,6 +404,7 @@ def enrich(c: Context, tx: DocTx, budget: Budget, *, public: bool = False, trans
                               f"{len(cat)} Kandidat(en): " + ", ".join(str(x.get("id")) for x in cat[:5]),
                               len(cat) == 1))
             cands = [f"coingecko:{x.get('id')}" for x in cat]
+    tx.identity = tx_keys(tx)
     existing = _stage2(c, tx, steps)
     _stage3(c, tx, steps)
     _stage4_local(c, tx, asset_id, steps)
