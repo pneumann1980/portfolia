@@ -11,6 +11,8 @@ from starlette.datastructures import UploadFile
 from app.documentimport.candidates import candidates
 from app.documentimport.evidence import FieldEvidence, resolve_fields
 from app.documentimport.extract import DocumentError, extract_document, field_evidence
+from app.documentimport.staging import stage_review
+from app.web.deps import get_ctx
 
 router = APIRouter()
 
@@ -34,6 +36,8 @@ def index(request: Request) -> HTMLResponse:
         '<form method="post" enctype="multipart/form-data">'
         f'<input type="hidden" name="csrf_token" value="{token}">'
         '<input type="file" name="files" multiple accept=".pdf,.png,.jpg,.jpeg,.webp" required>'
+        '<label><input type="checkbox" name="stage_review" value="1"> '
+        'Ungeklärte Vorgänge als Prüf-Stapel speichern (keine Buchungen)</label>'
         '<button type="submit">Lokal analysieren</button></form>'
     )
 
@@ -52,6 +56,9 @@ async def preview(request: Request) -> HTMLResponse:
             doc = await run_in_threadpool(extract_document, data)
             evidence = field_evidence(doc)
             transactions = candidates(doc)
+            staged_id = None
+            if form.get("stage_review") == "1" and transactions:
+                staged_id = await run_in_threadpool(stage_review, get_ctx(request), doc, transactions)
             field_candidates = [FieldEvidence(field, item.value, "document", item.source,
                                         item.location, item.status, item.reason)
                           for field, items in evidence.items() for item in items[:25]]
@@ -75,6 +82,8 @@ async def preview(request: Request) -> HTMLResponse:
                 + ("<h3>Vorgangskandidaten (keine Buchungen)</h3><ul>" + "".join(preview) + "</ul>"
                    if preview else "<p>Keine erkennbaren Vorgänge.</p>")
                 + ("<ul>" + "".join(found) + "</ul>" if found else "<p>Keine sicheren Feldkandidaten gefunden.</p>")
+                + (f'<p><a href="/journal/csv/{staged_id}">Prüf-Stapel #{staged_id} öffnen</a></p>'
+                   if staged_id is not None else "")
                 + "<p>Keine Buchungsfreigabe. Fachliche Prüfung erforderlich.</p></section>"
             )
         except DocumentError as exc:
