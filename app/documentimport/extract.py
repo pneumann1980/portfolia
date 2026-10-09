@@ -83,7 +83,7 @@ def financial_decimal(text: str, *, decimal_hint: str | None = None) -> Decimal:
         if len(after) == 3 and 1 <= len(before) <= 3 and not decimal_hint:
             raise DocumentError("Mehrdeutiger Zahlentrenner: Dezimalformat bestätigen.")
         if s.count(sep) > 1:
-            sep = "," if sep == "." else "."
+            raise DocumentError("Mehrdeutige Gruppierung: Zahlenformat bestätigen.")
         elif decimal_hint in (".", ","):
             sep = decimal_hint
     else:
