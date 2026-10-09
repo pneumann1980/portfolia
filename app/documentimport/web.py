@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
+from app.documentimport.evidence import FieldEvidence, resolve_fields
 from app.documentimport.extract import DocumentError, extract_document, field_evidence
 
 router = APIRouter()
@@ -49,13 +50,20 @@ async def preview(request: Request) -> HTMLResponse:
             data = await file.read(25 * 1024 * 1024 + 1)
             doc = await run_in_threadpool(extract_document, data)
             evidence = field_evidence(doc)
+            candidates = [FieldEvidence(field, item.value, "document", item.source,
+                                        item.location, item.status, item.reason)
+                          for field, items in evidence.items() for item in items[:25]]
+            decisions = resolve_fields(candidates)
             found = []
-            for field, items in evidence.items():
-                for item in items[:25]:
+            for field, decision in decisions.items():
+                for item in decision.alternatives:
                     found.append(
                         f"<li><strong>{html.escape(field)}:</strong> {html.escape(item.value)} "
-                        f"({html.escape(item.location)}) – nur Kandidat</li>"
+                        f"({html.escape(item.location)}; {html.escape(item.status)}) – "
+                        "unbestätigter Kandidat</li>"
                     )
+                if decision.conflicts:
+                    found.append("<li>Widerspruch: mehrere unterschiedliche Werte; manuelle Prüfung nötig.</li>")
             counts = f"{len(doc.pages)} Seite(n), Typ {html.escape(doc.file_type)}, SHA256 {doc.sha256}"
             output.append(
                 f"<section><h2>{name}</h2><p>{counts}</p>"
