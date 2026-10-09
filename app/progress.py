@@ -37,7 +37,17 @@ PHASES: list[tuple[str, str, int]] = [
     ("prices", "Kurse ergänzen", 10),
     ("save", "Speichern", 10),
 ]
-PHASE_LABEL = {k: v for k, v, _w in PHASES} | {"done": "Fertig"}
+# Zusätzliche Phasen (nur auf ausdrückliche Wahl, z. B. Dokumentimport M25); Standard bleibt ``PHASES``
+EXTRA_PHASES: list[tuple[str, str, int]] = [
+    ("analyze", "Dokument analysieren", 5),
+    ("extract", "Text extrahieren", 20),
+    ("ocr", "OCR durchführen", 30),
+    ("detect", "Transaktionen erkennen", 10),
+    ("research", "Fehlende Daten recherchieren", 15),
+    ("match", "Bestehende Buchungen abgleichen", 10),
+    ("propose", "Vorschläge vorbereiten", 10),
+]
+PHASE_LABEL = {k: v for k, v, _w in PHASES + EXTRA_PHASES} | {"done": "Fertig"}
 STALE_S = 180  # ohne Lebenszeichen gilt ein „laufender“ Fortschritt als abgebrochen
 _WRITE_EVERY_S = 0.8
 log = logging.getLogger(__name__)
@@ -54,7 +64,9 @@ class Progress:
         self.source = source
         self.unit = unit
         keys = phases or [k for k, _l, _w in PHASES]
-        self.phases = [(k, PHASE_LABEL[k], w) for k, _l, w in PHASES if k in keys]
+        table = {k: w for k, _l, w in PHASES + EXTRA_PHASES}
+        self.phases = [(k, PHASE_LABEL[k], table[k]) for k in keys if k in table] if phases else \
+            [(k, PHASE_LABEL[k], w) for k, _l, w in PHASES if k in keys]
         total_w = sum(w for _k, _l, w in self.phases) or 1
         self._weights = {k: w / total_w * 100 for k, _l, w in self.phases}
         self.clock = clock

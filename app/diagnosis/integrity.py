@@ -64,7 +64,8 @@ RECON_KINDS = frozenset({"duplicate", "transfer"})  # Befunde des Abgleichs (Kon
 INDEPENDENT_NOTE = "Unabhängige Buchung bestätigt"  # „verworfen“: Befund trifft nicht zu (Nutzerentscheidung)
 
 _KIND_CAT = {"duplicate": "dublette", "transfer": "dublette", "asset": "kurs", "holdings": "bestand",
-             "history": "bestand", "estimated": "quelle", "price": "kurs", "migration": "bestand"}
+             "history": "bestand", "estimated": "quelle", "price": "kurs", "migration": "bestand",
+             "document": "quelle"}
 _LOCK = threading.Lock()
 # Steuer-Hinweise, die schon als eigener Befund erscheinen (Diagnose: Schätzungen, Ledger-Warnungen, Kurse) –
 # nicht doppelt zeigen

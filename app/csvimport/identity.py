@@ -42,7 +42,7 @@ def provider_of(source: str | None = None, profile: str | None = None, account: 
     sonst der Kontoname (z. B. Koinly-Wallet „Bitpanda“)."""
     for v in (source, profile):
         s = (v or "").strip().lower().removeprefix("portfolia:")
-        s = s.split(":", 1)[1] if s.startswith(("sync:", "csv:")) else s
+        s = s.split(":", 1)[1] if s.startswith(("sync:", "csv:", "doc:")) else s
         if s in PROVIDER_LABEL:
             return s
     for p, rx in _ACCOUNT_HINTS.items():

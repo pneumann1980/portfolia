@@ -22,6 +22,7 @@ KINDS: dict[str, str] = {
     "estimated": "Rekonstruiert oder geschätzt",
     "price": "Fehlender oder veralteter Kurs",
     "migration": "Möglicher Token-Migrationsvorgang",
+    "document": "Beleg ergänzt Buchung",
 }
 KIND_ORDER = {k: i for i, k in enumerate(KINDS)}
 

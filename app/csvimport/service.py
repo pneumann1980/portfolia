@@ -163,8 +163,12 @@ class SymbolResolver:
         self.by_koinly = {str(a.koinly_id).strip().upper(): aid for aid, a in assets.items() if a.koinly_id}
         self.by_sym: dict[str, set[str]] = defaultdict(set)
         self.by_alias: dict[str, set[str]] = defaultdict(set)
+        self.by_isin: dict[str, set[str]] = defaultdict(set)  # ISIN/WKN (Belege, Wertpapierabrechnungen)
         for aid, a in assets.items():
             self.by_sym[a.symbol.upper()].add(aid)
+            for code in (a.isin, a.wkn):
+                if code:
+                    self.by_isin[str(code).strip().upper()].add(aid)
             for al in a.aliases:
                 self.by_alias[al.strip().upper()].add(aid)
         self._cache: dict[str, tuple[str | None, str]] = {}
@@ -216,6 +220,9 @@ class SymbolResolver:
             return self.by_koinly[key], "koinly"
         if base in self.by_id:
             return self.by_id[base], "id"
+        by_code = self.by_isin.get(base, set())
+        if len(by_code) == 1:
+            return next(iter(by_code)), "isin"
         cands = self.by_sym.get(base, set())
         if len(cands) == 1:
             return next(iter(cands)), "symbol"

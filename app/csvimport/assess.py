@@ -81,19 +81,20 @@ COMPLEX = frozenset({"hash_partial", "reconstructed", "event_part", "counterpart
 
 # Quellarten und feldbezogener Vorrang
 KIND_LABEL = {"exchange": "Börse", "chain": "Blockchain/Wallet", "taxtool": "Steuertool", "manual": "manuell",
+              "document": "Beleg (PDF/Screenshot)",
               "app": "Portfolia", "plan": "Sparplan", "reconstructed": "rekonstruiert", "import": "kuratierter Import"}
 TAXTOOLS = frozenset({"koinly", "blockpit", "cointracking", "accointing", "cointracker", "coinpanda", "divly",
                       "koinly_universal"})
-_ORIGINAL = ("manual", "exchange", "chain", "app", "taxtool", "import", "plan", "reconstructed")
+_ORIGINAL = ("manual", "exchange", "chain", "document", "app", "taxtool", "import", "plan", "reconstructed")
 PRIORITY: dict[str, tuple[str, ...]] = {
     # Feld → Rangfolge der Quellarten (vorne = Vorrang); manuelle Korrekturen gehen immer vor
-    "hash": ("manual", "chain", "exchange", "app", "taxtool", "import", "plan", "reconstructed"),
-    "ts": ("manual", "exchange", "chain", "app", "taxtool", "import", "plan", "reconstructed"),
-    "value": ("manual", "exchange", "app", "taxtool", "import", "chain", "plan", "reconstructed"),
-    "fee": ("manual", "exchange", "chain", "app", "taxtool", "import", "plan", "reconstructed"),
-    "net_fee": ("manual", "chain", "exchange", "app", "taxtool", "import", "plan", "reconstructed"),
-    "type": ("manual", "taxtool", "import", "app", "exchange", "chain", "plan", "reconstructed"),
-    "counter": ("manual", "taxtool", "import", "chain", "app", "exchange", "plan", "reconstructed"),
+    "hash": ("manual", "chain", "exchange", "document", "app", "taxtool", "import", "plan", "reconstructed"),
+    "ts": ("manual", "exchange", "document", "chain", "app", "taxtool", "import", "plan", "reconstructed"),
+    "value": ("manual", "exchange", "document", "app", "taxtool", "import", "chain", "plan", "reconstructed"),
+    "fee": ("manual", "exchange", "document", "chain", "app", "taxtool", "import", "plan", "reconstructed"),
+    "net_fee": ("manual", "chain", "exchange", "document", "app", "taxtool", "import", "plan", "reconstructed"),
+    "type": ("manual", "taxtool", "import", "app", "exchange", "document", "chain", "plan", "reconstructed"),
+    "counter": ("manual", "taxtool", "import", "chain", "app", "exchange", "document", "plan", "reconstructed"),
     "qty": _ORIGINAL,
 }
 PRIORITY_REASON = {
@@ -125,6 +126,8 @@ def source_kind(source: str | None) -> str:
         return "app" if s == "transfer" else "plan"
     if s == "reconstructed" or "reconstruct" in s:
         return "reconstructed"
+    if s.startswith("doc:"):
+        return "document"
     if s.startswith("sync:"):
         from app.datasources.providers import PROVIDERS, WALLET
 

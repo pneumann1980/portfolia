@@ -37,7 +37,8 @@ from app.util.timeutil import iso, local_tz, parse_iso, to_local_date, today_loc
 log = logging.getLogger(__name__)
 
 SOURCE_LABEL = {"manual": "manuell", "transfer": "Transfer-Abgleich", "diagnose": "Korrektur aus der Diagnose"}
-TX_PREFIX = {"manual": "PF-M-", "csv": "PF-C-", "transfer": "PF-T-", "sync": "PF-S-", "diagnose": "PF-D-"}
+TX_PREFIX = {"manual": "PF-M-", "csv": "PF-C-", "transfer": "PF-T-", "sync": "PF-S-", "diagnose": "PF-D-",
+             "doc": "PF-B-"}
 EDITABLE_SOURCES = ("manual", "transfer")
 SEQ_BASE = 2_000_000
 TAX_TYPES = {"share": "Aktie", "etf_equity": "Aktienfonds (≥ 51 % Aktien)", "etf_mixed": "Mischfonds (≥ 25 % Aktien)",
@@ -65,6 +66,11 @@ def source_label(source: str | None) -> str:
         except ImportError:  # pragma: no cover
             name = src[4:]
         return f"CSV · {name}"
+    if src.startswith("doc:"):
+        from app.documentimport.profiles import DOC_LABEL, PROVIDER_LABEL
+
+        key = src[4:]
+        return "Beleg · " + (PROVIDER_LABEL.get(key) or DOC_LABEL.get(key) or "PDF/Screenshot")
     if src.startswith("sync:"):
         try:
             from app.datasources.providers import provider_label
@@ -81,13 +87,15 @@ def tx_prefix(source: str) -> str:
         return TX_PREFIX["csv"]
     if source.startswith("sync:"):
         return TX_PREFIX["sync"]
+    if source.startswith("doc:"):
+        return TX_PREFIX["doc"]
     return TX_PREFIX.get(source, "PF-X-")
 
 
 def editable(row: Any) -> bool:
     src = row["source"] or ""
     return row["status"] == "active" and not row["group_ref"] and (src in EDITABLE_SOURCES
-                                                                   or src.startswith(("csv:", "sync:")))
+                                                                   or src.startswith(("csv:", "sync:", "doc:")))
 
 
 def _d(v: Any) -> Decimal | None:
@@ -288,7 +296,7 @@ class JournalService:
             if asset and asset not in (t.from_asset, t.to_asset, t.fee_asset, t.related_asset):
                 continue
             kind = "plan_est" if t.flag == "estimated" else ("plan" if t.origin == "plan" else t.origin)
-            if kind == "journal" and ((t.source or "").startswith("csv:") or t.source == "transfer"):
+            if kind == "journal" and ((t.source or "").startswith(("csv:", "doc:")) or t.source == "transfer"):
                 kind = "csv"
             elif kind == "journal" and (t.source or "").startswith("sync:"):
                 kind = "sync"

@@ -178,7 +178,7 @@ class Lookup:
             hashes, ref = sorted(R.hashes_in(t.note, t.source_ref)), t.source_ref
         status = _JOURNAL_STATUS.get(j["status"]) if j is not None and j["status"] != "active" else None
         editable = t.origin == "import" or (j is not None and j["status"] == "active" and (
-            j["source"] in ("manual", "transfer") or str(j["source"]).startswith(("csv:", "sync:"))))
+            j["source"] in ("manual", "transfer") or str(j["source"]).startswith(("csv:", "sync:", "doc:"))))
         return Side(label=t.tx_id, ts=t.ts, type=t.type, tag=t.tag,
                     out=_leg(t.from_account, t.from_asset, t.from_qty), inn=_leg(t.to_account, t.to_asset, t.to_qty),
                     fee=(t.fee_asset, t.fee_qty) if t.fee_asset and t.fee_qty else None, value_eur=t.value_eur,

@@ -106,7 +106,7 @@ def source_ref_keys(source: str | None, source_ref: str | None) -> set[str]:
     if ":" in ref and ref.split(":", 1)[0].strip().lower() in NATIVE_ID_PREFIXES:
         return identity_keys(None, (), ref)
     src = (source or "").strip().lower()
-    src = src.split(":", 1)[1] if src.startswith(("csv:", "sync:")) else src
+    src = src.split(":", 1)[1] if src.startswith(("csv:", "sync:", "doc:")) else src
     if src in NATIVE_ID_PREFIXES:
         return identity_keys(None, (), f"{src}:{ref}")
     return set()

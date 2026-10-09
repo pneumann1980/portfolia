@@ -57,7 +57,8 @@ CENT = Decimal("0.01")
 MAX_TAX_YEARS = 8
 _LOCK = threading.Lock()
 OP_LABEL = {"hide": "Ausblenden", "merge": "Zusammenführen", "cover": "Im Import enthalten", "create": "Neue Buchung",
-            "quote": "Kursquelle", "unmap": "Zuordnung entfernen"}
+            "quote": "Kursquelle", "unmap": "Zuordnung entfernen", "amend": "Buchung ergänzen"}
+AMEND_COLS = ("ts_utc", "date_only", "value_eur", "value_source", "fee_asset", "fee_qty", "fee_eur", "tx_hash", "note")
 
 
 class Conflict(Exception):
@@ -72,7 +73,7 @@ class Conflict(Exception):
 class Op:
     """Eine Änderung. ``before`` hält den Ausgangszustand (Prüfsumme der Vorschau, Grundlage für „Rückgängig“)."""
 
-    kind: str  # hide | cover | create | quote | unmap
+    kind: str  # hide | cover | create | quote | unmap | amend
     target: str  # hide/cover: Buchung; quote: Asset; unmap: Symbol; create: Schlüssel im Plan (t0, t1, …)
     label: str
     origin: str = ""  # hide: import | journal
@@ -606,10 +607,10 @@ class Effects:
 def hypothetical(pf: Portfolio, plan: Plan) -> Portfolio:
     remove: set[str] = set()
     for op in plan.ops:
-        if op.kind in ("hide", "cover"):
+        if op.kind in ("hide", "cover", "amend"):
             remove.add(op.target)
             remove.update(op.members)
-    add = [op.tx for op in plan.ops if op.kind == "create" and op.tx is not None]
+    add = [op.tx for op in plan.ops if op.kind in ("create", "amend") and op.tx is not None]
     assets = pf.assets
     quotes = {op.target: op.value for op in plan.ops if op.kind == "quote"}
     if quotes:
@@ -791,7 +792,7 @@ def preview(ctx: Any, report: Report, plan: Plan) -> Effects:
     if any(op.kind == "unmap" for op in plan.ops):
         eff.notes.append("Bestehende Buchungen bleiben unverändert; die Zuordnung fehlt erst bei künftigen Importen "
                          "und Abrufen (der Token geht dann in die Prüfung).")
-    if any(op.kind in ("hide", "cover", "create") for op in plan.ops):
+    if any(op.kind in ("hide", "cover", "create", "amend") for op in plan.ops):
         _tax_effects(ctx, pf2, eff)
         eff.notes.append("Historische Performance (TTWROR/IRR, Verlauf) wird nach dem Übernehmen neu berechnet – die "
                          "Vorschau rechnet die Tageshistorie nicht vorab durch.")
@@ -883,6 +884,32 @@ def _exec(c: Any, ctx: Any, js: Any, op: Op, stamp: str, created: dict[str, str]
         created[op.target] = tx_id
         rec["target"] = tx_id
         rec["row"] = op.row
+    elif op.kind == "amend" and op.origin == "import":
+        from app.importer.loader import active_import_id
+
+        cur = _row(c.execute("SELECT * FROM tx_override WHERE tx_id=?", (op.target,)).fetchone())
+        if cur != op.before["override"]:
+            raise Conflict(f"{op.target} wurde inzwischen geändert.")
+        row_json = json.dumps(op.row, ensure_ascii=False)
+        if cur is None:
+            c.execute("INSERT INTO tx_override(tx_id, action, row_json, base_json, import_id, created_at, updated_at) "
+                      "VALUES (?, 'edit', ?, ?, ?, ?, ?)", (op.target, row_json, json.dumps(op.before["tx"],
+                                                                                            ensure_ascii=False),
+                                                           active_import_id(ctx.db), stamp, stamp))
+        else:
+            c.execute("UPDATE tx_override SET action='edit', row_json=?, updated_at=? WHERE tx_id=?",
+                      (row_json, stamp, op.target))
+        js._log(c, "import_edit", op.target, op.before["tx"], {"diagnose": True, "row": op.row}, stamp)
+        rec["row"] = op.row
+    elif op.kind == "amend":
+        row = c.execute("SELECT * FROM journal_tx WHERE tx_id=?", (op.target,)).fetchone()
+        if row is None or row["status"] != "active" or row["updated_at"] != op.before["updated_at"]:
+            raise Conflict(f"{op.target} wurde inzwischen geändert.")
+        new = op.before["after"]
+        c.execute(f"UPDATE journal_tx SET {', '.join(f'{k}=?' for k in AMEND_COLS)}, updated_at=? WHERE tx_id=?",
+                  [*(new.get(k) for k in AMEND_COLS), stamp, op.target])
+        js._log(c, "update", op.target, {k: row[k] for k in AMEND_COLS}, {"diagnose": True, **new}, stamp)
+        rec["after"] = new
     elif op.kind == "quote":
         cur = _row(c.execute("SELECT * FROM asset_source WHERE asset_id=?", (op.target,)).fetchone())
         if cur != op.before["row"]:
@@ -913,6 +940,41 @@ def _after(ctx: Any, quotes: bool) -> None:
         from app.prices.sources import source_service
 
         source_service(ctx).changed()
+
+
+def apply_plan(ctx: Any, f: Finding, plan: Plan, token: str, rebuild: Any) -> Result:
+    """Plan eines anderen Moduls übernehmen (z. B. Beleg ergänzt Buchung): ``rebuild()`` baut den Plan unter der Sperre
+    neu (gleicher Datenstand wie die Vorschau, sonst Abbruch über ``token``); Protokoll und „Rückgängig“ wie bei
+    Diagnose-Korrekturen."""
+    with _LOCK:
+        plan = rebuild() if rebuild is not None else plan
+        if plan.errors:
+            return Result(errors=plan.errors)
+        if plan.token != token:
+            return Result(errors=["Die Vorschau ist nicht mehr aktuell – bitte die Vorschau prüfen und erneut "
+                                  "übernehmen."])
+        stamp = _now()
+        from app.journal.service import journal_service
+
+        js = journal_service(ctx)
+        created: dict[str, str] = {}
+        try:
+            with ctx.db.transaction() as c:
+                recs = [_exec(c, ctx, js, op, stamp, created) for op in plan.ops]
+                cur = c.execute(
+                    "INSERT INTO diag_decision(finding_id, kind, title, action, option, option_label, params_json, "
+                    "ops_json, fingerprint, note, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (f.id, f.kind, f.title[:300], "fix", plan.option.key, plan.option.label[:200],
+                     json.dumps(plan.params, ensure_ascii=False), json.dumps(recs, ensure_ascii=False, default=str),
+                     fingerprint(f), None, "active", stamp))
+                did = int(cur.lastrowid)
+                js._log(c, "diagnose_apply", f"diagnose:{did}", None, {"finding": f.id, "option": plan.option.key,
+                                                                         "changes": len(recs)}, stamp)
+        except Conflict as e:
+            return Result(errors=[f"{e} Es wurde nichts geändert – bitte die Vorschau neu öffnen."])
+        _after(ctx, False)
+        return Result(ok=True, decision_id=did, message=f"Übernommen: {plan.option.label}. Rückgängig unter "
+                                                        "„Datenqualität → Entscheidungen und Korrekturen“.")
 
 
 def apply(ctx: Any, finding_id: str, option_key: str, params: Mapping[str, list[str]], token: str) -> Result:
@@ -982,6 +1044,28 @@ def _revert(c: Any, js: Any, rec: dict[str, Any], stamp: str) -> str | None:
             c.execute("UPDATE journal_tx SET status='active', merged_into=NULL, updated_at=? WHERE tx_id=? AND "
                       "status=?", (stamp, tid, mode))
             js._log(c, "restore", tid, None, {"diagnose": True}, stamp)
+    elif kind == "amend" and rec.get("origin") == "import":
+        cur = _row(c.execute("SELECT * FROM tx_override WHERE tx_id=?", (target,)).fetchone())
+        if cur is None or cur["action"] != "edit" or json.loads(cur["row_json"] or "{}") != rec.get("row"):
+            raise Conflict(f"{target} wurde nach der Ergänzung erneut geändert – nicht zurückgesetzt.")
+        before = rec["before"]["override"]
+        if before is None:
+            c.execute("DELETE FROM tx_override WHERE tx_id=?", (target,))
+        else:
+            cols = list(before)
+            c.execute(f"INSERT OR REPLACE INTO tx_override({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                      [before[k] for k in cols])
+        js._log(c, "import_restore", target, None, {"diagnose": True}, stamp)
+    elif kind == "amend":
+        row = c.execute("SELECT * FROM journal_tx WHERE tx_id=?", (target,)).fetchone()
+        after = rec.get("after") or {}
+        if row is None or any(str(row[k] if row[k] is not None else "") != str(after.get(k) if after.get(k) is not
+                                                                                None else "") for k in AMEND_COLS):
+            raise Conflict(f"{target} wurde nach der Ergänzung erneut geändert – nicht zurückgesetzt.")
+        old = rec["before"]["cols"]
+        c.execute(f"UPDATE journal_tx SET {', '.join(f'{k}=?' for k in AMEND_COLS)}, updated_at=? WHERE tx_id=?",
+                  [*(old.get(k) for k in AMEND_COLS), stamp, target])
+        js._log(c, "update", target, after, {"diagnose_undo": True, **old}, stamp)
     elif kind == "cover":
         cur = c.execute("SELECT decision FROM journal_import_link WHERE journal_tx_id=? AND import_tx_id=?",
                         (target, rec["link"])).fetchone()

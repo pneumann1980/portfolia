@@ -207,7 +207,7 @@ class _Index:
         if t.origin == "journal":
             m = self.meta.get(t.tx_id)
             if m is None or m.status != "active" or not (m.source in ("manual", "transfer")
-                                                          or m.source.startswith(("csv:", "sync:"))):
+                                                          or m.source.startswith(("csv:", "sync:", "doc:"))):
                 return None
         elif t.origin != "import":
             return None

@@ -616,6 +616,43 @@ CREATE TABLE IF NOT EXISTS asset_change (
 CREATE INDEX IF NOT EXISTS ix_asset_change_old ON asset_change(old_asset, status);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_change_created ON asset_change(kind, old_asset, created_at);
 """),
+    (18, """
+-- Dokumentimport (M25): hochgeladene Belege (PDF/Bild) mit Herkunft je Feld. Das Original liegt – sofern gespeichert –
+-- unter /data/documents/<sha[:2]>/<sha>.<typ>; extrahierter Text (analysis_json) und Original lassen sich löschen,
+-- die abgeleiteten Feldbelege (result_json, ohne Volltext) bleiben für die Nachvollziehbarkeit der Buchungen.
+CREATE TABLE IF NOT EXISTS document (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  sha256         TEXT NOT NULL UNIQUE,
+  filename       TEXT NOT NULL,
+  file_type      TEXT NOT NULL,                  -- pdf | png | jpeg | webp
+  size           INTEGER NOT NULL,
+  pages          INTEGER,
+  stored         INTEGER NOT NULL DEFAULT 0,     -- Original lokal gespeichert
+  status         TEXT NOT NULL,                  -- queued | analysed | staged | failed
+  doc_type       TEXT,
+  provider       TEXT,
+  ocr            INTEGER NOT NULL DEFAULT 0,
+  stack_id       TEXT,                           -- Upload-Stapel
+  batch_id       INTEGER,                        -- Prüf-Stapel (csv_batch) der Vorgänge
+  analysis_json  TEXT,                           -- Zeilen mit Belegstellen (Volltext; löschbar)
+  result_json    TEXT,                           -- Vorgänge, Feldbelege, Recherche-Protokoll (ohne Volltext)
+  overrides_json TEXT,                           -- Korrekturen des Nutzers je Vorgang und Feld
+  supersedes     INTEGER,                        -- frühere Fassung desselben Belegs (gleiche Kennung, andere Datei)
+  error          TEXT,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  text_deleted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_document_stack ON document(stack_id);
+CREATE TABLE IF NOT EXISTS document_stack (
+  id           TEXT PRIMARY KEY,
+  status       TEXT NOT NULL,                    -- running | done | failed | cancelled
+  options_json TEXT,
+  summary_json TEXT,
+  created_at   TEXT NOT NULL,
+  finished_at  TEXT
+);
+"""),
 ]
 
 

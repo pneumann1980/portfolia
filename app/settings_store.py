@@ -59,6 +59,11 @@ DEFAULTS: dict[str, Any] = {
     "tax.options": {},  # je Regelwerk/Jahr, siehe tax.service
     "tax.profile": {"name": "", "tax_id": "", "tax_number": ""},
     "taxdata.auto_scan": True,  # Steuerdaten-Ordner alle 15 Minuten prüfen (zusätzlich beim Start und auf Knopfdruck)
+    # Dokumentimport (M25)
+    "documents.keep_originals": True,  # Originalbelege lokal unter /data/documents aufbewahren
+    "documents.ocr": True,  # lokale OCR (Tesseract) für Scans und Screenshots
+    "documents.language": "deu+eng",
+    "documents.public_lookup": False,  # öffentliche Explorer (nur Tx-Hash) – ausdrücklich freigeben
     # Betrieb
     "backup.keep": 14,
     "backup.hour": 3,

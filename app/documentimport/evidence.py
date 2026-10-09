@@ -10,9 +10,11 @@ from decimal import Decimal
 from typing import Literal
 
 Status = Literal["belegt", "rekonstruiert", "geschaetzt", "ungeloest"]
-Origin = Literal["document", "portfolio", "provider", "public", "user"]
-_PRIORITY = {"user": 0, "provider": 1, "document": 2, "portfolio": 3, "public": 4}
+Origin = Literal["document", "portfolio", "provider", "public", "user", "batch"]
+_PRIORITY = {"user": 0, "provider": 1, "document": 2, "batch": 3, "portfolio": 4, "public": 5}
 _NOT_EXECUTION_EVIDENCE = frozenset({"market_price", "reference_fx", "estimated_cost_basis"})
+NUMERIC_FIELDS = frozenset({"quantity", "amount", "fee", "value_eur", "price", "gross", "net", "fx_rate",
+                            "network_fee", "tax", "withholding_tax", "fee_eur"})
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,10 @@ class FieldEvidence:
     # To prevent attaching arbitrary account records to the wrong event,
     # portfolio/provider values require an exact verified event key.
     verified_link: bool = False
+    page: int | None = None  # Belegstelle (Dokumentseite, Zeile, relative Box) für Vorschau und Nachprüfung
+    line: int | None = None
+    box: tuple[float, float, float, float] | None = None
+    conf: float | None = None  # OCR-Konfidenz der Zeile (0–100); None = eingebetteter Text bzw. keine OCR
 
 
 @dataclass
@@ -44,7 +50,7 @@ class FieldDecision:
 def _equivalent(field_name: str, a: str, b: str) -> bool:
     if a == b:
         return True
-    if field_name in {"quantity", "amount", "fee", "value_eur", "price", "gross", "net"}:
+    if field_name in NUMERIC_FIELDS:
         try:
             return Decimal(a) == Decimal(b)
         except ArithmeticError:
