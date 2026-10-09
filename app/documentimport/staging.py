@@ -6,6 +6,7 @@ data in the existing review UI first.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -46,7 +47,17 @@ def stage_review(ctx: Any, document: DocumentResult,
          "candidates": [r.raw for r in recs]},
         ensure_ascii=False, separators=(",", ":"),
     ).encode("utf-8")
-    return csv_service(ctx).ingest(
+    svc = csv_service(ctx)
+    # Repeated identical documents must not create another staging batch.
+    # Only return an existing batch for this exact document source.
+    prior = ctx.db.q1(
+        "SELECT id FROM csv_batch WHERE source=? AND file_sha256=? "
+        "AND status != ? ORDER BY id DESC LIMIT 1",
+        ("document:review", hashlib.sha256(payload).hexdigest(), "reverted"),
+    )
+    if prior is not None:
+        return int(prior["id"])
+    return svc.ingest(
         recs, source="document:review", profile="document:review",
         account=account or "Dokument (ungeklärt)",
         label=f"Dokumentprüfung {document.sha256[:12]}",
