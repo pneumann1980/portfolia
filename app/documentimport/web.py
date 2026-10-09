@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
+from app.documentimport.candidates import candidates
 from app.documentimport.evidence import FieldEvidence, resolve_fields
 from app.documentimport.extract import DocumentError, extract_document, field_evidence
 
@@ -50,6 +51,7 @@ async def preview(request: Request) -> HTMLResponse:
             data = await file.read(25 * 1024 * 1024 + 1)
             doc = await run_in_threadpool(extract_document, data)
             evidence = field_evidence(doc)
+            transactions = candidates(doc)
             candidates = [FieldEvidence(field, item.value, "document", item.source,
                                         item.location, item.status, item.reason)
                           for field, items in evidence.items() for item in items[:25]]
@@ -65,8 +67,13 @@ async def preview(request: Request) -> HTMLResponse:
                 if decision.conflicts:
                     found.append("<li>Widerspruch: mehrere unterschiedliche Werte; manuelle Prüfung nötig.</li>")
             counts = f"{len(doc.pages)} Seite(n), Typ {html.escape(doc.file_type)}, SHA256 {doc.sha256}"
+            preview = [f"<li>{html.escape(tx.kind)}: " + ", ".join(
+                f"{html.escape(v.name)}={html.escape(v.value)}" for v in tx.fields
+            ) + " – Prüfung erforderlich</li>" for tx in transactions]
             output.append(
                 f"<section><h2>{name}</h2><p>{counts}</p>"
+                + ("<h3>Vorgangskandidaten (keine Buchungen)</h3><ul>" + "".join(preview) + "</ul>"
+                   if preview else "<p>Keine erkennbaren Vorgänge.</p>")
                 + ("<ul>" + "".join(found) + "</ul>" if found else "<p>Keine sicheren Feldkandidaten gefunden.</p>")
                 + "<p>Keine Buchungsfreigabe. Fachliche Prüfung erforderlich.</p></section>"
             )
