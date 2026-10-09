@@ -52,10 +52,10 @@ async def preview(request: Request) -> HTMLResponse:
             doc = await run_in_threadpool(extract_document, data)
             evidence = field_evidence(doc)
             transactions = candidates(doc)
-            candidates = [FieldEvidence(field, item.value, "document", item.source,
+            field_candidates = [FieldEvidence(field, item.value, "document", item.source,
                                         item.location, item.status, item.reason)
                           for field, items in evidence.items() for item in items[:25]]
-            decisions = resolve_fields(candidates)
+            decisions = resolve_fields(field_candidates)
             found = []
             for field, decision in decisions.items():
                 for item in decision.alternatives:
