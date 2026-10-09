@@ -28,6 +28,17 @@ prices, fees or cost basis. This is a read-only component, *not yet wired to
 Rec ingestion, provider queries or durable document storage*. Synthetic unit
 tests cover source mismatches, conflicts and financial-estimate guards.
 
+### Initial reconciliation bridge (review-only)
+
+The preview can optionally save detected action lines as **REVIEW** records
+through the existing `CsvImportService.ingest()` service. This is explicitly
+non-economic staging: timestamp missing, no quantities, no currency legs,
+no asserted execution price, fees or cost basis. The staging event key includes
+the document digest and candidate index. The existing review page remains
+responsible for later manual resolution. This is not completed automated
+reconciliation or document enrichment. Re-upload deduplication and persistent
+original documents remain open.
+
 ### Still required before v0.22.0
 
 - Reliable transaction segmentation and provider profiles (including tables, dividends,
