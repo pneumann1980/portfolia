@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}PDF &amp; Screenshot{% endblock %}
+{% block heading %}PDF &amp; Screenshot{% endblock %}
+{% block content %}
+{% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+{% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a href="/journal/csv">CSV-Import</a><a class="active" href="/journal/documents" aria-current="page">PDF &amp; Screenshot</a><a href="/journal/new">Neue Buchung</a></nav>
+
+<section class="card">
+  <div class="card-head"><h2>Belege einlesen</h2></div>
+  <p class="hint">Abrechnungen, Kontoauszüge, Dividendengutschriften und Screenshots (PDF, PNG, JPEG, WebP) werden <b>lokal</b>
+    ausgewertet – Text aus dem PDF bzw. lokale Texterkennung (OCR). Es wird <b>nichts gebucht</b>: Erkannte Vorgänge landen im
+    Prüf-Stapel (wie beim CSV-Import) oder werden als Ergänzung einer vorhandenen Buchung vorgeschlagen. Jede Angabe zeigt ihre
+    Herkunft (A belegt · B rekonstruiert · C geschätzt · ungelöst).</p>
+  {% if cfg.ocr and not ocr_available %}<div class="alert warn"><span class="icon">!</span><div>Texterkennung (Tesseract) ist auf diesem System nicht installiert – Screenshots und gescannte PDFs können nicht gelesen werden. Im Docker-Image ist sie enthalten.</div></div>{% endif %}
+  {% if running %}<div class="alert"><span class="icon">i</span><div>Ein Dokumentimport läuft gerade – ein neuer Stapel startet erst danach.</div></div>{% endif %}
+  <form id="doc-upload" method="post" action="/journal/documents/upload" enctype="multipart/form-data" class="stack" style="gap:10px"
+        data-max-files="{{ max_files }}" data-max-file="{{ max_file_mb * 1024 * 1024 }}" data-max-total="{{ max_stack_mb * 1024 * 1024 }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="dropzone" id="doc-drop">
+      <input type="file" name="files" id="doc-files" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp" required>
+      <span class="dz-main">Dateien hierher ziehen oder <u>auswählen</u></span>
+      <span class="hint">bis {{ max_files }} Dateien je Stapel · je Datei höchstens {{ max_file_mb }} MB · zusammen höchstens {{ max_stack_mb }} MB</span>
+    </label>
+    <ul class="doc-filelist plain-list" id="doc-filelist" aria-live="polite"></ul>
+    <div class="grid-3">
+      <label class="field">Konto / Depot (optional)<input type="text" name="account" list="dl-accounts" placeholder="leer: aus Beleg bzw. Datenquelle" autocomplete="off" maxlength="80">
+        <span class="hint">nur nötig, wenn der Anbieter mehrere Konten hat – im Prüf-Stapel änderbar</span></label>
+      <label class="check" style="align-self:end"><input type="checkbox" name="public" value="1" {% if not cfg.public %}disabled{% endif %}> Öffentliche Explorer abfragen (nur Transaktions-Hash)
+        {% if not cfg.public %}<span class="hint">in den Einstellungen unten freigeben</span>{% endif %}</label>
+      <label class="check" style="align-self:end"><input type="checkbox" name="reanalyze" value="1"> Bereits verarbeitete Belege erneut auswerten</label>
+    </div>
+    <datalist id="dl-accounts">{% for a in accounts %}<option value="{{ a }}">{% endfor %}</datalist>
+    <div class="upload-progress" id="doc-progress" hidden>
+      <div class="hint" id="doc-progress-text">Hochladen …</div>
+      <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div style="width:0%"></div></div>
+    </div>
+    <div class="row"><button class="btn primary" type="submit" id="doc-submit">Hochladen und auswerten</button>
+      <button class="btn ghost" type="button" id="doc-abort" hidden>Hochladen abbrechen</button></div>
+  </form>
+</section>
+
+{% if stacks %}
+<section class="card">
+  <div class="card-head"><h2>Letzte Stapel</h2></div>
+  <div class="table-wrap cards-wrap"><table class="cards">
+    <thead><tr><th>Stapel</th><th>Status</th><th class="num">Belege</th><th class="num">Vorgänge</th><th>Prüf-Stapel</th></tr></thead>
+    <tbody>{% for x in stacks %}{% set s = x.s %}{% set lab = stack_status.get(s.status, (s.status, '')) %}<tr>
+      <td data-label="Stapel"><a href="/journal/documents/stack/{{ s.id }}">{{ s.created_at|datetime_de if s.created_at else s.id }}</a></td>
+      <td data-label="Status"><span class="badge {{ lab[1] }}">{{ lab[0] }}</span></td>
+      <td class="num" data-label="Belege">{{ x.n }}</td>
+      <td class="num" data-label="Vorgänge">{{ x.summary.get('transactions', '–') }}</td>
+      <td data-label="Prüf-Stapel">{% for bid in x.summary.get('batches', []) %}<a href="/journal/csv/{{ bid }}">#{{ bid }}</a>{% if not loop.last %}, {% endif %}{% else %}<span class="muted">–</span>{% endfor %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
+<section class="card" id="belege">
+  <div class="card-head"><h2>Belege ({{ docs|length }})</h2></div>
+  {% if docs %}
+  <form method="post" action="/journal/documents/bulk" class="stack" style="gap:10px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="table-wrap cards-wrap"><table class="cards">
+      <thead><tr><th><span class="sr-only">Auswahl</span></th><th>Beleg</th><th>Art</th><th>Status</th><th class="num">Vorgänge</th><th>Original</th></tr></thead>
+      <tbody>{% for x in docs %}{% set d = x.d %}{% set lab = doc_status.get(d.status, (d.status, '')) %}<tr>
+        <td data-label="Auswahl"><input type="checkbox" name="ids" value="{{ d.id }}" aria-label="{{ d.filename }} auswählen"></td>
+        <td data-label="Beleg" class="wrap-any"><a href="/journal/documents/{{ d.id }}">{{ d.filename }}</a>
+          <div class="hint">{{ d.created_at|datetime_de if d.created_at else '' }}{% if d.pages %} · {{ d.pages }} S.{% endif %}{% if d.ocr %} · OCR{% endif %}{% if d.supersedes %} · geänderte Fassung von <a href="/journal/documents/{{ d.supersedes }}">#{{ d.supersedes }}</a>{% endif %}</div></td>
+        <td data-label="Art">{{ doc_label.get(d.doc_type, d.doc_type or '–') }}{% if d.provider %}<div class="hint">{{ provider_label.get(d.provider, d.provider) }}</div>{% endif %}</td>
+        <td data-label="Status"><span class="badge {{ lab[1] }}">{{ lab[0] }}</span>{% if d.error %}<div class="hint">{{ d.error }}</div>{% endif %}
+          {% if d.batch_id %}<div><a class="hint" href="/journal/csv/{{ d.batch_id }}">Prüf-Stapel #{{ d.batch_id }}</a></div>{% endif %}</td>
+        <td class="num" data-label="Vorgänge">{{ x.result.get('txs', [])|length }}</td>
+        <td data-label="Original">{% if d.stored %}gespeichert{% elif d.text_deleted_at %}<span class="muted">gelöscht</span>{% else %}<span class="muted">nicht gespeichert</span>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    <div class="row">
+      <label class="field" style="min-width:220px">Auswahl<select name="action">
+        <option value="reevaluate">neu bewerten (ohne erneute OCR)</option>
+        <option value="delete_original">Original und Volltext löschen</option>
+      </select></label>
+      <button class="btn sm" type="submit" style="align-self:end">Ausführen</button>
+    </div>
+    <p class="hint">Löschen entfernt die Datei und den extrahierten Text; erhalten bleiben Prüfsumme (SHA-256), Feldbelege mit Herkunft und die Prüfzeilen bzw. Buchungen.</p>
+  </form>
+  {% else %}<p class="hint">Noch keine Belege.</p>{% endif %}
+</section>
+
+<section class="card" id="einstellungen">
+  <div class="card-head"><h2>Einstellungen und Datenschutz</h2></div>
+  <form method="post" action="/journal/documents/settings" class="stack" style="gap:8px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="check"><input type="checkbox" name="keep_originals" value="1" {% if cfg.keep %}checked{% endif %}> Originalbelege lokal aufbewahren (unverändert, im Datenverzeichnis unter <code>documents/</code>) – nötig für Ausschnitt und Download</label>
+    <label class="check"><input type="checkbox" name="ocr" value="1" {% if cfg.ocr %}checked{% endif %}> Lokale Texterkennung (Tesseract) für Screenshots und Scans</label>
+    <label class="field" style="max-width:280px">Sprache der Texterkennung<select name="language">{% for k, l in langs.items() %}<option value="{{ k }}" {% if cfg.language == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="check"><input type="checkbox" name="public_lookup" value="1" {% if cfg.public %}checked{% endif %}> Öffentliche Blockchain-Explorer erlauben (Bitcoin: mempool.space, Kaspa: api.kaspa.org)</label>
+    <p class="hint">Übertragen wird ausschließlich der Transaktions-Hash – keine Namen, Adressen, Mengen, Kontodaten oder Dokumente. Die Abfrage muss zusätzlich je Stapel angehakt werden. Externe KI-Dienste werden nicht verwendet.</p>
+    <div><button class="btn sm" type="submit">Speichern</button></div>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/documents.js?v={{ version }}"></script>{% endblock %}

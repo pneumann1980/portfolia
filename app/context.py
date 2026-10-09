@@ -82,6 +82,9 @@ class AppContext:
         from app.fullexport import recover
 
         recover(self)  # unterbrochene Wiederherstellung fortsetzen, verwaiste temporäre Dateien entfernen
+        from app.documentimport.service import document_service
+
+        document_service(self).recover()  # Zwischendateien und unterbrochene Dokumentstapel aufräumen
         if self.prices.cg is not None:
             self.prices.cg.monthly_limit = int(self.settings.get("prices.coingecko_monthly_limit", 10000))
 

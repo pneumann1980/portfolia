@@ -40,6 +40,8 @@ FIELD_LABEL = {
     "tax": "Steuern", "withholding_tax": "Quellensteuer", "txhash": "Transaktions-Hash",
     "ext_id": "Auftrags-/Transaktions-ID",
     "account": "Konto/Depot/Wallet", "from_address": "Von", "to_address": "An", "status": "Status",
+    "fee_eur": "Gebühr in EUR", "price_ccy": "Kurswährung", "net_ccy": "Währung Gesamtbetrag",
+    "tax_ccy": "Steuerwährung", "withholding_tax_ccy": "Quellensteuer-Währung", "tz": "Zeitzone",
 }
 _SYN: list[tuple[str, tuple[str, ...]]] = [
     # Reihenfolge: spezifisch vor allgemein

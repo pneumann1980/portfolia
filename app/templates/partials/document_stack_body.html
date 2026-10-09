@@ -1,0 +1,34 @@
+{# Stapel eines Dokumentimports: Fortschritt (fragt alle 2 s nach, solange er läuft) und danach das Ergebnis.
+   „Abbrechen“ stoppt an der nächsten Prüfstelle – bis dahin wurde nichts in den Prüf-Stapel übernommen. #}
+{% from "partials/progress.html" import bar %}
+{% set lab = stack_status.get(st.status, (st.status, '')) %}
+<div id="doc-stack" class="stack" {% if live %}hx-get="/journal/documents/stack/{{ st.id }}/progress" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+<section class="card">
+  <div class="card-head"><h2>Stapel vom {{ st.created_at|datetime_de }}</h2><span class="badge {{ lab[1] }}">{{ lab[0] }}</span></div>
+  {% if live %}
+    {% if pv %}{{ bar(pv) }}{% else %}<p class="hint">Wartet auf den Start …</p>{% endif %}
+    <form method="post" action="/journal/documents/stack/{{ st.id }}/cancel" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn ghost sm" type="submit">Abbrechen</button>
+      <span class="hint">Bis zum Ende wird nichts in den Prüf-Stapel übernommen und nichts gebucht.</span>
+    </form>
+  {% elif st.status == 'done' %}
+    <div class="alert good"><span class="icon">✓</span><div>{{ summary.get('transactions', 0) }} Vorgang/Vorgänge aus {{ summary.get('documents', 0) }} Beleg(en) erkannt – noch <b>nichts gebucht</b>. Bitte im Prüf-Stapel prüfen und übernehmen bzw. verknüpfen.</div></div>
+    {% if summary.get('rows') %}<p>{% for k, n in summary.rows.items() %}<span class="badge">{{ row_label.get(k, k) }}: {{ n }}</span> {% endfor %}</p>{% endif %}
+    {% if batches %}<div class="row">{% for b in batches %}<a class="btn primary sm" href="/journal/csv/{{ b.id }}">Prüf-Stapel #{{ b.id }} öffnen</a>{% endfor %}</div>{% endif %}
+    {% if summary.get('public_requests') %}<p class="hint">Öffentliche Abfragen: {{ summary.public_requests }} (nur Transaktions-Hash).{% for e in summary.get('public_errors', []) %} {{ e }}{% endfor %}</p>{% endif %}
+  {% elif st.status == 'cancelled' %}
+    <div class="alert warn"><span class="icon">!</span><div>Abgebrochen – nichts wurde in den Prüf-Stapel übernommen. Belege erneut hochladen, um sie auszuwerten.</div></div>
+  {% else %}
+    <div class="alert crit"><span class="icon">!</span><div>Der Stapel wurde nicht abgeschlossen (z. B. Neustart der App). Es wurde nichts übernommen – bitte erneut hochladen.</div></div>
+  {% endif %}
+  {% for e in summary.get('errors', []) %}<div class="alert warn"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+</section>
+<section class="card">
+  <h2>Belege ({{ docs|length }})</h2>
+  <ul class="plain-list">{% for d in docs %}{% set dl = doc_status.get(d.status, (d.status, '')) %}
+    <li class="wrap-any">{% if d.status in ('analysed', 'staged') %}<a href="/journal/documents/{{ d.id }}">{{ d.filename }}</a>{% else %}{{ d.filename }}{% endif %}
+      <span class="badge {{ dl[1] }}">{{ dl[0] }}</span>{% if d.doc_type %} · {{ doc_label.get(d.doc_type, d.doc_type) }}{% endif %}{% if d.provider %} · {{ provider_label.get(d.provider, d.provider) }}{% endif %}{% if d.ocr %} · OCR{% endif %}{% if d.error %} · <span class="hint">{{ d.error }}</span>{% endif %}</li>
+  {% endfor %}</ul>
+</section>
+</div>

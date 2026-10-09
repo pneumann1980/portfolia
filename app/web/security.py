@@ -134,7 +134,8 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
 
 MAX_BODY = 1_000_000  # Formulare der App sind klein; der kuratierte Import läuft über das Importverzeichnis
 # Datei-Uploads (CSV-Import, Steuerdaten) dürfen größer sein – nur auf diesen Pfaden (ohne ROOT_PATH-Präfix)
-UPLOAD_LIMITS = {"/journal/csv": 26 * 1024 * 1024, "/tax/data/upload": 26 * 1024 * 1024}
+UPLOAD_LIMITS = {"/journal/csv": 26 * 1024 * 1024, "/tax/data/upload": 26 * 1024 * 1024,
+                 "/journal/documents/upload": 101 * 1024 * 1024}  # Belegstapel (höchstens 100 MiB, je Datei 25 MiB)
 _MULTIPART_TOKEN = re.compile(rb'name="csrf_token"(?:\r\n[^\r\n]+)*\r\n\r\n([^\r\n]{1,200})\r\n')
 
 

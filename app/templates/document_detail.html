@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Beleg prüfen{% endblock %}
+{% block heading %}PDF &amp; Screenshot · Beleg{% endblock %}
+{% macro boxq(x) %}{{ '%.4f,%.4f,%.4f,%.4f'|format(x[0], x[1], x[2], x[3]) }}{% endmacro %}
+{% block content %}
+{% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+{% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+{% set dl = doc_status.get(d.status, (d.status, '')) %}
+<div class="stack doc-detail">
+<section class="card">
+  <div class="card-head"><h2 class="wrap-any">{{ d.filename }}</h2><span class="badge {{ dl[1] }}">{{ dl[0] }}</span></div>
+  <dl class="kv">
+    <dt>Art</dt><dd>{{ doc_label.get(d.doc_type, d.doc_type or '–') }}{% if d.provider %} · {{ provider_label.get(d.provider, d.provider) }}{% endif %}</dd>
+    <dt>Datei</dt><dd>{{ d.file_type|upper }}{% if d.pages %} · {{ d.pages }} Seite(n){% endif %}{% if d.ocr %} · Texterkennung (OCR){% else %} · eingebetteter Text{% endif %} · {{ (d.size / 1024)|round(0)|int }} KB</dd>
+    <dt>Prüfsumme</dt><dd><code class="wrap-any">SHA-256 {{ d.sha256 }}</code></dd>
+    <dt>Eingelesen</dt><dd>{{ d.created_at|datetime_de }}{% if d.updated_at and d.updated_at != d.created_at %} · zuletzt bewertet {{ d.updated_at|datetime_de }}{% endif %}</dd>
+    {% if res.get('convention') %}<dt>Zahlenformat</dt><dd>{{ res.convention }}</dd>{% endif %}
+    {% if prev %}<dt>Fassung</dt><dd>geänderte Fassung von <a href="/journal/documents/{{ prev.id }}">{{ prev.filename }}</a> (gleiche Kennung, anderer Inhalt)</dd>{% endif %}
+    {% if later %}<dt>Neuere Fassung</dt><dd>{% for x in later %}<a href="/journal/documents/{{ x.id }}">{{ x.filename }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</dd>{% endif %}
+    <dt>Prüf-Stapel</dt><dd>{% if d.batch_id %}<a href="/journal/csv/{{ d.batch_id }}">#{{ d.batch_id }} öffnen</a> – dort übernehmen, verknüpfen, auslassen, Sammelaktionen, Rückgängig{% else %}–{% endif %}</dd>
+    <dt>Original</dt><dd>{% if d.stored %}lokal gespeichert · <a href="/journal/documents/{{ d.id }}/original">herunterladen</a>{% elif d.text_deleted_at %}gelöscht am {{ d.text_deleted_at|datetime_de }} (Feldbelege bleiben){% else %}nicht gespeichert{% endif %}</dd>
+  </dl>
+  <div class="row">
+    {% if d.analysis_json %}<form method="post" action="/journal/documents/{{ d.id }}/reevaluate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Neu bewerten</button></form>{% endif %}
+    {% if d.stored or d.analysis_json %}<form method="post" action="/journal/documents/{{ d.id }}/delete-original" data-confirm="Original und extrahierten Text dieses Belegs löschen? Feldbelege, Prüfzeilen und Buchungen bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Original löschen</button></form>{% endif %}
+    <a class="btn sm ghost" href="/journal/documents">Zurück</a>
+  </div>
+  {% for w in res.get('warnings', []) %}<div class="alert warn"><span class="icon">!</span><div>{{ w }}</div></div>{% endfor %}
+  {% if has_preview %}
+  <details class="box"><summary>Beleg ansehen{% if d.pages and d.pages > 1 %} (Seite 1 von {{ d.pages }}){% endif %}</summary>
+    <div class="doc-page">{% for pg in range(1, [d.pages or 1, 5]|min + 1) %}<img loading="lazy" src="/journal/documents/{{ d.id }}/preview?page={{ pg }}" alt="Seite {{ pg }}">{% endfor %}</div>
+  </details>
+  {% endif %}
+</section>
+
+{% if not items %}
+<section class="card"><p class="hint">Kein Vorgang erkannt. Bei Screenshots hilft ein schärferes Bild; ansonsten die Buchung manuell erfassen.</p></section>
+{% endif %}
+
+{% for it in items %}{% set t = it.t %}{% set row = it.row %}
+<section class="card" id="tx{{ it.n }}">
+  <div class="card-head"><h2>Vorgang {{ it.n }}: {{ kind_label.get(t.kind, t.kind) }}</h2>
+    <div class="row">{% if row %}<span class="badge {{ row.status_badge }}">{{ row.status_label }}</span>{% if row.cat_label %}<span class="badge {{ row.cat_badge }}">{{ row.cat_label }}</span>{% endif %}{% endif %}</div></div>
+
+  <h3>Lösung</h3>
+  <ol class="doc-solutions">{% for s in it.solutions %}
+    <li class="{{ 'preferred' if loop.first }}"><span class="badge {{ 'good' if loop.first else '' }}">{{ 'empfohlen' if loop.first else 'Alternative' }}</span>
+      <b>{% if s.key == 'amend' %}<a href="/journal/documents/{{ d.id }}/amend?n={{ it.n }}">{{ s.label }}</a>{% elif s.href %}<a href="{{ s.href }}">{{ s.label }}</a>{% else %}{{ s.label }}{% endif %}</b>
+      <div class="hint">{{ s.text }}</div></li>
+  {% endfor %}</ol>
+  {% if it.amend %}
+    {% for c in it.amend.contradictions %}<div class="alert warn"><span class="icon">!</span><div>{{ c }}</div></div>{% endfor %}
+    {% if it.amend.blocked and it.amend.target %}<p class="hint">{{ it.amend.blocked }}</p>{% endif %}
+  {% endif %}
+  {% if row and (row.why or row.ok or row.diff or row.add) %}
+  <details class="box"><summary>Abgleich mit vorhandenen Buchungen{% if row.target %} ({{ row.target }}){% endif %}</summary>
+    {% if row.why %}<p>{{ row.why }}</p>{% endif %}{% if row.basis %}<p class="hint">Grundlage: {{ row.basis }}</p>{% endif %}
+    <ul class="plain-list">{% for x in row.ok %}<li>✓ {{ x }}</li>{% endfor %}{% for x in row.diff %}<li>≠ {{ x }}</li>{% endfor %}{% for x in row.add %}<li>+ {{ x }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+
+  <h3>Felder und Herkunft</h3>
+  <div class="table-wrap cards-wrap"><table class="cards ev-table">
+    <thead><tr><th>Feld</th><th>Wert</th><th>Status</th><th>Herkunft</th><th>Begründung</th></tr></thead>
+    <tbody>{% for name, fv in t.get('fields', {}).items() %}{% set es = ev_status.get(fv.status, (fv.status, fv.status, '')) %}<tr>
+      <td data-label="Feld">{{ fv.label }}</td>
+      <td data-label="Wert" class="wrap-any">{% if fv.value is not none %}<b>{{ kind_label.get(fv.value, fv.value) if name == 'kind' else fv.value }}</b>{% else %}<span class="muted">–</span>{% endif %}</td>
+      <td data-label="Status"><span class="badge {{ es[2] }}" title="{{ es[1] }}">{{ es[0] }} · {{ es[1] }}</span>{% if fv.conf is not none %}<div class="hint">OCR {{ fv.conf|round(0)|int }} %</div>{% endif %}</td>
+      <td data-label="Herkunft" class="wrap-any">{{ origin_label.get(fv.origin, fv.origin) }}{% if fv.where %}<div class="hint">{{ fv.where }}{% if fv.page %} · S. {{ fv.page }}{% endif %}</div>{% endif %}
+        {% if has_preview and fv.box and fv.page %}<details class="crop"><summary>Ausschnitt</summary><img loading="lazy" src="/journal/documents/{{ d.id }}/preview?page={{ fv.page }}&amp;box={{ boxq(fv.box)|trim }}" alt="Ausschnitt {{ fv.label }}"></details>{% endif %}</td>
+      <td data-label="Begründung" class="wrap-any">{{ fv.reason }}
+        {% if fv.conflicts %}<div class="alert warn compact"><span class="icon">!</span><div>Widerspruch: {% for c in fv.conflicts %}{{ c.value }} ({{ origin_label.get(c.origin, c.origin) }}{% if c.where %}, {{ c.where }}{% endif %}){% if not loop.last %}; {% endif %}{% endfor %}</div></div>{% endif %}
+        {% if fv.alternatives %}<details><summary class="hint">Alternativen ({{ fv.alternatives|length }})</summary><ul class="plain-list">{% for a in fv.alternatives %}<li>{{ a.value }}{% if a.where %} ({{ a.where }}){% endif %} – {{ ev_status.get(a.status, (a.status, a.status, ''))[1] }}, {{ origin_label.get(a.origin, a.origin) }}{% if a.reason %}: {{ a.reason }}{% endif %}</li>{% endfor %}</ul></details>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% for w in t.get('warnings', []) %}<div class="alert warn"><span class="icon">!</span><div>{{ w }}</div></div>{% endfor %}
+
+  {% if t.get('steps') %}
+  <details class="box"><summary>Recherche-Protokoll ({{ t.steps|length }} Schritte)</summary>
+    <div class="table-wrap cards-wrap"><table class="cards">
+      <thead><tr><th>Stufe</th><th>Feld</th><th>Quelle</th><th>Anfrage</th><th>Ergebnis</th></tr></thead>
+      <tbody>{% for s in t.steps %}<tr>
+        <td data-label="Stufe">{{ stage_label.get(s.stage, s.stage) }}</td><td data-label="Feld">{{ field_label.get(s.field, s.field) }}</td>
+        <td data-label="Quelle" class="wrap-any">{{ s.source }}</td><td data-label="Anfrage" class="wrap-any">{{ s.query or '–' }}</td>
+        <td data-label="Ergebnis" class="wrap-any"><span class="badge {{ 'good' if s.ok else '' }}">{{ 'gefunden' if s.ok else 'nichts' }}</span> {{ s.result }}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="hint">Reihenfolge: 1 Beleg bzw. Stapel → 2 Portfolia-Daten → 3 verbundene Datenquellen → 4 öffentliche Quellen (nur nach Freigabe, nur Transaktions-Hash).</p>
+  </details>
+  {% endif %}
+
+  {% if d.analysis_json %}
+  <details class="box" id="korrektur{{ it.n }}" {% if row and row.status in ('invalid', 'unclear') %}open{% endif %}><summary>Angaben korrigieren bzw. ergänzen</summary>
+    <form method="post" action="/journal/documents/{{ d.id }}/correct" class="stack" style="gap:8px;margin-top:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="n" value="{{ it.n }}">
+      <div class="grid-3">{% for name in edit_order %}{% set fv = t.get('fields', {}).get(name, {}) %}
+        {% if name == 'kind' %}
+        <label class="field">{{ field_label.get(name, name) }}<select name="kind"><option value="">wie erkannt ({{ kind_label.get(t.kind, t.kind) }})</option>{% for k in kind_choices %}<option value="{{ k }}" {% if it.overrides.get('kind') == k %}selected{% endif %}>{{ kind_label.get(k, k) }}</option>{% endfor %}</select></label>
+        {% else %}
+        <label class="field">{{ field_label.get(name, name) }}<input type="text" name="{{ name }}" value="{{ it.overrides.get(name, '') }}" placeholder="{{ fv.get('value') if fv.get('value') is not none else '' }}" maxlength="200" autocomplete="off" {% if name == 'date' %}inputmode="numeric"{% elif name in ('quantity', 'price', 'gross', 'fee', 'value_eur', 'network_fee') %}inputmode="decimal"{% endif %}></label>
+        {% endif %}
+      {% endfor %}</div>
+      <p class="hint">Leer = Wert aus dem Beleg. Korrekturen gelten als eigene Herkunft („Korrektur“) mit Vorrang; der Beleg wird ohne erneute OCR neu bewertet. Datum als JJJJ-MM-TT, Zahlen mit Punkt oder Komma. Bereits übernommene Vorgänge werden nicht verändert.</p>
+      <div><button class="btn sm primary" type="submit">Speichern und neu bewerten</button></div>
+    </form>
+  </details>
+  {% endif %}
+</section>
+{% endfor %}
+
+{% if res.get('pages') %}
+<section class="card">
+  <details><summary>Seiten und Texterkennung</summary>
+    <ul class="plain-list">{% for p in res.pages %}<li>Seite {{ p.n }}: {{ 'Texterkennung' if p.method == 'ocr' else ('eingebetteter Text' if p.method == 'text' else p.method) }}{% if p.conf is not none %} · Sicherheit {{ p.conf|round(0)|int }} %{% endif %}{% for w in p.warnings %} · {{ w }}{% endfor %}</li>{% endfor %}</ul>
+  </details>
+</section>
+{% endif %}
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/documents.js?v={{ version }}"></script>{% endblock %}

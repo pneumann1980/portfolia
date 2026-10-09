@@ -733,3 +733,23 @@ table.months td, table.months th { padding: 2px 6px; }
 
 /* Abbrechen eines laufenden Abrufs */
 .ds-cancel { display: flex; justify-content: flex-end; margin-top: 6px; }
+
+/* PDF & Screenshot (Belegimport) */
+.dropzone { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 22px 14px; text-align: center;
+  border: 2px dashed var(--border); border-radius: 10px; background: var(--surface-2); cursor: pointer; position: relative; }
+.dropzone.over { border-color: var(--accent); background: var(--surface-3); }
+.dropzone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.dropzone .dz-main { font-weight: 600; }
+.doc-filelist:empty { display: none; }
+.doc-filelist li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.upload-progress .progress { height: 8px; margin-top: 4px; }
+.doc-solutions { margin: 0 0 8px; padding-left: 20px; }
+.doc-solutions li { margin: 6px 0; }
+.doc-solutions li.preferred b a, .doc-solutions li.preferred b { color: var(--ink); }
+.doc-page { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.doc-page img, details.crop img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+details.crop summary { font-size: .8rem; color: var(--ink-2); cursor: pointer; }
+details.crop img { display: block; margin-top: 4px; width: 100%; max-width: 420px; }
+.ev-table td { vertical-align: top; }
+.alert.compact { padding: 4px 8px; margin: 4px 0 0; font-size: .82rem; }
+.doc-filelist li.neg { color: var(--crit-ink); }

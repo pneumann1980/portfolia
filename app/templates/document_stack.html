@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Belegstapel{% endblock %}
+{% block heading %}PDF &amp; Screenshot · Stapel{% endblock %}
+{% block content %}
+{% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+{% if msg %}<div class="alert" role="status"><span class="icon">i</span><div>{{ msg }}</div></div>{% endif %}
+<div class="row" style="margin-bottom:8px"><a class="btn sm" href="/journal/documents">Zurück zu den Belegen</a></div>
+{% include "partials/document_stack_body.html" %}
+{% endblock %}

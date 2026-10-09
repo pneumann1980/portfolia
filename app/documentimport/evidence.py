@@ -68,7 +68,9 @@ def resolve_field(field_name: str, evidence: list[FieldEvidence],
     usable: list[FieldEvidence] = []
     rejected: list[FieldEvidence] = []
     for candidate in evidence:
-        if candidate.field != field_name or not candidate.value or not candidate.source_ref:
+        if candidate.field != field_name:  # Belege anderer Felder sind keine Alternative
+            continue
+        if not candidate.value or not candidate.source_ref:
             rejected.append(candidate)
             continue
         if candidate.origin in ("portfolio", "provider") and (

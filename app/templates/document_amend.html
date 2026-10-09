@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Buchung ergänzen{% endblock %}
+{% block heading %}PDF &amp; Screenshot · Buchung ergänzen{% endblock %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>Vorschau: Buchung aus Beleg ergänzen</h2>
+    <div class="row"><a class="btn sm" href="/journal/documents/{{ d.id }}#tx{{ n }}">Zurück zum Beleg</a></div></div>
+  {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+  <div class="alert"><span class="icon">i</span><div><strong>Vorschau – noch nichts geändert.</strong> Ergänzt werden nur Felder, die der Beleg belegt bzw. eindeutig rekonstruiert; Menge, Asset, Konto und Vorgangsart werden nie geändert. Die Auswirkungen sind auf einer Kopie berechnet; erst „Übernehmen“ ändert die Buchung, rückgängig unter Datenqualität → Entscheidungen und Korrekturen.</div></div>
+  <p>Beleg: <a href="/journal/documents/{{ d.id }}">{{ d.filename }}</a>{% if prop.target %} · Buchung <b>{{ prop.target.tx_id }}</b> ({{ prop.target.ts|datetime_de }}){% endif %}</p>
+  {% if prop.blocked %}<div class="alert warn"><span class="icon">!</span><div>{{ prop.blocked }}</div></div>{% endif %}
+  {% for c in prop.contradictions %}<div class="alert warn"><span class="icon">!</span><div>{{ c }}</div></div>{% endfor %}
+</section>
+
+{% if prop.changes and not prop.blocked %}
+<section class="card">
+  <h2>Ergänzungen ({{ prop.changes|length }})</h2>
+  <form method="get" action="/journal/documents/{{ d.id }}/amend" class="stack" style="gap:8px">
+    <input type="hidden" name="n" value="{{ n }}"><input type="hidden" name="set" value="1">
+    <div class="table-wrap cards-wrap"><table class="cards">
+      <thead><tr><th><span class="sr-only">Auswahl</span></th><th>Feld</th><th>Buchung</th><th>Beleg</th><th>Begründung</th></tr></thead>
+      <tbody>{% for c in prop.changes %}<tr>
+        <td data-label="Auswahl"><input type="checkbox" name="f" value="{{ c.field }}" {% if c.field in selected %}checked{% endif %} aria-label="{{ c.label }} übernehmen"></td>
+        <td data-label="Feld">{{ c.label }}</td><td data-label="Buchung">{{ c.old }}</td><td data-label="Beleg"><b>{{ c.new }}</b></td>
+        <td data-label="Begründung" class="wrap-any">{{ c.reason }}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    <div><button class="btn sm" type="submit">Vorschau aktualisieren</button></div>
+  </form>
+</section>
+{% endif %}
+
+{% if plan and plan.ops %}
+<section class="card">
+  <h2>Was geändert wird</h2>
+  {% for w in plan.warnings %}<div class="alert warn"><span class="icon">!</span><div>{{ w }}</div></div>{% endfor %}
+  <ol class="op-list">{% for op in plan.ops %}<li class="op"><div class="row"><span class="badge warn">ergänzen</span><span>{{ op.label }}</span></div></li>{% endfor %}</ol>
+</section>
+{% if effects %}{% include "partials/diag_effects.html" with context %}{% endif %}
+{% if not plan.errors %}
+<section class="card">
+  <h2>Übernehmen</h2>
+  <p class="hint">Eine Änderung in einer Transaktion. Haben sich die Daten seit dieser Vorschau geändert, wird nichts übernommen.</p>
+  <form method="post" action="/journal/documents/{{ d.id }}/amend" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="n" value="{{ n }}"><input type="hidden" name="token" value="{{ plan.token }}">
+    {% for f in selected|sort %}<input type="hidden" name="f" value="{{ f }}">{% endfor %}
+    <button class="btn primary" type="submit">Übernehmen</button>
+    <a class="btn ghost" href="/journal/documents/{{ d.id }}#tx{{ n }}">Abbrechen</a>
+  </form>
+</section>
+{% endif %}
+{% endif %}
+</div>
+{% endblock %}

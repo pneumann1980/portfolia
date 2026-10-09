@@ -45,6 +45,19 @@ def event_key(e: Enriched, sha: str) -> tuple[str, list[str]]:
     return f"doc:{sha[:16]}:{e.tx.n}", []
 
 
+def _alternatives(d: Any, sel: Any) -> list[dict[str, Any]]:
+    """Andere Werte für dasselbe Feld (gleiche Werte an weiteren Fundstellen sind keine Alternative)."""
+    out: list[dict[str, Any]] = []
+    seen = {sel.value} if sel is not None else set()
+    for a in d.alternatives:
+        if a is sel or a.value in seen:
+            continue
+        seen.add(a.value)
+        out.append({"value": a.value, "origin": a.origin, "status": a.status, "where": a.location,
+                    "reason": a.reason[:160]})
+    return out[:5]
+
+
 def provenance(e: Enriched, doc: dict[str, Any]) -> dict[str, Any]:
     """Herkunft je Feld (für ``Rec.raw`` und die Prüfoberfläche) – ohne Volltext des Dokuments."""
     fields: dict[str, Any] = {}
@@ -63,8 +76,7 @@ def provenance(e: Enriched, doc: dict[str, Any]) -> dict[str, Any]:
             "reason": (sel.reason if sel else d.unresolved_reason)[:300],
             "conflicts": [{"value": c.value, "origin": c.origin, "where": c.location, "reason": c.reason[:200]}
                           for c in d.conflicts][:5],
-            "alternatives": [{"value": a.value, "origin": a.origin, "status": a.status, "reason": a.reason[:160]}
-                             for a in d.alternatives if a is not sel][:5],
+            "alternatives": _alternatives(d, sel),
         }
     return {"document": doc, "kind": e.tx.kind, "doc_type": e.tx.doc_type, "provider": e.tx.provider,
             "fields": fields, "warnings": e.tx.warnings[:20], "asset": e.asset_id,

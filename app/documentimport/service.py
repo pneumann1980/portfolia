@@ -29,7 +29,7 @@ from app.documentimport import enrich as E
 from app.documentimport.bridge import to_recs
 from app.documentimport.evidence import FieldEvidence
 from app.documentimport.extract import MAX_FILE, DocumentError, DocumentResult, sniff
-from app.documentimport.profiles import DOC_LABEL, PROVIDER_LABEL, Analysis, DocTx, analyze
+from app.documentimport.profiles import DOC_LABEL, FIELD_LABEL, KIND_LABEL, PROVIDER_LABEL, Analysis, DocTx, analyze
 from app.documentimport.worker import Cancelled, extract_isolated
 from app.progress import job_progress
 from app.util.timeutil import iso
@@ -43,6 +43,65 @@ _CANCEL: dict[str, threading.Event] = {}
 _NAME_RE = re.compile(r"[^\w.\- ()äöüÄÖÜß]+")
 EDITABLE = ("kind", "date", "time", "quantity", "symbol", "isin", "gross", "ccy", "fee", "fee_ccy", "value_eur",
             "txhash", "ext_id", "price", "network_fee")
+
+
+NUMERIC = ("quantity", "gross", "fee", "value_eur", "price", "network_fee")
+
+
+def normalize(name: str, v: str) -> str:
+    """Korrektur des Nutzers prüfen und vereinheitlichen (Dezimalpunkt, ISO-Datum/-Zeit, Großbuchstaben).
+
+    Zahlen: Komma = Dezimaltrenner (deutsch), sonst Punkt; Tausenderpunkte nur zusammen mit Komma („1.234,56“).
+    Ungültige Eingaben werden abgelehnt statt geraten."""
+    from app.documentimport import parse as P
+    from app.documentimport.profiles import ISIN_RE, isin_ok
+
+    if name in NUMERIC:
+        conv = P.Convention("," if "," in v else ".")
+        try:
+            d = P.number(v, conv)
+        except P.Ambiguous as e:
+            raise ValueError(str(e)) from None
+        if d < 0:
+            raise ValueError("nur positive Werte (Richtung ergibt sich aus der Vorgangsart)")
+        return format(d.normalize(), "f") if d == d.to_integral() else format(d, "f")
+    if name == "date":
+        ds, _notes = P.dates(v)
+        if len(ds) != 1:
+            raise ValueError("Datum als TT.MM.JJJJ oder JJJJ-MM-TT")
+        return ds[0][0].isoformat()
+    if name == "time":
+        ts = P.times(v)
+        if len(ts) != 1:
+            raise ValueError("Uhrzeit als HH:MM oder HH:MM:SS")
+        return ts[0][0].isoformat()
+    if name in ("ccy", "fee_ccy"):
+        u = v.upper()
+        if not re.fullmatch(r"[A-Z]{3}", u):
+            raise ValueError("Währung als dreistelliger Code (z. B. EUR, USD)")
+        return u
+    if name == "isin":
+        u = v.upper().replace(" ", "")
+        if not (ISIN_RE.fullmatch(u) and isin_ok(u)):
+            raise ValueError("keine gültige ISIN (Prüfziffer)")
+        return u
+    if name == "symbol":
+        u = v.upper()
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9.\-^]{0,19}", u):
+            raise ValueError("Kürzel aus Buchstaben/Ziffern (höchstens 20 Zeichen)")
+        return u
+    if name == "kind":
+        if v not in KIND_LABEL or v in ("unknown", "trade"):
+            raise ValueError("unbekannte Vorgangsart")
+        return v
+    if name == "txhash":
+        u = v.removeprefix("0x").lower() if re.fullmatch(r"(0x)?[0-9a-fA-F]{64}", v) else v
+        if not re.fullmatch(r"[0-9A-Za-z]{16,128}", u):
+            raise ValueError("Transaktions-Hash aus Hex-/Base58-Zeichen")
+        return v if v.startswith("0x") else u
+    if not re.fullmatch(r"[\w.\-:/# ]{1,120}", v):
+        raise ValueError("unzulässige Zeichen")
+    return v
 
 
 def _now() -> str:
@@ -369,12 +428,13 @@ class DocumentService:
 
     def _store_results(self, results: dict[int, tuple[DocumentResult, Analysis]],
                        enriched: list[tuple[str, E.Enriched]]) -> None:
-        from app.documentimport.bridge import provenance
+        from app.documentimport.bridge import event_key, provenance
 
         by_sha: dict[str, list[dict[str, Any]]] = {}
         for sha, e in enriched:
             p = provenance(e, {})
             p["n"] = e.tx.n
+            p["event_key"] = event_key(e, sha)[0]
             for s in [sha, *e.tx.sources]:
                 by_sha.setdefault(s, []).append(p)
         for doc_id, (res, an) in results.items():
@@ -403,13 +463,20 @@ class DocumentService:
             return {"error": "Beleg nicht gefunden bzw. Text gelöscht – bitte erneut hochladen."}
         ov = json.loads(row["overrides_json"] or "{}")
         cur = ov.setdefault(str(n), {})
+        errors = []
         for k, v in values.items():
-            if k in EDITABLE:
-                v = (v or "").strip()[:200]
-                if v:
-                    cur[k] = v
-                else:
-                    cur.pop(k, None)
+            if k not in EDITABLE:
+                continue
+            v = (v or "").strip()[:200]
+            if not v:
+                cur.pop(k, None)
+                continue
+            try:
+                cur[k] = normalize(k, v)
+            except ValueError as e:
+                errors.append(f"{FIELD_LABEL.get(k, k)}: {e}")
+        if errors:
+            return {"error": "Nicht gespeichert – " + "; ".join(errors)}
         self.db.x("UPDATE document SET overrides_json=?, updated_at=? WHERE id=?",
                   (json.dumps(ov, ensure_ascii=False), _now(), doc_id))
         return self.reevaluate(doc_id)
@@ -498,21 +565,31 @@ class DocumentService:
             Image.MAX_IMAGE_PIXELS = 30_000_000
             img = Image.open(io.BytesIO(data)).convert("RGB")
         if box:
+            # Fundstelle mit etwas Umgebung (Zeile darüber/darunter, Beschriftung links) – lesbar statt Seitenbreite
             x0, y0, x1, y1 = box
             w, h = img.size
-            pad_y = 0.04
-            img = img.crop((0, int(max(0.0, y0 - pad_y) * h), w, int(min(1.0, y1 + pad_y) * h)))
-            del x0, x1
+            left, right = max(0.0, x0 - 0.25), min(1.0, x1 + 0.08)
+            if right - left < 0.45:
+                right = min(1.0, left + 0.45)
+            img = img.crop((int(left * w), int(max(0.0, y0 - 0.03) * h), int(right * w),
+                            int(min(1.0, y1 + 0.03) * h)))
         if img.size[0] > width:
             img = img.resize((width, max(1, int(img.size[1] * width / img.size[0]))), resample=3)
         buf = io.BytesIO()
         img.save(buf, format="PNG", optimize=True)
         return buf.getvalue()
 
-    def purge_tmp(self) -> None:
-        """Zwischendateien abgebrochener Läufe entfernen (Start der App)."""
+    def recover(self) -> None:
+        """Start der App: Zwischendateien abgebrochener Läufe entfernen; Stapel, die beim Beenden noch liefen, als
+        unterbrochen markieren (nichts wurde gestaget – erneut hochladen bzw. „Neu auswerten“)."""
         if self.tmp.is_dir():
             shutil.rmtree(self.tmp, ignore_errors=True)
+        stamp = _now()
+        with self.db.transaction() as c:
+            c.execute("UPDATE document SET status='failed', error='unterbrochen (Neustart)', updated_at=? WHERE "
+                      "status='queued'", (stamp,))
+            c.execute("UPDATE document_stack SET status='failed', finished_at=? WHERE status IN ('queued', 'running')",
+                      (stamp,))
 
 
 def document_service(ctx: Any) -> DocumentService:
