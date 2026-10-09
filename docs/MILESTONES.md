@@ -1267,6 +1267,18 @@ echten Android-Gerät geprüft**, die Offline-Hinweisseite ließ sich headless n
   Rückfrage; vorhandene Werkzeuge: Umstellung mit Verhältnis, Kursquelle ablehnen, Kurssprung-Befund.
 * Tests: `test_wallets_bsc_nodereal.py`, `test_krc20_prices.py`, erweiterte PulseChain/peaq-Tests.
 
+## M26.2 – Mobile Leiste, Depotwert verbergen (0.23.2)
+
+* **Untere Leiste nach Tipp auf eine Position verschwunden bzw. zu breit:** Ursache waren die sticky Tabellenköpfe
+  der Positionsliste: Sie ragten in Chrome mobil aus dem horizontal scrollenden Tabellenrahmen heraus und
+  verbreiterten das Layout-Viewport auf 857 px (statt 390 px, gemessen mit Chromium-Mobil-Emulation) – trotz
+  `overflow-x: clip` auf `html`. Fixierte Elemente (untere Leiste, Detail-Sheet) übernahmen diese Breite.
+  Behoben: Scroll-Container (`.table-wrap`, `.tabs`) sind Bezugsrahmen (`position: relative`). Zusätzlich endet das
+  Detail-Sheet mobil über der unteren Leiste; sie bleibt sichtbar und bedienbar (auch „Mehr“).
+  Geprüft per Emulation (alle Hauptseiten 390 px, Navigation aus offenem Detail); **nicht auf einem echten Gerät**.
+* **Depotwert verbergen:** Augen-Symbol auf der Übersicht; Gesamtwert und Tagesveränderung in € werden ersetzt
+  (nicht nur unscharf), Zustand je Gerät (`localStorage`), vor dem ersten Zeichnen angewendet.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

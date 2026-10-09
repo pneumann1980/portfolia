@@ -195,6 +195,10 @@ Ausprobieren ohne Internet: `DEMO_MODE=true` (deutlich gekennzeichnete synthetis
 
 ### Übersicht, Positionsdetail und Watchlist
 
+* **Depotwert verbergen:** Das Augen-Symbol neben „Depotwert“ blendet den Gesamtwert und die Tagesveränderung in €
+  aus (`•••••• €`; die Veränderung in % bleibt). Die Wahl gilt je Gerät/Browser und wird vor dem ersten Zeichnen
+  angewendet – der Betrag blitzt beim Laden nicht auf. Weitere Beträge (Kennzahlen, Positionen, Diagramme) bleiben
+  sichtbar.
 * **Top-Bewegungen** mit Umschalter **% | €**: nach prozentualer oder absoluter Tagesänderung sortiert, beide Werte
   sichtbar; die Wahl bleibt im Browser gespeichert.
 * **Allokation als Treemap** (neben Ring/Liste): Fläche = Positionswert, Farbe = Tages- oder Gesamtperformance;
@@ -713,6 +717,9 @@ das ist eine Regel der Browser, nicht von Portfolia. Wege zu HTTPS im Heimnetz:
   `https://<server>.<tailnet>.ts.net` mit gültigem Zertifikat, erreichbar von allen Geräten im Tailnet.
 * Nur zum Ausprobieren mit Chrome: `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, dort
   `http://192.168.x.x:8080` eintragen und Chrome neu starten (unterläuft den Schutz – nicht dauerhaft).
+
+Auf dem Smartphone bleibt die untere Leiste auch bei geöffnetem Positionsdetail sichtbar; das Detail endet über
+ihr. Breite Tabellen scrollen innerhalb ihres Rahmens, die Seite selbst wird nie breiter als der Bildschirm.
 
 Mit Basic Auth sind Manifest, App-Icons und Service Worker ohne Anmeldung abrufbar (sie enthalten keine Daten);
 alles andere bleibt geschützt, beim Start fragt die App nach den Zugangsdaten. Der Service Worker speichert nichts

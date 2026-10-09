@@ -19,9 +19,11 @@
 
 <section class="kpis" aria-label="Kennzahlen">
   <div class="kpi hero">
-    <div class="label">Depotwert</div>
-    <div class="value">{{ val.total_value|eur }}</div>
-    <div class="sub"><span class="delta {{ val.day_change|tone }}">{{ val.day_change|arrow }} {{ val.day_change|eur(2, true) }} ({{ val.day_change_pct|pct }})</span> heute</div>
+    <div class="label">Depotwert
+      <button type="button" class="eye-toggle" data-hide-total aria-pressed="false" aria-label="Depotwert verbergen" title="Depotwert verbergen">
+        <svg class="eye-on" aria-hidden="true"><use href="#i-eye"/></svg><svg class="eye-off" aria-hidden="true"><use href="#i-eye-off"/></svg></button></div>
+    <div class="value"><span class="sens-real">{{ val.total_value|eur }}</span><span class="sens-mask" aria-label="Depotwert verborgen">•••••• €</span></div>
+    <div class="sub"><span class="delta {{ val.day_change|tone }}">{{ val.day_change|arrow }} <span class="sens-real">{{ val.day_change|eur(2, true) }} </span>({{ val.day_change_pct|pct }})</span> heute</div>
     <div class="sub" title="{{ val.last_update|datetime_de }}">Stand: {{ val.last_update|rel_time }}{% if val.last_update %} · {{ val.last_update|datetime_de }}{% endif %}</div>
   </div>
   <div class="kpi">

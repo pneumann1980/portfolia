@@ -135,3 +135,20 @@ def test_installable_app_assets_public_under_basic_auth(config):
         assert "caches." not in sw.text  # nichts wird zwischengespeichert
         for private in ("/", "/static/js/app.js", "/static/css/app.css", "/journal"):
             assert c.get(private).status_code in (401, 404), private
+
+
+def test_dashboard_hide_total_toggle_and_mobile_layout_guards(client):
+    """Augen-Symbol: Depotwert und Tagesveränderung in € sind getrennt maskierbar (Zustand je Gerät, vor dem ersten
+    Zeichnen aus theme.js); Scroll-Container sind Bezugsrahmen der sticky Tabellenköpfe (sonst wird das Layout-Viewport
+    in Chrome mobil breiter als der Bildschirm), das Detail-Sheet endet mobil über der unteren Leiste."""
+    client.post("/actions/import/check", headers={"X-CSRF-Token": _csrf(client)})
+    page = client.get("/").text
+    assert 'data-hide-total aria-pressed="false"' in page and 'aria-label="Depotwert verbergen"' in page
+    hero = page.split('class="kpi hero"', 1)[1].split('<div class="kpi">', 1)[0]
+    assert hero.count('class="sens-real"') == 2 and 'class="sens-mask"' in hero and "#i-eye-off" in page
+    theme = client.get("/static/js/theme.js").text
+    assert 'localStorage.getItem("portfolia-hide-total")' in theme and 'classList.add("hide-total")' in theme
+    css = client.get("/static/css/app.css").text
+    assert ".table-wrap { position: relative; overflow-x: auto;" in css
+    assert "html.hide-total .eye-toggle .eye-on, html.hide-total .sens-real { display: none; }" in css
+    assert ".panel { bottom: calc(56px + env(safe-area-inset-bottom)); }" in css

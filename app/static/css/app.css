@@ -247,6 +247,16 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 .kpi .value .delta { white-space: normal; }
 .kpi .sub { font-size: 0.8rem; color: var(--ink-2); margin-top: 3px; }
 .kpi.hero { grid-column: 1 / -1; }
+/* Depotwert verbergen (Augen-Symbol): Betrag wird nicht nur unscharf, sondern gar nicht angezeigt */
+.eye-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: -6px 0 -6px 2px;
+  padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: var(--ink-2); cursor: pointer;
+  -webkit-tap-highlight-color: transparent; }
+.eye-toggle:hover { background: var(--surface-2); color: var(--ink); }
+.eye-toggle svg { width: 17px; height: 17px; }
+.eye-toggle .eye-off, .sens-mask { display: none; }
+html.hide-total .eye-toggle .eye-on, html.hide-total .sens-real { display: none; }
+html.hide-total .eye-toggle .eye-off { display: inline; }
+html.hide-total .sens-mask { display: inline; letter-spacing: 0.06em; }
 .kpi.hero .value { font-size: clamp(2rem, 9vw, 2.6rem); font-weight: 680; letter-spacing: -0.01em; white-space: nowrap; }
 @media (min-width: 700px) { .kpis { grid-template-columns: repeat(4, 1fr); } .kpi .value { font-size: 1.2rem; } }
 @media (min-width: 1200px) {
@@ -329,7 +339,10 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.85re
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 0.9rem; max-width: 100%; overflow-wrap: anywhere; }
 
 /* Tabellen */
-.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -16px; padding: 0 16px; }
+/* position: relative macht den Scroll-Container zum Bezugsrahmen der sticky Tabellenköpfe – sonst ragen sie in
+   Chrome mobil über den Container hinaus, das Layout-Viewport wird breiter als der Bildschirm (Positionsliste: 857 px
+   statt 390 px) und fixierte Elemente wie die untere Leiste und das Detail-Sheet werden entsprechend zu breit */
+.table-wrap { position: relative; overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -16px; padding: 0 16px; }
 table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 th, td { padding: 7px 7px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
 th { font-size: 0.76rem; font-weight: 600; color: var(--ink-2); text-transform: none; white-space: nowrap; position: sticky; top: 0; background: var(--surface); z-index: 1; }
@@ -388,6 +401,12 @@ body.panel-open { overflow: hidden; }
 @media (min-width: 900px) {
   .panel { inset: 0 0 0 auto; width: min(640px, 92vw); transform: translateX(100%); border-left: 1px solid var(--border); box-shadow: var(--shadow); }
 }
+/* Mobil/Tablet: Die untere Leiste bleibt beim offenen Detail sichtbar und bedienbar – das Sheet endet über ihr */
+@media (max-width: 1023px) {
+  .bottom-nav { z-index: 65; }
+  .more-menu { z-index: 66; }
+  .panel { bottom: calc(56px + env(safe-area-inset-bottom)); }
+}
 
 /* Detail */
 .asset-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
@@ -424,7 +443,7 @@ body.panel-open { overflow: hidden; }
 .news-item .icon-btn { font-size: 1.1rem; min-width: 34px; min-height: 34px; justify-content: center; }
 .news-item .summary { font-size: 0.86rem; color: var(--ink-2); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-width: 520px) { .news-item .thumb { flex-basis: 96px; width: 96px; } }
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-x: auto; }
+.tabs { position: relative; display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-x: auto; }
 .tabs a { padding: 9px 12px; color: var(--ink-2); border-bottom: 2px solid transparent; white-space: nowrap; font-weight: 560; }
 .tabs a.active { color: var(--ink); border-bottom-color: var(--accent); }
 .tabs a:hover { text-decoration: none; color: var(--ink); }

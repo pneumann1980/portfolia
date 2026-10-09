@@ -150,6 +150,25 @@
     if (trg) { e.preventDefault(); trg.click(); }
   });
 
+  // --- Depotwert verbergen (Augen-Symbol auf der Übersicht; gilt je Gerät, gesetzt schon in theme.js) ----------
+  function syncHideTotal() {
+    var hidden = document.documentElement.classList.contains("hide-total");
+    document.querySelectorAll("[data-hide-total]").forEach(function (b) {
+      b.setAttribute("aria-pressed", hidden ? "true" : "false");
+      var label = hidden ? "Depotwert anzeigen" : "Depotwert verbergen";
+      b.setAttribute("aria-label", label);
+      b.setAttribute("title", label);
+    });
+  }
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest("[data-hide-total]")) return;
+    var hidden = document.documentElement.classList.toggle("hide-total");
+    try { localStorage.setItem("portfolia-hide-total", hidden ? "1" : "0"); } catch (err) { /* nur für diese Seite */ }
+    syncHideTotal();
+  });
+  document.body.addEventListener("htmx:afterSwap", syncHideTotal);
+  syncHideTotal();
+
   // --- Reiter: aktiven Reiter in horizontal scrollenden Leisten sichtbar machen ---------------------------
   document.querySelectorAll(".tabs a.active").forEach(function (a) {
     var bar = a.parentElement;
