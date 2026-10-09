@@ -98,7 +98,7 @@ jobs:
           docker buildx build --load --platform linux/amd64 --build-arg PORTFOLIA_REVISION=${GITHUB_SHA} -t portfolia:ci .
           size=$(docker image inspect portfolia:ci --format '{{.Size}}')
           echo "Image-Größe: $((size / 1024 / 1024)) MB"
-          echo "::notice title=Image-Größe (amd64, entpackt)::$((size / 1024 / 1024)) MB"
+          echo "::notice title=Image-Größe amd64 entpackt::$((size / 1024 / 1024)) MiB"
           # Grenze 450 MiB: seit M25 inkl. Tesseract (≈ 80 MB entpackt, davon libicu72 ≈ 36 MB)
           test "$size" -lt 471859200
           # native Erweiterungen laden (fängt beschädigte Bibliotheken ab, auch wenn die App sie erst später braucht)

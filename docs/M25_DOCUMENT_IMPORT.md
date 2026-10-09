@@ -226,8 +226,9 @@ dunkel) und `httpx.MockTransport`:
 | Prüfansicht (HTTP) / Neu bewerten | 0,66 s / 0,30 s |
 | Spitzenspeicher Hauptprozess / Kindprozess (RSS) | 183 MB / 132 MB |
 
-Docker-Image (amd64, lokal gebaut): Tesseract-Schicht ≈ 80 MB entpackt (davon `libicu72` ≈ 36 MB, harte
-Abhängigkeit), gesamt ≈ 434 MB entpackt bzw. ≈ 143 MB komprimiert. CI-Grenze daher 450 MiB (vorher 350 MiB). Der
+Docker-Image (amd64): **385 MiB entpackt** (CI-Messung, Commit 230e1f7), ≈ 143 MB komprimiert (lokaler Build);
+die Tesseract-Schicht macht ≈ 80 MB entpackt aus (davon `libicu72` ≈ 36 MB, harte Abhängigkeit). CI-Grenze daher
+450 MiB (vorher 350 MiB). Der
 CI-Smoke-Test prüft zusätzlich `pypdfium2`, Tesseract mit `deu`, und lädt einen synthetischen Beleg per HTTP hoch
 (Stapel läuft durch, Beleg im Prüf-Stapel). Keine GPU, kein Modellserver, keine zusätzlichen Dienste.
 

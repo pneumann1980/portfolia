@@ -1204,7 +1204,7 @@ Grundlage: PR #1 (Extraktion, Feldbelege, read-only Vorschau) übernommen und er
    Bridge setzte fehlende Währung still auf EUR; erneutes Auswerten erzeugte doppelte offene Vorschläge.
 9. **Tests/Messung:** 57 neue Testfälle (49 Pipeline, 8 Oberfläche; gesamt 788), alle synthetisch; Benchmark `scripts/bench_documents.py`
    (20 Belege gegen 12.577 Buchungen: 8,1 s; RSS 183/132 MB); CI installiert Tesseract und lädt im Docker-Smoke-Test
-   einen Beleg hoch; Image ≈ 434 MB entpackt / ≈ 143 MB komprimiert (Grenze 450 MiB).
+   einen Beleg hoch; Image 385 MiB entpackt (CI) / ≈ 143 MB komprimiert (Grenze 450 MiB).
 
 Offen/Grenzen: Anbieterprofile nicht an Originalbelegen validiert; EVM-Explorer (Schlüssel nötig) und
 Wertpapier-Ausführungsdaten nicht recherchierbar; Belege nicht im Vollexport; optionale KI bewusst nicht umgesetzt.
