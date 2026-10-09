@@ -82,6 +82,8 @@ class EvmConnector(WalletConnector):
     mirror_contracts: ClassVar[frozenset[str]] = frozenset()
     # Umbenennung des nativen Coins: (erster Block mit neuem Symbol, altes Symbol, Zeitpunkt des Blocks, Hinweis)
     native_switch: ClassVar[tuple[int, str, datetime, str] | None] = None
+    first_block: ClassVar[int] = 0  # erster Block dieser Chain (PulseChain: davor Ethereum-Historie)
+    network: ClassVar[str | None] = None  # Netz-Platzhalter des Endpunkts (Subscan: peaq)
     limits = ("NFTs (ERC-721/1155) werden nicht gebucht – „Verbindung testen“ zeigt, ob welche vorhanden sind",
               "Positionen in Verträgen (Staking, Liquidität, Bridges) sind nicht sichtbar – nur Bewegungen der Adresse",
               "Interne Bewegungen laut Trace des Indexers; Gebühren aus gasUsed × gasPrice der Transaktion")
@@ -185,8 +187,9 @@ class EvmConnector(WalletConnector):
             details["balance"] = {"ok": True, "text": f"Bestand {bal.normalize():f} {self.native}"}
             if self.native_switch is not None:
                 details["native"] = {"ok": True, "text": self.native_switch[3]}
-            last = self._call(http, {"module": "account", "action": "txlist", "address": addr, "startblock": 0,
-                                     "endblock": tip, "page": 1, "offset": 1, "sort": "desc"}, "Transaktionen")
+            last = self._call(http, {"module": "account", "action": "txlist", "address": addr,
+                                     "startblock": self.first_block, "endblock": tip, "page": 1, "offset": 1,
+                                     "sort": "desc"}, "Transaktionen")
             if isinstance(last, list) and last:
                 when = ts_from_unix(last[0].get("timeStamp", 0)).strftime("%d.%m.%Y")
                 details["history"] = {"ok": True, "text": f"Historie abrufbar, letzte Transaktion {when}"}
@@ -230,7 +233,7 @@ class EvmConnector(WalletConnector):
         addr = self._addr(cfg)
         w = self.watch(cfg)
         cur = dict(cursor or {})
-        start = int(cur.get("block", 0) or 0)
+        start = max(int(cur.get("block", 0) or 0), self.first_block)
         tokens_seen: dict[str, dict[str, Any]] = dict(cur.get("tokens") or {})
         switch = dict(cur.get("switch") or {}) if self.native_switch is not None else {}
         actions = ACTIONS if w.tokens else ACTIONS[:2]
@@ -300,7 +303,8 @@ class EvmConnector(WalletConnector):
                 res.balances = self._balances(http, addr, tokens_seen)
             except Stop:
                 res.balances = None
-            res.coverage = {"mode": "historisch" if start == 0 else f"ab Block {start:,}".replace(",", "."),
+            res.coverage = {"mode": "historisch" if start <= self.first_block
+                            else f"ab Block {start:,}".replace(",", "."),
                             "from_block": start, "to_block": through, "tip": tip, "confirmations": self.confirmations,
                             "pages": pages, "operations": len(events), "provider": http.ep.label,
                             "records": {a: len(v) for a, v in records.items()}, **http.stats()}
@@ -605,3 +609,110 @@ class PolygonConnector(EvmConnector):
     explorer_tx = "https://polygonscan.com/tx/{}"
     explorer_addr = "https://polygonscan.com/address/{}"
     explorer_token = "https://polygonscan.com/token/{}"  # noqa: S105 - Link-Muster
+
+
+PULSE_FORK_BLOCK = 17_233_000  # letzter Ethereum-Block der kopierten Historie (on-chain geprüft: Miner ≠ 0x…0369)
+PULSE_FIRST_BLOCK = 17_233_001  # erster PulseChain-Block (11.05.2023 06:23:15 UTC, Miner 0x…0369)
+PULSE_START = datetime(2023, 5, 11, 6, 23, 15, tzinfo=UTC)
+
+
+@K.register
+class PulseChainConnector(EvmConnector):
+    """PulseChain (Chain-ID 369) über den offiziellen Explorer (Blockscout, Etherscan-kompatibel, ohne Key).
+
+    PulseChain ist eine Kopie des Ethereum-Zustands am Block 17.233.000: Die Historie davor gehört zu Ethereum und wird
+    nicht abgefragt (Start ab Block 17.233.001). Der beim Fork kopierte native Bestand wird einmalig per RPC
+    (``eth_getBalance`` am Fork-Block) gelesen und als prüfpflichtige Eröffnung vorgelegt – nie automatisch gebucht.
+    Kopierte Tokens (ERC-20-Kopien) werden nicht als Eröffnung angelegt; sie erscheinen in der Bestandsprüfung.
+    """
+
+    provider = "pulsechain"
+    label = "PulseChain (PulseChain-Explorer/Blockscout)"
+    chain_label = "PulseChain"
+    chain_id = 369
+    chain_tag = "PLS"
+    native = "PLS"
+    confirmations = 32  # Blöcke ≈ 10 s; Puffer bis zur Finalität des Indexers
+    endpoints = ("blockscout_pulsechain",)
+    first_block = PULSE_FIRST_BLOCK
+    explorer_tx = "https://scan.pulsechain.com/tx/{}"
+    explorer_addr = "https://scan.pulsechain.com/address/{}"
+    explorer_token = "https://scan.pulsechain.com/token/{}"  # noqa: S105 - Link-Muster
+    limits = (*EvmConnector.limits,
+              "Historie ab dem ersten PulseChain-Block 17.233.001 (11.05.2023) – davor Ethereum-Historie",
+              "Beim Fork kopierter PLS-Bestand: einmalige Eröffnung zur Prüfung (aus eth_getBalance am Fork-Block); "
+              "kopierte Tokens werden nicht eröffnet, Abweichungen zeigt die Bestandsprüfung")
+
+    def fetch(self, cfg: K.SourceConfig, secret: K.Secret, cursor: dict[str, Any] | None) -> K.FetchResult:
+        res = super().fetch(cfg, secret, cursor)
+        if int((cursor or {}).get("block", 0) or 0) > self.first_block:
+            return res  # Eröffnung nur beim Erstabruf (bekannte Kennung wird ohnehin erkannt)
+        addr = self._addr(cfg)
+        try:
+            qty = self._fork_balance(addr)
+        except (K.ConnectorError, Stop) as e:
+            res.warnings.append(f"Bestand am Fork-Block nicht abrufbar ({getattr(e, 'message', e)}) – Eröffnung "
+                                "fehlt; die Bestandsprüfung zeigt die Differenz")
+            return res
+        if qty:
+            rec = Rec(line=0, ts=PULSE_START, kind=M.DEPOSIT, in_sym=self.native, in_qty=qty, tag="fork",
+                      label="PulseChain-Fork: kopierter Bestand",
+                      note=f"Bestand laut Chain am Fork-Block {PULSE_FORK_BLOCK:,}".replace(",", "."),
+                      review="Eröffnungsbestand aus dem PulseChain-Fork (beim Fork aus dem Ethereum-Zustand "
+                             "übernommen) – steuerliche Einordnung (Fork-Zugang) und Wert prüfen",
+                      raw={"chain": self.provider, "block": PULSE_FORK_BLOCK, "source": "eth_getBalance"})
+            rec.ext_id = "fork"
+            res.events.insert(0, K.SourceEvent(f"{self.provider}:fork-{PULSE_FORK_BLOCK}:{addr}", PULSE_START, [rec],
+                                               rec.label))
+        return res
+
+    def _fork_balance(self, addr: str) -> Decimal:
+        from app.datasources.chainhttp import ENDPOINTS
+
+        with ChainHttp(ENDPOINTS["pulsechain_rpc"], transport=self.transport, sleep=self.sleep, clock=self.clock,
+                       max_requests=3, deadline_s=30) as http:
+            body = http.post("", {"jsonrpc": "2.0", "id": 1, "method": "eth_getBalance",
+                                  "params": [addr, hex(PULSE_FORK_BLOCK)]}, what="Bestand am Fork-Block")
+        res = body.get("result") if isinstance(body, dict) else None
+        if not isinstance(res, str) or not res.startswith("0x"):
+            err = (body or {}).get("error") if isinstance(body, dict) else None
+            raise K.ConnectorError("data", "RPC-Antwort ohne Bestand"
+                                   + (f" ({str(err.get('message'))[:80]})" if isinstance(err, dict) else ""))
+        return units(int(res, 16), 18)
+
+
+class PeaqEvmConnector(EvmConnector):
+    """peaq EVM (Chain-ID 3338, H160-Adressen) über Subscans Etherscan-kompatible API.
+
+    Subscan unterstützt laut Routenbeschreibung ``balance``, ``txlist``, ``txlistinternal``, ``tokentx``,
+    ``tokennfttx``, ``tokenbalance`` und ``getblocknobytime`` (kein ``proxy``-Modul). Nur mit direktem Subscan-Key
+    – das kostenlose PubFi-Gateway lässt für diese Route keine Abfrageparameter zu. Wird über :class:`PeaqConnector`
+    (Anbieter „peaq“) für 0x-Adressen verwendet, nicht eigenständig ausgewählt.
+    """
+
+    provider = "peaq"  # Ereignis-IDs „peaq:…“ (nicht registriert – Auswahl über PeaqConnector)
+    label = "peaq EVM (Subscan, direkter Key)"
+    chain_label = "peaq"
+    chain_id = 3338
+    chain_tag = "PEAQ"
+    native = "PEAQ"
+    confirmations = 12
+    endpoints = ("subscan_evm",)
+    network = "peaq"
+    explorer_tx = "https://peaq.subscan.io/tx/{}"
+    explorer_addr = "https://peaq.subscan.io/account/{}"
+    explorer_token = "https://peaq.subscan.io/token/{}"  # noqa: S105 - Link-Muster
+
+    def http(self, cfg: K.SourceConfig, secret: K.Secret, **kw: Any) -> ChainHttp:
+        kw.setdefault("network", self.network)
+        return super().http(cfg, secret, **kw)
+
+    def _tip(self, http: ChainHttp) -> int:
+        res = self._call(http, {"module": "block", "action": "getblocknobytime",
+                                "timestamp": int(datetime.now(UTC).timestamp()), "closest": "before"}, "Blockhöhe")
+        if isinstance(res, dict):
+            res = res.get("blockNumber")
+        try:
+            return int(str(res))
+        except ValueError:
+            raise K.ConnectorError("data", f"{http.ep.label}: Blockhöhe nicht lesbar.") from None

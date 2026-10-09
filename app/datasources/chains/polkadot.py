@@ -37,7 +37,7 @@ import re
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, ClassVar
 
 from app.csvimport import model as M
 from app.csvimport.model import Rec
@@ -91,6 +91,7 @@ class _Net:
         self.extrinsics: list[dict[str, Any]] = []
         self.rewards: list[dict[str, Any]] = []
         self.capped: list[str] = []
+        self.notes: list[str] = []
         self.stopped: str | None = None
         self.requests = 0
 
@@ -102,6 +103,12 @@ class PolkadotConnector(WalletConnector):
     chain_label = "Polkadot"
     native = "DOT"
     endpoints = ("pubfi", "subscan")
+    # Netzparameter (Unterklassen, z. B. peaq): Netze (Subscan-Name, Kürzel, Anzeige), Dezimalstellen, SS58-Präfix
+    nets: ClassVar[tuple[tuple[str, str, str], ...]] = NETS
+    decimals: ClassVar[int] = DOT_DECIMALS
+    ss58_prefix: ClassVar[int] = 0
+    token_tag: ClassVar[str] = ASSET_HUB_TAG
+    rewards_optional: ClassVar[bool] = False  # Reward-Route nicht für jedes Netz belegt → Fehler nur als Hinweis
     explorer_tx = "https://assethub-polkadot.subscan.io/extrinsic/{}"
     explorer_addr = "https://assethub-polkadot.subscan.io/account/{}"
     limits = ("Relay Chain und Asset Hub getrennt abgefragt; Ereignisse der Asset-Hub-Migration werden nicht gebucht, "
@@ -137,12 +144,24 @@ class PolkadotConnector(WalletConnector):
     def _addr(self, cfg: K.SourceConfig) -> str:
         a = (cfg.address or "").strip()
         try:
-            prefix, _ = ss58_decode(a)
+            prefix, acc = ss58_decode(a)
         except ValueError:
-            raise K.ConnectorError("config", "Polkadot-Adresse ungültig – bitte neu eingeben.") from None
-        if prefix != 0:
-            raise K.ConnectorError("config", "Keine Polkadot-Adresse (SS58-Präfix 0).")
+            raise K.ConnectorError("config", f"{self.chain_label}-Adresse ungültig – bitte neu eingeben.") from None
+        if prefix != self.ss58_prefix:
+            raise K.ConnectorError("config", f"Keine {self.chain_label}-Adresse (SS58-Präfix {self.ss58_prefix}).")
+        self._me = acc
         return a
+
+    def _is_me(self, v: Any, addr: str) -> bool:
+        """Eigenes Konto? Vergleich über den öffentlichen Schlüssel – unabhängig vom SS58-Format der Antwort."""
+        if not isinstance(v, str) or not v:
+            return False
+        if v == addr:
+            return True
+        try:
+            return ss58_decode(v)[1] == getattr(self, "_me", None)
+        except ValueError:
+            return False
 
     def _tip(self, http: ChainHttp) -> int:
         data = self._call(http, "scan/metadata", {}, "Blockhöhe")
@@ -158,8 +177,8 @@ class PolkadotConnector(WalletConnector):
     def _nets(self, cfg: K.SourceConfig, secret: K.Secret, budget: int | None = None,
               deadline_s: float | None = None) -> list[tuple[str, str, str, ChainHttp]]:
         n = budget or self.max_requests
-        return [(key, sh, label, self.http(cfg, secret, network=key, max_requests=max(n // len(NETS), 10),
-                                           deadline_s=deadline_s)) for key, sh, label in NETS]
+        return [(key, sh, label, self.http(cfg, secret, network=key, max_requests=max(n // len(self.nets), 10),
+                                           deadline_s=deadline_s)) for key, sh, label in self.nets]
 
     # -- Prüfen -------------------------------------------------------------------------------------------
     def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
@@ -179,12 +198,12 @@ class PolkadotConnector(WalletConnector):
         finally:
             for *_rest, http in nets:
                 http.close()
-        dot = balances[0] if balances else None
-        if dot is not None:
-            details["balance"] = {"ok": True, "text": f"Bestand {dot.qty.normalize():f} DOT"
-                                                      + (f" ({dot.note})" if dot.note else "")}
-        return K.CheckResult(True, f"Polkadot: Adresse {short(addr)} über {nets[0][3].ep.label} lesbar.", details,
-                             balances=balances)
+        main = balances[0] if balances else None
+        if main is not None:
+            details["balance"] = {"ok": True, "text": f"Bestand {main.qty.normalize():f} {self.native}"
+                                                      + (f" ({main.note})" if main.note else "")}
+        return K.CheckResult(True, f"{self.chain_label}: Adresse {short(addr)} über {nets[0][3].ep.label} lesbar.",
+                             details, balances=balances)
 
     def _balances(self, nets: list[tuple[str, str, str, ChainHttp]], addr: str) -> list[K.Balance]:
         total = Decimal(0)
@@ -200,12 +219,12 @@ class PolkadotConnector(WalletConnector):
                     continue
                 sym = str(r.get("symbol") or "")
                 try:
-                    dec = int(r.get("decimals") if r.get("decimals") is not None else DOT_DECIMALS)
+                    dec = int(r.get("decimals") if r.get("decimals") is not None else self.decimals)
                     bal = amount(r.get("balance"), dec)
                 except (TypeError, ValueError):
                     continue
                 uid = str(r.get("unique_id") or sym)
-                if sym == "DOT" and uid in ("DOT", "", "native"):
+                if sym == self.native and uid in (self.native, "", "native"):
                     total += bal
                     if bal:
                         parts.append(f"{label} {bal.normalize():f}")
@@ -222,9 +241,9 @@ class PolkadotConnector(WalletConnector):
                     cur[0] += bal
         note = "; ".join([" + ".join(parts)] if len(parts) > 1 else []
                          + [f"davon {lbl} {v.normalize():f}" for lbl, v in locked.items()]) or None
-        out = [K.Balance("DOT", total, "Polkadot", note)]
+        out = [K.Balance(self.native, total, self.chain_label, note)]
         for uid, (qty, sym) in sorted(tokens.items()):
-            out.append(K.Balance(token_key(sym, ASSET_HUB_TAG, uid), qty, sym))
+            out.append(K.Balance(token_key(sym, self.token_tag, uid), qty, sym))
         return out
 
     # -- Abrufen ------------------------------------------------------------------------------------------
@@ -268,8 +287,15 @@ class PolkadotConnector(WalletConnector):
                                                       "Überweisungen", {"filter_nft": True})
                     net.extrinsics, x_end = self._list(http, "v2/scan/extrinsics", "extrinsics", addr, net,
                                                        "Extrinsics")
-                    net.rewards, r_end = self._list(http, "v2/scan/account/reward_slash", "list", addr, net,
-                                                    "Rewards/Slashes")
+                    try:
+                        net.rewards, r_end = self._list(http, "v2/scan/account/reward_slash", "list", addr, net,
+                                                        "Rewards/Slashes")
+                    except K.ConnectorError as e:
+                        if not self.rewards_optional or e.kind != "data":
+                            raise
+                        net.rewards, r_end = [], x_end
+                        net.notes.append(f"Staking-Rewards nicht abrufbar ({e.message}) – Rewards fehlen ggf.; die "
+                                         "Bestandsprüfung zeigt Differenzen")
                     net.through = min(t_end, x_end, r_end)
                 except Stop as e:
                     net.stopped = str(e)
@@ -287,6 +313,7 @@ class PolkadotConnector(WalletConnector):
             res.cursor = {"v": 1, "nets": {n.key: {"block": max(n.through + 1, n.start)} for n in done}}
             res.resume = not res.complete
             for n in done:
+                res.warnings += n.notes
                 if n.stopped:
                     res.warnings.append(f"{n.label}: {n.stopped} – Fortsetzung ab Block {n.through + 1:,}"
                                         .replace(",", "."))
@@ -369,23 +396,25 @@ class PolkadotConnector(WalletConnector):
                 continue
             mod = str(t.get("module") or "").lower()
             modules.add(mod)
-            sym = str(t.get("asset_symbol") or "DOT")
+            sym = str(t.get("asset_symbol") or self.native)
             uid = str(t.get("asset_unique_id") or "")
-            native = sym == "DOT" and uid in ("", "DOT", "native")
+            native = sym == self.native and uid in ("", self.native, "native")
             try:
                 qty = Decimal(str(t.get("amount") or "0"))
             except InvalidOperation:
                 hints.append("Betrag nicht lesbar")
                 continue
             v2 = str(t.get("amount_v2") or "")
-            if native and _INT.match(v2) and units(v2, DOT_DECIMALS) != qty:
-                hints.append(f"Betrag nicht eindeutig (amount {qty} ≠ amount_v2/10¹⁰) – Menge prüfen")
+            if native and _INT.match(v2) and units(v2, self.decimals) != qty:
+                hints.append(f"Betrag nicht eindeutig (amount {qty} ≠ amount_v2/10^{self.decimals}) – Menge prüfen")
             if not qty:
                 continue
-            asset = "DOT" if native else token_key(clean_symbol(sym, "TOKEN"), ASSET_HUB_TAG, uid or sym)
+            asset = self.native if native else token_key(clean_symbol(sym, "TOKEN"), self.token_tag, uid or sym)
             ev = t.get("event_idx")
             sub = f"tr:{int(ev)}" if isinstance(ev, int) else f"tr:{sub_hash(t.get('from'), t.get('to'), qty)}"
             frm, to = t.get("from"), t.get("to")
+            frm = addr if self._is_me(frm, addr) else frm
+            to = addr if self._is_me(to, addr) else to
             if frm == addr and to == addr and "xcm" in mod:
                 # XCM an das eigene Konto auf einer anderen Chain (z. B. Relay Chain → Asset Hub): auf der Chain mit
                 # eigener Signatur ein Abgang, auf der Ziel-Chain (ohne Signatur) ein Zugang – nie zu null saldiert
@@ -405,7 +434,7 @@ class PolkadotConnector(WalletConnector):
             modules.add(str(x.get("call_module") or "").lower())
             fee_raw = x.get("fee_used") if str(x.get("fee_used") or "0") not in ("", "0") else x.get("fee")
             try:
-                fee = amount(fee_raw)
+                fee = amount(fee_raw, self.decimals)
             except ValueError:
                 hints.append("Gebühr nicht lesbar")
         txid = str((x or {}).get("extrinsic_hash") or next((t.get("hash") for t in transfers if t.get("hash")), "")
@@ -418,15 +447,16 @@ class PolkadotConnector(WalletConnector):
             hints.append("XCM-Übertragung (z. B. Relay Chain ↔ Asset Hub) – bei eigenem Konto eine Umbuchung, Art "
                          "prüfen")
         elif modules & _STAKING and moves:
-            hints.append("Bewegung aus Staking/Nomination Pool – Art prüfen (gebundene DOT bleiben im Konto)")
+            hints.append(f"Bewegung aus Staking/Nomination Pool – Art prüfen (gebundene {self.native} bleiben im "
+                         "Konto)")
         plain = not (modules - _PLAIN_CALLS - {""})
-        if x is None and any(t.get("from") == addr for t in transfers):
+        if x is None and any(self._is_me(t.get("from"), addr) for t in transfers):
             hints.append("Abgang ohne eigene Signatur (Proxy/Multisig?) – Art prüfen")
         raw = {"network": net.key, "extrinsic": idx, "call": call or None, "fee_raw": str((x or {}).get("fee_used")
                                                                                          or (x or {}).get("fee") or "")
                or None, "moves": raw_moves[:20]}
-        return TxView(self.provider, txid, ts, moves, fee=fee, fee_asset="DOT", initiated=initiated, failed=failed,
-                      plain=plain, hint="; ".join(dict.fromkeys(hints)) or None, label=call or None,
+        return TxView(self.provider, txid, ts, moves, fee=fee, fee_asset=self.native, initiated=initiated,
+                      failed=failed, plain=plain, hint="; ".join(dict.fromkeys(hints)) or None, label=call or None,
                       raw={k: v for k, v in raw.items() if v not in (None, [])})
 
     def _reward(self, addr: str, net: _Net, r: dict[str, Any], skipped: Counter[str]) -> K.SourceEvent | None:
@@ -435,7 +465,7 @@ class PolkadotConnector(WalletConnector):
             skipped["Rewards ohne Ereigniskennung"] += 1
             return None
         try:
-            qty = amount(r.get("amount"))
+            qty = amount(r.get("amount"), self.decimals)
             ts = datetime.fromtimestamp(int(r.get("block_timestamp")), UTC)
         except (TypeError, ValueError, OverflowError):
             skipped["Rewards mit unlesbaren Angaben"] += 1
@@ -447,12 +477,13 @@ class PolkadotConnector(WalletConnector):
         raw = {"chain": self.provider, "network": net.key, "event_index": idx, "event_id": r.get("event_id"),
                "era": era, "validator": r.get("validator_stash"), "amount_raw": str(r.get("amount"))}
         if slash:
-            rec = Rec(line=0, ts=ts, kind=M.WITHDRAWAL, out_sym="DOT", out_qty=qty, label="Staking-Slash",
+            rec = Rec(line=0, ts=ts, kind=M.WITHDRAWAL, out_sym=self.native, out_qty=qty, label="Staking-Slash",
                       review="Slash (Strafe des Validators) – Abgang prüfen", raw=raw,
                       note=f"Slash Ära {era}" if era is not None else "Slash")
         else:
-            rec = Rec(line=0, ts=ts, kind=M.DEPOSIT, in_sym="DOT", in_qty=qty, tag="staking", label="Staking-Reward",
-                      note=f"Staking-Reward Ära {era}" if era is not None else "Staking-Reward", raw=raw)
+            rec = Rec(line=0, ts=ts, kind=M.DEPOSIT, in_sym=self.native, in_qty=qty, tag="staking",
+                      label="Staking-Reward", raw=raw,
+                      note=f"Staking-Reward Ära {era}" if era is not None else "Staking-Reward")
         rec.txhash = None
         rec.ext_id = "slash" if slash else "reward"
         return K.SourceEvent(f"{self.provider}:reward-{net.short}-{idx}:{addr}", ts, [rec], rec.label)

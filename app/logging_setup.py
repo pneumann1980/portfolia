@@ -1,7 +1,8 @@
 """Strukturierte Logs auf stdout (JSON) + Fehlerprotokoll in der App-Datenbank.
 
 Sicherheitsrelevant: :class:`SecretRedactor` entfernt API-Keys aus *jeder* Logzeile, auch aus
-Meldungen von Drittbibliotheken (httpx loggt z. B. vollständige URLs inkl. ``key=``-Parameter).
+Meldungen von Drittbibliotheken (httpx loggt z. B. vollständige URLs inkl. ``key=``-Parameter bzw. die
+HMAC-``signature`` signierter Börsenabfragen).
 """
 
 from __future__ import annotations
@@ -21,7 +22,8 @@ from pathlib import Path
 
 # Nur in URL-Kontext (?key=… / &token=…) redigieren – normale Logtexte wie "Auth=basic" bleiben lesbar.
 _QUERY_SECRET_RE = re.compile(
-    r"(?i)([?&](?:key|api_key|apikey|token|access_token|x_cg_demo_api_key|x_cg_pro_api_key|x-api-key)=)([^&\s\"']+)"
+    r"(?i)([?&](?:key|api_key|apikey|token|access_token|x_cg_demo_api_key|x_cg_pro_api_key|x-api-key|signature)=)"
+    r"([^&\s\"']+)"
     r"|((?:x-api-key|authorization)[\"']?\s*[:=]\s*[\"']?(?:bearer\s+)?)([^\s,;\"'}]+)"
 )
 

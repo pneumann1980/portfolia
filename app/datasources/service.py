@@ -83,7 +83,7 @@ RUN_STATUS_LABEL = {"running": "läuft", "ok": "erfolgreich", "partial": "teilwe
 CHAIN_TICKER = {"bitcoin": "BTC", "ethereum": "ETH", "bsc": "BNB", "polygon": "POL", "avalanche": "AVAX",
                 "solana": "SOL", "xrp": "XRP", "cardano": "ADA", "polkadot": "DOT", "kaspa": "KAS", "tron": "TRX",
                 "litecoin": "LTC", "dogecoin": "DOGE", "arbitrum": "ARB", "optimism": "OP", "base": "BASE",
-                "pulsechain": "PLS", "other_chain": "…"}
+                "pulsechain": "PLS", "peaq": "PEAQ", "other_chain": "…"}
 MULTI_ADDRESS = ("bitcoin", "cardano")  # Chains mit mehreren Adressen je Konto (UTXO)
 MAX_EVENTS = 50_000
 KEY_WARN_DAYS = 14
@@ -132,6 +132,32 @@ _NAME_RE = re.compile(r"^[^\x00-\x1f<>]{1,60}$")
 ACCOUNT_MIN_MATCHES = 3  # automatische Konto-Umstellung: mindestens so viele Treffer im kuratierten Import …
 ACCOUNT_SHARE = 0.9  # … und dieser Anteil unter einem Konto
 _KEY_RE = re.compile(r"^[\x21-\x7e]{16,1024}$")  # druckbare ASCII-Zeichen ohne Leerzeichen
+# Anbieter mit zweiteiligem Zugang (API-Key + Secret), gespeichert als „Key:Secret“
+SPLIT_KEY_PROVIDERS = frozenset({"binance"})
+
+
+def join_key(provider: str, key: str, secret: str | None) -> tuple[str, list[str]]:
+    """Zugang zusammensetzen – nie Teile der Eingabe in Fehlertexten wiederholen."""
+    k, sec = (key or "").strip(), (secret or "").strip()
+    if provider not in SPLIT_KEY_PROVIDERS:
+        if sec:
+            return "", ["Für diesen Anbieter gibt es keinen Secret Key – Feld bitte leer lassen."]
+        return k, [] if k else ["API-Key fehlt."]
+    if not sec and ":" in k:  # Umgebungsvariable/Fortgeschritten: bereits „Key:Secret“
+        k, _, sec = k.partition(":")
+    if not k or not sec:
+        return "", ["Für Binance werden API-Key und Secret Key benötigt."]
+    if ":" in k or ":" in sec:
+        return "", ["API-Key bzw. Secret Key enthält ein unerwartetes Zeichen (:)."]
+    for part in (k, sec):
+        if not _KEY_RE.match(part):
+            return "", ["Das sieht nicht nach einem API-Key bzw. Secret Key aus (16–1024 Zeichen, keine Leerzeichen)."]
+    return f"{k}:{sec}", []
+
+
+def key_hint(provider: str, value: str) -> str:
+    """Letzte 4 Zeichen des API-Keys – bei zweiteiligem Zugang nie vom Secret."""
+    return (value.partition(":")[0] if provider in SPLIT_KEY_PROVIDERS else value)[-4:]
 _GROUP_RE = re.compile(r"^[^\x00-\x1f<>]{1,40}$")
 PROGRESS_STALE_S = 600  # ohne Lebenszeichen gilt ein Lauf als abgebrochen (Neustart des Containers)
 BACKFILL_NEXT_S = 90  # Etappen des Erstabrufs: nächster Lauf nach so vielen Sekunden
@@ -139,7 +165,10 @@ MAX_ROUNDS = 40  # Etappen je manuell gestartetem Hintergrundlauf
 MANY_ROUNDS = 3  # Etappen je Konto beim Aktualisieren mehrerer Konten (Erstabrufe setzt der Zeitplan fort)
 BATCH_KEY = "datasources.batch_sync"
 # Anbieter-Schlüssel (je Anbieter, nicht je Datenquelle) – nur Anbieter aus dem geprüften Katalog
-PROVIDER_KEYS = {e.key_provider: e for e in ENDPOINTS.values() if e.key_provider}
+PROVIDER_KEYS: dict[str, Any] = {}
+for _e in ENDPOINTS.values():  # erster Endpunkt je Schlüssel bestimmt die Anzeige (z. B. „Subscan direkt“)
+    if _e.key_provider:
+        PROVIDER_KEYS.setdefault(_e.key_provider, _e)
 _SECRETISH = re.compile(r"(?i)\b(authorization|x-api-key|api[-_ ]?key|apikey|secret|signature|passphrase|token|"
                         r"bearer)(\s*[:=]\s*|\s+)([^\s,;]+)")
 _URL_QUERY = re.compile(r"(https?://[^\s?#]+)\?[^\s]*")
@@ -808,13 +837,15 @@ class DataSourceService:
     def create(self, data: Mapping[str, Any]) -> tuple[int | None, list[str]]:
         vals, errors = self.validate(data)
         api_key = str(data.get("api_key") or "").strip()
-        if api_key:
+        api_secret = str(data.get("api_secret") or "").strip()
+        if api_key or api_secret:
             conn = K.connector_for(vals["provider"])
             if conn is None or not conn.needs_credentials:
                 errors.append("Für diesen Anbieter gibt es (noch) keine Anbindung mit API-Key – Feld bitte leer "
                               "lassen.")
             else:
-                errors += self._key_errors(api_key)
+                api_key, errs = join_key(vals["provider"], api_key, api_secret or None)
+                errors += errs or self._key_errors(api_key)
         if errors:
             return None, errors
         stamp = iso(_now())
@@ -937,15 +968,15 @@ class DataSourceService:
                                "PORTFOLIA_MASTER_KEY_FILE (siehe Anleitung)."]
         return []
 
-    def set_api_key(self, sid: int, value: str, expires_on: str | None = None) -> list[str]:
+    def set_api_key(self, sid: int, value: str, expires_on: str | None = None, secret: str | None = None) -> list[str]:
         """API-Key verschlüsselt speichern bzw. ersetzen. Übernommene Buchungen und Abrufstand bleiben erhalten;
-        die Verbindung ist danach neu zu prüfen."""
+        die Verbindung ist danach neu zu prüfen. ``secret``: zweiter Teil bei Anbietern mit Key + Secret (Binance)."""
         ds = self.get(sid)
         if ds is None:
             return ["Datenquelle nicht gefunden."]
-        v = (value or "").strip()
-        if not v:
-            return ["API-Key fehlt."]
+        v, errors = join_key(ds.provider, value, secret)
+        if errors:
+            return errors
         errors = self._key_errors(v)
         exp = None
         if expires_on:
@@ -966,7 +997,7 @@ class DataSourceService:
             c.execute("INSERT INTO data_source_secret(source_id, kind, ciphertext, key_id, hint, created_at, "
                       "updated_at) VALUES (?, 'api_key', ?, ?, ?, ?, ?) ON CONFLICT(source_id) DO UPDATE SET "
                       "ciphertext=excluded.ciphertext, key_id=excluded.key_id, hint=excluded.hint, "
-                      "updated_at=excluded.updated_at", (sid, blob, kid, v[-4:], stamp, stamp))
+                      "updated_at=excluded.updated_at", (sid, blob, kid, key_hint(ds.provider, v), stamp, stamp))
             c.execute("UPDATE data_source SET status='created', last_check_json=NULL, last_error=NULL, "
                       "key_expires_on=COALESCE(?, key_expires_on), updated_at=? WHERE id=?", (exp, stamp, sid))
         self._purge_wal()

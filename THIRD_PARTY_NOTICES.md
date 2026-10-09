@@ -132,7 +132,10 @@ jeweiligen Nutzungsbedingungen; die Inhalte sind nicht Teil dieses Repositorys o
 
 Wallet-Daten (nur bei eingerichteten Wallet-Konten, nur öffentliche Adressen) kommen von Etherscan, Routescan,
 mempool.space bzw. Blockstream (Esplora), dem öffentlichen Solana-RPC der Solana Foundation bzw. Helius,
-api.kaspa.org (kaspa-rest-server) und api.kasplex.org (Kasplex KRC-20-Indexer); es gelten deren
-Nutzungsbedingungen. Die Bitcoin-Ableitung (BIP32, nur öffentlich), Bech32/Bech32m, Base58, Keccak-256 und
-RIPEMD-160 sind eigene Implementierungen nach den jeweiligen öffentlichen Spezifikationen (BIP32/44/49/84/86/173/
-350, FIPS 202/Keccak, RIPEMD-160); die Testvektoren stammen aus diesen Spezifikationen.
+api.kaspa.org (kaspa-rest-server), api.kasplex.org (Kasplex KRC-20-Indexer), xrplcluster.com bzw. s2.ripple.com,
+Koios, Polygon-Blockscout, PubFi bzw. Subscan (Polkadot, peaq), dem PulseChain-Explorer api.scan.pulsechain.com
+(Blockscout) und rpc.pulsechain.com; es gelten deren Nutzungsbedingungen. Börsendaten (nur mit eigenem, lesendem
+API-Key) kommen von der Bitpanda Public API und der Binance Spot-API (api.binance.com).
+Die Bitcoin-Ableitung (BIP32, nur öffentlich), Bech32/Bech32m, Base58, Keccak-256 und RIPEMD-160 sind eigene
+Implementierungen nach den jeweiligen öffentlichen Spezifikationen (BIP32/44/49/84/86/173/350, FIPS 202/Keccak,
+RIPEMD-160); die Testvektoren stammen aus diesen Spezifikationen.

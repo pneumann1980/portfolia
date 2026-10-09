@@ -258,9 +258,14 @@ def ss58_decode(addr: str) -> tuple[int, bytes]:
 
 
 def ss58_encode(account_id: bytes, prefix: int = 0) -> str:
-    if len(account_id) != 32 or not 0 <= prefix < 64:
-        raise ValueError("nur 32-Byte-Konten mit einfachem Präfix")
-    data = bytes([prefix]) + account_id
+    """SS58 mit einfachem (0–63) oder zweibytigem Präfix (64–16383, z. B. peaq = 1221) laut SS58-Spezifikation."""
+    if len(account_id) != 32 or not 0 <= prefix < 16384:
+        raise ValueError("nur 32-Byte-Konten mit Präfix 0–16383")
+    if prefix < 64:
+        head = bytes([prefix])
+    else:
+        head = bytes([((prefix & 0b1111_1100) >> 2) | 0b0100_0000, (prefix >> 8) | ((prefix & 0b11) << 6)])
+    data = head + account_id
     return b58encode(data + hashlib.blake2b(b"SS58PRE" + data, digest_size=64).digest()[:2])
 
 

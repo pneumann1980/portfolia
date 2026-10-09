@@ -10,10 +10,10 @@ YouTube-Videos werden je Position gefiltert.
   werden direkt in Portfolia erfasst (siehe [Buchungen erfassen](#buchungen-in-portfolia-erfassen)) oder aus
   **CSV-Exporten von Börsen, Wallets und Steuertools** übernommen (siehe [CSV-Import](#csv-import-aus-börsen-und-wallets))
   – auch ganz ohne Import. Börsen und öffentliche Wallet-Adressen lassen sich als [Datenquellen](#datenquellen-börsen-und-wallet-adressen)
-  anlegen; **Bitpanda** wird read-only per API-Key synchronisiert (Schlüssel in der App eingegeben, verschlüsselt
-  gespeichert, jede Buchung vor der Übernahme prüfbar). **Wallets** auf Bitcoin, Ethereum, BNB Chain, Avalanche
-  C-Chain, Solana und Kaspa werden read-only über öffentliche Adressen bzw. einen öffentlichen Kontoschlüssel
-  synchronisiert (siehe [Wallets](#wallets-read-only-sechs-chains)) – nie Seed-Phrase, privater Schlüssel oder
+  anlegen; **Bitpanda** und **Binance** werden read-only per API-Key synchronisiert (Schlüssel in der App eingegeben,
+  verschlüsselt gespeichert, jede Buchung vor der Übernahme prüfbar). **Wallets** auf zwölf Chains (u. a. Bitcoin,
+  Ethereum, PulseChain, Polkadot, peaq, Solana, Kaspa) werden read-only über öffentliche Adressen bzw. einen öffentlichen Kontoschlüssel
+  synchronisiert (siehe [Wallets](#wallets-read-only-zwölf-chains)) – nie Seed-Phrase, privater Schlüssel oder
   Signatur. In der App erfasste
   Buchungen und Assets liegen neben abgeleiteten Daten (Kurse, News, Snapshots, Berichte) in `/data/app.sqlite`.
 * **Export und Sicherung:** Alles lässt sich jederzeit im einheitlichen Import-Format (Datenvertrag, Schema 1.1)
@@ -44,7 +44,7 @@ für Smartphones (≈390 px) optimiert.
    [Importprüfung: Abgleich, Stapelaktionen, Verknüpfen](#importprüfung-abgleich-je-zeile-stapelaktionen-verknüpfen) ·
    [Belege: PDF & Screenshot](#belege-pdf--screenshot)
 6. [Datenquellen: Börsen und Wallet-Adressen](#datenquellen-börsen-und-wallet-adressen) ·
-   [Wallets (read-only, zehn Chains)](#wallets-read-only-zehn-chains) ·
+   [Wallets (read-only, zwölf Chains)](#wallets-read-only-zwölf-chains) ·
    [Diagnose: Datenqualität und Bestandsabgleich](#diagnose-datenqualität-und-bestandsabgleich) ·
    [Finanzielle Integritätsprüfung und Sammelbearbeitung](#finanzielle-integritätsprüfung-und-sammelbearbeitung)
 7. [Berechnungen](#berechnungen)
@@ -84,7 +84,7 @@ Package settings → Change visibility → Public*; es enthält nur den öffentl
    | `/run/secrets/portfolia` | `/boot/config/portfolia` | **ro** | Master-Key (`master.key`) für in der App gespeicherte API-Keys von Datenquellen – bewusst außerhalb von appdata (siehe [Master-Key](#master-key-für-api-keys)) |
 
 3. Optional API-Schlüssel für Kurse und News eintragen (Umgebungsvariablen, nie angezeigt oder geloggt).
-4. Nur für Datenquellen mit API-Key (Bitpanda; bei Wallets Etherscan, Routescan, Helius, Koios, PubFi oder Subscan): einmalig den
+4. Nur für Datenquellen mit API-Key (Bitpanda, Binance; bei Wallets Etherscan, Routescan, Helius, Koios, PubFi oder Subscan): einmalig den
    Master-Key anlegen (Unraid-Terminal), danach bleibt er unverändert – Einzelheiten, Backup und Rotation unter
    [Master-Key](#master-key-für-api-keys). Wallets über mempool.space/Blockstream (Bitcoin), Routescan (Avalanche),
    Blockscout (Polygon), die öffentlichen XRPL-Server, Koios (Cardano), den öffentlichen Solana-RPC und api.kaspa.org
@@ -96,7 +96,7 @@ Package settings → Change visibility → Public*; es enthält nur den öffentl
 5. Container starten, Weboberfläche über *WebUI* öffnen (Port 8080).
 6. Optional Wallets einrichten: *Einstellungen → Datenquellen → „+ Wallet-Konto“* → Chain → Name/Gruppe →
    öffentliche Adresse (Bitcoin auch xpub/ypub/zpub) → „Verbindung testen“ → „Erstabruf starten“ (siehe
-   [Wallets](#wallets-read-only-sechs-chains)). Der Container braucht dafür ausgehenden HTTPS-Zugriff auf die
+   [Wallets](#wallets-read-only-zwölf-chains)). Der Container braucht dafür ausgehenden HTTPS-Zugriff auf die
    gewählten Anbieter.
 
 **Aktualisieren:** *Docker → portfolia → Update* (bzw. *Check for Updates*). Zeigt Unraid „not available“, hilft
@@ -172,7 +172,7 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 | `PORTFOLIA_MASTER_KEY` | – | alternativ der Master-Key selbst (sichtbar in `docker inspect` – Datei bevorzugen) |
 | `PORTFOLIA_MASTER_KEY_OLD_FILE` / `_OLD` | – | nur während einer Rotation: der bisherige Master-Key |
 | `PORTFOLIA_DS_<NAME>` | – | bisheriger Weg für Zugangsdaten einer [Datenquelle](#datenquellen-börsen-und-wallet-adressen) (API-Schlüssel mit Leserechten), alternativ `PORTFOLIA_DS_<NAME>_FILE` = Pfad einer Secret-Datei; in Portfolia steht nur der Variablenname. Funktioniert weiter, ein in der App gespeicherter Schlüssel hat Vorrang. |
-| `PORTFOLIA_DS_ETHERSCAN`, `…_ROUTESCAN`, `…_HELIUS`, `…_KOIOS`, `…_PUBFI`, `…_SUBSCAN` | – | optional: [Anbieter-Schlüssel](#wallets-read-only-zehn-chains) für Wallet-Abrufe als Container-Variable (bzw. `…_FILE`), falls nicht in der App gespeichert. Nötig: Etherscan (Ethereum, Polygon), PubFi **oder** Subscan (Polkadot); optional: Routescan, Koios. |
+| `PORTFOLIA_DS_ETHERSCAN`, `…_ROUTESCAN`, `…_HELIUS`, `…_KOIOS`, `…_PUBFI`, `…_SUBSCAN` | – | optional: [Anbieter-Schlüssel](#wallets-read-only-zwölf-chains) für Wallet-Abrufe als Container-Variable (bzw. `…_FILE`), falls nicht in der App gespeichert. Nötig: Etherscan (Ethereum, Polygon), PubFi **oder** Subscan (Polkadot, peaq-SS58), Subscan (peaq-0x); optional: Routescan, Koios. `PORTFOLIA_DS_<NAME>` für Börsen: Bitpanda-Key bzw. bei Binance `API-Key:Secret-Key`. |
 
 ---
 
@@ -718,6 +718,520 @@ Mit Basic Auth sind Manifest, App-Icons und Service Worker ohne Anmeldung abrufb
 alles andere bleibt geschützt, beim Start fragt die App nach den Zugangsdaten. Der Service Worker speichert nichts
 zwischen und greift bei bestehender Verbindung nicht ein; nur ohne Netz zeigt er eine Hinweisseite. Firefox auf dem
 Desktop bietet keine Installation von Web-Apps an.
+
+## Datenquellen: Börsen und Wallet-Adressen
+
+*Einstellungen → Datenquellen* verwaltet Börsenkonten und öffentliche Wallet-Adressen als Quellen für Buchungen:
+anlegen, ansehen, bearbeiten, deaktivieren und entfernen – auch auf dem Smartphone.
+
+> **Stand 0.23:** Automatische Anbindung für **Bitpanda** (Public API), **Binance** (Spot-API, siehe
+> [Binance einrichten](#binance-einrichten)) und für **Wallets auf zwölf Chains** (Bitcoin, Ethereum, BNB Chain,
+> Polygon, Avalanche C-Chain, PulseChain, XRP Ledger, Cardano, Polkadot, peaq, Solana, Kaspa) – ausschließlich
+> lesend. Alle Anbindungen sind
+> mit anonymisierten bzw. synthetischen Testdaten (Fixtures) und nachgebildeten Anbieter-APIs geprüft, **noch
+> nicht live** – siehe [Grenzen der Bitpanda-Anbindung](#grenzen-der-bitpanda-anbindung) und
+> [Wallets](#wallets-read-only-zwölf-chains). Alle anderen Börsen und Chains zeigen ehrlich **„Manuell / noch
+> nicht unterstützt“** und verweisen auf den CSV-Import.
+
+**Unabhängige Abrufe und Abbrechen (0.21.2):** Jede Datenquelle hat ihre eigene Sperre – ein langsamer Abruf (z. B.
+KRC-20 mit Ratenlimit) blockiert Bitpanda und andere Wallets nicht; dieselbe Quelle läuft nie doppelt. Abrufe beim
+Anbieter laufen parallel, Abgleich und Übernahme nacheinander (quellenübergreifende Dublettenerkennung sieht so stets
+den vollständigen Stand). Der Zeitplan startet fällige Quellen je in eigenem Thread. Laufende Abrufe zeigen
+*Abbrechen*: der Abruf endet an der nächsten Prüfstelle (Anfrage, Wartezeit, Fortschritt), der Abrufstand bleibt
+unverändert, die Quelle geht nicht in den Fehlerzustand. Eine verwaiste Anzeige „Abruf läuft“ (z. B. nach Neustart)
+setzt *Abbrechen* sofort zurück. Ein bereits abgerufenes Ergebnis wird nicht mitten im Einbuchen unterbrochen.
+
+**Datensatz:** Art (Börse oder Wallet-Adresse), Anbieter bzw. Chain, frei wählbarer Name, Konto in Portfolia (auf
+das gebucht wird – bei vorhandenen Buchungen aus Import oder CSV dasselbe Konto wählen), öffentliche Adresse bzw.
+xpub (formal geprüft; private Schlüssel und Seed-Phrasen werden abgelehnt, weder gespeichert noch zurückgespielt),
+API-Key (verschlüsselt, siehe unten) mit optionalem Ablaufdatum, Synchronisierungsintervall (nur manuell,
+stündlich, alle 6/12 Stunden, täglich), automatische Übernahme (Standard: aus), Status, letzter Lauf, letzter
+erfolgreicher Lauf, letzter Fehler, nächster Lauf, Abdeckung des letzten Abrufs und Laufhistorie.
+
+**Status:** *angelegt* · *verbunden* (Verbindungsprüfung erfolgreich, noch nicht synchronisiert) ·
+*synchronisiert* bzw. bei Wallets *vollständig synchronisiert* (letzter Abruf nachweislich vollständig, ohne erkannte
+Lücke) · *Erstabruf unvollständig* (lange Historie, wird in Etappen automatisch fortgesetzt) · *teilweise
+synchronisiert* (Seitenende oder Abdeckung unklar, Drosselung, Teilfehler, erkannte Lücke – eine erfolgreiche
+HTTP-Antwort allein genügt nicht; der nächste Lauf holt erneut ab) · *Fehler* mit verständlicher Meldung, z. B. „API-Key abgelaufen“, „Berechtigung fehlt“, „Anbieter drosselt
+Anfragen (HTTP 429)“, „Anbieter vorübergehend nicht erreichbar“. *Deaktiviert* stoppt nur den Zeitplan.
+
+### Bitpanda einrichten
+
+Alles geschieht in der App; einmalige Voraussetzung ist der [Master-Key](#master-key-für-api-keys).
+
+1. **API-Key bei Bitpanda erstellen** (*Profil → API-Key*, app.bitpanda.com/my-account/apikey, Reiter „Bitpanda“) –
+   nur Leserechte:
+
+   | Recht bei Bitpanda | Bedarf | Wofür |
+   |---|---|---|
+   | **Transaction** (lesen) | **erforderlich** | Vorgänge (`GET /v1/operations`) |
+   | **Balances** (lesen) | optional | Bestandsprüfung (`GET /v1/portfolio`, `balance.value`) – nur Hinweis, nie Buchung |
+   | – | kein Recht nötig | Asset-Stammdaten (`GET /v1/assets`, `/v1/currencies`) – laut Referenz öffentlich |
+   | **Trade (Write), Earn (Write)** | **nie aktivieren** | Portfolia handelt nie und ruft keine schreibenden Endpunkte auf |
+
+   Ein Ablaufdatum setzen (z. B. 12 Monate) und in Portfolia eintragen: Die App warnt 14 Tage vorher und ruft
+   nach Ablauf nicht mehr ab.
+2. *Einstellungen → Datenquellen → + Börse*: Anbieter **Bitpanda**, Name, Konto, API-Key einfügen, optional
+   Ablaufdatum → **Anlegen**. Synchronisierung zunächst auf „nur manuell“ lassen.
+3. **Verbindung testen** prüft Vorgänge, Bestände und Asset-Stammdaten einzeln und unterscheidet – soweit Bitpanda
+   es erkennen lässt – ungültigen bzw. widerrufenen Schlüssel (401), fehlendes Leserecht (403 bzw. 401 bei
+   lesbaren Beständen), abgelaufenen Schlüssel (Datum bzw. Meldung), Drosselung (429) und vorübergehende
+   Störungen (5xx, Zeitüberschreitung). Der Test geht ausschließlich an die dokumentierte Bitpanda-API.
+4. **Historischen Abgleich starten**: holt die gesamte Historie und legt einen Prüf-Stapel an. Jeder Vorgang
+   erscheint als *neu*, *bereits vorhanden* (gleiche Anbieter-ID, z. B. aus einem Bitpanda-CSV-Import),
+   *mögliche Dublette*, *vor Stichtag* (mit kuratiertem Import: bis zu dessen Stand – dort bereits enthalten),
+   *unvollständig* (z. B. EUR-Wert fehlt), *ungeklärt* (mit Grund) oder *ignoriert*.
+5. **Prüfen und übernehmen** – einzeln oder alle gültigen. Ungeklärte Vorgänge manuell erfassen, per CSV
+   nachziehen oder **dauerhaft ignorieren**; eine offene Zeile hält die übrigen nicht auf.
+6. Danach auf **stündlich** stellen. Optional „eindeutige neue Vorgänge automatisch übernehmen“.
+
+**Abbildung der Bitpanda-Vorgänge** – nur eindeutige Fälle werden gebucht:
+
+| Bitpanda | Portfolia | Bedingung |
+|---|---|---|
+| Kauf Krypto gegen Fiat, auch Sparplan (`buy`, `savings_plan`) | Kauf, Wert = Fiat-Betrag | genau ein Fiat-Ausgang und ein Krypto-Eingang |
+| Verkauf Krypto gegen Fiat | Verkauf, Wert = Fiat-Betrag | genau ein Krypto-Ausgang und ein Fiat-Eingang |
+| Swap Krypto → Krypto (`swap`, über EUR) | zwei Buchungen: Verkauf gegen EUR + Kauf mit EUR, Werte aus den Euro-Teilen | je ein Verkaufs- und Kauf-Paar (Transaktionsart `sell`/`buy`) in derselben Fiat-Währung |
+| Einzahlung Fiat oder Krypto, Sparplan-Einzahlung | Zugang | ein Eingang, Vorgangsart „deposit“ bzw. Sparplan mit Transaktionsart „deposit“ |
+| Auszahlung Fiat oder Krypto | Abgang und Gebühr (siehe *Gebühren*) | ein Ausgang, Vorgangsart „withdraw…“ |
+| Rewards: `reward`, `staking_reward`, `passive_earn_reward`, `onetime_reward`, Cashback, Airdrop | Zugang mit Ertrags-Tag (`reward`, `staking`, `bonus`, `cashback`, `airdrop` …) | ein Krypto-Eingang |
+| Token-Umstellung (`merger_crypto`, Migration) | Umstellung (Kapitalmaßnahme, Einstand geht über), **prüfbedürftig** | ein Krypto-Ausgang und ein Krypto-Eingang |
+| eigener Gebühren-Teil (z. B. in BEST) | Gebührenzeile desselben Vorgangs | Transaktionsart „fee“ |
+| `fee_amount` an einem Haupt-Teil | Gebühr so, wie der Saldoverlauf sie belegt; ohne Beleg **prüfbedürftig** | siehe *Gebühren* |
+| `trade.fee` (Handelsgebühr) | im Betrag enthalten → nur Hinweis; zusätzlich → Gebühr an der Buchung | Kurs `rate`/`rate_with_fee` und Saldo, sonst **prüfbedürftig** |
+| interne Umbuchung (gleiches Asset und gleicher Betrag ein und aus), Staking `stake`/`unstake` | keine Buchung, im Lauf gezählt | – |
+
+**Bewusst nicht automatisch – „ungeklärt“ mit Grund:** Korrekturen und Stornos (`compensates`) samt dem
+stornierten Vorgang, Tausch Krypto → Krypto ohne Euro-Teile, Fiat → Fiat, Aktien und ETFs (Bitpanda Stocks),
+Edelmetalle, Kryptoindizes, unbekannte Assets oder Vorgangsarten sowie Vorgänge ohne Zeitpunkt oder Richtung (mit
+den gelieferten Feldnamen im Hinweis). Sie werden weder still verworfen noch als Kauf oder Verkauf geraten.
+
+**Vertrag (offizielle Referenz, [docs.public.bitpanda.com](https://docs.public.bitpanda.com/list-operations-4375770e0),
+geprüft am 02.10.2026):** `GET /v1/operations` mit `page_size` (Standard 25), `cursor`, `from`/`to`; Antwort `data[]`,
+`self_cursor`, `next_cursor`, `has_next_page`. Je Vorgang `operation_id`, `operation_type`, `transactions[]`; je Teil
+`flow` (`INCOMING`/`OUTGOING`), `credited_at`, `transaction_type`, `wallet_id` und die Betragsobjekte `asset_amount`,
+`fee_amount`, `asset_balance_after` (`{value, asset_id | currency_id}`), dazu `compensates` und `trade` (`trade_id`,
+`fee`, `rate`, `rate_with_fee` …). Bestände: `GET /v1/portfolio` → `data[].balance.value`. Portfolia liest genau diese
+Felder – keine geratenen Ersatzfelder; nicht dokumentierte Felder und fehlende Pflichtfelder zeigt die Abdeckung des
+Laufs mit Namen (nie mit Werten).
+
+**Zeitpunkt:** ausschließlich `transactions[].credited_at` (bei mehreren Teilen der früheste). Fehlt er, bleibt der
+Vorgang *ungeklärt* und trägt im Prüf-Stapel „Zeitpunkt fehlt“ – mit Mengen, ohne Datum, nie gebucht. Kein Ersatz
+durch den Abrufzeitpunkt; liefert Bitpanda den Zeitpunkt später, ersetzt der nächste Abruf die Zeile.
+
+**Gebühren** (Bedeutung nicht dokumentiert – übernommen wird nur, was die Daten selbst belegen):
+
+* `fee_amount`: Der Saldoverlauf (`asset_balance_after` desselben Wallets gegenüber dem vorherigen Teil im selben
+  Abruf) zeigt, ob die Gebühr *zusätzlich* abgezogen wurde (Buchung: Betrag + Gebühr) oder *im Betrag* steckt
+  (Abgang = Betrag − Gebühr, dazu die Gebühr; bei Eingängen nur Hinweis). Ohne Beleg: Betrag + Gebühr, prüfbedürftig.
+* `trade.fee`: Betrag ≈ Menge × `rate_with_fee` → Gebühr im Fiat-Betrag enthalten (Einstand bzw. Erlös stimmen ohne
+  weitere Gebühr, Hinweis an der Zeile); Betrag ≈ Menge × `rate` → zusätzlich (Gebühr an der Buchung, prüfbedürftig,
+  solange der Saldoverlauf die Abbuchung nicht belegt); sonst prüfbedürftig, nichts geraten.
+
+**Pagination:** Jede Seite wird vollständig verarbeitet; dann entscheidet `has_next_page`. `false` beendet den Abruf –
+auch wenn `next_cursor` gesetzt ist; `true` setzt mit `next_cursor` unverändert fort. `self_cursor` und
+Vorgangskennungen sind nie Fortsetzungspunkte. Als *teilweise* (Abrufstand rückt nicht vor, Erfolgszeitpunkt
+bleibt) enden: fehlendes oder nicht boolesches `has_next_page`, `true` ohne `next_cursor` oder mit
+`next_cursor = self_cursor`, ein wiederholter Cursor, eine Seite nur mit bereits gelieferten Vorgängen, drei leere
+Seiten in Folge trotz `true`, Abbruch durch Drosselung bzw. Störung und mehr als 2000 Seiten. Die Seitenlänge
+entscheidet nie über das Ende. `page_size` = 100 (Höchstwert nicht dokumentiert); lehnt Bitpanda das mit HTTP 400 ab,
+gilt der dokumentierte Standard 25. Wie das Ende erkannt wurde, steht in der Abdeckung („Ende has_next_page=false“).
+
+**Technik und Aufwand:** nur `GET` an `https://api.public.bitpanda.com/v1` mit Header `x-api-key` – keine
+schreibenden Aufrufe, kein Rückgriff auf die ältere API `api.bitpanda.com`, Umleitungen werden nicht verfolgt.
+Folgeläufe fragen mit `from` (Format `2024-01-01T00:00:00.000Z`) ab dem letzten vollständigen Stand minus 2 Tage ab;
+eine neue Auswertungsversion (Parser), das Verwerfen eines Prüf-Stapels oder „Vollständig neu abrufen“ holen die
+ganze Historie. Asset-Stammdaten werden gesammelt (`/assets?id=…`) abgerufen und 30 Tage zwischengespeichert.
+Timeouts 20 s, bei 429 Warten nach `Retry-After` (höchstens 60 s je Wartezeit, 120 s je Lauf), bei 5xx drei Versuche.
+Beträge exakt als Dezimalzahl, Zeitpunkte in UTC; je Zeile bleiben Auswertungsversion, Zeitquelle, Teile und die
+Originalantwort des Vorgangs als Herkunft gespeichert (im Prüf-Stapel unter „Herkunft“). Ereignis-ID
+`bitpanda:<operation_id>`, Zeilen `…#0`, `…#1` (fest), dazu Aliase für Transaktions- und Trade-IDs (`trade.trade_id`)
+– so wird dieselbe Buchung aus dem Bitpanda-CSV-Export (Transaktions-ID `T…`) erkannt.
+
+**Bestände gegenprüfen:** Jeder Lauf liest `/v1/portfolio` (Leserecht „Balances“). Die Datenquelle zeigt je Asset den
+Bitpanda-Bestand neben dem Bestand aus Portfolia-Buchungen des Kontos; nach vollständigem Abruf zusätzlich den
+Abgleich mit der Summe aller Vorgänge – für alle Asset-IDs beider Seiten, mit der Lesart, die den Bestand erklärt
+(z. B. „Gebühren zusätzlich abgezogen“, „ohne Staking-Umbuchungen“), und dem letzten Saldo laut Vorgängen. Eine
+Antwort ohne auswertbare Position (`balance.value`) gilt nicht als geprüft. Abweichungen sind Hinweise – es entstehen
+nie Ausgleichsbuchungen.
+
+**Ältere Auswertungen ersetzen (Reparaturweg):** Jede Prüfzeile trägt die Version ihrer Auswertung. Liefert ein
+Abruf einen Vorgang erneut und unterscheidet sich die neue Auswertung, ersetzt Portfolia dessen Zeilen in offenen
+Prüf-Stapeln derselben Datenquelle – nur wenn sie unbearbeitet sind (keine Entscheidung „übernehmen ja/nein“, kein
+eingetragener Wert, keine Transfer-Bestätigung, nichts übernommen). Bearbeitete bleiben stehen; der Prüf-Stapel
+nennt ihre Zahl und bietet „Veraltete Zeilen neu auswerten“ (Eingaben daran verwerfen, vollständig neu abrufen).
+„Dauerhaft ignorieren“ gilt je Vorgang und damit auch für die neue Auswertung; übernommene Buchungen bleiben
+unverändert, und ein bereits übernommener Vorgang wird nicht ein zweites Mal gebucht – auch wenn die neue
+Auswertung ihn anders auf Zeilen verteilt. Wiederholte Läufe ersetzen nichts doppelt. Wartende Vorgänge blockieren
+nur ihre eigene Datenquelle, nie ein anderes Bitpanda-Konto.
+
+### Master-Key für API-Keys
+
+In der App eingegebene API-Keys speichert Portfolia **nur verschlüsselt** (AES-256-GCM aus der Bibliothek
+`cryptography`, Datenschlüssel per HKDF aus dem Master-Key, jeder Datensatz an seine Datenquelle gebunden). Der
+Browser sieht nach dem Speichern nur die letzten vier Zeichen; der Schlüssel erscheint nicht in URLs, Logs,
+Fehlermeldungen, Exporten oder Browser-Speichern und wird nur als Header an die API des Anbieters gesendet. Der
+**Master-Key** liegt nie in der Datenbank, wird nie protokolliert und **nie automatisch erzeugt**. Fehlt er, ist
+die Eingabe gesperrt, es wird nichts (auch nicht im Klartext) gespeichert und kein Abruf mit gespeichertem
+Schlüssel gestartet; alles andere funktioniert.
+
+**Einrichtung auf Unraid** (einmalig):
+
+```sh
+mkdir -p /boot/config/portfolia
+openssl rand -base64 32 > /boot/config/portfolia/master.key
+```
+
+Im Template: Pfad **„Master-Key (Ordner, nur lesen)“** `/boot/config/portfolia` → `/run/secrets/portfolia` (ro) und
+Variable `PORTFOLIA_MASTER_KEY_FILE=/run/secrets/portfolia/master.key` (im Template ab Portfolia 0.11 enthalten; fehlen
+sie im bestehenden Container, über *Edit → Add another Path, Port, Variable…* ergänzen), dann neu starten. *Einstellungen →
+Datenquellen* zeigt „Master-Key vorhanden“ mit einer Key-ID. Die Datei auf dem USB-Stick gehört root (FAT,
+nur root-lesbar); der Container liest sie beim Start als root und stellt sie nur dem App-Benutzer im RAM
+(`/dev/shm`) bereit – nach dem Anlegen oder Austauschen der Datei deshalb neu starten. Ohne `openssl`:
+`docker exec Portfolia python -m app master-key > /boot/config/portfolia/master.key`.
+
+**Andere Docker-Umgebungen:** Docker-Secret oder Datei mit Rechten 600/400 über `PORTFOLIA_MASTER_KEY_FILE`
+(siehe [Docker Compose](#docker-compose--docker-run)); notfalls `PORTFOLIA_MASTER_KEY` (sichtbar in
+`docker inspect`). Format: 32 zufällige Bytes als Base64 oder 64 Hex-Zeichen.
+
+**Backup:** Die Datenbank-Sicherungen (`/data/backups`, appdata-Backups) enthalten API-Keys nur verschlüsselt. Den
+Master-Key **getrennt** davon sichern – Inhalt von `master.key` im Passwortmanager; ein Flash-Backup des
+USB-Sticks kann die Datei ebenfalls enthalten. Wer beides zusammen aufbewahrt, hebt die Trennung auf.
+
+**Restore:** Datenbank wie gewohnt zurückspielen und **denselben** `master.key` wieder ablegen, neu starten. Die
+Key-ID unter *Einstellungen → Datenquellen* muss zu der an den gespeicherten Schlüsseln passen. Ist der Master-Key
+verloren: neuen anlegen und je Datenquelle „API-Key ersetzen“ – Buchungen, Abrufstand und Entscheidungen bleiben
+erhalten, nur die Schlüssel sind neu einzugeben.
+
+**Rotation** (z. B. nach Verdacht auf Offenlegung):
+
+```sh
+cd /boot/config/portfolia
+mv master.key master-old.key
+openssl rand -base64 32 > master.key
+```
+
+1. Im Template `PORTFOLIA_MASTER_KEY_OLD_FILE=/run/secrets/portfolia/master-old.key` setzen → *Apply* (Neustart).
+2. *Einstellungen → Datenquellen → „Mit aktuellem Master-Key neu verschlüsseln“* (oder
+   `docker exec Portfolia python -m app credentials rotate`); `python -m app credentials status` zeigt den Stand.
+3. Sobald „0 mit früherem Master-Key“ angezeigt wird: Variable wieder leeren, *Apply*, `master-old.key` löschen und
+   den neuen Key im Passwortmanager hinterlegen.
+
+Wurde ein **API-Key** selbst offengelegt, hilft nur ein neuer Schlüssel bei Bitpanda: dort widerrufen, neu
+erstellen und in Portfolia „API-Key ersetzen“.
+
+**Bisheriger Weg per Umgebungsvariable** (bestehende Einrichtungen): `PORTFOLIA_DS_<NAME>` bzw.
+`PORTFOLIA_DS_<NAME>_FILE` als Container-Variable, in der Datenquelle (*Fortgeschritten*) nur der Name. Das
+funktioniert unverändert und braucht keinen Master-Key; ein in der App gespeicherter Schlüssel hat Vorrang.
+
+### Synchronisieren, Abrufstand und Prüfung
+
+1. Der Connector liefert Vorgänge mit **stabiler Ereignis-ID** `<anbieter>:<ID>`; ein Vorgang darf **mehrere
+   Buchungszeilen** haben (z. B. Kauf + Gebühr in einem dritten Asset), jede Zeile erhält die feste Kennung
+   `<ereignis-id>#<zeile>` – bei erneutem Abruf verschwindet und verdoppelt sich keine.
+2. Die Zeilen durchlaufen **denselben Weg wie der CSV-Import**: Abgleich über den Transaktions-Hash, Symbole
+   zuordnen, EUR-Werte, Validierung, Dubletten, Stichtag, Transfer-Abgleich – nichts umgeht Portfolio- oder
+   Steuerlogik. Der Kasten *Abgleich mit vorhandenen Buchungen* zeigt, was bereits existiert, was neu ist und was
+   noch eine Entscheidung braucht.
+3. **Prüfen und übernehmen** (*Synchronisierung prüfen*). Übernommene Buchungen heißen `PF-S-…`, tragen Quelle
+   „Datenquelle · <Anbieter>“, Ereignis-ID, Zeile und Datenquelle und sind unter *Buchungen* bearbeitbar.
+
+**Fortschritt:** Alle Wege (Datenquellen-Sync, Erstabruf, CSV-Import, Import-ZIP, Kurshistorie) melden über
+denselben Mechanismus (`app/progress.py`) mit festen Phasen *Vorbereitung → Daten abrufen → Verarbeiten → Abgleichen
+→ Kurse ergänzen → Speichern → Fertig*, z. B. „Synchronisierung 63 %“ und „Bitpanda – 1.284 / 2.013 Datensätze
+verarbeitet“. Der Prozentwert steigt nur; ein Balken oben auf jeder Seite zeigt laufende Vorgänge.
+
+Regeln:
+
+* **Abrufstand (Cursor):** rückt nur nach nachweislich vollständigem Abruf vor und wird erst gespeichert, wenn die
+  Vorgänge im Prüf-Stapel stehen. Bei Abbruch, API- oder Datenbankfehler geht nichts verloren – der nächste Lauf
+  holt dieselben Vorgänge erneut; bereits bekannte werden erkannt.
+* **Idempotent:** Übernommene Kennungen gelten als „bereits vorhanden“ – auch gelöschte Buchungen werden nicht
+  wieder angelegt. Vorgänge, die schon in einem offenen Prüf-Stapel warten, werden nicht noch einmal aufgenommen;
+  neue werden an einen noch unbearbeiteten Stapel angehängt. Ein Lauf ohne Neues hinterlässt keinen Stapel.
+* **Verwerfen** eines Prüf-Stapels setzt den Abrufstand vor dessen ältesten offenen Vorgang zurück: Der nächste
+  Lauf liefert diese Vorgänge erneut.
+* **Dauerhaft ignorieren** wird je Anbieter-Ereignis gespeichert und gilt für alle künftigen Läufe (auch nach
+  Verwerfen oder Zurücksetzen); „Ignorieren aufheben“ macht es rückgängig.
+* **Automatisch übernehmen** (Standard: aus): je Vorgang nur vollständig neue, eindeutig zugeordnete Vorgänge ohne
+  Prüfhinweis; ungeklärte, möglicherweise doppelte und unvollständige bleiben zur Prüfung, ohne die sicheren
+  aufzuhalten – ebenso mögliche Transfers ohne Entscheidung (Vorschlag mittlerer Sicherheit oder Gegenbuchung nur
+  im kuratierten Import). Offene Prüfungen blockieren den Zeitplan nicht.
+* **Nie parallel:** Zeitplan und „Jetzt synchronisieren“ teilen sich eine Sperre.
+* **API-Key ersetzen oder entfernen** ändert keine Buchungen. **Entfernen** der Datenquelle löscht Konfiguration,
+  verschlüsselten Schlüssel (SQLite `secure_delete`, WAL wird geleert), Laufhistorie und offene Prüf-Stapel;
+  übernommene Buchungen bleiben und werden von einer neu angelegten Quelle desselben Anbieters erkannt (kein
+  Doppelimport). Ändern von Anbieter, Adresse oder Konto in den Einstellungen setzt Status und Abrufstand zurück;
+  die Konto-Umstellung aus dem Abgleich ruft nicht neu ab.
+* **Zeitplan:** Ein Hintergrundjob prüft alle 5 Minuten fällige Quellen (aktiv, mit Anbindung und Intervall).
+* **Datenschutz:** Ein Connector überträgt nur, was für den Abruf nötig ist (Adresse bzw. API-Key an den
+  jeweiligen Anbieter) – keine Bestände, Werte oder Kontonamen.
+
+### Doppelzählung zwischen kuratiertem Import und App-Buchungen
+
+Wird nach einer Synchronisierung ein **neuer kuratierter Import** eingespielt, der dieselben Börsenbuchungen
+enthält, dürfen sie nicht doppelt zählen:
+
+* **Exakt und automatisch:** Trägt die Import-Buchung die Anbieter-ID – `source_ref = bitpanda:<ID>` (oder
+  `source = bitpanda` und `source_ref = <ID>`; Portfolia-Exporte enthalten das bereits) –, gilt die Import-Buchung.
+  Die App-Buchung zählt nicht mehr, bleibt aber mit Herkunft erhalten und zählt wieder, sobald ein späterer Import
+  sie nicht mehr enthält.
+* **Unsicher, nur Vorschlag:** gleiche Art und Assets, Menge ± 1 %, Datum ± 2 Tage, App-Buchung nicht nach dem
+  Stand des Imports → *Buchungen → Abgleich mit dem Import*: „Import-Buchung gilt“ oder „keine Dublette“. Die
+  Entscheidung speichert beide IDs und lässt sich aufheben; nichts wird still zusammengeführt. Das betrifft vor
+  allem Importe aus Steuertools (z. B. Koinly), deren IDs keine Bitpanda-IDs enthalten.
+* **Transferseite, nur Vorschlag:** ein Zu- bzw. Abgang der App (z. B. aus einer Wallet-Datenquelle), der einer Seite
+  eines Import-Transfers entspricht – auch verzögert gutgeschrieben und unter anderem Kontonamen (Regeln unter
+  *Importprüfung*). „Import-Buchung gilt“ lässt den Transfer zählen (Einstand und Haltedauer wandern mit), die
+  App-Buchung nicht mehr. Heißt dasselbe Wallet in Import und Datenquelle verschieden, danach die Konten angleichen –
+  sonst laufen spätere Bewegungen der Datenquelle auf dem anderen Konto weiter.
+
+### Grenzen der Bitpanda-Anbindung
+
+* **Geprüft gegen die Referenz, nicht gegen ein echtes Konto:** Endpunkte, Parameter und Feldnamen folgen der
+  offiziellen Referenz (Stand 02.10.2026); die Tests nutzen synthetische Antworten in deren Aufbau, und der
+  Test-Server lehnt nicht dokumentierte Parameter, Endpunkte und Cursor ab. Echte Antworten wurden nicht geprüft –
+  ob z. B. `credited_at` bei allen Vorgängen gefüllt ist, zeigt erst die Abdeckung des ersten Laufs („Zeitpunkt:
+  transactions[].credited_at …×, fehlt …×“, fehlende Pflichtfelder, nicht dokumentierte Felder).
+* **Nicht dokumentiert, deshalb nie vorausgesetzt:** Wertebereich von `operation_type`/`transaction_type`
+  (beobachtet u. a. `buy`, `sell`, `swap`, `deposit`, `withdrawal`, `savings_plan`, `stake`,
+  `passive_earn_reward`, `onetime_reward`, `merger_crypto`), Höchstwert von `page_size`, worauf sich `from` bezieht,
+  ob Gebühren im Betrag enthalten sind, ob `balance` gestakte Mengen enthält, ob `asset_balance_after` je Wallet gilt.
+* **Korrektur gegenüber 0.16.1:** 0.16.1 sendete `pageSize` statt `page_size`, folgte einem `next_cursor` trotz
+  `has_next_page=false`, ersetzte einen wiederholten Cursor durch die letzte Vorgangskennung, prüfte Bestände über
+  `/portfolio/holdings` und erkannte Zeitpunkte über geratene Feldnamen. 0.16.2 hält sich an die Referenz.
+* **Scope-Fehler:** Ob Bitpanda ein fehlendes Leserecht mit 401 oder 403 beantwortet, ist nicht dokumentiert – die
+  Unterscheidung „fehlendes Recht“ vs. „ungültiger Schlüssel“ stützt sich zusätzlich auf den Bestände-Test.
+* **Gebühren:** Ob ein Betrag die Gebühr bereits enthält, ist nicht dokumentiert – belegt wird es nur über den
+  Saldoverlauf bzw. die Kurse des Handels; sonst bleibt die Buchung prüfbedürftig.
+* **Bestandsabgleich:** nur Plausibilität. Der Vergleich mit der Summe der Vorgänge braucht einen vollständigen Abruf
+  der Historie; die Lesart (Gebühren, Staking) ist eine Erklärung, kein Beleg. Assets ohne Symbol in den
+  Stammdaten erscheinen mit ihrer Bitpanda-Kennung; Stocks, Metalle und Indizes werden verglichen, aber nicht gebucht.
+* **Nicht abgebildet:** Tausch Krypto → Krypto ohne Euro-Teile, Stocks/ETFs, Edelmetalle, Indizes, Korrekturen
+  (siehe oben); für diese Fälle bleibt der CSV-Import bzw. die manuelle Erfassung.
+* **Ohne Zeitpunkt:** Vorgänge ohne `credited_at` (z. B. noch nicht gutgeschrieben) bleiben ungeklärt, bis Bitpanda
+  den Zeitpunkt liefert; inkrementelle Läufe sehen sie erst wieder, wenn er innerhalb des Abfragefensters liegt –
+  sonst „Vollständig neu abrufen“.
+
+### Vollständigkeit der Historie (Bericht je Datenquelle)
+
+*Einstellungen → Datenquellen → Bitpanda → Vollständigkeit der Historie* bewertet nur Belege, nie eine erfolgreiche
+Antwort allein:
+
+* **Nachgewiesene Fehler:** Abruf unvollständig (Pagination/Fehler), fehlende Pflichtfelder, Brüche im Saldoverlauf
+  (`asset_balance_after` passt nicht zum Betrag), Bestand laut `/portfolio` ≠ Summe der Vorgänge in jeder Lesart,
+  übernommene bzw. verknüpfte Vorgänge, die der letzte **vollständige** Abruf nicht mehr liefert (Buchungen bleiben
+  unverändert).
+* **Plausible Datenlücken:** Monate ohne Vorgänge in sonst aktiven Zeiträumen, Buchungen des kuratierten Imports auf
+  dem Bitpanda-Konto ohne Gegenstück in der API, Vorgänge mit älterer Auswertung.
+* **Nicht verifizierbar:** Zeitraum vor dem ersten Vorgang laut API, Vorgänge ohne Zeitpunkt, Zeitraum seit dem
+  letzten vollständigen Abruf (nur inkrementell), Bestand ohne vollständige Historie.
+
+Dazu eine Tabelle *Vorgänge je Monat*. Grundlage sind die Kennzahlen, die jeder vollständige Abruf seit 0.17.0
+festhält – nach dem Update einmal *Vollständig neu abrufen*. Ob ältere Vorgänge nach der API-Umstellung bei Bitpanda
+fehlen, lässt sich nur so weit beurteilen, wie diese Belege reichen; der Bericht unterscheidet das ausdrücklich.
+
+### Binance einrichten
+
+Wie bei Bitpanda geschieht alles in der App (einmalig: [Master-Key](#master-key-für-api-keys)).
+
+1. **API-Key bei Binance erstellen:** *Profil → API-Verwaltung → API erstellen → Systemgeneriert* (HMAC).
+2. **Nur „Enable Reading“** aktiv lassen. **Nicht** aktivieren: Spot-/Margin-Handel, Futures, Auszahlungen, Universal
+   Transfer. Optional die IP-Freigabe auf die feste öffentliche IP des Servers beschränken.
+3. In Portfolia *Datenquellen → + Börse → Binance*, **API-Key und Secret Key** in die beiden Felder einfügen
+   (Binance zeigt den Secret Key nur einmal), speichern, **Verbindung testen**: Spot-Bestände, Einzahlungen und
+   Trades müssen lesbar sein; darf der Key handeln, warnt die Prüfung („Handelsrechte bei Binance abschalten“).
+4. **Erstabruf starten.** Als Umgebungsvariable (Fortgeschritten) lautet der Wert `API-Key:Secret-Key`.
+
+Beide Teile werden verschlüsselt gespeichert; angezeigt werden nur die letzten 4 Zeichen des **API-Keys** (nie des
+Secrets). An api.binance.com gehen nur der API-Key (Header `X-MBX-APIKEY`) und die HMAC-SHA256-Signatur jeder Abfrage
+– der Secret Key verlässt Portfolia nie. Es gibt ausschließlich lesende `GET`-Abfragen.
+
+**Abgerufen:** Spot-Trades je Handelspaar (`myTrades`, Gebühr `commission` in `commissionAsset` als zusätzliche
+Gebühr), Krypto-Ein- und -Auszahlungen (mit Tx-Hash für den Transfer-Abgleich mit Wallets), Ausschüttungen
+(`assetDividend`: Simple Earn/Zinsen → *interest*, Staking → *staking*, Launchpool/Airdrop → *airdrop*, Unbekanntes →
+*sonstiger Ertrag* zur Prüfung), Staubumtausch in BNB, Convert, Kauf/Verkauf mit Karte/Bank (`fiat/payments`) und
+Fiat-Ein-/Auszahlungen (`fiat/orders`). Kennungen: `binance:trade:<PAAR>:<id>`, `binance:dep:<id>`, `binance:wd:<id>`,
+`binance:div:<tranId>`, `binance:dust:<transId>`, `binance:convert:<orderId>`, `binance:fiatpay:<orderNo>`,
+`binance:fiat:<orderNo>`. Ausstehende Vorgänge (Einzahlung „pending“, Auszahlung „in Bearbeitung“, Fiat
+„Processing“) werden nicht gebucht und halten den Abrufstand bis zu 30 Tage zurück; abgelehnte erscheinen als „ohne
+Buchung“.
+
+**Etappen und Drosselung:** Binance begrenzt die Zeitfenster je Abfrage (Ein-/Auszahlungen < 90 Tage,
+Ausschüttungen ≤ 180 Tage, Convert ≤ 30 Tage) und gewichtet einige Endpunkte je Konto sehr hoch (Auszahlungen,
+Fiat-Aufträge). Portfolia fragt ab dem Binance-Start (14.07.2017) Fenster für Fenster ab, mit Mindestabständen je
+Endpunkt (z. B. Auszahlungen 7 s, Fiat-Aufträge 16 s) und höchstens 4 Minuten je Lauf; der Abrufstand rückt nach
+jedem vollständigen Fenster vor. Der **Erstabruf dauert deshalb mehrere Etappen** (Größenordnung 20–30 Minuten,
+automatisch fortgesetzt), Folgeabrufe nur wenige Sekunden plus die Paarliste. HTTP 429 mit `Retry-After` ≤ 30 s
+wird abgewartet, sonst (und bei 418) wird der nächste Lauf verschoben; Zeitabweichung (-1021) gleicht Portfolia
+mit der Serverzeit ab.
+
+#### Grenzen und Annahmen der Binance-Anbindung
+
+* **Handelspaare:** Binance bietet keine Abfrage „alle eigenen Trades“. Portfolia fragt die Paare ab, deren Basis
+  und Quote aus Beständen, Ein-/Auszahlungen, Ausschüttungen, Convert, Fiat, Staubumtausch oder früheren Trades
+  bekannt sind (laut `exchangeInfo`; delistete Paare fehlen dort). Ein Trade in ein Asset, das sonst nie bewegt
+  wurde, bleibt unsichtbar – die Bestandsprüfung zeigt die Differenz; dafür den CSV-Kontoauszug abgleichen.
+  Sehr viele Paare werden über mehrere Läufe abgearbeitet.
+* **Nicht abgerufen:** Earn-/Staking-Umbuchungen (Bestände in Earn fehlen in der Bestandsprüfung, sie zeigt nur
+  Spot), Funding-Konto, Futures, Margin, Options, P2P, Binance Pay, Unterkonten, NFT, Binance Card.
+* **Annahmen (gekennzeichnet, Prüf-Stapel/Bestandsprüfung zeigen Abweichungen):** `qty`/`quoteQty` brutto, die
+  `commission` zusätzlich; ob die Auszahlungs-`amount` die `transactionFee` enthält, dokumentiert Binance nicht
+  (Gebühr „offen“, zur Prüfung); Zeiten der Auszahlungen ohne Zonenangabe als UTC gelesen; bei Fiat-Kauf ist
+  `sourceAmount` der Fiat-, `obtainAmount` der Kryptobetrag (beim Verkauf umgekehrt); Gebühren bei Fiat und
+  Staubumtausch zur Prüfung. Das UID-Gewichtslimit ist in den gelesenen Doku-Seiten nicht beziffert – die
+  Abstände sind konservativ gewählt.
+* **Abgleich mit dem Binance-CSV:** Das CSV-Profil hat keine nativen Kennungen; frühere CSV-Importe erkennt der
+  Abgleich über Menge/Zeit bzw. den Tx-Hash (Ein-/Auszahlungen) als mögliche Dublette.
+* Gegen die offizielle Dokumentation (developers.binance.com) und einen strengen Mock geprüft (Signatur, Fenster,
+  Paging, Statuswerte, 429/418/-1021), **nicht mit einem echten Konto**. Beim ersten Abruf „Verbindung testen“,
+  Bestandsprüfung und Prüf-Stapel ansehen.
+
+## Wallets (read-only, zwölf Chains)
+
+*Einstellungen → Datenquellen → „+ Wallet-Konto“*: Chain wählen, Namen vergeben (z. B. „Ledger BTC“, „Ledger ETH“,
+„MetaMask BNB“), optional einer **Wallet-Gruppe** zuordnen („Ledger“, „MetaMask“), öffentliche Adresse eintragen –
+bei Bitcoin auch mehrere Adressen oder den **öffentlichen Kontoschlüssel** (xpub/ypub/zpub). Portfolia prüft die
+Eingabe mit Prüfsumme (EIP-55, Bech32/Bech32m, Base58Check, Kaspa), zeigt nach „Verbindung testen“ die beobachteten
+Bestände, holt mit „Erstabruf starten“ die Historie (im Hintergrund, mit Fortschritt, in Etappen) und synchronisiert
+danach inkrementell. **Nie** werden Seed-Phrase, privater Schlüssel, Wallet-Signatur oder eine Verbindung zum
+Ledger-Gerät verlangt – solche Eingaben werden abgelehnt. Portfolia schreibt nichts in eine Wallet.
+
+**Jede Chain ist ein eigenes Konto:** Dieselbe 0x-Adresse auf Ethereum, BNB Chain, Polygon und Avalanche ergibt
+vier Konten; Vorgänge (`ethereum:…`, `bsc:…`, `polygon:…`, `avalanche:…`) und Tokens (`USDC@ETH:0xa0b8…`,
+`USDC@POLYGON:0x3c49…`) bleiben getrennt – es wird nie automatisch zusammengelegt.
+
+### Wallet-Gruppen und Übersicht
+
+Eine **Gruppe** („Ledger“, „MetaMask“, „Meine Hardware-Wallet“) ist nur eine Zuordnung: Ein Ledger mit BTC-, ETH-,
+POL-, XRP-, ADA- und DOT-Konto sind sechs Konten in einer Gruppe – jedes mit eigener Chain, eigenen Adressen,
+Vorgängen und eigener Synchronisierung. Neue Konten lassen sich direkt in einer Gruppe anlegen („+ Konto in
+„Ledger““), bestehende über *Mehr … → Gruppe speichern* zuordnen; Gruppenname (*Gruppe umbenennen*, auch zum
+Zusammenführen) und Kontoname sind unabhängig.
+
+Die Übersicht zeigt je Konto Chain-Symbol, Name, Netzwerk und Anbieter, die gekürzte **kopierbare Adresse** mit
+**Explorer-Link** (öffnest du selbst), den **EUR-Wert** des beobachteten Bestands, den Abrufzustand (*noch nicht
+synchronisiert, läuft, erfolgreich, teilweise, Fehler*) mit letzter erfolgreicher Synchronisierung sowie getrennt
+davon **Datenhinweise** (ungeklärte/nicht unterstützte Vorgänge, fehlende Kurse oder Zuordnungen,
+Bestandsabweichungen, Überschneidungen). Je Gruppe und gesamt steht die Summe. **Suche** über Konto-, Gruppen- und
+Portfolia-Kontoname, Netzwerk und Adresse; **Sortierung** nach Name, Wert, Hinzufügedatum oder letzter erfolgreicher
+Synchronisierung. Aktualisieren geht je Konto, je Gruppe und für alle Wallets – nacheinander im Hintergrund; ein
+fehlgeschlagenes Konto hält die übrigen nicht auf.
+
+* **Kein irreführendes 0,00 €:** Ohne beobachteten Bestand steht „unbekannt“; fehlt für ein Asset Kurs oder
+  Zuordnung, steht der bekannte Teil als „mind. …“ mit Liste der fehlenden Assets. Schlägt ein Abruf fehl, bleibt der
+  letzte bekannte Bestand mit Zeitpunkt stehen („letzter bekannter Wert“) – übernommene Daten werden nie geleert.
+* **Keine Doppelzählung:** Konten derselben Chain dürfen sich nicht überschneiden – gleiche Adresse, eine
+  Einzeladresse, die ein Bitcoin-Kontoschlüssel desselben Kontos bereits abdeckt (abgeleitete Empfangs- und
+  Wechselgeldadressen bis zum zuletzt geprüften Index bzw. Gap-Limit), oder eine Cardano-Adresse, deren Stake-Teil
+  schon als Konto geführt wird. Solche Eingaben werden mit Begründung abgelehnt; ältere Überschneidungen werden
+  angezeigt und in Summen nur einmal gezählt. Legt man eine Datenquelle für dieselbe Wallet neu an, erscheinen
+  bereits übernommene Vorgänge (gleicher Hash, gleiche Buchungsseite und Menge) als **mögliche Dublette** statt
+  erneut gebucht zu werden; zwei verschiedene eigene Wallets in derselben Transaktion (Transfer A → B, gemeinsame
+  Ausgabe) bleiben dagegen getrennte Vorgänge.
+* **Einzeladressen vs. Konto:** Bitcoin mit Kontoschlüssel (xpub/ypub/zpub) und Cardano über die Stake-Adresse
+  erfassen alle Adressen inklusive Wechselgeld; reine Einzeladressen sind am Konto als eingeschränkte Abdeckung
+  gekennzeichnet („Wechselgeld an nicht eingetragene Adressen erscheint als Abgang“).
+
+### Abdeckung je Chain
+
+| Chain | Adress-/Kontotypen | Native / Tokens | Historie | Gebühren | Anbieter (Standard · Alternative) | Keys | Kosten/Limits (Stand 10/2026) | Bekannte Lücken |
+|---|---|---|---|---|---|---|---|---|
+| **Bitcoin** | Einzeladressen P2PKH (1…), P2SH (3…), P2WPKH/P2WSH (bc1q…), P2TR (bc1p…), mehrere je Konto; Kontoschlüssel xpub/ypub/zpub mit wählbarem Typ (Legacy, Nested/Native SegWit, Taproot nach BIP44/49/84/86), Empfang + Wechselgeld bis Gap-Limit (Standard 20) | BTC | vollständig je Adresse (Esplora, 25 je Seite) | je Transaktion (`fee`), nur wenn alle Eingänge eigen | mempool.space · Blockstream Esplora | keine | kein Key; Limit nicht beziffert, Portfolia ≤ 1 Anfrage/s | Einzeladressen: Wechselgeld an nicht eingetragene Adressen zählt als Abgang (angezeigt); Adressen jenseits des Gap-Limits; Lightning, Multisig, Ordinals/Runes; CoinJoin/PayJoin nur als Saldo zur Prüfung |
+| **Ethereum** | eine 0x-Adresse je Konto | ETH; ERC-20 (Contract-genau) | vollständig, Blockfenster ≤ 1.000 Einträge, nie mitten im Block | gasUsed × gasPrice der eigenen Transaktion | Etherscan API V2 · Routescan | Etherscan: kostenloser Key nötig | 3–5 Anfragen/s, 100.000/Tag, ≤ 1.000 Einträge je Anfrage | NFTs (ERC-721/1155) nicht gebucht (Prüfung zeigt, ob vorhanden); Positionen in Verträgen nicht sichtbar; interne Bewegungen laut Indexer-Trace |
+| **BNB Chain** | wie Ethereum | BNB; BEP-20 | wie Ethereum | wie Ethereum | Etherscan API V2 · Routescan | Etherscan: **kostenpflichtiger Plan** | BscScan-API laut BNB Chain seit Ende 2025 abgekündigt; Etherscan liefert Chain 56 nur bezahlt (ab ca. 49 USD/Monat); Routescan ohne Key – Abdeckung zeigt „Verbindung testen“ | wie Ethereum; ohne passenden Anbieter keine Synchronisierung (klare Meldung, CSV-Weg bleibt) |
+| **Polygon PoS** | wie Ethereum | **MATIC bis Block 62.278.656, danach POL** (siehe unten); ERC-20 (Contract-genau) | wie Ethereum; native Überweisungen, die Polygon zusätzlich als Token-Transfer des Systemvertrags `0x…1010` meldet, werden nur einmal gezählt | wie Ethereum | Etherscan API V2 · Blockscout | Etherscan: kostenloser Key; Blockscout: keiner | Etherscan wie oben (Polygon im kostenlosen Plan); Blockscout ohne Key, ≤ 10.000 Einträge je Abfrage | wie Ethereum; Blockscout meldet interne Transaktionen älterer Blöcke teils als „noch nicht verarbeitet“ (→ angezeigte Lücke); Einzahlungen über die PoS-Bridge per State-Sync ggf. nicht in der Historie (Bestandsprüfung) |
+| **Avalanche C-Chain** | wie Ethereum | AVAX; ERC-20 | wie Ethereum | wie Ethereum | Routescan (Snowtrace) · Etherscan (bezahlt) | optional (Routescan-Key) | ohne Key 2/s, 10.000/Tag; kostenloser Key 5/s, 100.000/Tag | wie Ethereum; X-/P-Chain nicht erfasst |
+| **XRP Ledger** | eine klassische Adresse r… je Konto (X-Adressen werden abgelehnt – Destination Tags gehören nicht zur Adresse) | XRP; Trustline-Tokens je Währung **und** Emittent (`USD@XRPL:USD.r…`) | `account_tx` aufsteigend über `marker`, nur validierte Ledger; Lücke, wenn die Historie nicht mit der Kontoeröffnung beginnt | `Fee` der eigenen Transaktion (aus dem Saldo herausgerechnet); fehlgeschlagene `tec…` = nur Gebühr | xrplcluster.com · s2.ripple.com (beide Full History) | keine | kein Key; öffentliche Server, Portfolia ≤ 2/s | Bewegungen aus Saldoänderungen (auch Teilzahlungen, DEX-Ausführungen); DEX, AMM, Escrow, Payment Channels, NFTs zur Prüfung; MPT nicht gebucht (ungeklärt); Reserve bleibt Bestand (als gesperrt ausgewiesen); Destination/Source Tag in Notiz und Rohdaten |
+| **Cardano** | **Stake-Adresse** stake1… (ganzes Konto) oder Adresse(n) addr1…; aus einer Basisadresse wird die Stake-Adresse abgeleitet (CIP-19); Enterprise-Adressen ohne Stake-Teil im Adressmodus | ADA; native Assets je Policy + Name über den CIP-14-Fingerabdruck (`HOSKY@CARDANO:asset1…`) | Koios `account_txs` (bzw. `address_txs`) in Seiten zu 1.000, Details über `tx_info`; ab 15 Bestätigungen | Gebühr nur, wenn alle Eingänge eigene sind | Koios (api.koios.rest) | optional (kostenloser Bearer-Token) | ohne Key 5.000 Anfragen/Tag, 100 je 10 s; mit kostenlosem Key 50.000/Tag | Wechselgeld an eigene Adressen ist kein Abgang (Stake-Konto); Pfand für Stake-Registrierung/Governance als prüfbedürftige Bewegung; Reward-Abhebung = Umbuchung, Rewards je Epoche als Ertrag (ab Verfügbarkeit); DEX/Smart Contracts und fremde Eingänge zur Prüfung; ungültige Plutus-Transaktionen nicht gekennzeichnet |
+| **PulseChain** | eine 0x-Adresse je Konto | PLS; PRC-20 (Contract-genau) | ab dem ersten PulseChain-Block 17.233.001 (11.05.2023) – die Ethereum-Vorgeschichte davor wird nicht abgefragt; Fork-Bestand siehe unten | wie Ethereum | PulseChain-Explorer (Blockscout, Etherscan-kompatibel) | keine | kein Key; Limit nicht beziffert, Portfolia ≤ 2/s | beim Fork kopierte Tokens werden nicht eröffnet (Bestandsprüfung zeigt sie); sonst wie Ethereum |
+| **Polkadot** | SS58-Adresse 1… (generisches Format 5… wird umgerechnet, Kusama abgelehnt) | DOT auf Relay Chain **und** Asset Hub; Asset-Hub-Tokens (`USDT@DOTAH:…`) | Subscan: Überweisungen, eigene Extrinsics, Rewards/Slashes je Netz in Blockbereichen, Seiten zu 100 | `fee_used` (sonst `fee`) der vom Konto signierten Extrinsics | PubFi-Gateway für Subscan · Subscan direkt | **Key nötig**: PubFi kostenlos bzw. Subscan bezahlt | PubFi-Free-Routen 2 Anfragen/s, 20.000/Tag | Einheiten der Subscan-Felder nicht dokumentiert (Prüfung `amount` ↔ `amount_v2`, Abweichung → Prüfung); Asset-Hub-Migration nicht gebucht (ungeklärt); Staking bindet nur (nur Gebühr), Rewards als Ertrag, Slashes zur Prüfung; Nomination Pools, XCM, Proxy/Multisig zur Prüfung; andere Parachains nicht erfasst |
+| **peaq** | SS58-Konto (Präfix 1221; generisches 5… wird umgerechnet) **oder** 0x-Adresse (peaq EVM, z. B. MetaMask/Ledger) | PEAQ (18 Nachkommastellen) | SS58: wie Polkadot (Subscan-Routen: Überweisungen, Extrinsics, Rewards, Bestände); 0x: Etherscan-kompatible Subscan-Route (txlist, intern, Token) | SS58: `fee_used`; 0x: wie Ethereum | SS58: PubFi-Gateway · Subscan direkt; **0x: nur Subscan direkt** | SS58: PubFi kostenlos; 0x: **Subscan-Key (bezahlt)** | wie Polkadot | Substrate- und EVM-Konto derselben Person sind getrennte Konten (die Zuordnung H160 ↔ SS58 ist nicht dokumentiert und wird nicht berechnet); Reward-Route ggf. ohne Daten (Hinweis statt Fehler); Einheiten wie bei Polkadot geprüft |
+| **Solana** | eine Adresse je Konto | SOL (inkl. Miete der Token-Konten); SPL- und Token-2022-Tokens (Mint-genau) | Signaturen der Wallet **und** aller Token-Konten (aktuelle + frühere aus Transaktionen) | `meta.fee`, wenn die Wallet zahlt | öffentlicher RPC (Solana Foundation) · Helius | Helius: Key nötig | öffentlich 100/10 s je IP, 40/10 s je Methode, nicht für Dauerbetrieb; Helius frei 10/s | Native Staking/Inflations-Rewards nicht als Vorgang; mehrere Bewegungen desselben Tokens je Transaktion saldiert; NFTs gezählt, nicht gebucht; Token-Konten, die der Wallet nur per Autoritätswechsel gehörten und heute anderen gehören, nicht auffindbar |
+| **Kaspa** | eine Adresse je Konto | KAS; KRC-20 über Kasplex | KAS vollständig (Blockzeit-Seiten, 30 min Überlappung); KRC-20-Operationen je Adresse | aus Eingängen − Ausgängen; KRC-20-Commit/Reveal als nur Gebühr | api.kaspa.org (KAS) · api.kasplex.org (KRC-20) | keine | kein Key; Limits nicht beziffert, Portfolia ≤ 2/s | KRC-20 abhängig vom Kasplex-Indexer (Ausfall/„nicht synchron“ = sichtbare Lücke, KAS bleibt vollständig, Ergänzung per CSV); KRC-721 nicht erfasst |
+
+### So arbeiten alle Chain-Adapter
+
+* **Nur geprüfte Endpunkte:** Anbieter sind fest hinterlegt (HTTPS, kein Freitext-URL-Feld, keine Weiterleitungen,
+  Host-Prüfung vor jeder Anfrage) – kein Server-Side-Request-Forgery. Beträge werden exakt als `Decimal` gelesen.
+* **Anbieter-Schlüssel** (Etherscan, Routescan, Helius, Koios, PubFi, Subscan) gelten je Anbieter, werden unter
+  *Datenquellen → Anbieter-Schlüssel* verschlüsselt gespeichert (derselbe [Master-Key](#master-key-für-api-keys)),
+  nie angezeigt, nie exportiert; alternativ `PORTFOLIA_DS_ETHERSCAN`, `PORTFOLIA_DS_ROUTESCAN`,
+  `PORTFOLIA_DS_HELIUS`, `PORTFOLIA_DS_KOIOS`, `PORTFOLIA_DS_PUBFI`, `PORTFOLIA_DS_SUBSCAN` (bzw. `…_FILE`). Fehlt
+  ein nötiger Schlüssel, zeigt das Konto „Schlüssel fehlt“ mit Anbieter und Konditionen – es wird nichts abgerufen.
+* **Datenschutz:** Der gewählte Anbieter sieht die abgefragten öffentlichen Adressen und die IP des Servers und
+  kann sie verknüpfen. Ein Kontoschlüssel (xpub) legt alle Adressen des Kontos offen – ausgeben lässt sich damit
+  nichts. Stückzahlen, Werte oder Kontonamen verlassen den Server nie.
+* **Lückenlos und wiederholbar:** Abrufe in Seiten mit Mindestabstand, Wiederholung bei 429/5xx mit Backoff und
+  `Retry-After`, begrenzte Parallelität, Anfrage- und Zeitbudget je Lauf. Der Fortsetzungspunkt rückt nur über
+  vollständig verarbeitete Daten vor (Blöcke, Seiten, Signatur-Blöcke); ein abgebrochener Erstabruf setzt sich in
+  Etappen selbst fort, auch nach Fehlern. Nur bestätigte Daten werden gebucht (Ethereum 64, BNB 20, Polygon 128,
+  Avalanche 6 Blöcke, Bitcoin 3 Bestätigungen, Cardano 15 Blöcke, XRP Ledger validiert, Polkadot finalisiert laut
+  Indexer, Solana „finalized“, Kaspa akzeptiert); Unbestätigtes wird gezählt.
+* **Stabile Kennungen:** Ereignis `<chain>:<tx>:<eigenes Konto>`, je Bewegung eine feste Unterkennung (z. B.
+  `#n:out`, `#t:<fingerabdruck>#1` für den zweiten gleichartigen Token-Transfer im selben Hash, `#fee`) – wiederholte
+  und überlappende Läufe erzeugen keine Doppelungen.
+* **Beobachtet ≠ gekauft:** Ein Eingang ist ein Zugang, kein Kauf; Anschaffungskosten und -daten werden nie erfunden.
+  Swaps, Vertragsaufrufe, Bridges, Staking, Rewards, Mints, mögliche Spam-Tokens (Werbung/Links im Namen,
+  unbekannte Tokens ohne eigene Aktion) und Unklares gehen mit Begründung in den Prüf-Stapel. 0-Wert-Transfers
+  (Address-Poisoning) werden gezählt, nicht gebucht. Tokens werden über Chain + Contract/Mint/Tick zugeordnet, nie
+  über das Symbol – ein gefälschter „USDC“ bleibt ein eigenes Asset (Vorschlag: ignorieren).
+* **Abgleich mit Börsen und CSV:** Eine Bitpanda-Auszahlung und der passende Wallet-Eingang werden als Transfer
+  vorgeschlagen (mit Begründung: gleicher Hash bzw. Menge/Zeitabstand) – Anschaffungsdatum und -kosten bleiben
+  erhalten, nichts zählt als zwei unabhängige Vorgänge. Vorschläge, die eine bereits übernommene Buchung verändern
+  würden, werden **nie automatisch** übernommen. Ist der Transfer schon erfasst (Import oder Journal), erscheint der
+  Wallet-Vorgang als Dublette; derselbe Hash aus einem Wallet-CSV (z. B. Ledger Live) ebenso.
+* **Bestandsabgleich:** Je Konto stehen **On-Chain beobachtet** (laut Anbieter) und **durch Portfolia-Buchungen
+  erklärt** (übernommene Buchungen des Kontos) nebeneinander; Abweichungen werden angezeigt, nie ausgeglichen.
+* **Status:** „vollständig synchronisiert“ nur, wenn die unterstützten Daten des Kontos ohne erkannte Lücke abgerufen
+  sind. Erkannte Lücken (Anbieterfehler, nicht abrufbare Transaktion, Indexer nicht synchron) stehen als Warnung am
+  Konto; dauerhafte Abdeckungsgrenzen sind am Konto aufgeführt.
+
+### Fehlerarten und KRC-20 (Kasplex)
+
+Fehler einer Datenquelle werden einzeln benannt: *API-Key fehlt*, *Zugangsdaten abgelehnt*, *Zugriff verweigert
+(HTTP 403)*, *Anbieter drosselt Anfragen*, *nicht erreichbar*, *Endpunkt nicht mehr unterstützt*, *keine Daten*.
+Ein 403 hinter Cloudflare (Bot-Schutz) wird als solcher erkannt.
+
+**KRC-20 / HTTP 403:** Der Kasplex-Indexer (go-krc20d, API v1) beantwortet auch **Anwendungszustände** mit HTTP 403
+und einer Meldung im JSON-Rumpf – u. a. `unsynced` (Indexer hinter der Chain) und `internal error`. Bisher wurde das
+als Zugriffsfehler behandelt und der KRC-20-Abruf abgebrochen. Jetzt: vorübergehende Zustände → bis zu zwei
+Wiederholungen mit Pause (5 s, 10 s), danach „Indexer vorübergehend nicht synchron“ als sichtbare Lücke; KAS bleibt
+vollständig. Echte Sperren (Cloudflare, Zugriff verweigert) werden ohne Wiederholung gemeldet. Fallback-Kette:
+Kasplex → (weitere Indexer, sobald ein dokumentierter verfügbar ist) → CSV-Ergänzung. Welcher Rumpf beim gemeldeten
+Fehler konkret kam, ist nicht protokolliert – die Zuordnung zu `unsynced`/`internal error` ist eine begründete
+Annahme.
+
+### MATIC → POL auf Polygon PoS
+
+Seit dem 04.09.2024 ist POL der native Coin von Polygon PoS (1:1 aus MATIC, automatisch, ohne Transaktion des
+Nutzers); on-chain wurde der Ticker mit dem Hardfork „Ahmedabad“ (Block 62.278.656, 26.09.2024, PIP-45)
+umbenannt. Portfolia bucht den nativen Coin bis zu diesem Block als `MATIC`, danach als `POL` und schlägt **einmal**
+eine Umstellung `MATIC → POL` (Unternehmensereignis „migration“) über den aus der Historie berechneten Bestand vor –
+nie automatisch, mit Hinweis, wenn die Historie nicht ab Block 0 vorliegt. Ist die Umstellung schon im kuratierten
+Import erfasst, den Vorschlag ignorieren. Bestände außerhalb der Wallet-Anbindung (Börsen, kuratierter Import) stellt
+[Ticker- und Token-Änderungen](#ticker--und-token-änderungen-z-b-matic--pol) um – der Hinweis erscheint automatisch. Kurse: CoinGecko `matic-network` (MATIC) bzw. `polygon-ecosystem-token`
+(POL).
+
+**Was live geprüft wurde und was nicht:** Alle Wallet-Anbindungen sind mit synthetischen Fixtures gegen nachgebildete
+Anbieter-APIs getestet (Paginierung, Drosselung, Abbruch/Fortsetzung, Wiederholung ohne Doppelungen). Für XRP Ledger
+(xrplcluster.com), Koios und Blockscout (Polygon) wurden zusätzlich die Antwortformate der dokumentierten Methoden
+mit öffentlichen Beispieladressen der Dokumentation abgeglichen. **Subscan/PubFi konnte nicht live geprüft werden**
+(jede Anfrage verlangt einen Schlüssel); dort beruhen Feldnamen auf der veröffentlichten OpenAPI-Beschreibung, die
+Einheiten sind eine gekennzeichnete Annahme mit Prüfung je Vorgang. Das gilt ebenso für **peaq** (Subscan; Netz,
+SS58-Präfix 1221 und 18 Nachkommastellen laut SS58-Registry bzw. PubFi-OpenAPI). Für **PulseChain** wurden Fork-Block,
+Chain-ID 369 und die Antwortformate von Explorer-API und RPC mit öffentlichen Abfragen abgeglichen. Beim ersten
+echten Abruf bitte „Verbindung testen“, die Bestandsprüfung und den Prüf-Stapel ansehen.
+
+### PulseChain: Fork-Bestand
+
+PulseChain entstand am 11.05.2023 als Kopie des Ethereum-Zustands am Block 17.233.000 (erster eigener Block
+17.233.001); Salden und Token-Verträge wurden dabei übernommen. Portfolia fragt die Historie erst ab Block 17.233.001 ab und liest beim
+**Erstabruf** einmalig per RPC (`eth_getBalance` am Fork-Block, rpc.pulsechain.com) den kopierten PLS-Bestand. Er
+erscheint als **prüfpflichtige Eröffnung** (Tag *fork*, Zeitpunkt des ersten PulseChain-Blocks) – nie automatisch
+übernommen; die steuerliche Einordnung (Zugang aus Fork, Anschaffung zu 0 € bzw. Wert) entscheidest du. Ist der RPC
+nicht erreichbar, fehlt die Eröffnung mit Warnung; die Bestandsprüfung zeigt die Differenz. Kopierte PRC-20-Tokens
+werden nicht eröffnet.
 
 ---
 

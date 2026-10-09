@@ -19,6 +19,21 @@
   <p class="hint">Der Schlüssel wird nur verschlüsselt gespeichert und nur als Header an api.public.bitpanda.com gesendet –
     nie an Dritte und nie zurück an den Browser.</p>
 </details>{% endmacro %}
+{% macro binance_guide() %}
+<details class="box" style="margin-top:10px"><summary>So erstellst du den Binance-API-Key (nur lesend)</summary>
+  <ol class="small" style="margin:8px 0 0 18px">
+    <li>Bei Binance anmelden → Profil → <b>API-Verwaltung</b> → „API erstellen“ → <b>Systemgeneriert</b> (HMAC).</li>
+    <li>Namen vergeben (z. B. „Portfolia“), Sicherheitsprüfung abschließen.</li>
+    <li>Bei den Rechten <b>nur „Enable Reading“</b> aktiv lassen. <b>Nicht</b> aktivieren: Spot-/Margin-Handel, Futures,
+      Auszahlungen, Universal Transfer – Portfolia handelt nie und fragt nur lesend ab; „Verbindung testen“ warnt, wenn
+      der Key handeln darf.</li>
+    <li>Optional die IP-Freigabe auf die öffentliche IP deines Servers beschränken (empfohlen, wenn sie fest ist).</li>
+    <li><b>API-Key</b> und <b>Secret Key</b> kopieren – der Secret Key wird von Binance nur einmal angezeigt – und unten
+      einfügen, speichern, <b>Verbindung testen</b>.</li>
+  </ol>
+  <p class="hint">Beide werden verschlüsselt gespeichert. An api.binance.com gehen nur der API-Key (Header) und die damit
+    berechnete Signatur – der Secret Key selbst verlässt Portfolia nie. Als Umgebungsvariable: Wert <span class="mono">API-Key:Secret-Key</span>.</p>
+</details>{% endmacro %}
 {% block content %}
 <nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a class="active" href="/settings/datasources">Datenquellen</a></nav>
 {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
@@ -56,12 +71,17 @@
       <label class="field" style="grid-column:1/-1">API-Key
         <input type="text" name="api_key" required minlength="16" maxlength="1024" class="mono secret-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="{{ 'neuen Schlüssel einfügen' if ds.key_mode == 'app' else 'Schlüssel einfügen' }}">
         <span class="hint">Wird verschlüsselt gespeichert und danach nie wieder angezeigt (nur die letzten 4 Zeichen).</span></label>
-      <label class="field">Ablaufdatum laut Bitpanda (optional)
+      {% if ds.provider == 'binance' %}
+      <label class="field" style="grid-column:1/-1">Secret Key
+        <input type="password" name="api_secret" required minlength="16" maxlength="1024" class="mono secret-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="Secret Key einfügen">
+        <span class="hint">Nur zum Signieren der Abfragen – wird nie angezeigt und nie übertragen.</span></label>
+      {% endif %}
+      <label class="field">Ablaufdatum des API-Keys (optional)
         <input type="date" name="key_expires_on" value="{{ data.get('key_expires_on', '') }}"></label>
     </div>
     <div class="row"><button class="btn primary" type="submit">{{ 'Ersetzen' if ds.key_mode == 'app' else 'Speichern' }}</button></div>
   </form>{% endif %}
-  {% if ds.provider == 'bitpanda' %}{{ key_guide() }}{% endif %}
+  {% if ds.provider == 'bitpanda' %}{{ key_guide() }}{% elif ds.provider == 'binance' %}{{ binance_guide() }}{% endif %}
 </section>
 {% endif %}
 
@@ -235,10 +255,10 @@
       <label class="field">Anbieter
         <select name="chain_provider">{% for e in ci.endpoints %}<option value="{{ e.id }}" {% if data.get('chain_provider') == e.id or (not data.get('chain_provider') and loop.first) %}selected{% endif %}>{{ e.label }}{% if loop.first %} (Standard){% endif %}</option>{% endfor %}</select>
         <span class="hint">{% for e in ci.endpoints %}<b>{{ e.label }}:</b> {{ e.terms }}{% if e.key_provider %} – Schlüssel: {% set pk = provider_keys.get(e.key_provider) %}{% if pk and pk.mode %}vorhanden{% elif e.key_required %}<a href="/settings/datasources#anbieter">nötig, unter „Anbieter-Schlüssel“ hinterlegen</a>{% else %}optional{% endif %}{% endif %}.{% if not loop.last %}<br>{% endif %}{% endfor %}</span></label>
-      {% if chain in ('ethereum', 'bsc', 'polygon', 'avalanche', 'solana', 'kaspa') %}
+      {% if chain in ('ethereum', 'bsc', 'polygon', 'avalanche', 'pulsechain', 'solana', 'kaspa') %}
       <input type="hidden" name="tokens_shown" value="1">
       <label class="check" style="grid-column:1/-1"><input type="checkbox" name="tokens" value="1" {% if data.get('tokens') in ('1', 'on') %}checked{% endif %}>
-        Tokens mit abrufen ({{ 'ERC-20/BEP-20' if chain in ('ethereum', 'bsc', 'polygon', 'avalanche') else ('SPL-Tokens' if chain == 'solana' else 'KRC-20 über den Kasplex-Indexer') }}) – Tokens werden über Contract/Mint identifiziert, nie über das Symbol</label>
+        Tokens mit abrufen ({{ 'ERC-20/BEP-20' if chain in ('ethereum', 'bsc', 'polygon', 'avalanche') else ('PRC-20' if chain == 'pulsechain' else ('SPL-Tokens' if chain == 'solana' else 'KRC-20 über den Kasplex-Indexer')) }}) – Tokens werden über Contract/Mint identifiziert, nie über das Symbol</label>
       {% endif %}
       <div class="alert" style="grid-column:1/-1"><span class="icon">i</span><div><b>Abdeckung:</b> {{ ci.limits|join(' · ') }}. Der gewählte Anbieter sieht die abgefragten Adressen.</div></div>
       {% endif %}
@@ -253,6 +273,9 @@
       <label class="field" style="grid-column:1/-1">API-Key (optional, nur bei automatischer Anbindung)
         <input type="text" name="api_key" maxlength="1024" class="mono secret-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
         <span class="hint">Wird verschlüsselt gespeichert und nie wieder angezeigt. Kann auch später unter „Zugang“ eingegeben werden.</span></label>
+      <label class="field" style="grid-column:1/-1">Secret Key (nur Binance)
+        <input type="password" name="api_secret" maxlength="1024" class="mono secret-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
+        <span class="hint">Binance verlangt API-Key und Secret Key (nur „Enable Reading“) – Anleitung nach dem Anlegen unter „Zugang“.</span></label>
       {% elif kind == 'exchange' and not ds %}
       <div style="grid-column:1/-1"><div class="alert warn"><span class="icon">!</span><div>Ein API-Key kann erst nach Einrichtung des
         Master-Keys gespeichert werden – die Datenquelle lässt sich trotzdem schon anlegen.{% if vault.error or vault.note %}<br>{{ vault.error or vault.note }}{% endif %}</div></div>

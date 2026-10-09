@@ -32,12 +32,13 @@ log = logging.getLogger(__name__)
 FORM_FIELDS = ("kind", "provider", "name", "account", "address", "credential_ref", "sync_interval_min", "auto_commit",
                "note", "key_expires_on", "wallet_group", "script", "gap", "chain_provider", "tokens", "tokens_shown")
 WALLET_CHAINS = ("bitcoin", "ethereum", "bsc", "polygon", "avalanche", "solana", "xrp", "cardano", "polkadot",
-                 "kaspa")  # mit Anbindung (Reihenfolge der Auswahl)
+                 "kaspa", "pulsechain", "peaq")  # mit Anbindung (Reihenfolge der Auswahl)
 CHECK_LABELS = {"transaction": "Vorgänge", "balances": "Bestände", "assets": "Asset-Stammdaten", "chain": "Chain",
                 "balance": "Bestand", "history": "Historie", "nft": "NFTs", "tokens": "Tokens", "addresses": "Adressen",
                 "krc20": "KRC-20", "native": "Nativer Coin", "xpub": "Kontoschlüssel",
                 "chain_polkadot": "Relay Chain", "chain_assethub-polkadot": "Asset Hub",
-                "history_polkadot": "Historie Relay Chain", "history_assethub-polkadot": "Historie Asset Hub"}
+                "history_polkadot": "Historie Relay Chain", "history_assethub-polkadot": "Historie Asset Hub",
+                "chain_peaq": "Chain", "history_peaq": "Historie"}
 
 
 @extra_jobs
@@ -64,7 +65,7 @@ def _detail_url(sid: int, **params: str) -> str:
 
 def _safe_echo(data: dict[str, Any]) -> dict[str, Any]:
     """Formular nach Fehlern erneut füllen – ohne mögliche Geheimnisse (Schlüssel, Seed) zurückzuspielen."""
-    out = {k: v for k, v in data.items() if k != "api_key"}
+    out = {k: v for k, v in data.items() if k not in ("api_key", "api_secret")}
     addr = out.get("address") or ""
     if contains_secret(addr) or "prv" in addr:
         out["address"] = ""
@@ -214,8 +215,10 @@ def make_router() -> APIRouter:
         f = await request.form()
         data = {k: str(f.get(k) or "") for k in FORM_FIELDS}
         data["api_key"] = str(f.get("api_key") or "")
+        data["api_secret"] = str(f.get("api_secret") or "")
         sid, errors = await run_in_threadpool(svc.create, data)
         data.pop("api_key", None)
+        data.pop("api_secret", None)
         if errors and sid is None:
             return _form_page(request, _safe_echo(data), errors, status_code=400)
         if errors:
@@ -278,9 +281,10 @@ def make_router() -> APIRouter:
         if ds is None:
             raise HTTPException(404)
         f = await request.form()
-        value = str(f.get("api_key") or "")
-        errors = await run_in_threadpool(svc.set_api_key, sid, value, str(f.get("key_expires_on") or "") or None)
-        del value
+        value, secret = str(f.get("api_key") or ""), str(f.get("api_secret") or "")
+        errors = await run_in_threadpool(svc.set_api_key, sid, value, str(f.get("key_expires_on") or "") or None,
+                                         secret or None)
+        del value, secret
         if errors:
             return _back(request, _detail_url(sid, error=" ".join(errors)) + "#zugang")
         return _back(request, _detail_url(sid, msg="API-Key verschlüsselt gespeichert – jetzt „Verbindung testen“.")

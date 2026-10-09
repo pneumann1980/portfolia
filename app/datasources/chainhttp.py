@@ -49,7 +49,7 @@ _PATH_RE = re.compile(r"^(/[A-Za-z0-9_.:\-]+)*/?$")
 
 
 # erlaubte Werte für den Platzhalter {network} (Subscan: Relay-Chain und Asset Hub von Polkadot)
-NETWORKS = frozenset({"polkadot", "assethub-polkadot"})
+NETWORKS = frozenset({"polkadot", "assethub-polkadot", "peaq"})
 
 
 @dataclass(frozen=True)
@@ -115,6 +115,18 @@ ENDPOINTS: dict[str, Endpoint] = {e.id: e for e in (
              "https://polygon.blockscout.com/api", rps=2.0, docs="https://docs.blockscout.com/devs/apis/rpc",
              terms="ohne Key; höchstens 10.000 Einträge je Abfrage; interne Transaktionen älterer Blöcke teils noch "
                    "nicht verarbeitet (wird als Lücke angezeigt) – Portfolia fragt höchstens 2×/s"),
+    Endpoint("blockscout_pulsechain", "PulseChain-Explorer (Blockscout, Etherscan-kompatibel, ohne Key)",
+             "https://api.scan.pulsechain.com/api", rps=2.0, docs="https://docs.blockscout.com/devs/apis/rpc",
+             terms="ohne Key; offizieller Explorer scan.pulsechain.com (Blockscout) – Limit nicht beziffert, "
+                   "Portfolia fragt höchstens 2×/s"),
+    Endpoint("pulsechain_rpc", "PulseChain RPC (rpc.pulsechain.com)", "https://rpc.pulsechain.com", rps=1.0,
+             docs="https://pulsechain.com",
+             terms="ohne Key; nur für den kopierten Bestand am Fork-Block (eine Anfrage je Adresse)"),
+    Endpoint("subscan_evm", "Subscan Etherscan-kompatible API (direkter Subscan-Key)",
+             "https://{network}.api.subscan.io/api/scan/evm/etherscan", rps=4.0, auth="header:X-API-Key",
+             key_provider="subscan", key_required=True, docs="https://support.subscan.io",
+             terms="nur mit direktem (kostenpflichtigem) Subscan-Key; über das kostenlose PubFi-Gateway lässt die "
+                   "Route keine Abfrageparameter zu"),
     Endpoint("xrplcluster", "XRPL Cluster (xrplcluster.com, vollständige Historie)", "https://xrplcluster.com",
              rps=2.0, docs="https://xrpl.org/docs/tutorials/public-servers",
              terms="ohne Key; öffentlicher Full-History-Cluster (Community) – Portfolia fragt höchstens 2×/s"),

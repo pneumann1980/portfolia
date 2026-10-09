@@ -1220,6 +1220,31 @@ Manifest mit `id`. (3) ist Sache der Einrichtung: README beschreibt Reverse Prox
 Chrome-Flag. Geprüft mit Headless-Chromium (`Page.getInstallabilityErrors` leer, Worker aktiv); **nicht auf einem
 echten Android-Gerät geprüft**, die Offline-Hinweisseite ließ sich headless nicht auslösen.
 
+## M26 – Wallets PulseChain und peaq, Binance-API (0.23.0)
+
+* **PulseChain** (`pulsechain`, Chain-ID 369): EVM-Adapter über den offiziellen Explorer (Blockscout,
+  Etherscan-kompatibel, ohne Key). Historie erst ab Block 17.233.001 (`first_block`) – die kopierte
+  Ethereum-Vorgeschichte wird nie abgefragt. Beim Erstabruf liest Portfolia den Bestand am Fork-Block 17.233.000
+  (`eth_getBalance`, rpc.pulsechain.com) und legt ihn als prüfpflichtige Eröffnung (Tag `fork`) an; RPC-Fehler sind
+  nur eine Warnung. Kopierte Tokens werden nicht eröffnet (Bestandsprüfung).
+* **peaq** (`peaq`): SS58-Konten (Präfix 1221, 18 Nachkommastellen) über den parametrisierten Polkadot-Adapter
+  (PubFi-Gateway oder Subscan direkt; Reward-Route optional → Hinweis statt Fehler); 0x-Adressen (peaq EVM,
+  Chain-ID 3338) über die Etherscan-kompatible Subscan-Route – nur mit direktem Subscan-Key, weil das
+  PubFi-Gateway dort keine Query-Parameter zulässt (klare Fehlermeldung). SS58-Codec für Zwei-Byte-Präfixe
+  (64–16383). Die Zuordnung H160 ↔ SS58 ist nicht dokumentiert und wird nicht berechnet.
+* **Binance** (`binance`): read-only Spot-Connector nach developers.binance.com – HMAC-SHA256-Signatur,
+  `X-MBX-APIKEY`, Zeitabgleich (-1021), Gewichts- und Routen-Taktung, 429/418 mit `Retry-After`. Abgerufen: Bestände,
+  `myTrades` je Paar (`fromId`), Ein-/Auszahlungen (Fenster < 90 Tage, `offset`), Ausschüttungen (≤ 180 Tage, Fenster
+  wird bei vollem Ergebnis geteilt), Staubumtausch, Convert (≤ 30 Tage, `moreData` → Fenster teilen statt eine nicht
+  dokumentierte Reihenfolge anzunehmen), Fiat-Käufe/-Verkäufe und Fiat-Ein-/Auszahlungen. Abrufstand je Stream nach
+  jedem vollständigen Fenster, ausstehende Vorgänge halten ihn (≤ 30 Tage), Paar-Durchlauf über mehrere Läufe.
+  Zugang zweiteilig (API-Key + Secret, gespeichert als `Key:Secret`, Hinweis nur aus dem API-Key).
+* Behoben: README-Abschnitte „Datenquellen“ und „Wallets“ waren mit 0.22.1 versehentlich entfernt worden –
+  wiederhergestellt.
+* Tests: `tests/test_wallets_pulse_peaq.py` (8), `tests/test_binance.py` (10, strenger Mock mit
+  Signaturprüfung). **Nicht live geprüft:** Binance (kein Konto), peaq (Subscan-Key nötig); PulseChain-Fork-Block,
+  Chain-ID und Antwortformate wurden mit öffentlichen Abfragen abgeglichen.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

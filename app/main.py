@@ -24,7 +24,8 @@ def _load_modules() -> None:
                 "app.jobs.maintenance", "app.jobs.exports", "app.prices.sources_web", "app.datasources.web",
                 "app.datasources.bitpanda", "app.datasources.chains.evm", "app.datasources.chains.bitcoin",
                 "app.datasources.chains.solana", "app.datasources.chains.kaspa", "app.datasources.chains.xrpl",
-                "app.datasources.chains.cardano", "app.datasources.chains.polkadot", "app.diagnosis.web",
+                "app.datasources.chains.cardano", "app.datasources.chains.polkadot", "app.datasources.chains.peaq",
+                "app.datasources.binance", "app.diagnosis.web",
                 "app.diagnosis.integrity_web", "app.documentimport.web",
                 "app.watchlist.module", "app.taxdata.module", "app.assetchange.module"):
         with contextlib.suppress(ModuleNotFoundError):

@@ -97,5 +97,24 @@ def polkadot(v: str) -> tuple[str | None, str | None]:
                   "(beginnt mit 1) angeben.")
 
 
+PEAQ_SS58 = 1221  # SS58-Registry (paritytech/ss58-registry): peaq, Symbol PEAQ, 18 Dezimalstellen
+
+
+def peaq(v: str) -> tuple[str | None, str | None]:
+    """peaq: EVM-Adresse (0x…, H160) oder Substrate-Konto (SS58). Das generische Format (Präfix 42, beginnt mit 5)
+    wird in das peaq-Format (Präfix 1221) umgerechnet – dasselbe Konto."""
+    if v.lower().startswith("0x"):
+        return evm(v)
+    try:
+        prefix, acc = ss58_decode(v)
+    except ValueError as e:
+        return None, f"peaq-Adresse ungültig ({e})."
+    if prefix in (PEAQ_SS58, 42):
+        return ss58_encode(acc, PEAQ_SS58), None
+    return None, (f"SS58-Adresse eines anderen Netzes (Präfix {prefix}) – bitte die peaq-Adresse (SS58) oder die "
+                  "EVM-Adresse (0x…) angeben.")
+
+
 VALIDATORS = {"ethereum": evm, "bsc": evm, "avalanche": evm, "polygon": evm, "solana": solana, "kaspa": kaspa,
-              "bitcoin": bitcoin, "xrp": xrpl, "cardano": cardano, "polkadot": polkadot}
+              "bitcoin": bitcoin, "xrp": xrpl, "cardano": cardano, "polkadot": polkadot, "pulsechain": evm,
+              "peaq": peaq}
