@@ -330,11 +330,6 @@ def diagnose(snap: Snapshot) -> Report:
         findings += cases
         stats["txs"] = len(idx.txs)
     findings += _open_batches(snap, stats)
-    findings.sort(key=lambda f: (*f.sort_key(), f.id))
-    if snap.pf is not None:
-        from app.diagnosis import audit as _audit
-
-        _audit.case_states(snap, findings)
     traces: dict[tuple[str, str], Any] = {}
     if idx is not None:
         from app.diagnosis import windows
@@ -342,6 +337,18 @@ def diagnose(snap: Snapshot) -> Report:
         traces = windows.analyse(idx, snap, findings)
         stats["traces"] = len(traces)
         stats["trace_windows"] = sum(1 for t in traces.values() for sg in t.segments if sg.kind != "ok")
+        seen: set[str] = set()
+        for tr in traces.values():  # Rekonstruktionskandidaten (je Evidenz ein freigebbarer Einzelvorgang)
+            for f in tr.findings:
+                if f.id not in seen:
+                    seen.add(f.id)
+                    findings.append(f)
+        stats["reconstruction"] = len(seen)
+    findings.sort(key=lambda f: (*f.sort_key(), f.id))
+    if snap.pf is not None:
+        from app.diagnosis import audit as _audit
+
+        _audit.case_states(snap, findings)
     return Report(findings=findings, holdings=holdings, generated_for=snap.today, stats=stats, snapshot=snap,
                   index=idx, traces=traces)
 

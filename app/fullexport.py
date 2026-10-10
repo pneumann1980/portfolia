@@ -122,6 +122,12 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
         "asset_changes": _rows(db, "SELECT * FROM asset_change ORDER BY id"),
         # Referenzbestände (Prüfwerte der Diagnose, keine Buchungen) – auch entfernte, für die Nachvollziehbarkeit
         "reference_balances": _rows(db, "SELECT * FROM reference_balance ORDER BY id"),
+        # Recherche-Ergebnisse der Diagnose (M29): nur lesend gewonnene, noch ungebuchte Ereignisse; je Datenquelle
+        # über Anbieter/Konto/Name zugeordnet (IDs ändern sich bei der Wiederherstellung); „im Prüf-Stapel“ = neu
+        "diag_research_events": _rows(
+            db, "SELECT d.provider, d.account, d.name, e.event_key, e.ts, e.lines_json, "
+                "CASE e.status WHEN 'staged' THEN 'new' ELSE e.status END AS status, e.created_at, e.decided_at "
+                "FROM diag_research_event e JOIN data_source d ON d.id = e.source_id ORDER BY e.id", drop=()),
         "watchlists": _rows(db, "SELECT name, position, is_default, created_at FROM watchlist ORDER BY id", drop=()),
         "watchlist_items": _rows(db, "SELECT w.name AS list_name, i.quote_source, i.quote_id, i.asset_class, "
                                      "i.asset_id, i.symbol, i.name, i.position, i.added_at FROM watchlist_item i "
@@ -281,7 +287,7 @@ JOURNAL_KEY = "restore.journal"  # laufende Wiederherstellung: Dateien, die nach
 _RESTORE_LOCK = threading.Lock()
 _LIST_KEYS = ("asset_sources", "plans", "plan_dismissed", "datasources", "event_decisions", "event_aliases",
               "tx_links", "csv_symbols", "csv_accounts", "csv_mappings", "deleted_journal", "diag_dismissed",
-              "asset_changes", "watchlists", "watchlist_items", "reference_balances")
+              "asset_changes", "watchlists", "watchlist_items", "reference_balances", "diag_research_events")
 _TMP_MARK = ".restore-"
 
 
@@ -490,6 +496,7 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
         counts["checked"] = _dismissed(c, st.get("diag_dismissed") or [])
         counts["asset_changes"] = _insert(c, "asset_change", st.get("asset_changes"), "OR IGNORE")
         counts["references"] = _insert(c, "reference_balance", st.get("reference_balances"), "OR IGNORE")
+        counts["research"] = _research_events(c, st.get("diag_research_events") or [])
         counts["usage"] = _usage(c, extras.get(USAGE))
         counts["prices"] = _prices(c, extras.get(PRICES))
         counts["series_meta"] = _meta(c, extras.get(META))
@@ -693,6 +700,25 @@ def _dismissed(c: Any, rows: list[Any]) -> int:
                   (r["finding_id"], r.get("kind") or "", r.get("title") or "", action, r["fingerprint"], r.get("note"),
                    "active", r.get("created_at") or "", r.get("tx_ids_json"), r.get("data_version")))
         n += 1
+    return n
+
+
+def _research_events(c: Any, rows: list[Any]) -> int:
+    """Recherche-Ergebnisse der Diagnose wieder ablegen (idempotent: je Quelle und Ereignis nur einmal)."""
+    n = 0
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("event_key") or not r.get("lines_json"):
+            continue
+        src = c.execute("SELECT id FROM data_source WHERE provider=? AND account IS ? AND name=?",
+                        (r.get("provider"), r.get("account"), r.get("name"))).fetchone()
+        if src is None:
+            continue
+        cur = c.execute("INSERT OR IGNORE INTO diag_research_event(source_id, event_key, ts, lines_json, status, "
+                        "created_at, decided_at) VALUES (?,?,?,?,?,?,?)",
+                        (src["id"], r["event_key"], r.get("ts"), r["lines_json"],
+                         r.get("status") if r.get("status") in ("new", "dismissed") else "new",
+                         r.get("created_at") or "", r.get("decided_at")))
+        n += max(cur.rowcount, 0)
     return n
 
 

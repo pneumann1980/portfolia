@@ -58,7 +58,7 @@ MAX_TAX_YEARS = 8
 _LOCK = threading.Lock()
 OP_LABEL = {"hide": "Ausblenden", "merge": "Zusammenführen", "cover": "Im Import enthalten", "create": "Neue Buchung",
             "quote": "Kursquelle", "unmap": "Zuordnung entfernen", "amend": "Buchung ergänzen",
-            "duplicate": "Doppelbuchung"}
+            "duplicate": "Doppelbuchung", "stage": "Importkandidat", "book_row": "Buchung aus Prüf-Stapel"}
 AMEND_COLS = ("ts_utc", "date_only", "value_eur", "value_source", "fee_asset", "fee_qty", "fee_eur", "tx_hash", "note")
 
 
@@ -74,7 +74,7 @@ class Conflict(Exception):
 class Op:
     """Eine Änderung. ``before`` hält den Ausgangszustand (Prüfsumme der Vorschau, Grundlage für „Rückgängig“)."""
 
-    kind: str  # hide | cover | create | quote | unmap | amend
+    kind: str  # hide | cover | create | quote | unmap | amend | stage | book_row
     target: str  # hide/cover: Buchung; quote: Asset; unmap: Symbol; create: Schlüssel im Plan (t0, t1, …)
     label: str
     origin: str = ""  # hide: import | journal
@@ -302,6 +302,57 @@ def _create(st: _State, row: dict[str, str], label: str, plan: Plan, refs: str =
     op = Op("create", key, label, row=row, value=refs, tx=t, ref=st.ref(t))
     plan.ops.append(op)
     return op
+
+
+def _stage(st: _State, plan: Plan) -> None:
+    """Recherche-Ergebnis als Importkandidat in einen eigenen Prüf-Stapel legen (keine Buchung)."""
+    d = plan.finding.data
+    row = st.db.q1("SELECT id, status FROM diag_research_event WHERE source_id=? AND event_key=?",
+                   (d.get("source_id"), d.get("event_key")))
+    if row is None or row["status"] != "new":
+        plan.errors.append("Der Vorgang liegt nicht mehr als Recherche-Ergebnis vor (bereits bereitgestellt oder "
+                           "verworfen).")
+        return
+    plan.ops.append(Op("stage", str(d["event_key"]), f"Importkandidat {d['event_key']} in einen neuen Prüf-Stapel "
+                                                     "legen (keine Buchung)", value=str(d["source_id"]),
+                       before={"event": {"id": int(row["id"]), "status": row["status"]}}))
+    plan.warnings.append("Es wird nichts gebucht: Der Vorgang wird in einen neuen Prüf-Stapel gelegt und dort wie "
+                         "jeder Import auf Dubletten, Transfers und Werte geprüft. Gebucht wird in einem eigenen "
+                         "Schritt.")
+
+
+def _book_row(st: _State, plan: Plan) -> None:
+    """Genau eine Zeile eines Prüf-Stapels buchen (alle übrigen bleiben unverändert)."""
+    from app.csvimport.service import csv_service
+    from app.importer.validate import validate_tx_rows
+
+    d = plan.finding.data
+    bid, idx = d.get("batch"), d.get("idx")
+    csv = csv_service(st.ctx)
+    batch = csv.batch(int(bid)) if bid is not None else None
+    rc = next((r for r in csv._load(int(bid)) if r.idx == idx), None) if batch is not None else None
+    if rc is None or not rc.open:
+        plan.errors.append("Die Zeile steht nicht mehr offen im Prüf-Stapel (bereits gebucht oder verworfen).")
+        return
+    if rc.status != "new" or rc.row is None or rc.errors or not rc.include():
+        plan.errors.append("Die Zeile ist nicht eindeutig übernehmbar (Status „" + rc.status + "“) – im Prüf-Stapel "
+                           "prüfen und entscheiden.")
+        return
+    if rc.pair_ref or rc.transfer_unclear:
+        plan.errors.append("Der Vorgang gehört zu einem möglichen Transfer – bitte im Prüf-Stapel entscheiden.")
+        return
+    rep, parsed = validate_tx_rows([{**rc.row, "tx_id": "PF-PRUEFUNG"}], st.classes())
+    if rep.errors or not parsed:
+        plan.errors += [_strip(m.message) for m in rep.errors]
+        return
+    plan.warnings += [_strip(m.message) for m in rep.warnings if m.code != "value_eur" or rc.row["type"] != "transfer"]
+    key = st.new_key()
+    t = dataclasses.replace(Tx.from_parsed({**parsed[0], "seq": st.next_seq()}), tx_id=f"neu-{key[1:]}",
+                            origin="journal", source=csv.source_of(batch))
+    plan.ops.append(Op("book_row", f"{bid}:{idx}", f"Vorgang {rc.rec.event_key or rc.rec.ext_id} aus Prüf-Stapel "
+                                                   f"#{bid} buchen", row=rc.row, tx=t, ref=st.ref(t),
+                       before={"status": rc.status, "decision": rc.decision, "row": rc.row,
+                               "batch": batch["status"]}))
 
 
 def _quote(st: _State, aid: str, raw_coin: str, plan: Plan) -> None:
@@ -580,6 +631,10 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
         _hide(st, st.tx(d.get("receipt") or ""), plan)
     elif key == "adjust":
         _adjust(st, plan)
+    elif key == "stage":
+        _stage(st, plan)
+    elif key == "book_row":
+        _book_row(st, plan)
     elif key == "hide_custom":
         valid = {c for p in opt.params if p.name == "txs" for c, _l in p.choices}
         for tid in _selected(plan, "txs", valid) or []:
@@ -657,7 +712,7 @@ def hypothetical(pf: Portfolio, plan: Plan) -> Portfolio:
         if op.kind in ("hide", "cover", "amend"):
             remove.add(op.target)
             remove.update(op.members)
-    add = [op.tx for op in plan.ops if op.kind in ("create", "amend") and op.tx is not None]
+    add = [op.tx for op in plan.ops if op.kind in ("create", "amend", "book_row") and op.tx is not None]
     assets = pf.assets
     quotes = {op.target: op.value for op in plan.ops if op.kind == "quote"}
     if quotes:
@@ -673,7 +728,7 @@ def _hyp_snapshot(snap: Any, pf2: Portfolio, led2: LedgerResult, plan: Plan) -> 
     token_keys = {k: list(v) for k, v in snap.token_keys.items()}
     saved = dict(snap.saved_symbols)
     for op in plan.ops:
-        if op.kind == "create" and op.tx is not None:
+        if op.kind in ("create", "book_row") and op.tx is not None:
             journal[op.tx.tx_id] = JournalMeta(op.tx.tx_id, SOURCE, "active")
         elif op.kind == "hide" and op.origin == "journal" and op.target in journal:
             journal[op.target] = dataclasses.replace(journal[op.target], status=_jstatus(op.mode))
@@ -867,10 +922,13 @@ def preview(ctx: Any, report: Report, plan: Plan) -> Effects:
     if quoted:
         eff.notes.append("Kurse werden nach dem Übernehmen abgerufen; Wert und Kursbefunde der Position stehen erst "
                          "danach fest. Die Vorschau fragt keine Kurse ab.")
+    if any(op.kind == "stage" for op in plan.ops):
+        eff.notes.append("Bereitstellen bucht nichts: Bestände, Einstand, realisierte Ergebnisse und Steuer bleiben "
+                         "unverändert. Die Wirkung des Vorgangs zeigt die Vorschau der Buchung im nächsten Schritt.")
     if any(op.kind == "unmap" for op in plan.ops):
         eff.notes.append("Bestehende Buchungen bleiben unverändert; die Zuordnung fehlt erst bei künftigen Importen "
                          "und Abrufen (der Token geht dann in die Prüfung).")
-    if any(op.kind in ("hide", "cover", "create", "amend") for op in plan.ops):
+    if any(op.kind in ("hide", "cover", "create", "amend", "book_row") for op in plan.ops):
         _tax_effects(ctx, pf2, eff)
         eff.notes.append("Historische Performance (TTWROR/IRR, Verlauf) wird nach dem Übernehmen neu berechnet – die "
                          "Vorschau rechnet die Tageshistorie nicht vorab durch.")
@@ -1007,9 +1065,57 @@ def _exec(c: Any, ctx: Any, js: Any, op: Op, stamp: str, created: dict[str, str]
         if cur != op.before["row"]:
             raise Conflict(f"Zuordnung {op.target} wurde inzwischen geändert.")
         c.execute("DELETE FROM csv_symbol WHERE symbol=?", (op.target,))
+    elif op.kind == "stage":
+        _exec_stage(c, ctx, op, stamp, rec)
+    elif op.kind == "book_row":
+        _exec_book_row(c, ctx, op, stamp, rec)
     else:  # pragma: no cover - Programmierfehler
         raise ValueError(op.kind)
     return rec
+
+
+def _exec_stage(c: Any, ctx: Any, op: Op, stamp: str, rec: dict[str, Any]) -> None:
+    from app.csvimport.service import csv_service, rec_from_json, rec_to_json
+    from app.datasources.service import datasource_service
+
+    row = c.execute("SELECT * FROM diag_research_event WHERE source_id=? AND event_key=?",
+                    (int(op.value), op.target)).fetchone()
+    if row is None or row["status"] != "new" or int(row["id"]) != op.before["event"]["id"]:
+        raise Conflict(f"Recherche-Ergebnis {op.target} wurde inzwischen verändert.")
+    ds = datasource_service(ctx).get(int(op.value))
+    if ds is None:
+        raise Conflict("Die Datenquelle des Recherche-Ergebnisses besteht nicht mehr.")
+    recs = [rec_from_json(json.dumps(d)) for d in json.loads(row["lines_json"])]
+    payload = ("[" + ",".join(rec_to_json(r) for r in recs) + "]").encode()
+    bid = csv_service(ctx).ingest(recs, source=f"sync:{ds.provider}", profile=f"sync:{ds.provider}", account=ds.account,
+                                  label=f"{ds.name} · Recherche der Diagnose", datasource_id=int(ds.id),
+                                  payload=payload, append_to=None)
+    c.execute("UPDATE diag_research_event SET status='staged', batch_id=?, decided_at=? WHERE id=?",
+              (bid, stamp, row["id"]))
+    rec.update({"batch_id": bid, "event_id": int(row["id"]), "source_id": int(op.value), "event_key": op.target})
+
+
+def _exec_book_row(c: Any, ctx: Any, op: Op, stamp: str, rec: dict[str, Any]) -> None:
+    from app.csvimport.service import csv_service
+
+    csv = csv_service(ctx)
+    bid, idx = (int(x) for x in op.target.split(":"))
+    batch = csv.batch(bid)
+    rows = csv._load(bid) if batch is not None else []
+    rc = next((r for r in rows if r.idx == idx), None)
+    if rc is None or (rc.status, rc.decision) != (op.before["status"], op.before["decision"]) \
+            or rc.row != op.before["row"]:
+        raise Conflict(f"Zeile {op.target} im Prüf-Stapel wurde inzwischen verändert.")
+    plan = csv.commit_plan(rows, {idx})
+    if plan.get("errors"):
+        raise Conflict("Zeile nicht mehr übernehmbar: " + "; ".join(str(e) for e in plan["errors"]) + ".")
+    res = csv.commit_apply(c, batch, rows, plan, {idx}, stamp)
+    ids = list(res["tx_ids"])
+    if res["transfers"] or res["merged"] or len(ids) != 1:
+        raise Conflict("Die Zeile würde mit einer anderen zu einem Transfer verbunden – bitte im Prüf-Stapel "
+                       "entscheiden.")
+    rec.update({"target": ids[0], "batch_id": bid, "idx": idx, "row_id": rc.id, "tx_ids": ids,
+                "before_batch": op.before["batch"]})
 
 
 def _after(ctx: Any, quotes: bool) -> None:
@@ -1206,6 +1312,10 @@ def _revert(c: Any, js: Any, rec: dict[str, Any], stamp: str) -> str | None:
             raise Conflict(f"{target} wurde inzwischen anderweitig geändert ({cur['status']}).")
         c.execute("UPDATE journal_tx SET status='reverted', updated_at=? WHERE tx_id=?", (stamp, target))
         js._log(c, "revert", target, None, {"diagnose": True}, stamp)
+    elif kind == "stage":
+        return _revert_stage(c, rec, stamp)
+    elif kind == "book_row":
+        return _revert_book_row(c, js, rec, stamp)
     elif kind == "quote":
         cur = _row(c.execute("SELECT * FROM asset_source WHERE asset_id=?", (target,)).fetchone())
         after = rec.get("after") or {}
@@ -1231,6 +1341,59 @@ def _revert(c: Any, js: Any, rec: dict[str, Any], stamp: str) -> str | None:
         cols = list(before)
         c.execute(f"INSERT INTO csv_symbol({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                   [before[k] for k in cols])
+    return None
+
+
+def _reevaluate(ctx: Any, recs: list[dict[str, Any]]) -> None:
+    """Prüf-Stapel nach Rückgängig neu auswerten (Anzeige der wieder offenen Zeilen)."""
+    from app.csvimport.service import csv_service
+
+    csv = csv_service(ctx)
+    for bid in {int(r["batch_id"]) for r in recs if r["kind"] == "book_row" and r.get("batch_id") is not None}:
+        try:
+            if csv.batch(bid) is not None:
+                csv.evaluate(bid)
+                csv.refresh_status(bid)
+        except Exception:  # Auswertung ist Anzeige – das Zurücknehmen selbst ist bereits abgeschlossen
+            log.exception("Prüf-Stapel %s konnte nach dem Zurücknehmen nicht neu ausgewertet werden", bid)
+
+
+def _revert_stage(c: Any, rec: dict[str, Any], stamp: str) -> str | None:
+    """Importkandidat wieder aus dem Prüf-Stapel nehmen – nur solange die Zeile unberührt und ungebucht ist."""
+    bid, key = rec.get("batch_id"), rec["event_key"]
+    rows = c.execute("SELECT id, status, tx_id, decision FROM csv_row WHERE batch_id=? AND event_key=?",
+                     (bid, key)).fetchall()
+    if any(r["tx_id"] or r["status"] in ("committed", "merged", "linked") for r in rows):
+        raise Conflict(f"Der Importkandidat {key} wurde inzwischen gebucht bzw. verknüpft – zuerst die Buchung im "
+                       "Prüf-Stapel bzw. Journal zurücknehmen.")
+    note = None
+    if rows:
+        c.execute("DELETE FROM csv_row WHERE batch_id=? AND event_key=?", (bid, key))
+        if not c.execute("SELECT 1 FROM csv_row WHERE batch_id=?", (bid,)).fetchone():
+            c.execute("DELETE FROM csv_batch WHERE id=?", (bid,))
+    else:
+        note = f"Importkandidat {key} lag nicht mehr im Prüf-Stapel."
+    c.execute("UPDATE diag_research_event SET status='new', batch_id=NULL, decided_at=NULL WHERE id=? AND "
+              "status='staged'", (rec["event_id"],))
+    return note
+
+
+def _revert_book_row(c: Any, js: Any, rec: dict[str, Any], stamp: str) -> str | None:
+    """Einzelbuchung zurücknehmen (Status „zurückgenommen“, nichts wird gelöscht); die Zeile steht wieder offen."""
+    ids = rec["tx_ids"]
+    cur = [c.execute("SELECT status FROM journal_tx WHERE tx_id=?", (t,)).fetchone() for t in ids]
+    if all(r is None or r["status"] == "reverted" for r in cur):
+        return f"{ids[0]} ist bereits zurückgenommen."
+    if any(r is None or r["status"] not in ("active", "deleted") for r in cur):
+        raise Conflict(f"{ids[0]} wurde inzwischen anderweitig geändert.")
+    for t in ids:
+        c.execute("UPDATE journal_tx SET status='reverted', updated_at=? WHERE tx_id=?", (stamp, t))
+        js._log(c, "revert", t, None, {"diagnose": True}, stamp)
+    c.execute("UPDATE csv_row SET status='new', tx_id=NULL WHERE id=? AND tx_id=?", (rec["row_id"], ids[0]))
+    left = c.execute("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status IN ('committed', 'merged', 'linked')",
+                     (rec["batch_id"],)).fetchone()[0]
+    c.execute("UPDATE csv_batch SET status=?, updated_at=? WHERE id=?",
+              ("partial" if left else "preview", stamp, rec["batch_id"]))
     return None
 
 
@@ -1287,6 +1450,7 @@ def undo(ctx: Any, decision_id: int) -> Result:
         except Conflict as e:
             return Result(errors=[f"Rückgängig nicht möglich: {e} Es wurde nichts geändert."])
         _after(ctx, any(r["kind"] in ("quote", "unmap") for r in recs))
+        _reevaluate(ctx, recs)
         log.info("Diagnose-Korrektur %s zurückgenommen", decision_id)
         return Result(ok=True, decision_id=decision_id,
                       message="Korrektur zurückgenommen." + (" Hinweis: " + " ".join(notes) if notes else ""))

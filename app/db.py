@@ -684,6 +684,43 @@ ALTER TABLE diag_decision ADD COLUMN data_version TEXT;   -- Datenstand beim Ent
 ALTER TABLE diag_decision ADD COLUMN effects_json TEXT;   -- Wirkung (Bestände, Steuerjahre) laut Vorschau
 CREATE UNIQUE INDEX IF NOT EXISTS ux_diag_decision_token ON diag_decision(token) WHERE token IS NOT NULL;
 """),
+    (21, """
+-- M29 (additiv): Evidenzrecherche der Diagnose. Ein Lauf liest bei einer Datenquelle nur (kein Abrufstand, keine
+-- Buchung, kein Prüf-Stapel); die Ergebnisse liegen getrennt in ``diag_research_event`` und sind erst nach einer
+-- ausdrücklichen Freigabe ein Importkandidat (Prüf-Stapel) – gebucht wird in einem weiteren, eigenen Schritt.
+CREATE TABLE IF NOT EXISTS diag_research (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id   INTEGER NOT NULL,
+  account     TEXT,
+  asset       TEXT,
+  win_from    TEXT,                -- gesuchtes Fenster (UTC, ISO 8601), NULL = ganze Historie
+  win_to      TEXT,
+  status      TEXT NOT NULL,       -- running | done | partial | cancelled | error
+  rounds      INTEGER NOT NULL DEFAULT 0,
+  events      INTEGER NOT NULL DEFAULT 0,   -- vom Anbieter geliefert
+  staged      INTEGER NOT NULL DEFAULT 0,   -- davon im Fenster und neu abgelegt
+  complete    INTEGER NOT NULL DEFAULT 0,   -- Anbieter meldet vollständigen Abruf
+  message     TEXT,
+  cursor_json TEXT,                -- Fortsetzungspunkt eines abgebrochenen bzw. teilweisen Laufs
+  started_at  TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_diag_research_source ON diag_research(source_id, id);
+CREATE TABLE IF NOT EXISTS diag_research_event (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id   INTEGER NOT NULL,
+  event_key   TEXT NOT NULL,       -- Ereignis-ID des Anbieters (``anbieter:id``) – je Quelle nur einmal
+  ts          TEXT NOT NULL,       -- Zeitpunkt des Ereignisses (UTC, ISO 8601)
+  run_id      INTEGER,
+  lines_json  TEXT NOT NULL,       -- normalisierte Zeilen (Rec) wie im Prüf-Stapel
+  status      TEXT NOT NULL DEFAULT 'new',   -- new | staged | dismissed
+  batch_id    INTEGER,             -- Prüf-Stapel, in den der Kandidat auf Freigabe gelegt wurde
+  created_at  TEXT NOT NULL,
+  decided_at  TEXT,
+  UNIQUE(source_id, event_key)
+);
+CREATE INDEX IF NOT EXISTS ix_diag_research_event_ts ON diag_research_event(source_id, status, ts);
+"""),
 ]
 
 

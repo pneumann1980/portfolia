@@ -7,6 +7,8 @@
 <section class="card">
   <div class="card-head"><h2>Abweichungsentwicklung je Position</h2>
     <div class="row"><a class="btn sm" href="/quality/diagnose#bestand">Bestandsabweichungen</a><a class="btn sm" href="/quality/diagnose/windows{% if show_all %}?all=1{% endif %}" title="neu berechnen (ändert keine Daten)">Erneut prüfen</a></div></div>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
   <div class="alert"><span class="icon">i</span><div>
     <strong>Was diese Ansicht zeigt – und was nicht.</strong> Ein Referenzbestand belegt den Bestand <em>zu einem Zeitpunkt</em>, nicht wann oder zu welchen Kosten er entstand. Je Referenzzeitpunkt wird <em>Differenz = Referenz − Ledger</em> berechnet. Ein <em>Fenster</em> ist der Zeitraum zwischen zwei Nachweisen, in dem sich die Differenz geändert hat; es lokalisiert die <strong>Nettoveränderung</strong> und beweist nicht, dass darin genau eine Buchung fehlerhaft ist (gegenläufige Fehler heben sich auf). Die Punkte sind einzelne Messungen – zwischen ihnen ist der tatsächliche Bestand unbekannt. Nichts hier verändert Buchungen, Bestände, Einstand oder Steuer.</div></div>
   <form method="get" action="/quality/diagnose/windows" class="filters dev-filters" role="search" aria-label="Positionen filtern">
@@ -15,6 +17,9 @@
     <label class="check"><input type="checkbox" name="all" value="1"{% if show_all %} checked{% endif %}> <span>auch Positionen ohne Abweichung</span></label>
     <button class="btn sm" type="submit">Filtern</button>
   </form>
+  {% if research_runs %}<details class="box"><summary><b>Letzte Recherchen ({{ research_runs|length }})</b> <span class="hint">– nur lesend, getrennt von Sync und Buchungen</span></summary>
+    <ul class="plain-list" style="margin-top:6px">{% for rr in research_runs %}<li><span class="badge {{ 'good' if rr.status == 'done' else 'warn' if rr.status in ('partial', 'cancelled') else 'crit' if rr.status == 'error' else 'info' }}">{{ rr.status }}</span> Quelle #{{ rr.source_id }} · {{ rr.account or 'alle Konten' }}{% if rr.asset %} · {{ rr.asset }}{% endif %} · {{ rr.started_at[:16].replace('T', ' ') }} UTC <span class="hint">{{ rr.message or '' }}</span>
+      {% if rr.status in ('partial', 'cancelled') and rr.cursor_json %}<form method="post" action="/quality/diagnose/research/start" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="source" value="{{ rr.source_id }}"><input type="hidden" name="resume" value="{{ rr.id }}"><button class="btn sm ghost" type="submit">Fortsetzen</button></form>{% endif %}</li>{% endfor %}</ul></details>{% endif %}
   <p class="hint">{{ n_traces }} Position{{ 'en' if n_traces != 1 }} mit Referenzbestand, davon {{ n_dev }} mit Abweichung. Positionen ohne Referenzbestand erscheinen hier nicht – ohne Nachweis ist der Ist-Bestand unbekannt (nicht 0).</p>
 </section>
 
@@ -58,6 +63,32 @@
         <div class="stack" style="gap:8px;margin-top:8px">
           <p class="hint">Änderung der Differenz im Fenster: <b>{{ s.delta|qty_exact }}</b> · Nettowirkung der Buchungen im Fenster auf den Ledger-Bestand: {{ s.net_effect|qty_exact }}. Das Fenster lokalisiert die Nettoveränderung – es beweist nicht, dass darin genau eine fehlerhafte Buchung liegt.</p>
           {% for fl in s.flags %}<div class="alert {{ 'warn' if 'grob' in fl or 'gegenläufig' in fl or 'nicht' in fl else '' }}"><span class="icon">i</span><div>{{ fl }}</div></div>{% endfor %}
+          {% set pl = r.plans.get(s.key) %}
+          {% if pl %}
+          <details class="box plan"><summary><b>Untersuchung dieses Fensters</b> <span class="hint">– lokal zuerst, Anbieter nur gezielt und lesend</span></summary>
+            <div class="stack" style="gap:6px;margin-top:8px">
+              <dl class="kv">
+                <dt>Konto · Asset</dt><dd>{{ pl.account }} · {{ pl.asset }}</dd>
+                <dt>Zeitraum</dt><dd>{{ s.start.at|datetime_de if s.start else 'Beginn der Historie' }} → {{ s.end.at|datetime_de }}</dd>
+                <dt>Richtung · Größe</dt><dd>{{ pl.direction }} · {{ pl.size|qty_exact }}</dd>
+                <dt>Plattform</dt><dd>{{ pl.platforms|join(', ') if pl.platforms else 'keine Anbindung' }}</dd>
+                <dt>Mögliche Ursachen</dt><dd><ul class="plain-list">{% for c in pl.causes %}<li>{{ c }}</li>{% endfor %}</ul></dd>
+                {% if pl.missing_data %}<dt>Fehlende Daten</dt><dd><ul class="plain-list">{% for m in pl.missing_data %}<li>{{ m }}</li>{% endfor %}</ul></dd>{% endif %}
+              </dl>
+              {% for st in pl.steps %}
+              <div class="plan-step"><span class="badge {{ 'good' if st.state == 'erledigt' else '' if st.state == 'nicht möglich' else 'info' }}">{{ st.state }}</span> <b>{{ st.title }}</b>
+                <div class="hint">{{ st.detail }}</div>
+                {% if st.items %}<ul class="plain-list hint">{% for i in st.items %}<li>{{ i }}</li>{% endfor %}</ul>{% endif %}
+                {% if st.action %}{% if st.action[2] == 'link' %}<a class="btn sm" href="{{ st.action[1] }}"{% if st.action[1].startswith('http') %} target="_blank" rel="noopener noreferrer"{% endif %}>{{ st.action[0] }}</a>
+                {% else %}<form method="post" action="/quality/diagnose/research/start" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="source" value="{{ st.action[1].split(':')[1] }}"><input type="hidden" name="account" value="{{ pl.account }}"><input type="hidden" name="asset" value="{{ pl.asset }}">
+                  <input type="hidden" name="win_from" value="{{ pl.win_from or '' }}"><input type="hidden" name="win_to" value="{{ pl.win_to or '' }}"><input type="hidden" name="pos" value="{{ tr.key }}">
+                  <button class="btn sm primary" type="submit">{{ st.action[0] }}</button></form>
+                  <form method="post" action="/quality/diagnose/research/cancel" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="source" value="{{ st.action[1].split(':')[1] }}"><input type="hidden" name="pos" value="{{ tr.key }}"><button class="btn sm ghost" type="submit">Abbrechen</button></form>{% endif %}{% endif %}
+              </div>{% endfor %}
+            </div>
+          </details>
+          {% endif %}
           {% if s.candidates %}
           <h4>Ursachenkandidaten (Hypothesen – nichts davon ist gebucht)</h4>
           <div class="stack" style="gap:8px">{% for c in s.candidates %}
@@ -67,6 +98,7 @@
                 {% if c.creates_negative %}<b>Erzeugt negative Zwischenbestände.</b>{% endif %}</div>
               {% if c.other_positions %}<div class="hint">Wirkt auch auf: {% for a, b, v in c.other_positions %}{{ ' · ' if not loop.first }}{{ a }} {{ b }} {{ '+' if v > 0 }}{{ v|qty_exact }}{% endfor %}</div>{% endif %}
               {% if c.note %}<div class="hint">{{ c.note }}</div>{% endif %}
+              {% if c.missing %}<div class="hint caution">Nicht belegt (wird nicht ergänzt): {{ c.missing|join('; ') }}</div>{% endif %}
               {% if c.finding_id %}<div><a class="btn sm" href="/quality/diagnose/case/{{ c.finding_id }}">Vorgang prüfen und entscheiden</a></div>{% endif %}
             </div>{% endfor %}</div>
           {% elif s.kind != 'ok' %}<p class="hint">Keine belegbaren Kandidaten in diesem Fenster. Die Differenz bleibt <strong>ungeklärt</strong> – es wird nichts angenommen oder gebucht.</p>{% endif %}

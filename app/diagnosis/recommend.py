@@ -894,6 +894,43 @@ def _reference(facts: Facts, f: Finding) -> Recommendation | None:
         links=[*_journal_links(d["account"], d["asset"]), Link("Referenzbestände", "/quality/diagnose#referenzen")])
 
 
+def _reconstruction(facts: Facts, f: Finding) -> Recommendation | None:
+    """Rekonstruktionskandidat (M29): ein tatsächlich vorliegender, ungebuchter Vorgang einer Quelle. Freigabe nur je
+    Einzelfall; ohne Übernahme bleibt die Differenz ungeklärt."""
+    d = f.data
+    strong = d.get("level") in ("Belegt", "Stark gestützt")
+    opts: list[Option] = []
+    links: list[Link] = []
+    if d.get("ev_kind") == "staged":
+        opts.append(Option(
+            "stage", "Als Importkandidat bereitstellen (Prüf-Stapel)",
+            "Legt diesen einen Vorgang in einen neuen Prüf-Stapel – mit Duplikat-, Transfer- und Wertprüfung. Es wird "
+            "nichts gebucht; die Buchung ist ein eigener, ausdrücklicher Schritt (Vorschau, Rückgängig).",
+            recommended=strong,
+            caution="" if strong else "Nur teilweise belegt – fehlende Angaben werden nicht ergänzt."))
+        text = ("Der Vorgang wurde bei der Datenquelle gelesen, ist aber weder gebucht noch im Prüf-Stapel. "
+                "Bereitstellen ändert keine Bestände.")
+    else:
+        if d.get("ev_status") == "new" and strong:
+            opts.append(Option(
+                "book_row", "Diesen einen Vorgang buchen",
+                "Bucht genau diesen Vorgang aus dem Prüf-Stapel (Einzelfreigabe, alle anderen Zeilen bleiben "
+                "unverändert). Vorschau rechnet Bestände, Einstand, realisierte Ergebnisse und Steuer durch; "
+                "Rückgängig nimmt die Buchung zurück.", recommended=True,
+                caution="Ändert Bestand und – je nach Vorgang – Einstand und Haltedauer."))
+        text = ("Der Vorgang liegt ungebucht im Prüf-Stapel. " + (
+            "Buchen erst nach Prüfung der Vorschau." if opts else
+            "Er ist nicht eindeutig genug für eine Einzelbuchung – im Prüf-Stapel prüfen."))
+        if d.get("batch"):
+            links.append(Link(f"Prüf-Stapel #{d['batch']} öffnen", f"/journal/csv/{d['batch']}"))
+    acc, aid = d["pos"]
+    links += _journal_links(acc, aid)
+    links.append(Link("Abweichungsentwicklung der Position", "/quality/diagnose/windows?" + urlencode(
+        {"p": f"{acc}|{aid}", "all": "1"})))
+    opts.append(_dismiss("Nicht übernehmen – Differenz bleibt ungeklärt"))
+    return Recommendation(text=text, conditional=not strong, options=opts, links=links)
+
+
 _BUILDERS = {
     "same_qty": _same_qty, "hash_pairs": _hash_pairs, "identical": _identical, "import_vs_app": _import_vs_app,
     "transfer": _transfer,
@@ -901,5 +938,5 @@ _BUILDERS = {
     "price_fallback": _price_fallback, "stale": _stale, "migration": _migration, "holding": _holding,
     "conversion_twin": _conversion_twin, "rename_trade": _rename_trade,
     "econ_pairs": _econ_pairs, "breakdown": _breakdown, "negative": _negative, "loss": _loss, "inactive": _inactive,
-    "reference": _reference,
+    "reference": _reference, "reconstruction": _reconstruction,
 }

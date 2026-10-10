@@ -133,6 +133,8 @@ class Snapshot:
     price_gaps: list[dict[str, Any]] = field(default_factory=list)
     series_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
     references: list[Reference] = field(default_factory=list)  # aktive Referenzbestände (M27)
+    # ungebuchte Vorgänge mit Beleglage (offene Prüf-Stapel-Zeilen, Recherche-Ergebnisse) für Rekonstruktionskandidaten
+    evidence: list[Any] = field(default_factory=list)
     # aktive Nutzerentscheidungen ohne Datenänderung je Befund: (Aktion, Prüfsumme) – dismiss | reject | defer
     marks: dict[str, tuple[str, str]] = field(default_factory=dict)
 
@@ -195,6 +197,14 @@ def collect(ctx: Any, now: datetime | None = None) -> Snapshot:
             if o.key.upper() not in (k.upper() for k in lst):
                 lst.append(o.key)
     snap.open_rows = _open_rows(db, resolver)
+    try:
+        from app.diagnosis import research
+
+        snap.evidence = [*research.load_rows(db, resolver),
+                         *research.load_staged(db, resolver, {s.id: s.account for s in snap.sources},
+                                               {s.id: s.provider for s in snap.sources})]
+    except Exception as e:  # Evidenz ist Zusatz – die Diagnose läuft auch ohne
+        log.warning("Evidenz für Rekonstruktionskandidaten nicht verfügbar: %s", e)
     snap.references = references(db)
     try:
         snap.marks = {r["finding_id"]: (r["action"], r["fingerprint"] or "") for r in db.q(

@@ -109,6 +109,9 @@ class Candidate:
     creates_negative: bool = False
     other_positions: list[tuple[str, str, Decimal]] = field(default_factory=list)
     note: str = ""
+    ev_id: str | None = None  # reconstruction: Evidenz (Prüf-Stapel-Zeile bzw. Recherche-Ergebnis)
+    missing: list[str] = field(default_factory=list)  # reconstruction: Angaben, die dem Beleg fehlen (nicht ergänzt)
+    similar: list[str] = field(default_factory=list)  # reconstruction: ähnliche vorhandene Buchungen (Verdacht)
 
     @property
     def reduces(self) -> bool:
@@ -135,6 +138,7 @@ class PositionTrace:
     n_unique_ref: int = 0
     rest_strong: Decimal | None = None  # Differenz am letzten Punkt nach Belegten/Stark gestützten Kandidaten
     rest_all: Decimal | None = None  # … auch nach Plausiblen (rein rechnerisch)
+    findings: list[Finding] = field(default_factory=list)  # Rekonstruktionskandidaten als freigebbare Einzelvorgänge
 
     @property
     def position(self) -> tuple[str, str]:
@@ -406,6 +410,108 @@ def _drops(idx: Any, f: Finding) -> list[str]:
     return []
 
 
+STATUS_OF_EVIDENCE = {"Belegt": "belegt", "Stark gestützt": "wahrscheinlich", "Plausibel": "verdacht",
+                      "Ungeklärt": "hinweis", "Widersprüchlich": "hinweis"}
+
+
+def _local_date(ts: datetime) -> date:
+    from app.util.timeutil import to_local_date
+
+    return to_local_date(ts)
+
+
+def reconstruction(idx: Any, traces: dict[tuple[str, str], PositionTrace],
+                   series: dict[tuple[str, str], _Series]) -> dict[tuple[str, str], dict[str, list[Candidate]]]:
+    """Rekonstruktionskandidaten je Fenster aus ungebuchten Vorgängen (Prüf-Stapel, Recherche-Ergebnisse).
+
+    Ein Kandidat ist ein tatsächlich vorliegender Vorgang einer Quelle – nichts wird aus der Differenz „errechnet“.
+    Die Einstufung folgt der Beleglage (:func:`app.diagnosis.research.assess`), nie der Höhe: ein Betrag, der zur
+    Differenz passt, beweist nichts. Je Evidenz entsteht höchstens ein freigebbarer Einzelvorgang (``Finding``)."""
+    from app.diagnosis import research as RS
+    from app.diagnosis.engine import _d, _q
+    from app.diagnosis.model import Scenario
+
+    snap = idx.snap
+    evidence = list(getattr(snap, "evidence", []) or [])
+    if not evidence:
+        return {}
+    booked: set[str] = set()
+    for m in snap.journal.values():
+        if m.status in ("active", "merged"):
+            if m.event_key:
+                booked.add(m.event_key)
+            booked.update(m.aliases)
+    by_hash: dict[str, list[str]] = defaultdict(list)
+    for tid, hs in idx.hashes.items():
+        for h in hs:
+            by_hash[h].append(tid)
+    books = {pos: RS.PositionBookings(list(ser.items)) for pos, ser in series.items()}
+    by_pos: dict[tuple[str, str], list[Any]] = defaultdict(list)
+    for ev in evidence:
+        for acc, aid, _eff in ev.effects:
+            by_pos[(acc, aid)].append(ev)
+    out: dict[tuple[str, str], dict[str, list[Candidate]]] = {}
+    found: dict[str, list[tuple[tuple[str, str], Segment, Candidate, Any]]] = defaultdict(list)
+    for pos, tr in traces.items():
+        evs = by_pos.get(pos)
+        if not evs:
+            continue
+        ser = series[pos]
+        base_min = ser.min_running()
+        for seg in tr.segments:
+            if seg.kind == "ok":
+                continue
+            for ev in evs:
+                d = _local_date(ev.ts)
+                if not _within(seg.end, ev.ts, d) or _within(seg.start, ev.ts, d):
+                    continue
+                eff = ev.effect_on(pos)
+                if not eff:
+                    continue
+                a = RS.assess(ev, pos, books[pos], booked, by_hash)
+                if a.booked:
+                    continue
+                diff_end = seg.end.diff
+                text = f"{ev.authority_label}: {ev.label or 'Vorgang'} am {_d(ev.ts)} ({'+' if eff > 0 else '−'}" \
+                       f"{_q(abs(eff))} {pos[1]})"
+                cand = Candidate(
+                    key=f"rec|{ev.id}|{seg.key}", kind="reconstruction", title=text, evidence=a.level, tx_ids=[],
+                    ledger_effect=eff, diff_before=diff_end, diff_after=diff_end - eff,
+                    creates_negative=ser.min_running(extra=[(ev.ts, eff)]) < min(ZERO, base_min),
+                    other_positions=[(x, y, q) for x, y, q in ev.effects if (x, y) != pos],
+                    note=" ".join(a.notes), ev_id=ev.id, missing=a.missing, similar=a.similar)
+                out.setdefault(pos, {}).setdefault(seg.key, []).append(cand)
+                found[ev.id].append((pos, seg, cand, a))
+    for ev_id, hits in sorted(found.items()):
+        ev = next(e for e in evidence if e.id == ev_id)
+        pos, seg, cand, a = hits[0]
+        eff = ev.effect_on(pos)
+        status = STATUS_OF_EVIDENCE[cand.evidence]
+        f = Finding(
+            kind="reconstruction", status=status, title=cand.title, priority=2,
+            known=[f"{ev.authority_label}: {RS.STATUS_TEXT.get(ev.status, ev.status)}.",
+                   f"Wirkung: {'+' if eff > 0 else '−'}{_q(abs(eff))} {pos[1]} auf {pos[0]} am {_d(ev.ts)}."],
+            suspected=[f"Der Vorgang könnte einen Teil der Abweichung im Fenster {seg.label.lower()} erklären – "
+                       "das bleibt eine Hypothese."],
+            evidence=[*a.notes, *([f"Hash {h}" for h in ev.hashes[:2]])],
+            uncertainty=[*(f"Nicht belegt: {m}" for m in a.missing),
+                         "Ein zur Differenz passender Betrag ist kein Beleg; maßgeblich ist die Beleglage."],
+            accounts=sorted({x for x, _y, _q_ in ev.effects}), assets=sorted({y for _x, y, _q_ in ev.effects}),
+            sources=[ev.source], positions=sorted({p for p, *_ in hits}), key=f"reconstruction|{ev.id}",
+            data={"type": "reconstruction", "ev": ev.id, "ev_kind": ev.kind, "ref": ev.ref, "batch": ev.batch_id,
+                  "idx": ev.idx, "event_key": ev.event_key, "source_id": ev.source_id, "pos": list(pos),
+                  "level": cand.evidence, "ev_status": ev.status, "ts": ev.ts.isoformat(),
+                  "effect": format(eff, "f")},
+            decision="Vorgang prüfen; ungeprüft wird nichts gebucht.",
+            scenario=Scenario(text="Hypothetisch, nichts davon ist gebucht.", rows=[
+                (f"Differenz am Fensterende ({pos[0]} · {pos[1]})", _q(cand.diff_before), _q(cand.diff_after)),
+                ("Ledger-Bestand am Fensterende", _q(seg.end.ledger), _q(seg.end.ledger + eff))]))
+        for pos_, _seg, c, _a in hits:
+            c.finding_id = f.id
+            traces[pos_].findings.append(f)
+    return out
+
+
 def attach_candidates(idx: Any, traces: dict[tuple[str, str], PositionTrace], findings: list[Finding],
                       series: dict[tuple[str, str], _Series]) -> None:
     """Je Fenster Kandidaten aus vorhandenen Befunden (Dubletten, nicht finanzierte Sparpläne) mit hypothetischer
@@ -413,6 +519,7 @@ def attach_candidates(idx: Any, traces: dict[tuple[str, str], PositionTrace], fi
     from app.diagnosis.audit import PRIMARY_EXCLUDE, _family_last, family
 
     top = [f for f in findings if f.parent is None and f.kind == "duplicate"]
+    recon = reconstruction(idx, traces, series)
     for pos, tr in traces.items():
         acc, _aid = pos
         ser = series[pos]
@@ -463,6 +570,7 @@ def attach_candidates(idx: Any, traces: dict[tuple[str, str], PositionTrace], fi
                                  "bzw. Wirkung bei unveränderter Differenz")
             elif seg.kind == "ok":
                 cands = []  # ohne Abweichung nur dann Kandidaten zeigen, wenn sie sich gegenseitig aufheben könnten
+            cands += recon.get(pos, {}).get(seg.key, [])
             order = list(EVIDENCE_BADGE)
             seg.candidates = sorted(cands, key=lambda c: (order.index(c.evidence), c.key))
         if tr.segments:  # Restdifferenz am letzten Punkt – rein rechnerisch, nie als Beleg

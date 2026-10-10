@@ -56,3 +56,12 @@ class MemoryCatalog(Catalog):
     def put(self, remote_id: str, kind: str, symbol: str | None, name: str | None = None,
             asset_type: str | None = None, isin: str | None = None) -> None:
         self._mem[remote_id] = {"kind": kind, "symbol": symbol, "name": name, "type": asset_type, "isin": isin}
+
+
+class ReadOnlyCatalog(Catalog):
+    """Liest den Zwischenspeicher, schreibt aber nur in den Speicher des Laufs (Recherche der Diagnose: keine
+    Schreibzugriffe auf Anbieter-Stammdaten)."""
+
+    def put(self, remote_id: str, kind: str, symbol: str | None, name: str | None = None,
+            asset_type: str | None = None, isin: str | None = None) -> None:
+        self._mem[remote_id] = {"kind": kind, "symbol": symbol, "name": name, "type": asset_type, "isin": isin}

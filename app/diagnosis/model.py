@@ -25,12 +25,14 @@ KINDS: dict[str, str] = {
     "price": "Fehlender oder veralteter Kurs",
     "migration": "Möglicher Token-Migrationsvorgang",
     "document": "Beleg ergänzt Buchung",
+    "reconstruction": "Rekonstruktionskandidat (fehlender Vorgang)",
 }
 KIND_ORDER = {k: i for i, k in enumerate(KINDS)}
 
 # Bereiche der Diagnoseansicht (Kurzwahl) – Befundarten, die zusammen gezeigt werden
 SECTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "bestand": ("Bestandsabweichungen", ("holdings",)),
+    "rekonstruktion": ("Rekonstruktionskandidaten", ("reconstruction",)),
     "dubletten": ("Mögliche Doppelbuchungen", ("duplicate",)),
     "transfers": ("Ungeklärte Transfers", ("transfer",)),
     "inaktiv": ("Inaktive Konten", ("inactive",)),

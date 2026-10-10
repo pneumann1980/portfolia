@@ -56,7 +56,7 @@ from typing import Any
 import httpx
 
 from app.datasources import connector as K
-from app.datasources.catalog import Catalog
+from app.datasources.catalog import Catalog, ReadOnlyCatalog
 from app.datasources.chainhttp import ENDPOINTS
 from app.datasources.overview import conflict, identity, is_xpub
 from app.datasources.providers import (
@@ -163,6 +163,8 @@ _GROUP_RE = re.compile(r"^[^\x00-\x1f<>]{1,40}$")
 PROGRESS_STALE_S = 600  # ohne Lebenszeichen gilt ein Lauf als abgebrochen (Neustart des Containers)
 BACKFILL_NEXT_S = 90  # Etappen des Erstabrufs: nächster Lauf nach so vielen Sekunden
 MAX_ROUNDS = 40  # Etappen je manuell gestartetem Hintergrundlauf
+RESEARCH_ROUNDS = 12  # Etappen je Recherchelauf (Diagnose); danach Fortsetzungspunkt
+RESEARCH_SECONDS = 240  # Zeitbudget je Recherchelauf
 BATCH_WORKERS = 4  # Anbieter, die beim Aktualisieren mehrerer Konten gleichzeitig abgerufen werden
 MANY_ROUNDS = 3  # Etappen je Konto beim Aktualisieren mehrerer Konten (Erstabrufe setzt der Zeitplan fort)
 BATCH_KEY = "datasources.batch_sync"
@@ -1275,6 +1277,70 @@ class DataSourceService:
             self._set_progress(sid, p, force=True)
             return "Kein laufender Abruf gefunden – Anzeige zurückgesetzt."
         return "Es läuft kein Abruf."
+
+    # -- Recherche (Diagnose, nur lesend) ---------------------------------------------------------------
+    def research_fetch(self, sid: int, cursor: dict[str, Any] | None = None, *, rounds: int = RESEARCH_ROUNDS,
+                       seconds: float = RESEARCH_SECONDS, progress: Any = None) -> dict[str, Any]:
+        """Vorgänge einer Datenquelle **nur lesend** erneut abrufen (Beleg-Recherche der Diagnose).
+
+        Kein Nebeneffekt auf den normalen Abgleich: kein Abrufstand (``cursor_json``), kein Status, kein Lauf-Eintrag,
+        kein Prüf-Stapel, keine Bestände (``ds_balance``), keine Stammdaten-Cache-Schreibzugriffe. Gelesen wird ab
+        ``cursor`` (Fortsetzung eines abgebrochenen bzw. teilweisen Laufs) bzw. ab Beginn der Historie, in höchstens
+        ``rounds`` Etappen und ``seconds`` Sekunden; danach liefert die Antwort einen Fortsetzungspunkt. Je Quelle
+        läuft ein Abruf zur Zeit (gemeinsame Sperre mit dem Sync, abbrechbar über :meth:`cancel`).
+        Antwort: ``recs`` (Zeilen je Ereignis, normalisiert), ``complete``, ``cursor``, ``rounds``,
+        ``gaps``/``warnings`` oder ``error``."""
+        import time as _time
+
+        ds = self.get(sid)
+        if ds is None:
+            return {"error": "Datenquelle nicht gefunden."}
+        conn = K.connector_for(ds.provider)
+        if conn is None:
+            return {"error": "Für diese Datenquelle gibt es keinen Abruf (manuell/noch nicht unterstützt)."}
+        ev = _acquire(sid)
+        if ev is None:
+            return {"error": BUSY_TEXT, "busy": True}
+        started = _time.monotonic()
+        secret = K.Secret(None)
+        recs: list[Any] = []
+        res_meta: dict[str, Any] = {"rounds": 0, "gaps": [], "warnings": [], "complete": False, "cursor": cursor}
+        try:
+            with K.cancel_scope(ev):
+                conn.catalog = ReadOnlyCatalog(self.db, ds.provider)
+                self._bind_usage(ds, conn)
+
+                def report(stage: str, done: int, total: int | None, text: str) -> None:
+                    if progress is not None:
+                        progress(stage, done, total, text)
+
+                conn.progress = report
+                secret = self._secret(ds, conn)
+                cur = cursor
+                seen: set[str] = set()
+                for n in range(max(1, rounds)):
+                    with get_redactor().temporary(secret.values()):
+                        res = conn.fetch(ds.config(), secret, cur)
+                    for r in self._normalize(ds, res):
+                        if r.ext_id not in seen:  # überlappende Etappen liefern Ereignisse mehrfach
+                            seen.add(r.ext_id or "")
+                            recs.append(r)
+                    res_meta["rounds"] = n + 1
+                    res_meta["gaps"] = [sanitize_error(g, secret.values()) for g in res.gaps[:20]]
+                    res_meta["warnings"] = [sanitize_error(w, secret.values()) for w in res.warnings[:10]]
+                    more = bool(res.resume and not res.complete and res.cursor is not None)
+                    res_meta["complete"] = bool(res.complete and not res.gaps)
+                    res_meta["cursor"] = res.cursor if more else None
+                    if not more or ev.is_set() or _time.monotonic() - started > seconds:
+                        break
+                    cur = res.cursor
+        except Exception as e:  # Anbieter-/Netzwerk-/Vertragsfehler oder Abbruch → Anzeige ohne Geheimnisse
+            kind, msg = describe_error(e, secret.values())
+            res_meta.update(error=msg, kind=kind, cancelled=kind == "cancelled")
+        finally:
+            _release(sid)
+        res_meta["recs"] = recs
+        return res_meta
 
     def _background(self, sid: int, trigger: str, ev: threading.Event) -> None:
         """Hintergrundlauf: so lange Etappen, bis der Erstabruf vollständig ist, ein Fehler auftritt, der Nutzer
