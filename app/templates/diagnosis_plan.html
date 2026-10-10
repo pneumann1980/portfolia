@@ -42,11 +42,14 @@
     <li class="op">
       <div class="row"><span class="badge {{ 'good' if op.kind == 'create' else ('info' if op.kind in ('quote', 'cover') else 'warn') }}">{{ op.badge }}</span><span>{{ op.label }}</span></div>
       {% if op.kind == 'create' and op.ref %}{{ dm.txref(op.ref, new=true) }}<div class="hint">Wird als App-Buchung „Korrektur aus der Diagnose“ gespeichert (Kennung PF-D-…, vergeben beim Übernehmen).</div>
+      {% elif op.kind == 'book_row' and op.ref %}{{ dm.txref(op.ref, new=true) }}
       {% elif op.ref %}{{ dm.txref(op.ref) }}{% endif %}
       {% if op.kind == 'hide' and op.origin == 'import' %}<div class="hint">Import-Buchung: Überlagerung „gelöscht“ – die Import-Datei bleibt unverändert; wiederherstellbar.</div>
       {% elif op.kind == 'hide' and op.mode == 'merged' %}<div class="hint">App-Buchung: geht in der neuen Transfer-Buchung auf (Status „zusammengeführt“).</div>
       {% elif op.kind == 'hide' %}<div class="hint">App-Buchung: Status „gelöscht“ – wiederherstellbar.</div>
-      {% elif op.kind == 'cover' %}<div class="hint">Wie Journal → Abgleich „Import-Buchung gilt“: Die App-Buchung bleibt erhalten und zählt wieder, falls ein späterer Import den Vorgang nicht mehr enthält.</div>{% endif %}
+      {% elif op.kind == 'cover' %}<div class="hint">Wie Journal → Abgleich „Import-Buchung gilt“: Die App-Buchung bleibt erhalten und zählt wieder, falls ein späterer Import den Vorgang nicht mehr enthält.</div>
+      {% elif op.kind == 'stage' %}<div class="hint">Der Vorgang wurde bei der Datenquelle <em>nur gelesen</em>. Er kommt in einen neuen Prüf-Stapel und wird dort wie jeder Import auf Dubletten, Transfers und Werte geprüft – es wird <strong>nichts gebucht</strong>. Rückgängig nimmt ihn wieder aus dem Prüf-Stapel, solange er ungebucht ist.</div>
+      {% elif op.kind == 'book_row' %}<div class="hint">Bucht genau diese eine Zeile des Prüf-Stapels (Einzelfreigabe); alle anderen Zeilen bleiben unverändert. Rückgängig nimmt die Buchung zurück (Status „zurückgenommen“) und stellt die Zeile wieder offen.</div>{% endif %}
     </li>
   {% endfor %}
   </ol>

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Bestandsklärung{% endblock %}
+{% block heading %}Datenqualität · Bestandsklärung{% endblock %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>{{ 'Bestätigte Bestandssicht (alternativ)' if view else 'Bestandsklärung je Position' }}</h2>
+    <div class="row"><a class="btn sm{% if not view %} primary{% endif %}" href="/quality/diagnose/stock">Bestandsklärung</a><a class="btn sm{% if view %} primary{% endif %}" href="/quality/diagnose/stock?view=confirmed">Bestätigte Bestandssicht</a><a class="btn sm" href="/quality/diagnose/windows">Abweichungsentwicklung</a></div></div>
+  <div class="alert"><span class="icon">i</span><div>
+    <strong>Drei Größen, strikt getrennt.</strong>
+    <b>A · buchhalterisch</b>: Bestand laut Buchungen (Ledger). <b>B · bestätigter Referenzbestand</b>: dein letzter Kontostand-Nachweis, mit den Buchungen <em>danach</em> fortgeschrieben – mit späteren Buchungen heißt er „fortgeschrieben“, nie „verifiziert“.
+    <b>C · ungeklärte Differenz</b> = B − A. Ein ungeklärter Bestand ist <strong>kein</strong> Zugang, Kauf, Transfer, Lot, Gewinn oder Verlust: Er ändert weder Ledger noch FIFO, Einstand, realisierte Ergebnisse, Steuer, Haltefrist oder XIRR. Die Werte werden berechnet, nicht gespeichert.</div></div>
+</section>
+
+{% if view %}
+<section class="card">
+  <p class="hint">Diese Sicht ersetzt je Position die Ledger-Menge durch den fortgeschriebenen Referenzbestand (nie beides – keine Doppelzählung). Bewertet wird nur mit belastbarer Menge <em>und</em> belastbarem Kurs; sonst steht „unvollständig“, nicht 0. Sie ist <strong>nur indikativ</strong> und fließt nicht in FIFO, Einstand, realisierte Gewinne, Steuer, Haltefrist oder XIRR ein.</p>
+  <dl class="kv kv-stack">
+    <dt>Buchhalterischer Wert (A)</dt><dd><b>{{ sv.ledger_total|eur }}</b> <span class="hint">nur bewertete Positionen</span></dd>
+    <dt>Bestätigte Sicht (B′, indikativ)</dt><dd><b>{{ sv.view_total|eur }}</b> <span class="hint">Differenz {{ (sv.view_total - sv.ledger_total)|eur }}</span></dd>
+    <dt>Positionen ohne Referenzbestand</dt><dd>{{ sv.n_unreferenced }} – Ledger-Menge unverändert, <em>nicht bestätigt</em></dd>
+    <dt>Unvollständig bewertet</dt><dd>{{ sv.n_unvalued }}{% if sv.unvalued %} <span class="hint">({{ sv.unvalued[:8]|join(', ') }}{% if sv.unvalued|length > 8 %} …{% endif %}) – ohne Kurs bzw. mit veraltetem Kurs; diese Werte fehlen in beiden Summen, sie gelten nicht als 0.</span>{% endif %}</dd>
+  </dl>
+</section>
+{% endif %}
+
+<section class="card">
+  {% if not sv.rows %}<p class="hint">Keine Position mit Referenzbestand. Hinterlege unter <a href="/quality/diagnose#referenzen">Referenzbestände</a> Kontostände, um Bestände zu bestätigen.</p>{% else %}
+  <div class="table-wrap cards-wrap dev-wrap" tabindex="0" role="region" aria-label="Bestandsklärung (scrollbar)"><table class="cards hold-table dev-table">
+    <thead><tr><th>Konto · Asset</th><th class="num">A · Ledger</th><th class="num">B · Referenz{% if view %} (fortgeschrieben){% endif %}</th><th class="num">C · Differenz</th>{% if view %}<th class="num">Wert A</th><th class="num">Wert B′</th>{% else %}<th>Nachweis · Status</th>{% endif %}</tr></thead>
+    <tbody>{% for r in sv.rows %}<tr id="s-{{ loop.index }}">
+      <td class="who" data-label="Konto · Asset"><b>{{ r.account }}</b> · {{ r.asset }}<div class="hint">{{ r.n_refs }} Referenz{{ 'en' if r.n_refs != 1 }}{% if r.sources %} · {{ r.sources|join(', ') }}{% endif %}</div></td>
+      <td class="num" data-label="A · Ledger">{{ r.ledger|qty_exact }}</td>
+      <td class="num" data-label="B · Referenz">{% if r.rolled is not none %}{{ (r.rolled if view else r.point.qty)|qty_exact }}<div class="hint">
+        <span class="badge {{ 'good' if r.state == 'bestätigt' and not r.stale else 'warn' }}">{{ r.state }}</span>
+        {% if not view %}{{ r.point.at|datetime_de }}{% endif %}{% if r.stale %} · <b>veraltet</b> ({{ r.age_days }} Tage, &gt; {{ stale_days }}){% endif %}
+        {% if r.state == 'fortgeschrieben' %}<br>Referenz {{ r.point.qty|qty_exact }} {{ r.point.at|date_de }} + Wirkung von {{ r.n_after }} späteren Buchung{{ 'en' if r.n_after != 1 }}{% endif %}</div>
+      {% else %}<span class="badge crit">widersprüchlich</span><div class="hint">Referenzbestände widersprechen sich – nicht verwendet.</div>{% endif %}</td>
+      <td class="num" data-label="C · Differenz">{% if r.diff %}<b>{{ r.diff|qty_exact }}</b><div class="hint">ungeklärt – keine Buchung</div>{% elif r.diff is not none %}<span class="muted">0</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+      {% if view %}
+      <td class="num" data-label="Wert A">{% if r.ledger_value is not none %}{{ r.ledger_value|eur }}{% else %}<span class="muted" title="{{ r.value_note }}">unvollständig</span>{% endif %}</td>
+      <td class="num" data-label="Wert B′">{% if r.view_value is not none %}{{ r.view_value|eur }}{% if r.price_note %}<div class="hint">Kurs: {{ r.price_note }}</div>{% endif %}{% else %}<span class="muted" title="{{ r.value_note }}">unvollständig</span><div class="hint">{{ r.value_note }}</div>{% endif %}</td>
+      {% else %}
+      <td data-label="Nachweis · Status"><span class="badge {{ 'good' if r.evidence in ('Belegt', 'keine Abweichung') else 'info' if r.evidence == 'Stark gestützt' else 'warn' if r.evidence == 'Plausibel' else '' }}">{{ r.evidence }}</span>
+        <span class="badge {{ case_states.get(r.status, ('', ''))[1] }}">Untersuchung: {{ r.status_label }}</span>
+        <div class="hint"><a href="/quality/diagnose/windows?p={{ r.key|urlencode }}&amp;all=1">Fenster &amp; Kandidaten</a> · <a href="/journal?account={{ r.account|urlencode }}&amp;asset={{ r.asset|urlencode }}">Buchungen</a></div></td>
+      {% endif %}
+    </tr>
+    {% if not view and (r.unexplained or r.decisions) %}<tr class="detail-row"><td colspan="5">
+      <details class="box"{% if open_pos == r.key %} open{% endif %}><summary>Mögliche Ursachen, Befunde, Entscheidungen – {{ r.account }} · {{ r.asset }}</summary>
+        <div class="stack" style="gap:6px;margin-top:6px">
+          {% if r.causes %}<div><b>Mögliche Ursachen</b> <span class="hint">(Kategorien, keine Feststellung)</span><ul class="plain-list">{% for c in r.causes %}<li>{{ c }}</li>{% endfor %}</ul></div>{% endif %}
+          {% if r.candidates %}<div><b>Kandidaten</b> <span class="hint">(Hypothesen, nichts gebucht)</span><ul class="plain-list">{% for c in r.candidates %}<li>{{ c }}</li>{% endfor %}</ul>{% if r.rest_strong is not none %}<div class="hint">Rest nach belegten/stark gestützten Kandidaten: {{ r.rest_strong|qty_exact }}</div>{% endif %}</div>{% else %}{% if r.unexplained %}<div class="hint">Keine Kandidaten – die Differenz bleibt <b>ungeklärt</b>; es wird nichts angenommen oder gebucht.</div>{% endif %}{% endif %}
+          {% if r.findings %}<div><b>Befunde</b><ul class="plain-list">{% for fid, title in r.findings %}<li><a href="/quality/diagnose/case/{{ fid }}">{{ title }}</a></li>{% endfor %}</ul></div>{% endif %}
+          {% if r.decisions %}<div><b>Historie der Entscheidungen</b><ul class="plain-list">{% for d in r.decisions %}<li>#{{ d.id }} · {{ d.created|datetime_de }} · {{ 'Korrektur' if d.action == 'fix' else 'geprüft' }}: {{ d.option_label or 'kein Handlungsbedarf' }} <span class="badge {{ 'good' if d.active else '' }}">{{ 'aktiv' if d.active else 'zurückgenommen' }}</span>{% if d.note %} <span class="hint">„{{ d.note }}“</span>{% endif %}</li>{% endfor %}</ul></div>{% endif %}
+        </div></details></td></tr>{% endif %}
+    {% endfor %}</tbody></table></div>
+  {% endif %}
+</section>
+</div>
+{% endblock %}

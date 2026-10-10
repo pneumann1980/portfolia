@@ -304,6 +304,65 @@ def _create(st: _State, row: dict[str, str], label: str, plan: Plan, refs: str =
     return op
 
 
+def _opening(st: _State, plan: Plan) -> None:
+    """Eröffnungsposition (Ausnahme, M29): nur mit nachgewiesenem Anschaffungsdatum **und** nachgewiesenen Kosten –
+    beides ohne Vorgabe. Ohne diese Angaben entsteht kein Lot; der Bestand bleibt eine ungeklärte Differenz."""
+    d = plan.finding.data
+    acc, aid = d["account"], d["asset"]
+    p = plan.params
+    kinds = {"statement": "Kontoauszug", "provider": "Anzeige beim Anbieter", "other": "sonstiger Beleg"}
+    kind = (p.get("doc_kind") or [""])[0]
+    proof = (p.get("proof") or [""])[0].strip()
+    missing = [label for label, ok in (("Belegdatum", bool(p.get("doc_date"))), ("Art des Belegs", kind in kinds),
+                                       ("Anschaffungsdatum", bool(p.get("acq_date"))),
+                                       ("Anschaffungskosten", bool(p.get("cost"))),
+                                       ("Beleg der Anschaffungsdaten", bool(proof))) if not ok]
+    if missing:
+        plan.errors.append("Pflichtangaben fehlen: " + ", ".join(missing) + ". Unbekannte Anschaffungsdaten bleiben "
+                           "unbekannt – es wird weder ein Datum noch ein Kostenwert angenommen; der Bestand bleibt "
+                           "ungeklärt.")
+        return
+    try:
+        doc_day = date.fromisoformat(p["doc_date"][0])
+        acq_day = date.fromisoformat(p["acq_date"][0])
+    except ValueError:
+        plan.errors.append("Daten im Format JJJJ-MM-TT angeben.")
+        return
+    cost = _dec_param(plan, "cost", "Anschaffungskosten")
+    if cost is None:
+        return
+    if cost < 0:
+        plan.errors.append("Die Anschaffungskosten dürfen nicht negativ sein.")
+        return
+    if acq_day > doc_day or doc_day > today_local():
+        plan.errors.append("Das Anschaffungsdatum liegt vor dem Belegdatum, das Belegdatum nicht in der Zukunft.")
+        return
+    try:
+        qty = Decimal(d["reference"]) - Decimal(d["soll"])
+    except (ArithmeticError, KeyError, ValueError):
+        plan.errors.append("Kein Referenzbestand vorhanden.")
+        return
+    cur = next((h for h in st.report.holdings if (h.account, h.asset) == (acc, aid)), None)
+    if cur is None or cur.reference is None or cur.ref_diff != qty:
+        plan.errors.append("Der Referenzbestand bzw. das Soll hat sich seit dem Befund geändert – bitte die Diagnose "
+                           "neu öffnen.")
+        return
+    if qty <= 0:
+        plan.errors.append("Eine Eröffnungsposition setzt einen fehlenden Bestand voraus (Referenz über Soll).")
+        return
+    row = {"datetime": acq_day.isoformat(), "type": "deposit", "tag": "opening_balance", "from_account": "",
+           "from_asset": "", "from_qty": "", "to_account": acc, "to_asset": aid, "to_qty": _s(qty), "fee_asset": "",
+           "fee_qty": "", "fee_eur": "", "value_eur": _s(cost), "orig_price": "", "orig_ccy": "", "related_asset": "",
+           "note": f"Eröffnungsposition (Ausnahme, Diagnose): Bestand {qty_exact(qty)} {aid} laut {kinds[kind]} "
+                   f"vom {doc_day:%d.%m.%Y}; Anschaffungsdatum {acq_day:%d.%m.%Y} und Kosten {eur(cost)} belegt "
+                   f"durch: {proof[:200]}"}
+    _create(st, row, f"Eröffnungsposition {qty_exact(qty)} {aid} auf {acc} (Anschaffung {acq_day:%d.%m.%Y}, "
+                     f"Kosten {eur(cost)}, Beleg: {kinds[kind]})", plan)
+    plan.warnings.append("Es entsteht ein Lot mit dem von dir angegebenen Datum und den angegebenen Kosten – nicht "
+                         "geschätzt, nicht aus Kursen abgeleitet. Stimmen sie nicht, verändert das Einstand, "
+                         "Haltefrist und spätere realisierte Ergebnisse.")
+
+
 def _stage(st: _State, plan: Plan) -> None:
     """Recherche-Ergebnis als Importkandidat in einen eigenen Prüf-Stapel legen (keine Buchung)."""
     d = plan.finding.data
@@ -631,6 +690,8 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
         _hide(st, st.tx(d.get("receipt") or ""), plan)
     elif key == "adjust":
         _adjust(st, plan)
+    elif key == "opening":
+        _opening(st, plan)
     elif key == "stage":
         _stage(st, plan)
     elif key == "book_row":

@@ -180,6 +180,30 @@ class _Series:
     def at_date(self, d: date) -> Decimal:
         return self.now - (self.total - self.cum_d[bisect_right(self.dates, d)])
 
+    def _prep(self) -> None:
+        if getattr(self, "_pmin", None) is not None:
+            return
+        run = self.cum[1:]
+        pmin, lo = [], ZERO
+        for r in run:
+            lo = min(lo, r)
+            pmin.append(lo)
+        smin: list[Decimal | None] = [None] * (len(run) + 1)
+        hi: Decimal | None = None
+        for i in range(len(run) - 1, -1, -1):
+            hi = run[i] if hi is None else min(hi, run[i])
+            smin[i] = hi
+        self._pmin, self._smin = pmin, smin
+
+    def min_with(self, when: datetime, eff: Decimal) -> Decimal:
+        """Tiefster Zwischenbestand (ab 0) mit einer zusätzlichen Bewegung – O(log n) über Präfix-/Suffix-Minima."""
+        self._prep()
+        k = bisect_right(self.ts, when)
+        before = self.cum[k]
+        lo = min(self._pmin[k - 1] if k else ZERO, before + eff, ZERO)
+        tail = self._smin[k]
+        return lo if tail is None else min(lo, tail + eff)
+
     def min_running(self, extra: list[tuple[datetime, Decimal]] | None = None,
                     remove: set[str] | None = None) -> Decimal:
         """Tiefster Zwischenbestand (ab 0) – optional hypothetisch ohne bestimmte Buchungen bzw. mit zusätzlichen
@@ -477,7 +501,7 @@ def reconstruction(idx: Any, traces: dict[tuple[str, str], PositionTrace],
                 cand = Candidate(
                     key=f"rec|{ev.id}|{seg.key}", kind="reconstruction", title=text, evidence=a.level, tx_ids=[],
                     ledger_effect=eff, diff_before=diff_end, diff_after=diff_end - eff,
-                    creates_negative=ser.min_running(extra=[(ev.ts, eff)]) < min(ZERO, base_min),
+                    creates_negative=ser.min_with(ev.ts, eff) < min(ZERO, base_min),
                     other_positions=[(x, y, q) for x, y, q in ev.effects if (x, y) != pos],
                     note=" ".join(a.notes), ev_id=ev.id, missing=a.missing, similar=a.similar)
                 out.setdefault(pos, {}).setdefault(seg.key, []).append(cand)

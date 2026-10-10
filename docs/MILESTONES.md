@@ -1361,6 +1361,47 @@ Undo, Sammelbearbeitung) – keine zweite Diagnose-, Abgleichs- oder Korrektur-E
 * **Alle EVM-Chains:** Ausweichweg „Bestand laut öffentlichem RPC“ bei Anbieterproblemen (nur Bestand).
 * **Diagnose:** „Explorer ↗“ je Konto in den Bestandsabweichungen.
 
+## M29 – Bestandsrekonstruktion, Abweichungsfenster und evidenzbasierte Buchungsaufklärung (0.26.0)
+
+Leitsatz: **trennen, was tatsächlich existiert, was Buchungen erklären und was historisch unbekannt bleibt.**
+
+* **A · Abweichungsfenster** (`app/diagnosis/windows.py`, Seite *Abweichungsentwicklung*): je Position
+  `Differenz(t) = Referenz(t) − Ledger(t)` (Decimal, zeitzonenfest, mehrere Referenzen je Tag, widersprüchliche Referenzen
+  ohne Rückschluss). Fenster: *erstmals nachweisbar · verändert sich · bleibt stabil · verschwindet wieder · nicht
+  eingrenzbar* (eine einzelne Referenz lokalisiert nichts); gegenläufige Fehler werden als Möglichkeit ausgewiesen. Das
+  Diagramm zeigt Referenzen als Mess-/Nachweispunkte (keine Verbindungslinie), Ledger-Ringe, Differenz und getönte
+  Fenster; Klick öffnet Buchungen und Kandidaten, darunter Tabellenansicht.
+* **B · Ursachenkandidaten:** Dubletten (Befunde der Diagnose), nicht finanzierte Sparpläne und ungebuchte Vorgänge
+  (Prüf-Stapel, Recherche) – eingestuft nach **Beleglage** (*Belegt · Stark gestützt · Plausibel · Ungeklärt ·
+  Widersprüchlich*), nie nach der Höhe; ein zur Differenz passender Betrag ist kein Beleg. Hypothetische Wirkung auf
+  Differenz, negative Zwischenbestände und andere Positionen.
+* **C · Evidenzrecherche** (`app/diagnosis/research.py`, Migration 21): lokal zuerst (Prüf-Stapel, Belege, gespeicherte
+  Ergebnisse), danach gezielt und **nur lesend** bei der Datenquelle (`DataSourceService.research_fetch`: kein Abrufstand,
+  kein Status, kein Prüf-Stapel, keine Buchung, keine Stammdaten-Schreibzugriffe; Etappen mit Fortsetzungspunkt,
+  Zeit- und Etappenbudget, abbrechbar, je Quelle exklusiv mit dem normalen Sync). Ergebnisse liegen getrennt
+  (`diag_research_event`, idempotent je Quelle und Ereignis). Kein Abruf privater Daten an öffentliche Suchdienste oder
+  KI; Explorer-Links öffnet nur der Nutzer.
+* **D/H · Rekonstruktionskandidaten** (Befundart *Rekonstruktionskandidat*): Einzelfreigabe in zwei Schritten –
+  *Als Importkandidat bereitstellen* (Prüf-Stapel, keine Buchung) und *Diesen einen Vorgang buchen* (genau eine Zeile,
+  alle anderen unverändert) – je mit Vorschau, Prüfsumme (idempotent), Datenstand-Prüfung, Protokoll, **Rückgängig**.
+  Teilweise belegte Vorgänge nennen ihre fehlenden Angaben (nicht ergänzt); nicht rekonstruierbare Differenzen bleiben
+  ungeklärt.
+* **E · Bestandsklärung** (`/quality/diagnose/stock`): A buchhalterisch · B bestätigter Referenzbestand (fortgeschrieben,
+  nie „verifiziert“ bei späteren Buchungen, „veraltet“ ab 90 Tagen) · C ungeklärte Differenz, mit Evidenz,
+  Untersuchungsstatus, möglichen Ursachen, Befunden und Entscheidungshistorie. Berechnet, nicht gespeichert; ändert weder
+  Ledger noch FIFO/Steuer.
+* **F · Bestätigte Bestandssicht** (optional, gekennzeichnet): je Position genau eine Menge (Referenz ersetzt Ledger –
+  keine Doppelzählung); nur belastbare Bewertung, sonst „unvollständig“ (nie 0); fließt nicht in FIFO, Einstand,
+  realisierte Gewinne, Steuer, Haltefrist oder XIRR ein.
+* **G · Eröffnungsposition:** nur als Ausnahme mit belegtem Datum und belegten Kosten (keine Vorgabewerte) – siehe
+  `docs/OPENING-POSITIONS.md` (inkl. Prüfung des KREST-Musters).
+* **Performance:** Präfixsummen je Position, Bisektion für Zwischenbestand und Ähnlichkeitssuche (3.000 Buchungen,
+  1.500 ungebuchte Vorgänge: ≈ 1 s); keine Abfrage bei Seitenaufruf; Diagnose bleibt deterministisch.
+* **Grenzen:** Fenster sind so grob wie die Referenzen; Plattform-spezifische Suche beschränkt sich auf die vorhandenen
+  Connectoren (Anbieter-API, keine Suche über Hashes/Adressen bei Dritten); Bereitstellen und Buchen sind zwei Schritte
+  (die Wirkung auf FIFO/Steuer zeigt die Vorschau der Buchung); Beleg-Dokumente erscheinen als Evidenz erst nach dem Import
+  in den Prüf-Stapel; die Belegprüfung der Eröffnungsposition obliegt dem Nutzer.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

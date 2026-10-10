@@ -67,7 +67,7 @@
           {% if pl %}
           <details class="box plan"><summary><b>Untersuchung dieses Fensters</b> <span class="hint">– lokal zuerst, Anbieter nur gezielt und lesend</span></summary>
             <div class="stack" style="gap:6px;margin-top:8px">
-              <dl class="kv">
+              <dl class="kv kv-stack">
                 <dt>Konto · Asset</dt><dd>{{ pl.account }} · {{ pl.asset }}</dd>
                 <dt>Zeitraum</dt><dd>{{ s.start.at|datetime_de if s.start else 'Beginn der Historie' }} → {{ s.end.at|datetime_de }}</dd>
                 <dt>Richtung · Größe</dt><dd>{{ pl.direction }} · {{ pl.size|qty_exact }}</dd>

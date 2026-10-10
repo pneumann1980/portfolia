@@ -228,3 +228,22 @@ def test_page_renders_chart_data_windows_candidates_and_changes_nothing(cfg):
         # Verknüpfung aus der Bestandsabweichungs-Tabelle bzw. Filter ohne Treffer
         assert "Keine Positionen" in c.get("/quality/diagnose/windows?acc=gibt-es-nicht").text
         assert fingerprint(db) == before  # Seitenaufruf ändert nichts
+
+
+def test_min_with_matches_the_reference_implementation():
+    """Die schnelle Bisektion (Präfix-/Suffix-Minima) liefert dasselbe wie der vollständige Durchlauf."""
+    import random
+
+    rnd = random.Random(7)
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    from datetime import timedelta
+
+    items = []
+    for i in range(60):
+        ts = base + timedelta(hours=rnd.randrange(0, 400))
+        items.append((ts, ts.date(), D(rnd.choice((-5, -3, -1, 1, 2, 4, 6))), f"T{i:03d}"))
+    ser = W._Series(items, D("0"))
+    for _ in range(80):
+        when = base + timedelta(hours=rnd.randrange(-20, 430))
+        eff = D(rnd.choice((-9, -4, -1, 1, 3, 8)))
+        assert ser.min_with(when, eff) == ser.min_running(extra=[(when, eff)]), (when, eff)

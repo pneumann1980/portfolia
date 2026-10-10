@@ -815,3 +815,4 @@ details.crop img { display: block; margin-top: 4px; width: 100%; max-width: 420p
 .cand { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface-2); display: grid; gap: 4px; }
 .win > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .win-chart { min-width: 0; }
+@media (max-width: 640px) { .kv.kv-stack { grid-template-columns: 1fr; gap: 2px; } .kv.kv-stack dt { margin-top: 8px; } .kv.kv-stack dd { margin: 0; } }

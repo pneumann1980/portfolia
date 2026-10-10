@@ -1338,11 +1338,16 @@ def _history(idx: _Index, stats: dict[str, int]) -> list[Finding]:
     opening = [t for t in idx.txs if (t.tag or "") == "opening_balance" and t.source != "reconstructed"
                and not any(fl.startswith("RECONSTRUCTED") for fl in _flags(t))]
     for t in opening:
+        documented = (t.note or "").startswith("Eröffnungsposition (Ausnahme")  # Diagnose: Datum und Kosten belegt
         f = Finding(kind="history", status="hinweis", priority=3,
-                    title=f"Anfangsbestand ohne Einzelbelege: {t.to_asset} auf {t.to_account}",
-                    known=[idx.describe(t)],
-                    uncertainty=["Die Historie vor diesem Datum fehlt; Einstand und Anschaffungsdatum des "
-                                 "Anfangsbestands sind Annahmen."],
+                    title=(f"Eröffnungsposition mit belegten Anschaffungsdaten: {t.to_asset} auf {t.to_account}"
+                           if documented else f"Anfangsbestand ohne Einzelbelege: {t.to_asset} auf {t.to_account}"),
+                    known=[idx.describe(t), *([t.note] if documented and t.note else [])],
+                    uncertainty=(["Anschaffungsdatum und Kosten stammen aus dem von dir genannten Beleg (siehe "
+                                  "Notiz) und werden nicht von Portfolia geprüft; die Historie davor fehlt."]
+                                 if documented else
+                                 ["Die Historie vor diesem Datum fehlt; Einstand und Anschaffungsdatum des "
+                                  "Anfangsbestands sind Annahmen."]),
                     key=f"opening|{t.tx_id}")
         f.txs = [idx.ref(t)]
         out.append(idx.attach(f))

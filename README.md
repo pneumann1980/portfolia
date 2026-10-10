@@ -1376,6 +1376,43 @@ Einträge bleiben als „entfernt“ erhalten. Referenzbestände reisen mit dem 
 `reference_balances`, inkl. Zeitpunkt/Zeitzone). Datenbank: Migration 19 (Tabelle) und 20 (Spalten `as_of_ts`, `tz`,
 `basis`; additiv).
 
+### Bestandsrekonstruktion und Evidenzrecherche (M29)
+
+*Datenqualität → Abweichungsentwicklung* (`/quality/diagnose/windows`) und *Bestandsklärung*
+(`/quality/diagnose/stock`) trennen konsequent, **was tatsächlich existiert** (Referenzbestand), **was Buchungen erklären**
+(Ledger) und **was historisch unbekannt bleibt** (ungeklärte Differenz).
+
+* **Abweichungsfenster:** Mit mehreren Referenzbeständen je Position (Kontoauszug, Anzeige beim Anbieter – mit Uhrzeit und
+  Zeitzone) berechnet Portfolia `Referenz − Ledger` je Zeitpunkt und ordnet die Entwicklung ein: *erstmals nachweisbar*,
+  *verändert sich*, *bleibt stabil*, *verschwindet wieder*, *nicht eingrenzbar* (eine Referenz allein lokalisiert
+  nichts). Ein Fenster lokalisiert die **Nettoveränderung** – es beweist nicht, dass darin genau eine Buchung falsch ist
+  (gegenläufige Fehler heben sich auf). Das Diagramm zeigt Referenzen als einzelne Nachweispunkte (keine durchgehende
+  Linie), Ledger-Ringe, Differenz und getönte Fenster; Klick öffnet die Buchungen und Kandidaten des Fensters.
+* **Ursachenkandidaten mit Evidenz statt Wahrscheinlichkeit:** *Belegt* (Originalvorgang der Börsen-/Wallet-API,
+  vollständig, nicht gebucht) · *Stark gestützt* · *Plausibel* (teilweise belegt, ähnliche Buchung vorhanden) ·
+  *Ungeklärt* · *Widersprüchlich*. Ein Betrag, der zur Differenz passt, ist nie ein Beleg. Je Kandidat: hypothetische
+  Wirkung auf die Differenz, negative Zwischenbestände, weitere betroffene Positionen, fehlende Angaben (werden nicht
+  ergänzt).
+* **Untersuchung je Fenster:** lokal zuerst (Prüf-Stapel, Belege, gespeicherte Ergebnisse), dann *Recherche starten*: die
+  Datenquelle wird gezielt und **nur lesend** erneut gelesen – ohne Abrufstand, Status, Prüf-Stapel oder Buchung, in
+  Etappen mit Fortsetzungspunkt, abbrechbar, wiederholbar ohne doppelte Kandidaten. Ein normaler Sync dient nie als
+  „Recherche“. Explorer-Links öffnest du selbst; Adressen und Buchungen gehen nie an öffentliche Suchdienste oder KI.
+* **Einzelfreigabe:** Ein Rekonstruktionskandidat wird in zwei ausdrücklichen Schritten übernommen – *Als Importkandidat
+  bereitstellen* (Prüf-Stapel, Dubletten-/Transfer-/Wertprüfung, keine Buchung) und *Diesen einen Vorgang buchen* –, jeweils
+  mit Vorschau, Prüfsumme, Datenstand-Prüfung, Protokoll und *Rückgängig*; Ablehnen, später prüfen, ungeklärt lassen wie
+  bei jedem Befund.
+* **Bestandsklärung:** A buchhalterisch · B bestätigter Referenzbestand (mit späteren Buchungen *fortgeschrieben*, nie
+  „verifiziert“; ab 90 Tagen *veraltet*) · C ungeklärte Differenz – mit Evidenz, Untersuchungsstatus, möglichen Ursachen und
+  Entscheidungshistorie. Ein ungeklärter Bestand ist kein Zugang, Kauf, Transfer, Lot, Gewinn oder Verlust; er ändert
+  weder Ledger noch FIFO, Einstand, Steuer, Haltefrist oder XIRR.
+* **Bestätigte Bestandssicht (optional):** je Position genau eine Menge (Referenz ersetzt Ledger, keine Doppelzählung),
+  indikativ und nur bei belastbarer Menge **und** belastbarem Kurs bewertet – sonst „unvollständig“, nie 0.
+* **Eröffnungsposition:** nur als Ausnahme mit belegtem Anschaffungsdatum **und** belegten Kosten (kein Vorgabewert);
+  ohne Beleg bleibt der Bestand ungeklärt. Siehe `docs/OPENING-POSITIONS.md`.
+
+Datenbank: Migration 21 (`diag_research`, `diag_research_event`; additiv). Recherche-Ergebnisse reisen mit dem
+Gesamtexport (`state.json` → `diag_research_events`, je Datenquelle über Anbieter/Konto/Name).
+
 ### Aktuelle Bestände abfragen und Quellenrang (M28.1)
 
 * **Aktuelle Bestände problematischer Positionen abfragen:** In *Bestandsabweichungen* (Diagnose) und in der

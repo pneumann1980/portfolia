@@ -14,7 +14,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+from app.diagnosis import actions as A
 from app.diagnosis import research as RS
+from app.diagnosis import stock as ST
 from app.diagnosis.engine import report_for
 from app.diagnosis.web import _common
 from app.diagnosis.windows import EVIDENCE_BADGE, KIND_BADGE, KIND_LABEL, PositionTrace
@@ -88,6 +90,16 @@ def make_router() -> APIRouter:
                       assets=sorted({t.asset for t in traces.values()}), kind_label=KIND_LABEL, kind_badge=KIND_BADGE,
                       evidence_badge=EVIDENCE_BADGE, source_label=SOURCE_LABEL, research_runs=research_runs, msg=msg,
                       err=err, **_common())
+
+    @router.get("/quality/diagnose/stock", response_class=HTMLResponse)
+    def stock_page(request: Request, view: str = "", p: str = "") -> HTMLResponse:
+        """Bestandsklärung (A buchhalterisch · B bestätigter Referenzbestand · C ungeklärte Differenz) und die
+        optionale „bestätigte Bestandssicht“. Rein berechnet – nichts wird gespeichert oder gebucht."""
+        ctx = get_ctx(request)
+        report = report_for(ctx)
+        sv = ST.build(report, A.decisions(ctx.db, 400))
+        return render(request, "diagnosis_stock.html", active="quality", sv=sv, view=view == "confirmed", open_pos=p,
+                      stale_days=ST.STALE_DAYS, **_common())
 
     @router.post("/quality/diagnose/research/start")
     async def research_start(request: Request) -> Response:

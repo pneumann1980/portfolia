@@ -133,9 +133,9 @@ def inject(ctx, *evs):
 
 def ev(ref: str, when: str, qty: str, *, flags: tuple[str, ...] = (), hashes: tuple[str, ...] = (),
        extra: tuple[tuple[str, str, Decimal], ...] = (), source: str = "sync:kraken", status: str = "staged",
-       kind: str = "staged") -> RS.Evidence:
+       kind: str = "staged", acc: str = ACC) -> RS.Evidence:
     return RS.Evidence(kind=kind, ref=ref, source=source, ts=ts(when), status=status,
-                       effects=((ACC, "EUR", D(qty)), *extra), label="Einzahlung", flags=flags, hashes=hashes,
+                       effects=((acc, "EUR", D(qty)), *extra), label="Einzahlung", flags=flags, hashes=hashes,
                        event_key=ref if kind == "staged" else None, source_id=1)
 
 
@@ -413,3 +413,48 @@ def test_33_research_results_survive_export_and_restore_idempotently(staged_worl
     assert restore() == 0  # nicht doppelt
     (row,) = ctx.db.q("SELECT status, source_id FROM diag_research_event")
     assert row["status"] == "new" and row["source_id"] == sid
+
+
+def test_35_many_evidence_entries_on_a_large_history_stay_bounded(tmp_path):
+    """3.000 Buchungen, 4 Referenzen, 1.500 ungebuchte Vorgänge: Nachschlagen per Bisektion statt n:m."""
+    import time
+
+    from app.config import Config, Secrets
+    from app.diagnosis.collect import collect
+    from app.diagnosis.engine import diagnose
+    from tests.test_diagnosis_windows import dep as wdep
+    from tests.test_diagnosis_windows import ref as wref
+
+    rows = [wdep(f"T{n:05d}", f"2025-{1 + n % 12:02d}-{1 + n % 27:02d}T{n % 24:02d}:00:00Z", "1") for n in range(3000)]
+    from tests.test_diagnosis import make_ctx
+    from tests.test_diagnosis_audit import AUDIT_ASSETS
+
+    (tmp_path / "import").mkdir()
+    cfg = Config(data_dir=tmp_path / "data", import_dir=tmp_path / "import", demo_mode=True, scheduler_enabled=False,
+                 startup_jobs=False, log_format="text", secrets=Secrets())
+    ctx = make_ctx(cfg, rows, AUDIT_ASSETS, valuation="2026-10-01")
+    for n, day in enumerate(("2025-03-01", "2025-06-01", "2025-09-01", "2025-12-01")):
+        wref(ctx, str(n), day)
+    snap = collect(ctx)
+    evs = [ev(f"kraken:E{n:05d}", f"2025-{1 + n % 12:02d}-{1 + n % 27:02d}T{(n + 7) % 24:02d}:30:00", "1",
+              acc="Börse B") for n in range(1500)]
+    snap.evidence = evs
+    t0 = time.monotonic()
+    rep = diagnose(snap)
+    took = time.monotonic() - t0
+    tr = rep.traces[("Börse B", "EUR")]
+    n_cands = sum(len(s.candidates) for s in tr.segments)
+    assert n_cands > 0 and took < 30
+    # deterministisch: gleiche Daten → gleiche Befunde
+    assert diagnose(snap).signature() == rep.signature()
+
+
+def test_plan_page_explains_stage_and_booking_steps(staged_world):
+    c, ctx, sid = staged_world
+    (f,) = recon_findings(ctx)
+    page = c.get(f"/quality/diagnose/plan?f={f.id}&o=stage").text
+    assert "nur gelesen" in page and "nichts gebucht" in page
+    approve(ctx, f.id, "stage")
+    (g,) = recon_findings(ctx)
+    page = c.get(f"/quality/diagnose/plan?f={g.id}&o=book_row").text
+    assert "genau diese eine Zeile" in page and "neue Buchung" in page

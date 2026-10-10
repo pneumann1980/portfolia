@@ -886,12 +886,41 @@ def _inactive(facts: Facts, f: Finding) -> Recommendation | None:
 
 def _reference(facts: Facts, f: Finding) -> Recommendation | None:
     d = f.data
+    opts = [_dismiss("Differenz ungeklärt belassen – kein Handlungsbedarf")]
+    try:
+        short = Decimal(d["reference"]) - Decimal(d["soll"])
+    except (InvalidOperation, ValueError, KeyError):
+        short = Decimal(0)
+    if short > 0:  # nur ein fehlender Bestand lässt sich als Eröffnungsposition belegen – nie ein Überschuss
+        opts.append(Option(
+            "opening", f"Eröffnungsposition über {_q(short)} {d['asset']} buchen – Ausnahme, nur mit belegten "
+                       "Anschaffungsdaten",
+            "Eine Zugangsbuchung (Tag „opening_balance“) mit dem von dir nachgewiesenen Anschaffungsdatum und den "
+            "nachgewiesenen Anschaffungskosten – beides ohne Vorgabe: Fehlen sie, bleibt der Bestand ungeklärt (im "
+            "Bestandsklärung-Bereich), und es entsteht kein Lot. Vorschau, Einzelfreigabe, Protokoll und Rückgängig "
+            "wie bei jeder Korrektur; die Buchung ist als rekonstruierter Anfangsbestand gekennzeichnet.",
+            params=[Param("doc_date", "Datum des Belegs (Kontoauszug, Anzeige beim Anbieter)", "date",
+                          default=[d["as_of"][:10]] if d.get("as_of") else []),
+                    Param("doc_kind", "Art des Belegs", "select", default=["statement"],
+                          choices=[("statement", "Kontoauszug"), ("provider", "Anzeige beim Anbieter"),
+                                   ("other", "sonstiger Beleg")]),
+                    Param("acq_date", "Nachgewiesenes Anschaffungsdatum", "date",
+                          hint="Kein Vorgabewert: ohne belegtes Datum keine Buchung"),
+                    Param("cost", "Nachgewiesene Anschaffungskosten gesamt (EUR)", "decimal",
+                          hint="Kein Vorgabewert, keine 0 aus Bequemlichkeit: nur eintragen, was belegt ist"),
+                    Param("proof", "Beleg der Anschaffungsdaten (Dokument, Kennung)", "text")],
+            caution="Ändert Bestand, Einstand und Haltedauer (FIFO). Nur mit Beleg für Datum und Kosten – "
+                    "ohne Beleg den Bestand ungeklärt lassen."))
     return Recommendation(
-        text="Die genannten Ursachen der Reihe nach klären (zuerst Doppelbuchungen). Stimmt danach Soll und "
-             "Referenzbestand nicht überein, fehlende Buchungen anhand des Kontoauszugs ergänzen – eine "
-             "Ausgleichsbuchung nur zum Schließen der Differenz bietet Portfolia hier nicht an.",
-        conditional=True, options=[_dismiss("Differenz erklärt – als geprüft markieren")],
-        links=[*_journal_links(d["account"], d["asset"]), Link("Referenzbestände", "/quality/diagnose#referenzen")])
+        text="Die genannten Ursachen der Reihe nach klären (zuerst Doppelbuchungen, dann fehlende Vorgänge – siehe "
+             "„Abweichungsentwicklung“ und Recherche). Eine Ausgleichsbuchung nur zum Schließen der Differenz bietet "
+             "Portfolia hier nicht an; ein Bestand ohne belegte Herkunft bleibt als ungeklärte Differenz in der "
+             "Bestandsklärung stehen und verändert nichts.",
+        conditional=True, options=opts,
+        links=[*_journal_links(d["account"], d["asset"]), Link("Referenzbestände", "/quality/diagnose#referenzen"),
+               Link("Abweichungsentwicklung", "/quality/diagnose/windows?" + urlencode(
+                   {"p": f"{d['account']}|{d['asset']}", "all": "1"})),
+               Link("Bestandsklärung", "/quality/diagnose/stock")])
 
 
 def _reconstruction(facts: Facts, f: Finding) -> Recommendation | None:
