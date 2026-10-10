@@ -26,7 +26,7 @@ def _load_modules() -> None:
                 "app.datasources.chains.solana", "app.datasources.chains.kaspa", "app.datasources.chains.xrpl",
                 "app.datasources.chains.cardano", "app.datasources.chains.polkadot", "app.datasources.chains.peaq",
                 "app.datasources.binance", "app.diagnosis.web",
-                "app.diagnosis.integrity_web", "app.documentimport.web",
+                "app.diagnosis.integrity_web", "app.diagnosis.windows_web", "app.documentimport.web",
                 "app.watchlist.module", "app.taxdata.module", "app.assetchange.module"):
         with contextlib.suppress(ModuleNotFoundError):
             __import__(mod)

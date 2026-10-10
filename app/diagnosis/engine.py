@@ -335,8 +335,15 @@ def diagnose(snap: Snapshot) -> Report:
         from app.diagnosis import audit as _audit
 
         _audit.case_states(snap, findings)
+    traces: dict[tuple[str, str], Any] = {}
+    if idx is not None:
+        from app.diagnosis import windows
+
+        traces = windows.analyse(idx, snap, findings)
+        stats["traces"] = len(traces)
+        stats["trace_windows"] = sum(1 for t in traces.values() for sg in t.segments if sg.kind != "ok")
     return Report(findings=findings, holdings=holdings, generated_for=snap.today, stats=stats, snapshot=snap,
-                  index=idx)
+                  index=idx, traces=traces)
 
 
 # ----------------------------------------------------------------------------------------------------

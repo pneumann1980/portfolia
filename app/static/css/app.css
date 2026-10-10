@@ -807,3 +807,11 @@ details.crop img { display: block; margin-top: 4px; width: 100%; max-width: 420p
 .ev-table td { vertical-align: top; }
 .alert.compact { padding: 4px 8px; margin: 4px 0 0; font-size: .82rem; }
 .doc-filelist li.neg { color: var(--crit-ink); }
+
+/* Abweichungsentwicklung (M29) */
+.win-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; cursor: pointer; }
+.win-meta { display: grid; gap: 4px; }
+.win-meta .k { color: var(--muted); margin-right: 6px; }
+.cand { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface-2); display: grid; gap: 4px; }
+.win > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.win-chart { min-width: 0; }

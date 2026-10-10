@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Abweichungsentwicklung{% endblock %}
+{% block heading %}Datenqualität · Abweichungsentwicklung{% endblock %}
+{% import "partials/diag_macros.html" as dm with context %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>Abweichungsentwicklung je Position</h2>
+    <div class="row"><a class="btn sm" href="/quality/diagnose#bestand">Bestandsabweichungen</a><a class="btn sm" href="/quality/diagnose/windows{% if show_all %}?all=1{% endif %}" title="neu berechnen (ändert keine Daten)">Erneut prüfen</a></div></div>
+  <div class="alert"><span class="icon">i</span><div>
+    <strong>Was diese Ansicht zeigt – und was nicht.</strong> Ein Referenzbestand belegt den Bestand <em>zu einem Zeitpunkt</em>, nicht wann oder zu welchen Kosten er entstand. Je Referenzzeitpunkt wird <em>Differenz = Referenz − Ledger</em> berechnet. Ein <em>Fenster</em> ist der Zeitraum zwischen zwei Nachweisen, in dem sich die Differenz geändert hat; es lokalisiert die <strong>Nettoveränderung</strong> und beweist nicht, dass darin genau eine Buchung fehlerhaft ist (gegenläufige Fehler heben sich auf). Die Punkte sind einzelne Messungen – zwischen ihnen ist der tatsächliche Bestand unbekannt. Nichts hier verändert Buchungen, Bestände, Einstand oder Steuer.</div></div>
+  <form method="get" action="/quality/diagnose/windows" class="filters dev-filters" role="search" aria-label="Positionen filtern">
+    <label>Konto <select name="acc"><option value="">alle</option>{% for a in accounts %}<option{% if acc == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+    <label>Asset <select name="asset"><option value="">alle</option>{% for a in assets %}<option{% if asset == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+    <label class="check"><input type="checkbox" name="all" value="1"{% if show_all %} checked{% endif %}> <span>auch Positionen ohne Abweichung</span></label>
+    <button class="btn sm" type="submit">Filtern</button>
+  </form>
+  <p class="hint">{{ n_traces }} Position{{ 'en' if n_traces != 1 }} mit Referenzbestand, davon {{ n_dev }} mit Abweichung. Positionen ohne Referenzbestand erscheinen hier nicht – ohne Nachweis ist der Ist-Bestand unbekannt (nicht 0).</p>
+</section>
+
+{% if not rows %}
+<section class="card"><p class="hint">Keine Positionen für diese Auswahl.{% if not n_traces %} Hinterlege unter <a href="/quality/diagnose#referenzen">Referenzbestände</a> mindestens einen Kontostand; für eine zeitliche Eingrenzung braucht es mehrere zu verschiedenen Zeitpunkten.{% endif %}</p></section>
+{% endif %}
+
+{% for r in rows %}{% set tr = r.tr %}{% set key = tr.key %}
+<section class="card win-pos" id="pos-{{ loop.index }}">
+  <details {% if loop.index <= 3 or open_pos == key %}open{% endif %}>
+    <summary class="win-sum"><b>{{ tr.account }}</b> · {{ tr.asset }}
+      {% for t in tr.summary %}<span class="badge {{ 'crit' if 'erstmals' in t or 'Widerspr' in t else 'warn' if 'verändert' in t or 'eingrenzbar' in t else 'good' if 'keine Abweichung' in t or 'verschwindet' in t else 'info' }}">{{ t }}</span>{% endfor %}
+      <span class="hint">{{ tr.points|length }} Referenz{{ 'en' if tr.points|length != 1 else '' }}{% if tr.last and tr.last.diff %} · letzte Differenz {{ tr.last.diff|qty_exact }}{% if r.value is not none %} (≈ {{ r.value|eur }}){% endif %}{% endif %}</span></summary>
+    <div class="stack" style="gap:10px;margin-top:10px">
+      <div class="chart win-chart" data-chart="devwindows" data-inline="wd-{{ loop.index }}" data-lazy style="height:340px" role="img" aria-label="Referenzbestände, Ledger-Bestand und Differenz von {{ tr.account }} {{ tr.asset }}"></div>
+      <script type="application/json" id="wd-{{ loop.index }}">{{ r.chart|safe }}</script>
+      <p class="hint">Gefüllte Punkte: Referenz (Nachweis). Ringe: Ledger-Bestand zum selben Zeitpunkt. Unten: Referenz − Ledger. Getönte Bänder sind Fenster zwischen zwei Nachweisen; Klick öffnet Buchungen und Kandidaten. Es gibt <em>keine</em> durchgehende Linie, weil zwischen den Nachweisen nichts gemessen wurde.</p>
+
+      {% for c in tr.contradictions %}<div class="alert warn"><span class="icon">!</span><div>{{ c }}</div></div>{% endfor %}
+      <div class="win-meta">
+        <div><span class="k">Datengrundlage</span> {% if tr.sources %}{{ tr.sources|join(', ') }}{% else %}<span class="muted">keine Anbindung</span>{% endif %}</div>
+        {% for q in tr.quality %}<div class="hint">⚠ {{ q }}</div>{% endfor %}
+        {% if tr.since_last %}<div class="hint">{{ tr.since_last }} Buchung{{ 'en' if tr.since_last != 1 }} nach dem letzten Nachweis – ohne Referenzbestand ungeprüft.</div>{% endif %}
+        {% if tr.rest_all is not none and tr.last and tr.last.diff %}<div class="hint">Rechnerischer Rest der Differenz nach Belegten/Stark gestützten Kandidaten: <b>{{ tr.rest_strong|qty_exact }}</b>{% if tr.rest_all != tr.rest_strong %}; nach zusätzlich Plausiblen (nur Rechenbeispiel): {{ tr.rest_all|qty_exact }}{% endif %}. Das ist keine Buchung und kein Beleg.</div>{% endif %}
+      </div>
+
+      <div class="table-wrap cards-wrap" tabindex="0" role="region" aria-label="Referenzpunkte (Tabellenansicht)"><table class="cards hold-table">
+        <thead><tr><th>Zeitpunkt</th><th class="num">Referenz</th><th class="num">Ledger</th><th class="num">Differenz</th><th>Beleg</th></tr></thead>
+        <tbody>{% for p in tr.points %}<tr>
+          <td data-label="Zeitpunkt">{{ p.at|datetime_de }}<div class="hint">{{ p.basis_label }}{% if p.tz %} · {{ p.tz }}{% endif %} · {{ utc_fmt(p.at) }}</div></td>
+          <td class="num" data-label="Referenz">{{ p.qty|qty_exact }}</td><td class="num" data-label="Ledger">{{ p.ledger|qty_exact }}</td>
+          <td class="num" data-label="Differenz">{{ p.diff|qty_exact }}{% if p.conflict %}<div><span class="badge crit">widersprüchlich</span></div>{% endif %}</td>
+          <td data-label="Beleg">{{ source_label.get(p.source, 'sonstiger Beleg') }}{% if p.note %}<div class="hint">{{ p.note }}</div>{% endif %}</td>
+        </tr>{% endfor %}</tbody></table></div>
+
+      {% for s in tr.segments %}
+      <details class="box win" id="win-{{ s.key }}"{% if s.kind != 'ok' and loop.last %} open{% endif %}>
+        <summary><span class="badge {{ kind_badge[s.kind] }}">{{ s.label }}</span>
+          <b>{% if s.start %}{{ s.start.at|datetime_de }}{% else %}Beginn der Historie{% endif %} → {{ s.end.at|datetime_de }}</b>
+          <span class="hint">Differenz {% if s.start %}{{ s.start.diff|qty_exact }} → {% endif %}{{ s.end.diff|qty_exact }} · {{ s.n_tx }} Buchung{{ 'en' if s.n_tx != 1 }}{% if s.days is not none %} · {{ s.days }} Tage{% endif %}</span></summary>
+        <div class="stack" style="gap:8px;margin-top:8px">
+          <p class="hint">Änderung der Differenz im Fenster: <b>{{ s.delta|qty_exact }}</b> · Nettowirkung der Buchungen im Fenster auf den Ledger-Bestand: {{ s.net_effect|qty_exact }}. Das Fenster lokalisiert die Nettoveränderung – es beweist nicht, dass darin genau eine fehlerhafte Buchung liegt.</p>
+          {% for fl in s.flags %}<div class="alert {{ 'warn' if 'grob' in fl or 'gegenläufig' in fl or 'nicht' in fl else '' }}"><span class="icon">i</span><div>{{ fl }}</div></div>{% endfor %}
+          {% if s.candidates %}
+          <h4>Ursachenkandidaten (Hypothesen – nichts davon ist gebucht)</h4>
+          <div class="stack" style="gap:8px">{% for c in s.candidates %}
+            <div class="cand">
+              <div class="row"><span class="badge {{ evidence_badge[c.evidence] }}">{{ c.evidence }}</span><b>{{ c.title }}</b></div>
+              <div class="hint">Wäre der Kandidat zutreffend und umgesetzt: Ledger-Bestand {{ '+' if c.ledger_effect > 0 }}{{ c.ledger_effect|qty_exact }}, Differenz am Fensterende {{ c.diff_before|qty_exact }} → {{ c.diff_after|qty_exact }} ({{ c.effect_text }}).
+                {% if c.creates_negative %}<b>Erzeugt negative Zwischenbestände.</b>{% endif %}</div>
+              {% if c.other_positions %}<div class="hint">Wirkt auch auf: {% for a, b, v in c.other_positions %}{{ ' · ' if not loop.first }}{{ a }} {{ b }} {{ '+' if v > 0 }}{{ v|qty_exact }}{% endfor %}</div>{% endif %}
+              {% if c.note %}<div class="hint">{{ c.note }}</div>{% endif %}
+              {% if c.finding_id %}<div><a class="btn sm" href="/quality/diagnose/case/{{ c.finding_id }}">Vorgang prüfen und entscheiden</a></div>{% endif %}
+            </div>{% endfor %}</div>
+          {% elif s.kind != 'ok' %}<p class="hint">Keine belegbaren Kandidaten in diesem Fenster. Die Differenz bleibt <strong>ungeklärt</strong> – es wird nichts angenommen oder gebucht.</p>{% endif %}
+          {% if s.tx_ids %}<h4>Wirksame Buchungen der Position im Fenster ({{ s.n_tx }}{% if s.n_tx > s.tx_ids|length %}, die ersten {{ s.tx_ids|length }} angezeigt{% endif %})</h4>
+          <div class="tx-grid">{% for i in s.tx_ids %}{% set t = r.txs.get(i) %}{% if t %}{{ dm.txref(t) }}{% endif %}{% endfor %}</div>
+          {% else %}<p class="hint">Keine wirksamen Buchungen dieser Position im Fenster.</p>{% endif %}
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+  </details>
+</section>
+{% endfor %}
+</div>
+{% endblock %}

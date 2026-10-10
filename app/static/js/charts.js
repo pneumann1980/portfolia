@@ -85,7 +85,7 @@
       mode: mode(), surface: g("--surface"), ink: g("--ink"), ink2: g("--ink-2"), muted: g("--muted"),
       grid: g("--grid"), axis: g("--axis"), s1: g("--series-1"), s2: g("--series-2"), s3: g("--series-3"),
       s4: g("--series-4"), pos: g("--div-pos"), neg: g("--div-neg"), mid: g("--div-mid"), up: g("--up"), down: g("--down"),
-      border: g("--border"),
+      border: g("--border"), warn: g("--warn-mark"),
     };
   }
 
@@ -142,6 +142,11 @@
   function load(el, keepFrame) {
     var type = el.dataset.chart;
     var builder = BUILDERS[type];
+    if (builder && el.dataset.inline && !el.dataset.src) {  // Daten liegen im Dokument (kein Abruf nötig)
+      try { el._data = JSON.parse(document.getElementById(el.dataset.inline).textContent); }
+      catch (e) { return empty(el, "Diagrammdaten ungültig."); }
+      return builder(el, el._data);
+    }
     if (!builder || !el.dataset.src) return;
     el.classList.add("loading");
     var url = buildUrl(el);
@@ -596,12 +601,92 @@
     }, true);
   }
 
-  var BUILDERS = { allocation: allocation, history: history, price: price, position: position, treemap: treemap,
+
+  // ------------------------------------------------------------------------------------------------
+  // Abweichungsfenster (Diagnose): Referenzbestände sind Nachweiszeitpunkte – nur Marker, keine verbindende Linie.
+  // Oben: Bestand laut Referenz (gefüllt) und laut Ledger (Ring) je Zeitpunkt; unten: Differenz Referenz − Ledger.
+  // Getönte Bänder = Fenster zwischen zwei Nachweisen; Klick auf Band oder Marker öffnet die Details darunter.
+  var WIN_TINT = { erstmals: "neg", veraendert: "warn", stabil: "s1", verschwindet: "pos", nicht_eingrenzbar: "mid", ok: null };
+  function devwindows(el, d) {
+    var t = tok();
+    var pts = d.points || [];
+    if (!pts.length) return empty(el, "Kein Referenzbestand.");
+    var inst = getInstance(el);
+    var narrow = el.clientWidth < 520;
+    var xs = pts.map(function (p) { return Date.parse(p.t); });
+    var span = Math.max(1, Math.max.apply(null, xs) - Math.min.apply(null, xs));
+    var pad = Math.max(span * 0.06, 86400000 * 2);
+    var xmin = Math.min.apply(null, xs) - pad, xmax = Math.max.apply(null, xs) + pad;
+    function fmt(v) { return num(v, d.fiat ? 2 : 8); }
+    var refs = pts.map(function (p, i) { return { value: [xs[i], Number(p.qty)], _p: p }; });
+    var leds = pts.map(function (p, i) { return { value: [xs[i], Number(p.ledger)], _p: p }; });
+    var diffs = pts.map(function (p, i) { return { value: [xs[i], Number(p.diff)], _p: p }; });
+    var areas = (d.segs || []).filter(function (s) { return WIN_TINT[s.kind]; }).map(function (s) {
+      var c = t[WIN_TINT[s.kind]] || t.mid;
+      var a = s.start ? Date.parse(s.start) : xmin;
+      return [{ xAxis: a, name: s.label, _s: s, itemStyle: { color: c, opacity: s.kind === "nicht_eingrenzbar" ? 0.07 : 0.14 } },
+              { xAxis: Date.parse(s.end) }];
+    });
+    function tipPoint(p) {
+      var s = "<b>" + esc(p.when) + "</b><div style='color:" + t.ink2 + "'>" + esc(p.basis) + "</div>";
+      s += row(null, "Referenz", fmt(p.qty)) + row(null, "Ledger", fmt(p.ledger)) + row(null, "Differenz", fmt(p.diff));
+      s += "<div style='color:" + t.ink2 + "'>" + esc(p.src) + (p.conflict ? " · widersprüchlich" : "") + "</div>";
+      return s;
+    }
+    var axisX = function (gi) {
+      return Object.assign({ type: "time", gridIndex: gi, min: xmin, max: xmax }, axisCommon(t),
+        { splitLine: { show: false }, axisLabel: { color: t.muted, fontSize: 11, show: gi === 1, hideOverlap: true } });
+    };
+    inst.setOption({
+      animation: false,
+      legend: { top: 0, left: 0, itemWidth: 12, itemHeight: 12, textStyle: { color: t.ink2, fontSize: 12, fontFamily: LEGEND_FONT },
+        data: [{ name: "Referenz (Nachweis)", icon: "circle" }, { name: "Ledger zum selben Zeitpunkt", icon: "circle", itemStyle: { color: t.surface, borderColor: t.ink2, borderWidth: 2 } },
+               { name: "Differenz", icon: "rect" }] },
+      grid: [{ left: 8, right: 16, top: narrow ? 64 : 40, height: "32%", containLabel: true },
+             { left: 8, right: 16, top: "62%", bottom: 28, containLabel: true }],
+      xAxis: [axisX(0), axisX(1)],
+      yAxis: [Object.assign({ type: "value", gridIndex: 0, scale: true }, axisCommon(t)),
+              Object.assign({ type: "value", gridIndex: 1, scale: true }, axisCommon(t))],
+      tooltip: Object.assign(tooltipBase(t), { trigger: "item", formatter: function (p) {
+        if (p.componentType === "markArea") {
+          var s = p.data && p.data._s;
+          if (!s) return "";
+          return "<b>" + esc(s.label) + "</b>" + row(null, "Änderung der Differenz", fmt(s.delta)) + row(null, "Buchungen im Fenster", String(s.n_tx)) +
+            "<div style='color:" + t.ink2 + "'>Klicken für Buchungen und Kandidaten</div>";
+        }
+        return p.data && p.data._p ? tipPoint(p.data._p) : "";
+      } }),
+      series: [
+        { name: "Referenz (Nachweis)", type: "scatter", xAxisIndex: 0, yAxisIndex: 0, data: refs, symbol: "circle", symbolSize: 9,
+          itemStyle: { color: t.s1, borderColor: t.surface, borderWidth: 2 }, z: 3 },
+        { name: "Ledger zum selben Zeitpunkt", type: "scatter", xAxisIndex: 0, yAxisIndex: 0, data: leds, symbol: "circle", symbolSize: 15,
+          itemStyle: { color: t.surface, borderColor: t.ink2, borderWidth: 2 }, z: 2 },
+        { name: "Differenz", type: "bar", xAxisIndex: 1, yAxisIndex: 1, barWidth: 3, z: 1,
+          data: diffs.map(function (x) { return { value: x.value, _p: x._p, itemStyle: { color: t.s1, borderRadius: Number(x.value[1]) < 0 ? [0, 0, 2, 2] : [2, 2, 0, 0] } }; }),
+          markArea: { silent: false, data: areas, label: { show: !narrow, color: t.ink2, fontSize: 10, position: "insideTop", formatter: function (p) { return p.name; } } },
+          markLine: { silent: true, symbol: "none", label: { show: false }, lineStyle: { color: t.axis, width: 1, type: "solid" }, data: [{ yAxis: 0 }] } },
+        { name: "Differenz", type: "scatter", xAxisIndex: 1, yAxisIndex: 1, data: diffs, symbol: "circle", symbolSize: 9,
+          itemStyle: { color: t.s1, borderColor: t.surface, borderWidth: 2 }, z: 4, tooltip: {} },
+      ],
+    }, true);
+    inst.off("click");
+    inst.on("click", function (p) {
+      var key = p.componentType === "markArea" ? (p.data && p.data._s && p.data._s.key) : (p.data && p.data._p && p.data._p.seg);
+      if (!key) return;
+      var target = document.getElementById("win-" + key);
+      if (!target) return;
+      if (target.tagName === "DETAILS") target.open = true;
+      target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+
+  var BUILDERS = { devwindows: devwindows, allocation: allocation, history: history, price: price, position: position, treemap: treemap,
     perf: perf, drawdown: drawdown, annual: annual, waterfall: waterfall };
 
   function initAll(root) {
     (root || document).querySelectorAll("[data-chart]").forEach(function (el) {
       if (el._inited) return;
+      if (el.dataset.lazy !== undefined && el.offsetParent === null) return;  // in geschlossenem Bereich: beim Öffnen
       el._inited = true;
       load(el);
     });
@@ -626,4 +711,7 @@
     instances.forEach(function (inst, el) { rerender(el); });
   });
   document.addEventListener("DOMContentLoaded", function () { initAll(document); });
+  document.addEventListener("toggle", function (e) {  // Diagramme in <details> erst beim Aufklappen zeichnen
+    if (e.target.tagName === "DETAILS" && e.target.open) initAll(e.target);
+  }, true);
 })();

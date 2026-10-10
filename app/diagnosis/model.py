@@ -218,6 +218,8 @@ class Report:
     stats: dict[str, int] = field(default_factory=dict)  # Kennzahlen der Prüfung (z. B. legitime Hash-Gruppen)
     snapshot: Any = field(default=None, repr=False, compare=False)  # Grundlage (für Empfehlungen und Vorschau)
     index: Any = field(default=None, repr=False, compare=False)  # Nachschlage-Index der Regeln (Buchungsanzeige)
+    # Abweichungsfenster je (Konto, Asset) mit mindestens einem Referenzbestand (M29, rein lesend)
+    traces: dict[tuple[str, str], Any] = field(default_factory=dict, repr=False, compare=False)
 
     def counts(self) -> dict[str, dict[str, int]]:
         out: dict[str, dict[str, int]] = {k: {} for k in KINDS}
