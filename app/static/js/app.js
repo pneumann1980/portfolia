@@ -155,7 +155,7 @@
     var hidden = document.documentElement.classList.contains("hide-total");
     document.querySelectorAll("[data-hide-total]").forEach(function (b) {
       b.setAttribute("aria-pressed", hidden ? "true" : "false");
-      var label = hidden ? "Depotwert anzeigen" : "Depotwert verbergen";
+      var label = hidden ? "Beträge anzeigen" : "Beträge verbergen";
       b.setAttribute("aria-label", label);
       b.setAttribute("title", label);
     });
@@ -165,6 +165,7 @@
     var hidden = document.documentElement.classList.toggle("hide-total");
     try { localStorage.setItem("portfolia-hide-total", hidden ? "1" : "0"); } catch (err) { /* nur für diese Seite */ }
     syncHideTotal();
+    document.dispatchEvent(new CustomEvent("portfolia:privacy"));  // Diagramme des Dashboards neu beschriften
   });
   document.body.addEventListener("htmx:afterSwap", syncHideTotal);
   syncHideTotal();

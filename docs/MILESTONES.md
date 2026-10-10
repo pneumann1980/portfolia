@@ -1279,6 +1279,37 @@ echten Android-Gerät geprüft**, die Offline-Hinweisseite ließ sich headless n
 * **Depotwert verbergen:** Augen-Symbol auf der Übersicht; Gesamtwert und Tagesveränderung in € werden ersetzt
   (nicht nur unscharf), Zustand je Gerät (`localStorage`), vor dem ersten Zeichnen angewendet.
 
+## M27 – Buchungsprüfung über Quellen, Soll-Ist zum Stichtag, Datenschutz-Modus (0.24.0)
+
+Erweiterung der bestehenden Diagnose (gleicher Index, gleiche Befunde, Vorschau/Übernehmen/Rückgängig) – keine
+zweite Engine. Neue Regeln in `app/diagnosis/audit.py`, eingehängt in `engine.diagnose`.
+
+* **Wirtschaftliche Dubletten über Quellen:** Steuertool-Import und Börsen-API buchen dieselbe Ein-/Auszahlung –
+  netto bzw. brutto mit Gebühr, Minuten auseinander, ohne gemeinsame Kennung. Erkannt über Konto, Asset-ID,
+  Richtung, Betrag (brutto/netto/Gebühr) und Zeit, 1:1 deterministisch; Status nach Evidenz (≤ 1 h eindeutig,
+  ≤ 36 h, regelmäßiger Tagesversatz, sonst „hinweis“ ohne Empfehlung). Nachfolgende Käufe, die genau einen Zugang
+  verbrauchen, sind ein zusätzlicher Beleg. Korrektur „verknüpfen“: App-Buchung → „im Import enthalten“,
+  Import-Buchung → als Doppelbuchung ausgeblendet (Überlagerung, `duplicate_of` im Protokoll), Undo wie gewohnt.
+* **Bestand nach Quellen:** Saldo, Zeitraum und nur einseitig vorhandene Ein-/Auszahlungen je Quelle; Szenarien
+  „nur Quelle X“ und „ohne Doppelbuchungen“.
+* **Negative Bestände:** Zwischenstand vs. aktuelle Inkonsistenz, Beginn der negativen Phase, Ursachen (doppelte
+  Auszahlung, Sparplan ohne Finanzierung, Ende der Quellhistorie, Gebühr, fehlender Eigenübertrag).
+* **Transfers:** Abgänge ohne Gegenbuchung mit Alternativen und Sicherheit in %, auch Tokenwechsel (Bridge/Wrapped)
+  über `related_asset` bzw. EUR-Wert; keine Verknüpfung bei mehrdeutigen Zielen.
+* **Ungeklärter Vermögensabgang / möglicher Verlust** (neue Befundart, A/B/C) und **Inaktive Konten** (neue
+  Befundart; letzte Buchung und letzte Synchronisation getrennt) – Inaktivität bzw. ein fehlerhafter Abruf sind nie
+  ein Verlust.
+* **Soll-Ist zum selben Stichtag:** externer Bestand gegen Soll zum Abrufzeitpunkt; **Referenzbestände** (Migration
+  19, Prüfwert, keine Buchung) gegen Soll bis Ende des Stichtags; Soll aus einem Portfolia-Gesamtexport gilt nicht
+  als unabhängige Referenz. Keine Ausgleichsbuchung für Referenz-Differenzen.
+* **Oberfläche:** Bereiche Bestandsabweichungen (Tabelle mit Filtern), Mögliche Doppelbuchungen, Ungeklärte
+  Transfers, Inaktive Konten, Potenzielle Verluste; Formular für Referenzbestände.
+* **Datenschutz-Modus (nur Dashboard):** Das Augen-Symbol maskiert alle Beträge des Dashboards (Depotwert,
+  G/V, Kapital, Erträge/Gebühren, Top-Bewegungen) sowie Beträge in Achsen und Tooltips der Dashboard-Diagramme;
+  Prozentwerte bleiben sichtbar. Andere Seiten bleiben unverändert.
+* **Validierung:** ausschließlich lesend gegen eine Kopie eines realen Exports (Ergebnis im Abschlussbericht, ohne
+  personenbezogene Daten im Repository); Tests nur mit synthetischen Daten (`tests/test_diagnosis_audit.py`).
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

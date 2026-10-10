@@ -58,6 +58,25 @@ class SourceState:
     last_success_at: datetime | None = None
     addresses: list[str] = field(default_factory=list)
     balance_check: dict[str, Any] = field(default_factory=dict)  # Bestandsprüfung des Anbieters (z. B. Bitpanda)
+    enabled: bool = True
+    status: str = ""  # created | connected | synced | partial | error
+    last_error: str | None = None  # bereinigte Fehlermeldung des letzten Abrufs (ohne Geheimnisse)
+    last_error_at: datetime | None = None
+    last_run_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class Reference:
+    """Vom Nutzer bestätigter Bestand zum Stichtag (``reference_balance``) – Prüfwert, keine Buchung."""
+
+    id: int
+    account: str
+    asset_id: str
+    qty: Decimal
+    as_of: date
+    source: str
+    note: str | None
+    created_at: str
 
 
 @dataclass
@@ -110,6 +129,7 @@ class Snapshot:
     # Kursqualität der Historie (Tabelle price_gap, letzte vollständige Neuberechnung) und Ersatzanbieter je Reihe
     price_gaps: list[dict[str, Any]] = field(default_factory=list)
     series_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
+    references: list[Reference] = field(default_factory=list)  # aktive Referenzbestände (M27)
 
 
 def _dec(v: Any) -> Decimal | None:
@@ -170,6 +190,7 @@ def collect(ctx: Any, now: datetime | None = None) -> Snapshot:
             if o.key.upper() not in (k.upper() for k in lst):
                 lst.append(o.key)
     snap.open_rows = _open_rows(db, resolver)
+    snap.references = references(db)
     try:
         snap.price_gaps = [dict(r) for r in db.q("SELECT * FROM price_gap ORDER BY asset_id, date_from")]
         snap.series_meta = {r["series"]: dict(r) for r in db.q(
@@ -210,7 +231,9 @@ def _sources(ctx: Any, resolver: Any) -> tuple[list[SourceState], list[Observed]
             account=ds.account, state=text, complete=complete, gaps=list(cov.get("gaps") or []),
             limits=list(ds.limits), backfill=ds.backfill_pending, last_success_at=parse_iso(ds.last_success_at),
             addresses=list(ds.addresses) if ds.is_wallet else [],
-            balance_check=dict(cov.get("balances") or {}) if isinstance(cov.get("balances"), dict) else {}))
+            balance_check=dict(cov.get("balances") or {}) if isinstance(cov.get("balances"), dict) else {},
+            enabled=bool(ds.row["enabled"]), status=str(ds.row["status"] or ""), last_error=ds.row["last_error"],
+            last_error_at=parse_iso(ds.row["last_error_at"]), last_run_at=parse_iso(ds.row["last_run_at"])))
         for r in svc.balances(int(ds.id)):
             q = _dec(r["qty"])
             if q is None:
@@ -218,6 +241,26 @@ def _sources(ctx: Any, resolver: Any) -> tuple[list[SourceState], list[Observed]
             aid, how = resolver.resolve(r["asset_key"]) if resolver is not None else (None, "unknown")
             observed.append(Observed(int(ds.id), r["asset_key"], r["name"], q, parse_iso(r["observed_at"]), aid, how))
     return states, observed
+
+
+def references(db: Any) -> list[Reference]:
+    """Aktive Referenzbestände (ältere Datenbanken ohne Tabelle: keine)."""
+    out: list[Reference] = []
+    try:
+        rows = db.q("SELECT * FROM reference_balance WHERE status='active' ORDER BY account, asset_id, as_of, id")
+    except Exception as e:  # Datenbank vor Migration 19
+        log.debug("Referenzbestände nicht verfügbar: %s", e)
+        return out
+    for r in rows:
+        q = _dec(r["qty"])
+        try:
+            d = date.fromisoformat(str(r["as_of"])[:10])
+        except ValueError:
+            continue
+        if q is not None:
+            out.append(Reference(int(r["id"]), r["account"], r["asset_id"], q, d, r["source"] or "statement",
+                                 r["note"], r["created_at"]))
+    return out
 
 
 def _open_rows(db: Any, resolver: Any) -> list[OpenRow]:

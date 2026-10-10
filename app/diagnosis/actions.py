@@ -57,7 +57,8 @@ CENT = Decimal("0.01")
 MAX_TAX_YEARS = 8
 _LOCK = threading.Lock()
 OP_LABEL = {"hide": "Ausblenden", "merge": "Zusammenführen", "cover": "Im Import enthalten", "create": "Neue Buchung",
-            "quote": "Kursquelle", "unmap": "Zuordnung entfernen", "amend": "Buchung ergänzen"}
+            "quote": "Kursquelle", "unmap": "Zuordnung entfernen", "amend": "Buchung ergänzen",
+            "duplicate": "Doppelbuchung"}
 AMEND_COLS = ("ts_utc", "date_only", "value_eur", "value_source", "fee_asset", "fee_qty", "fee_eur", "tx_hash", "note")
 
 
@@ -77,8 +78,9 @@ class Op:
     target: str  # hide/cover: Buchung; quote: Asset; unmap: Symbol; create: Schlüssel im Plan (t0, t1, …)
     label: str
     origin: str = ""  # hide: import | journal
-    mode: str = ""  # hide (App-Buchung): deleted | merged; quote: user | override
-    link: str = ""  # hide (merged): Schlüssel der neuen Transfer-Buchung; cover: Import-Buchung
+    mode: str = ""  # hide: deleted | merged | duplicate (wirtschaftliche Dublette, M27); quote: user | override
+    link: str = ""  # hide (merged): Schlüssel der neuen Transfer-Buchung; hide (duplicate): geltende Buchung;
+    # cover: Import-Buchung
     row: dict[str, str] | None = None  # create: neue Buchung (Spalten wie transactions.csv)
     value: str = ""  # quote: CoinGecko-ID; create: Quellbezug (pair_refs)
     before: Any = None
@@ -88,7 +90,9 @@ class Op:
 
     @property
     def badge(self) -> str:
-        return OP_LABEL["merge" if self.kind == "hide" and self.mode == "merged" else self.kind]
+        if self.kind == "hide" and self.mode in ("merged", "duplicate"):
+            return OP_LABEL["merge" if self.mode == "merged" else "duplicate"]
+        return OP_LABEL[self.kind]
 
     def state(self) -> dict[str, Any]:
         return {"kind": self.kind, "target": self.target, "origin": self.origin, "mode": self.mode,
@@ -210,6 +214,17 @@ class _State:
         return f"t{self._n}"
 
 
+def _jstatus(mode: str | None) -> str:
+    """Status einer ausgeblendeten App-Buchung: „merged“ (im Transfer aufgegangen), sonst „deleted“ (auch eine als
+    Doppelbuchung verknüpfte Buchung – die Verknüpfung steht im Protokoll)."""
+    return "merged" if mode == "merged" else "deleted"
+
+
+def _verb(mode: str, link: str) -> str:
+    return {"merged": "Geht im Transfer auf",
+            "duplicate": f"Doppelbuchung von {link} – zählt nicht mehr (bleibt erhalten)"}.get(mode, "Ausblenden")
+
+
 def _hide(st: _State, t: Tx | None, plan: Plan, mode: str = "deleted", link: str = "") -> Op | None:
     if t is None:
         plan.errors.append("Eine betroffene Buchung ist nicht mehr vorhanden.")
@@ -224,9 +239,9 @@ def _hide(st: _State, t: Tx | None, plan: Plan, mode: str = "deleted", link: str
         if ov is not None and ov["action"] == "delete":
             plan.errors.append(f"{t.tx_id} ist bereits ausgeblendet.")
             return None
-        verb = "Geht im Transfer auf" if mode == "merged" else "Ausblenden"
-        op = Op("hide", t.tx_id, f"{verb}: Import-Buchung {tx_short(t)}", origin="import", link=link,
-                before={"override": ov, "tx": tx_row(t)}, ref=st.ref(t))
+        op = Op("hide", t.tx_id, f"{_verb(mode, link)}: Import-Buchung {tx_short(t)}", origin="import", link=link,
+                mode="duplicate" if mode == "duplicate" else "", before={"override": ov, "tx": tx_row(t)},
+                ref=st.ref(t))
     elif t.origin == "journal":
         row = st.db.q1("SELECT * FROM journal_tx WHERE tx_id=?", (t.tx_id,))
         if row is None or row["status"] != "active":
@@ -242,8 +257,7 @@ def _hide(st: _State, t: Tx | None, plan: Plan, mode: str = "deleted", link: str
             return None
         members = [r["tx_id"] for r in st.db.q("SELECT tx_id FROM journal_tx WHERE group_ref=? AND status='active' "
                                                "ORDER BY id", (t.tx_id,))]
-        verb = "Geht im Transfer auf" if mode == "merged" else "Ausblenden"
-        op = Op("hide", t.tx_id, f"{verb}: App-Buchung {tx_short(t)}" + (
+        op = Op("hide", t.tx_id, f"{_verb(mode, link)}: App-Buchung {tx_short(t)}" + (
             f" (mit {len(members)} Teilbuchung(en))" if members else ""), origin="journal", mode=mode, link=link,
             before={"status": row["status"], "updated_at": row["updated_at"], "tx": tx_row(t)}, members=members,
             ref=st.ref(t))
@@ -511,6 +525,21 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
         imp = st.tx(d["imports"][0])
         for j in d["journals"]:
             _cover(st, st.tx(j), imp, plan)
+    elif key in ("link_econ", "link_econ_swap"):
+        # wirtschaftliche Dublette (M27): je Paar zählt eine Buchung; die andere bleibt mit Herkunft erhalten
+        sel = _selected(plan, "pairs", {f"{a}|{b}" for a, b in d["pairs"]})
+        for keep_id, drop_id in d["pairs"] if sel else []:
+            if f"{keep_id}|{drop_id}" not in sel:  # type: ignore[operator]
+                continue
+            keep, drop = st.tx(keep_id), st.tx(drop_id)
+            if key == "link_econ_swap":
+                keep, drop = drop, keep
+            if keep is None or drop is None:
+                plan.errors.append(f"{keep_id}/{drop_id}: Buchung nicht mehr vorhanden.")
+            elif drop.origin == "journal" and keep.origin == "import":
+                _cover(st, drop, keep, plan)
+            else:
+                _hide(st, drop, plan, mode="duplicate", link=keep.tx_id)
     elif key == "hide_import":
         for i in d["imports"]:
             _hide(st, st.tx(i), plan)
@@ -629,7 +658,7 @@ def _hyp_snapshot(snap: Any, pf2: Portfolio, led2: LedgerResult, plan: Plan) -> 
         if op.kind == "create" and op.tx is not None:
             journal[op.tx.tx_id] = JournalMeta(op.tx.tx_id, SOURCE, "active")
         elif op.kind == "hide" and op.origin == "journal" and op.target in journal:
-            journal[op.target] = dataclasses.replace(journal[op.target], status=op.mode or "deleted")
+            journal[op.target] = dataclasses.replace(journal[op.target], status=_jstatus(op.mode))
         elif op.kind == "quote":
             sources[op.target] = {**(sources.get(op.target) or {}), "asset_id": op.target, "quote_id": op.value,
                                   "status": "active", "origin": op.mode}
@@ -849,7 +878,8 @@ def _exec(c: Any, ctx: Any, js: Any, op: Op, stamp: str, created: dict[str, str]
                       "VALUES (?, 'delete', ?, ?, ?, ?)",
                       (op.target, json.dumps(import_row(t), ensure_ascii=False), active_import_id(ctx.db), stamp,
                        stamp))
-        js._log(c, "import_delete", op.target, op.before["tx"], {"diagnose": True}, stamp)
+        js._log(c, "import_delete", op.target, op.before["tx"], {"diagnose": True, **(
+            {"duplicate_of": op.link} if op.mode == "duplicate" else {})}, stamp)
     elif op.kind == "hide":
         row = c.execute("SELECT status, updated_at FROM journal_tx WHERE tx_id=?", (op.target,)).fetchone()
         if row is None or row["status"] != "active" or row["updated_at"] != op.before["updated_at"]:
@@ -857,8 +887,9 @@ def _exec(c: Any, ctx: Any, js: Any, op: Op, stamp: str, created: dict[str, str]
         merged_into = created.get(op.link) if op.mode == "merged" else None
         for tid in [op.target, *op.members]:
             c.execute("UPDATE journal_tx SET status=?, merged_into=?, updated_at=? WHERE tx_id=? AND status='active'",
-                      (op.mode or "deleted", merged_into, stamp, tid))
-            js._log(c, "merge" if op.mode == "merged" else "delete", tid, None, {"diagnose": True}, stamp)
+                      (_jstatus(op.mode), merged_into, stamp, tid))
+            js._log(c, "merge" if op.mode == "merged" else "delete", tid, None, {"diagnose": True, **(
+                {"duplicate_of": op.link} if op.mode == "duplicate" else {})}, stamp)
         rec["members"] = op.members
     elif op.kind == "cover":
         cur = _row(c.execute("SELECT * FROM journal_import_link WHERE journal_tx_id=? AND import_tx_id=?",
@@ -1036,7 +1067,7 @@ def _revert(c: Any, js: Any, rec: dict[str, Any], stamp: str) -> str | None:
             c.execute("UPDATE tx_override SET action=?, updated_at=? WHERE tx_id=?", (before["action"], stamp, target))
         js._log(c, "import_restore", target, None, {"diagnose": True}, stamp)
     elif kind == "hide":
-        mode = rec.get("mode") or "deleted"
+        mode = _jstatus(rec.get("mode"))
         cur = c.execute("SELECT status FROM journal_tx WHERE tx_id=?", (target,)).fetchone()
         if cur is None or cur["status"] != mode:
             return f"{target} wurde inzwischen anderweitig geändert bzw. wiederhergestellt."

@@ -1329,6 +1329,12 @@ Jeder Befund nennt betroffene Buchungen, Konten, Quellen und Kennungen und trenn
 | Rekonstruiert oder geschätzt | Quelle `reconstructed` bzw. Kennzeichen `RECONSTRUCTED_*`/`AVG_PRICE` (Ausgleichsbuchungen, rekonstruierte Sparpläne, Lücken), Sparplan-Schätzungen, Buchungen ohne EUR-Kurs – mit betroffenen Lots, Veräußerungen je Jahr, Haltefrist und Performance |
 | Fehlender oder veralteter Kurs | gehaltene Positionen ohne gültigen Kurs (mit Kursquelle und Alter des letzten Kurspunkts), Bewertung mit manuellem bzw. Transaktionskurs (kein Marktkurs), veraltete Marktkurse |
 | Möglicher Token-Migrationsvorgang | gleiches Symbol auf demselben Konto, Mengenverhältnis 10^3/10^6/10^9/10^12/10^18 : 1 (± 0,01 %), Spam-Markierung und Contract-Adressen als Belege |
+| Wirtschaftliche Dublette über Quellen (M27) | Zu- bzw. Abgang auf demselben Konto, gleiche Asset-ID (gleichnamige Tokens anderer Netzwerke sind andere Assets), gleiche Richtung, aus zwei Quellen (z. B. Koinly-Import und Börsen-API); Betrag brutto/netto gleich – eine Gebühr im selben Asset erklärt die Differenz; deterministische 1:1-Zuordnung. ≤ 1 h und je Buchung genau ein Partner → *wahrscheinlich*; ≤ 36 h → *verdacht*; regelmäßiger Tagesversatz bei gleicher Uhrzeit (≥ 3 Paare, z. B. Zahlungs- vs. Ausführungsdatum eines Sparplans) → *verdacht*; sonst bis 7 Tage → *hinweis* („ohne ausreichenden Beleg“, keine empfohlene Korrektur). Verschiedene Hashes bzw. Anbieter-Kennungen schließen eine Zuordnung aus |
+| Bestand nach Quellen (M27) | Konten, die im selben Zeitraum aus mehreren Quellen gebucht werden: Saldo, Anzahl und Zeitraum je Quelle, nur in einer Quelle vorhandene Ein-/Auszahlungen, Szenario „nur Quelle X“ bzw. „ohne Doppelbuchungen“ – zerlegt eine Abweichung je Konto statt einen Gesamtwert als falsch zu melden |
+| Negativer Bestand (erweitert, M27) | Zwischenstand oder aktuelle Inkonsistenz, Beginn der aktuellen negativen Phase, mögliche Ursachen: doppelte Auszahlung aus zwei Quellen (mit Rechnung, ob sie den Fehlbestand vollständig erklärt), Sparplan-Ausführung ohne Finanzierung nach dem Ende der Quellhistorie, Gebühr, fehlender Eingang eines Eigenübertrags |
+| Möglicher interner Transfer (erweitert, M27) | Abgänge ohne Gegenbuchung mit möglichen Zielen und Sicherheitsbewertung in % (Hash, Menge, Zeit bis 14 Tage, Netzwerk, unverwechselbare Menge, Tokenwechsel über `related_asset` bzw. EUR-Wert für Bridge/Wrapped/Cross-Chain); bei mehreren ähnlich guten Zielen keine Verknüpfung vorgeschlagen |
+| Ungeklärter Vermögensabgang / möglicher Verlust (M27) | Einordnung **A** technischer Buchungsfehler (Wert wahrscheinlich vorhanden), **B** ungeklärter Abgang (Informationen fehlen), **C** nachgewiesener Verlust (Verlust-Buchung, als kompromittiert gekennzeichnetes Konto mit Datum). Abgänge an Dritte ohne Gegenbuchung ab 50 € (*verdacht* ab 500 €), Bestand fehlt bei aktueller, vollständiger Wallet-Prüfung. Nie aus Inaktivität, Kursverfall oder einem veralteten bzw. fehlerhaften Abruf |
+| Inaktives Konto mit Restbestand (M27) | letzte Buchung > 365 Tage, Restbestände mit Wert, letzte erfolgreiche Synchronisation und Verbindungszustand getrennt ausgewiesen; Einordnung (ohne Datenquelle, nie bzw. nicht mehr synchronisiert, Fehler, Kurs fehlt, Migration, kompromittiert) – kein Verlust |
 
 **Bestandsabgleich je Konto und Asset:** berechnet (Buchungen) neben beobachtet (Börse/Blockchain mit Zeitpunkt und
 Anbieter), Soll laut kuratiertem Import und Differenz, mit möglichen Erklärungen (offene Prüf-Stapel,
@@ -1342,7 +1348,31 @@ unvollständige Historie, Gebühren, Dublettenverdacht, nicht verknüpfte Transf
 | intern konsistent | aus den Buchungen reproduzierbar (= Soll des kuratierten Imports) – **nicht** extern geprüft |
 | Import-Soll + Änderungen in Portfolia | die Import-Buchungen ergeben das Soll; die Abweichung stammt vollständig aus Änderungen in Portfolia (ausgeblendete, geänderte oder ergänzte Buchungen, Sparplan-Schätzungen) – z. B. nach einer übernommenen Korrektur; kein Befund |
 | intern abweichend | Buchungen ergeben einen anderen Bestand als das Soll |
-| ohne Abgleich | weder externer Bestand noch Soll vorhanden |
+| mit Referenzbestand abgestimmt | vom Nutzer hinterlegter Kontostand (z. B. Kontoauszug) = Soll aus den Buchungen zum selben Stichtag |
+| Differenz zum Referenzbestand | Soll zum Stichtag weicht vom hinterlegten Kontostand ab – Befund mit Zerlegung nach Quellen und möglichen Ursachen, ohne Ausgleichsbuchung |
+| ohne Abgleich | weder externer Bestand noch Soll noch Referenzbestand vorhanden – ein fehlender Ist-Bestand gilt als unbekannt, nicht als 0 |
+
+**Soll-Ist zum selben Stichtag (M27):** Ein externer Bestand wird mit dem Soll *zum Abrufzeitpunkt* verglichen
+(Buchungen danach zählen nicht), ein Referenzbestand mit dem Soll bis Ende des Stichtags (Ortszeit). Rechnung in
+`Decimal`, ohne Rundung. Ein Soll aus einem Portfolia-Gesamtexport (`holdings_check.csv` mit Notiz „Export“) ist von
+Portfolia selbst berechnet und gilt nicht als unabhängige Referenz („ohne Abgleich“ mit Hinweis).
+
+**Bereiche (M27):** Die Diagnose bündelt *Bestandsabweichungen* (Tabelle mit Konto/Plattform, Asset-Identität, Soll,
+Ist, Differenz, Stichtag, Datenquelle/Qualität, letzter Synchronisation, Ursache, Zustand und Sicherheit; Filter
+nach Börse/Wallet, Konto, Asset, Abweichung in € und Sicherheit), *Mögliche Doppelbuchungen*, *Ungeklärte
+Transfers*, *Inaktive Konten* und *Potenzielle Verluste*.
+
+**Referenzbestände:** *Diagnose → Referenzbestände* nimmt Konto, Asset-ID, Bestand (0 ist gültig), Stichtag und Beleg
+auf. Ein Referenzbestand ist ein **Prüfwert, keine Buchung** – er ändert weder Bestand noch Einstand noch Steuer.
+Anlegen und Entfernen stehen im Änderungsprotokoll; entfernte Einträge bleiben als „entfernt“ erhalten. Referenzbestände
+reisen mit dem Gesamtexport (`state.json` → `reference_balances`). Datenbank: Migration 19 (neue Tabelle, nicht
+destruktiv).
+
+**Wirtschaftliche Dublette verknüpfen:** Je ausgewähltem Paar zählt eine Buchung (Vorgabe: der kuratierte Import). Die
+andere bleibt mit Herkunft erhalten: eine App-Buchung wird als „im Import enthalten“ verknüpft, eine Import-Buchung als
+Doppelbuchung der geltenden Buchung ausgeblendet (Überlagerung, Protokoll mit `duplicate_of`). Vorschau, Übernehmen
+und Rückgängig wie bei allen Korrekturen; eine freie Löschung („eigene Auswahl“) wird für diese Befunde nicht
+angeboten.
 
 „Intern konsistent“ trotz Dublettenverdacht ist kein Widerspruch: Der Soll-Bestand wurde aus denselben Buchungen
 berechnet. Portfolia speichert oder ersetzt dabei keine Bestände.

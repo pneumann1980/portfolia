@@ -137,6 +137,9 @@ class _Index:
         self.findings_by_pos: dict[tuple[str, str], list[Finding]] = defaultdict(list)
         self.dup_txs: set[str] = set()
         self.twin_weak: set[str] = set()
+        self.transfer_txs: set[str] = set()  # von _transfers zugeordnete Abgänge/Zugänge
+        self.econ: dict[tuple[str, str], list[tuple[str, Tx, Tx, str]]] = defaultdict(list)  # (Status, gilt, Dublette)
+        self.unmatched_out: list[Tx] = []  # Abgänge ohne Gegenbuchung (audit.outflows)
 
     # -- Buchungen ------------------------------------------------------------------------------------
     def _hashes(self, t: Tx) -> set[str]:
@@ -306,15 +309,22 @@ def diagnose(snap: Snapshot) -> Report:
     holdings: list[HoldingRow] = []
     idx = None
     if snap.pf is not None and snap.ledger is not None:
+        from app.diagnosis import audit
+
         idx = _Index(snap)
         for rule in (_dup_same_hash, _dup_same_qty, _dup_same_id, _dup_identical, _dup_conversion_twin,
-                     _dup_transfer_side, _transfers,
+                     _dup_transfer_side, audit.econ_duplicates, _transfers, audit.outflows,
                      _assets, _history,
                      _estimated, _prices, _price_history, _migrations, _rename_trades):
             findings += rule(idx, stats)
         rows, hf = _holdings(idx, stats)
         holdings = rows
         findings += hf
+        findings += audit.missing_at_check(idx, rows)
+        findings += audit.source_breakdown(idx, stats, {(r.account, r.asset): r for r in rows
+                                                        if r.reference is not None})
+        findings += audit.inactive_accounts(idx, stats)
+        audit.explain_negatives(idx, findings)
         stats["txs"] = len(idx.txs)
     findings += _open_batches(snap, stats)
     findings.sort(key=lambda f: (*f.sort_key(), f.id))
@@ -972,7 +982,7 @@ def _transfers(idx: _Index, stats: dict[str, int]) -> list[Finding]:
             score = (0 if same_hash else 1, abs(1 - ratio), abs((d.ts - w.ts).total_seconds()), w.tx_id, d.tx_id)
             cands.append((score, w, d, ratio))
     cands.sort(key=lambda c: c[0])
-    used: set[str] = set()
+    used = idx.transfer_txs
     groups: dict[tuple[str, str, str, str], list[tuple[Tx, Tx, Decimal, bool]]] = defaultdict(list)
     for _score, w, d, ratio in cands:
         if w.tx_id in used or d.tx_id in used:
@@ -1897,8 +1907,19 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
             obs[(s.account, o.asset_id)].append(o)
         elif o.how != "ignored" and o.qty:
             unmapped[s.account].append(o)
-    keys = {k for k, v in idx.led.balances.items() if abs(v) > DUST} | set(obs)
+    from app.diagnosis import audit
+
+    refs: dict[tuple[str, str], Any] = {}
+    for r in snap.references:  # je Position der jüngste Referenzbestand
+        cur = refs.get((r.account, r.asset_id))
+        if cur is None or (r.as_of, r.id) > (cur.as_of, cur.id):
+            refs[(r.account, r.asset_id)] = r
+    keys = {k for k, v in idx.led.balances.items() if abs(v) > DUST} | set(obs) | set(refs)
     keys |= {(h["account"], h["asset_id"]) for h in idx.pf.holdings_check if h.get("account")}
+    last_sync: dict[str, datetime] = {}
+    for s in snap.sources:
+        if s.last_success_at is not None and (s.account not in last_sync or s.last_success_at > last_sync[s.account]):
+            last_sync[s.account] = s.last_success_at
     open_by_acc: dict[str, list[Any]] = defaultdict(list)
     for r in snap.open_rows:
         if r.account:
@@ -1938,11 +1959,17 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
             findings.append(f)
     for acc, aid in sorted(keys):
         comp = idx.bal(acc, aid)
-        row = HoldingRow(account=acc, asset=aid, name=idx.asset(aid).name, computed=comp)
+        row = HoldingRow(account=acc, asset=aid, name=idx.asset(aid).name, computed=comp,
+                         platform=audit.platform(idx, acc), identity=audit.identity(idx, aid),
+                         last_sync=last_sync.get(acc), families=audit.families_of(idx, acc, aid))
         chk = idx.checks.get((acc, aid))
+        self_ref = False
         if chk is not None:
             row.expected = Decimal(str(chk["qty"]))
-            as_of = (chk.get("extra") or {}).get("as_of")
+            extra = chk.get("extra") or {}
+            as_of = extra.get("as_of")
+            # Soll aus einem Portfolia-Gesamtexport: von Portfolia selbst berechnet – keine unabhängige Referenz
+            self_ref = str(extra.get("note") or "").strip() == "Export"
             try:
                 row.expected_as_of = date.fromisoformat(str(as_of)[:10]) if as_of else idx.pf.valuation_date
             except ValueError:
@@ -1958,7 +1985,13 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
             row.observed_state = "; ".join(sorted({s.state for s in used}))
             fresh = row.observed_at is not None and snap.now - row.observed_at <= EXTERNAL_FRESH
             complete = all(s.complete for s in used)
-            equal = abs(row.observed - comp) <= _tol(comp)
+            # gleicher Stichtag: Soll zum Abrufzeitpunkt (Buchungen danach zählen nicht)
+            soll = audit.soll_at_time(idx, acc, aid, row.observed_at) if row.observed_at else comp
+            row.computed_at_obs = soll
+            if soll != comp:
+                row.explanations.append(f"Buchungen nach dem Abruf ändern den Bestand um "
+                                        f"{_q(comp - soll)} (nicht Teil des Vergleichs)")
+            equal = abs(row.observed - soll) <= _tol(soll)
             row.status = ("extern_ok" if equal else "extern_diff") if fresh and complete else "extern_unsicher"
             if not fresh:
                 row.explanations.append("Abruf älter als 48 h" if row.observed_at else "Abrufzeit unbekannt")
@@ -1970,16 +2003,30 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
             row.observed_state = "; ".join(sorted({s.state for s in srcs}))
             row.explanations.append("Anbieter meldet für dieses Asset keinen Bestand (nicht geliefert, nicht "
                                     "zugeordnet oder 0)")
-        elif row.expected is not None:
+        elif row.expected is not None and not self_ref:
             row.status = internal(row, raw.get((acc, aid), ZERO) if raw is not None else None, why.get((acc, aid)))
         else:
             row.status = "offen"
+        if self_ref:
+            row.explanations.append("Soll stammt aus einem Portfolia-Gesamtexport (von Portfolia selbst berechnet) – "
+                                    "keine unabhängige Referenz; dafür einen Referenzbestand hinterlegen")
+        ref = refs.get((acc, aid))
+        if ref is not None:
+            audit.apply_reference(idx, row, ref)
         _explain(idx, row, open_by_acc.get(acc, []), unmapped.get(acc, []))
+        row.quality = row.observed_state or ("Referenzbestand (Nutzer)" if ref is not None else
+                                             "Soll aus Portfolia-Export" if self_ref else
+                                             "Soll aus kuratiertem Import" if row.expected is not None else
+                                             "nur Buchungen")
+        row.confidence = {"extern_ok": "belegt", "extern_diff": "belegt", "ref_ok": "belegt", "ref_diff": "belegt",
+                          "extern_unsicher": "verdacht", "intern_diff": "belegt"}.get(row.status, "hinweis"
+                                                                                      if row.status != "offen" else "")
         rows.append(row)
-        f = _holding_finding(idx, row)
+        f = _holding_finding(idx, row) if row.status != "ref_diff" else audit.reference_finding(idx, row)
         if f is not None:
             findings.append(f)
-    for k in ("extern_ok", "extern_diff", "extern_unsicher", "intern_ok", "intern_app", "intern_diff", "offen"):
+    for k in ("extern_ok", "extern_diff", "extern_unsicher", "intern_ok", "intern_app", "intern_diff", "ref_ok",
+              "ref_diff", "offen"):
         stats[f"holdings_{k}"] = sum(1 for r in rows if r.status == k)
     return rows, findings
 

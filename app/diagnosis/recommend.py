@@ -258,7 +258,8 @@ def recommend(report: Any, f: Finding) -> Recommendation:
     if rec is None:
         rec = Recommendation(text=f.decision or "Keine Korrektur vorgesehen – zur Einordnung.", conditional=True)
     keys = {o.key for o in rec.options}
-    if "hide_custom" not in keys and f.kind in ("duplicate", "transfer", "history", "migration"):
+    if "hide_custom" not in keys and f.kind in ("duplicate", "transfer", "history", "migration") \
+            and (f.data or {}).get("type") not in ("econ_pairs", "negative"):
         custom = _custom_hide(facts, f)
         if custom is not None:
             rec.options.append(custom)
@@ -704,10 +705,150 @@ def _holding(facts: Facts, f: Finding) -> Recommendation | None:
     return Recommendation(text=text, conditional=True, options=opts, links=links)
 
 
+# ----------------------------------------------------------------------------------------------------
+# Buchungsprüfung über Quellen (M27)
+# ----------------------------------------------------------------------------------------------------
+
+def _econ_pairs(facts: Facts, f: Finding) -> Recommendation | None:
+    from app.diagnosis.audit import family_label
+
+    d = f.data
+    choices, keep_txs, drop_txs = [], [], []
+    for keep_id, drop_id in d["pairs"]:
+        k, x = facts.tx(keep_id), facts.tx(drop_id)
+        if k is None or x is None:
+            continue
+        keep_txs.append(k)
+        drop_txs.append(x)
+        choices.append((f"{keep_id}|{drop_id}", f"{tx_short(k)} ({keep_id}) ↔ {tx_short(x)} ({drop_id})"))
+    if not choices:
+        return None
+    lk, ld = family_label(d.get("keep_family") or ""), family_label(d.get("drop_family") or "")
+    strong = f.status == "wahrscheinlich"
+    hint = f.status == "hinweis"
+    how = ("App-Buchungen werden als „im Import enthalten“ verknüpft, Import-Buchungen als Doppelbuchung der geltenden "
+           "Buchung ausgeblendet (Überlagerung, die Import-Datei bleibt unverändert). Rohdaten und Herkunft bleiben "
+           "erhalten; „Rückgängig“ stellt alles wieder her.")
+    opts = [Option("link_econ", f"Als einen wirtschaftlichen Vorgang verknüpfen – „{lk}“ gilt",
+                   f"Je ausgewähltem Paar zählt nur die Buchung aus „{lk}“; die aus „{ld}“ nicht mehr. {how}",
+                   recommended=strong,
+                   params=[Param("pairs", "Paare", "multi", default=[c for c, _l in choices] if strong else [],
+                                 choices=choices,
+                                 hint="" if strong else "Nur Paare wählen, die laut Kontoauszug derselbe Vorgang "
+                                                        "sind.")],
+                   caution=("Kein ausreichender Beleg für eine Doppelbuchung – nur mit Kontoauszug verknüpfen."
+                            if hint else "Ändert Bestand und ggf. Einstand/realisierte Ergebnisse – die Vorschau "
+                                         "zeigt die Werte je Jahr.")),
+            Option("link_econ_swap", f"Stattdessen „{ld}“ gelten lassen",
+                   f"Je Paar zählt die Buchung aus „{ld}“ (z. B. weil sie Gebühr und genaue Uhrzeit enthält); die aus "
+                   f"„{lk}“ wird als Doppelbuchung ausgeblendet bzw. verknüpft. {how}",
+                   params=[Param("pairs", "Paare", "multi", choices=choices)],
+                   caution="Der kuratierte Import ist sonst maßgeblich – nur wählen, wenn die zweite Quelle genauer "
+                           "ist."),
+            _dismiss("Verschiedene Vorgänge – als geprüft markieren")]
+    if strong:
+        text = (f"Als einen wirtschaftlichen Vorgang verknüpfen: Je Paar stimmen Konto, Asset, Richtung und Betrag "
+                f"(brutto/netto) überein, der Abstand ist kleiner als eine Stunde und jede Buchung hat genau einen "
+                f"Partner. Es zählt dann nur die Buchung aus „{lk}“.")
+    elif hint:
+        text = ("Keine Korrektur empfohlen: Gleiche Höhe und ein Abstand von Tagen belegen keine Doppelbuchung. Mit "
+                "dem Kontoauszug prüfen, ob der Betrag einmal oder zweimal eingegangen ist; dann verknüpfen oder als "
+                "geprüft markieren.")
+    else:
+        text = ("Erst mit Kontoauszug bzw. Historie der Börse prüfen, ob der Vorgang einmal oder zweimal stattfand. "
+                "Nur dann die betroffenen Paare verknüpfen.")
+    checks = [("Kontoauszug bzw. Transaktionshistorie der Börse: Ist jeder Betrag einmal oder zweimal enthalten?", [])]
+    checks += _hash_checks(facts, [*keep_txs, *drop_txs], "Explorer: Vorgang ansehen")
+    return Recommendation(text=text, conditional=not strong, checks=checks, options=opts,
+                          links=[*_journal_links(d.get("account"), d.get("asset")),
+                                 Link("Referenzbestand hinterlegen", "/quality/diagnose#referenzen")])
+
+
+def _breakdown(facts: Facts, f: Finding) -> Recommendation | None:
+    d = f.data
+    return Recommendation(
+        text="Die Zerlegung zeigt, welche Quelle wie viel zum Bestand beiträgt. Zuerst die Doppelbuchungen dieses "
+             "Kontos klären, dann den Kontostand laut Auszug als Referenzbestand zum Stichtag hinterlegen – der "
+             "Bestandsabgleich vergleicht dann Soll und Ist zum selben Datum.",
+        conditional=True, options=[_dismiss("Zerlegung geprüft – als geprüft markieren")],
+        links=[*_journal_links(d["account"], d["asset"]),
+               Link("Mögliche Doppelbuchungen", "/quality/diagnose?kind=duplicate#findings"),
+               Link("Referenzbestand hinterlegen", "/quality/diagnose#referenzen")])
+
+
+def _negative(facts: Facts, f: Finding) -> Recommendation | None:
+    d = f.data
+    causes = d.get("causes") or []
+    links = _journal_links(d["account"], d["asset"])
+    if any("Sparplan" in c for c in causes):
+        links.append(Link("Sparpläne", "/plans"))
+    if any("doppelte Auszahlung" in c for c in causes):
+        links.append(Link("Mögliche Doppelbuchungen", "/quality/diagnose?kind=duplicate#findings"))
+        text = ("Die doppelte Auszahlung lösen (Befund „Mögliche Doppelbuchungen“) – danach ist der Bestand nicht mehr "
+                "negativ. Keine Ausgleichsbuchung.")
+    elif any("Sparplan" in c for c in causes):
+        text = ("Fehlende Einzahlung zur Sparplan-Ausführung ergänzen (Kontoauszug, nächster Import bzw. Abruf) oder "
+                "die Schätzung unter Sparpläne prüfen. Portfolia ergänzt keine Einzahlung automatisch.")
+    elif any("Zwischenstand" in c for c in causes):
+        text = "Kein Bestandsfehler: Reihenfolge bzw. Zeitstempel prüfen; ohne Handlungsbedarf als geprüft markieren."
+    else:
+        text = ("Fehlende Zugänge belegen (Export der Quelle, Explorer) und im kuratierten Import ergänzen bzw. die "
+                "Datenquelle vollständig abrufen. Keine Ausgleichsbuchung nur zum Schließen der Lücke.")
+    return Recommendation(text=text, conditional=True, options=[_dismiss("Ursache geklärt – als geprüft markieren")],
+                          links=links)
+
+
+def _loss(facts: Facts, f: Finding) -> Recommendation | None:
+    d = f.data
+    cls = d.get("class")
+    if d.get("documented"):
+        return Recommendation(text="Bereits als Verlust bzw. Ausbuchung gebucht – keine Korrektur nötig.",
+                              options=[_dismiss("Dokumentiert – als geprüft markieren")])
+    txs = [t for x in d.get("txs") or [] if (t := facts.tx(x)) is not None]
+    checks = _hash_checks(facts, txs, "Explorer: Zieladresse prüfen") or [
+        ("Kontoauszug bzw. Auszahlungshistorie: Zieladresse und Empfänger prüfen", [])]
+    if cls == "C":
+        text = ("Kompromittierung ist dokumentiert: Zieladressen im Explorer prüfen. Gehört das Ziel nicht dir, die "
+                "Abgänge als Verlust/Diebstahl buchen (Journal: Abgang bearbeiten, Art „Verlust“); sonst das "
+                "Zielkonto erfassen und als Transfer verknüpfen.")
+    else:
+        text = ("Ziel klären: eigenes, nicht erfasstes Konto → Konto bzw. Datenquelle erfassen, danach erscheint der "
+                "Transfer-Vorschlag; Zahlung/Verkauf an Dritte → Buchung entsprechend einordnen; nur bei Beleg als "
+                "Verlust buchen. Ohne Beleg als ungeklärt markieren (Notiz).")
+    acc = d.get("account")
+    return Recommendation(text=text, conditional=True, checks=checks,
+                          options=[_dismiss("Als ungeklärt markieren (Prüfung dokumentiert)" if cls != "C" else
+                                            "Geprüft – als geprüft markieren")],
+                          links=[*_journal_links(acc, d.get("asset")), Link("Datenquellen", "/settings/datasources")])
+
+
+def _inactive(facts: Facts, f: Finding) -> Recommendation | None:
+    d = f.data
+    return Recommendation(
+        text="Konto beim Anbieter bzw. im Explorer prüfen. Besteht der Bestand, die Datenquelle (neu) verbinden oder "
+             "den Kontostand als Referenzbestand hinterlegen. Inaktivität ist kein Verlust – eine Ausbuchung nur bei "
+             "Beleg (Hack, Delisting, Insolvenz).",
+        conditional=True, options=[_dismiss("Langfristige Verwahrung – als geprüft markieren")],
+        links=[*_journal_links(d["account"], None), Link("Datenquellen", "/settings/datasources"),
+               Link("Referenzbestand hinterlegen", "/quality/diagnose#referenzen")])
+
+
+def _reference(facts: Facts, f: Finding) -> Recommendation | None:
+    d = f.data
+    return Recommendation(
+        text="Die genannten Ursachen der Reihe nach klären (zuerst Doppelbuchungen). Stimmt danach Soll und "
+             "Referenzbestand nicht überein, fehlende Buchungen anhand des Kontoauszugs ergänzen – eine "
+             "Ausgleichsbuchung nur zum Schließen der Differenz bietet Portfolia hier nicht an.",
+        conditional=True, options=[_dismiss("Differenz erklärt – als geprüft markieren")],
+        links=[*_journal_links(d["account"], d["asset"]), Link("Referenzbestände", "/quality/diagnose#referenzen")])
+
+
 _BUILDERS = {
     "same_qty": _same_qty, "hash_pairs": _hash_pairs, "identical": _identical, "import_vs_app": _import_vs_app,
     "transfer": _transfer,
     "provider_quote": _provider_quote, "contracts": _contracts, "unvalued": _unvalued,
     "price_fallback": _price_fallback, "stale": _stale, "migration": _migration, "holding": _holding,
     "conversion_twin": _conversion_twin, "rename_trade": _rename_trade,
+    "econ_pairs": _econ_pairs, "breakdown": _breakdown, "negative": _negative, "loss": _loss, "inactive": _inactive,
+    "reference": _reference,
 }

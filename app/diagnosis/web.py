@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.diagnosis import actions as A
 from app.diagnosis.engine import report_for
-from app.diagnosis.model import HOLDING_STATUS, KINDS, STATUS, STATUS_BADGE
+from app.diagnosis.model import HOLDING_STATUS, KINDS, LOSS_CLASS, SECTIONS, STATUS, STATUS_BADGE
 from app.diagnosis.recommend import recommend
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
@@ -38,7 +38,54 @@ def _utc(dt: datetime) -> str:
 
 def _common() -> dict[str, Any]:
     return {"type_label": TYPE_LABEL, "origin_label": ORIGIN_LABEL, "utc_fmt": _utc, "status_badge": STATUS_BADGE,
-            "holding_status": HOLDING_STATUS}
+            "holding_status": HOLDING_STATUS, "loss_class": LOSS_CLASS}
+
+
+DEVIATION_STATUSES = ("extern_diff", "ref_diff", "intern_diff")
+ACCOUNT_TYPES = {"exchange": "Börse", "wallet": "Wallet", "none": "ohne Datenquelle"}
+
+
+def _deviations(report: Any, q: Mapping[str, str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Bestandsabweichungen (Soll ≠ Ist, negative Bestände, Dublettenverdacht) mit Filtern – nur Anzeige."""
+    from decimal import Decimal
+
+    idx = report.index
+    snap = report.snapshot
+    kinds: dict[str, set[str]] = {}
+    for src in (snap.sources if snap is not None else []):
+        kinds.setdefault(src.account, set()).add(src.kind)
+    rows = []
+    for h in report.holdings:
+        diff = h.ref_diff if h.ref_diff is not None else h.diff if h.diff is not None else h.internal_diff
+        dup = any(e.startswith(("Dublettenverdacht", "nicht verknüpfter Transfer")) for e in h.explanations)
+        if not (h.status in DEVIATION_STATUSES or (h.status == "extern_unsicher" and h.diff) or h.computed < 0 or dup):
+            continue
+        value = None
+        if idx is not None and diff:
+            value = idx.value(h.asset, abs(diff))
+        elif idx is not None and h.computed < 0:
+            value = idx.value(h.asset, abs(h.computed))
+        acc_kinds = kinds.get(h.account) or {"none"}
+        rows.append({"h": h, "diff": diff, "value": value, "types": acc_kinds,
+                     "ist": h.reference if h.reference is not None else h.observed,
+                     "ist_at": h.reference_at if h.reference is not None else h.observed_at,
+                     "soll": h.soll_at_ref if h.reference is not None else h.computed_at_obs
+                     if h.observed is not None and h.computed_at_obs is not None else h.computed})
+    f = {k: (q.get(k) or "").strip() for k in ("h_type", "h_acc", "h_asset", "h_min", "h_conf")}
+    try:
+        h_min = Decimal(f["h_min"].replace(",", ".")) if f["h_min"] else None
+    except ArithmeticError:
+        h_min = None
+    shown = [r for r in rows
+             if (not f["h_type"] or f["h_type"] in r["types"])
+             and (not f["h_acc"] or r["h"].account == f["h_acc"])
+             and (not f["h_asset"] or r["h"].asset == f["h_asset"])
+             and (h_min is None or (r["value"] is not None and r["value"] >= h_min))
+             and (not f["h_conf"] or r["h"].confidence == f["h_conf"])]
+    shown.sort(key=lambda r: (-(r["value"] or 0), r["h"].account, r["h"].asset))
+    meta = {"filters": f, "n_all": len(rows), "accounts": sorted({r["h"].account for r in rows}),
+            "assets": sorted({r["h"].asset for r in rows}), "types": ACCOUNT_TYPES}
+    return shown, meta
 
 
 def _params(data: Mapping[str, Any] | Any) -> tuple[dict[str, list[str]], bool]:
@@ -102,7 +149,26 @@ def make_router() -> APIRouter:
         accounts: dict[str, list[Any]] = {}
         for h in report.holdings:
             accounts.setdefault(h.account, []).append(h)
+        deviations, dev_meta = _deviations(report, request.query_params)
+        sections = []
+        for key, (label, skinds) in SECTIONS.items():
+            items = [x for x in open_findings if x.kind in skinds]
+            extra = ""
+            if key == "verluste":
+                by_cls = {c: sum(1 for x in items if (x.data or {}).get("class") == c) for c in LOSS_CLASS}
+                extra = " · ".join(f"{n}× {c}" for c, n in by_cls.items() if n)
+            if key == "bestand":
+                extra = f"{len(deviations)} Positionen" if deviations else ""
+            sections.append({"key": key, "label": label, "kind": skinds[0], "n": len(items), "extra": extra})
+        pf = report.snapshot.pf if report.snapshot is not None else None
+        ref_rows = []
+        by_pos = {(h.account, h.asset): h for h in report.holdings}
+        for r in (report.snapshot.references if report.snapshot is not None else []):
+            ref_rows.append({"r": r, "h": by_pos.get((r.account, r.asset_id))})
         return render(request, "diagnosis.html", active="quality", report=report, shown=shown, kind=kind,
+                      deviations=deviations, dev_meta=dev_meta, sections=sections, ref_rows=ref_rows,
+                      ref_accounts=sorted(set(pf.all_accounts()) | set(pf.accounts)) if pf is not None else [],
+                      ref_assets=sorted(pf.assets) if pf is not None else [], today=datetime.now(UTC).date(),
                       status=status, open_id=f, kinds=KINDS, statuses=STATUS, by_kind=by_kind, by_status=by_status,
                       accounts=accounts, counts=counts, holding_counts=report.holding_counts(),
                       generated=datetime.now(UTC), n_open=len(open_findings),
@@ -141,6 +207,25 @@ def make_router() -> APIRouter:
             q = urlencode({"msg": res.message} if res.ok else {"err": "; ".join(res.errors)})
             return _back(f"/quality/integrity?{q}#items")
         return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="checked" if res.ok else ""))
+
+    @router.post("/quality/diagnose/reference")
+    async def reference_add(request: Request) -> Response:
+        """Referenzbestand hinterlegen (Prüfwert, keine Buchung)."""
+        from app.diagnosis import references as R
+
+        form = await request.form()
+        res = await run_in_threadpool(R.add, get_ctx(request), str(form.get("account") or ""),
+                                      str(form.get("asset") or ""), str(form.get("qty") or ""),
+                                      str(form.get("as_of") or ""), str(form.get("source") or "statement"),
+                                      str(form.get("note") or ""))
+        return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="referenzen"))
+
+    @router.post("/quality/diagnose/reference/{rid}/delete")
+    async def reference_delete(request: Request, rid: int) -> Response:
+        from app.diagnosis import references as R
+
+        res = await run_in_threadpool(R.remove, get_ctx(request), rid)
+        return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="referenzen"))
 
     @router.post("/quality/diagnose/decision/{did}/undo")
     async def undo_route(request: Request, did: int) -> Response:

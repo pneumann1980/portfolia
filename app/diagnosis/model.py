@@ -16,8 +16,10 @@ from typing import Any
 KINDS: dict[str, str] = {
     "duplicate": "Wahrscheinliche Dublette",
     "transfer": "Möglicher interner Transfer",
+    "loss": "Ungeklärter Vermögensabgang / möglicher Verlust",
     "asset": "Falsche oder mehrdeutige Asset-Zuordnung",
     "holdings": "Bestand: beobachtet ≠ berechnet",
+    "inactive": "Inaktives Konto mit Restbestand",
     "history": "Unvollständige Transaktionshistorie",
     "estimated": "Rekonstruiert oder geschätzt",
     "price": "Fehlender oder veralteter Kurs",
@@ -25,6 +27,22 @@ KINDS: dict[str, str] = {
     "document": "Beleg ergänzt Buchung",
 }
 KIND_ORDER = {k: i for i, k in enumerate(KINDS)}
+
+# Bereiche der Diagnoseansicht (Kurzwahl) – Befundarten, die zusammen gezeigt werden
+SECTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "bestand": ("Bestandsabweichungen", ("holdings",)),
+    "dubletten": ("Mögliche Doppelbuchungen", ("duplicate",)),
+    "transfers": ("Ungeklärte Transfers", ("transfer",)),
+    "inaktiv": ("Inaktive Konten", ("inactive",)),
+    "verluste": ("Potenzielle Verluste", ("loss",)),
+}
+
+# Einordnung eines ungeklärten Abgangs (Befundart „loss“) – nie aus Inaktivität oder Kursverfall allein
+LOSS_CLASS: dict[str, tuple[str, str]] = {
+    "A": ("Technischer Buchungsfehler", "Vermögenswert wahrscheinlich weiterhin vorhanden, aber falsch abgebildet"),
+    "B": ("Ungeklärter Abgang", "es fehlen Informationen für eine sichere Bewertung"),
+    "C": ("Nachgewiesener Verlust", "belastbare Hinweise auf Hack, Verlust oder endgültige Ausbuchung"),
+}
 
 # Befundstatus: wie belastbar ist die Aussage?
 STATUS: dict[str, str] = {
@@ -51,7 +69,13 @@ HOLDING_STATUS: dict[str, tuple[str, str, str]] = {
                    "Portfolia (ausgeblendete, geänderte oder ergänzte Buchungen, Sparplan-Schätzungen) – nicht extern "
                    "geprüft"),
     "intern_diff": ("intern abweichend", "warn", "Buchungen ergeben einen anderen Bestand als das Soll des Imports"),
-    "offen": ("ohne Abgleich", "", "weder externer Bestand noch Soll-Bestand vorhanden"),
+    "ref_ok": ("mit Referenzbestand abgestimmt", "good",
+               "vom Nutzer hinterlegter Referenzbestand (z. B. Kontoauszug) = Soll aus den Buchungen zum selben "
+               "Stichtag"),
+    "ref_diff": ("Differenz zum Referenzbestand", "crit",
+                 "Soll aus den Buchungen zum Stichtag des Referenzbestands weicht vom hinterlegten Bestand ab"),
+    "offen": ("ohne Abgleich", "", "weder externer Bestand noch Soll- oder Referenzbestand vorhanden – ein "
+                                   "fehlender Referenzbestand gilt als unbekannt, nicht als 0"),
 }
 
 
@@ -134,10 +158,33 @@ class HoldingRow:
     expected_as_of: date | None = None
     status: str = "offen"
     explanations: list[str] = field(default_factory=list)
+    # Soll-Ist zum selben Stichtag (M27): Ist = beobachteter bzw. vom Nutzer bestätigter Bestand, Soll = Bestand aus
+    # allen wirksamen Buchungen bis zu genau diesem Zeitpunkt
+    platform: str = ""  # Börse/Wallet (Broker bzw. Anbieter der Datenquelle)
+    identity: str = ""  # eindeutige Asset-Identität (Asset-ID, ggf. Netzwerk und Contract)
+    computed_at_obs: Decimal | None = None  # Soll zum Abrufzeitpunkt des beobachteten Bestands
+    reference: Decimal | None = None  # vom Nutzer hinterlegter Referenzbestand (Prüfwert, keine Buchung)
+    reference_at: date | None = None
+    reference_note: str = ""
+    soll_at_ref: Decimal | None = None  # Soll zum Stichtag des Referenzbestands
+    last_sync: datetime | None = None  # letzte erfolgreiche Synchronisation der Datenquelle(n) des Kontos
+    quality: str = ""  # Datenqualität (Abrufzustand bzw. Herkunft des Solls)
+    confidence: str = ""  # Sicherheit der Diagnose (belegt | wahrscheinlich | verdacht | hinweis)
+    tx_ids: list[str] = field(default_factory=list)  # Buchungen der erkannten möglichen Ursachen
+    families: list[tuple[str, Decimal, int, datetime, datetime]] = field(default_factory=list)  # je Quelle
+
+    @property
+    def ref_diff(self) -> Decimal | None:
+        """Ist (Referenz) − Soll zum selben Stichtag."""
+        return self.reference - self.soll_at_ref if self.reference is not None and self.soll_at_ref is not None \
+            else None
 
     @property
     def diff(self) -> Decimal | None:
-        return self.observed - self.computed if self.observed is not None else None
+        """Ist (beobachtet) − Soll zum Abrufzeitpunkt (ohne Buchungen danach)."""
+        if self.observed is None:
+            return None
+        return self.observed - (self.computed_at_obs if self.computed_at_obs is not None else self.computed)
 
     @property
     def internal_diff(self) -> Decimal | None:

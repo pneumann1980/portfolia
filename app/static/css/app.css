@@ -625,6 +625,16 @@ details.hold-acc .table-wrap { margin: 0; padding: 0; }
 ul.diag-counts { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
 ul.diag-counts li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 ul.diag-counts a.badge:hover { text-decoration: none; filter: brightness(0.97); }
+.diag-sections { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; }
+.diag-section { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; color: inherit; min-width: 0; }
+.diag-section:hover { text-decoration: none; border-color: var(--accent, currentColor); }
+.diag-section .ds-label { font-size: 0.85rem; overflow-wrap: anywhere; }
+.diag-section .ds-n { font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.dev-filters label, .ref-form label { display: flex; flex-direction: column; gap: 2px; font-size: 0.8rem; min-width: 0; }
+.dev-filters select, .dev-filters input, .ref-form input, .ref-form select { max-width: 100%; }
+.ref-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-top: 12px; }
+.ref-form label { flex: 1 1 140px; }
+.ref-form label.wide { flex: 2 1 220px; }
 .scen-rows { display: grid; gap: 6px; font-size: 0.86rem; }
 .scen-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 6px 0; border-top: 1px solid rgba(0,0,0,0.08); overflow-wrap: anywhere; }
 .scen-row .scen-label { font-weight: 600; }

@@ -391,7 +391,9 @@ def test_diagnosis_page_and_rescan_change_nothing(cfg):
         assert "hx-post" not in body and "hx-delete" not in body
         actions = re.findall(r'<form method="post" action="([^"]+)"', body)
         assert actions and all(a.startswith("/quality/diagnose/") for a in actions)
-        assert body.count("<form") == len(actions)
+        # einzige weitere Form: Filter der Bestandsabweichungen (GET, ändert nichts)
+        gets = re.findall(r'<form method="get" action="([^"]+)"', body)
+        assert gets == ["/quality/diagnose"] and body.count("<form") == len(actions) + len(gets)
         assert "Empfehlung" in body and "/quality/diagnose/plan?f=" in body
         assert "Szenario (hypothetisch)" in body and "intern konsistent" in body
         assert "zuerst ansehen" in body

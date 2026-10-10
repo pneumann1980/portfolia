@@ -138,14 +138,20 @@ def test_installable_app_assets_public_under_basic_auth(config):
 
 
 def test_dashboard_hide_total_toggle_and_mobile_layout_guards(client):
-    """Augen-Symbol: Depotwert und Tagesveränderung in € sind getrennt maskierbar (Zustand je Gerät, vor dem ersten
+    """Augen-Symbol (Datenschutz-Modus): alle Beträge des Dashboards sind maskierbar (Zustand je Gerät, vor dem ersten
     Zeichnen aus theme.js); Scroll-Container sind Bezugsrahmen der sticky Tabellenköpfe (sonst wird das Layout-Viewport
     in Chrome mobil breiter als der Bildschirm), das Detail-Sheet endet mobil über der unteren Leiste."""
     client.post("/actions/import/check", headers={"X-CSRF-Token": _csrf(client)})
     page = client.get("/").text
-    assert 'data-hide-total aria-pressed="false"' in page and 'aria-label="Depotwert verbergen"' in page
+    assert 'data-hide-total aria-pressed="false"' in page and 'aria-label="Beträge verbergen"' in page
     hero = page.split('class="kpi hero"', 1)[1].split('<div class="kpi">', 1)[0]
     assert hero.count('class="sens-real"') == 2 and 'class="sens-mask"' in hero and "#i-eye-off" in page
+    # Datenschutz-Modus: alle Beträge des Dashboards (KPIs, Top-Bewegungen) maskierbar, Diagramme ebenfalls
+    kpis = page.split('class="kpis"', 1)[1].split("</section>", 1)[0]
+    assert "data-privacy-scope" in page and kpis.count('class="sens-real"') >= 9
+    charts = client.get("/static/js/charts.js").text
+    assert "function masked()" in charts and '"portfolia:privacy"' in charts
+    assert '"portfolia:privacy"' in client.get("/static/js/app.js").text
     theme = client.get("/static/js/theme.js").text
     assert 'localStorage.getItem("portfolia-hide-total")' in theme and 'classList.add("hide-total")' in theme
     css = client.get("/static/css/app.css").text

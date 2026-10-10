@@ -44,6 +44,12 @@
     {% for k, label in kinds.items() %}<li><a href="{{ qurl(k) }}">{{ label }}</a>
       <span class="row">{% for s in statuses %}{% set n = counts[k].get(s, 0) %}{% if n %}<a class="badge {{ status_badge[s] }}" href="{{ qurl(k, s) }}">{{ n }} {{ s }}</a>{% endif %}{% endfor %}{% if not counts[k] %}<span class="muted">keine</span>{% endif %}</span></li>{% endfor %}
   </ul>
+  <nav class="diag-sections" aria-label="Bereiche der Buchungsprüfung">
+    {% for sec in sections %}<a class="diag-section" href="{% if sec.key == 'bestand' %}#bestand{% else %}{{ qurl(sec.kind) }}#findings{% endif %}">
+      <span class="ds-label">{{ sec.label }}</span>
+      <span class="ds-n">{% if sec.key == 'bestand' %}{{ deviations|length }}{% else %}{{ sec.n }}{% endif %}</span>
+      {% if sec.extra %}<span class="hint">{{ sec.extra }}</span>{% endif %}</a>{% endfor %}
+  </nav>
   <details class="box" style="margin-top:10px"><summary>Was bedeuten die Status?</summary>
     <dl class="kv" style="margin-top:8px">
       {% for s, text in statuses.items() %}<dt><span class="badge {{ status_badge[s] }}">{{ s }}</span></dt><dd>{{ text }}</dd>{% endfor %}
@@ -72,7 +78,7 @@
   {% for f in shown %}
   <details class="finding" id="{{ f.id }}" {% if open_id == f.id %}open{% endif %}>
     <summary>
-      <div class="row"><span class="badge {{ status_badge[f.status] }}">{{ f.status }}</span><span class="badge">{{ f.kind_label }}</span>{% if f.priority == 1 %}<span class="badge warn">zuerst ansehen</span>{% endif %}</div>
+      <div class="row"><span class="badge {{ status_badge[f.status] }}">{{ f.status }}</span><span class="badge">{{ f.kind_label }}</span>{% if f.kind == 'loss' and f.data.get('class') %}<span class="badge {{ 'crit' if f.data['class'] == 'C' and not f.data.get('documented') else '' }}" title="{{ loss_class[f.data['class']][1] }}">{{ f.data['class'] }} · {{ loss_class[f.data['class']][0] }}</span>{% endif %}{% if f.priority == 1 %}<span class="badge warn">zuerst ansehen</span>{% endif %}</div>
       <div class="f-title">{{ f.title }}</div>
       <div class="f-meta">{% if f.accounts %}{{ f.accounts[:4]|join(', ') }}{% if f.accounts|length > 4 %} …{% endif %}{% endif %}{% if f.assets %}{% if f.accounts %} · {% endif %}{{ f.assets[:6]|join(', ') }}{% if f.assets|length > 6 %} …{% endif %}{% endif %}{% if f.txs %} · {{ f.txs|length }} Buchung{{ 'en' if f.txs|length != 1 }}{% endif %}</div>
     </summary>
@@ -147,6 +153,60 @@
   {% endif %}
 </section>
 
+<section class="card" id="bestand">
+  <div class="card-head"><h2>Bestandsabweichungen ({{ deviations|length }}{% if deviations|length != dev_meta.n_all %} von {{ dev_meta.n_all }}{% endif %})</h2></div>
+  <p class="hint">Soll = Bestand aus allen wirksamen Buchungen <em>zum selben Stichtag</em> wie der Ist-Bestand (Abruf der Datenquelle bzw. hinterlegter Referenzbestand). Ohne Ist-Bestand wird nichts als 0 angenommen. Negative Bestände und Positionen mit Doppelbuchungsverdacht stehen ebenfalls hier.</p>
+  <form method="get" action="/quality/diagnose" class="filters dev-filters" role="search" aria-label="Bestandsabweichungen filtern">
+    <label>Art <select name="h_type"><option value="">alle</option>{% for k, label in dev_meta.types.items() %}<option value="{{ k }}"{% if dev_meta.filters.h_type == k %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label>Konto <select name="h_acc"><option value="">alle</option>{% for a in dev_meta.accounts %}<option{% if dev_meta.filters.h_acc == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+    <label>Asset <select name="h_asset"><option value="">alle</option>{% for a in dev_meta.assets %}<option{% if dev_meta.filters.h_asset == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+    <label>ab € <input type="text" inputmode="decimal" name="h_min" value="{{ dev_meta.filters.h_min }}" size="6" placeholder="0"></label>
+    <label>Sicherheit <select name="h_conf"><option value="">jede</option>{% for st in statuses %}<option{% if dev_meta.filters.h_conf == st %} selected{% endif %}>{{ st }}</option>{% endfor %}</select></label>
+    <button class="btn sm" type="submit">Filtern</button>{% if dev_meta.filters.values()|select|list %} <a class="btn sm ghost" href="/quality/diagnose#bestand">zurücksetzen</a>{% endif %}
+  </form>
+  {% if not deviations %}<p class="hint">Keine Abweichungen{% if dev_meta.n_all %} für diese Auswahl{% endif %}.</p>{% else %}
+  <div class="table-wrap cards-wrap"><table class="cards hold-table dev-table">
+    <thead><tr><th>Konto · Plattform</th><th>Asset</th><th class="num">Soll</th><th class="num">Ist</th><th class="num">Differenz</th><th>Stichtag · Quelle</th><th>Ursache</th><th>Zustand</th></tr></thead>
+    <tbody>{% for r in deviations %}{% set h = r.h %}{% set st = holding_status[h.status] %}<tr>
+      <td data-label="Konto">{{ h.account }}<div class="hint">{{ h.platform }}{% if h.last_sync %} · Sync {{ h.last_sync|datetime_de }}{% else %} · Sync: nie{% endif %}</div></td>
+      <td data-label="Asset">{{ h.asset }}{% if h.identity and h.identity != h.asset %}<div class="hint mono">{{ h.identity }}</div>{% endif %}</td>
+      <td class="num" data-label="Soll">{{ r.soll|qty_exact }}</td>
+      <td class="num" data-label="Ist">{% if r.ist is not none %}{{ r.ist|qty_exact }}{% else %}<span class="muted" title="kein Ist-Bestand – unbekannt, nicht 0">unbekannt</span>{% endif %}</td>
+      <td class="num" data-label="Differenz">{% if r.diff is not none and r.ist is not none %}{{ r.diff|qty_exact }}{% elif h.computed < 0 %}<span title="negativer Bestand">{{ h.computed|qty_exact }}</span>{% else %}<span class="muted">–</span>{% endif %}{% if r.value is not none %}<div class="hint">≈ {{ r.value|eur }}</div>{% endif %}</td>
+      <td data-label="Stichtag · Quelle">{% if r.ist_at %}{{ r.ist_at|date_de if h.reference is not none else r.ist_at|datetime_de }}{% else %}<span class="muted">–</span>{% endif %}<div class="hint">{{ h.quality }}</div></td>
+      <td class="wide" data-label="Ursache">{% if h.explanations %}<ul class="plain-list">{% for e in h.explanations[:4] %}<li>{{ e }}</li>{% endfor %}</ul>{% else %}<span class="muted">keine erkannt</span>{% endif %}</td>
+      <td data-label="Zustand"><span class="badge {{ st[1] }}" title="{{ st[2] }}">{{ st[0] }}</span>{% if h.confidence %}<div class="hint">Sicherheit: {{ h.confidence }}</div>{% endif %}<div><a href="/journal?account={{ h.account|urlencode }}&amp;asset={{ h.asset|urlencode }}">Buchungen</a></div></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>{% endif %}
+</section>
+
+<section class="card" id="referenzen">
+  <div class="card-head"><h2>Referenzbestände (Kontoauszug)</h2></div>
+  <p class="hint">Ein Referenzbestand ist ein <strong>Prüfwert, keine Buchung</strong>: Er ändert weder Bestand noch Einstand oder Steuer. Die Diagnose vergleicht ihn mit dem Soll aus allen Buchungen bis zum selben Stichtag (Ende des Tages). Für Fiat-Konten centgenau, für Krypto mit voller Präzision.</p>
+  {% if ref_rows %}<div class="table-wrap cards-wrap"><table class="cards hold-table">
+    <thead><tr><th>Konto</th><th>Asset</th><th>Stichtag</th><th class="num">Referenz (Ist)</th><th class="num">Soll zum Stichtag</th><th class="num">Differenz</th><th>Beleg</th><th></th></tr></thead>
+    <tbody>{% for x in ref_rows %}{% set r = x.r %}{% set h = x.h %}<tr>
+      <td data-label="Konto">{{ r.account }}</td><td data-label="Asset">{{ r.asset_id }}</td><td data-label="Stichtag">{{ r.as_of|date_de }}</td>
+      <td class="num" data-label="Referenz">{{ r.qty|qty_exact }}</td>
+      <td class="num" data-label="Soll">{% if h and h.reference_at == r.as_of and h.soll_at_ref is not none %}{{ h.soll_at_ref|qty_exact }}{% else %}<span class="muted" title="ein jüngerer Referenzbestand gilt">–</span>{% endif %}</td>
+      <td class="num" data-label="Differenz">{% if h and h.reference_at == r.as_of and h.ref_diff is not none %}{{ h.ref_diff|qty_exact }}{% else %}<span class="muted">–</span>{% endif %}</td>
+      <td data-label="Beleg">{{ {'statement': 'Kontoauszug', 'api': 'Anzeige beim Anbieter'}.get(r.source, 'sonstiger Beleg') }}{% if r.note %}<div class="hint">{{ r.note }}</div>{% endif %}</td>
+      <td><form method="post" action="/quality/diagnose/reference/{{ r.id }}/delete" data-confirm="Referenzbestand entfernen? (Buchungen bleiben unberührt)"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Entfernen</button></form></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>{% else %}<p class="hint">Noch keine. Ohne Referenzbestand gilt der Ist-Bestand als unbekannt.</p>{% endif %}
+  <form method="post" action="/quality/diagnose/reference" class="ref-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Konto <input name="account" list="ref-accounts" required autocomplete="off"></label>
+    <label>Asset-ID <input name="asset" list="ref-assets" required autocomplete="off" placeholder="z. B. EUR"></label>
+    <label>Bestand <input name="qty" inputmode="decimal" required placeholder="2.811,00"></label>
+    <label>Stichtag <input type="date" name="as_of" required max="{{ today.isoformat() }}" value="{{ today.isoformat() }}"></label>
+    <label>Beleg <select name="source"><option value="statement">Kontoauszug</option><option value="api">Anzeige beim Anbieter</option><option value="other">sonstiger Beleg</option></select></label>
+    <label class="wide">Notiz <input name="note" maxlength="300" placeholder="optional"></label>
+    <button class="btn sm primary" type="submit">Referenzbestand hinterlegen</button>
+    <datalist id="ref-accounts">{% for a in ref_accounts %}<option value="{{ a }}">{% endfor %}</datalist>
+    <datalist id="ref-assets">{% for a in ref_assets %}<option value="{{ a }}">{% endfor %}</datalist>
+  </form>
+</section>
+
 <section class="card" id="holdings">
   <div class="card-head"><h2>Bestandsabgleich je Konto und Asset</h2></div>
   <p class="hint">„intern konsistent“ heißt nur: Die Buchungen ergeben den Soll-Bestand des kuratierten Imports. Mit der Börse bzw. Blockchain abgestimmt ist ein Bestand erst bei „mit externer Quelle abgestimmt“ – das setzt einen aktuellen (≤ 48 h), vollständigen Abruf voraus. Portfolia speichert oder ersetzt hier keine Bestände.</p>
@@ -168,7 +228,7 @@
         <td class="num" data-label="Soll (Import)">{% if h.expected is not none %}{{ h.expected|qty_exact }}{% if h.expected_as_of %}<div class="hint">{{ h.expected_as_of|date_de }}</div>{% endif %}{% else %}<span class="muted">–</span>{% endif %}</td>
         <td class="num" data-label="Differenz">{% if h.diff is not none %}{{ h.diff|qty_exact }} <span class="hint">zur Quelle</span>{% elif h.internal_diff is not none %}{{ h.internal_diff|qty_exact }} <span class="hint">zum Soll</span>{% else %}<span class="muted">–</span>{% endif %}</td>
         <td data-label="Status"><span class="badge {{ st[1] }}" title="{{ st[2] }}">{{ st[0] }}</span></td>
-        <td class="wide" data-label="mögliche Erklärungen">{% if h.explanations %}<ul class="plain-list">{% for e in h.explanations %}<li>{{ e }}</li>{% endfor %}</ul>{% else %}<span class="muted">–</span>{% endif %}</td>
+        <td class="wide" data-label="mögliche Erklärungen">{% if h.explanations %}<ul class="plain-list">{% for e in h.explanations %}<li>{{ e }}</li>{% endfor %}</ul>{% else %}<span class="muted">–</span>{% endif %}{% if h.families|length > 1 %}<div class="hint">Quellen: {% for fam, net, n, _a, _b in h.families %}{{ ' · ' if not loop.first }}{{ fam }} {{ net|qty_exact }} ({{ n }}){% endfor %}</div>{% endif %}</td>
       </tr>{% endfor %}</tbody>
     </table></div>
   </details>
@@ -181,6 +241,8 @@
     <li>Ohne Ereignisindex (Output-/Log-Index) sind zwei gleiche Bewegungen in derselben Blockchain-Transaktion nicht von einer Doppelbuchung zu unterscheiden – solche Fälle bleiben „verdacht“.</li>
     <li>Gleiche Menge und gleiche Zeit allein beweisen keine Dublette; Portfolia nennt sie nur zusammen mit weiteren Belegen (manuell erfasst, ohne Hash, Platzhalter-Uhrzeit).</li>
     <li>Transfers zwischen eigenen Konten werden über Hash, Zeit, Menge und Gebühr vermutet; Adressen der Gegenseite fehlen in den meisten Buchungen.</li>
+    <li>Wirtschaftliche Dubletten über Quellen werden über Konto, Asset-ID, Richtung, Betrag (brutto/netto, Gebühr) und Zeit erkannt – ohne gemeinsame Kennung höchstens „wahrscheinlich“; Abstände von Tagen bleiben „hinweis“ (ohne ausreichenden Beleg), außer bei einem regelmäßigen Versatz (≥ 3 Paare, gleiche Uhrzeit).</li>
+    <li>Ungeklärte Abgänge sind kein Verlust: „Nachgewiesen“ erfordert eine Verlust-Buchung oder ein als kompromittiert gekennzeichnetes Konto; Inaktivität und Kursverfall zählen nie.</li>
     <li>Kurse fragt die Diagnose nicht ab; Bewertungen in Szenarien nutzen nur gespeicherte Kurse bzw. Kaufkurse und sind keine Marktbewertung.</li>
     <li>Ein externer Bestand gilt nur bei aktuellem, vollständigem Abruf als Abgleich – sonst „extern nicht bestätigt“.</li>
   </ul>

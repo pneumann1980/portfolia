@@ -17,10 +17,12 @@
   {% for p in val.unvalued[:6] %}{{ p.asset.name }}{{ ', ' if not loop.last }}{% endfor %}{% if unval_n > 6 %} …{% endif %}
   · <a href="/quality#prices">Gründe</a> · <a href="/journal/writeoff">als Verlust ausbuchen</a></div></div>{% endif %}
 
-<section class="kpis" aria-label="Kennzahlen">
+{# Datenschutz-Modus (Augen-Symbol): alle Beträge des Dashboards maskierbar, Prozentwerte bleiben sichtbar #}
+{% macro sens(v) %}<span class="sens-real">{{ v }}</span><span class="sens-mask" aria-label="Betrag verborgen">•••</span>{% endmacro %}
+<section class="kpis" aria-label="Kennzahlen" data-privacy-scope>
   <div class="kpi hero">
     <div class="label">Depotwert
-      <button type="button" class="eye-toggle" data-hide-total aria-pressed="false" aria-label="Depotwert verbergen" title="Depotwert verbergen">
+      <button type="button" class="eye-toggle" data-hide-total aria-pressed="false" aria-label="Beträge verbergen" title="Beträge verbergen">
         <svg class="eye-on" aria-hidden="true"><use href="#i-eye"/></svg><svg class="eye-off" aria-hidden="true"><use href="#i-eye-off"/></svg></button></div>
     <div class="value"><span class="sens-real">{{ val.total_value|eur }}</span><span class="sens-mask" aria-label="Depotwert verborgen">•••••• €</span></div>
     <div class="sub"><span class="delta {{ val.day_change|tone }}">{{ val.day_change|arrow }} <span class="sens-real">{{ val.day_change|eur(2, true) }} </span>({{ val.day_change_pct|pct }})</span> heute</div>
@@ -30,13 +32,13 @@
     <div class="label">Seit Jahresbeginn <span title="TTWROR – zeitgewichtete Rendite, Ein- und Auszahlungen neutralisiert (Methodik Portfolio Performance)">ⓘ</span></div>
     {% if kpi.ytd and kpi.ytd.ttwror is not none %}
       <div class="value"><span class="delta {{ kpi.ytd.ttwror|tone }}">{{ kpi.ytd.ttwror|arrow }} {{ kpi.ytd.ttwror|pct }}</span></div>
-      <div class="sub">{{ kpi.ytd.gain|eur_kpi(true) }}</div>
+      <div class="sub">{{ sens(kpi.ytd.gain|eur_kpi(true)) }}</div>
     {% else %}<div class="value muted">–</div><div class="sub">Historie wird geladen</div>{% endif %}
   </div>
   <div class="kpi">
     <div class="label">Gesamt-G/V <span title="Depotwert minus eingesetztes Kapital (Summe externer Ein- und Auszahlungen)">ⓘ</span></div>
-    <div class="value"><span class="delta {{ val.total_gain|tone }}">{{ val.total_gain|eur_kpi(true) }}</span></div>
-    <div class="sub">Kapital {{ val.invested|eur_compact }}</div>
+    <div class="value"><span class="delta {{ val.total_gain|tone }}">{{ sens(val.total_gain|eur_kpi(true)) }}</span></div>
+    <div class="sub">Kapital {{ sens(val.invested|eur_compact) }}</div>
   </div>
   <div class="kpi">
     <div class="label">IRR p. a. <span title="Interner Zinsfuß (geldwertgewichtet) seit Beginn: berücksichtigt Zeitpunkt und Höhe aller Ein- und Auszahlungen">ⓘ</span></div>
@@ -46,12 +48,12 @@
   </div>
   <div class="kpi">
     <div class="label">Unrealisiert / Realisiert</div>
-    <div class="value" style="font-size:1rem"><span class="delta {{ val.unrealized|tone }}">{{ val.unrealized|eur(0, true) }}</span><br><span class="delta {{ val.realized|tone }}">{{ val.realized|eur(0, true) }}</span></div>
-    <div class="sub">Erträge {{ val.income|eur(0) }} · Gebühren {{ val.fees|eur(0) }}</div>
+    <div class="value" style="font-size:1rem"><span class="delta {{ val.unrealized|tone }}">{{ sens(val.unrealized|eur(0, true)) }}</span><br><span class="delta {{ val.realized|tone }}">{{ sens(val.realized|eur(0, true)) }}</span></div>
+    <div class="sub">Erträge {{ sens(val.income|eur(0)) }} · Gebühren {{ sens(val.fees|eur(0)) }}</div>
   </div>
 </section>
 
-<div class="grid-2" style="margin-top:16px">
+<div class="grid-2" style="margin-top:16px" data-privacy-scope>
   <section class="card" aria-labelledby="alloc-h">
     <div class="card-head">
       <h2 id="alloc-h">Allokation</h2>
@@ -93,8 +95,8 @@
     {% macro mover(p, up) -%}
       <a class="list-item" href="{{ asset_url(p.asset_id) }}" data-panel="{{ panel_url(p.asset_id) }}" data-title="{{ p.asset.name }}">
         <span class="dot" style="background:{{ p.colors.light }}" data-color-light="{{ p.colors.light }}" data-color-dark="{{ p.colors.dark }}"></span>
-        <span class="grow"><span class="title">{{ p.asset.name }}</span><span class="meta">{{ p.value|eur }}</span></span>
-        <span class="delta mv-delta {{ 'up' if up else 'down' }}"><span>{{ '▲' if up else '▼' }} {{ p.day_change_pct|pct }}</span><span class="mv-eur">{{ p.day_change|eur(0, true) }}</span></span>
+        <span class="grow"><span class="title">{{ p.asset.name }}</span><span class="meta">{{ sens(p.value|eur) }}</span></span>
+        <span class="delta mv-delta {{ 'up' if up else 'down' }}"><span>{{ '▲' if up else '▼' }} {{ p.day_change_pct|pct }}</span><span class="mv-eur">{{ sens(p.day_change|eur(0, true)) }}</span></span>
       </a>
     {%- endmacro %}
     <div class="card-head"><h2 id="movers-h">Top-Bewegungen heute</h2>

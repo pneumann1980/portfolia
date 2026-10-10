@@ -653,6 +653,25 @@ CREATE TABLE IF NOT EXISTS document_stack (
   finished_at  TEXT
 );
 """),
+    (19, """
+-- Referenzbestände (M27): vom Nutzer bestätigte Kontostände zum Stichtag (z. B. Kontoauszug). Reiner Prüfwert für den
+-- Soll-Ist-Abgleich der Diagnose – keine Buchung, wirkt nie auf Bestand, Lots oder Steuer. Löschen setzt nur den
+-- Status (Nachvollziehbarkeit); fehlt ein Referenzbestand, gilt er als unbekannt, nicht als 0.
+CREATE TABLE IF NOT EXISTS reference_balance (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  account     TEXT NOT NULL,
+  asset_id    TEXT NOT NULL,
+  qty         TEXT NOT NULL,                     -- Decimal als Text (exakt)
+  as_of       TEXT NOT NULL,                     -- Stichtag (ISO-Datum, Ende des Tages Ortszeit)
+  source      TEXT NOT NULL DEFAULT 'statement', -- statement (Kontoauszug) | api (Anzeige beim Anbieter) | other
+  note        TEXT,
+  status      TEXT NOT NULL DEFAULT 'active',    -- active | deleted
+  created_at  TEXT NOT NULL,
+  deleted_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_reference_balance_pos ON reference_balance(account, asset_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_reference_balance ON reference_balance(account, asset_id, as_of, qty, created_at);
+"""),
 ]
 
 

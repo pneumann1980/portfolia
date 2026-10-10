@@ -11,8 +11,13 @@
   var DF = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
   var DTF = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
+  // Datenschutz-Modus (nur Dashboard): Beträge in Achsen und Tooltips maskieren, Prozentwerte bleiben sichtbar
+  function masked() {
+    return document.documentElement.classList.contains("hide-total") && !!document.querySelector("[data-privacy-scope]");
+  }
   function eur(v, dec) {
     if (v === null || v === undefined || isNaN(v)) return "–";
+    if (masked()) return "••• €";
     if (dec === 0) return NF0.format(v) + " €";
     var a = Math.abs(v);
     if (dec === undefined && a > 0 && a < 1) {
@@ -22,6 +27,7 @@
   }
   function eurCompact(v) {
     if (v === null || v === undefined || isNaN(v)) return "–";
+    if (masked()) return "••• €";
     var a = Math.abs(v);
     if (a >= 1e6) return NF2.format(v / 1e6) + " Mio. €";
     if (a >= 1e4) return new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(v / 1e3) + " Tsd. €";
@@ -593,6 +599,9 @@
     util: { eur: eur, eurCompact: eurCompact, pct: pct, share: share, num: num, fdate: fdate, esc: esc, tok: tok, row: row,
       tooltipBase: tooltipBase, axisCommon: axisCommon, getInstance: getInstance, empty: empty },
   };
+  document.addEventListener("portfolia:privacy", function () {
+    instances.forEach(function (inst, el) { rerender(el); });
+  });
   document.addEventListener("portfolia:theme", function () {
     instances.forEach(function (inst, el) { rerender(el); });
   });
