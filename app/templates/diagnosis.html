@@ -204,7 +204,7 @@
   <form method="post" action="/quality/diagnose/reference" class="ref-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Konto <input name="account" list="ref-accounts" required autocomplete="off"></label>
     <label>Asset-ID <input name="asset" list="ref-assets" required autocomplete="off" placeholder="z. B. EUR"></label>
-    <label>Bestand <input name="qty" inputmode="decimal" required placeholder="2.811,00"></label>
+    <label>Bestand <input name="qty" inputmode="decimal" required placeholder="1.000,00"></label>
     <label>Stichtag <input type="date" name="as_of" required max="{{ today.isoformat() }}" value="{{ today.isoformat() }}"></label>
     <label>Uhrzeit (optional) <input type="time" name="time" step="1" title="exakter Zeitpunkt des Kontostands, z. B. Abruf beim Anbieter"></label>
     <label>Zeitzone <input name="tz" list="ref-tz" placeholder="Europe/Berlin" autocomplete="off"></label>

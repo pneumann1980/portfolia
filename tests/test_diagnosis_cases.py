@@ -109,29 +109,29 @@ def test_01_02_11_21_22_single_case_from_group_of_ten(cfg):
 # ----------------------------------------------------------------------------------------------------
 
 def test_03_amount_match_without_identity_is_never_proven(cfg):
-    rows = [koinly(tx("K1", "2024-02-01T09:00:00Z", "deposit", to=("Börse B", "USD", "300"), value="280")),
-            api(tx("A1", "2024-02-01T09:03:00Z", "deposit", to=("Börse B", "USD", "304.5"), fee=("USD", "4.5", ""),
+    rows = [koinly(tx("K1", "2024-02-01T09:00:00Z", "deposit", to=("Börse B", "USD", "412"), value="280")),
+            api(tx("A1", "2024-02-01T09:03:00Z", "deposit", to=("Börse B", "USD", "418.18"), fee=("USD", "6.18", ""),
                    value="280"), "x1"),
-            koinly(tx("K2", "2024-03-01T09:00:00Z", "deposit", to=("Börse B", "USD", "250"), value="230")),
-            api(tx("A2", "2024-03-01T09:03:00Z", "deposit", to=("Börse B", "USD", "253.75"), value="233"), "x2")]
+            koinly(tx("K2", "2024-03-01T09:00:00Z", "deposit", to=("Börse B", "USD", "235"), value="230")),
+            api(tx("A2", "2024-03-01T09:03:00Z", "deposit", to=("Börse B", "USD", "238.6"), value="233"), "x2")]
     ctx = make_ctx(cfg, rows, AUDIT_ASSETS)
     rep = report_for(ctx)
     (f,) = [x for x in by_kind(rep, "duplicate") if x.key.startswith("econ|")]
     assert f.status == "wahrscheinlich" and "Möglicherweise doppelt" in f.title  # Gebühr belegt, Identität nicht
     case = f.data["cases"][0]
-    assert any("Gebühr 4,5 USD in A1 ausgewiesen" in p for p in case["pro"])
+    assert any("Gebühr 6,18 USD in A1 ausgewiesen" in p for p in case["pro"])
     assert any("nicht identisch" in c for c in case["contra"])
     assert any("Anbieterreferenz" in m for m in case["missing"])
-    # 253,75 ohne ausgewiesene Gebühr passt nicht zu 250 → keine Zuordnung
+    # 238,6 ohne ausgewiesene Gebühr passt nicht zu 235 → keine Zuordnung
     assert all("K2" not in json.dumps(x.data) for x in by_kind(rep, "duplicate") if x.key.startswith("econ"))
 
 
 def test_shared_provider_reference_is_proven_duplicate(cfg):
     uuid = "0a1b2c3d-1111-4222-8333-444455556666"
-    k = koinly(tx("K1", "2024-02-01T09:00:00Z", "deposit", to=("Bitpanda", "USD", "300"), value="280"))
+    k = koinly(tx("K1", "2024-02-01T09:00:00Z", "deposit", to=("Bitpanda", "USD", "412"), value="280"))
     k["note"] = f"txhash={uuid}"
-    rows = [k, api(tx("A1", "2024-02-01T09:03:00Z", "deposit", to=("Bitpanda", "USD", "304.5"),
-                      fee=("USD", "4.5", ""), value="280"), uuid)]
+    rows = [k, api(tx("A1", "2024-02-01T09:03:00Z", "deposit", to=("Bitpanda", "USD", "418.18"),
+                      fee=("USD", "6.18", ""), value="280"), uuid)]
     ctx = make_ctx(cfg, rows, AUDIT_ASSETS)
     (f,) = [x for x in by_kind(report_for(ctx), "duplicate") if x.key.startswith(("econ|", "id|"))]
     assert f.status in ("belegt", "wahrscheinlich")
@@ -325,8 +325,8 @@ def test_15_stale_preview_after_new_sync_is_rejected(cfg):
 
 
 def test_undo_refused_when_later_correction_depends_on_it(cfg):
-    rows = [koinly(tx("K1", "2024-02-01T09:00:00Z", "deposit", to=("Börse B", "USD", "300"), value="280")),
-            api(tx("A1", "2024-02-01T09:03:00Z", "deposit", to=("Börse B", "USD", "304.5"), fee=("USD", "4.5", ""),
+    rows = [koinly(tx("K1", "2024-02-01T09:00:00Z", "deposit", to=("Börse B", "USD", "412"), value="280")),
+            api(tx("A1", "2024-02-01T09:03:00Z", "deposit", to=("Börse B", "USD", "418.18"), fee=("USD", "6.18", ""),
                    value="280"), "x1")]
     ctx = make_ctx(cfg, rows, AUDIT_ASSETS)
     rep = report_for(ctx)
