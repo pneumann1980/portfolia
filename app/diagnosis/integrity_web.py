@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.diagnosis import integrity as I
+from app.diagnosis import live as L
 from app.jobs.scheduler import Scheduler, extra_jobs
 from app.progress import job_progress, view
 from app.web.app import register_router
@@ -63,8 +64,10 @@ def make_router() -> APIRouter:
                                severity=severity if severity in I.SEVERITIES else "", asset=asset, account=account,
                                status=status if status in I.STATUSES else "", sort=sort)
         accounts = sorted({a for it in (r.items if r else []) for a in it.accounts})
+        live = L.context(ctx, {a for it in (r.items if r else []) if it.status == "offen" for a in it.accounts},
+                         "/quality/integrity")
         assets = sorted({a for it in (r.items if r else []) for a in it.assets})
-        return render(request, "integrity.html", active="quality", run=r, items=items, running=_running(ctx),
+        return render(request, "integrity.html", active="quality", run=r, items=items, running=_running(ctx), live=live,
                       categories=I.CATEGORIES, severities=I.SEVERITIES, statuses=I.STATUSES, causes=I.CAUSES,
                       f={"category": category, "severity": severity, "asset": asset, "account": account,
                          "status": status, "sort": sort},

@@ -635,6 +635,26 @@ ul.diag-counts a.badge:hover { text-decoration: none; filter: brightness(0.97); 
 .btn.wrap { white-space: normal; text-align: left; max-width: 100%; height: auto; }
 .diag-section .ds-cc { font-size: 0.75rem; }
 .diag-section .ds-n { font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Bestandsabweichungen: wenige, schmale Spalten; Zahlen umbrechen nie, Text schon. Auf breiten Bildschirmen scrollt
+   die Tabelle im eigenen Bereich (Kopfzeile und erste Spalte bleiben stehen, die Bildlaufleiste ist immer sichtbar). */
+.dev-table td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dev-table td.num .k { display: inline-block; min-width: 2.4em; font-size: 0.72rem; font-weight: 600; color: var(--ink-2); text-align: left; }
+.dev-table td.num .hint { white-space: normal; max-width: 16em; margin-left: auto; text-align: right; }
+.dev-table td.who { min-width: 11em; max-width: 18em; overflow-wrap: anywhere; }
+.dev-table td.why { min-width: 16em; max-width: 36em; }
+.dev-table td.why .plain-list { margin: 0; }
+@media (max-width: 699px) {
+  .dev-table td.num { text-align: left; }
+  .dev-table td.num .hint { margin-left: 0; text-align: left; }
+}
+@media (min-width: 700px) {
+  .table-wrap.dev-wrap { max-height: 70vh; overflow: auto; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overscroll-behavior: contain; }
+  .dev-table { min-width: 52rem; }
+  .dev-table th { top: 0; }
+  .dev-table td.who, .dev-table th:first-child { position: sticky; left: 0; background: var(--surface); z-index: 2; }
+  .dev-table th:first-child { z-index: 3; }
+  .dev-table tbody tr:hover td.who { background: var(--surface-2); }
+}
 .dev-filters label, .ref-form label { display: flex; flex-direction: column; gap: 2px; font-size: 0.8rem; min-width: 0; }
 .dev-filters select, .dev-filters input, .ref-form input, .ref-form select { max-width: 100%; }
 .ref-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-top: 12px; }

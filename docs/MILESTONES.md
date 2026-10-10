@@ -1340,6 +1340,20 @@ Undo, Sammelbearbeitung) – keine zweite Diagnose-, Abgleichs- oder Korrektur-E
 * **Validierung:** lesend gegen eine Kopie eines realen Exports (Datenbank-Fingerprint vorher = nachher); Ergebnis im
   Abschlussbericht, keine personenbezogenen Daten im Repository.
 
+## M28.1 – Rückmeldungen: Tooltip, Datenquellen, Bestandsabweichungen, Quellenrang (0.25.1)
+
+* **Wertentwicklung:** Tooltip liest Depotwert/Kapital/Gewinn aus den Rohdaten des nächsten Tages (lttb-Ausdünnung ließ
+  den Depotwert stellenweise fehlen); gleiches Vorgehen bei Performance- und Positionsverlauf.
+* **Sammelaktualisierung:** je Anbieter nacheinander, Anbieter gleichzeitig (4 Worker); Abbrechen erreicht alle laufenden
+  Konten; Kaspa-Abdeckung nennt die Laufzeit von KAS und KRC-20.
+* **PubFi/Polkadot (403):** laut PubFi-Doku 401 = Schlüssel, 403 = Konto/Route; Meldung mit Code, Grund, Anfrage-ID.
+  Nicht live prüfbar (kein Schlüssel) – die Ursache auf Kontoseite bleibt beim Anbieter.
+* **peaq:** Subscan-Konto unbekannt → Kettenabfrage über öffentlichen EVM-RPC; leer = kein Fehler, sonst Hinweis auf
+  Subscan direkt.
+* **Bestandsabweichungen:** kompaktere Tabelle, eigener Scrollbereich.
+* **Integrität/Diagnose:** „Aktuelle Bestände abfragen“ (nur lesend, Hintergrund); Quellenrang API > CSV > Beleg >
+  Steuertool > manuell bei Doppelungen.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

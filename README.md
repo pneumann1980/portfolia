@@ -1122,8 +1122,11 @@ synchronisiert, läuft, erfolgreich, teilweise, Fehler*) mit letzter erfolgreich
 davon **Datenhinweise** (ungeklärte/nicht unterstützte Vorgänge, fehlende Kurse oder Zuordnungen,
 Bestandsabweichungen, Überschneidungen). Je Gruppe und gesamt steht die Summe. **Suche** über Konto-, Gruppen- und
 Portfolia-Kontoname, Netzwerk und Adresse; **Sortierung** nach Name, Wert, Hinzufügedatum oder letzter erfolgreicher
-Synchronisierung. Aktualisieren geht je Konto, je Gruppe und für alle Wallets – nacheinander im Hintergrund; ein
-fehlgeschlagenes Konto hält die übrigen nicht auf.
+Synchronisierung. Aktualisieren geht je Konto, je Gruppe und für alle Wallets – im Hintergrund, **je Anbieter
+nacheinander, verschiedene Anbieter gleichzeitig** (höchstens vier; die Anfragegrenzen je Endpunkt gelten gemeinsam,
+ein langsamer Anbieter wie eine Kaspa-Historie hält die übrigen nicht auf); ein fehlgeschlagenes Konto hält die
+übrigen nicht auf, „Abbrechen“ erreicht alle laufenden Konten. Die Abdeckung eines Kaspa-Abrufs nennt die Laufzeit
+von KAS und KRC-20 getrennt (`seconds`).
 
 * **Kein irreführendes 0,00 €:** Ohne beobachteten Bestand steht „unbekannt“; fehlt für ein Asset Kurs oder
   Zuordnung, steht der bekannte Teil als „mind. …“ mit Liste der fehlenden Assets. Schlägt ein Abruf fehl, bleibt der
@@ -1372,6 +1375,33 @@ Bestand, nicht die Vollständigkeit der Buchungshistorie. Anlegen und Entfernen 
 Einträge bleiben als „entfernt“ erhalten. Referenzbestände reisen mit dem Gesamtexport (`state.json` →
 `reference_balances`, inkl. Zeitpunkt/Zeitzone). Datenbank: Migration 19 (Tabelle) und 20 (Spalten `as_of_ts`, `tz`,
 `basis`; additiv).
+
+### Aktuelle Bestände abfragen und Quellenrang (M28.1)
+
+* **Aktuelle Bestände problematischer Positionen abfragen:** In *Bestandsabweichungen* (Diagnose) und in der
+  Integritätsprüfung fragt „↻ Aktuelle Bestände abfragen“ die Börsen- bzw. Wallet-Anbindungen der betroffenen Konten ab –
+  nur lesend (Verbindungsprüfung der Datenquelle liefert die Bestände; keine Buchungen, nichts wird übernommen). Der
+  Fortschritt läuft im Hintergrund (verschiedene Anbieter gleichzeitig) und kehrt danach zur Diagnose zurück; das
+  Ergebnis erscheint als Ist-Bestand zum Abrufzeitpunkt.
+* **Quellenrang bei Doppelungen:** Börsen-/Wallet-API vor Börsen-CSV vor Beleg vor Steuertool-Import (Koinly …) vor
+  manuell/abgeleitet (`audit.source_rank`). Bei einer wirtschaftlichen Dublette gilt standardmäßig die API-Buchung (genaue
+  Zeit, Gebühr, Referenz), die Import-Buchung entfällt als Überlagerung – die Import-Datei bleibt unverändert, „Rückgängig“
+  stellt sie wieder her. Dasselbe bei gleichem Ereignisindex (API-Buchung neben Import-Buchung). Die Gegenoption „andere
+  Quelle gilt“ bleibt wählbar. Manuell erfasste Buchungen bleiben wie bisher. Die feldbezogene Rangfolge des CSV-Abgleichs
+  (Einordnung als Transfer zwischen eigenen Konten: Steuertool vor Börse) bleibt bewusst unverändert, weil eine API nicht
+  weiß, ob ein Abgang an ein eigenes Konto geht.
+* **Bestandsabweichungen:** fünf statt acht Spalten (Konto · Asset, Bestand mit Soll/Ist, Differenz, Ursache, Zustand);
+  Zahlen umbrechen nie, auf breiten Bildschirmen scrollt die Tabelle im eigenen Bereich mit feststehender Kopfzeile und
+  erster Spalte.
+* **PubFi (Polkadot/peaq):** Die Meldung unterscheidet nach PubFi-Dokumentation 401 („Schlüssel unbekannt“) und 403
+  („Konto für die kostenlose Route nicht freigeschaltet“ – Schlüssel wird erkannt, Konto/Tarif bei PubFi prüfen oder
+  „Subscan direkt“ wählen) und nennt Code, Grund und Anfrage-ID der Antwort.
+* **peaq 0x-Adresse ohne Subscan-Konto:** Kennt Subscan die Adresse nicht, fragt Portfolia Bestand und Transaktionszähler
+  über einen öffentlichen peaq-EVM-RPC ab (`eth_getBalance`, `eth_getTransactionCount`, ohne Schlüssel). Leer (0, nie
+  gesendet) → sauber „leeres Konto“ statt Fehler; sonst Fehler mit dem tatsächlichen Bestand (Subscan-Lücke, kein leeres
+  Konto – „Subscan direkt“ wählen).
+* **Wertentwicklung:** Der Tooltip liest Depotwert und eingesetztes Kapital direkt aus den Daten des nächstgelegenen
+  Tages (vorher fehlte der Depotwert an Stellen, an denen die Linie für die Darstellung ausgedünnt war).
 
 ### Einzelvorgänge, Evidenzstufen und Freigabe (M28)
 

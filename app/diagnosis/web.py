@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.diagnosis import actions as A
+from app.diagnosis import live as L
 from app.diagnosis.engine import report_for
 from app.diagnosis.model import CASE_STATES, HOLDING_STATUS, KINDS, LOSS_CLASS, SECTIONS, STATUS, STATUS_BADGE
 from app.diagnosis.recommend import recommend
@@ -204,7 +205,8 @@ def make_router() -> APIRouter:
         for sec in sections:
             sec["cc"] = {k: sum(case_counts.get(kd, {}).get(k, 0) for kd in SECTIONS[sec["key"]][1])
                          for k in ("offen", "nachgewiesen", "wahrscheinlich", "ungeklaert", "abgelehnt", "uebernommen")}
-        return render(request, "diagnosis.html", active="quality", report=report, shown=shown, kind=kind,
+        live = L.context(ctx, {r["h"].account for r in _deviations(report, {})[0]}, "/quality/diagnose#bestand")
+        return render(request, "diagnosis.html", active="quality", report=report, shown=shown, kind=kind, live=live,
                       case_counts=case_counts, by_fid={x.id: x for x in report.findings},
                       deviations=deviations, dev_meta=dev_meta, sections=sections, ref_rows=ref_rows,
                       ref_accounts=sorted(set(pf.all_accounts()) | set(pf.accounts)) if pf is not None else [],
@@ -280,6 +282,28 @@ def make_router() -> APIRouter:
         if not res.ok:
             return await run_in_threadpool(_plan_page, request, fid, opt, params, True, res.errors, 409)
         return _back(_page_url(msg=res.message, anchor="decisions"))
+
+    @router.post("/quality/diagnose/live-balances")
+    async def live_balances(request: Request) -> Response:
+        """Aktuelle Bestände der Konten problematischer Positionen bei Börse bzw. Wallet abfragen (nur lesend)."""
+        ctx = get_ctx(request)
+        form = await request.form()
+        if str(form.get("back") or "") == "integrity":
+            from app.diagnosis import integrity as I
+
+            run = I.load(ctx.db)
+            accounts = {a for it in (run.items if run else []) if it.status == "offen" for a in it.accounts}
+            back, target = "/quality/integrity", "/quality/integrity"
+        else:
+            report = await run_in_threadpool(report_for, ctx)
+            accounts = {r["h"].account for r in _deviations(report, {})[0]}
+            back, target = "/quality/diagnose#bestand", "/quality/diagnose"
+        res = await run_in_threadpool(L.start, ctx, accounts, back)
+        if res.get("error"):
+            return _back(f"{target}?{urlencode({'err': res['error']})}")
+        msg = (f"Bestandsabfrage gestartet: {res['count']} Datenquelle(n) – im Hintergrund, nur lesend; das Ergebnis "
+               "erscheint danach als Ist-Bestand.")
+        return _back(f"{target}?{urlencode({'msg': msg})}")
 
     @router.post("/quality/diagnose/dismiss")
     async def dismiss_route(request: Request) -> Response:

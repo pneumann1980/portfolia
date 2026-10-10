@@ -44,6 +44,20 @@
   }
   function fdate(s) { var d = new Date(s); return isNaN(d) ? s : DF.format(d); }
   function fdt(s) { var d = new Date(s); return isNaN(d) ? s : DTF.format(d); }
+  // Index des Datums, das dem Zeitwert des Mauszeigers am nächsten liegt. Die Tooltips lesen ihre Werte direkt aus
+  // den Rohdaten: Serien mit Downsampling (lttb) fehlen sonst an Stellen, an denen ein Punkt weggelassen wurde.
+  function nearestIndex(dates, ts) {
+    var x = typeof ts === "number" ? ts : Date.parse(ts);
+    if (isNaN(x) || !dates.length) return -1;
+    var lo = 0, hi = dates.length - 1;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      if (Date.parse(dates[mid]) < x) lo = mid + 1; else hi = mid;
+    }
+    if (lo > 0 && Math.abs(Date.parse(dates[lo - 1]) - x) <= Math.abs(Date.parse(dates[lo]) - x)) lo -= 1;
+    return lo;
+  }
+  function axisTs(ps) { return ps && ps.length ? (ps[0].axisValue !== undefined ? ps[0].axisValue : ps[0].value[0]) : NaN; }
   function esc(s) {
     return String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -258,11 +272,13 @@
       tooltip: Object.assign(tooltipBase(t), {
         trigger: "axis", axisPointer: { type: "line", lineStyle: { color: t.axis } },
         formatter: function (ps) {
-          var s = "<b>" + fdate(ps[0].value[0]) + "</b>";
-          var v = null, c = null;
-          ps.forEach(function (p) { if (p.seriesIndex === 0) v = p.value[1]; else c = p.value[1]; });
-          s += row(t.s1, "Depotwert", eur(v)) + row(t.muted, "Eingesetztes Kapital", eur(c));
-          if (v !== null && c !== null) s += row(null, "Gewinn/Verlust", eur(v - c));
+          var i = nearestIndex(d.dates, axisTs(ps));
+          if (i < 0) return "";
+          var v = d.value[i], c = d.invested[i];
+          var s = "<b>" + fdate(d.dates[i]) + "</b>";
+          s += row(t.s1, "Depotwert", v === null || v === undefined ? "–" : eur(v)) +
+            row(t.muted, "Eingesetztes Kapital", c === null || c === undefined ? "–" : eur(c));
+          if (v !== null && v !== undefined && c !== null && c !== undefined) s += row(null, "Gewinn/Verlust", eur(v - c));
           return s;
         },
       }),
@@ -364,9 +380,11 @@
       tooltip: Object.assign(tooltipBase(t), {
         trigger: "axis",
         formatter: function (ps) {
-          var s = "<b>" + fdate(ps[0].value[0]) + "</b>";
-          ps.forEach(function (p) { s += p.seriesIndex === 0 ? row(t.s1, "Stück", num(p.value[1], 8)) : row(t.s1, "Wert", eur(p.value[1])); });
-          return s;
+          var i = nearestIndex(d.dates, axisTs(ps));
+          if (i < 0) return "";
+          var qv = d.qty[i], vv = d.value[i];
+          return "<b>" + fdate(d.dates[i]) + "</b>" + row(t.s1, "Stück", qv === null || qv === undefined ? "–" : num(qv, 8)) +
+            row(t.s1, "Wert", vv === null || vv === undefined ? "–" : eur(vv));
         },
       }),
       xAxis: [Object.assign({ type: "time", gridIndex: 0 }, axisCommon(t), { axisLabel: { show: false }, splitLine: { show: false } }),
@@ -462,9 +480,9 @@
     if (!d.dates || d.dates.length < 2) return empty(el, "Nicht genügend Historie.");
     var inst = getInstance(el);
     var colors = [t.s1, t.s2, t.s3, t.s4];
-    var series = [{ name: "Portfolio (TTWROR)", data: d.dates.map(function (x, i) { return [x, d.portfolio[i]]; }) }];
+    var series = [{ name: "Portfolio (TTWROR)", values: d.portfolio, data: d.dates.map(function (x, i) { return [x, d.portfolio[i]]; }) }];
     (d.benchmarks || []).forEach(function (b) {
-      if (b.values.some(function (v) { return v !== null; })) series.push({ name: b.name, data: d.dates.map(function (x, i) { return [x, b.values[i]]; }) });
+      if (b.values.some(function (v) { return v !== null; })) series.push({ name: b.name, values: b.values, data: d.dates.map(function (x, i) { return [x, b.values[i]]; }) });
     });
     inst.setOption({
       animation: false,
@@ -475,8 +493,10 @@
       tooltip: Object.assign(tooltipBase(t), {
         trigger: "axis",
         formatter: function (ps) {
-          var s = "<b>" + fdate(ps[0].value[0]) + "</b>";
-          ps.forEach(function (p) { s += row(colors[p.seriesIndex], p.seriesName, pct(p.value[1])); });
+          var i = nearestIndex(d.dates, axisTs(ps));
+          if (i < 0) return "";
+          var s = "<b>" + fdate(d.dates[i]) + "</b>";
+          series.forEach(function (sr, k) { s += row(colors[k], sr.name, pct(sr.values[i])); });
           return s;
         },
       }),

@@ -1,6 +1,6 @@
 {# Aktualisierung mehrerer Konten – fragt alle 3 s nach; danach lädt die Übersicht neu (HX-Redirect). #}
 {% from "partials/progress.html" import bar %}
-{% set v = progress_view({"v": 2, "running": True, "label": "Synchronisierung " ~ (batch.label or ''), "pct": batch.pct or 0,
+{% set v = progress_view({"v": 2, "running": True, "label": ("Bestandsabfrage " if batch.mode == "check" else "Synchronisierung ") ~ (batch.label or ''), "pct": batch.pct or 0,
                           "done": batch.done or 0, "total": batch.total or 0, "unit": "Konten",
                           "phase_label": batch.current_phase or '',
                           "source": ("jetzt „" ~ batch.current ~ "“") if batch.current else ''}) %}

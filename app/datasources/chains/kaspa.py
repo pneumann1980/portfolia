@@ -146,6 +146,7 @@ class KaspaConnector(WalletConnector):
         after = int(cur.get("after", 0) or 0)
         res = K.FetchResult(complete=True)
         skipped: Counter[str] = Counter()
+        t_start = self.clock()
         with self.http(cfg, secret) as http:
             txs: list[dict[str, Any]] = []
             done_through = after
@@ -180,8 +181,11 @@ class KaspaConnector(WalletConnector):
                     bal = None  # Budget erschöpft: Historie vollständig, Bestand beim nächsten Lauf
             # KRC-20: eigener Fortsetzungspunkt – ein Ausfall blockiert KAS nicht, wird aber als Lücke gezeigt
             krc_more = False
+            t_krc = self.clock()
             if self.watch(cfg).tokens and stopped is None:
                 krc_more = self._krc_fetch(cfg, http, a, cur, res, bal, skipped)
+            # Laufzeit je Teil (sichtbar in der Abdeckung): zeigt, ob KAS-Historie oder KRC-20-Operationen bremsen
+            res.coverage["seconds"] = {"kas": round(t_krc - t_start, 1), "krc20": round(self.clock() - t_krc, 1)}
             res.balances = bal
             res.skipped = dict(skipped)
             res.complete = stopped is None and not res.gaps and not krc_more

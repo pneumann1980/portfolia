@@ -138,6 +138,13 @@ ENDPOINTS: dict[str, Endpoint] = {e.id: e for e in (
              key_provider="subscan", key_required=True, docs="https://support.subscan.io",
              terms="nur mit direktem (kostenpflichtigem) Subscan-Key; über das kostenlose PubFi-Gateway lässt die "
                    "Route keine Abfrageparameter zu"),
+    Endpoint("peaq_rpc", "peaq öffentlicher EVM-RPC (OnFinality)", "https://peaq.api.onfinality.io/public", rps=1.0,
+             docs="https://docs.peaq.xyz/build/getting-started/connecting-to-peaq",
+             terms="ohne Key; nur Prüfabfragen (eth_getBalance, eth_getTransactionCount) für 0x-Adressen, die "
+                   "Subscan nicht kennt"),
+    Endpoint("peaq_rpc_2", "peaq öffentlicher EVM-RPC (quicknode1.peaq.xyz)", "https://quicknode1.peaq.xyz", rps=1.0,
+             docs="https://docs.peaq.xyz/build/getting-started/connecting-to-peaq",
+             terms="ohne Key; Ausweichadresse für Prüfabfragen (eth_getBalance, eth_getTransactionCount)"),
     Endpoint("xrplcluster", "XRPL Cluster (xrplcluster.com, vollständige Historie)", "https://xrplcluster.com",
              rps=2.0, docs="https://xrpl.org/docs/tutorials/public-servers",
              terms="ohne Key; öffentlicher Full-History-Cluster (Community) – Portfolia fragt höchstens 2×/s"),
@@ -434,6 +441,16 @@ class ChainHttp:
         msg = _excerpt(raw)
         blocked = _blocked(resp)
         detail = f"HTTP {code}" + (f": „{msg}“" if msg and not blocked else "")
+        rid = resp.headers.get("pubfi-request-id")
+        if self.ep.key_provider == "pubfi" and self._key and not blocked:
+            ref = f" (Anfrage-ID {rid[:36]})" if rid else ""
+            if code == 401:
+                return K.ConnectorError("auth", f"{self.ep.label} kennt den Schlüssel nicht ({what}, {detail}){ref} – "
+                                                "Schlüssel unter „Anbieter-Schlüssel“ neu eintragen (Bearer-Schlüssel "
+                                                "von pubfi.ai, nicht der Subscan-Schlüssel).")
+            return K.ConnectorError("scope", f"Das PubFi-Konto ist für diese kostenlose Route nicht freigeschaltet "
+                                             f"({what}, {detail}){ref} – der Schlüssel wird erkannt; Konto bzw. Tarif "
+                                             "bei PubFi prüfen oder als Anbieter „Subscan direkt“ wählen.")
         if self._key:
             return K.ConnectorError("auth", f"{self.ep.label} lehnt den Schlüssel ab ({what}, {detail}) – Schlüssel "
                                             "unter „Anbieter-Schlüssel“ prüfen.")
@@ -519,7 +536,12 @@ def _excerpt(raw: bytes) -> str:
         text = raw[:200].decode("utf-8", "replace")
     else:
         if isinstance(body, dict):
-            text = str(body.get("detail") or body.get("message") or body.get("error") or "")
+            err = body.get("error")
+            if isinstance(err, dict):  # z. B. PubFi: {"error": {"code": "pubfi.forbidden", "message": "…"}}
+                code, msg = str(err.get("code") or ""), str(err.get("message") or "")
+                text = f"{code}: {msg}" if code and msg and code != msg else (msg or code)
+            else:
+                text = str(body.get("detail") or body.get("message") or err or "")
         else:
             text = ""
     return re.sub(r"\s+", " ", text).strip()[:160]

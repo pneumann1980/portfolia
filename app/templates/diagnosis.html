@@ -163,6 +163,7 @@
 <section class="card" id="bestand">
   <div class="card-head"><h2>Bestandsabweichungen ({{ deviations|length }}{% if deviations|length != dev_meta.n_all %} von {{ dev_meta.n_all }}{% endif %})</h2></div>
   <p class="hint">Soll = Bestand aus allen wirksamen Buchungen <em>zum selben Stichtag</em> wie der Ist-Bestand (Abruf der Datenquelle bzw. hinterlegter Referenzbestand). Ohne Ist-Bestand wird nichts als 0 angenommen. Negative Bestände und Positionen mit Doppelbuchungsverdacht stehen ebenfalls hier.</p>
+  {% include "partials/live_balances.html" with context %}
   <form method="get" action="/quality/diagnose" class="filters dev-filters" role="search" aria-label="Bestandsabweichungen filtern">
     <label>Art <select name="h_type"><option value="">alle</option>{% for k, label in dev_meta.types.items() %}<option value="{{ k }}"{% if dev_meta.filters.h_type == k %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     <label>Konto <select name="h_acc"><option value="">alle</option>{% for a in dev_meta.accounts %}<option{% if dev_meta.filters.h_acc == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
@@ -172,16 +173,13 @@
     <button class="btn sm" type="submit">Filtern</button>{% if dev_meta.filters.values()|select|list %} <a class="btn sm ghost" href="/quality/diagnose#bestand">zurücksetzen</a>{% endif %}
   </form>
   {% if not deviations %}<p class="hint">Keine Abweichungen{% if dev_meta.n_all %} für diese Auswahl{% endif %}.</p>{% else %}
-  <div class="table-wrap cards-wrap"><table class="cards hold-table dev-table">
-    <thead><tr><th>Konto · Plattform</th><th>Asset</th><th class="num">Soll</th><th class="num">Ist</th><th class="num">Differenz</th><th>Stichtag · Quelle</th><th>Ursache</th><th>Zustand</th></tr></thead>
+  <div class="table-wrap cards-wrap dev-wrap" tabindex="0" role="region" aria-label="Bestandsabweichungen (scrollbar)"><table class="cards hold-table dev-table">
+    <thead><tr><th>Konto · Asset</th><th class="num">Bestand</th><th class="num">Differenz</th><th>Ursache</th><th>Zustand</th></tr></thead>
     <tbody>{% for r in deviations %}{% set h = r.h %}{% set st = holding_status[h.status] %}<tr>
-      <td data-label="Konto">{{ h.account }}<div class="hint">{{ h.platform }}{% if h.last_sync %} · Sync {{ h.last_sync|datetime_de }}{% else %} · Sync: nie{% endif %}</div></td>
-      <td data-label="Asset">{{ h.asset }}{% if h.identity and h.identity != h.asset %}<div class="hint mono">{{ h.identity }}</div>{% endif %}</td>
-      <td class="num" data-label="Soll">{{ r.soll|qty_exact }}</td>
-      <td class="num" data-label="Ist">{% if r.ist is not none %}{{ r.ist|qty_exact }}{% else %}<span class="muted" title="kein Ist-Bestand – unbekannt, nicht 0">unbekannt</span>{% endif %}</td>
+      <td class="who" data-label="Konto · Asset"><b>{{ h.account }}</b> · {{ h.asset }}{% if h.identity and h.identity != h.asset %}<div class="hint mono">{{ h.identity }}</div>{% endif %}<div class="hint">{{ h.platform }}{% if h.last_sync %} · Sync {{ h.last_sync|datetime_de }}{% else %} · Sync: nie{% endif %}</div></td>
+      <td class="num" data-label="Soll / Ist"><div><span class="k">Soll</span> {{ r.soll|qty_exact }}</div><div><span class="k">Ist</span> {% if r.ist is not none %}{{ r.ist|qty_exact }}{% else %}<span class="muted" title="kein Ist-Bestand – unbekannt, nicht 0">unbekannt</span>{% endif %}</div><div class="hint">{% if r.ist_at %}{{ r.ist_at|date_de if h.reference is not none else r.ist_at|datetime_de }} · {% endif %}{{ h.quality }}</div></td>
       <td class="num" data-label="Differenz">{% if r.diff is not none and r.ist is not none %}{{ r.diff|qty_exact }}{% elif h.computed < 0 %}<span title="negativer Bestand">{{ h.computed|qty_exact }}</span>{% else %}<span class="muted">–</span>{% endif %}{% if r.value is not none %}<div class="hint">≈ {{ r.value|eur }}</div>{% endif %}</td>
-      <td data-label="Stichtag · Quelle">{% if r.ist_at %}{{ r.ist_at|date_de if h.reference is not none else r.ist_at|datetime_de }}{% else %}<span class="muted">–</span>{% endif %}<div class="hint">{{ h.quality }}</div></td>
-      <td class="wide" data-label="Ursache">{% if h.explanations %}<ul class="plain-list">{% for e in h.explanations[:4] %}<li>{{ e }}</li>{% endfor %}</ul>{% else %}<span class="muted">keine erkannt</span>{% endif %}</td>
+      <td class="wide why" data-label="Ursache">{% if h.explanations %}<ul class="plain-list">{% for e in h.explanations[:4] %}<li>{{ e }}</li>{% endfor %}</ul>{% else %}<span class="muted">keine erkannt</span>{% endif %}</td>
       <td data-label="Zustand"><span class="badge {{ st[1] }}" title="{{ st[2] }}">{{ st[0] }}</span>{% if h.confidence %}<div class="hint">Sicherheit: {{ h.confidence }}</div>{% endif %}<div><a href="/journal?account={{ h.account|urlencode }}&amp;asset={{ h.asset|urlencode }}">Buchungen</a></div></td>
     </tr>{% endfor %}</tbody>
   </table></div>{% endif %}

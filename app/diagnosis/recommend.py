@@ -153,6 +153,13 @@ class Facts:
     def tx(self, tx_id: str) -> Tx | None:
         return self.by_id.get(tx_id)
 
+    def is_api(self, t: Tx) -> bool:
+        """App-Buchung aus einer Börsen-/Wallet-Anbindung (Datenquelle) – Originalquelle, geht dem Import vor."""
+        if t.origin != "journal" or self.snap is None:
+            return False
+        m = self.snap.journal.get(t.tx_id)
+        return m is not None and str(m.source or "").lower().startswith(("sync:", "portfolia:sync:"))
+
     def hideable(self, t: Tx) -> bool:
         """Buchung lässt sich über die Diagnose ausblenden (Import-Überlagerung bzw. Status einer App-Buchung)."""
         if t.origin == "import":
@@ -309,8 +316,12 @@ def _same_qty(facts: Facts, f: Finding) -> Recommendation | None:
 
 
 def pair_choice(facts: Facts, first: Tx, second: Tx) -> tuple[str, Tx, Tx]:
-    """Je Hash-Paar: was entfällt? App-Buchung neben Import-Buchung → „im Import enthalten“ (Import hat Vorrang),
-    sonst die zweite Buchung (gleiche Angaben, spätere Kennung)."""
+    """Je Hash-Paar: was entfällt? Buchung der Börsen-/Wallet-API neben Import-Buchung → die Import-Buchung entfällt
+    (API ist die Originalquelle); sonstige App-Buchung neben Import-Buchung → „im Import enthalten“, sonst die zweite
+    Buchung (gleiche Angaben, spätere Kennung)."""
+    for api, imp in ((first, second), (second, first)):
+        if facts.is_api(api) and imp.origin == "import" and facts.hideable(imp):
+            return "hide", imp, api
     if first.origin == "journal" and second.origin == "import":
         return "cover", first, second
     if first.origin == "import" and second.origin == "journal":

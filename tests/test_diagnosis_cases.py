@@ -81,14 +81,14 @@ def test_01_02_11_21_22_single_case_from_group_of_ten(cfg):
     rec = recommend(rep, target)
     assert rec.primary.key == "link_econ" and rec.primary.params == []
     plan = A.build_plan(ctx, rep, target, "link_econ", None)
-    assert [(op.kind, op.target, op.link, op.mode) for op in plan.ops] == [("hide", "A3", "K3", "duplicate")]
+    assert [(op.kind, op.target, op.link, op.mode) for op in plan.ops] == [("hide", "K3", "A3", "duplicate")]
     eff = A.preview(ctx, rep, plan)
     assert eff.total is not None and eff.positions and eff.positions[0].delta < 0
     assert data_fp(ctx.db) == before
     # 1: nur dieser Vorgang wird übernommen
     res = A.apply(ctx, target.id, "link_econ", plan.params, plan.token)
     assert res.ok
-    assert [r["tx_id"] for r in ctx.db.q("SELECT tx_id FROM tx_override WHERE action='delete'")] == ["A3"]
+    assert [r["tx_id"] for r in ctx.db.q("SELECT tx_id FROM tx_override WHERE action='delete'")] == ["K3"]
     row = ctx.db.q1("SELECT * FROM diag_decision WHERE id=?", (res.decision_id,))
     assert row["token"] == plan.token and set(json.loads(row["tx_ids_json"])) >= {"K3", "A3"}
     assert row["data_version"] and json.loads(row["effects_json"])["positions"]
@@ -291,7 +291,7 @@ def test_12_bulk_uses_cases_never_group_and_case_together(cfg):
     before = data_fp(ctx.db)
     res = B.execute(ctx, [f.id, cs[0].id, cs[1].id], bp.token, include_review=True)
     assert res.ok
-    assert sorted(r["tx_id"] for r in ctx.db.q("SELECT tx_id FROM tx_override WHERE action='delete'")) == ["A0", "A1"]
+    assert sorted(r["tx_id"] for r in ctx.db.q("SELECT tx_id FROM tx_override WHERE action='delete'")) == ["K0", "K1"]
     assert B.undo(ctx, res.bulk_id).ok and data_fp(ctx.db) == before
 
 
@@ -337,7 +337,7 @@ def test_undo_refused_when_later_correction_depends_on_it(cfg):
     with ctx.db.transaction() as c:
         c.execute("INSERT INTO diag_decision(finding_id, kind, title, action, option, ops_json, status, created_at) "
                   "VALUES ('x', 'duplicate', 't', 'fix', 'hide_custom', ?, 'active', '2099-01-01T00:00:00Z')",
-                  (json.dumps([{"kind": "hide", "target": "A1", "origin": "import"}]),))
+                  (json.dumps([{"kind": "hide", "target": "K1", "origin": "import"}]),))
     res = A.undo(ctx, first)
     assert not res.ok and "spätere Korrekturen" in res.errors[0]
 
@@ -441,18 +441,18 @@ def test_19_tiny_token_amounts_keep_full_precision(cfg):
 # ----------------------------------------------------------------------------------------------------
 
 def test_20_tax_and_fifo_effects_are_shown_before_release(cfg):
-    rows = [api(tx("A1", "2024-01-10T09:00:00Z", "deposit", to=("Börse B", "BTC", "1"), value="1200"), "b1"),
-            koinly(tx("K1", "2024-01-10T09:20:00Z", "deposit", to=("Börse B", "BTC", "1"), value="1000")),
+    rows = [koinly(tx("K1", "2024-01-10T09:00:00Z", "deposit", to=("Börse B", "BTC", "1"), value="1200")),
+            api(tx("A1", "2024-01-10T09:20:00Z", "deposit", to=("Börse B", "BTC", "1"), value="1000"), "b1"),
             koinly(tx("S1", "2024-06-01T09:00:00Z", "sell", frm=("Börse B", "BTC", "1"), to=("Börse B", "EUR", "3000"),
                       value="3000"))]
     ctx = make_ctx(cfg, rows, AUDIT_ASSETS, valuation="2024-12-31")
     rep = report_for(ctx)
     (f,) = [x for x in by_kind(rep, "duplicate") if x.key.startswith("econ|")]
     plan = A.build_plan(ctx, rep, f, "link_econ", None)
-    assert [op.target for op in plan.ops] == ["A1"]
+    assert [op.target for op in plan.ops] == ["K1"]  # die API-Buchung (A1) gilt, der Import-Eintrag entfällt
     eff = A.preview(ctx, rep, plan)
     (y,) = [y for y in eff.years if y.year == 2024]
-    assert y.realized == (Decimal("1800.00"), Decimal("2000.00"))  # FIFO: Lot von A1 (1.200) → Lot von K1 (1.000)
+    assert y.realized == (Decimal("1800.00"), Decimal("2000.00"))  # FIFO: Lot von K1 (1.200) → Lot von A1 (1.000)
     assert any(p.asset == "BTC" and p.bal == (Decimal("1"), Decimal("0")) for p in eff.positions)
 
 

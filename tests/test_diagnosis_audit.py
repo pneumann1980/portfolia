@@ -112,8 +112,9 @@ def test_01_usd_double_deposits_gross_net_fee_explain_the_fictitious_position(cf
     assert ctx.ledger().balances[("Börse B", "USD")] == Decimal("1450.2")  # Steuertool netto 0 + API netto 1.450,20
     (f,) = econ(rep, "USD")
     assert f.status == "wahrscheinlich" and f.priority == 1 and len(f.pairs) == 4
-    assert {(a.tx_id, b.tx_id) for a, b, _w in f.pairs} == {("K1", "PF-S-000101"), ("K2", "PF-S-000102"),
-                                                            ("K3", "PF-S-000103"), ("K4", "PF-S-000104")}
+    # (gilt, entfällt): die Börsen-API geht dem Steuertool-Import vor
+    assert {(a.tx_id, b.tx_id) for a, b, _w in f.pairs} == {("PF-S-000101", "K1"), ("PF-S-000102", "K2"),
+                                                            ("PF-S-000103", "K3"), ("PF-S-000104", "K4")}
     ev = " ".join(f.evidence)
     assert "brutto 416,35, Gebühr 6,15, netto 410,2 USD" in ev
     assert any("Gebühr erklärt" in w or "netto gleich" in w for _a, _b, w in f.pairs)
@@ -155,7 +156,7 @@ def test_14_15_preview_writes_nothing_apply_links_as_duplicate_and_undo_restores
     plan = A.build_plan(ctx, rep, f, "link_econ", sel, given=True)
     assert not plan.errors and len(plan.ops) == 4
     assert all(op.kind == "hide" and op.mode == "duplicate" and op.badge == "Doppelbuchung" for op in plan.ops)
-    assert {op.target for op in plan.ops} == {"PF-S-000101", "PF-S-000102", "PF-S-000103", "PF-S-000104"}
+    assert {op.target for op in plan.ops} == {"K1", "K2", "K3", "K4"}  # Import-Buchungen entfallen, API gilt
     eff = A.preview(ctx, rep, plan)
     assert eff is not None
     assert data_fp(ctx.db) == before  # 14: Vorschau ändert nichts
@@ -164,7 +165,8 @@ def test_14_15_preview_writes_nothing_apply_links_as_duplicate_and_undo_restores
     assert ctx.ledger().balances.get(("Börse B", "USD"), Decimal(0)) == 0
     logs = [json.loads(r["after_json"]) for r in ctx.db.q("SELECT after_json FROM journal_log WHERE "
                                                            "action='import_delete'")]
-    assert sorted(x["duplicate_of"] for x in logs) == ["K1", "K2", "K3", "K4"]  # verknüpft, nicht nur gelöscht
+    assert sorted(x["duplicate_of"] for x in logs) == ["PF-S-000101", "PF-S-000102", "PF-S-000103",
+                                                       "PF-S-000104"]  # verknüpft, nicht nur gelöscht
     assert ctx.db.scalar("SELECT COUNT(*) FROM tx_override WHERE action='delete'") == 4  # Import-Datei unverändert
     assert not econ(report_for(ctx), "USD")
     (d,) = A.decisions(ctx.db)
@@ -173,16 +175,18 @@ def test_14_15_preview_writes_nothing_apply_links_as_duplicate_and_undo_restores
     assert ctx.ledger().balances[("Börse B", "USD")] == Decimal("1450.2")
 
 
-def test_app_booking_of_data_source_is_covered_not_deleted(cfg):
+def test_api_booking_outranks_tax_tool_import_which_is_overlaid_not_deleted(cfg):
     rows = [koinly(tx("K1", "2023-05-03T08:27:00Z", "deposit", to=("Börse B", "USD", "410.2"), value="380"))]
     ctx = make_ctx(cfg, rows, AUDIT_ASSETS)
     journal_deposit(ctx, "PF-S-000001", "2023-05-03T08:29:00Z", "Börse B", "USD", "416.35", "6.15", "abc-1")
     rep = report_for(ctx)
     (f,) = econ(rep, "USD")
     plan = A.build_plan(ctx, rep, f, "link_econ", None)
-    assert [(op.kind, op.target, op.link) for op in plan.ops] == [("cover", "PF-S-000001", "K1")]
+    # Quellenrang: Börsen-/Wallet-API vor Steuertool-Import – die Import-Buchung entfällt (Überlagerung, Datei bleibt)
+    assert [(op.kind, op.target, op.link) for op in plan.ops] == [("hide", "K1", "PF-S-000001")]
     did = A.apply(ctx, f.id, "link_econ", plan.params, plan.token).decision_id
     assert ctx.db.q1("SELECT status FROM journal_tx WHERE tx_id='PF-S-000001'")["status"] == "active"
+    assert ctx.db.scalar("SELECT COUNT(*) FROM tx_override WHERE action='delete' AND tx_id='K1'") == 1
     assert ctx.ledger().balances[("Börse B", "USD")] == Decimal("410.2")
     assert A.undo(ctx, did).ok and ctx.ledger().balances[("Börse B", "USD")] == Decimal("820.4")
 
@@ -274,7 +278,7 @@ def test_04_negative_usdt_from_missing_counterpart_and_double_withdrawal(cfg):
     assert any("doppelte Auszahlung" in s and "vollständig" in s for s in neg2.suspected)
     assert neg2.scenario is not None and neg2.scenario.rows[0][2].startswith("0 ")
     (f,) = econ(rep, "USDT")
-    assert f.status == "wahrscheinlich" and [(a.tx_id, b.tx_id) for a, b, _w in f.pairs] == [("X1", "X2")]
+    assert f.status == "wahrscheinlich" and [(a.tx_id, b.tx_id) for a, b, _w in f.pairs] == [("X2", "X1")]
 
 
 # ----------------------------------------------------------------------------------------------------

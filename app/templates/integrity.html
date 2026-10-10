@@ -15,6 +15,7 @@
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
   {% if running %}{% include "partials/integrity_progress.html" with context %}{% endif %}
+  {% include "partials/live_balances.html" with context %}
   <div class="alert"><span class="icon">i</span><div><strong>Die Prüfung liest nur.</strong> Sie vergleicht Buchungen, Bestände, Lots und Kostenbasis, Dubletten und Transfers, Kurse und die steuerliche Datenqualität auf einem gemeinsamen Datenstand und speichert nur ihr Ergebnis. Korrekturen laufen über die Vorschau der Diagnose bzw. die Sammelbearbeitung – erst nach deiner Bestätigung und jederzeit rückgängig zu machen.</div></div>
   {% if run %}
   {% set c = run.counts() %}

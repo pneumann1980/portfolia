@@ -112,8 +112,21 @@ def family_label(fam: str) -> str:
 
 
 def _curated(fam: str) -> bool:
-    """Kuratierter Import (Steuertool, Broker-Export) – gilt bei Doppelungen als maßgeblich."""
+    """Kuratierter Import (Steuertool, Broker-Export)."""
     return not (fam.startswith(("sync:", "csv:", "doc:")) or fam in PRIMARY_EXCLUDE)
+
+
+# Rang einer Quelle, wenn zwei Quellen denselben Vorgang enthalten (kleiner = maßgeblich): Die Börsen- bzw.
+# Wallet-API ist die Originalquelle (genaue Zeit, Gebühr, Referenz) und geht Steuertool- und CSV-Importen vor.
+SOURCE_RANK = {"sync": 0, "csv": 1, "doc": 2, "import": 3}
+
+
+def source_rank(fam: str) -> int:
+    """0 Börsen-/Wallet-API · 1 Börsen-CSV · 2 Beleg · 3 kuratierter Import (Koinly …) · 4 manuell/abgeleitet."""
+    if fam in PRIMARY_EXCLUDE:
+        return 4
+    kind = fam.partition(":")[0]
+    return SOURCE_RANK.get(kind, SOURCE_RANK["import"])
 
 
 def flows_by_family(idx: _Index) -> dict[tuple[str, str], dict[str, list[Any]]]:
@@ -282,10 +295,11 @@ def _leg_text(leg: Leg) -> str:
 
 
 def _keep_drop(a: Leg, b: Leg) -> tuple[Leg, Leg]:
-    """Welche Buchung gilt: der kuratierte Import (maßgeblich), sonst die frühere."""
-    ca, cb = _curated(a.fam), _curated(b.fam)
-    if ca != cb:
-        return (a, b) if ca else (b, a)
+    """Welche Buchung gilt: die der höheren Quelle (API vor CSV vor Steuertool-Import vor manuell, ``source_rank``),
+    sonst der Import, sonst die frühere."""
+    ra, rb = source_rank(a.fam), source_rank(b.fam)
+    if ra != rb:
+        return (a, b) if ra < rb else (b, a)
     if (a.tx.origin == "import") != (b.tx.origin == "import"):
         return (a, b) if a.tx.origin == "import" else (b, a)
     return (a, b) if (a.tx.ts, a.tx.tx_id) <= (b.tx.ts, b.tx.tx_id) else (b, a)
@@ -565,7 +579,7 @@ def _multi_parts(idx: _Index, by_pos: dict[tuple[str, str, str], list[Leg]], use
             ambiguous = len(combos) > 1
             ids = [single.tx.tx_id, *(x.tx.tx_id for x in parts)]
             taken.update(ids if not ambiguous else [single.tx.tx_id])
-            keep_single = _curated(single.fam) or not _curated(parts[0].fam)
+            keep_single = source_rank(single.fam) <= source_rank(parts[0].fam)
             pairs = ([[single.tx.tx_id, x.tx.tx_id] for x in parts] if keep_single else
                      [[x.tx.tx_id, single.tx.tx_id] for x in parts])
             shape = f"1:{len(parts)}"
@@ -1628,7 +1642,8 @@ def identity(idx: _Index, aid: str) -> str:
 def platform(idx: _Index, acc: str) -> str:
     info = idx.pf.accounts.get(acc)
     labels = sorted({s.provider_label for s in idx.snap.sources if s.account == acc})
-    return ", ".join([*([info.broker] if info and info.broker else []), *labels]) or "–"
+    names = list(dict.fromkeys([*([info.broker] if info and info.broker else []), *labels]))  # ohne Doppelungen
+    return ", ".join(names) or "–"
 
 
 # ----------------------------------------------------------------------------------------------------

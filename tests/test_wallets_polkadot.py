@@ -213,3 +213,18 @@ def test_provider_error_keeps_cursor(client, scan):
     scan.fail_next(httpx.Response(200, json={"code": 10001, "message": "API rate limit exceeded"}))
     res = sync(client, sid)
     assert "drosselt" in res["error"] and source(client, sid)["cursor_json"] == cursor
+
+
+def test_pubfi_401_and_403_are_told_apart(client, scan):
+    """PubFi: 401 = Schlüssel unbekannt, 403 = Konto für die kostenlose Route nicht freigeschaltet (laut Doku).
+    Die Meldung nennt den Grund aus der Antwort und die Anfrage-ID; beides wird nie als „Subscan-Schlüssel“ gedeutet."""
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    body = {"error": {"code": "pubfi.forbidden", "message": "Account is not authorized for this route"}}
+    scan.fail_next(httpx.Response(403, json=body, headers={"pubfi-request-id": "req-1234"}))
+    err = sync(client, sid)["error"]
+    assert "nicht freigeschaltet" in err and "pubfi.forbidden" in err and "req-1234" in err
+    assert "Subscan direkt" in err
+    scan.fail_next(httpx.Response(401, json={"error": {"code": "pubfi.unauthorized", "message": "Unauthorized"}}))
+    err = sync(client, sid)["error"]
+    assert "kennt den Schlüssel nicht" in err and "pubfi.unauthorized" in err and "pubfi.ai" in err

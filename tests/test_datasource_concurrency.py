@@ -154,6 +154,25 @@ def test_batch_skips_source_running_separately_and_can_be_cancelled(client, fake
     assert wait_until(lambda: not S.is_busy(a))
 
 
+def test_batch_runs_different_providers_side_by_side_and_cancel_stops_all(client, fake, slow):  # noqa: F811
+    """Sammelaktualisierung: ein langsamer Anbieter hält andere Anbieter nicht auf; Konten desselben Anbieters laufen
+    nacheinander; „Abbrechen“ erreicht alle laufenden Konten."""
+    c = client
+    svc = datasource_service(c.app.state.ctx)
+    a, b = two_sources(c)  # a: Coinbase (langsam), b: anderer Anbieter
+    fake.events = [deposit("kraken:L1", "2024-03-01T10:00:00", "EUR", "1000")]
+    assert svc.start_sync_many([a, b], "Test")["started"] and slow.started.wait(5)
+    # b ist fertig, obwohl a noch läuft
+    assert wait_until(lambda: source(c, b)["status"] == "synced")
+    st = svc.batch_progress()
+    assert st["running"] and S.is_busy(a) and st.get("done") == 1 and st.get("current_ids") == [a]
+    assert "bricht ab" in svc.cancel_many() or "Abbruch" in svc.cancel_many()
+    assert wait_until(lambda: not svc.batch_progress().get("running"))
+    assert not S.is_busy(a)
+    done = svc.batch_progress()
+    assert done["done"] == 2 and done.get("cancelled")
+
+
 def test_http_client_stops_on_cancel_even_while_waiting():
     ev = threading.Event()
     calls = []

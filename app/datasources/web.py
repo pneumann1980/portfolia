@@ -169,8 +169,9 @@ def make_router() -> APIRouter:
         res = await run_in_threadpool(svc.start_sync_many, ids, label)
         if res.get("error"):
             return _back(request, _list_url(error=res["error"]))
-        return _back(request, _list_url(msg=f"Aktualisierung gestartet: {label} ({res['count']} Konten) – nacheinander "
-                                            "im Hintergrund; Fehler einzelner Konten halten die übrigen nicht auf."))
+        return _back(request, _list_url(msg=f"Aktualisierung gestartet: {label} ({res['count']} Konten) – im "
+                                            "Hintergrund, verschiedene Anbieter gleichzeitig; Fehler einzelner "
+                                            "Konten halten die übrigen nicht auf."))
 
     @router.post("/settings/datasources/sync-many/cancel")
     async def sync_many_cancel(request: Request) -> Response:
@@ -183,7 +184,7 @@ def make_router() -> APIRouter:
         svc = datasource_service(get_ctx(request))
         b = svc.batch_progress()
         if not b.get("running"):
-            return Response(status_code=204, headers={"HX-Redirect": _list_url()})
+            return Response(status_code=204, headers={"HX-Redirect": b.get("back") or _list_url()})
         return render(request, "partials/ds_batch.html", batch=b)
 
     @router.post("/settings/datasources/groups/rename")

@@ -30,15 +30,27 @@ Grenze
 from __future__ import annotations
 
 from dataclasses import replace
+from decimal import Decimal
 from typing import Any, ClassVar
 
 from app.datasources import connector as K
-from app.datasources.chainhttp import ENDPOINTS, Endpoint
+from app.datasources.chainhttp import ENDPOINTS, ChainHttp, Endpoint, Stop
 from app.datasources.chains.addresses import PEAQ_SS58
 from app.datasources.chains.codec import ss58_decode, ss58_encode
 from app.datasources.chains.evm import PeaqEvmConnector
 from app.datasources.chains.polkadot import PolkadotConnector
-from app.datasources.wallet import WalletConnector
+from app.datasources.wallet import WalletConnector, units
+
+RPC_ENDPOINTS = ("peaq_rpc", "peaq_rpc_2")
+
+
+class UnknownAccount(K.ConnectorError):
+    """Subscan kennt zur 0x-Adresse kein Substrate-Konto (noch nie gebucht bzw. nicht aufgelöst)."""
+
+    def __init__(self, address: str) -> None:
+        super().__init__("data", "Subscan kennt zu dieser 0x-Adresse (noch) kein peaq-Konto – erst nach einer "
+                                 "Bewegung auf peaq abrufbar, oder Anbieter „Subscan direkt“ wählen.")
+        self.address = address
 
 
 class PeaqSubstrateConnector(PolkadotConnector):
@@ -124,15 +136,50 @@ class PeaqConnector(WalletConnector):
         try:
             _prefix, pub = ss58_decode(str(raw or ""))
         except ValueError:
-            raise K.ConnectorError("data", "Subscan kennt zu dieser 0x-Adresse (noch) kein peaq-Konto – erst nach "
-                                           "einer Bewegung auf peaq abrufbar, oder Anbieter „Subscan direkt“ "
-                                           "wählen.") from None
+            raise UnknownAccount(evm) from None
         return replace(cfg, address=ss58_encode(pub, PEAQ_SS58))
+
+    def _chain_state(self, addr: str) -> tuple[Decimal, int] | None:
+        """(Bestand in PEAQ, Transaktionszähler) laut öffentlichem peaq-EVM-RPC (Standard-JSON-RPC
+        ``eth_getBalance`` / ``eth_getTransactionCount``); ``None``, wenn kein RPC antwortet."""
+        for eid in RPC_ENDPOINTS:
+            try:
+                with ChainHttp(ENDPOINTS[eid], transport=self.transport, sleep=self.sleep, clock=self.clock,
+                               max_requests=4, deadline_s=30, usage=self.usage) as http:
+                    bal = http.rpc("eth_getBalance", [addr, "latest"], what="Bestand laut Kette")
+                    nonce = http.rpc("eth_getTransactionCount", [addr, "latest"], what="Transaktionszähler")
+                return units(int(str(bal), 16), 18), int(str(nonce), 16)
+            except (K.ConnectorError, Stop, ValueError, TypeError):
+                continue
+        return None
+
+    def _unknown(self, e: UnknownAccount) -> tuple[Decimal, str]:
+        """Konto bei Subscan unbekannt: Kette fragen. Leeres Konto (Bestand 0, nie gesendet) → (0, Hinweis);
+        sonst Fehler mit dem tatsächlichen Bestand – Subscan-Lücke, kein leeres Konto."""
+        state = self._chain_state(e.address)
+        if state is None:
+            raise e
+        qty, nonce = state
+        if qty == 0 and nonce == 0:
+            return qty, ("Subscan kennt das Konto nicht; laut öffentlichem peaq-RPC ist die Adresse leer (Bestand 0, "
+                         "nie eine Transaktion gesendet) – es gibt nichts zu buchen. Sobald Bewegungen existieren, "
+                         "übernimmt der nächste Abruf sie.")
+        raise K.ConnectorError("data", f"Subscan kennt die 0x-Adresse nicht, die Kette zeigt aber "
+                                       f"{qty.normalize():f} PEAQ (Transaktionszähler {nonce}) – Historie über "
+                                       "PubFi nicht abrufbar. Anbieter „Subscan direkt“ mit eigenem Schlüssel "
+                                       "wählen; der Bestand ist per Referenzbestand prüfbar.")
 
     def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
         impl = self._impl(cfg)
         if isinstance(impl, PeaqSubstrateConnector):
-            sub = self._substrate_cfg(impl, cfg, secret)
+            try:
+                sub = self._substrate_cfg(impl, cfg, secret)
+            except UnknownAccount as e:
+                qty, note = self._unknown(e)
+                return K.CheckResult(True, f"peaq: Adresse {(cfg.address or '')[:8]}… ist noch leer.",
+                                     {"balance": {"ok": True, "text": f"Bestand {qty.normalize():f} PEAQ laut Kette"},
+                                      "account": {"ok": True, "text": note}},
+                                     balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")])
             res = impl.check(sub, secret)
             if sub is not cfg:
                 res.details["mapping"] = {"ok": True, "text": f"0x-Adresse gehört laut Subscan zu {sub.address[:8]}…"
@@ -143,7 +190,13 @@ class PeaqConnector(WalletConnector):
     def fetch(self, cfg: K.SourceConfig, secret: K.Secret, cursor: dict[str, Any] | None) -> K.FetchResult:
         impl = self._impl(cfg)
         if isinstance(impl, PeaqSubstrateConnector):
-            sub = self._substrate_cfg(impl, cfg, secret)
+            try:
+                sub = self._substrate_cfg(impl, cfg, secret)
+            except UnknownAccount as e:
+                qty, note = self._unknown(e)
+                return K.FetchResult(complete=True, cursor=cursor, warnings=[note],
+                                     balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")],
+                                     coverage={"mode": "leeres Konto", "operations": 0, "provider": "peaq-RPC"})
             res = impl.fetch(sub, secret, cursor)
             if sub is not cfg:
                 res.warnings.append(EVM_VIA_PUBFI_NOTE)

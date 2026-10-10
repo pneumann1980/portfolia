@@ -48,6 +48,7 @@ import re
 import threading
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -162,6 +163,7 @@ _GROUP_RE = re.compile(r"^[^\x00-\x1f<>]{1,40}$")
 PROGRESS_STALE_S = 600  # ohne Lebenszeichen gilt ein Lauf als abgebrochen (Neustart des Containers)
 BACKFILL_NEXT_S = 90  # Etappen des Erstabrufs: nächster Lauf nach so vielen Sekunden
 MAX_ROUNDS = 40  # Etappen je manuell gestartetem Hintergrundlauf
+BATCH_WORKERS = 4  # Anbieter, die beim Aktualisieren mehrerer Konten gleichzeitig abgerufen werden
 MANY_ROUNDS = 3  # Etappen je Konto beim Aktualisieren mehrerer Konten (Erstabrufe setzt der Zeitplan fort)
 BATCH_KEY = "datasources.batch_sync"
 # Anbieter-Schlüssel (je Anbieter, nicht je Datenquelle) – nur Anbieter aus dem geprüften Katalog
@@ -196,7 +198,7 @@ def sanitize_error(msg: str, secrets: Iterable[str] = ()) -> str:
     text = _SECRETISH.sub(_mask_secretish, text)
     text = _URL_QUERY.sub(lambda m: f"{m.group(1)}?…", text)
     text = re.sub(r"\s+", " ", text).strip()
-    return text[:300] + ("…" if len(text) > 300 else "")
+    return text[:400] + ("…" if len(text) > 400 else "")
 
 
 def describe_error(e: BaseException, secrets: Iterable[str] = ()) -> tuple[str, str]:
@@ -1291,17 +1293,24 @@ class DataSourceService:
                 self.db.close_thread_conn()
 
     # -- Mehrere Konten nacheinander (Gruppe, alle Wallets) ------------------------------------------------
-    def start_sync_many(self, ids: list[int], label: str, trigger: str = "manual") -> dict[str, Any]:
-        """Konten nacheinander im Hintergrund aktualisieren (eine Synchronisierung zur Zeit). Ein Fehler betrifft nur
-        das jeweilige Konto – die übrigen laufen weiter; bisher übernommene Daten bleiben unverändert."""
+    def start_sync_many(self, ids: list[int], label: str, trigger: str = "manual", *, mode: str = "sync",
+                        back: str | None = None) -> dict[str, Any]:
+        """Konten im Hintergrund aktualisieren: je Anbieter nacheinander, verschiedene Anbieter nebeneinander. Ein
+        Fehler betrifft nur das jeweilige Konto – die übrigen laufen weiter; bisher übernommene Daten bleiben
+        unverändert. ``mode="check"`` fragt nur die aktuellen Bestände ab (Verbindungsprüfung des Anbieters, keine
+        Buchungen); ``back`` ist die Seite, zu der die Fortschrittsanzeige danach zurückkehrt."""
         todo = [i for i in ids if (ds := self.get(i)) is not None and ds.supported and ds.enabled]
         if not todo:
             return {"error": "Keine aktiven Konten mit automatischer Anbindung ausgewählt."}
         if not _BATCH_LOCK.acquire(blocking=False):
             return {"error": "Eine Aktualisierung mehrerer Konten läuft bereits – abwarten oder abbrechen."}
+        mode = "check" if mode == "check" else "sync"
+        safe_back = back if back and back.startswith("/") and not back.startswith("//") else None
         self.ctx.settings.set(BATCH_KEY, {"running": True, "label": label[:80], "total": len(todo), "done": 0,
-                                          "errors": [], "started_at": iso(_now()), "updated_at": iso(_now())})
-        t = threading.Thread(target=self._background_many, args=(todo, trigger), name="ds-sync-many", daemon=True)
+                                          "errors": [], "started_at": iso(_now()), "updated_at": iso(_now()),
+                                          "mode": mode, "back": safe_back})
+        t = threading.Thread(target=self._background_many, args=(todo, trigger, mode), name="ds-sync-many",
+                             daemon=True)
         try:
             t.start()
         except Exception:  # pragma: no cover - Thread-Start fehlgeschlagen
@@ -1321,41 +1330,59 @@ class DataSourceService:
             return "Es läuft keine Aktualisierung mehrerer Konten."
         _BATCH_CANCEL.set()
         state = dict(self.ctx.settings.get(BATCH_KEY) or {})
-        cur = state.get("current_id")
-        if cur:
-            self.cancel(int(cur))
+        for cur in dict.fromkeys([*(state.get("current_ids") or []), state.get("current_id")]):
+            if cur:
+                self.cancel(int(cur))
         state.update(cancel_requested=True)
         self.ctx.settings.set(BATCH_KEY, state)
         return "Abbruch angefordert – weitere Konten werden nicht mehr gestartet."
 
-    def _background_many(self, ids: list[int], trigger: str) -> None:
+    def _background_many(self, ids: list[int], trigger: str, mode: str = "sync") -> None:
+        """Konten je Anbieter nacheinander, verschiedene Anbieter nebeneinander (höchstens ``BATCH_WORKERS``): Ein
+        langsamer Anbieter (z. B. eine Kaspa-Historie) hält die übrigen nicht mehr auf. Die Anfragegrenzen je Endpunkt
+        gelten ohnehin gemeinsam für alle Läufe – paralleles Abrufen verletzt sie nicht."""
         state = dict(self.batch_progress())
         _BATCH_CANCEL.clear()
-        try:
-            for n, sid in enumerate(ids, 1):
-                if _BATCH_CANCEL.is_set():
-                    state["skipped"] = len(ids) - n + 1
-                    break
-                ds = self.get(sid)
-                state.update(current=ds.name if ds else str(sid), current_id=sid, updated_at=iso(_now()))
-                self.ctx.settings.set(BATCH_KEY, state)
-                res: dict[str, Any] = {}
-                ev = _acquire(sid)
-                if ev is None:  # läuft gerade einzeln – nicht doppelt abrufen, die übrigen Konten nicht aufhalten
-                    state["errors"] = [*state.get("errors", []),
-                                       f"{ds.name if ds else sid}: läuft bereits separat – übersprungen"][-10:]
-                    state.update(done=n, updated_at=iso(_now()))
-                    self.ctx.settings.set(BATCH_KEY, state)
-                    continue
+        lock = threading.Lock()
+        running: dict[int, str] = {}
+        groups: dict[str, list[int]] = {}
+        for sid in ids:
+            ds = self.get(sid)
+            groups.setdefault(str(ds.provider) if ds is not None else "?", []).append(sid)
+        counter = {"done": 0, "skipped": 0}
+
+        def publish(**extra: Any) -> None:  # unter ``lock`` aufrufen
+            state.update(current=", ".join(running.values()) or None, current_id=next(iter(running), None),
+                         current_ids=list(running), done=counter["done"], updated_at=iso(_now()), **extra)
+            self.ctx.settings.set(BATCH_KEY, state)
+
+        def one(sid: int) -> None:
+            ds = self.get(sid)
+            name = ds.name if ds else str(sid)
+            ev = _acquire(sid)
+            if ev is None:  # läuft gerade einzeln – nicht doppelt abrufen, die übrigen Konten nicht aufhalten
+                with lock:
+                    counter["done"] += 1
+                    publish(errors=[*state.get("errors", []), f"{name}: läuft bereits separat – übersprungen"][-10:])
+                return
+            with lock:
+                running[sid] = name
+                publish()
+            res: dict[str, Any] = {}
+            try:
                 try:
                     self._set_progress(sid, {"running": True, "stage": "Start", "done": 0, "total": None, "text": "",
                                              "started_at": iso(_now())}, force=True)
                     with K.cancel_scope(ev):
-                        for _ in range(MANY_ROUNDS):
-                            res = self._sync(sid, trigger, background=True)
-                            cur = self.get(sid)
-                            if res.get("error") or cur is None or not cur.backfill_pending or ev.is_set():
-                                break
+                        if mode == "check":  # nur aktuelle Bestände abfragen, keine Buchungen abrufen
+                            ok, text = self.check(sid)
+                            res = {"message": text} if ok else {"error": text}
+                        else:
+                            for _ in range(MANY_ROUNDS):
+                                res = self._sync(sid, trigger, background=True)
+                                cur = self.get(sid)
+                                if res.get("error") or cur is None or not cur.backfill_pending or ev.is_set():
+                                    break
                 except Exception as e:  # ein Konto darf die übrigen nie aufhalten
                     log.exception("Datenquelle %s: Aktualisierung fehlgeschlagen", sid)
                     res = {"error": describe_error(e)[1]}
@@ -1371,13 +1398,42 @@ class DataSourceService:
                             self._set_progress(sid, p, force=True)
                     finally:
                         _release(sid)
-                if res.get("error"):
-                    state["errors"] = [*state.get("errors", []), f"{ds.name if ds else sid}: {res['error']}"][-10:]
-                state.update(done=n, updated_at=iso(_now()))
-                self.ctx.settings.set(BATCH_KEY, state)
+            finally:
+                with lock:
+                    running.pop(sid, None)
+                    counter["done"] += 1
+                    extra: dict[str, Any] = {}
+                    if res.get("error"):
+                        extra["errors"] = [*state.get("errors", []), f"{name}: {res['error']}"][-10:]
+                    publish(**extra)
+
+        def worker(group: list[int]) -> None:
+            try:
+                for sid in group:
+                    if _BATCH_CANCEL.is_set():
+                        with lock:
+                            counter["skipped"] += 1
+                        continue
+                    one(sid)
+            finally:
+                self.db.close_thread_conn()
+
+        try:
+            queue = list(groups.values())
+            with ThreadPoolExecutor(max_workers=max(1, min(BATCH_WORKERS, len(queue))),
+                                    thread_name_prefix="ds-sync-batch") as pool:
+                for fut in [pool.submit(worker, g) for g in queue]:
+                    try:
+                        fut.result()
+                    except Exception:  # pragma: no cover - Absicherung
+                        log.exception("Sammelaktualisierung: Anbietergruppe abgebrochen")
         finally:
-            state.update(running=False, current=None, finished_at=iso(_now()), cancelled=_BATCH_CANCEL.is_set())
-            state.pop("cancel_requested", None)
+            with lock:
+                state.update(running=False, current=None, current_id=None, current_ids=[], finished_at=iso(_now()),
+                             cancelled=_BATCH_CANCEL.is_set(), done=counter["done"])
+                if counter["skipped"]:
+                    state["skipped"] = counter["skipped"]
+                state.pop("cancel_requested", None)
             try:
                 self.ctx.settings.set(BATCH_KEY, state)
             finally:

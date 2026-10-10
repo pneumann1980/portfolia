@@ -233,9 +233,33 @@ def peaq_nets() -> dict:
                      "tokens": [{"symbol": "PEAQ", "unique_id": "PEAQ", "decimals": 18, "balance": str(105 * 10**17)}]}}
 
 
+RPC_HOSTS = ("peaq.api.onfinality.io", "quicknode1.peaq.xyz")
+
+
+class FakePeaqRpc(FakeSubscan):
+    """Subscan (PubFi) plus öffentlicher peaq-EVM-RPC für ``eth_getBalance`` / ``eth_getTransactionCount``."""
+
+    def __init__(self, nets: dict, key: str) -> None:
+        super().__init__(nets, key)
+        self.rpc_balance, self.rpc_nonce, self.rpc_down = 0, 0, False
+        self.rpc_calls: list[dict] = []
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        if req.url.host not in RPC_HOSTS:
+            return super().handler(req)
+        assert req.method == "POST" and not req.headers.get("authorization"), "RPC: kein Schlüssel"
+        body = json.loads(req.content)
+        self.rpc_calls.append(body)
+        if self.rpc_down:
+            return httpx.Response(503, text="down")
+        result = {"eth_getBalance": hex(self.rpc_balance),
+                  "eth_getTransactionCount": hex(self.rpc_nonce)}[body["method"]]
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+
+
 @pytest.fixture
 def subscan(monkeypatch):
-    fake = FakeSubscan(peaq_nets(), KEY)
+    fake = FakePeaqRpc(peaq_nets(), KEY)
     monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(fake.handler))
     monkeypatch.setattr(WalletConnector, "sleep", staticmethod(lambda s: None))
     monkeypatch.setattr(CH, "_LIMITERS", {})
@@ -306,11 +330,38 @@ def test_peaq_evm_address_over_pubfi_resolves_substrate_account(client, subscan)
     assert all(c.url.host == "api.pubfi.ai" for c in subscan.calls)
 
 
-def test_peaq_evm_address_unknown_to_subscan_is_explained(client, subscan):
+def test_peaq_evm_address_unknown_to_subscan_is_explained_when_rpc_is_down(client, subscan):
+    subscan.rpc_down = True
     set_provider_key(client, "pubfi", KEY)
     sid = create_wallet(client, "peaq", A, name="peaq EVM")
     res = sync(client, sid)
     assert "kein peaq-Konto" in res["error"] and "Subscan direkt" in res["error"]
+
+
+def test_peaq_evm_address_unknown_to_subscan_and_empty_on_chain_is_a_clean_empty_account(client, subscan):
+    """Subscan kennt die Adresse nicht, die Kette zeigt Bestand 0 und nie eine Transaktion: kein Fehler, Bestand 0."""
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "peaq", A, name="peaq EVM")
+    res = sync(client, sid)
+    assert res["status"] == "synced", res
+    assert not all_rows(client, sid) and balances(client, sid).get("PEAQ") in ("0", None)
+    assert "leer" in run_text(client, sid)
+    assert [c["method"] for c in subscan.rpc_calls] == ["eth_getBalance", "eth_getTransactionCount"]
+    # Später entsteht das Konto bei Subscan → regulärer Abruf ab Block 0, nichts geht verloren
+    subscan.nets["peaq"]["search"] = {A: ss58_encode(b"\x55" * 32, 42)}
+    res = sync(client, sid)
+    assert res["status"] == "synced", res
+    assert all_rows(client, sid)[qk("100-2", "tr:4")].rec.in_qty == D("12.5")
+
+
+def test_peaq_evm_address_unknown_to_subscan_but_funded_on_chain_is_not_called_empty(client, subscan):
+    subscan.rpc_balance, subscan.rpc_nonce = 3 * WEI, 2
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "peaq", A, name="peaq EVM")
+    res = sync(client, sid)
+    assert res.get("status") != "synced"
+    assert "3 PEAQ" in res["error"] and "Subscan direkt" in res["error"]
+    assert not all_rows(client, sid)
 
 
 def test_peaq_evm_with_direct_subscan_key(client, pulse):

@@ -1,0 +1,19 @@
+{# Aktuelle Bestände der Konten problematischer Positionen bei Börse bzw. Wallet abfragen (nur lesend).
+   Erwartet ``live`` (sources, back, batch) – siehe app/diagnosis/live.py. #}
+{% if live and live.sources %}
+<div class="box live-box" id="live">
+  {% if live.batch.running %}{% set batch = live.batch %}{% include "partials/ds_batch.html" %}
+  {% else %}
+  <form method="post" action="/quality/diagnose/live-balances" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="{{ 'integrity' if 'integrity' in live.back else 'diagnose' }}">
+    <button class="btn sm wrap" type="submit">↻ Aktuelle Bestände abfragen</button>
+    <span class="hint">Börsen- und Wallet-APIs liefern den tatsächlichen Bestand – er gilt als Ist-Bestand und geht Steuertool- und CSV-Daten vor.</span>
+  </form>
+  <details style="margin-top:6px"><summary class="hint">{{ live.sources|length }} Datenquelle{{ 'n' if live.sources|length != 1 }} betroffen</summary>
+    <ul class="plain-list" style="margin-top:4px">{% for s in live.sources %}<li><b>{{ s.name }}</b> · {{ s.provider }} · Konto {{ s.account }}{% if s.last_success_at %} · letzter Abruf {{ s.last_success_at|datetime_de }}{% else %} · noch nie abgerufen{% endif %}</li>{% endfor %}</ul>
+    <p class="hint">Es werden nur Bestände abgefragt (Verbindungsprüfung der Datenquelle) – keine Buchungen, nichts wird übernommen oder geändert. Verschiedene Anbieter laufen gleichzeitig.</p>
+  </details>
+  {% endif %}
+  {% if live.batch.finished_at and live.batch.mode == 'check' and live.batch.errors and not live.batch.running %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div>Letzte Bestandsabfrage ({{ live.batch.finished_at|datetime_de }}): {{ live.batch.errors|length }} Datenquelle(n) mit Fehler.<ul class="small" style="margin:4px 0 0 16px">{% for e in live.batch.errors %}<li class="wrap-any">{{ e }}</li>{% endfor %}</ul></div></div>{% endif %}
+</div>
+{% endif %}
