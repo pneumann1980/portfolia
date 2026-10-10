@@ -233,7 +233,7 @@ def peaq_nets() -> dict:
                      "tokens": [{"symbol": "PEAQ", "unique_id": "PEAQ", "decimals": 18, "balance": str(105 * 10**17)}]}}
 
 
-RPC_HOSTS = ("peaq.api.onfinality.io", "quicknode1.peaq.xyz")
+RPC_HOSTS = ("peaq.api.onfinality.io", "quicknode1.peaq.xyz", "peaq-rpc.publicnode.com")
 
 
 class FakePeaqRpc(FakeSubscan):
@@ -354,14 +354,37 @@ def test_peaq_evm_address_unknown_to_subscan_and_empty_on_chain_is_a_clean_empty
     assert all_rows(client, sid)[qk("100-2", "tr:4")].rec.in_qty == D("12.5")
 
 
-def test_peaq_evm_address_unknown_to_subscan_but_funded_on_chain_is_not_called_empty(client, subscan):
-    subscan.rpc_balance, subscan.rpc_nonce = 3 * WEI, 2
+def test_peaq_evm_address_unknown_to_subscan_but_funded_on_chain_gives_balance_and_a_gap(client, subscan):
+    """Subscan kennt die Adresse nicht, die Kette zeigt Bestand (nie gesendet): der Bestand wird als Ist-Bestand
+    übernommen, die fehlende Historie ist eine ausgewiesene Lücke – kein Fehler, keine erfundene Buchung."""
+    subscan.rpc_balance, subscan.rpc_nonce = 3 * WEI, 0
     set_provider_key(client, "pubfi", KEY)
     sid = create_wallet(client, "peaq", A, name="peaq EVM")
     res = sync(client, sid)
-    assert res.get("status") != "synced"
-    assert "3 PEAQ" in res["error"] and "Subscan direkt" in res["error"]
-    assert not all_rows(client, sid)
+    assert not res.get("error"), res
+    assert not all_rows(client, sid)  # nichts gebucht
+    assert balances(client, sid).get("PEAQ") in ("3", "3.0")
+    text = run_text(client, sid)
+    assert "Historie" in text and "nicht abrufbar" in text and "Subscan direkt" in text
+    assert source(client, sid)["status"] != "synced" or "Lücke" in text or "nicht abrufbar" in text
+
+
+def test_peaq_evm_without_any_key_still_reads_the_balance_from_the_chain(client, subscan):
+    """Kein PubFi-Schlüssel hinterlegt: „Bestand abfragen“ liefert den Kettenbestand, das Problem bleibt sichtbar."""
+    subscan.rpc_balance = 13 * WEI + WEI // 2
+    sid = create_wallet(client, "peaq", A, name="peaq EVM")  # kein Schlüssel
+    ok, msg = datasource_service(ctx(client)).check(sid)
+    assert not ok and "Bestand laut öffentlichem RPC: 13.5 PEAQ" in msg and "Schlüssel" in msg
+    assert balances(client, sid) == {"PEAQ": "13.5"}
+    assert not [c for c in subscan.calls if c.url.host == "api.pubfi.ai"]
+
+
+def test_explorer_links_per_account_for_the_diagnosis(client, subscan):
+    from app.diagnosis import live as L
+
+    create_wallet(client, "peaq", A, name="peaq EVM")
+    links = L.explorer_links(ctx(client))
+    assert list(links.values()) == [f"https://peaq.subscan.io/account/{A}"]
 
 
 def test_peaq_evm_with_direct_subscan_key(client, pulse):

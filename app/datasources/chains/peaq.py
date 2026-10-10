@@ -41,7 +41,7 @@ from app.datasources.chains.evm import PeaqEvmConnector
 from app.datasources.chains.polkadot import PolkadotConnector
 from app.datasources.wallet import WalletConnector, units
 
-RPC_ENDPOINTS = ("peaq_rpc", "peaq_rpc_2")
+RPC_ENDPOINTS = ("peaq_rpc", "peaq_rpc_2", "peaq_rpc_3")
 
 
 class UnknownAccount(K.ConnectorError):
@@ -100,6 +100,7 @@ class PeaqConnector(WalletConnector):
     explorer_tx = PeaqSubstrateConnector.explorer_tx
     explorer_addr = PeaqSubstrateConnector.explorer_addr
     limits = PeaqSubstrateConnector.limits
+    rpc_endpoints = RPC_ENDPOINTS  # Ausweichweg für den Bestand (Service: Prüfung läuft auch ohne PubFi-Schlüssel)
 
     @staticmethod
     def is_evm(cfg: K.SourceConfig) -> bool:
@@ -153,9 +154,11 @@ class PeaqConnector(WalletConnector):
                 continue
         return None
 
-    def _unknown(self, e: UnknownAccount) -> tuple[Decimal, str]:
-        """Konto bei Subscan unbekannt: Kette fragen. Leeres Konto (Bestand 0, nie gesendet) → (0, Hinweis);
-        sonst Fehler mit dem tatsächlichen Bestand – Subscan-Lücke, kein leeres Konto."""
+    def _unknown(self, e: UnknownAccount) -> tuple[Decimal, str, bool]:
+        """Konto bei Subscan unbekannt: Kette fragen → (Bestand, Hinweis, Historie fehlt). Leeres Konto (Bestand 0, nie
+        gesendet) → vollständig, nichts zu buchen. Mit Bestand: der Bestand laut Kette ist ein belegter Ist-Bestand
+        (Abgleich mit den Buchungen), die Historie dagegen über PubFi nicht abrufbar → Lücke, kein Fehler. Antwortet
+        kein RPC, bleibt es beim Fehler."""
         state = self._chain_state(e.address)
         if state is None:
             raise e
@@ -163,11 +166,23 @@ class PeaqConnector(WalletConnector):
         if qty == 0 and nonce == 0:
             return qty, ("Subscan kennt das Konto nicht; laut öffentlichem peaq-RPC ist die Adresse leer (Bestand 0, "
                          "nie eine Transaktion gesendet) – es gibt nichts zu buchen. Sobald Bewegungen existieren, "
-                         "übernimmt der nächste Abruf sie.")
-        raise K.ConnectorError("data", f"Subscan kennt die 0x-Adresse nicht, die Kette zeigt aber "
-                                       f"{qty.normalize():f} PEAQ (Transaktionszähler {nonce}) – Historie über "
-                                       "PubFi nicht abrufbar. Anbieter „Subscan direkt“ mit eigenem Schlüssel "
-                                       "wählen; der Bestand ist per Referenzbestand prüfbar.")
+                         "übernimmt der nächste Abruf sie."), False
+        return qty, (f"Bestand laut Kette (öffentlicher peaq-RPC): {qty.normalize():f} PEAQ, Transaktionszähler "
+                     f"{nonce}. Subscan kennt die 0x-Adresse über PubFi nicht – die Historie ist darüber nicht "
+                     "abrufbar. Der Bestand dient als Ist-Bestand für den Abgleich; Zugänge per Koinly-/CSV-Import "
+                     "bzw. mit Anbieter „Subscan direkt“ (eigener Schlüssel) ergänzen."), True
+
+    def _rpc_only(self, cfg: K.SourceConfig, err: K.ConnectorError) -> K.CheckResult | None:
+        """Anbieter (Subscan/PubFi) nicht nutzbar: Bestand der 0x-Adresse laut öffentlichem RPC als Ist-Bestand –
+        das Anbieterproblem bleibt als Fehler sichtbar."""
+        state = self._chain_state((cfg.address or "").lower())
+        if state is None:
+            return None
+        qty = state[0]
+        text = f"Bestand laut öffentlichem RPC: {qty.normalize():f} PEAQ (nur Bestand, keine Historie)"
+        return K.CheckResult(False, f"{err.message} – {text}",
+                             {"api": {"ok": False, "text": err.message}, "balance": {"ok": True, "text": text}},
+                             balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")])
 
     def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
         impl = self._impl(cfg)
@@ -175,11 +190,18 @@ class PeaqConnector(WalletConnector):
             try:
                 sub = self._substrate_cfg(impl, cfg, secret)
             except UnknownAccount as e:
-                qty, note = self._unknown(e)
-                return K.CheckResult(True, f"peaq: Adresse {(cfg.address or '')[:8]}… ist noch leer.",
+                qty, note, gap = self._unknown(e)
+                head = (f"peaq: Adresse {(cfg.address or '')[:8]}… – Bestand laut Kette, Historie nicht abrufbar."
+                        if gap else f"peaq: Adresse {(cfg.address or '')[:8]}… ist noch leer.")
+                return K.CheckResult(True, head,
                                      {"balance": {"ok": True, "text": f"Bestand {qty.normalize():f} PEAQ laut Kette"},
-                                      "account": {"ok": True, "text": note}},
+                                      "account": {"ok": not gap, "text": note}},
                                      balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")])
+            except K.ConnectorError as e:
+                fb = self._rpc_only(cfg, e) if self.is_evm(cfg) and e.kind not in ("cancelled", "config") else None
+                if fb is None:
+                    raise
+                return fb
             res = impl.check(sub, secret)
             if sub is not cfg:
                 res.details["mapping"] = {"ok": True, "text": f"0x-Adresse gehört laut Subscan zu {sub.address[:8]}…"
@@ -193,10 +215,11 @@ class PeaqConnector(WalletConnector):
             try:
                 sub = self._substrate_cfg(impl, cfg, secret)
             except UnknownAccount as e:
-                qty, note = self._unknown(e)
-                return K.FetchResult(complete=True, cursor=cursor, warnings=[note],
+                qty, note, gap = self._unknown(e)
+                return K.FetchResult(complete=not gap, cursor=cursor, warnings=[note], gaps=[note] if gap else [],
                                      balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")],
-                                     coverage={"mode": "leeres Konto", "operations": 0, "provider": "peaq-RPC"})
+                                     coverage={"mode": "nur Bestand laut Kette" if gap else "leeres Konto",
+                                               "operations": 0, "provider": "peaq-RPC"})
             res = impl.fetch(sub, secret, cursor)
             if sub is not cfg:
                 res.warnings.append(EVM_VIA_PUBFI_NOTE)

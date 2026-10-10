@@ -1400,6 +1400,18 @@ Einträge bleiben als „entfernt“ erhalten. Referenzbestände reisen mit dem 
   über einen öffentlichen peaq-EVM-RPC ab (`eth_getBalance`, `eth_getTransactionCount`, ohne Schlüssel). Leer (0, nie
   gesendet) → sauber „leeres Konto“ statt Fehler; sonst Fehler mit dem tatsächlichen Bestand (Subscan-Lücke, kein leeres
   Konto – „Subscan direkt“ wählen).
+* **Bestand laut Kette (alle EVM-Chains):** Scheitert der Explorer-Anbieter (Schlüssel fehlt oder abgelehnt, Tarif,
+  nicht erreichbar, Konto unbekannt), fragt „Verbindung testen“ bzw. „Aktuelle Bestände abfragen“ den nativen Bestand der
+  Adresse über einen öffentlichen RPC ab (`eth_getBalance`, ohne Schlüssel; PublicNode bzw. offizielle RPCs für Ethereum,
+  BNB Chain, Avalanche, Polygon, PulseChain, peaq). Das Anbieterproblem bleibt als Fehler sichtbar, der Bestand dient als
+  Ist-Bestand für den Abgleich – nur Bestand, keine Historie und keine Tokens.
+* **peaq 0x mit Bestand, aber ohne Subscan-Konto:** Der Kettenbestand wird als Ist-Bestand übernommen, die fehlende
+  Historie ist eine ausgewiesene Lücke (kein Fehler, keine erfundene Buchung); Zugänge per Koinly-/CSV-Import oder mit
+  Anbieter „Subscan direkt“ (eigener Schlüssel) ergänzen. Die Subscan-Weboberfläche zeigt mehr, weil sie interne
+  Schnittstellen nutzt; die öffentlich nutzbaren Routen über PubFi kennen dieses Konto nicht.
+* **Explorer-Link:** In den Bestandsabweichungen führt „Explorer ↗“ je Konto zur Adresse im Explorer der Chain
+  (Etherscan, BscScan, Snowtrace, Polygonscan, PulseChain, Subscan, mempool.space, Solscan, Cardanoscan, XRPL, Kaspa) –
+  Portfolia ruft ihn nie selbst ab.
 * **Wertentwicklung:** Der Tooltip liest Depotwert und eingesetztes Kapital direkt aus den Daten des nächstgelegenen
   Tages (vorher fehlte der Depotwert an Stellen, an denen die Linie für die Darstellung ausgedünnt war).
 

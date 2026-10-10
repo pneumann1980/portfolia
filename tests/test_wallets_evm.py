@@ -537,3 +537,34 @@ def test_token_mapping_in_review_batch_uses_contract(client, evm):
     from app.csvimport.service import csv_service as _csv
     saved = _csv(ctx(client)).saved_symbols()
     assert saved[f"USDC@ETH:{USDC}".upper()] == "USDC" and saved[f"USDC@ETH:{FAKE}".upper()] is None
+
+
+def test_public_rpc_gives_the_balance_when_the_explorer_api_has_no_key(client, evm, monkeypatch):
+    """Ohne Etherscan-Schlüssel (oder bei Ausfall des Anbieters) liefert ein öffentlicher RPC wenigstens den
+    aktuellen Bestand: Ergebnis bleibt ein Fehler des Anbieters, der Bestand dient als Ist-Bestand."""
+    import json
+
+    rpc: list[dict] = []
+    inner = evm.handler
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.host == "ethereum-rpc.publicnode.com":
+            body = json.loads(req.content)
+            rpc.append(body)
+            assert body["method"] == "eth_getBalance" and body["params"][1] == "latest"
+            wei = 2 * 10**18 + 5 * 10**17
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": hex(wei)})
+        return inner(req)
+
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(handler))
+    assets(client, "ETH")
+    sid = create_wallet(client, "ethereum", A, name="Ledger ETH")  # kein Etherscan-Schlüssel hinterlegt
+    ok, msg = datasource_service(ctx(client)).check(sid)
+    assert not ok and "Bestand laut öffentlichem RPC: 2.5 ETH" in msg and "keine Historie" in msg
+    assert balances(client, sid) == {"ETH": "2.5"}
+    assert [b["method"] for b in rpc] == ["eth_getBalance"]
+    assert source(client, sid)["status"] == "error"  # das Anbieterproblem bleibt sichtbar
+    # Mit Schlüssel: normaler Weg, der RPC wird nicht gefragt
+    rpc.clear()
+    set_provider_key(client, "etherscan", ETHERSCAN_KEY)
+    assert datasource_service(ctx(client)).check(sid)[0] and not rpc

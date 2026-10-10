@@ -86,6 +86,9 @@ class EvmConnector(WalletConnector):
     # Blockfenster je Abfrage (None = bis zur Spitze): langsame Indexer antworten auf kleine Bereiche zuverlässig
     block_window: ClassVar[int | None] = None
     network: ClassVar[str | None] = None  # Netz-Platzhalter des Endpunkts (Subscan: peaq)
+    # Öffentliche JSON-RPC-Endpunkte (ohne Key) in Reihenfolge: Ausweichweg für den aktuellen Bestand der Adresse, wenn
+    # der Explorer-Anbieter (Schlüssel fehlt/abgelehnt, nicht erreichbar, Konto unbekannt) nichts liefert
+    rpc_endpoints: ClassVar[tuple[str, ...]] = ()
     limits = ("NFTs (ERC-721/1155) werden nicht gebucht – „Verbindung testen“ zeigt, ob welche vorhanden sind",
               "Positionen in Verträgen (Staking, Liquidität, Bridges) sind nicht sichtbar – nur Bewegungen der Adresse",
               "Interne Bewegungen laut Trace des Indexers; Gebühren aus gasUsed × gasPrice der Transaktion")
@@ -192,6 +195,46 @@ class EvmConnector(WalletConnector):
 
     # -- Prüfen -------------------------------------------------------------------------------------------
     def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
+        """Verbindung prüfen. Scheitert der Anbieter, liefert ein öffentlicher RPC wenigstens den aktuellen Bestand der
+        Adresse (nur Bestand, keine Historie): Das Ergebnis bleibt ein Fehler des Anbieters, der Bestand dient aber als
+        Ist-Bestand für den Abgleich."""
+        try:
+            return self._check_api(cfg, secret)
+        except (K.ConnectorError, Stop) as e:
+            if isinstance(e, K.ConnectorError) and e.kind in ("cancelled", "config"):
+                raise
+            fb = self._rpc_fallback(cfg, getattr(e, "message", None) or str(e))
+            if fb is None:
+                raise
+            return fb
+
+    def _rpc_balance(self, addr: str) -> Decimal | None:
+        """Nativer Bestand laut öffentlichem RPC (``eth_getBalance``); ``None``, wenn keiner antwortet."""
+        from app.datasources.chainhttp import ENDPOINTS
+
+        for eid in self.rpc_endpoints:
+            try:
+                with ChainHttp(ENDPOINTS[eid], transport=self.transport, sleep=self.sleep, clock=self.clock,
+                               max_requests=3, deadline_s=30, usage=self.usage) as http:
+                    res = http.rpc("eth_getBalance", [addr, "latest"], what="Bestand laut Kette")
+                return units(int(str(res), 16), 18)
+            except (K.ConnectorError, Stop, ValueError, TypeError):
+                continue
+        return None
+
+    def _rpc_fallback(self, cfg: K.SourceConfig, reason: str) -> K.CheckResult | None:
+        if not self.rpc_endpoints:
+            return None
+        addr = self._addr(cfg)
+        bal = self._rpc_balance(addr)
+        if bal is None:
+            return None
+        text = f"Bestand laut öffentlichem RPC: {bal.normalize():f} {self.native} (nur Bestand, keine Historie)"
+        return K.CheckResult(False, f"{reason} – {text}",
+                             {"api": {"ok": False, "text": reason}, "balance": {"ok": True, "text": text}},
+                             balances=[K.Balance(self.native, bal, self.chain_label, "laut öffentlichem RPC")])
+
+    def _check_api(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
         addr = self._addr(cfg)
         details: dict[str, Any] = {}
         with self.http(cfg, secret, max_requests=12, deadline_s=60) as http:
@@ -605,6 +648,7 @@ class EthereumConnector(EvmConnector):
     chain_id = 1
     chain_tag = "ETH"
     native = "ETH"
+    rpc_endpoints = ("rpc_ethereum",)
     confirmations = 64  # ≈ 2 Epochen – finalisiert
     endpoints = ("etherscan", "routescan")
     explorer_tx = "https://etherscan.io/tx/{}"
@@ -620,6 +664,7 @@ class BscConnector(EvmConnector):
     chain_id = 56
     chain_tag = "BSC"
     native = "BNB"
+    rpc_endpoints = ("rpc_bsc",)
     confirmations = 20
     # Routescan führt Chain 56 nicht („chain not supported“, live geprüft 10/2026); Etherscan nur im bezahlten Plan.
     # Kostenlos: NodeReal BSCTrace (von BNB Chain als Ersatz der BscScan-API empfohlen) – eigener Abrufweg unten.
@@ -656,9 +701,9 @@ class BscConnector(EvmConnector):
             raise K.ConnectorError("data", f"{http.ep.label}: Blockhöhe nicht lesbar.")
         return int(res, 16)
 
-    def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
+    def _check_api(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
         if not self._nr(cfg):
-            return super().check(cfg, secret)
+            return super()._check_api(cfg, secret)
         addr = self._addr(cfg)
         with self.http(cfg, secret, max_requests=8, deadline_s=60) as http:
             tip = self._nr_tip(http)
@@ -789,6 +834,7 @@ class AvalancheConnector(EvmConnector):
     chain_id = 43114
     chain_tag = "AVAX"
     native = "AVAX"
+    rpc_endpoints = ("rpc_avalanche",)
     confirmations = 6  # sofortige Finalität (Snowman); kleiner Puffer für den Indexer
     endpoints = ("routescan", "etherscan")
     explorer_tx = "https://snowtrace.io/tx/{}"
@@ -807,6 +853,7 @@ class PolygonConnector(EvmConnector):
     chain_id = 137
     chain_tag = "POLYGON"
     native = "POL"
+    rpc_endpoints = ("rpc_polygon",)
     confirmations = 128  # Bor-Blöcke ≈ 2 s; Puffer bis zur Checkpoint-Finalität des Indexers
     endpoints = ("etherscan", "blockscout_polygon")
     mirror_contracts = frozenset({POLYGON_NATIVE})
@@ -844,6 +891,7 @@ class PulseChainConnector(EvmConnector):
     chain_id = 369
     chain_tag = "PLS"
     native = "PLS"
+    rpc_endpoints = ("pulsechain_rpc",)
     confirmations = 32  # Blöcke ≈ 10 s; Puffer bis zur Finalität des Indexers
     endpoints = ("blockscout_pulsechain",)
     first_block = PULSE_FIRST_BLOCK
@@ -909,6 +957,7 @@ class PeaqEvmConnector(EvmConnector):
     chain_id = 3338
     chain_tag = "PEAQ"
     native = "PEAQ"
+    rpc_endpoints = ("peaq_rpc", "peaq_rpc_2", "peaq_rpc_3")
     confirmations = 12
     endpoints = ("subscan_evm",)
     network = "peaq"

@@ -1354,6 +1354,13 @@ Undo, Sammelbearbeitung) – keine zweite Diagnose-, Abgleichs- oder Korrektur-E
 * **Integrität/Diagnose:** „Aktuelle Bestände abfragen“ (nur lesend, Hintergrund); Quellenrang API > CSV > Beleg >
   Steuertool > manuell bei Doppelungen.
 
+## M28.2 – Bestand laut Kette, Explorer-Links (0.25.2)
+
+* **peaq:** 0x-Adresse mit Bestand, aber ohne Subscan-Konto → Kettenbestand (öffentlicher RPC) als Ist-Bestand, Historie als
+  Lücke; auch ohne PubFi-Schlüssel erreichbar.
+* **Alle EVM-Chains:** Ausweichweg „Bestand laut öffentlichem RPC“ bei Anbieterproblemen (nur Bestand).
+* **Diagnose:** „Explorer ↗“ je Konto in den Bestandsabweichungen.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

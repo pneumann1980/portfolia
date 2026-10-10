@@ -41,3 +41,14 @@ def start(ctx: Any, accounts: Iterable[str], back: str) -> dict[str, Any]:
         return {"error": "Für diese Konten gibt es keine aktive Börsen- oder Wallet-Anbindung."}
     return datasource_service(ctx).start_sync_many([s["id"] for s in srcs], "problematische Positionen",
                                                    mode="check", back=back)
+
+
+def explorer_links(ctx: Any) -> dict[str, str]:
+    """Konto → Explorer-Link der Wallet-Adresse (öffnet der Nutzer selbst; Portfolia ruft ihn nie ab) – damit lässt sich
+    der tatsächliche Bestand je Chain mit einem Klick gegenprüfen."""
+    out: dict[str, str] = {}
+    for ds in datasource_service(ctx).list():
+        url = ds.explorer_url if ds.is_wallet else None
+        if url and ds.account:
+            out.setdefault(ds.account, url)
+    return out

@@ -206,7 +206,9 @@ def make_router() -> APIRouter:
             sec["cc"] = {k: sum(case_counts.get(kd, {}).get(k, 0) for kd in SECTIONS[sec["key"]][1])
                          for k in ("offen", "nachgewiesen", "wahrscheinlich", "ungeklaert", "abgelehnt", "uebernommen")}
         live = L.context(ctx, {r["h"].account for r in _deviations(report, {})[0]}, "/quality/diagnose#bestand")
-        return render(request, "diagnosis.html", active="quality", report=report, shown=shown, kind=kind, live=live,
+        explorers = L.explorer_links(ctx)
+        return render(request, "diagnosis.html", active="quality", report=report, shown=shown, kind=kind,
+                      live=live, explorers=explorers,
                       case_counts=case_counts, by_fid={x.id: x for x in report.findings},
                       deviations=deviations, dev_meta=dev_meta, sections=sections, ref_rows=ref_rows,
                       ref_accounts=sorted(set(pf.all_accounts()) | set(pf.accounts)) if pf is not None else [],

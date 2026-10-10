@@ -62,6 +62,8 @@ class FakeEvm(Recorder):
         self.paid = paid
 
     def handler(self, req: httpx.Request) -> httpx.Response:
+        if req.url.host.endswith("publicnode.com"):  # öffentlicher RPC (Ausweichweg für den Bestand): nicht erreichbar
+            return httpx.Response(503, text="Testumgebung: kein RPC")
         self.calls.append(req)
         assert req.method == "GET", "nur lesende Aufrufe"
         p = req.url.params

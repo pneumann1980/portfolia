@@ -201,6 +201,11 @@ def sanitize_error(msg: str, secrets: Iterable[str] = ()) -> str:
     return text[:400] + ("…" if len(text) > 400 else "")
 
 
+class ProviderKeyMissing(K.ConnectorError):
+    """Für den gewählten Wallet-Anbieter fehlt der Schlüssel (Art ``config``). Die Prüfung lässt den Connector trotzdem
+    laufen: Er meldet das Problem selbst und kann einen schlüssellosen Ausweichweg (öffentlicher RPC) anbieten."""
+
+
 def describe_error(e: BaseException, secrets: Iterable[str] = ()) -> tuple[str, str]:
     """(Art, bereinigte Meldung) für die Anzeige."""
     if isinstance(e, K.ConnectorError):
@@ -1137,8 +1142,8 @@ class DataSourceService:
                 return K.Secret(None)
             sec = self.provider_secret(ep.key_provider)
             if ep.key_required and not sec.present:
-                raise K.ConnectorError("config", f"{ep.label} verlangt einen Schlüssel des Anbieters – unter "
-                                                 "„Anbieter-Schlüssel“ hinterlegen (wird verschlüsselt gespeichert).")
+                raise ProviderKeyMissing("config", f"{ep.label} verlangt einen Schlüssel des Anbieters – unter "
+                                                   "„Anbieter-Schlüssel“ hinterlegen (wird verschlüsselt gespeichert).")
             return sec
         if ds.key_expiry_state == "expired":
             raise K.ConnectorError("expired", f"laut Angabe am {ds.key_expiry.strftime('%d.%m.%Y')} abgelaufen – "  # type: ignore[union-attr]
@@ -1182,7 +1187,12 @@ class DataSourceService:
         conn.catalog = Catalog(self.db, ds.provider)
         self._prepare(ds, conn, track=False)
         try:
-            secret = self._secret(ds, conn)
+            try:
+                secret = self._secret(ds, conn)
+            except ProviderKeyMissing:
+                if not getattr(conn, "rpc_endpoints", ()):
+                    raise
+                secret = K.Secret(None)  # Connector meldet den fehlenden Schlüssel selbst und fragt den RPC
             with get_redactor().temporary(secret.values()):
                 res = conn.check(ds.config(), secret)
             if res.balances is not None:
