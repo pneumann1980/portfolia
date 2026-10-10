@@ -24,7 +24,7 @@
   {% for o in rec.options if o.dismiss %}
   <form method="post" action="/quality/diagnose/dismiss" class="reco-dismiss"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ f.id }}">
     <input type="text" name="note" maxlength="500" placeholder="Notiz (optional), z. B. „im Explorer geprüft“" aria-label="Notiz zur Prüfung">
-    <button class="btn sm ghost" type="submit">{{ o.label }}</button>
+    <button class="btn sm ghost wrap" type="submit">{{ o.label }}</button>
   </form>{% endfor %}
   {% if rec.links %}<div class="hint">Weiter:{% for l in rec.links %}{{ ' · ' if not loop.first else ' ' }}<a href="{{ l.url }}"{% if l.external %} target="_blank" rel="noopener noreferrer"{% endif %}>{{ l.label }}</a>{% endfor %}</div>{% endif %}
 </div>
@@ -47,7 +47,8 @@
   <nav class="diag-sections" aria-label="Bereiche der Buchungsprüfung">
     {% for sec in sections %}<a class="diag-section" href="{% if sec.key == 'bestand' %}#bestand{% else %}{{ qurl(sec.kind) }}#findings{% endif %}">
       <span class="ds-label">{{ sec.label }}</span>
-      <span class="ds-n">{% if sec.key == 'bestand' %}{{ deviations|length }}{% else %}{{ sec.n }}{% endif %}</span>
+      <span class="ds-n">{% if sec.key == 'bestand' %}{{ deviations|length }}{% else %}{{ sec.cc.offen }}{% endif %}</span>
+      {% if sec.key != 'bestand' %}<span class="hint ds-cc">offen{% if sec.cc.nachgewiesen %} · {{ sec.cc.nachgewiesen }} nachgewiesen{% endif %}{% if sec.cc.wahrscheinlich %} · {{ sec.cc.wahrscheinlich }} wahrscheinlich{% endif %}{% if sec.cc.ungeklaert %} · {{ sec.cc.ungeklaert }} ungeklärt{% endif %}{% if sec.cc.abgelehnt %} · {{ sec.cc.abgelehnt }} abgelehnt{% endif %}{% if sec.cc.uebernommen %} · {{ sec.cc.uebernommen }} übernommen{% endif %}</span>{% endif %}
       {% if sec.extra %}<span class="hint">{{ sec.extra }}</span>{% endif %}</a>{% endfor %}
   </nav>
   <details class="box" style="margin-top:10px"><summary>Was bedeuten die Status?</summary>
@@ -78,11 +79,17 @@
   {% for f in shown %}
   <details class="finding" id="{{ f.id }}" {% if open_id == f.id %}open{% endif %}>
     <summary>
-      <div class="row"><span class="badge {{ status_badge[f.status] }}">{{ f.status }}</span><span class="badge">{{ f.kind_label }}</span>{% if f.kind == 'loss' and f.data.get('class') %}<span class="badge {{ 'crit' if f.data['class'] == 'C' and not f.data.get('documented') else '' }}" title="{{ loss_class[f.data['class']][1] }}">{{ f.data['class'] }} · {{ loss_class[f.data['class']][0] }}</span>{% endif %}{% if f.priority == 1 %}<span class="badge warn">zuerst ansehen</span>{% endif %}</div>
+      <div class="row"><span class="badge {{ status_badge[f.status] }}">{{ f.status }}</span><span class="badge">{{ f.kind_label }}</span>{% if f.kind == 'loss' and f.data.get('class') %}<span class="badge {{ 'crit' if f.data['class'] == 'C' and not f.data.get('documented') else '' }}" title="{{ loss_class[f.data['class']][1] }}">{{ f.data['class'] }} · {{ loss_class[f.data['class']][0] }}</span>{% endif %}{% if f.priority == 1 %}<span class="badge warn">zuerst ansehen</span>{% endif %}{% if f.state and f.state != 'offen' %}<span class="badge {{ case_states[f.state][1] }}">{{ case_states[f.state][0] }}</span>{% endif %}{% if f.children %}<span class="badge info">{{ f.children|length }} Einzelvorgänge</span>{% endif %}</div>
       <div class="f-title">{{ f.title }}</div>
       <div class="f-meta">{% if f.accounts %}{{ f.accounts[:4]|join(', ') }}{% if f.accounts|length > 4 %} …{% endif %}{% endif %}{% if f.assets %}{% if f.accounts %} · {% endif %}{{ f.assets[:6]|join(', ') }}{% if f.assets|length > 6 %} …{% endif %}{% endif %}{% if f.txs %} · {{ f.txs|length }} Buchung{{ 'en' if f.txs|length != 1 }}{% endif %}</div>
     </summary>
     <div class="finding-body">
+      {% if f.children %}
+      <div class="case-box"><h4>Einzelvorgänge ({{ f.children|length }}) – jeder einzeln prüf- und freigebbar</h4>
+        <ul class="plain-list case-list">{% for cid in f.children %}{% set c = by_fid.get(cid) %}{% if c %}{% set cs = case_states[c.state or 'offen'] %}
+          <li><a href="/quality/diagnose/case/{{ c.id }}">{{ c.title }}</a> <span class="badge {{ status_badge[c.status] }}">{{ c.status }}</span>{% if c.state and c.state != 'offen' %} <span class="badge {{ cs[1] }}">{{ cs[0] }}</span>{% endif %}</li>{% endif %}{% endfor %}</ul></div>
+      {% endif %}
+      <div class="row"><a class="btn sm" href="/quality/diagnose/case/{{ f.id }}">{{ 'Sammelbefund im Detail' if f.children else 'Vorgang prüfen und entscheiden' }}</a></div>
       {{ reco(f) }}
       {% if f.known %}<div><h4>Was Portfolia aus den Daten weiß</h4><ul>{% for x in f.known %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
       {% if f.suspected %}<div><h4>Was Portfolia nur vermutet</h4><ul>{% for x in f.suspected %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
@@ -186,7 +193,7 @@
   {% if ref_rows %}<div class="table-wrap cards-wrap"><table class="cards hold-table">
     <thead><tr><th>Konto</th><th>Asset</th><th>Stichtag</th><th class="num">Referenz (Ist)</th><th class="num">Soll zum Stichtag</th><th class="num">Differenz</th><th>Beleg</th><th></th></tr></thead>
     <tbody>{% for x in ref_rows %}{% set r = x.r %}{% set h = x.h %}<tr>
-      <td data-label="Konto">{{ r.account }}</td><td data-label="Asset">{{ r.asset_id }}</td><td data-label="Stichtag">{{ r.as_of|date_de }}</td>
+      <td data-label="Konto">{{ r.account }}</td><td data-label="Asset">{{ r.asset_id }}</td><td data-label="Stichtag">{% if r.at %}{{ r.at|datetime_de }}<div class="hint">exakter Zeitpunkt{% if r.tz %} · {{ r.tz }}{% endif %}</div>{% else %}{{ r.as_of|date_de }}<div class="hint">Tagesende{% if r.tz %} ({{ r.tz }}){% else %} (Ortszeit){% endif %}</div>{% endif %}{% if r.basis == 'value' %}<div class="hint">Wertstellung</div>{% endif %}</td>
       <td class="num" data-label="Referenz">{{ r.qty|qty_exact }}</td>
       <td class="num" data-label="Soll">{% if h and h.reference_at == r.as_of and h.soll_at_ref is not none %}{{ h.soll_at_ref|qty_exact }}{% else %}<span class="muted" title="ein jüngerer Referenzbestand gilt">–</span>{% endif %}</td>
       <td class="num" data-label="Differenz">{% if h and h.reference_at == r.as_of and h.ref_diff is not none %}{{ h.ref_diff|qty_exact }}{% else %}<span class="muted">–</span>{% endif %}</td>
@@ -199,10 +206,14 @@
     <label>Asset-ID <input name="asset" list="ref-assets" required autocomplete="off" placeholder="z. B. EUR"></label>
     <label>Bestand <input name="qty" inputmode="decimal" required placeholder="2.811,00"></label>
     <label>Stichtag <input type="date" name="as_of" required max="{{ today.isoformat() }}" value="{{ today.isoformat() }}"></label>
+    <label>Uhrzeit (optional) <input type="time" name="time" step="1" title="exakter Zeitpunkt des Kontostands, z. B. Abruf beim Anbieter"></label>
+    <label>Zeitzone <input name="tz" list="ref-tz" placeholder="Europe/Berlin" autocomplete="off"></label>
+    <label>Datum laut Beleg <select name="basis"><option value="">unbekannt</option><option value="booking">Buchungsdatum</option><option value="value">Wertstellungsdatum</option></select></label>
     <label>Beleg <select name="source"><option value="statement">Kontoauszug</option><option value="api">Anzeige beim Anbieter</option><option value="other">sonstiger Beleg</option></select></label>
     <label class="wide">Notiz <input name="note" maxlength="300" placeholder="optional"></label>
     <button class="btn sm primary" type="submit">Referenzbestand hinterlegen</button>
     <datalist id="ref-accounts">{% for a in ref_accounts %}<option value="{{ a }}">{% endfor %}</datalist>
+    <datalist id="ref-tz"><option value="Europe/Berlin"><option value="UTC"><option value="Europe/Vienna"><option value="Europe/London"><option value="America/New_York"><option value="Asia/Singapore"></datalist>
     <datalist id="ref-assets">{% for a in ref_assets %}<option value="{{ a }}">{% endfor %}</datalist>
   </form>
 </section>

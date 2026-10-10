@@ -262,8 +262,11 @@ def test_competing_suggestions_are_never_executed_together(cfg):  # noqa: F811
     assert kinds == {"duplicate", "transfer"}
     before = fingerprint(ctx.db)
     bp = B.plan(ctx, ids, include_review=True)
-    # Transfer (W1→D1 oder D2) und Dublette (D1/D2) deuten dieselbe Buchung verschieden → nur einzeln
-    assert not bp.ready and all("dieselbe Buchung" in it.reason for it in bp.items)
+    # Transfer W1→D1 oder D2 ist mehrdeutig: keine Zuordnung, keine bevorzugte Lösung (M28, statt greedy D1);
+    # Transfer und Dublette werden nie gemeinsam ausgeführt
+    (t,) = [it for it in bp.items if it.finding.kind == "transfer"]
+    assert t.finding.data.get("ambiguous") and not t.ready and "keine bevorzugte Lösung" in t.reason
+    assert not any(it.ready and it.finding.kind == "transfer" for it in bp.items)
     assert fingerprint(ctx.db) == before
 
 

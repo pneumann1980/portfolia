@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.diagnosis import actions as A
 from app.diagnosis.engine import report_for
-from app.diagnosis.model import HOLDING_STATUS, KINDS, LOSS_CLASS, SECTIONS, STATUS, STATUS_BADGE
+from app.diagnosis.model import CASE_STATES, HOLDING_STATUS, KINDS, LOSS_CLASS, SECTIONS, STATUS, STATUS_BADGE
 from app.diagnosis.recommend import recommend
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
@@ -38,7 +38,35 @@ def _utc(dt: datetime) -> str:
 
 def _common() -> dict[str, Any]:
     return {"type_label": TYPE_LABEL, "origin_label": ORIGIN_LABEL, "utc_fmt": _utc, "status_badge": STATUS_BADGE,
-            "holding_status": HOLDING_STATUS, "loss_class": LOSS_CLASS}
+            "holding_status": HOLDING_STATUS, "loss_class": LOSS_CLASS, "case_states": CASE_STATES}
+
+
+def _case_counts(report: Any, fixes: dict[str, list[Any]], applied_kinds: dict[str, int]) -> dict[str, dict[str, int]]:
+    """Je Befundart: offene Vorgänge (Einzelvorgänge statt Sammelbefund), nachgewiesen, wahrscheinlich, ungeklärt,
+    abgelehnt, übernommen."""
+    out: dict[str, dict[str, int]] = {}
+    for f in report.findings:
+        if f.children:
+            continue  # gezählt werden die Einzelvorgänge
+        c = out.setdefault(f.kind, dict.fromkeys(("offen", "nachgewiesen", "wahrscheinlich", "ungeklaert",
+                                                  "abgelehnt", "spaeter", "uebernommen"), 0))
+        if f.state == "abgelehnt":
+            c["abgelehnt"] += 1
+            continue
+        if f.state == "ungeklaert":
+            c["ungeklaert"] += 1
+            continue
+        if f.state == "spaeter":
+            c["spaeter"] += 1
+        c["offen"] += 1
+        if f.status == "belegt":
+            c["nachgewiesen"] += 1
+        elif f.status == "wahrscheinlich":
+            c["wahrscheinlich"] += 1
+    for kind, n in applied_kinds.items():
+        out.setdefault(kind, dict.fromkeys(("offen", "nachgewiesen", "wahrscheinlich", "ungeklaert", "abgelehnt",
+                                            "spaeter", "uebernommen"), 0))["uebernommen"] = n
+    return out
 
 
 DEVIATION_STATUSES = ("extern_diff", "ref_diff", "intern_diff")
@@ -132,13 +160,15 @@ def make_router() -> APIRouter:
         kind = kind if kind in KINDS else ""
         status = status if status in STATUS else ""
         report = report_for(ctx)
-        marks = A.active_dismissals(ctx.db)
+        marks = A.active_marks(ctx.db)
         prints = {x.id: A.fingerprint(x) for x in report.findings if x.id in marks}
-        checked = {fid for fid, d in marks.items() if fid in prints and d.fingerprint == prints[fid]}
+        checked = {fid for fid, d in marks.items() if fid in prints and d.fingerprint == prints[fid]
+                   and d.action in ("dismiss", "reject")}
         changed = {fid: d for fid, d in marks.items() if fid in prints and d.fingerprint != prints[fid]}
-        open_findings = [x for x in report.findings if x.id not in checked]
+        # Übersicht: Einzelvorgänge erscheinen unter ihrem Sammelbefund (eigene Prüfansicht je Vorgang)
+        open_findings = [x for x in report.findings if x.id not in checked and x.parent is None]
         shown = [x for x in open_findings if (not kind or x.kind == kind) and (not status or x.status == status)]
-        dismissed = [x for x in report.findings if x.id in checked]
+        dismissed = [x for x in report.findings if x.id in checked and x.parent is None]
         counts: dict[str, dict[str, int]] = {k: {} for k in KINDS}
         for x in open_findings:
             counts[x.kind][x.status] = counts[x.kind].get(x.status, 0) + 1
@@ -165,7 +195,17 @@ def make_router() -> APIRouter:
         by_pos = {(h.account, h.asset): h for h in report.holdings}
         for r in (report.snapshot.references if report.snapshot is not None else []):
             ref_rows.append({"r": r, "h": by_pos.get((r.account, r.asset_id))})
+        fixes = A.active_fixes(ctx.db)
+        applied_kinds: dict[str, int] = {}
+        for lst in fixes.values():
+            for d in lst:
+                applied_kinds[d.kind] = applied_kinds.get(d.kind, 0) + 1
+        case_counts = _case_counts(report, fixes, applied_kinds)
+        for sec in sections:
+            sec["cc"] = {k: sum(case_counts.get(kd, {}).get(k, 0) for kd in SECTIONS[sec["key"]][1])
+                         for k in ("offen", "nachgewiesen", "wahrscheinlich", "ungeklaert", "abgelehnt", "uebernommen")}
         return render(request, "diagnosis.html", active="quality", report=report, shown=shown, kind=kind,
+                      case_counts=case_counts, by_fid={x.id: x for x in report.findings},
                       deviations=deviations, dev_meta=dev_meta, sections=sections, ref_rows=ref_rows,
                       ref_accounts=sorted(set(pf.all_accounts()) | set(pf.accounts)) if pf is not None else [],
                       ref_assets=sorted(pf.assets) if pf is not None else [], today=datetime.now(UTC).date(),
@@ -173,8 +213,54 @@ def make_router() -> APIRouter:
                       accounts=accounts, counts=counts, holding_counts=report.holding_counts(),
                       generated=datetime.now(UTC), n_open=len(open_findings),
                       recs={x.id: recommend(report, x) for x in [*shown, *dismissed]}, dismissed=dismissed,
-                      marks=marks, changed=changed, fixes=A.active_fixes(ctx.db), decisions=A.decisions(ctx.db),
+                      marks=marks, changed=changed, fixes=fixes, decisions=A.decisions(ctx.db),
                       msg=msg, err=err, **_common())
+
+    @router.get("/quality/diagnose/case/{fid}", response_class=HTMLResponse)
+    def case_page(request: Request, fid: str, msg: str = "", err: str = "") -> HTMLResponse:
+        """Prüfansicht eines Einzelvorgangs bzw. Befunds: alle beteiligten Buchungen, Belege, Korrekturmöglichkeiten,
+        Entscheidungen. Ändert nichts."""
+        ctx = get_ctx(request)
+        report = report_for(ctx)
+        f = report.by_id(fid)
+        if f is None:
+            return render(request, "diagnosis_case.html", status_code=404, active="quality", f=None, rows=[],
+                          msg=msg, err=err or "Der Vorgang besteht nicht mehr – die Daten haben sich geändert "
+                                              "(z. B. nach einer übernommenen Korrektur).", **_common())
+        snap = report.snapshot
+        by_tx = {t.tx_id: t for t in snap.pf.txs} if snap is not None and snap.pf is not None else {}
+        ids = list(dict.fromkeys([r.tx_id for r in f.txs] + [x.tx_id for a, b, _w in f.pairs for x in (a, b)]))
+        rows = []
+        for tid in ids:
+            t = by_tx.get(tid)
+            if t is None:
+                continue
+            meta = snap.journal.get(tid) if snap is not None else None
+            rows.append({"t": t, "ref": report.index.ref(t) if report.index is not None else None, "meta": meta,
+                         "status": ("App-Buchung, aktiv" if meta is not None and meta.status == "active" else
+                                    f"App-Buchung, {meta.status}" if meta is not None else
+                                    "Sparplan" if t.origin == "plan" else "Import-Buchung, zählt")})
+        marks = A.active_marks(ctx.db)
+        mark = marks.get(f.id)
+        parent = report.by_id(f.parent) if f.parent else None
+        children = [c for c in (report.by_id(x) for x in f.children) if c is not None]
+        return render(request, "diagnosis_case.html", active="quality", f=f, rows=rows, rec=recommend(report, f),
+                      parent=parent, children=children, mark=mark, fixes=A.active_fixes(ctx.db).get(f.id, []),
+                      msg=msg, err=err, **_common())
+
+    @router.post("/quality/diagnose/mark")
+    async def mark_route(request: Request) -> Response:
+        """Entscheidung ohne Datenänderung: ablehnen, später prüfen, ungeklärt lassen."""
+        ctx = get_ctx(request)
+        form = await request.form()
+        fid, action = str(form.get("f") or ""), str(form.get("action") or "")
+        if not fid or action not in A.MARK_ACTIONS:
+            raise HTTPException(400)
+        res = await run_in_threadpool(A.mark, ctx, fid, action, str(form.get("note") or ""))
+        q = {"msg": res.message} if res.ok else {"err": "; ".join(res.errors)}
+        if str(form.get("back") or "") == "case":
+            return _back(f"/quality/diagnose/case/{fid}?{urlencode(q)}")
+        return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="findings"))
 
     @router.get("/quality/diagnose/plan", response_class=HTMLResponse)
     def plan_page(request: Request, f: str = "", o: str = "") -> HTMLResponse:
@@ -217,7 +303,8 @@ def make_router() -> APIRouter:
         res = await run_in_threadpool(R.add, get_ctx(request), str(form.get("account") or ""),
                                       str(form.get("asset") or ""), str(form.get("qty") or ""),
                                       str(form.get("as_of") or ""), str(form.get("source") or "statement"),
-                                      str(form.get("note") or ""))
+                                      str(form.get("note") or ""), str(form.get("time") or ""),
+                                      str(form.get("tz") or ""), str(form.get("basis") or ""))
         return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="referenzen"))
 
     @router.post("/quality/diagnose/reference/{rid}/delete")

@@ -347,6 +347,14 @@ def _unmap(st: _State, symbol: str, asset: str, plan: Plan) -> None:
 
 # -- Lösungen ------------------------------------------------------------------------------------------
 
+def _pair_sel(plan: Plan, pairs: list[list[str]]) -> list[str] | None:
+    """Auswahl der Paare: Einzelvorgang (Lösung ohne Auswahlfeld) → sein Paar; sonst ausdrückliche Auswahl."""
+    valid = {"|".join(p) for p in pairs}
+    if not any(p.name == "pairs" for p in plan.option.params):
+        return sorted(valid) if valid else None
+    return _selected(plan, "pairs", valid)
+
+
 def _selected(plan: Plan, name: str, valid: set[str]) -> list[str] | None:
     sel = plan.params.get(name, [])
     if not sel:
@@ -504,7 +512,7 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
     if key in ("hide_weak", "hide_strong"):
         _hide(st, st.tx(d["weak" if key == "hide_weak" else "strong"]), plan)
     elif key == "hide_second":
-        sel = _selected(plan, "pairs", {f"{a}|{b}" for a, b in d["pairs"]})
+        sel = _pair_sel(plan, d["pairs"])
         for a_id, b_id in d["pairs"] if sel else []:
             if f"{a_id}|{b_id}" not in sel:  # type: ignore[operator]
                 continue
@@ -527,13 +535,18 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
             _cover(st, st.tx(j), imp, plan)
     elif key in ("link_econ", "link_econ_swap"):
         # wirtschaftliche Dublette (M27): je Paar zählt eine Buchung; die andere bleibt mit Herkunft erhalten
-        sel = _selected(plan, "pairs", {f"{a}|{b}" for a, b in d["pairs"]})
+        sel = _pair_sel(plan, d["pairs"])
+        dropped: set[str] = set()
         for keep_id, drop_id in d["pairs"] if sel else []:
             if f"{keep_id}|{drop_id}" not in sel:  # type: ignore[operator]
                 continue
             keep, drop = st.tx(keep_id), st.tx(drop_id)
             if key == "link_econ_swap":
                 keep, drop = drop, keep
+            if drop is not None and drop.tx_id in dropped:
+                continue  # mehrteiliger Vorgang: dieselbe Buchung nur einmal
+            if drop is not None:
+                dropped.add(drop.tx_id)
             if keep is None or drop is None:
                 plan.errors.append(f"{keep_id}/{drop_id}: Buchung nicht mehr vorhanden.")
             elif drop.origin == "journal" and keep.origin == "import":
@@ -544,7 +557,7 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
         for i in d["imports"]:
             _hide(st, st.tx(i), plan)
     elif key == "link":
-        sel = _selected(plan, "pairs", {f"{w}|{x}" for w, x in d["pairs"]})
+        sel = _pair_sel(plan, d["pairs"])
         for w_id, d_id in d["pairs"] if sel else []:
             if f"{w_id}|{d_id}" in sel:  # type: ignore[operator]
                 _transfer(st, st.tx(w_id), st.tx(d_id), plan)
@@ -631,6 +644,11 @@ class Effects:
     successors: list[Finding] = field(default_factory=list)  # Befund besteht in geänderter Form weiter
     negative_new: list[tuple[str, str]] = field(default_factory=list)  # (Konto, Asset) mit neuem negativem Bestand
     lot_dates: list[tuple[str, str, str, str]] = field(default_factory=list)  # Anschaffungsdaten vorher/nachher
+    total: tuple[Decimal, Decimal] | None = None  # Gesamtwert der bewerteten Positionen vorher/nachher
+    alloc: list[tuple[str, Decimal, Decimal]] = field(default_factory=list)  # Asset, Anteil in % vorher/nachher
+    unvalued: list[str] = field(default_factory=list)  # betroffene Assets ohne Kurs (Wirkung nicht bewertbar)
+    estimated: list[str] = field(default_factory=list)  # betroffene Assets mit Ersatzkurs (keine Marktbewertung)
+    references: list[tuple[str, str, Decimal | None, Decimal | None]] = field(default_factory=list)  # Referenzdiff.
 
 
 def hypothetical(pf: Portfolio, plan: Plan) -> Portfolio:
@@ -761,6 +779,31 @@ def _tax_effects(ctx: Any, pf2: Portfolio, eff: Effects) -> None:
                         "Steuerbereich prüfen.")
 
 
+def _allocation(snap: Any, led: LedgerResult, led2: LedgerResult, eff: Effects) -> None:
+    """Gesamtwert und Anteile der betroffenen Assets – nur mit gespeicherten Kursen; ohne Kurs bzw. mit Ersatzkurs
+    wird das ausgewiesen statt einen genauen Euro-Betrag vorzutäuschen."""
+    def totals(lr: LedgerResult) -> tuple[Decimal, dict[str, Decimal]]:
+        per: dict[str, Decimal] = defaultdict(lambda: ZERO)
+        for (_acc, aid), q in lr.balances.items():
+            p = snap.prices.get(aid)
+            if p is not None and p.valued and q > 0:
+                per[aid] += q * Decimal(str(p.price_eur))
+        return sum(per.values(), ZERO), per
+    t1, p1 = totals(led)
+    t2, p2 = totals(led2)
+    eff.total = (t1.quantize(CENT), t2.quantize(CENT))
+    for aid in sorted({p.asset for p in eff.positions}):
+        price = snap.prices.get(aid)
+        if price is None or not price.valued:
+            eff.unvalued.append(aid)
+            continue
+        if price.kind in ("manual", "tx") or price.source in ("manual", "tx", "demo") or price.stale:
+            eff.estimated.append(f"{aid} ({price.source}{', veraltet' if price.stale else ''})")
+        s1 = (p1.get(aid, ZERO) / t1 * 100).quantize(Decimal("0.01")) if t1 else ZERO
+        s2 = (p2.get(aid, ZERO) / t2 * 100).quantize(Decimal("0.01")) if t2 else ZERO
+        eff.alloc.append((aid, s1, s2))
+
+
 def preview(ctx: Any, report: Report, plan: Plan) -> Effects:
     """Auswirkungen des Plans – gerechnet auf einer Kopie (Ledger, Diagnose, Steuer); schreibt nichts."""
     snap = report.snapshot
@@ -790,6 +833,12 @@ def preview(ctx: Any, report: Report, plan: Plan) -> Effects:
         lab2 = HOLDING_STATUS[st2[k]][0] if k in st2 else None
         eff.positions.append(PosEffect(k[0], k[1], (b1, b2), (k1.quantize(CENT), k2.quantize(CENT)), (v1, v2),
                                        (lab1, lab2), note))
+    _allocation(snap, led, led2, eff)
+    r1 = {(h.account, h.asset): h for h in report.holdings if h.reference is not None}
+    r2 = {(h.account, h.asset): h for h in rep2.holdings if h.reference is not None}
+    touched = {(p.account, p.asset) for p in eff.positions}
+    for k in sorted(set(r1) & touched):
+        eff.references.append((k[0], k[1], r1[k].ref_diff, r2[k].ref_diff if k in r2 else None))
     y1, y2 = _per_year(led), _per_year(led2)
     for y in sorted(set(y1) | set(y2)):
         a, b = y1.get(y, (ZERO, ZERO)), y2.get(y, (ZERO, ZERO))
@@ -1008,9 +1057,46 @@ def apply_plan(ctx: Any, f: Finding, plan: Plan, token: str, rebuild: Any) -> Re
                                                         "„Datenqualität → Entscheidungen und Korrekturen“.")
 
 
+def _by_token(db: Any, token: str) -> Any:
+    try:
+        return db.q1("SELECT id, status FROM diag_decision WHERE token=?", (token,))
+    except Exception:  # Datenbank vor Migration 20
+        return None
+
+
+def _effects_summary(ctx: Any, report: Report, plan: Plan) -> dict[str, Any]:
+    """Wirkung laut Vorschau für das Protokoll (Bestände je Konto/Asset, realisierte Ergebnisse je Jahr)."""
+    try:
+        eff = preview(ctx, report, plan)
+    except Exception as e:  # Protokoll darf das Übernehmen nicht verhindern
+        return {"error": type(e).__name__}
+    return {"positions": [{"account": p.account, "asset": p.asset, "before": str(p.bal[0]), "after": str(p.bal[1]),
+                           "cost_before": str(p.cost[0]), "cost_after": str(p.cost[1])} for p in eff.positions[:50]],
+            "years": [{"year": y.year, "realized": [str(y.realized[0]), str(y.realized[1])],
+                       "income": [str(y.income[0]), str(y.income[1])]} for y in eff.years]}
+
+
+def _plan_tx_ids(f: Finding, plan: Plan) -> list[str]:
+    ids = [r.tx_id for r in f.txs] + [x.tx_id for a, b, _w in f.pairs for x in (a, b)]
+    for op in plan.ops:
+        if op.kind in ("hide", "cover", "amend"):
+            ids += [op.target, *op.members, *([op.link] if op.kind == "cover" and op.link else [])]
+    return list(dict.fromkeys(ids))
+
+
 def apply(ctx: Any, finding_id: str, option_key: str, params: Mapping[str, list[str]], token: str) -> Result:
-    """Lösung übernehmen – nur wenn Befund und Plan noch exakt der Vorschau entsprechen (``token``)."""
+    """Lösung übernehmen – nur wenn Befund und Plan noch exakt der Vorschau entsprechen (``token``). Dieselbe Vorschau
+    wird höchstens einmal ausgeführt (wiederholte Anfrage, Neuladen, Doppelklick, zweite Sitzung → kein zweites
+    Mal)."""
     with _LOCK:
+        done = _by_token(ctx.db, token)
+        if done is not None:
+            if done["status"] == "active":
+                return Result(ok=True, decision_id=int(done["id"]),
+                              message=f"Diese Korrektur wurde bereits übernommen (#{done['id']}) – keine erneute "
+                                      "Ausführung.")
+            return Result(errors=[f"Diese Vorschau wurde bereits übernommen und wieder zurückgenommen (#{done['id']}) "
+                                  "– bitte eine neue Vorschau öffnen."])
         report = report_for(ctx)
         f = report.by_id(finding_id)
         if f is None:
@@ -1022,6 +1108,7 @@ def apply(ctx: Any, finding_id: str, option_key: str, params: Mapping[str, list[
         if plan.token != token:
             return Result(errors=["Die Vorschau ist nicht mehr aktuell – Daten oder Auswahl haben sich seit der "
                                   "Vorschau geändert. Bitte die Vorschau prüfen und erneut übernehmen."])
+        effects = _effects_summary(ctx, report, plan)
         stamp = _now()
         from app.journal.service import journal_service
 
@@ -1033,10 +1120,12 @@ def apply(ctx: Any, finding_id: str, option_key: str, params: Mapping[str, list[
                     plan.ops, key=lambda o: 0 if o.kind == "create" else 1)]
                 cur = c.execute(
                     "INSERT INTO diag_decision(finding_id, kind, title, action, option, option_label, params_json, "
-                    "ops_json, fingerprint, note, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "ops_json, fingerprint, note, status, created_at, token, tx_ids_json, data_version, effects_json) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (f.id, f.kind, f.title[:300], "fix", plan.option.key, plan.option.label[:200],
                      json.dumps(plan.params, ensure_ascii=False),
-                     json.dumps(recs, ensure_ascii=False, default=str), fingerprint(f), None, "active", stamp))
+                     json.dumps(recs, ensure_ascii=False, default=str), fingerprint(f), None, "active", stamp, token,
+                     json.dumps(_plan_tx_ids(f, plan)), plan.version, json.dumps(effects, ensure_ascii=False)))
                 did = int(cur.lastrowid)
                 js._log(c, "diagnose_apply", f"diagnose:{did}", None,
                         {"finding": f.id, "option": plan.option.key, "changes": len(recs)}, stamp)
@@ -1145,6 +1234,31 @@ def _revert(c: Any, js: Any, rec: dict[str, Any], stamp: str) -> str | None:
     return None
 
 
+def _rec_ids(recs: list[dict[str, Any]]) -> set[str]:
+    out: set[str] = set()
+    for r in recs:
+        out.add(str(r.get("target") or ""))
+        if r.get("link"):
+            out.add(str(r["link"]))
+        out.update(str(m) for m in r.get("members") or [])
+    return out - {""}
+
+
+def _dependents(db: Any, decision_id: int, recs: list[dict[str, Any]]) -> list[int]:
+    """Spätere, aktive Korrekturen, die dieselben Buchungen bzw. Objekte berühren – ein Undo würde sie entwerten."""
+    mine = _rec_ids(recs)
+    out = []
+    for r in db.q("SELECT id, ops_json FROM diag_decision WHERE action='fix' AND status='active' AND id>? ORDER BY id",
+                  (decision_id,)):
+        try:
+            other = _rec_ids(json.loads(r["ops_json"] or "[]"))
+        except ValueError:
+            continue
+        if mine & other:
+            out.append(int(r["id"]))
+    return out
+
+
 def undo(ctx: Any, decision_id: int) -> Result:
     """Korrektur als Ganzes zurücknehmen (in umgekehrter Reihenfolge; Konflikt → nichts wird geändert)."""
     with _LOCK:
@@ -1152,6 +1266,11 @@ def undo(ctx: Any, decision_id: int) -> Result:
         if row is None or row["action"] != "fix" or row["status"] != "active":
             return Result(errors=["Diese Korrektur ist nicht (mehr) aktiv."])
         recs = json.loads(row["ops_json"] or "[]")
+        later = _dependents(ctx.db, decision_id, recs)
+        if later:
+            return Result(errors=["Rückgängig nicht möglich: spätere Korrekturen betreffen dieselben Buchungen ("
+                                  + ", ".join(f"#{i}" for i in later) + "). Bitte zuerst diese zurücknehmen – es wurde "
+                                  "nichts geändert."])
         from app.journal.service import journal_service
 
         js = journal_service(ctx)
@@ -1173,28 +1292,48 @@ def undo(ctx: Any, decision_id: int) -> Result:
                       message="Korrektur zurückgenommen." + (" Hinweis: " + " ".join(notes) if notes else ""))
 
 
-def dismiss(ctx: Any, finding_id: str, note: str = "") -> Result:
-    """„Geprüft, kein Handlungsbedarf“ – ändert keine Daten; gilt, solange die Befunddaten gleich bleiben."""
+MARK_ACTIONS = {"dismiss": "Als geprüft markiert (ungeklärt belassen)",
+                "reject": "Abgelehnt (kein Duplikat bzw. Vorschlag sachlich falsch)",
+                "defer": "Zur späteren Prüfung vorgemerkt"}
+
+
+def mark(ctx: Any, finding_id: str, action: str, note: str = "") -> Result:
+    """Entscheidung ohne Datenänderung: geprüft/ungeklärt (``dismiss``), abgelehnt (``reject``) oder später prüfen
+    (``defer``). Gilt, solange die Befunddaten (Prüfsumme) gleich bleiben; ändert sich die Evidenz, erscheint der
+    Befund als „überholt“ wieder. Je Befund ist höchstens eine solche Entscheidung aktiv."""
+    if action not in MARK_ACTIONS:
+        return Result(errors=["Unbekannte Entscheidung."])
     with _LOCK:
         report = report_for(ctx)
         f = report.by_id(finding_id)
         if f is None:
             return Result(errors=["Der Befund besteht nicht mehr – bitte die Diagnose neu öffnen."])
         stamp = _now()
+        fp = fingerprint(f)
+        cur_row = ctx.db.q1("SELECT id, action, fingerprint FROM diag_decision WHERE finding_id=? AND action IN "
+                            "('dismiss', 'reject', 'defer') AND status='active' ORDER BY id DESC LIMIT 1", (f.id,))
+        if cur_row is not None and cur_row["action"] == action and cur_row["fingerprint"] == fp and not note.strip():
+            return Result(ok=True, decision_id=int(cur_row["id"]), message=f"{MARK_ACTIONS[action]}: {f.title}")
+        tx_ids = list(dict.fromkeys([r.tx_id for r in f.txs] + [x.tx_id for a, b, _w in f.pairs for x in (a, b)]))
         with ctx.db.transaction() as c:
-            c.execute("UPDATE diag_decision SET status='undone', undone_at=? WHERE finding_id=? AND action='dismiss' "
-                      "AND status='active'", (stamp, f.id))
+            c.execute("UPDATE diag_decision SET status='undone', undone_at=? WHERE finding_id=? AND action IN "
+                      "('dismiss', 'reject', 'defer') AND status='active'", (stamp, f.id))
             cur = c.execute("INSERT INTO diag_decision(finding_id, kind, title, action, fingerprint, note, status, "
-                            "created_at) VALUES (?,?,?,?,?,?,?,?)",
-                            (f.id, f.kind, f.title[:300], "dismiss", fingerprint(f), note.strip()[:500] or None,
-                             "active", stamp))
-        return Result(ok=True, decision_id=int(cur.lastrowid), message=f"Als geprüft markiert: {f.title}")
+                            "created_at, tx_ids_json, data_version) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                            (f.id, f.kind, f.title[:300], action, fp, note.strip()[:500] or None, "active", stamp,
+                             json.dumps(tx_ids), data_version(ctx.db)))
+        return Result(ok=True, decision_id=int(cur.lastrowid), message=f"{MARK_ACTIONS[action]}: {f.title}")
+
+
+def dismiss(ctx: Any, finding_id: str, note: str = "") -> Result:
+    """„Geprüft, kein Handlungsbedarf“ – ändert keine Daten; gilt, solange die Befunddaten gleich bleiben."""
+    return mark(ctx, finding_id, "dismiss", note)
 
 
 def reopen(ctx: Any, decision_id: int) -> Result:
     with _LOCK:
-        cur = ctx.db.x("UPDATE diag_decision SET status='undone', undone_at=? WHERE id=? AND action='dismiss' AND "
-                       "status='active'", (_now(), decision_id))
+        cur = ctx.db.x("UPDATE diag_decision SET status='undone', undone_at=? WHERE id=? AND action IN ('dismiss', "
+                       "'reject', 'defer') AND status='active'", (_now(), decision_id))
         if not cur.rowcount:
             return Result(errors=["Diese Markierung ist nicht (mehr) aktiv."])
         return Result(ok=True, decision_id=decision_id, message="Befund wieder geöffnet.")
@@ -1249,8 +1388,19 @@ def decisions(db: Any, limit: int = 60) -> list[Decision]:
 
 
 def active_dismissals(db: Any) -> dict[str, Decision]:
+    """Abschließende Entscheidungen ohne Datenänderung: geprüft/ungeklärt und abgelehnt."""
     try:
-        rows = db.q("SELECT * FROM diag_decision WHERE action='dismiss' AND status='active' ORDER BY id")
+        rows = db.q("SELECT * FROM diag_decision WHERE action IN ('dismiss', 'reject') AND status='active' ORDER BY id")
+    except Exception:
+        return {}
+    return {r["finding_id"]: _decision(r) for r in rows}
+
+
+def active_marks(db: Any) -> dict[str, Decision]:
+    """Alle aktiven Entscheidungen ohne Datenänderung (geprüft, abgelehnt, später prüfen)."""
+    try:
+        rows = db.q("SELECT * FROM diag_decision WHERE action IN ('dismiss', 'reject', 'defer') AND status='active' "
+                    "ORDER BY id")
     except Exception:
         return {}
     return {r["finding_id"]: _decision(r) for r in rows}

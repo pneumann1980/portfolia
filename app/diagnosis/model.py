@@ -41,7 +41,8 @@ SECTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
 LOSS_CLASS: dict[str, tuple[str, str]] = {
     "A": ("Technischer Buchungsfehler", "Vermögenswert wahrscheinlich weiterhin vorhanden, aber falsch abgebildet"),
     "B": ("Ungeklärter Abgang", "es fehlen Informationen für eine sichere Bewertung"),
-    "C": ("Nachgewiesener Verlust", "belastbare Hinweise auf Hack, Verlust oder endgültige Ausbuchung"),
+    "C": ("Dokumentierter Verlust", "konkretes Verlustereignis dokumentiert (z. B. als Verlust/Diebstahl gebucht) – "
+                                    "eine Kennzeichnung des Kontos als kompromittiert allein genügt nicht"),
 }
 
 # Befundstatus: wie belastbar ist die Aussage?
@@ -52,6 +53,18 @@ STATUS: dict[str, str] = {
     "hinweis": "zur Einordnung – kein Fehler festgestellt",
 }
 STATUS_BADGE = {"belegt": "crit", "wahrscheinlich": "warn", "verdacht": "info", "hinweis": ""}
+
+# Stand eines Befunds bzw. Einzelvorgangs aus Sicht der Nutzerentscheidung (Bezeichnung, Badge)
+CASE_STATES: dict[str, tuple[str, str]] = {
+    "offen": ("offen", "warn"),
+    "spaeter": ("später prüfen", "info"),
+    "ungeklaert": ("ungeklärt belassen", ""),
+    "abgelehnt": ("abgelehnt – kein Duplikat bzw. Vorschlag falsch", ""),
+    "uebernommen": ("bestätigt und übernommen", "good"),
+    "rueckgaengig": ("rückgängig gemacht", ""),
+    "ueberholt": ("durch Datenänderung überholt – erneut prüfen", "warn"),
+}
+MARK_STATE = {"defer": "spaeter", "dismiss": "ungeklaert", "reject": "abgelehnt"}
 
 # Bestandsabgleich je Konto und Asset
 HOLDING_STATUS: dict[str, tuple[str, str, str]] = {
@@ -131,6 +144,11 @@ class Finding:
     weight: Decimal = Decimal(0)  # Sortierung innerhalb gleicher Priorität (z. B. betroffener Wert)
     key: str = ""  # stabile Kennung (aus Art und betroffenen Buchungen/Schlüsseln)
     data: dict[str, Any] = field(default_factory=dict)  # maschinenlesbar für Empfehlungen (Buchungen, Asset, Coin …)
+    # Einzelvorgänge (M28): ein Sammelbefund zeigt die Übersicht, jeder enthaltene Vorgang ist ein eigener, einzeln
+    # prüf- und freigebbarer Befund (``parent`` = Sammelbefund). ``state`` = Stand der Nutzerentscheidung (Anzeige).
+    parent: str | None = None
+    children: list[str] = field(default_factory=list)
+    state: str = ""
 
     @property
     def id(self) -> str:
@@ -165,6 +183,7 @@ class HoldingRow:
     computed_at_obs: Decimal | None = None  # Soll zum Abrufzeitpunkt des beobachteten Bestands
     reference: Decimal | None = None  # vom Nutzer hinterlegter Referenzbestand (Prüfwert, keine Buchung)
     reference_at: date | None = None
+    reference_ts: datetime | None = None  # exakter Zeitpunkt des Referenzbestands (sonst Ende des Stichtags)
     reference_note: str = ""
     soll_at_ref: Decimal | None = None  # Soll zum Stichtag des Referenzbestands
     last_sync: datetime | None = None  # letzte erfolgreiche Synchronisation der Datenquelle(n) des Kontos
@@ -217,4 +236,13 @@ class Report:
         return out
 
     def by_id(self, fid: str) -> Finding | None:
-        return next((f for f in self.findings if f.id == fid), None)
+        cache = getattr(self, "_by_id", None)
+        if cache is None or len(cache) != len(self.findings):
+            cache = {f.id: f for f in self.findings}
+            self._by_id = cache
+        return cache.get(fid)
+
+    @property
+    def top(self) -> list[Finding]:
+        """Befunde ohne Einzelvorgänge (Übersicht)."""
+        return [f for f in self.findings if f.parent is None]

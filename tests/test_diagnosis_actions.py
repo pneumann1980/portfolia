@@ -190,7 +190,12 @@ def test_hash_pairs_partial_selection(cfg):
     ctx = make_ctx(cfg, kaspa_like_rows(), ASSETS)
     rep, f = finding(ctx, "duplicate", lambda x: x.key.startswith("hash|"))
     opt = recommend(rep, f).option("hide_second")
-    assert opt is not None and opt.recommended and len(opt.params[0].default) == 3
+    # Sammelbefund: Auswahl ausdrücklich (nichts vorausgewählt), Einzelvorgänge tragen die Empfehlung
+    assert opt is not None and not opt.recommended and opt.params[0].default == [] and len(opt.params[0].choices) == 3
+    assert len(f.children) == 3
+    child = rep.by_id(f.children[0])
+    copt = recommend(rep, child).option("hide_second")
+    assert child.parent == f.id and copt is not None and copt.params == []
     _rep, f, plan = plan_for(ctx, "duplicate", "hide_second", {"pairs": ["P0a|P0b"]},
                              pred=lambda x: x.key.startswith("hash|"))
     assert [op.target for op in plan.ops] == ["P0b"]
@@ -455,9 +460,11 @@ def test_web_flow_preview_apply_undo(cfg):
         assert ctx.db.q1("SELECT action FROM tx_override WHERE tx_id='M1'")["action"] == "delete"
         page = c.get(r.headers["location"])
         assert "Übernommen: M1 ausblenden" in page.text and "Rückgängig" in page.text
-        # zweites Übernehmen derselben Vorschau → Befund besteht nicht mehr
+        # zweites Übernehmen derselben Vorschau (Doppelklick, Neuladen) → keine zweite Ausführung
+        after = fingerprint(ctx.db)
         r2 = c.post("/quality/diagnose/apply", data={**form, "csrf_token": c.token}, follow_redirects=False)
-        assert r2.status_code == 404 and "besteht nicht mehr" in r2.text
+        assert r2.status_code == 303 and "bereits+%C3%BCbernommen" in r2.headers["location"]
+        assert fingerprint(ctx.db) == after
         did = A.decisions(ctx.db)[0].id
         r = c.post(f"/quality/diagnose/decision/{did}/undo", data={"csrf_token": c.token}, follow_redirects=False)
         assert r.status_code == 303 and not ctx.db.q("SELECT 1 FROM tx_override")

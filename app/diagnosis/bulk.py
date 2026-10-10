@@ -80,8 +80,8 @@ def candidates(report: Report) -> list[tuple[Finding, str, str]]:
     """Befunde des Abgleichs mit bevorzugter Lösung: (Befund, Konfidenz, bevorzugte Lösung)."""
     out = []
     for f in report.findings:
-        if f.kind not in RECON_KINDS:
-            continue
+        if f.kind not in RECON_KINDS or f.children:
+            continue  # Sammelbefunde mit Einzelvorgängen: nur die Einzelvorgänge (keine doppelte Verwendung)
         rec = recommend(report, f)
         p = rec.primary
         out.append((f, confidence_of(f, p is not None, rec.conditional), p.label if p else ""))
@@ -183,6 +183,10 @@ def _effects(ctx: Any, report: Report, bp: BulkPlan) -> None:
             bp.effects = None
             return
         eff = A.preview(ctx, report, _merged(bp))
+        if len(bp.ready) > 1:
+            bp.notes.append("Die Wirkung ist für alle ausgewählten Korrekturen gemeinsam berechnet. Sie kann von der "
+                            "Summe der Einzelvorschauen abweichen: FIFO verbraucht Lots in zeitlicher Reihenfolge über "
+                            "alle Korrekturen hinweg, und Steuerwerte (z. B. Freigrenzen) gelten je Jahr gemeinsam.")
         if not eff.negative_new:
             bp.effects = eff
             return

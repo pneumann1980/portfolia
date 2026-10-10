@@ -183,7 +183,10 @@
   });
   document.addEventListener("submit", function (e) {
     var msg = e.target.getAttribute && e.target.getAttribute("data-confirm");
-    if (msg && !window.confirm(msg)) e.preventDefault();
+    if (msg && !window.confirm(msg)) { e.preventDefault(); return; }
+    // Doppelklick-Schutz: Knopf nach dem Absenden sperren (der Server führt dieselbe Vorschau ohnehin nur einmal aus)
+    var once = e.target.querySelector && e.target.querySelector("[data-once]");
+    if (once) window.setTimeout(function () { once.disabled = true; once.textContent = "Wird übernommen …"; }, 0);
   });
 
   // --- Mehrfachauswahl: „alle“-Kästchen und Zähler (data-check-all / data-check-count = Feldname) -------

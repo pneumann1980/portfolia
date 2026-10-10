@@ -1310,6 +1310,36 @@ zweite Engine. Neue Regeln in `app/diagnosis/audit.py`, eingehängt in `engine.d
 * **Validierung:** ausschließlich lesend gegen eine Kopie eines realen Exports (Ergebnis im Abschlussbericht, ohne
   personenbezogene Daten im Repository); Tests nur mit synthetischen Daten (`tests/test_diagnosis_audit.py`).
 
+## M28 – Evidenzstufen, Einzelvorgänge und transaktionsgenaue Freigabe (0.25.0)
+
+Nachbesserung der Diagnose aus M27 innerhalb derselben Engine (Index, Befunde, Empfehlungen, Vorschau, Übernehmen,
+Undo, Sammelbearbeitung) – keine zweite Diagnose-, Abgleichs- oder Korrektur-Engine.
+
+* **Evidenzstufen statt Prozent:** Dubletten *nachgewiesen* nur mit gemeinsamer Anbieterreferenz bzw. Hash, sonst
+  wahrscheinlich/verdacht/hinweis; Belege dafür und dagegen sowie fehlende Informationen je Vorgang. Transfer-Scores
+  nur noch als „Matching-Score x/95, regelbasiert“ mit qualitativer Einstufung.
+* **1:n, n:1, n:m:** begrenzte, deterministische Kombinationssuche; angezeigt, nie verknüpft, Mehrdeutigkeit
+  ausgewiesen; keine Buchung in zwei Vorgängen.
+* **Transfers global statt gierig:** alle Kandidaten, Komponenten, Hash vor Zeit/Betrag, exakte Zuordnung bis 6 je
+  Seite; eindeutige Zuordnung mit Ausschlussbegründung, sonst „mehrdeutig“ ohne Vorschlag. Tokenwechsel nur über
+  `related_asset`.
+* **Verlust:** C nur über Benutzerkennzeichnung der Buchung (als solche ausgewiesen); kompromittiertes Konto → erst
+  Rettungsziel prüfen, sonst B.
+* **Referenzbestand mit Zeitpunkt:** Uhrzeit, Zeitzone, Buchungs-/Wertstellungstag (Migration 20, additiv);
+  Fiat auf den Cent, Krypto exakt; alte Einträge und Exporte bleiben gültig.
+* **Einzelvorgänge:** eigene Befunde je Paar bzw. Abgang mit Vorgangsseite (A Buchungen, B Diagnose, C Optionen,
+  D Wirkung in der Vorschau); Sammelbefund ohne Vorauswahl.
+* **Entscheidungen:** übernehmen (idempotent per Vorschau-Prüfsumme, eindeutiger Index), ablehnen (bleibt bei
+  gleicher Evidenz, „überholt“ bei neuer), später prüfen, ungeklärt lassen, rückgängig (abhängigkeitsgeprüft);
+  Zustände je Vorgang und Zähler je Bereich. Markierungen reisen mit dem Gesamtexport.
+* **Vorschau:** zusätzlich Gesamtwert/Allokation (nur gespeicherte Kurse), unbewertete und geschätzte Positionen,
+  Referenzbestand-Differenzen; Sammel-Vorschau mit Hinweis zur kombinierten Wirkung.
+* **Tests:** `tests/test_diagnosis_cases.py` (22 vorgegebene Fälle plus Export/Restore, Web-Ablauf, Undo-Abhängigkeit)
+  mit synthetischen Daten; bestehende Tests an die bewusst geänderte Semantik angepasst (Sammelbefund ohne
+  Vorauswahl, mehrdeutige Transfers ohne bevorzugte Lösung).
+* **Validierung:** lesend gegen eine Kopie eines realen Exports (Datenbank-Fingerprint vorher = nachher); Ergebnis im
+  Abschlussbericht, keine personenbezogenen Daten im Repository.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und

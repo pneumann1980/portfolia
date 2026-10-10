@@ -629,6 +629,11 @@ ul.diag-counts a.badge:hover { text-decoration: none; filter: brightness(0.97); 
 .diag-section { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; color: inherit; min-width: 0; }
 .diag-section:hover { text-decoration: none; border-color: var(--accent, currentColor); }
 .diag-section .ds-label { font-size: 0.85rem; overflow-wrap: anywhere; }
+.case-list li { padding: 4px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.case-box { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+.case-actions { display: grid; gap: 8px; margin-top: 10px; }
+.btn.wrap { white-space: normal; text-align: left; max-width: 100%; height: auto; }
+.diag-section .ds-cc { font-size: 0.75rem; }
 .diag-section .ds-n { font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .dev-filters label, .ref-form label { display: flex; flex-direction: column; gap: 2px; font-size: 0.8rem; min-width: 0; }
 .dev-filters select, .dev-filters input, .ref-form input, .ref-form select { max-width: 100%; }

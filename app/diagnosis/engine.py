@@ -325,9 +325,16 @@ def diagnose(snap: Snapshot) -> Report:
                                                         if r.reference is not None})
         findings += audit.inactive_accounts(idx, stats)
         audit.explain_negatives(idx, findings)
+        cases = audit.split_cases(idx, findings)
+        stats["cases"] = len(cases)
+        findings += cases
         stats["txs"] = len(idx.txs)
     findings += _open_batches(snap, stats)
     findings.sort(key=lambda f: (*f.sort_key(), f.id))
+    if snap.pf is not None:
+        from app.diagnosis import audit as _audit
+
+        _audit.case_states(snap, findings)
     return Report(findings=findings, holdings=holdings, generated_for=snap.today, stats=stats, snapshot=snap,
                   index=idx)
 
@@ -982,11 +989,12 @@ def _transfers(idx: _Index, stats: dict[str, int]) -> list[Finding]:
             score = (0 if same_hash else 1, abs(1 - ratio), abs((d.ts - w.ts).total_seconds()), w.tx_id, d.tx_id)
             cands.append((score, w, d, ratio))
     cands.sort(key=lambda c: c[0])
+    from app.diagnosis.audit import assign_transfers
+
+    accepted, ambiguous = assign_transfers(idx, [(w, d, ratio) for _s, w, d, ratio in cands])
     used = idx.transfer_txs
     groups: dict[tuple[str, str, str, str], list[tuple[Tx, Tx, Decimal, bool]]] = defaultdict(list)
-    for _score, w, d, ratio in cands:
-        if w.tx_id in used or d.tx_id in used:
-            continue
+    for w, d, ratio in accepted:
         used.update((w.tx_id, d.tx_id))
         same_hash = bool(idx.hashes[w.tx_id] & idx.hashes[d.tx_id])
         gap = d.ts - w.ts
@@ -1014,6 +1022,8 @@ def _transfers(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                            if ratio >= Decimal("0.98") else f"Differenz {_q(diff)} {aid}")
             if w.fee_asset and w.fee_qty:
                 why.append(f"Gebühr am Abgang {_q(w.fee_qty)} {w.fee_asset}")
+            if (w.tx_id, d.tx_id) in getattr(idx, "transfer_exclusive", set()):
+                why.append("Zuordnung nur durch Ausschluss konkurrierender Kandidaten eindeutig (globale Zuordnung)")
             why.append("gleicher Transaktions-Hash" if same_hash else "Hash fehlt auf mindestens einer Seite"
                        if not (idx.hashes[w.tx_id] and idx.hashes[d.tx_id]) else "verschiedene Hashes")
             for t in (w, d):
@@ -1057,6 +1067,10 @@ def _transfers(idx: _Index, stats: dict[str, int]) -> list[Finding]:
         f.txs = [x for w, d, _r, _h in items[:MAX_PAIRS_SHOWN] for x in (idx.ref(w), idx.ref(d))]
         out.append(idx.attach(f))
     stats["transfer_pairs"] = sum(len(v) for v in groups.values())
+    from app.diagnosis.audit import ambiguous_transfers
+
+    out += ambiguous_transfers(idx, ambiguous)
+    stats["transfer_ambiguous"] = len(ambiguous)
     return out
 
 
@@ -1993,6 +2007,8 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
                                         f"{_q(comp - soll)} (nicht Teil des Vergleichs)")
             equal = abs(row.observed - soll) <= _tol(soll)
             row.status = ("extern_ok" if equal else "extern_diff") if fresh and complete else "extern_unsicher"
+            if row.status == "extern_ok":
+                row.quality = "aktueller Bestand bestätigt – kein Nachweis einer vollständigen Buchungshistorie"
             if not fresh:
                 row.explanations.append("Abruf älter als 48 h" if row.observed_at else "Abrufzeit unbekannt")
             if not complete:
@@ -2014,7 +2030,7 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
         if ref is not None:
             audit.apply_reference(idx, row, ref)
         _explain(idx, row, open_by_acc.get(acc, []), unmapped.get(acc, []))
-        row.quality = row.observed_state or ("Referenzbestand (Nutzer)" if ref is not None else
+        row.quality = row.quality or row.observed_state or ("Referenzbestand (Nutzer)" if ref is not None else
                                              "Soll aus Portfolia-Export" if self_ref else
                                              "Soll aus kuratiertem Import" if row.expected is not None else
                                              "nur Buchungen")

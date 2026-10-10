@@ -672,6 +672,18 @@ CREATE TABLE IF NOT EXISTS reference_balance (
 CREATE INDEX IF NOT EXISTS ix_reference_balance_pos ON reference_balance(account, asset_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_reference_balance ON reference_balance(account, asset_id, as_of, qty, created_at);
 """),
+    (20, """
+-- M28 (additiv): Referenzbestand mit exaktem Zeitpunkt und Zeitzone; Entscheidungen der Diagnose mit Prüfsumme der
+-- Vorschau (Schutz vor doppelter Ausführung), betroffenen Buchungen, Datenstand und Wirkung.
+ALTER TABLE reference_balance ADD COLUMN as_of_ts TEXT;   -- exakter Zeitpunkt (UTC, ISO 8601), optional
+ALTER TABLE reference_balance ADD COLUMN tz TEXT;         -- Zeitzone des Belegs/Anbieters (IANA), optional
+ALTER TABLE reference_balance ADD COLUMN basis TEXT;      -- booking | value: Buchungs- bzw. Wertstellungstag
+ALTER TABLE diag_decision ADD COLUMN token TEXT;          -- Prüfsumme der Vorschau (fix) – je Vorschau nur einmal
+ALTER TABLE diag_decision ADD COLUMN tx_ids_json TEXT;    -- betroffene Buchungen
+ALTER TABLE diag_decision ADD COLUMN data_version TEXT;   -- Datenstand beim Entscheiden
+ALTER TABLE diag_decision ADD COLUMN effects_json TEXT;   -- Wirkung (Bestände, Steuerjahre) laut Vorschau
+CREATE UNIQUE INDEX IF NOT EXISTS ux_diag_decision_token ON diag_decision(token) WHERE token IS NOT NULL;
+"""),
 ]
 
 

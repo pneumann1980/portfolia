@@ -82,7 +82,8 @@ def fingerprint(db) -> str:
 
 
 def by_kind(rep, kind: str) -> list:
-    return [f for f in rep.findings if f.kind == kind]
+    """Befunde einer Art in der Übersicht (ohne Einzelvorgänge – diese über ``rep.by_id(f.children[i])``)."""
+    return [f for f in rep.findings if f.kind == kind and f.parent is None]
 
 
 # ----------------------------------------------------------------------------------------------------

@@ -21,6 +21,18 @@
   </table></div>
   {% else %}<p class="hint">Keine Änderung an Beständen oder Einstand.</p>{% endif %}
 
+  {% if effects.total %}
+  <h3>Gesamtwert und Allokation <span class="hint">(gespeicherte Kurse, keine neue Kursabfrage)</span></h3>
+  <p>Gesamtwert der bewerteten Positionen: {{ arrow(effects.total[0]|eur, effects.total[1]|eur) }}</p>
+  {% if effects.alloc %}<ul class="plain-list">{% for a, s1, s2 in effects.alloc %}<li>Anteil {{ a }}: {{ arrow(s1|qty_exact ~ ' %', s2|qty_exact ~ ' %') }}</li>{% endfor %}</ul>{% endif %}
+  {% if effects.unvalued %}<p class="hint">Ohne Kurs, Wirkung in € nicht bewertbar: {{ effects.unvalued|join(', ') }}.</p>{% endif %}
+  {% if effects.estimated %}<p class="hint">Bewertung mit Ersatz- bzw. veraltetem Kurs (geschätzt, keine Marktbewertung): {{ effects.estimated|join(', ') }}.</p>{% endif %}
+  {% endif %}
+  {% if effects.references %}
+  <h3>Differenz zum Referenzbestand</h3>
+  <ul class="plain-list">{% for acc, a, d1, d2 in effects.references %}<li>{{ acc }} · {{ a }}: {{ arrow(d1|qty_exact if d1 is not none else '–', d2|qty_exact if d2 is not none else '–') }}{% if d2 is not none and d2 != 0 %} <span class="hint">– Differenz bleibt bestehen</span>{% endif %}</li>{% endfor %}</ul>
+  {% endif %}
+
   {% if effects.lot_dates %}
   <h3>Anschaffungsdaten offener Lots <span class="hint">(Grundlage der Haltefristen)</span></h3>
   <div class="table-wrap cards-wrap"><table class="cards">

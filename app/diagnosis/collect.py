@@ -77,6 +77,9 @@ class Reference:
     source: str
     note: str | None
     created_at: str
+    at: datetime | None = None  # exakter Zeitpunkt (UTC), sonst Ende des Stichtags
+    tz: str | None = None  # Zeitzone des Belegs (IANA); Stichtag ohne Uhrzeit endet um 24 Uhr in dieser Zone
+    basis: str | None = None  # booking | value
 
 
 @dataclass
@@ -130,6 +133,8 @@ class Snapshot:
     price_gaps: list[dict[str, Any]] = field(default_factory=list)
     series_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
     references: list[Reference] = field(default_factory=list)  # aktive Referenzbestände (M27)
+    # aktive Nutzerentscheidungen ohne Datenänderung je Befund: (Aktion, Prüfsumme) – dismiss | reject | defer
+    marks: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
 def _dec(v: Any) -> Decimal | None:
@@ -191,6 +196,12 @@ def collect(ctx: Any, now: datetime | None = None) -> Snapshot:
                 lst.append(o.key)
     snap.open_rows = _open_rows(db, resolver)
     snap.references = references(db)
+    try:
+        snap.marks = {r["finding_id"]: (r["action"], r["fingerprint"] or "") for r in db.q(
+            "SELECT finding_id, action, fingerprint FROM diag_decision WHERE action IN ('dismiss', 'reject', 'defer') "
+            "AND status='active' ORDER BY id")}
+    except Exception as e:  # Datenbank vor Migration 12
+        log.debug("Entscheidungen nicht verfügbar: %s", e)
     try:
         snap.price_gaps = [dict(r) for r in db.q("SELECT * FROM price_gap ORDER BY asset_id, date_from")]
         snap.series_meta = {r["series"]: dict(r) for r in db.q(
@@ -258,8 +269,11 @@ def references(db: Any) -> list[Reference]:
         except ValueError:
             continue
         if q is not None:
+            keys = r.keys()
+            at = parse_iso(r["as_of_ts"]) if "as_of_ts" in keys and r["as_of_ts"] else None
             out.append(Reference(int(r["id"]), r["account"], r["asset_id"], q, d, r["source"] or "statement",
-                                 r["note"], r["created_at"]))
+                                 r["note"], r["created_at"], at, r["tz"] if "tz" in keys else None,
+                                 r["basis"] if "basis" in keys else None))
     return out
 
 

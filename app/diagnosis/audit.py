@@ -45,6 +45,8 @@ HINT_WINDOW = timedelta(days=7)
 FUNDING_WINDOW = timedelta(hours=24)
 SYSTEMATIC_MIN = 3  # so viele Paare mit gleichem Tagesversatz bei gleicher Uhrzeit gelten als regelmäßiges Muster
 SYSTEMATIC_TOD = timedelta(minutes=15)
+MULTI_MAX_CANDIDATES = 8  # 1:n – höchstens so viele Teilbuchungen im Fenster (begrenzte, deterministische Suche)
+MULTI_MAX_PARTS = 3
 ALT_BEFORE = timedelta(hours=2)
 ALT_AFTER = timedelta(days=14)
 ALT_MIN_RATIO = Decimal("0.5")
@@ -188,7 +190,9 @@ def _tol(v: Decimal) -> Decimal:
 
 
 def _eq(a: Decimal, b: Decimal) -> bool:
-    return abs(a - b) <= _tol(max(abs(a), abs(b)))
+    """Gleiche Menge: relativ 1e-12 (Rundung der Quellen) – auch bei sehr kleinen Tokenmengen, ohne absolute
+    Untergrenze."""
+    return a == b or abs(a - b) <= max(abs(a), abs(b)) * Decimal("1e-12")
 
 
 def rating(score: int) -> str:
@@ -291,8 +295,77 @@ def _keep_drop(a: Leg, b: Leg) -> tuple[Leg, Leg]:
 # Wirtschaftliche Dubletten über Quellen
 # ----------------------------------------------------------------------------------------------------
 
+EVIDENCE_LEVEL = {"belegt": "nachgewiesen (Identität belegt)", "wahrscheinlich": "möglich – starke Übereinstimmung",
+                  "verdacht": "möglich – plausibel, nicht belegt", "hinweis": "möglich – schwacher Hinweis"}
+
+
+def _shared_identity(idx: _Index, a: Tx, b: Tx, ka: set[str], kb: set[str]) -> str:
+    """Belastbare Identität: gemeinsamer Transaktions-Hash bzw. gemeinsame Anbieter-Kennung."""
+    from app.diagnosis.engine import _short
+
+    hs = sorted(idx.hashes[a.tx_id] & idx.hashes[b.tx_id])
+    if hs:
+        return f"gleicher Transaktions-Hash {_short(hs[0])}"
+    ks = sorted(ka & kb)
+    if ks:
+        return f"gleiche Anbieter-Kennung {_short(ks[0], 24)}"
+    return ""
+
+
+def _regular(lst: list[Leg], leg: Leg) -> bool:
+    """Wiederkehrender gleich hoher Vorgang derselben Quelle (z. B. Sparplan): ≥ 3 Buchungen in 90 Tagen."""
+    n = sum(1 for x in lst
+            if x.fam == leg.fam and _eq(x.net, leg.net) and abs(x.tx.ts - leg.tx.ts) <= timedelta(days=90))
+    return n >= 3 or "SAVINGS_PLAN" in (leg.tx.flag or "") or (leg.tx.source_ref or "").startswith("sparplan|")
+
+
+def _case_evidence(idx: _Index, k: Leg, d: Leg, how: str, gap: timedelta, ident: str, unique: bool, regular: bool,
+                   offset: int | None, alternatives: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Belege für und gegen einen gemeinsamen Vorgang sowie fehlende Informationen (für die Einzelprüfung)."""
+    from app.diagnosis.engine import _d, _dur, _q
+
+    pro, contra, missing = [], [], []
+    if ident:
+        pro.append(f"Identität belegt: {ident}")
+    pro.append(f"gleiches Konto ({k.account}), gleiche Asset-ID ({k.asset}), gleiche Richtung")
+    pro.append(f"Beträge {how}")
+    for leg in (k, d):
+        if leg.fee:
+            pro.append(f"Gebühr {_q(leg.fee)} {leg.asset} in {leg.tx.tx_id} ausgewiesen ({family_label(leg.fam)})")
+    if gap <= STRONG_GAP:
+        pro.append(f"Abstand {_dur(gap)}")
+    else:
+        contra.append(f"Abstand {_dur(gap)} – zeitliche Nähe ist kein Beleg")
+    if unique:
+        pro.append("je Buchung genau ein möglicher Partner")
+    else:
+        contra.append("mehrere mögliche Partner – Zuordnung mehrdeutig"
+                      + (f" (auch: {', '.join(alternatives[:4])})" if alternatives else ""))
+    fund = _funding(idx, k, d)
+    if fund:
+        pro.append(fund)
+    if offset:
+        pro.append(f"regelmäßiger Versatz von {offset} Tagen bei gleicher Uhrzeit (mindestens {SYSTEMATIC_MIN} Paare) "
+                   "– typisch für Zahlungs- bzw. Wertstellungsdatum vs. Ausführung")
+    if k.tx.type != d.tx.type:
+        contra.append(f"verschiedene Buchungsarten ({k.tx.type} / {d.tx.type})")
+    if not how.startswith(("exakt", "brutto und")):
+        contra.append("Beträge nicht identisch – die Differenz ist nur über die ausgewiesene Gebühr erklärt")
+    if regular:
+        contra.append("wiederkehrender gleich hoher Vorgang (z. B. Sparplan) – unabhängige Ausführungen könnten "
+                      "verwechselt werden")
+    if not ident:
+        missing.append("gemeinsame Anbieterreferenz bzw. gemeinsamer Transaktions-Hash fehlen")
+        for leg in (k, d):
+            if not _prov_keys(idx, leg.tx) and not idx.hashes[leg.tx.tx_id]:
+                missing.append(f"{leg.tx.tx_id} trägt keine Anbieterreferenz ({family_label(leg.fam)})")
+        missing.append(f"Kontoauszug bzw. Transaktionshistorie der Börse um den {_d(k.tx.ts)}: Betrag einmal oder "
+                       "zweimal enthalten?")
+    return pro, contra, missing
+
+
 def econ_duplicates(idx: _Index, stats: dict[str, int]) -> list[Finding]:
-    from app.diagnosis.engine import _dur, _effect, _q, _scenario_without, _short, _ts
+    from app.diagnosis.engine import _effect, _q, _scenario_without, _short, _ts
 
     by_pos: dict[tuple[str, str, str], list[Leg]] = defaultdict(list)
     for t in idx.txs:
@@ -308,8 +381,8 @@ def econ_duplicates(idx: _Index, stats: dict[str, int]) -> list[Finding]:
             pkeys[t.tx_id] = _prov_keys(idx, t)
         return pkeys[t.tx_id]
 
-    cands: list[tuple[tuple[Any, ...], Leg, Leg, str]] = []
-    partners: dict[str, int] = defaultdict(int)
+    cands: list[tuple[tuple[Any, ...], Leg, Leg, str, str]] = []
+    partners: dict[str, list[str]] = defaultdict(list)
     for _pos, lst in sorted(by_pos.items()):
         lst.sort(key=lambda x: (x.tx.ts, x.tx.tx_id))
         for i, a in enumerate(lst):
@@ -327,59 +400,61 @@ def econ_duplicates(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                 how = _amount_match(a, b)
                 if how is None:
                     continue
+                ident = _shared_identity(idx, a.tx, b.tx, keys(a.tx), keys(b.tx))
                 exact = 0 if how.startswith(("exakt", "brutto und")) else 1
-                cands.append(((gap, exact, a.tx.tx_id, b.tx.tx_id), a, b, how))
-                if gap <= ECON_WINDOW:
-                    partners[a.tx.tx_id] += 1
-                    partners[b.tx.tx_id] += 1
+                cands.append(((0 if ident else 1, gap, exact, a.tx.tx_id, b.tx.tx_id), a, b, how, ident))
+                if gap <= ECON_WINDOW or ident:
+                    partners[a.tx.tx_id].append(b.tx.tx_id)
+                    partners[b.tx.tx_id].append(a.tx.tx_id)
     cands.sort(key=lambda c: c[0])
     used: set[str] = set()
-    chosen: list[tuple[Leg, Leg, str, timedelta, str]] = []
+    chosen: list[tuple[Leg, Leg, str, timedelta, str, str, bool]] = []
     pattern: dict[tuple[str, str, str, str, str, int], int] = defaultdict(int)
-    for (gap, _e, _x, _y), a, b, how in cands:
+    for (_i, gap, _e, _x, _y), a, b, how, ident in cands:
         if a.tx.tx_id in used or b.tx.tx_id in used:
             continue
         used.update((a.tx.tx_id, b.tx.tx_id))
-        unique = partners[a.tx.tx_id] <= 1 and partners[b.tx.tx_id] <= 1
-        if gap <= STRONG_GAP and unique:
+        unique = len(partners[a.tx.tx_id]) <= 1 and len(partners[b.tx.tx_id]) <= 1
+        if ident:
+            status = "belegt"
+        elif gap <= STRONG_GAP and unique:
             status = "wahrscheinlich"
-        elif gap <= ECON_WINDOW and (unique or gap <= STRONG_GAP):
+        elif gap <= ECON_WINDOW:
             status = "verdacht"
         else:
             status = "hinweis"
             pk = _offset_key(a, b, gap)
             if pk is not None:
                 pattern[pk] += 1
-        chosen.append((a, b, how, gap, status))
-    groups: dict[tuple[str, str, str, str, str, str], list[tuple[Leg, Leg, str, timedelta]]] = defaultdict(list)
-    systematic: dict[str, int] = {}
-    for a, b, how, gap, status in chosen:
+        chosen.append((a, b, how, gap, status, ident, unique))
+    groups: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for a, b, how, gap, status, ident, unique in chosen:
         pk = _offset_key(a, b, gap) if status == "hinweis" else None
-        if pk is not None and pattern[pk] >= SYSTEMATIC_MIN:
+        offset = pk[5] if pk is not None and pattern[pk] >= SYSTEMATIC_MIN else None
+        if offset:
             status = "verdacht"  # regelmäßiger Versatz bei gleicher Uhrzeit: Zahlungs- vs. Ausführungsdatum
-            systematic[a.tx.tx_id] = systematic[b.tx.tx_id] = pk[5]
         keep, drop = _keep_drop(a, b)
-        groups[(status, a.account, a.asset, a.side, keep.fam, drop.fam)].append((keep, drop, how, gap))
+        lst = by_pos[(a.account, a.asset, a.side)]
+        regular = _regular(lst, a) or _regular(lst, b)
+        alts = sorted(set(partners[a.tx.tx_id] + partners[b.tx.tx_id]) - {a.tx.tx_id, b.tx.tx_id})
+        pro, contra, missing = _case_evidence(idx, keep, drop, how, gap, ident, unique, regular, offset, alts)
+        groups[(status, a.account, a.asset, a.side, keep.fam, drop.fam)].append(
+            {"keep": keep, "drop": drop, "how": how, "gap": gap, "ident": ident, "ambiguous": not unique,
+             "alternatives": alts, "pro": pro, "contra": contra, "missing": missing, "status": status})
     out: list[Finding] = []
     econ = getattr(idx, "econ", None)
     if econ is None:
         idx.econ = econ = defaultdict(list)
     for (status, acc, aid, side, fk, fd), items in sorted(groups.items()):
-        items.sort(key=lambda x: (x[0].tx.ts, x[0].tx.tx_id))
+        items.sort(key=lambda x: (x["keep"].tx.ts, x["keep"].tx.tx_id))
         lk, ld = family_label(fk), family_label(fd)
-        drops = [d.tx for _k, d, _h, _g in items]
+        drops = [c["drop"].tx for c in items]
         pairs, evidence = [], []
-        for k, d, how, gap in items:
+        for c in items:
+            k, d = c["keep"], c["drop"]
             econ[(acc, aid)].append((status, k.tx, d.tx, side))
-            why = (f"gleiches Konto {acc}, Asset {aid}, {'Zugang' if side == 'in' else 'Abgang'}; Beträge {how}; "
-                   f"Abstand {_dur(gap)}; Quellen „{lk}“ / „{ld}“")
-            fund = _funding(idx, k, d)
-            if fund:
-                why += f"; {fund}"
-            if k.tx.tx_id in systematic:
-                why += (f"; regelmäßiger Versatz von {systematic[k.tx.tx_id]} Tagen bei gleicher Uhrzeit (mindestens "
-                        f"{SYSTEMATIC_MIN} Paare) – typisch für Zahlungs- bzw. Wertstellungsdatum vs. Ausführung")
-            pairs.append((idx.ref(k.tx), idx.ref(d.tx), why))
+            pairs.append((idx.ref(k.tx), idx.ref(d.tx), "; ".join(c["pro"])
+                          + (" – dagegen: " + "; ".join(c["contra"]) if c["contra"] else "")))
             evidence.append(f"{_ts(k.tx.ts)} {lk}: {_leg_text(k)} ({k.tx.tx_id}) ↔ {_ts(d.tx.ts)} {ld}: "
                             f"{_leg_text(d)} ({d.tx.tx_id})")
         n = len(items)
@@ -387,39 +462,48 @@ def econ_duplicates(idx: _Index, stats: dict[str, int]) -> list[Finding]:
         total = sum((abs(v) for (a2, x), v in eff.items() if a2 == acc and x == aid), ZERO)
         word = "Zugänge" if side == "in" else "Abgänge"
         noun = ("Zugang" if side == "in" else "Abgang") if n == 1 else word
-        title = (f"{n} wirtschaftlich gleiche{'r' if n == 1 else ''} {noun} aus zwei Quellen: {acc} · {aid}"
-                 + (" (ohne ausreichenden Beleg)" if status == "hinweis" else ""))
-        known = [f"{n} {'Paar' if n == 1 else 'Paare'}: gleiches Konto, gleiches Asset (Asset-ID {aid}), gleiche "
-                 f"Richtung, Betrag brutto bzw. netto gleich – je eine Buchung aus „{lk}“ und aus „{ld}“.",
+        ambiguous = sum(1 for c in items if c["ambiguous"])
+        prefix = "Nachgewiesen doppelt" if status == "belegt" else "Möglicherweise doppelt"
+        title = (f"{prefix}: {n} wirtschaftlich gleiche{'r' if n == 1 else ''} {noun} aus zwei Quellen – "
+                 f"{acc} · {aid}" + (" (ohne ausreichenden Beleg)" if status == "hinweis" else ""))
+        known = [f"{n} {'Vorgang' if n == 1 else 'Vorgänge'} (je ein Paar): gleiches Konto, gleiche Asset-ID ({aid}), "
+                 f"gleiche Richtung, Betrag brutto bzw. netto gleich – je eine Buchung aus „{lk}“ und aus „{ld}“.",
+                 f"Evidenzstufe: {EVIDENCE_LEVEL[status]}.",
                  f"Beide Buchungen je Paar zählen derzeit: Bestand {acc} · {aid} "
                  f"{'um' if n == 1 else 'insgesamt um'} {_q(total)} {aid} {'zu hoch' if side == 'in' else 'zu niedrig'}"
                  f", falls es jeweils derselbe Vorgang ist.",
-                 "Die Rohdaten beider Quellen bleiben unverändert erhalten."]
-        if fd.startswith("sync:") and _curated(fk):
-            known.append(f"„{ld}“ bildet die Buchung mit Gebühr (brutto) ab, „{lk}“ meist netto – unterschiedliche "
-                         "Darstellung desselben Vorgangs ist typisch.")
-        effect = "je Paar zählt eine Buchung zu viel" if status != "hinweis" else "möglich, aber nicht belegt"
-        suspected = [f"Derselbe wirtschaftliche Vorgang ist über zwei Quellen erfasst (z. B. Steuertool-Import und "
-                     f"Börsen-API) – {effect}."]
-        if status == "wahrscheinlich":
+                 "Die Rohdaten beider Quellen bleiben unverändert erhalten. Jeder Vorgang ist einzeln prüf- und "
+                 "freigebbar (Einzelvorgänge unten)."]
+        if ambiguous:
+            known.append(f"{ambiguous} Vorgang/Vorgänge mit mehreren möglichen Partnern – Entscheidung zurückgestellt, "
+                         "keine Empfehlung.")
+        suspected = ([f"Derselbe wirtschaftliche Vorgang ist über zwei Quellen erfasst – durch "
+                      f"{items[0]['ident'] or 'Kennung'} belegt."] if status == "belegt" else
+                     ["Derselbe wirtschaftliche Vorgang könnte über zwei Quellen erfasst sein (z. B. Steuertool-Import "
+                      "und Börsen-API) – nicht bewiesen."])
+        if status == "belegt":
+            unc = ["Identität über Hash bzw. Anbieter-Kennung belegt; prüfen, ob eine Quelle den Vorgang legitim in "
+                   "mehrere Teile zerlegt (dann ist die Summe maßgeblich)."]
+        elif status == "wahrscheinlich":
             unc = ["Kein gemeinsamer Hash und keine gemeinsame Anbieter-Kennung: Die Zuordnung beruht auf Konto, "
                    "Asset, Richtung, Betrag (brutto/netto) und Zeit (≤ 1 h, je Buchung genau ein Partner). Zwei "
                    "echte, gleich hohe Vorgänge in derselben Stunde sind möglich – Kontoauszug prüfen."]
         elif status == "verdacht":
             unc = ["Abstand über 1 h bzw. mehrere mögliche Partner: Gleiche Höhe und zeitliche Nähe allein beweisen "
                    "keine Doppelbuchung."]
-            if any(k.tx.tx_id in systematic for k, _d, _h, _g in items):
+            if any("regelmäßiger Versatz" in " ".join(c["pro"]) for c in items):
                 unc.append("Bei regelmäßigen Vorgängen (Sparplan) kann der Versatz auch zwei verschiedene Ausführungen "
                            "verbinden – Kontoauszug bzw. Anzahl der Ausführungen je Monat prüfen.")
         else:
             unc = ["Gleiche Höhe und ein Abstand von mehreren Tagen sind kein Beleg für eine Doppelbuchung (z. B. zwei "
                    "gleich hohe Einzahlungen in einer Woche). Ohne Kontoauszug bzw. Anbieter-Kennung bleibt das "
-                   "ungeklärt – Portfolia empfiehlt hier keine Korrektur.",
-                   "Wirkung, falls doch doppelt: siehe Szenario; mit einem hinterlegten Referenzbestand zeigt der "
-                   "Bestandsabgleich, ob das Szenario zum Kontoauszug passt."]
-        hashes = sorted({_short(h) for k, d, _h, _g in items for h in idx.hashes[k.tx.tx_id] | idx.hashes[d.tx.tx_id]})
+                   "ungeklärt – Portfolia empfiehlt hier keine Korrektur."]
+        unc.append("Eine rechnerische Übereinstimmung mit einer Bestandsabweichung ist kein Beleg und fließt nicht in "
+                   "die Bewertung ein.")
+        hashes = sorted({_short(h) for c in items
+                         for h in idx.hashes[c["keep"].tx.tx_id] | idx.hashes[c["drop"].tx.tx_id]})
         f = Finding(
-            kind="duplicate", status=status, priority={"wahrscheinlich": 1, "verdacht": 2}.get(status, 3),
+            kind="duplicate", status=status, priority={"belegt": 1, "wahrscheinlich": 1, "verdacht": 2}.get(status, 3),
             title=title, known=known, suspected=suspected, uncertainty=unc,
             evidence=evidence[:40] + ([f"… und {len(evidence) - 40} weitere"] if len(evidence) > 40 else [])
             + ([f"Hashes: {', '.join(hashes)}"] if hashes else []),
@@ -427,18 +511,136 @@ def econ_duplicates(idx: _Index, stats: dict[str, int]) -> list[Finding]:
             scenario=_scenario_without(idx, drops, f"Szenario (hypothetisch): je Paar nur die Buchung aus „{lk}“ "
                                                    f"gezählt (die aus „{ld}“ als enthalten verknüpft) – es wird "
                                                    "nichts gebucht."),
-            decision=f"Je Paar mit Kontoauszug bzw. Historie der Börse prüfen. Nur wenn derselbe Vorgang: verknüpfen – "
-                     f"die Buchung aus „{ld}“ zählt dann nicht mehr, bleibt mit Herkunft erhalten und lässt sich "
-                     "zurücknehmen. Portfolia ändert nichts automatisch.",
-            key=f"econ|{acc}|{aid}|{side}|" + "|".join(sorted(f"{k.tx.tx_id}>{d.tx.tx_id}" for k, d, _h, _g in items)),
+            decision="Jeden Vorgang einzeln mit Kontoauszug bzw. Historie der Börse prüfen und entscheiden: "
+                     "verknüpfen (eine Buchung zählt, die andere bleibt mit Herkunft erhalten), verschiedene Vorgänge "
+                     "(ablehnen) oder später prüfen. Portfolia ändert nichts automatisch.",
+            key=f"econ|{acc}|{aid}|{side}|" + "|".join(sorted(f"{c['keep'].tx.tx_id}>{c['drop'].tx.tx_id}"
+                                                               for c in items)),
             weight=total, positions=[(acc, aid)],
-            data={"type": "econ_pairs", "pairs": [[k.tx.tx_id, d.tx.tx_id] for k, d, _h, _g in items],
-                  "account": acc, "asset": aid, "side": side, "keep_family": fk, "drop_family": fd})
-        f.txs = [x for k, d, _h, _g in items[:40] for x in (idx.ref(k.tx), idx.ref(d.tx))]
+            data={"type": "econ_pairs", "pairs": [[c["keep"].tx.tx_id, c["drop"].tx.tx_id] for c in items],
+                  "account": acc, "asset": aid, "side": side, "keep_family": fk, "drop_family": fd,
+                  "cases": [{"pair": [c["keep"].tx.tx_id, c["drop"].tx.tx_id], "status": status,
+                             "level": EVIDENCE_LEVEL[status], "how": c["how"], "identity": c["ident"],
+                             "ambiguous": c["ambiguous"], "alternatives": c["alternatives"], "pro": c["pro"],
+                             "contra": c["contra"], "missing": c["missing"]} for c in items]})
+        f.txs = [x for c in items[:40] for x in (idx.ref(c["keep"].tx), idx.ref(c["drop"].tx))]
         if status != "hinweis":
-            idx.dup_txs.update(t.tx_id for k, d, _h, _g in items for t in (k.tx, d.tx))
+            idx.dup_txs.update(t.tx_id for c in items for t in (c["keep"].tx, c["drop"].tx))
         out.append(idx.attach(f, derive_positions=False))
     stats["econ_pairs"] = sum(len(v) for v in groups.values())
+    out += _multi_parts(idx, by_pos, used)
+    return out
+
+
+def _multi_parts(idx: _Index, by_pos: dict[tuple[str, str, str], list[Leg]], used: set[str]) -> list[Finding]:
+    """Mehrteilige Darstellung (1:n, n:1, n:m): eine Quelle bucht einen Vorgang in Teilen. Nur als Hinweis – eine
+    passende Summe ist kein Beleg; mehrere passende Kombinationen → mehrdeutig, keine Verknüpfung."""
+    from itertools import combinations
+
+    from app.diagnosis.engine import _q, _ts
+
+    out: list[Finding] = []
+    taken: set[str] = set(used)
+    for (acc, aid, side), lst in sorted(by_pos.items()):
+        rest = [x for x in lst if x.tx.tx_id not in taken]
+        for single in rest:
+            if single.tx.tx_id in taken:
+                continue
+            near = [x for x in rest if x.fam != single.fam and x.tx.tx_id not in taken
+                    and abs(x.tx.ts - single.tx.ts) <= STRONG_GAP and x.tx.tx_id != single.tx.tx_id]
+            near = sorted(near, key=lambda x: (x.tx.ts, x.tx.tx_id))[:MULTI_MAX_CANDIDATES]
+            fams = {x.fam for x in near}
+            if len(near) < 2 or len(fams) != 1:
+                continue
+            combos = []
+            for size in range(2, min(MULTI_MAX_PARTS, len(near)) + 1):
+                for combo in combinations(near, size):
+                    s_net = sum((x.net for x in combo), ZERO)
+                    s_gross = sum((x.gross for x in combo), ZERO)
+                    if any(_eq(u, v) for u in (s_net, s_gross) for v in (single.net, single.gross)):
+                        combos.append(combo)
+            if not combos:
+                continue
+            parts = combos[0]
+            ambiguous = len(combos) > 1
+            ids = [single.tx.tx_id, *(x.tx.tx_id for x in parts)]
+            taken.update(ids if not ambiguous else [single.tx.tx_id])
+            keep_single = _curated(single.fam) or not _curated(parts[0].fam)
+            pairs = ([[single.tx.tx_id, x.tx.tx_id] for x in parts] if keep_single else
+                     [[x.tx.tx_id, single.tx.tx_id] for x in parts])
+            shape = f"1:{len(parts)}"
+            known = [f"Eine Buchung aus „{family_label(single.fam)}“ ({single.tx.tx_id}, {_leg_text(single)}) "
+                     f"entspricht der Summe von {len(parts)} Buchungen aus „{family_label(parts[0].fam)}“ "
+                     f"({', '.join(x.tx.tx_id for x in parts)}) innerhalb einer Stunde.",
+                     *(f"{_ts(x.tx.ts)} {x.tx.tx_id}: {_leg_text(x)}" for x in parts)]
+            if ambiguous:
+                known.append(f"{len(combos)} verschiedene Kombinationen ergeben dieselbe Summe – mehrdeutig, "
+                             "Entscheidung zurückgestellt.")
+            f = Finding(
+                kind="duplicate", status="hinweis", priority=3,
+                title=f"Mögliche mehrteilige Darstellung ({shape}): {acc} · {aid}, {_q(single.net)} {aid}",
+                known=known,
+                suspected=["Eine Quelle könnte einen Vorgang in Teilbeträgen abbilden (z. B. Einzahlung und "
+                           "Gebühr getrennt) – möglich, nicht belegt."],
+                uncertainty=["Eine passende Summe ist kein Beleg für denselben Vorgang; unabhängige Teilbeträge "
+                             "können zufällig dieselbe Summe ergeben.",
+                             "Portfolia empfiehlt hier keine Korrektur; verknüpfen nur mit Kontoauszug."],
+                decision="Kontoauszug prüfen; nur bei Beleg verknüpfen, sonst ablehnen bzw. später prüfen.",
+                key=f"econ-multi|{acc}|{aid}|{side}|" + "|".join(sorted(ids)), positions=[(acc, aid)],
+                weight=abs(single.net),
+                data={"type": "econ_pairs", "pairs": [] if ambiguous else pairs, "multi": shape,
+                      "account": acc, "asset": aid, "side": side,
+                      "keep_family": single.fam if keep_single else parts[0].fam,
+                      "drop_family": parts[0].fam if keep_single else single.fam, "ambiguous": ambiguous,
+                      "cases": []})
+            f.txs = [idx.ref(single.tx), *(idx.ref(x.tx) for x in parts)]
+            out.append(idx.attach(f, derive_positions=False))
+        out += _many_to_many(idx, acc, aid, side, [x for x in lst if x.tx.tx_id not in taken], taken)
+    return out
+
+
+def _many_to_many(idx: _Index, acc: str, aid: str, side: str, rest: list[Leg], taken: set[str]) -> list[Finding]:
+    """n:m: in einem Zeitfenster (≤ 1 h zwischen Buchungen) buchen zwei Quellen je mehrere Teile mit gleicher Summe."""
+    from app.diagnosis.engine import _q
+
+    out: list[Finding] = []
+    rest = sorted(rest, key=lambda x: (x.tx.ts, x.tx.tx_id))
+    cluster: list[Leg] = []
+    clusters: list[list[Leg]] = []
+    for x in rest:
+        if cluster and x.tx.ts - cluster[-1].tx.ts > STRONG_GAP:
+            clusters.append(cluster)
+            cluster = []
+        cluster.append(x)
+    if cluster:
+        clusters.append(cluster)
+    for cl in clusters:
+        by_fam: dict[str, list[Leg]] = defaultdict(list)
+        for x in cl:
+            by_fam[x.fam].append(x)
+        if len(by_fam) != 2 or any(len(v) < 2 for v in by_fam.values()):
+            continue
+        (fa, la), (fb, lb) = sorted(by_fam.items())
+        if not _eq(sum((x.net for x in la), ZERO), sum((x.net for x in lb), ZERO)):
+            continue
+        ids = [x.tx.tx_id for x in (*la, *lb)]
+        taken.update(ids)
+        f = Finding(
+            kind="duplicate", status="hinweis", priority=3,
+            title=f"Mögliche mehrteilige Darstellung ({len(la)}:{len(lb)}): {acc} · {aid}, Summe "
+                  f"{_q(sum((x.net for x in la), ZERO))} {aid}",
+            known=[f"„{family_label(fa)}“: {', '.join(f'{x.tx.tx_id} ({_leg_text(x)})' for x in la)}",
+                   f"„{family_label(fb)}“: {', '.join(f'{x.tx.tx_id} ({_leg_text(x)})' for x in lb)}",
+                   "Beide Quellen buchen im selben Zeitfenster dieselbe Summe in unterschiedlich vielen Teilen."],
+            suspected=["Möglicherweise derselbe Vorgang in unterschiedlicher Aufteilung – nicht belegt."],
+            uncertainty=["Eine n:m-Zuordnung ist ohne Kennungen nicht eindeutig – Portfolia bietet keine "
+                         "Verknüpfung an; erst mit Kontoauszug einzeln entscheiden."],
+            decision="Kontoauszug prüfen; Teile einzeln zuordnen, sonst ablehnen bzw. später prüfen.",
+            key=f"econ-nm|{acc}|{aid}|{side}|" + "|".join(sorted(ids)), positions=[(acc, aid)],
+            data={"type": "econ_pairs", "pairs": [], "multi": f"{len(la)}:{len(lb)}", "account": acc, "asset": aid,
+                  "side": side, "keep_family": fa, "drop_family": fb, "ambiguous": True, "cases": []})
+        f.txs = [idx.ref(x.tx) for x in (*la, *lb)]
+        out.append(idx.attach(f, derive_positions=False))
     return out
 
 
@@ -689,6 +891,164 @@ def _dur_text(td: timedelta) -> str:
 # Abgänge ohne Gegenbuchung: mögliche Gegenbuchungen (Sicherheit) bzw. ungeklärter Abgang / Verlust
 # ----------------------------------------------------------------------------------------------------
 
+TRANSFER_EXACT_LIMIT = 6  # Teilproblem bis zu so vielen Ab- bzw. Zugängen: exakte globale Zuordnung
+
+
+def _max_matchings(edges: list[tuple[str, str]], limit: int = 64) -> tuple[int, list[list[tuple[str, str]]]]:
+    """Alle Zuordnungen maximaler Größe (deterministisch, begrenzt). Rückgabe: Größe und bis zu ``limit``
+    Zuordnungen."""
+    ws = sorted({w for w, _d in edges})
+    adj: dict[str, list[str]] = defaultdict(list)
+    for w, d in sorted(edges):
+        adj[w].append(d)
+    best = 0
+    found: list[list[tuple[str, str]]] = []
+
+    def rec(i: int, taken: set[str], cur: list[tuple[str, str]]) -> None:
+        nonlocal best
+        if len(found) > limit:
+            return
+        if i == len(ws):
+            if len(cur) > best:
+                best = len(cur)
+                found.clear()
+            if len(cur) == best and best:
+                found.append(list(cur))
+            return
+        if len(cur) + (len(ws) - i) < best:
+            return  # kann die beste Größe nicht mehr erreichen
+        w = ws[i]
+        for d in adj[w]:
+            if d not in taken:
+                taken.add(d)
+                cur.append((w, d))
+                rec(i + 1, taken, cur)
+                cur.pop()
+                taken.discard(d)
+        rec(i + 1, taken, cur)
+
+    rec(0, set(), [])
+    return best, found
+
+
+def assign_transfers(idx: _Index, cands: list[tuple[Tx, Tx, Decimal]]
+                     ) -> tuple[list[tuple[Tx, Tx, Decimal]], list[list[tuple[Tx, Tx, Decimal]]]]:
+    """Abgänge ↔ Zugänge ohne vorschnelle (greedy) Belegung zuordnen.
+
+    1. Gemeinsamer Hash belegt die Identität und geht vor; konkurriert ein Hash-Kandidat, ist das mehrdeutig.
+    2. Übrige Kandidaten bilden zusammenhängende Teilprobleme. Ein Teilproblem mit genau einer Kante ist eindeutig.
+    3. Kleine Teilprobleme (≤ 6 je Seite) werden exakt gelöst: Gibt es genau eine Zuordnung maximaler Größe, gilt sie
+       (eindeutig durch Ausschluss); sonst – und bei größeren Teilproblemen – bleibt die Zuordnung offen.
+    Rückgabe: angenommene Paare und mehrdeutige Teilprobleme (nie automatisch verknüpft)."""
+    by_id: dict[str, Tx] = {}
+    ratio: dict[tuple[str, str], Decimal] = {}
+    hash_edges: list[tuple[str, str]] = []
+    other: list[tuple[str, str]] = []
+    for w, d, r in cands:
+        by_id[w.tx_id], by_id[d.tx_id] = w, d
+        ratio[(w.tx_id, d.tx_id)] = r
+        (hash_edges if idx.hashes[w.tx_id] & idx.hashes[d.tx_id] else other).append((w.tx_id, d.tx_id))
+    accepted: list[tuple[str, str]] = []
+    ambiguous: list[list[tuple[str, str]]] = []
+    deg: dict[str, int] = defaultdict(int)
+    for w, d in hash_edges:
+        deg[w] += 1
+        deg[d] += 1
+    blocked: set[str] = set()
+    for w, d in sorted(hash_edges):
+        if deg[w] == 1 and deg[d] == 1:
+            accepted.append((w, d))
+            blocked.update((w, d))
+    rest_hash = [(w, d) for w, d in hash_edges if (w, d) not in accepted]
+    edges = [(w, d) for w, d in [*rest_hash, *other] if w not in blocked and d not in blocked]
+    # zusammenhängende Teilprobleme (Union-Find über Ab- und Zugänge)
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for w, d in edges:
+        parent[find(w)] = find(d)
+    comps: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for w, d in edges:
+        comps[find(w)].append((w, d))
+    for comp in sorted(comps.values(), key=lambda c: sorted(c)):
+        ws, ds = {w for w, _d in comp}, {d for _w, d in comp}
+        if len(comp) == 1:
+            accepted.append(comp[0])
+            continue
+        if len(ws) <= TRANSFER_EXACT_LIMIT and len(ds) <= TRANSFER_EXACT_LIMIT:
+            _size, matchings = _max_matchings(comp)
+            if len(matchings) == 1:
+                accepted.extend(matchings[0])
+                idx.transfer_exclusive = getattr(idx, "transfer_exclusive", set()) | set(matchings[0])
+                continue
+        ambiguous.append(sorted(comp))
+    idx.transfer_ambiguous = {x for comp in ambiguous for e in comp for x in e}
+    acc = [(by_id[w], by_id[d], ratio[(w, d)]) for w, d in sorted(accepted)]
+    amb = [[(by_id[w], by_id[d], ratio[(w, d)]) for w, d in comp] for comp in ambiguous]
+    return acc, amb
+
+
+def ambiguous_transfers(idx: _Index, comps: list[list[tuple[Tx, Tx, Decimal]]]) -> list[Finding]:
+    """Konkurrierende Transfer-Kandidaten: alle Zuordnungen zeigen, keine Verknüpfung empfehlen."""
+    from app.diagnosis.engine import _d, _dur, _q
+
+    out: list[Finding] = []
+    for comp in comps:
+        ws = sorted({w.tx_id: w for w, _d2, _r in comp}.values(), key=lambda t: (t.ts, t.tx_id))
+        ds = sorted({d.tx_id: d for _w, d, _r in comp}.values(), key=lambda t: (t.ts, t.tx_id))
+        aid = ws[0].from_asset or ""
+        ev = []
+        for w, d, r in comp:
+            same = bool(idx.hashes[w.tx_id] & idx.hashes[d.tx_id])
+            level = "Identität durch Hash belegt" if same else evidence_label(_edge_score(w, d, r))
+            ev.append(f"{w.tx_id} ({_d(w.ts)}, −{_q(w.from_qty)} {aid}, {w.from_account}) → {d.tx_id} ({_d(d.ts)}, "
+                      f"+{_q(d.to_qty)} {d.to_asset}, {d.to_account}): {level}; Menge "
+                      f"{(r * 100).quantize(Decimal('0.1'))} %, Abstand {_dur(d.ts - w.ts)}")
+        f = Finding(
+            kind="transfer", status="hinweis", priority=2,
+            title=f"Mehrdeutige Transfer-Zuordnung: {len(ws)} Abgänge, {len(ds)} mögliche Zugänge · {aid}",
+            known=[f"{len(ws)} Abgänge und {len(ds)} Zugänge desselben Assets passen über Kreuz zusammen "
+                   f"({len(comp)} mögliche Paare) – mehr als eine Zuordnung ist möglich.",
+                   "Portfolia legt keine Zuordnung fest und empfiehlt keine Verknüpfung "
+                   "(Entscheidung zurückgestellt)."],
+            evidence=ev,
+            uncertainty=["Ohne gemeinsamen Hash bzw. Referenz entscheidet erst der Explorer bzw. Kontoauszug, welcher "
+                         "Abgang zu welchem Zugang gehört.",
+                         "Matching-Stufen sind regelbasierte Bewertungen, keine Wahrscheinlichkeiten."],
+            decision="Je Abgang im Explorer bzw. Kontoauszug das Ziel prüfen und den passenden Zugang einzeln "
+                     "verknüpfen (Journal) – oder ablehnen bzw. später prüfen.",
+            key="transfer-amb|" + "|".join(f"{w.tx_id}>{d.tx_id}" for w, d, _r in comp),
+            data={"type": "transfer", "pairs": [], "ambiguous": True,
+                  "alternatives": {w.tx_id: [d.tx_id for w2, d, _r in comp if w2.tx_id == w.tx_id] for w in ws}})
+        f.txs = [idx.ref(t) for t in (*ws, *ds)]
+        out.append(idx.attach(f))
+    return out
+
+
+def _edge_score(w: Tx, d: Tx, ratio: Decimal) -> int:
+    gap = d.ts - w.ts
+    return (25 if ratio >= Decimal("0.98") else 12) + (20 if abs(gap) <= timedelta(hours=2) else
+                                                       12 if gap <= timedelta(hours=24) else 6)
+
+
+def evidence_label(score: int, *, identity: bool = False, conflict: bool = False) -> str:
+    """Qualitative Evidenzstufe eines regelbasierten Matching-Scores (keine kalibrierte Wahrscheinlichkeit)."""
+    if identity:
+        return "Identität durch Hash/Referenz belegt"
+    if conflict:
+        return "widersprüchliche Informationen"
+    if score >= 70:
+        return "starke Übereinstimmung"
+    if score >= ALT_LINK_SCORE:
+        return "plausibler Kandidat"
+    return "schwacher Hinweis"
+
+
 def _networks(idx: _Index) -> dict[str, set[str]]:
     out: dict[str, set[str]] = defaultdict(set)
     for s in idx.snap.sources:
@@ -751,25 +1111,23 @@ def _alternatives(idx: _Index, w: Tx, deps: dict[str, list[Tx]], all_deps: list[
             why.append(f"verschiedene Netzwerke ({', '.join(sorted(na))} → {', '.join(sorted(nb))}) – nur über Bridge "
                        "bzw. Börse plausibel")
         out.append((max(0, min(95, score)), d, why))
-    # Tokenwechsel (Bridge, Wrapped, Cross-Chain-Swap): verwandtes Asset laut Buchung oder gleicher EUR-Wert
-    if w.value_eur:
-        for d in all_deps:
-            if d.to_asset == w.from_asset or d.to_account == w.from_account or d.tx_id in taken or not d.value_eur:
-                continue
-            if not (w.ts - ALT_BEFORE <= d.ts <= w.ts + timedelta(hours=24)):
-                continue
-            related = d.related_asset == w.from_asset or w.related_asset == d.to_asset
-            vr = d.value_eur / w.value_eur
-            if not related and not (Decimal("0.97") <= vr <= Decimal("1.01") and d.ts - w.ts <= timedelta(hours=6)):
-                continue
-            if not (Decimal("0.8") <= vr <= Decimal("1.02")):
-                continue
-            score = (30 if related else 10) + (15 if vr >= Decimal("0.97") else 5) + \
-                (10 if abs(d.ts - w.ts) <= timedelta(hours=2) else 0)
-            why = [f"Tokenwechsel {w.from_asset} → {d.to_asset}" + (" (verwandtes Asset laut Buchung)" if related else
-                                                                     " (nur über den EUR-Wert zugeordnet)"),
-                   f"EUR-Wert {(vr * 100).quantize(Decimal('0.1'))} %", f"Abstand {_dur(d.ts - w.ts)}"]
-            out.append((min(70, score), d, why))
+    # Tokenwechsel (Bridge, Wrapped, Cross-Chain-Swap): nur mit belegter Beziehung (``related_asset``) – ein ähnlicher
+    # EUR-Wert allein ist kein Beleg für denselben Vorgang
+    for d in all_deps:
+        if d.to_asset == w.from_asset or d.to_account == w.from_account or d.tx_id in taken:
+            continue
+        if not (w.ts - ALT_BEFORE <= d.ts <= w.ts + timedelta(hours=24)):
+            continue
+        if not (d.related_asset == w.from_asset or w.related_asset == d.to_asset):
+            continue
+        vr = (d.value_eur / w.value_eur) if w.value_eur and d.value_eur else None
+        score = 30 + (15 if vr is not None and Decimal("0.97") <= vr <= Decimal("1.02") else 0) + \
+            (10 if abs(d.ts - w.ts) <= timedelta(hours=2) else 0)
+        why = [f"Tokenwechsel {w.from_asset} → {d.to_asset} (Bridge/Wrapped/Cross-Chain; Beziehung laut "
+               "„related_asset“ der Buchung)",
+               f"EUR-Wert {(vr * 100).quantize(Decimal('0.1'))} %" if vr is not None else "EUR-Wert nicht vergleichbar",
+               f"Abstand {_dur(d.ts - w.ts)}", "anderes Asset – keine automatische Transfer-Verknüpfung"]
+        out.append((min(65, score), d, why))
     out.sort(key=lambda x: (-x[0], x[1].ts, x[1].tx_id))
     return out[:ALT_SHOW]
 
@@ -777,7 +1135,7 @@ def _alternatives(idx: _Index, w: Tx, deps: dict[str, list[Tx]], all_deps: list[
 def outflows(idx: _Index, stats: dict[str, int]) -> list[Finding]:
     from app.diagnosis.engine import NEUTRAL_TAGS, _d, _q, _ts
 
-    taken = set(getattr(idx, "transfer_txs", set())) | set(idx.dup_txs)
+    taken = set(getattr(idx, "transfer_txs", set())) | set(idx.dup_txs) | set(getattr(idx, "transfer_ambiguous", set()))
     deps: dict[str, list[Tx]] = defaultdict(list)
     all_deps: list[Tx] = []
     for t in idx.txs:
@@ -798,25 +1156,28 @@ def outflows(idx: _Index, stats: dict[str, int]) -> list[Finding]:
             continue
         comp, cdate, _note = compromised(idx, w.from_account)
         if tag in ("lost", "stolen"):
-            loss_groups[("C", w.from_account, w.from_asset)].append(w)
+            loss_groups[("C", w.from_account, w.from_asset)].append(w)  # vom Nutzer als Verlust gebucht
             continue
         if tag in NO_COUNTERPART_TAGS or tag not in NEUTRAL_TAGS:
             continue  # Zahlung, Gebühr, Schenkung …: keine Gegenbuchung zu erwarten
-        if comp and (cdate is None or w.date >= cdate):
-            loss_groups[("C" if cdate else "B", w.from_account, w.from_asset)].append(w)
-            unmatched.append(w)
-            continue
-        if w.value_eur is not None and abs(w.value_eur) < LOSS_MIN_EUR:
+        after_hack = comp and (cdate is None or w.date >= cdate)
+        if not after_hack and w.value_eur is not None and abs(w.value_eur) < LOSS_MIN_EUR:
             small += 1
             continue
+        # auch auf einem kompromittierten Konto zuerst nach eigenen Zielen suchen (Rettungsüberweisung)
         alts = _alternatives(idx, w, deps, all_deps, nets, taken)
         unmatched.append(w)
         if alts and alts[0][0] >= ALT_LINK_SCORE:
             alt_groups[(w.from_account, w.from_asset)].append((w, alts))
         else:
+            # kompromittiert ist kein Verlustnachweis: ohne dokumentierte Verlustbuchung bleibt es ungeklärt (B)
             loss_groups[("B", w.from_account, w.from_asset)].append(w)
     idx.unmatched_out = unmatched
     out: list[Finding] = []
+    best_of: dict[str, list[str]] = defaultdict(list)  # Zugang → Abgänge, für die er der beste Kandidat ist
+    for items in alt_groups.values():
+        for w, alts in items:
+            best_of[alts[0][1].tx_id].append(w.tx_id)
     for (acc, aid), items in sorted(alt_groups.items()):
         items.sort(key=lambda x: (x[0].ts, x[0].tx_id))
         evidence, pairs, link_pairs = [], [], []
@@ -824,13 +1185,26 @@ def outflows(idx: _Index, stats: dict[str, int]) -> list[Finding]:
         for w, alts in items:
             best = alts[0]
             best_scores.append(best[0])
+            comp, _cd, note = compromised(idx, acc)
             evidence.append(f"{_ts(w.ts)} −{_q(w.from_qty)} {aid} von {acc} ({w.tx_id}) – mögliche Gegenbuchungen:")
             for sc_, d, why in alts:
-                evidence.append(f"  {sc_} % ({rating(sc_)}): {_d(d.ts)} +{_q(d.to_qty)} {d.to_asset} auf "
-                                f"{d.to_account} ({d.tx_id}) – {'; '.join(why)}")
-            pairs.append((idx.ref(w), idx.ref(best[1]), f"Sicherheit {best[0]} % ({rating(best[0])}): "
-                                                        + "; ".join(best[2])))
-            ambiguous = len(alts) > 1 and alts[1][0] >= best[0] - 15
+                same = bool(idx.hashes[w.tx_id] & idx.hashes[d.tx_id])
+                evidence.append(f"  {evidence_label(sc_, identity=same)} (Matching-Score {sc_}/95, regelbasiert): "
+                                f"{_d(d.ts)} +{_q(d.to_qty)} {d.to_asset} auf {d.to_account} ({d.tx_id}) – "
+                                f"{'; '.join(why)}")
+            if comp:
+                evidence.append(f"  Konto als kompromittiert gekennzeichnet („{note}“) – ein Abgang an ein eigenes "
+                                "Konto kann eine Rettungsüberweisung sein")
+            same = bool(idx.hashes[w.tx_id] & idx.hashes[best[1].tx_id])
+            pairs.append((idx.ref(w), idx.ref(best[1]), f"{evidence_label(best[0], identity=same)} (Matching-Score "
+                                                        f"{best[0]}/95): " + "; ".join(best[2])))
+            many_out = len(best_of[best[1].tx_id]) > 1
+            ambiguous = (len(alts) > 1 and alts[1][0] >= best[0] - 15) or many_out
+            if ambiguous:
+                evidence.append(f"  mehrdeutig – {'mehrere ähnlich gute Ziele' if len(alts) > 1 else ''}"
+                                f"{' bzw. ' if len(alts) > 1 and many_out else ''}"
+                                f"{'derselbe Zugang passt zu mehreren Abgängen' if many_out else ''}"
+                                " – keine Verknüpfung vorgeschlagen")
             if best[1].to_asset == aid and not ambiguous:
                 link_pairs.append([w.tx_id, best[1].tx_id])
         top = max(best_scores)
@@ -843,13 +1217,15 @@ def outflows(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                    "Zugänge (Menge, Zeit, ggf. Hash bzw. Tokenwechsel).",
                    "Ohne Verknüpfung zählt der Abgang als Abgang ohne Gegenbuchung und der Zugang als neue "
                    "Anschaffung."],
-            suspected=["Eigener Transfer, dessen Seiten getrennt gebucht sind – je Abgang ist die Gegenbuchung mit der "
-                       "höchsten Sicherheit genannt; Alternativen stehen unter „Belege“."],
+            suspected=["Eigener Transfer, dessen Seiten getrennt gebucht sind – je Abgang ist der Kandidat mit der "
+                       "stärksten Übereinstimmung genannt; Alternativen stehen unter „Belege“."],
             evidence=evidence[:60],
-            uncertainty=["Die Sicherheit ist eine Bewertung aus Hash, Menge, Zeit, Netzwerk und Tokenwechsel – keine "
-                         "Gewissheit. Bei mehreren ähnlich guten Zielen schlägt Portfolia keine Verknüpfung vor.",
-                         "Zieladressen fehlen in den meisten Buchungen; Bridge-Vorgänge sind nur über den Wert bzw. "
-                         "„related_asset“ erkennbar."],
+            uncertainty=["Matching-Scores sind regelbasierte Punktwerte aus Hash, Menge, Zeit, Netzwerk und "
+                         "Tokenwechsel – keine kalibrierten Wahrscheinlichkeiten und ohne Hash/Referenz kein "
+                         "Identitätsnachweis. Bei mehreren ähnlich guten Zielen schlägt Portfolia keine Verknüpfung "
+                         "vor.",
+                         "Zieladressen fehlen in den meisten Buchungen; Bridge-Vorgänge sind nur über „related_asset“ "
+                         "erkennbar."],
             pairs=pairs[:40],
             decision="Je Abgang prüfen (Explorer, Kontoauszug) und den passenden Zugang als internen Transfer "
                      "verknüpfen; Portfolia legt keine Verknüpfung automatisch an.",
@@ -883,8 +1259,8 @@ def _documented_losses(idx: _Index, txs: list[Tx]) -> Finding:
     val = sum((abs(t.value_eur) for t in txs if t.value_eur is not None), ZERO)
     known = [f"{len(txs)} Abgänge auf {len(by_acc)} Konten sind als Verlust bzw. Diebstahl gebucht (Tag „lost“/"
              f"„stolen“) – Wert zum Buchungszeitpunkt, soweit bekannt: {eur(val)}.",
-             f"Einordnung: C – {LOSS_CLASS['C'][0]} ({LOSS_CLASS['C'][1]}); bereits als Abgang ohne Gegenwert "
-             "erfasst."]
+             f"Einordnung: C – {LOSS_CLASS['C'][0]}, dokumentiert durch die Benutzerklassifikation der Buchung "
+             "(Tag); nicht extern unabhängig verifiziert. Bereits als Abgang ohne Gegenwert erfasst."]
     for acc, lst in sorted(by_acc.items()):
         parts = "; ".join(f"{_q(t.from_qty)} {t.from_asset} ({_d(t.ts)})" for t in lst[:6])
         known.append(f"{acc}: {parts}" + (f" … und {len(lst) - 6} weitere" if len(lst) > 6 else ""))
@@ -925,18 +1301,20 @@ def _loss_finding(idx: _Index, cls: str, acc: str, aid: str, txs: list[Tx]) -> F
         known.append("Als Verlust bzw. Diebstahl gebucht (Tag „lost“/„stolen“) – bereits als Abgang ohne Gegenwert "
                      "erfasst.")
         uncertainty.append("Ob ein Verlust steuerlich geltend gemacht werden kann, ist eine eigene Frage.")
-    elif cls == "C":
-        status = "wahrscheinlich"
-        evidence.append(f"Konto als kompromittiert gekennzeichnet: „{note}“" + (f" (ab {_d(cdate)})" if cdate else ""))
-        evidence.append("Abgänge ab diesem Datum ohne Gegenbuchung auf eigenen Konten")
-        uncertainty.append("Ein Teil der Abgänge kann eine eigene Rettungs-Überweisung sein (Ziel nicht im System "
-                           "erfasst) – Zieladressen im Explorer prüfen.")
     else:
         status = "verdacht" if valued and val >= LOSS_ALERT_EUR else "hinweis"
         known.append("Auf keinem eigenen Konto gibt es einen passenden Zugang (Menge 50–100,1 %, −2 h … +14 Tage, "
                      "auch Tokenwechsel über den Wert).")
         if comp:
-            evidence.append(f"Konto als kompromittiert gekennzeichnet („{note}“), Datum unbekannt – Zusammenhang offen")
+            after = cdate is None or any(t.date >= cdate for t in txs)
+            evidence.append(f"Konto als kompromittiert gekennzeichnet („{note}“)"
+                            + (f", Abgänge ab dem genannten Datum {_d(cdate)}" if cdate and after else
+                               ", Datum unbekannt" if cdate is None else ", Abgänge vor dem genannten Datum"))
+            uncertainty.insert(0, "Die Kennzeichnung als kompromittiert beweist keinen Diebstahl: Rettungsüberweisung "
+                                  "an eine nicht erfasste eigene Wallet, Verkauf oder eigener Übertrag sind möglich. "
+                                  "Ein Verlust gilt erst als dokumentiert, wenn er als solcher gebucht ist.")
+            if after:
+                status = "verdacht"
         uncertainty += ["Auszahlung an eine eigene, nicht erfasste Wallet bzw. Börse ist möglich (Zielkonto fehlt "
                         "im System).",
                         "Auszahlung an Dritte (Zahlung, Verkauf außerhalb) ist möglich – dann ist es kein Verlust.",
@@ -1109,6 +1487,25 @@ def soll_at_date(idx: _Index, acc: str, aid: str, d: date) -> Decimal:
     return idx.bal(acc, aid) - later
 
 
+def reference_instant(ref: Any) -> datetime | None:
+    """Vergleichszeitpunkt eines Referenzbestands: exakter Zeitpunkt, sonst Ende des Stichtags in der angegebenen
+    Zeitzone; ohne beides (ältere Einträge) None → Vergleich über das Buchungsdatum in Ortszeit."""
+    at = getattr(ref, "at", None)
+    if at is not None:
+        return at
+    tz = getattr(ref, "tz", None)
+    if not tz:
+        return None
+    from datetime import UTC, time
+    from zoneinfo import ZoneInfo
+
+    try:
+        zone = ZoneInfo(tz)
+    except Exception:
+        return None
+    return datetime.combine(ref.as_of, time(23, 59, 59, 999999), tzinfo=zone).astimezone(UTC)
+
+
 def soll_at_time(idx: _Index, acc: str, aid: str, when: datetime) -> Decimal:
     """Bestand zum Zeitpunkt ``when`` (z. B. Abruf eines externen Bestands) – ohne Buchungen danach."""
     later = sum((v for ts, _dd, v, _id in deltas(idx).get((acc, aid), ()) if ts > when), ZERO)
@@ -1122,11 +1519,19 @@ def apply_reference(idx: _Index, row: HoldingRow, ref: Any) -> None:
 
     row.reference = ref.qty
     row.reference_at = ref.as_of
-    row.reference_note = (ref.note or "") + (f" ({ref.source})" if ref.source else "")
-    row.soll_at_ref = soll_at_date(idx, row.account, row.asset, ref.as_of)
+    row.reference_note = (ref.note or "") + (f" ({ref.source})" if ref.source else "") + (
+        "; Wertstellungsdatum – Buchungsdatum kann abweichen" if getattr(ref, "basis", None) == "value" else "")
+    at = reference_instant(ref)
+    row.reference_ts = at
+    row.soll_at_ref = soll_at_time(idx, row.account, row.asset, at) if at is not None else \
+        soll_at_date(idx, row.account, row.asset, ref.as_of)
     if row.status in ("extern_ok", "extern_diff"):
         return
-    eq = abs(row.ref_diff or ZERO) <= _tol(row.soll_at_ref)
+    # Fiat centgenau, Krypto exakt (volle Präzision, keine Toleranz)
+    if idx.asset(row.asset).is_fiat:
+        eq = (row.reference.quantize(Decimal("0.01")) == row.soll_at_ref.quantize(Decimal("0.01")))
+    else:
+        eq = row.ref_diff == 0
     row.status = "ref_ok" if eq else "ref_diff"
     if not eq:
         row.explanations.insert(0, f"Referenzbestand {_q(ref.qty)} zum {ref.as_of.strftime('%d.%m.%Y')} − Soll zum "
@@ -1144,7 +1549,10 @@ def reference_finding(idx: _Index, row: HoldingRow) -> Finding | None:
         return None
     acc, aid = row.account, row.asset
     diff = row.ref_diff
-    known = [f"Referenzbestand (Prüfwert, keine Buchung) zum {_d(row.reference_at)}: {_q(row.reference)} {aid}"
+    from app.diagnosis.engine import _ts
+
+    stamp = _ts(row.reference_ts) if row.reference_ts else f"Ende {_d(row.reference_at)} (Ortszeit)"
+    known = [f"Referenzbestand (Prüfwert, keine Buchung) zum {stamp}: {_q(row.reference)} {aid}"
              + (f" – {row.reference_note.strip()}" if row.reference_note.strip() else "") + ".",
              f"Soll aus allen wirksamen Buchungen bis zum selben Stichtag: {_q(row.soll_at_ref)} {aid}.",
              f"Differenz Ist − Soll: {_signed(diff)} {aid}."]
@@ -1221,3 +1629,106 @@ def platform(idx: _Index, acc: str) -> str:
     info = idx.pf.accounts.get(acc)
     labels = sorted({s.provider_label for s in idx.snap.sources if s.account == acc})
     return ", ".join([*([info.broker] if info and info.broker else []), *labels]) or "–"
+
+
+# ----------------------------------------------------------------------------------------------------
+# Einzelvorgänge: Sammelbefunde in einzeln prüf- und freigebbare Vorgänge zerlegen
+# ----------------------------------------------------------------------------------------------------
+
+def _case_title(idx: _Index, ids: list[str]) -> str:
+    from app.diagnosis.engine import _d, _q
+
+    parts = []
+    for tid in ids:
+        t = idx.by_id.get(tid)
+        if t is None:
+            continue
+        q, a = (t.to_qty, t.to_asset) if t.to_qty and t.to_asset else (t.from_qty, t.from_asset)
+        parts.append(f"{_q(q)} {a} ({tid})")
+    first = idx.by_id.get(ids[0]) if ids else None
+    return f"Vorgang {_d(first.ts) if first else ''}: " + " ↔ ".join(parts)
+
+
+def split_cases(idx: _Index, findings: list[Finding]) -> list[Finding]:
+    """Je Sammelbefund (mehrere Paare) einen eigenen Befund je Vorgang. Kennung und Prüfsumme hängen nur an den
+    beteiligten Buchungen und ihrer Evidenz – nicht an der Gruppe –, damit eine Entscheidung zu einem Vorgang auch
+    bestehen bleibt, wenn sich andere Vorgänge der Gruppe ändern."""
+    from app.diagnosis.engine import _scenario_without
+
+    out: list[Finding] = []
+    for f in list(findings):
+        d = f.data or {}
+        typ = d.get("type")
+        cases: list[tuple[list[str], dict[str, Any]]] = []
+        if typ == "econ_pairs" and d.get("pairs") and not d.get("multi"):
+            info = {tuple(c["pair"]): c for c in d.get("cases") or []}
+            for pair in d["pairs"]:
+                c = info.get(tuple(pair), {})
+                cases.append((pair, {"type": "econ_pairs", "pairs": [pair], "account": d.get("account"),
+                                     "asset": d.get("asset"), "side": d.get("side"),
+                                     "keep_family": d.get("keep_family"), "drop_family": d.get("drop_family"),
+                                     "case": {k: c.get(k) for k in ("level", "how", "identity", "ambiguous",
+                                                                    "alternatives", "pro", "contra", "missing")},
+                                     "_status": c.get("status", f.status)}))
+        elif typ == "hash_pairs" and d.get("pairs"):
+            for pair, h in zip(d["pairs"], d.get("hashes") or [], strict=False):
+                cases.append((pair, {"type": "hash_pairs", "pairs": [pair], "hashes": [h],
+                                     "accounts": d.get("accounts")}))
+        elif typ == "transfer" and not d.get("ambiguous"):
+            alts = d.get("alternatives")
+            if alts:
+                links = dict(d.get("pairs") or [])
+                for w, lst in alts.items():
+                    pair = [w, links[w]] if w in links else [w, lst[0][0]] if lst else [w]
+                    cases.append((pair, {"type": "transfer", "pairs": [pair] if w in links else [],
+                                         "alternatives": {w: lst}}))
+            elif not alts and d.get("pairs"):
+                for pair in d["pairs"]:
+                    cases.append((pair, {"type": "transfer", "pairs": [pair]}))
+        if not cases:
+            continue
+        why_by = {(a.tx_id, b.tx_id): why for a, b, why in f.pairs}
+        for pair, data in cases:
+            status = data.pop("_status", f.status)
+            c = data.get("case") or {}
+            refs = [idx.ref(idx.by_id[x]) for x in pair if x in idx.by_id]
+            child = Finding(
+                kind=f.kind, status=status, priority=f.priority, title=_case_title(idx, pair),
+                known=[idx.describe(idx.by_id[x]) for x in pair if x in idx.by_id]
+                + ([f"Evidenzstufe: {c['level']}."] if c.get("level") else [])
+                + ([f"Mehrere mögliche Partner (auch {', '.join(c['alternatives'][:4])}) – Entscheidung "
+                    "zurückgestellt."] if c.get("ambiguous") else []),
+                evidence=list(c.get("pro") or []) or ([why_by[tuple(pair)]] if tuple(pair) in why_by else []),
+                uncertainty=list(c.get("contra") or []) or list(f.uncertainty),
+                suspected=[f"noch offen: {m}" for m in c.get("missing") or []] or list(f.suspected),
+                decision=f.decision, data=data, parent=f.id,
+                key=f"case|{data['type']}|{f.kind}|" + "|".join(pair), weight=f.weight)
+            if len(pair) == 2 and tuple(pair) in why_by:
+                child.pairs = [(refs[0], refs[1], why_by[tuple(pair)])]
+            child.txs = refs
+            if data["type"] in ("econ_pairs", "hash_pairs") and len(pair) == 2 and pair[1] in idx.by_id:
+                child.scenario = _scenario_without(idx, [idx.by_id[pair[1]]], "Szenario (hypothetisch): ohne die "
+                                                   f"zweite Buchung {pair[1]} – es wird nichts gebucht.")
+            idx.attach(child, derive_positions=False)
+            child.positions = []
+            f.children.append(child.id)
+            out.append(child)
+    return out
+
+
+def case_states(snap: Any, findings: list[Finding]) -> None:
+    """Stand der Nutzerentscheidung je Befund (Anzeige; ändert nichts): offen, später prüfen, ungeklärt, abgelehnt,
+    überholt (Entscheidung zu älteren Daten)."""
+    from app.diagnosis.actions import fingerprint
+    from app.diagnosis.model import MARK_STATE
+
+    marks = getattr(snap, "marks", {}) or {}
+    for f in findings:
+        m = marks.get(f.id)
+        if m is None:
+            f.state = "offen"
+        elif m[1] and m[1] != fingerprint(f):
+            f.state = "ueberholt"
+        else:
+            f.state = MARK_STATE.get(m[0], "offen")
+

@@ -138,6 +138,17 @@ class Facts:
         pf = self.snap.pf if self.snap is not None else None
         self.by_id: dict[str, Tx] = {t.tx_id: t for t in pf.txs} if pf is not None else {}
         self.pf = pf
+        self.report = report
+
+    def closed_pairs(self, f: Finding) -> set[str]:
+        """Paare von Einzelvorgängen, die der Nutzer abgelehnt bzw. als ungeklärt belassen hat (nicht in die
+        Sammelbearbeitung)."""
+        out: set[str] = set()
+        for cid in f.children:
+            c = self.report.by_id(cid) if self.report is not None else None
+            if c is not None and c.state in ("abgelehnt", "ungeklaert"):
+                out.update("|".join(p) for p in (c.data or {}).get("pairs") or [])
+        return out
 
     def tx(self, tx_id: str) -> Tx | None:
         return self.by_id.get(tx_id)
@@ -317,7 +328,7 @@ def _hash_pairs(facts: Facts, f: Finding) -> Recommendation | None:
         if a is None or b is None:
             continue
         how, drop, keep = pair_choice(facts, a, b)
-        if how == "hide" and not facts.hideable(drop):
+        if (how == "hide" and not facts.hideable(drop)) or f"{a_id}|{b_id}" in facts.closed_pairs(f):
             continue
         txs.append(a)
         val = f"{a_id}|{b_id}"
@@ -328,19 +339,24 @@ def _hash_pairs(facts: Facts, f: Finding) -> Recommendation | None:
         defaults.append(val)
     if not choices:
         return None
-    likely = f.status == "wahrscheinlich"
+    single = len(d["pairs"]) == 1
+    likely = f.status == "wahrscheinlich" and (single or not f.children)
     text = ("Je Paar die zweite Buchung ausblenden: beide tragen denselben Ereignisindex – es ist dieselbe Bewegung."
             if likely else
             "Je Hash im Explorer nachsehen, ob die Transaktion eine oder zwei gleiche Bewegungen an dieses Konto "
             "enthält. Nur bei einer: je Paar die zweite Buchung ausblenden – die Auswahl ist je Paar möglich. Sind es "
             "zwei Bewegungen, als geprüft markieren.")
-    opts = [Option("hide_second", "Je Paar die zweite Buchung ausblenden",
+    opts = [Option("hide_second", ("Die zweite Buchung ausblenden" if single else
+                                   "Sammelbearbeitung: je ausgewähltem Paar die zweite Buchung ausblenden"),
                    "Die erste Buchung je Paar bleibt; die zweite zählt nicht mehr (Import-Buchung: Überlagerung "
-                   "„gelöscht“; App-Buchung neben einer Import-Buchung: „im Import enthalten“).", recommended=True,
-                   params=[Param("pairs", "Paare", "multi", default=defaults, choices=choices,
-                                 hint="Nur Paare auswählen, die im Explorer nur eine Bewegung zeigen.")]),
+                   "„gelöscht“; App-Buchung neben einer Import-Buchung: „im Import enthalten“).",
+                   recommended=single or not f.children,
+                   params=[] if single else [Param("pairs", "Paare", "multi",
+                                                   default=[] if f.children else defaults, choices=choices,
+                                                   hint="Nur Paare auswählen, die im Explorer nur eine Bewegung "
+                                                        "zeigen.")]),
             _dismiss("Zwei legitime Bewegungen je Hash – als geprüft markieren")]
-    return Recommendation(text=text, conditional=not likely,
+    return Recommendation(text=text + _sammel_hint(f), conditional=not likely,
                           checks=_hash_checks(facts, txs, "Explorer: Bewegungen der Transaktion zählen"),
                           options=opts, links=_journal_links(d["accounts"][0] if d.get("accounts") else None, None))
 
@@ -425,9 +441,10 @@ def _import_vs_app(facts: Facts, f: Finding) -> Recommendation | None:
 
 def _transfer(facts: Facts, f: Finding) -> Recommendation | None:
     choices, defaults, txs = [], [], []
+    closed = facts.closed_pairs(f)
     for w_id, d_id in f.data["pairs"]:
         w, d = facts.tx(w_id), facts.tx(d_id)
-        if w is None or d is None or not facts.hideable(w) or not facts.hideable(d):
+        if w is None or d is None or not facts.hideable(w) or not facts.hideable(d) or f"{w_id}|{d_id}" in closed:
             continue
         txs += [w, d]
         val = f"{w_id}|{d_id}"
@@ -436,22 +453,25 @@ def _transfer(facts: Facts, f: Finding) -> Recommendation | None:
         defaults.append(val)
     if not choices:
         return None
-    likely = f.status == "wahrscheinlich"
+    single = len(f.data["pairs"]) == 1
+    likely = f.status == "wahrscheinlich" and (single or not f.children)
     text = ("Als internen Transfer verbuchen: Der gleiche Transaktions-Hash belegt dieselbe Blockchain-Transaktion. "
             "Einstand und Anschaffungsdatum wandern dann vom Abgangskonto mit; der Zugang ist keine neue Anschaffung "
             "und die Haltefrist läuft weiter." if likely else
             "Nur wenn beide Konten dir gehören und es derselbe Vorgang ist: als internen Transfer verbuchen (Einstand "
             "und Anschaffungsdatum wandern mit). Ist es ein Abgang an Dritte bzw. ein Zugang von Dritten, als "
             "geprüft markieren.")
-    opts = [Option("link", "Als internen Transfer verbuchen",
+    opts = [Option("link", "Als internen Transfer verbuchen" if single or not f.children else
+                   "Sammelbearbeitung: ausgewählte Paare als Transfer verbuchen",
                    "Je Paar entsteht eine Transfer-Buchung (App, „Korrektur aus der Diagnose“); Abgang und Zugang "
                    "zählen nicht mehr einzeln (Import-Buchungen: Überlagerung, App-Buchungen: zusammengeführt). Eine "
-                   "Mengendifferenz gilt als Transfergebühr.", recommended=True,
-                   params=[Param("pairs", "Paare", "multi", default=defaults, choices=choices)],
+                   "Mengendifferenz gilt als Transfergebühr.", recommended=single or not f.children,
+                   params=[] if single else [Param("pairs", "Paare", "multi", default=[] if f.children else defaults,
+                                                   choices=choices)],
                    caution="Ändert Einstand, Haltedauer und damit realisierte Ergebnisse späterer Verkäufe – die "
                            "Vorschau zeigt die Steuerwerte je Jahr."),
             _dismiss("Kein interner Transfer – als geprüft markieren")]
-    return Recommendation(text=text, conditional=not likely,
+    return Recommendation(text=text + _sammel_hint(f), conditional=not likely,
                           checks=_hash_checks(facts, txs, "Explorer: Absender und Empfänger prüfen")
                           or [("Kontoauszüge beider Konten vergleichen (kein Hash vorhanden)", [])],
                           options=opts)
@@ -709,59 +729,79 @@ def _holding(facts: Facts, f: Finding) -> Recommendation | None:
 # Buchungsprüfung über Quellen (M27)
 # ----------------------------------------------------------------------------------------------------
 
+def _sammel_hint(f: Finding) -> str:
+    return (f" Dieser Befund fasst {len(f.children)} Einzelvorgänge zusammen – jeden Vorgang einzeln prüfen und "
+            "entscheiden; die Sammelbearbeitung übernimmt nur ausdrücklich ausgewählte Vorgänge.") \
+        if len(f.children) > 1 else ""
+
+
 def _econ_pairs(facts: Facts, f: Finding) -> Recommendation | None:
     from app.diagnosis.audit import family_label
 
     d = f.data
+    lk, ld = family_label(d.get("keep_family") or ""), family_label(d.get("drop_family") or "")
+    case = d.get("case") or {}
+    closed = facts.closed_pairs(f)
     choices, keep_txs, drop_txs = [], [], []
     for keep_id, drop_id in d["pairs"]:
         k, x = facts.tx(keep_id), facts.tx(drop_id)
-        if k is None or x is None:
+        if k is None or x is None or f"{keep_id}|{drop_id}" in closed:
             continue
         keep_txs.append(k)
         drop_txs.append(x)
         choices.append((f"{keep_id}|{drop_id}", f"{tx_short(k)} ({keep_id}) ↔ {tx_short(x)} ({drop_id})"))
+    single = len(d["pairs"]) == 1
+    ambiguous = bool(case.get("ambiguous") or d.get("ambiguous"))
+    checks = [("Kontoauszug bzw. Transaktionshistorie der Börse: Ist jeder Betrag einmal oder zweimal enthalten?", [])]
+    checks += _hash_checks(facts, [*keep_txs, *drop_txs], "Explorer: Vorgang ansehen")
+    links = [*_journal_links(d.get("account"), d.get("asset")),
+             Link("Referenzbestand hinterlegen", "/quality/diagnose#referenzen")]
     if not choices:
-        return None
-    lk, ld = family_label(d.get("keep_family") or ""), family_label(d.get("drop_family") or "")
-    strong = f.status == "wahrscheinlich"
+        text = ("Keine Verknüpfung möglich bzw. sinnvoll: "
+                + ("mehrere gleich gute Kombinationen – die Entscheidung ist zurückgestellt. " if ambiguous else "")
+                + "Mit Kontoauszug prüfen; sonst ablehnen (verschiedene Vorgänge) oder später prüfen.")
+        return Recommendation(text=text, conditional=True, checks=checks,
+                              options=[_dismiss("Ungeklärt lassen – als geprüft markieren")], links=links)
+    strong = f.status in ("belegt", "wahrscheinlich") and single and not ambiguous
     hint = f.status == "hinweis"
     how = ("App-Buchungen werden als „im Import enthalten“ verknüpft, Import-Buchungen als Doppelbuchung der geltenden "
            "Buchung ausgeblendet (Überlagerung, die Import-Datei bleibt unverändert). Rohdaten und Herkunft bleiben "
            "erhalten; „Rückgängig“ stellt alles wieder her.")
-    opts = [Option("link_econ", f"Als einen wirtschaftlichen Vorgang verknüpfen – „{lk}“ gilt",
-                   f"Je ausgewähltem Paar zählt nur die Buchung aus „{lk}“; die aus „{ld}“ nicht mehr. {how}",
-                   recommended=strong,
-                   params=[Param("pairs", "Paare", "multi", default=[c for c, _l in choices] if strong else [],
-                                 choices=choices,
-                                 hint="" if strong else "Nur Paare wählen, die laut Kontoauszug derselbe Vorgang "
-                                                        "sind.")],
-                   caution=("Kein ausreichender Beleg für eine Doppelbuchung – nur mit Kontoauszug verknüpfen."
-                            if hint else "Ändert Bestand und ggf. Einstand/realisierte Ergebnisse – die Vorschau "
-                                         "zeigt die Werte je Jahr.")),
-            Option("link_econ_swap", f"Stattdessen „{ld}“ gelten lassen",
-                   f"Je Paar zählt die Buchung aus „{ld}“ (z. B. weil sie Gebühr und genaue Uhrzeit enthält); die aus "
-                   f"„{lk}“ wird als Doppelbuchung ausgeblendet bzw. verknüpft. {how}",
-                   params=[Param("pairs", "Paare", "multi", choices=choices)],
+    pparams = [] if single else [Param("pairs", "Vorgänge", "multi", default=[], choices=choices,
+                                       hint="Nur Vorgänge wählen, die laut Kontoauszug je derselbe Vorgang sind.")]
+    caution = ("Kein ausreichender Beleg für eine Doppelbuchung – nur mit Kontoauszug verknüpfen." if hint else
+               "Mehrdeutig: mehrere mögliche Partner – nur mit Kontoauszug verknüpfen." if ambiguous else
+               "Ändert Bestand und ggf. Einstand/realisierte Ergebnisse – die Vorschau zeigt die Werte je Jahr.")
+    prefix = "" if single else "Sammelbearbeitung: ausgewählte Vorgänge – "
+    opts = [Option("link_econ", f"{prefix}Als einen Vorgang verknüpfen – „{lk}“ bleibt maßgeblich",
+                   f"Es zählt nur die Buchung aus „{lk}“; die aus „{ld}“ wird als bereits enthalten verknüpft. {how}",
+                   recommended=strong, params=pparams, caution=caution),
+            Option("link_econ_swap", f"{prefix}Als einen Vorgang verknüpfen – „{ld}“ bleibt maßgeblich",
+                   f"Es zählt die Buchung aus „{ld}“ (z. B. weil sie Gebühr und genaue Uhrzeit enthält); die aus "
+                   f"„{lk}“ wird als bereits enthalten verknüpft bzw. ausgeblendet. {how}",
+                   params=[Param(p.name, p.label, p.kind, [], p.choices, p.hint) for p in pparams],
                    caution="Der kuratierte Import ist sonst maßgeblich – nur wählen, wenn die zweite Quelle genauer "
                            "ist."),
-            _dismiss("Verschiedene Vorgänge – als geprüft markieren")]
-    if strong:
-        text = (f"Als einen wirtschaftlichen Vorgang verknüpfen: Je Paar stimmen Konto, Asset, Richtung und Betrag "
-                f"(brutto/netto) überein, der Abstand ist kleiner als eine Stunde und jede Buchung hat genau einen "
-                f"Partner. Es zählt dann nur die Buchung aus „{lk}“.")
+            _dismiss("Ungeklärt lassen – als geprüft markieren")]
+    if f.status == "belegt" and single:
+        text = (f"Identität belegt ({case.get('identity') or 'Kennung'}): als einen Vorgang verknüpfen – es zählt die "
+                f"Buchung aus „{lk}“.")
+    elif strong:
+        text = (f"Möglicherweise derselbe Vorgang (starke Übereinstimmung, nicht bewiesen): Konto, Asset, Richtung und "
+                f"Betrag (brutto/netto) passen, Abstand unter einer Stunde, je Buchung genau ein Partner. Nach Prüfung "
+                f"des Kontoauszugs verknüpfen – es zählt dann nur die Buchung aus „{lk}“.")
     elif hint:
         text = ("Keine Korrektur empfohlen: Gleiche Höhe und ein Abstand von Tagen belegen keine Doppelbuchung. Mit "
-                "dem Kontoauszug prüfen, ob der Betrag einmal oder zweimal eingegangen ist; dann verknüpfen oder als "
-                "geprüft markieren.")
+                "dem Kontoauszug prüfen, ob der Betrag einmal oder zweimal eingegangen ist; dann verknüpfen oder "
+                "ablehnen.")
+    elif ambiguous:
+        text = ("Mehrdeutig – Entscheidung zurückgestellt. Erst mit Kontoauszug klären, welche Buchungen "
+                "zusammengehören.")
     else:
         text = ("Erst mit Kontoauszug bzw. Historie der Börse prüfen, ob der Vorgang einmal oder zweimal stattfand. "
-                "Nur dann die betroffenen Paare verknüpfen.")
-    checks = [("Kontoauszug bzw. Transaktionshistorie der Börse: Ist jeder Betrag einmal oder zweimal enthalten?", [])]
-    checks += _hash_checks(facts, [*keep_txs, *drop_txs], "Explorer: Vorgang ansehen")
-    return Recommendation(text=text, conditional=not strong, checks=checks, options=opts,
-                          links=[*_journal_links(d.get("account"), d.get("asset")),
-                                 Link("Referenzbestand hinterlegen", "/quality/diagnose#referenzen")])
+                "Nur dann verknüpfen, sonst ablehnen.")
+    return Recommendation(text=text + _sammel_hint(f), conditional=not (strong and f.status == "belegt"),
+                          checks=checks, options=opts, links=links)
 
 
 def _breakdown(facts: Facts, f: Finding) -> Recommendation | None:

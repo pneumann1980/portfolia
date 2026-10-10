@@ -1363,10 +1363,67 @@ nach Börse/Wallet, Konto, Asset, Abweichung in € und Sicherheit), *Mögliche 
 Transfers*, *Inaktive Konten* und *Potenzielle Verluste*.
 
 **Referenzbestände:** *Diagnose → Referenzbestände* nimmt Konto, Asset-ID, Bestand (0 ist gültig), Stichtag und Beleg
-auf. Ein Referenzbestand ist ein **Prüfwert, keine Buchung** – er ändert weder Bestand noch Einstand noch Steuer.
-Anlegen und Entfernen stehen im Änderungsprotokoll; entfernte Einträge bleiben als „entfernt“ erhalten. Referenzbestände
-reisen mit dem Gesamtexport (`state.json` → `reference_balances`). Datenbank: Migration 19 (neue Tabelle, nicht
-destruktiv).
+auf, optional mit **Uhrzeit, Zeitzone** (IANA, z. B. `Europe/Berlin`) und Hinweis **Buchungs- bzw. Wertstellungstag**.
+Mit Uhrzeit gilt genau dieser Zeitpunkt (gespeichert in UTC), sonst das Ende des Stichtags in der angegebenen bzw.
+fachlichen Zeitzone; Einträge aus 0.24.0 ohne Uhrzeit bleiben unverändert gültig. Fiat wird auf den Cent, Krypto ohne
+Toleranz verglichen. Ein Referenzbestand ist ein **Prüfwert, keine Buchung** – er ändert weder Bestand noch Einstand
+noch Steuer. Fehlt er, ist der Ist-Bestand unbekannt (nie 0); ein erfolgreicher API-Abruf bestätigt nur den aktuellen
+Bestand, nicht die Vollständigkeit der Buchungshistorie. Anlegen und Entfernen stehen im Änderungsprotokoll; entfernte
+Einträge bleiben als „entfernt“ erhalten. Referenzbestände reisen mit dem Gesamtexport (`state.json` →
+`reference_balances`, inkl. Zeitpunkt/Zeitzone). Datenbank: Migration 19 (Tabelle) und 20 (Spalten `as_of_ts`, `tz`,
+`basis`; additiv).
+
+### Einzelvorgänge, Evidenzstufen und Freigabe (M28)
+
+**Sammelbefund und Vorgänge:** Ein Sammelbefund (z. B. „10 mögliche Doppelbuchungen auf Börse B · USD“) bleibt als
+Übersicht; jeder einzelne Vorgang (ein Paar bzw. ein Abgang mit Kandidaten) ist ein eigener Befund mit stabiler ID
+(*Vorgang prüfen*, `/quality/diagnose/case/{id}`). Die Vorgangsseite zeigt:
+
+* **A · Beteiligte Buchungen:** Kennung, Zeit (Ortszeit und UTC), Konto, Quelle, Art, Abgang/Zugang, Gebühr samt
+  Gebühren-Asset, Wert, Referenz bzw. Hash, Status (zählt / ausgeblendet / verknüpft) und die Originalfelder samt
+  Herkunft.
+* **B · Diagnose:** was aus den Daten folgt, Belege dafür und dagegen, fehlende Informationen, Szenarien – in
+  Worten *nachgewiesen* (gemeinsame Anbieterreferenz bzw. Hash), *wahrscheinlich – nicht bewiesen* oder *ungeklärt*.
+  Prozentwerte werden nicht angezeigt; ein Matching-Score erscheint nur als „regelbasiert“ gekennzeichnete Kennzahl.
+* **C · Entscheidung:** die zulässigen Optionen (Koinly-Buchung bzw. API-Buchung maßgeblich, eigener Transfer,
+  ungeklärt lassen) – jeweils mit „Wirkung ansehen und übernehmen“, dazu *Ablehnen*, *Später prüfen*, *Ungeklärt
+  lassen*.
+* **D · Wirkung:** erst in der Vorschau – Bestände vorher/nachher, Einstand und Lots (FIFO), realisierte Ergebnisse
+  und Steuerwerte je Jahr, Gesamtwert und Allokation (nur gespeicherte Kurse; ohne Kurs bzw. mit Ersatzkurs als
+  solche ausgewiesen), Referenzbestand-Differenzen, erledigte und neue Befunde.
+
+**Entscheidungen** werden je Vorgang gespeichert (`diag_decision`: Befund-ID, Buchungs-IDs, Art, Evidenz-Fingerprint,
+Option, Zeitpunkt, Datenstand, Vorher/Nachher bzw. Wirkung, Undo-Verweis). Zustände: *offen*, *später prüfen*,
+*ungeklärt*, *abgelehnt*, *übernommen*, *rückgängig*, *überholt*. Ein abgelehnter Vorgang erscheint bei unveränderter
+Evidenz nicht erneut als offener Vorschlag und fällt aus der Sammelbearbeitung; ändert sich die Evidenz (z. B. neuer
+möglicher Partner nach einem Sync), wird er *überholt* und ist erneut zu prüfen. „Übernehmen“ ist idempotent: Die
+Prüfsumme der Vorschau ist eindeutig gespeichert – Doppelklick, Neuladen oder eine zweite Sitzung führen die Änderung
+nicht zweimal aus; hat sich der Datenstand seit der Vorschau geändert, wird nichts übernommen. „Rückgängig“ wird
+verweigert, solange eine spätere Korrektur dieselben Buchungen betrifft (zuerst diese zurücknehmen). Ungeklärt,
+abgelehnt und später prüfen reisen mit dem Gesamtexport (`state.json` → `diag_dismissed`, mit `action`; ältere
+Exporte ohne `action` gelten als „ungeklärt“).
+
+**Sammelbearbeitung:** nur über ausdrücklich ausgewählte Einzelvorgänge – keine Vorauswahl, ein Sammelbefund und
+seine Vorgänge nie gemeinsam. Die Vorschau zeigt Abhängigkeiten, Konflikte und die *kombinierte* Wirkung (sie kann von
+der Summe der Einzelvorschauen abweichen, z. B. durch FIFO-Reihenfolge); übernommen wird alles oder nichts.
+
+**Dubletten über Quellen:** *nachgewiesen* nur mit gemeinsamer Anbieterreferenz bzw. gemeinsamem Hash; sonst
+*wahrscheinlich* (≤ 1 h, eindeutig), *verdacht* (≤ 36 h bzw. systematischer Tagesversatz) oder *hinweis* (≤ 7 Tage,
+ohne Empfehlung). Wiederkehrende gleich hohe Vorgänge (Sparplan) sind ein Gegenbeleg. 1:n-, n:1- und n:m-Kombinationen
+(bis 8 Kandidaten, bis 3 Teile) werden angezeigt, aber nie verknüpft; mehrdeutige Kombinationen sind als solche
+gekennzeichnet. Keine Buchung wird zwei Vorgängen zugeordnet. Eine rechnerisch passende Bestandsabweichung ist kein
+Beleg und fließt nicht in die Bewertung ein.
+
+**Transfers:** Erst alle Kandidaten, dann Zuordnung je Zusammenhangskomponente: Hash- bzw. Referenzgleichheit vor Zeit
+und Betrag; ist bei bis zu 6 Buchungen je Seite genau eine vollständige Zuordnung möglich, wird sie mit Begründung
+(Ausschluss) gezeigt, sonst gilt der Fall als *mehrdeutig* – ohne bevorzugte Lösung. Tokenwechsel (Bridge/Wrapped)
+nur über hinterlegtes `related_asset`, nie über den EUR-Wert allein.
+
+**Verlustklassen:** A technischer Buchungsfehler (Wert vermutlich noch vorhanden, z. B. Gegenbuchung auf eigenem
+Konto), B ungeklärt, C dokumentiert. C nur mit Kennzeichnung der Buchung
+(Tag „lost“/„stolen“) – ausgewiesen als *Benutzerklassifikation, nicht extern verifiziert*. Ein als kompromittiert
+markiertes Konto allein ergibt nie C: Abgänge an eigene Konten werden zuerst als mögliche Rettungsüberweisung geprüft,
+sonst B. Verlustbuchungen legt die Diagnose nie selbst an.
 
 **Wirtschaftliche Dublette verknüpfen:** Je ausgewähltem Paar zählt eine Buchung (Vorgabe: der kuratierte Import). Die
 andere bleibt mit Herkunft erhalten: eine App-Buchung wird als „im Import enthalten“ verknüpft, eine Import-Buchung als
@@ -1382,6 +1439,9 @@ berechnet. Portfolia speichert oder ersetzt dabei keine Bestände.
 * Ohne Ereignisindex (Output-/Log-Index) sind zwei gleiche Bewegungen in derselben Blockchain-Transaktion nicht von
   einer Doppelbuchung zu unterscheiden; Steuertool-Exporte (z. B. Koinly) liefern keinen Index.
 * Gleiche Menge und Zeit beweisen keine Dublette; zwei verschiedene Hashes gelten immer als zwei Vorgänge.
+* Die n:m-Suche ist begrenzt (8 Kandidaten, 3 Teile, 6 Buchungen je Seite bei Transfers); größere Gruppen bleiben
+  ungeklärt statt heuristisch zugeordnet.
+* Der Ledger verwirft Bestände unter 1e-12 als Staub; Referenzvergleiche darunter sind daher nicht aussagekräftig.
 * Transfers zwischen eigenen Konten werden nur vermutet; Adressen der Gegenseite fehlen meist. Abgänge an Dritte mit
   zufällig ähnlichem Zugang sind möglich.
 * Die Anbieter-Identität von Kürzeln kennt Portfolia nur für hinterlegte Fälle (`app/csvimport/identity.py`, derzeit

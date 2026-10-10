@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% import "partials/diag_macros.html" as dm with context %}
+{% block title %}Vorgang prüfen{% endblock %}
+{% block heading %}Datenqualität · Vorgang prüfen{% endblock %}
+{% set level = {'belegt': ('Nachgewiesen', 'Die Identität des Vorgangs ist durch Kennung bzw. Hash bzw. Kennzeichen in den Daten belegt.'),
+                'wahrscheinlich': ('Wahrscheinlich – nicht bewiesen', 'Mehrere unabhängige Übereinstimmungen; ein Identitätsbeleg (gemeinsame Kennung) fehlt.'),
+                'verdacht': ('Ungeklärt – Verdacht', 'Das Muster passt, ein entscheidender Beleg fehlt oder eine legitime Erklärung ist möglich.'),
+                'hinweis': ('Ungeklärt – schwacher Hinweis', 'Zur Einordnung; kein ausreichender Beleg für einen Fehler.')} %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>{% if f %}{{ f.title }}{% else %}Vorgang{% endif %}</h2>
+    <div class="row">{% if parent %}<a class="btn sm" href="/quality/diagnose/case/{{ parent.id }}">Zum Sammelbefund</a>{% endif %}<a class="btn sm" href="/quality/diagnose{% if f %}?f={{ (parent or f).id }}#{{ (parent or f).id }}{% endif %}">Zur Diagnose</a></div></div>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  {% if f %}
+  <div class="row"><span class="badge {{ status_badge[f.status] }}">{{ level[f.status][0] }}</span><span class="badge">{{ f.kind_label }}</span>
+    {% set st = case_states.get(f.state or 'offen') %}<span class="badge {{ st[1] }}">Stand: {{ st[0] }}</span>
+    {% if f.kind == 'loss' and f.data.get('class') %}<span class="badge">{{ f.data['class'] }} · {{ loss_class[f.data['class']][0] }}</span>{% endif %}</div>
+  <p class="hint">{{ level[f.status][1] }} Diagnose und Prüfansicht ändern nichts.{% if parent %} Teil des Sammelbefunds „{{ parent.title }}“ – diese Entscheidung betrifft nur diesen Vorgang.{% endif %}</p>
+  {% endif %}
+</section>
+
+{% if f %}
+<section class="card" id="buchungen">
+  <h2>A · Beteiligte Buchungen ({{ rows|length }})</h2>
+  <div class="table-wrap cards-wrap"><table class="cards hold-table">
+    <thead><tr><th>Buchung</th><th>Datum · Uhrzeit</th><th>Konto</th><th>Quelle</th><th>Art</th><th class="num">Abgang</th><th class="num">Zugang</th><th class="num">Gebühr</th><th class="num">Wert</th><th>Referenz · Hash</th><th>Status</th></tr></thead>
+    <tbody>{% for r in rows %}{% set t = r.t %}<tr>
+      <td data-label="Buchung"><span class="mono">{{ t.tx_id }}</span></td>
+      <td data-label="Datum">{{ t.ts|datetime_de }}<div class="hint">{{ utc_fmt(t.ts) }}</div></td>
+      <td data-label="Konto">{{ t.from_account or '' }}{% if t.from_account and t.to_account and t.from_account != t.to_account %} → {% endif %}{% if t.to_account != t.from_account %}{{ t.to_account or '' }}{% endif %}</td>
+      <td data-label="Quelle">{{ r.ref.source if r.ref else (t.source or '–') }}</td>
+      <td data-label="Art">{{ type_label.get(t.type, t.type) }}{% if t.tag %} · {{ t.tag }}{% endif %}</td>
+      <td class="num" data-label="Abgang">{% if t.from_qty %}−{{ t.from_qty|qty_exact }} {{ t.from_asset }}{% else %}<span class="muted">–</span>{% endif %}</td>
+      <td class="num" data-label="Zugang">{% if t.to_qty %}+{{ t.to_qty|qty_exact }} {{ t.to_asset }}{% else %}<span class="muted">–</span>{% endif %}</td>
+      <td class="num" data-label="Gebühr">{% if t.fee_qty %}{{ t.fee_qty|qty_exact }} {{ t.fee_asset }}{% else %}<span class="muted">keine</span>{% endif %}</td>
+      <td class="num" data-label="Wert">{% if t.value_eur is not none %}{{ t.value_eur|eur }}{% else %}<span class="muted">ohne Wert</span>{% endif %}</td>
+      <td data-label="Referenz · Hash">{% if t.source_ref %}<span class="mono">{{ t.source_ref }}</span>{% else %}<span class="muted">keine Referenz</span>{% endif %}{% if r.ref %}{% for h in r.ref.hashes %}<div class="hint mono">{{ h }}</div>{% endfor %}{% endif %}</td>
+      <td data-label="Status">{{ r.status }}{% if r.ref and r.ref.edit_url %}<div><a href="{{ r.ref.edit_url }}">bearbeiten</a></div>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% for r in rows %}{% set t = r.t %}
+  <details class="box" style="margin-top:6px"><summary>Originalfelder und Herkunft: <span class="mono">{{ t.tx_id }}</span></summary>
+    <dl class="kv" style="margin-top:6px">
+      <dt>Herkunft</dt><dd>{{ origin_label.get(t.origin, t.origin) }}{% if r.meta %} · Quelle {{ r.meta.source }} · Status {{ r.meta.status }}{% if r.meta.external_id %} · externe ID <span class="mono">{{ r.meta.external_id }}</span>{% endif %}{% if r.meta.event_key %} · Ereignis <span class="mono">{{ r.meta.event_key }}</span>{% endif %}{% endif %}</dd>
+      <dt>Zeitpunkt</dt><dd>{{ utc_fmt(t.ts) }}{% if t.date_only %} (nur Datum){% endif %}</dd>
+      <dt>Quelle / Kennung</dt><dd>{{ t.source or '–' }} · <span class="mono">{{ t.source_ref or '–' }}</span></dd>
+      <dt>Abgang</dt><dd>{{ t.from_account or '–' }} · {{ t.from_asset or '–' }} · {{ t.from_qty|qty_exact if t.from_qty else '–' }}</dd>
+      <dt>Zugang</dt><dd>{{ t.to_account or '–' }} · {{ t.to_asset or '–' }} · {{ t.to_qty|qty_exact if t.to_qty else '–' }}</dd>
+      <dt>Gebühr</dt><dd>{{ t.fee_asset or '–' }} · {{ t.fee_qty|qty_exact if t.fee_qty else '–' }}</dd>
+      <dt>EUR-Wert</dt><dd>{{ t.value_eur|eur if t.value_eur is not none else '–' }}</dd>
+      {% if t.related_asset %}<dt>verwandtes Asset</dt><dd>{{ t.related_asset }}</dd>{% endif %}
+      {% if t.flag %}<dt>Kennzeichen</dt><dd>{{ t.flag }}</dd>{% endif %}
+      {% if t.note %}<dt>Notiz</dt><dd>{{ t.note }}</dd>{% endif %}
+    </dl></details>
+  {% endfor %}
+</section>
+
+<section class="card" id="diagnose">
+  <h2>B · Diagnose</h2>
+  {% if f.known %}<h4>Was aus den Daten folgt</h4><ul>{% for x in f.known %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+  {% if f.evidence %}<h4>Was übereinstimmt (Belege dafür)</h4><ul>{% for x in f.evidence %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+  {% if f.uncertainty %}<h4>Was widerspricht bzw. unsicher ist</h4><ul>{% for x in f.uncertainty %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+  {% if f.suspected %}<h4>Vermutung bzw. noch ungeklärt</h4><ul>{% for x in f.suspected %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+  {% if f.pairs %}<h4>Gegenüberstellung</h4><div class="stack" style="gap:10px">{% for a, b, why in f.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">{{ why }}</div></div>{% endfor %}</div>{% endif %}
+  {% if f.scenario %}<div class="scenario" role="note"><div class="scenario-label">Szenario (hypothetisch) – nicht gebucht</div><p>{{ f.scenario.text }}</p>
+    {% if f.scenario.rows %}<div class="scen-rows"><div class="scen-row scen-head"><span>Größe</span><span>aktuell</span><span>im Szenario</span></div>
+    {% for label, cur, alt in f.scenario.rows %}<div class="scen-row"><span class="scen-label">{{ label }}</span><span><em class="scen-k">aktuell: </em>{{ cur }}</span><span><em class="scen-k">im Szenario: </em>{{ alt }}</span></div>{% endfor %}</div>{% endif %}</div>{% endif %}
+</section>
+
+{% if children %}
+<section class="card" id="vorgaenge">
+  <h2>Einzelvorgänge ({{ children|length }})</h2>
+  <p class="hint">Jeder Vorgang wird einzeln geprüft und entschieden; eine Entscheidung betrifft nur den jeweiligen Vorgang.</p>
+  <ul class="plain-list case-list">{% for c in children %}{% set cs = case_states.get(c.state or 'offen') %}
+    <li><a href="/quality/diagnose/case/{{ c.id }}">{{ c.title }}</a> <span class="badge {{ status_badge[c.status] }}">{{ level[c.status][0] }}</span> <span class="badge {{ cs[1] }}">{{ cs[0] }}</span></li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section class="card" id="korrektur">
+  <h2>C · Entscheidung und Korrekturmöglichkeiten</h2>
+  <p><span class="hint">{{ 'Empfehlung (nach Prüfung)' if rec.conditional else 'Empfehlung' }}:</span> {{ rec.text }}</p>
+  {% if rec.checks %}<div><span class="hint">Vorher prüfen:</span><ul>{% for text, links in rec.checks %}<li>{{ text }}{{ dm.ext_links(links) }}</li>{% endfor %}</ul></div>{% endif %}
+  {% for d in fixes %}<div class="alert good"><span class="icon">✓</span><div>Korrektur #{{ d.id }} übernommen ({{ d.option_label }}) am {{ d.created|datetime_de }}.
+    <form method="post" action="/quality/diagnose/decision/{{ d.id }}/undo" class="inline" data-confirm="Korrektur #{{ d.id }} vollständig zurücknehmen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Rückgängig</button></form></div></div>{% endfor %}
+  {% if rec.fixes %}<div class="reco-opts">
+    {% for o in rec.fixes %}<div class="reco-opt{% if o.recommended %} is-rec{% endif %}">
+      <div class="reco-opt-text"><b>{{ o.label }}</b>{% if o.recommended %} <span class="badge good">empfohlen</span>{% endif %}
+        <div class="hint">{{ o.summary }}</div>{% if o.caution %}<div class="hint caution">⚠ {{ o.caution }}</div>{% endif %}</div>
+      <a class="btn sm{% if o.recommended %} primary{% endif %}" href="/quality/diagnose/plan?f={{ f.id }}&amp;o={{ o.key }}">Wirkung ansehen und übernehmen</a>
+    </div>{% endfor %}
+  </div>
+  <p class="hint">D · Wirkung: Die Vorschau zeigt vor dem Übernehmen Bestände vorher/nachher je Konto und Asset, Einstand und Anschaffungsdaten der Lots (FIFO), realisierte Ergebnisse und Steuerwerte je Jahr, Allokation, Referenzbestände und neue bzw. erledigte Befunde. Erst „Übernehmen“ ändert Daten.</p>
+  {% else %}<p class="hint">Keine datenändernde Korrektur angeboten – fachlich ist hier nur eine Entscheidung ohne Datenänderung möglich.</p>{% endif %}
+  <div class="case-actions">
+    {% if mark %}<div class="hint">Aktuelle Entscheidung: {{ {'dismiss': 'ungeklärt belassen', 'reject': 'abgelehnt', 'defer': 'später prüfen'}[mark.action] }} am {{ mark.created|datetime_de }}{% if mark.note %} – „{{ mark.note }}“{% endif %}{% if f.state == 'ueberholt' %} · <strong>Daten seitdem geändert – erneut prüfen</strong>{% endif %}</div>{% endif %}
+    {% for action, label, cls in [('reject', 'Ablehnen – kein Duplikat bzw. Vorschlag falsch', ''), ('defer', 'Später prüfen', 'ghost'), ('dismiss', 'Ungeklärt lassen', 'ghost')] %}
+    <form method="post" action="/quality/diagnose/mark" class="reco-dismiss"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ f.id }}"><input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="back" value="case">
+      <input type="text" name="note" maxlength="500" placeholder="Begründung (optional), z. B. „laut Kontoauszug zwei Einzahlungen“" aria-label="Begründung">
+      <button class="btn sm {{ cls }}" type="submit">{{ label }}</button></form>{% endfor %}
+    {% if mark %}<form method="post" action="/quality/diagnose/decision/{{ mark.id }}/reopen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Entscheidung aufheben (wieder offen)</button></form>{% endif %}
+  </div>
+  <div class="f-meta">Vorgangs-ID <span class="mono">{{ f.id }}</span>{% if f.identifiers %} · Kennungen <span class="mono">{{ f.identifiers[:16]|join(' · ') }}</span>{% endif %}</div>
+</section>
+{% endif %}
+</div>
+{% endblock %}

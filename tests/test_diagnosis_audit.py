@@ -125,8 +125,13 @@ def test_01_usd_double_deposits_gross_net_fee_explain_the_fictitious_position(cf
     assert any("Koinly-Import" in k and "Saldo ±0 USD" in k for k in b.known)
     assert any("Saldo +1.450,2 USD" in k for k in b.known)
     rec = recommend(rep, f)
-    assert rec.primary.key == "link_econ" and rec.option("link_econ_swap") is not None
+    assert rec.primary is None and rec.option("link_econ").params[0].default == []  # Sammelbefund: keine Vorauswahl
     assert rec.option("hide_custom") is None  # Dublette wird verknüpft, nicht frei gelöscht
+    assert len(f.children) == 4  # jeder Vorgang einzeln prüf- und freigebbar
+    case = rep.by_id(f.children[0])
+    crec = recommend(rep, case)
+    assert crec.primary.key == "link_econ" and crec.primary.params == [] and crec.option("link_econ_swap")
+    assert "nicht bewiesen" in crec.text and case.data["case"]["missing"]
     assert fingerprint(ctx.db) == before
 
 
@@ -145,7 +150,9 @@ def test_14_15_preview_writes_nothing_apply_links_as_duplicate_and_undo_restores
     before = data_fp(ctx.db)
     rep = report_for(ctx)
     (f,) = econ(rep, "USD")
-    plan = A.build_plan(ctx, rep, f, "link_econ", None)
+    assert A.build_plan(ctx, rep, f, "link_econ", None).errors  # Sammelbearbeitung nur mit Auswahl
+    sel = {"pairs": [c for c, _l in recommend(rep, f).option("link_econ").params[0].choices]}
+    plan = A.build_plan(ctx, rep, f, "link_econ", sel, given=True)
     assert not plan.errors and len(plan.ops) == 4
     assert all(op.kind == "hide" and op.mode == "duplicate" and op.badge == "Doppelbuchung" for op in plan.ops)
     assert {op.target for op in plan.ops} == {"PF-S-000101", "PF-S-000102", "PF-S-000103", "PF-S-000104"}
@@ -195,7 +202,7 @@ def test_02_eur_same_amount_days_apart_stays_unresolved(cfg):
     rec = recommend(rep, f)
     assert rec.primary is None and rec.conditional  # keine empfohlene Korrektur
     opt = rec.option("link_econ")
-    assert opt.params[0].default == [] and "Kein ausreichender Beleg" in opt.caution
+    assert not opt.recommended and "Kein ausreichender Beleg" in opt.caution
     assert not {"K1", "A1"} & rep.index.dup_txs  # andere Regeln sehen beide als eigenständig
 
 
@@ -295,7 +302,8 @@ def test_06_bridge_with_token_change_is_a_transfer_candidate(cfg):
     rep = report_for(ctx)
     (t,) = [x for x in by_kind(rep, "transfer") if x.key.startswith("transfer-alt|")]
     ev = " ".join(t.evidence)
-    assert "Tokenwechsel USDC → USDC.E (verwandtes Asset laut Buchung)" in ev and "D1" in ev
+    assert "Tokenwechsel USDC → USDC.E (Bridge/Wrapped/Cross-Chain" in ev and "D1" in ev
+    assert not re.search(r"\d+ % \(", ev) and "Matching-Score" in ev  # keine Prozent-„Wahrscheinlichkeit“
     assert t.data["pairs"] == []  # anderes Asset: keine automatische Transfer-Verknüpfung vorgeschlagen
     assert not [x for x in by_kind(rep, "loss") if "W1" in x.data.get("txs", [])]
 
@@ -311,7 +319,7 @@ def test_07_withdrawal_to_foreign_address_is_unresolved_not_a_proven_loss(cfg):
     assert recommend(rep, f).options[-1].dismiss
 
 
-def test_compromised_account_outflows_are_documented_loss_class_c(cfg):
+def test_compromised_account_alone_is_not_a_documented_loss(cfg):
     rows = [tx("F1", "2024-01-01T10:00:00Z", "deposit", to=("Wallet H", "ETH", "1"), value="2000"),
             tx("W1", "2024-06-15T10:00:00Z", "withdrawal", frm=("Wallet H", "ETH", "0.9"), value="2700")]
     ctx = make_ctx(cfg, rows, AUDIT_ASSETS)
@@ -321,8 +329,9 @@ def test_compromised_account_outflows_are_documented_loss_class_c(cfg):
     ctx.invalidate_data()
     rep = report_for(ctx)
     (f,) = by_kind(rep, "loss")
-    assert f.data["class"] == "C" and f.status == "wahrscheinlich"
+    assert f.data["class"] == "B" and f.status == "verdacht"  # ungeklärt – kein Verlustnachweis
     assert any("kompromittiert" in e for e in f.evidence)
+    assert any("beweist keinen Diebstahl" in u for u in f.uncertainty)
 
 
 def test_18_same_symbol_on_different_networks_is_never_matched(cfg):

@@ -8,7 +8,7 @@
 
 <section class="card">
   <div class="card-head"><h2>{% if plan %}Vorschau: {{ plan.option.label }}{% else %}Vorschau{% endif %}</h2>
-    <div class="row"><a class="btn sm" href="/quality/diagnose{% if f %}?f={{ f.id }}#{{ f.id }}{% endif %}">Zurück zur Diagnose</a></div></div>
+    <div class="row">{% if f %}<a class="btn sm" href="/quality/diagnose/case/{{ f.id }}">Zurück zum Vorgang</a>{% endif %}<a class="btn sm" href="/quality/diagnose{% if f %}?f={{ (f.parent or f.id) }}#{{ (f.parent or f.id) }}{% endif %}">Zur Diagnose</a></div></div>
   {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
   {% if f %}
   <div class="row"><span class="badge {{ status_badge[f.status] }}">{{ f.status }}</span><span class="badge">{{ f.kind_label }}</span></div>
@@ -16,7 +16,7 @@
   <div class="alert"><span class="icon">i</span><div><strong>Vorschau – noch nichts geändert.</strong> Die Auswirkungen sind auf einer Kopie im Speicher berechnet (Ledger, Diagnose, Steuer-Regelwerk). Erst „Übernehmen“ ändert Daten; jede Korrektur lässt sich danach als Ganzes zurücknehmen.</div></div>
   <p><span class="hint">{{ 'Empfehlung (nach Prüfung)' if rec.conditional else 'Empfehlung' }}:</span> {{ rec.text }}</p>
   {% if rec.checks %}<details class="box"><summary>Vorher prüfen ({{ rec.checks|length }})</summary><ul class="plain-list" style="margin-top:6px">{% for text, links in rec.checks %}<li>{{ text }}{{ dm.ext_links(links) }}</li>{% endfor %}</ul></details>{% endif %}
-  {% if rec.fixes|length > 1 %}<div class="row" style="margin-top:8px"><span class="hint">Andere Lösung:</span>{% for o in rec.fixes if o.key != plan.option.key %}<a class="btn sm ghost" href="/quality/diagnose/plan?f={{ f.id }}&amp;o={{ o.key }}">{{ o.label }}</a>{% endfor %}</div>{% endif %}
+  {% if rec.fixes|length > 1 %}<div class="row" style="margin-top:8px"><span class="hint">Andere Lösung:</span>{% for o in rec.fixes if o.key != plan.option.key %}<a class="btn sm ghost wrap" href="/quality/diagnose/plan?f={{ f.id }}&amp;o={{ o.key }}">{{ o.label }}</a>{% endfor %}</div>{% endif %}
   {% endif %}
 </section>
 
@@ -61,7 +61,7 @@
   <form method="post" action="/quality/diagnose/apply" class="row">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ f.id }}"><input type="hidden" name="o" value="{{ plan.option.key }}"><input type="hidden" name="token" value="{{ plan.token }}"><input type="hidden" name="p__set" value="1">
     {% for name, values in plan.params.items() %}{% for v in values %}<input type="hidden" name="p_{{ name }}" value="{{ v }}">{% endfor %}{% endfor %}
-    <button class="btn primary" type="submit">Übernehmen</button>
+    <button class="btn primary" type="submit" data-once>Diese Änderung übernehmen</button>
     <a class="btn ghost" href="/quality/diagnose?f={{ f.id }}#{{ f.id }}">Abbrechen</a>
   </form>
 </section>

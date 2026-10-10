@@ -113,8 +113,10 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
         "deleted_journal": _rows(db, "SELECT * FROM journal_tx WHERE status='deleted' AND (external_id IS NOT NULL "
                                      "OR event_key IS NOT NULL) ORDER BY id", drop=("id", "form_json", "batch_id",
                                                                                     "datasource_id")),
-        "diag_dismissed": _rows(db, "SELECT finding_id, kind, title, fingerprint, note, created_at FROM diag_decision "
-                                    "WHERE action='dismiss' AND status='active' ORDER BY id", drop=()),
+        # Entscheidungen ohne Datenänderung (ungeklärt, abgelehnt, später prüfen); ältere Exporte kennen nur „dismiss“
+        "diag_dismissed": _rows(db, "SELECT finding_id, kind, title, action, fingerprint, note, created_at, "
+                                    "tx_ids_json, data_version FROM diag_decision WHERE action IN ('dismiss', "
+                                    "'reject', 'defer') AND status='active' ORDER BY id", drop=()),
         # Ticker-/Token-Änderungen: Umbenennungen (Overlay), Umstellungen (Verweis auf exportierte Buchungen),
         # ausgeblendete Hinweise
         "asset_changes": _rows(db, "SELECT * FROM asset_change ORDER BY id"),
@@ -676,17 +678,20 @@ def _taxdata(c: Any, raw: bytes | None, uploads: Path, now: str) -> int:
     return n
 
 def _dismissed(c: Any, rows: list[Any]) -> int:
-    """„Geprüft“-Markierungen der Diagnose ergänzen (gleicher Befund mit gleichen Daten nur einmal)."""
+    """Entscheidungen der Diagnose ohne Datenänderung ergänzen (ungeklärt, abgelehnt, später prüfen; ältere Exporte:
+    nur „geprüft“ = ungeklärt). Je Befund gilt höchstens eine aktive Markierung; vorhandene bleiben unangetastet."""
     n = 0
     for r in rows:
         if not isinstance(r, dict) or not r.get("finding_id") or not r.get("fingerprint"):
             continue
-        if c.execute("SELECT 1 FROM diag_decision WHERE finding_id=? AND fingerprint=? AND action='dismiss' AND "
-                     "status='active'", (r["finding_id"], r["fingerprint"])).fetchone():
+        action = r.get("action") if r.get("action") in ("dismiss", "reject", "defer") else "dismiss"
+        if c.execute("SELECT 1 FROM diag_decision WHERE finding_id=? AND action IN ('dismiss', 'reject', 'defer') AND "
+                     "status='active'", (r["finding_id"],)).fetchone():
             continue
-        c.execute("INSERT INTO diag_decision(finding_id, kind, title, action, fingerprint, note, status, created_at) "
-                  "VALUES (?,?,?,?,?,?,?,?)", (r["finding_id"], r.get("kind") or "", r.get("title") or "", "dismiss",
-                                              r["fingerprint"], r.get("note"), "active", r.get("created_at") or ""))
+        c.execute("INSERT INTO diag_decision(finding_id, kind, title, action, fingerprint, note, status, created_at, "
+                  "tx_ids_json, data_version) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (r["finding_id"], r.get("kind") or "", r.get("title") or "", action, r["fingerprint"], r.get("note"),
+                   "active", r.get("created_at") or "", r.get("tx_ids_json"), r.get("data_version")))
         n += 1
     return n
 
