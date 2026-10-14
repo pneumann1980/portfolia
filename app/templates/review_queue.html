@@ -5,6 +5,7 @@
 {% block content %}
 <nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/pruefung" aria-current="page">Prüfung</a><a href="/journal/csv">CSV-Import</a><a href="/journal/documents">PDF &amp; Screenshot</a><a href="/journal/new">Neue Buchung</a></nav>
 {% if msg == 'decided' %}<div class="alert good"><span class="icon">✓</span><div>Entscheidung gespeichert und protokolliert – im Verlauf des Prüf-Stapels jederzeit rückgängig zu machen.</div></div>
+{% elif msg == 'uploaded' %}<div class="alert good"><span class="icon">✓</span><div>{{ request.query_params.get('info', '') }}</div></div>
 {% elif msg == 'decide_failed' %}<div class="alert warn"><span class="icon">!</span><div>Für diesen Vorgang war nichts zu entscheiden (bereits erledigt oder inzwischen geändert).</div></div>{% endif %}
 
 <section class="card">

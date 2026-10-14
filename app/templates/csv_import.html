@@ -2,19 +2,20 @@
 {% block title %}CSV-Import{% endblock %}
 {% block heading %}CSV-Import{% endblock %}
 {% block content %}
-{% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+{% if created %}<div class="alert good"><span class="icon">✓</span><div>{{ created|length }} Prüf-Stapel angelegt:{% for x in created %} <a href="/journal/csv/{{ x.b.id }}">{{ x.b.filename }}</a>{{ ',' if not loop.last }}{% endfor %}.</div></div>{% endif %}
+{% if errors %}<div class="alert {{ 'warn' if created else 'crit' }}" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
 <nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a href="/journal/pruefung">Prüfung</a><a class="active" href="/journal/csv" aria-current="page">CSV-Import</a><a href="/journal/documents">PDF &amp; Screenshot</a><a href="/journal/new">Neue Buchung</a></nav>
 
 <section class="card">
   <div class="card-head"><h2>Datei einlesen</h2></div>
-  <p class="hint">Exporte von Börsen, Wallets und Steuertools als CSV-Datei hochladen – es gibt <b>keine</b> Online-Verbindung zu
+  <p class="hint">Exporte von Börsen, Wallets und Steuertools als CSV-, Excel- (XLSX) oder ZIP-Datei hochladen – jede Tabelle wird ein eigener Prüf-Stapel mit Herkunft (Archiv, Eintrag, Blatt); Excel-Makros werden nie ausgeführt – es gibt <b>keine</b> Online-Verbindung zu
     Börsen oder Wallets. Nach dem Einlesen zeigt eine Vorschau jede Buchung im einheitlichen Format; erst mit „Übernehmen“
     werden daraus Buchungen. Bereits importierte Zeilen werden erkannt, Überträge zwischen eigenen Konten abgeglichen,
     und jeder Import lässt sich als Ganzes rückgängig machen.</p>
   <form method="post" action="/journal/csv" enctype="multipart/form-data" class="stack" style="gap:10px">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="grid-3">
-      <label class="field">CSV-Datei (höchstens {{ max_mb }} MB)<input type="file" name="file" accept=".csv,.txt,text/csv" required></label>
+      <label class="field">Exportdatei – CSV, Excel (XLSX) oder ZIP (höchstens {{ max_mb }} MB)<input type="file" name="file" accept=".csv,.txt,.tsv,.xlsx,.zip,text/csv" required></label>
       <label class="field">Format<select name="profile">
         <option value="auto">automatisch erkennen</option>
         {% for g, ps in groups %}<optgroup label="{{ g }}">{% for p in ps %}<option value="{{ p.id }}" {% if form.get('profile') == p.id %}selected{% endif %}>{{ p.label }}</option>{% endfor %}</optgroup>{% endfor %}

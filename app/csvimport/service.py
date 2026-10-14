@@ -509,12 +509,46 @@ class CsvImportService:
     def raw(self, batch: Any) -> bytes:
         return gzip.decompress(batch["raw_gz"])
 
+    def upload_file(self, data: bytes, filename: str, profile_id: str, account: str, options: Mapping[str, Any],
+                    progress: Any = None, *, datasource_id: int | None = None
+                    ) -> tuple[list[int], list[str], list[str]]:
+        """Beliebige Exportdatei annehmen (CSV, XLSX, ZIP mit mehreren Dateien) – je Tabelle ein Prüf-Stapel mit
+        Herkunft. Rückgabe: (Stapel, Fehler, Hinweise). Portfolia-eigene Import-/Gesamtexporte werden erkannt und mit
+        dem richtigen Weg beantwortet, nicht als Börsenexport gelesen."""
+        from app.csvimport import files as F
+
+        if len(data) > MAX_UPLOAD:
+            return [], [f"Datei zu groß ({len(data) // 1024 // 1024} MB, höchstens 25 MB)."], []
+        try:
+            up = F.unpack(data, filename)
+        except F.FileError as e:
+            return [], [str(e)], []
+        if up.kind == "portfolia_full":
+            return [], ["Das ist ein Portfolia-Gesamtexport (Neueinrichtung) – bitte in den Importordner legen; "
+                        "Einstellungen → Sicherung erklärt die Wiederherstellung. Als Börsenexport wird er nicht "
+                        "gelesen (sonst entstünden Doppelbuchungen)."], []
+        if up.kind == "portfolia_contract":
+            return [], ["Das ist eine Portfolia-Importdatei (Datenvertrag mit manifest.json) – bitte in den "
+                        "Importordner legen. Als Börsenexport wird sie nicht gelesen."], []
+        bids: list[int] = []
+        errors: list[str] = []
+        for part in up.parts:
+            bid, errs = self.upload(part.data, part.name, profile_id, account, options, progress,
+                                    datasource_id=datasource_id, origin={**part.origin, "format": part.fmt})
+            if bid is not None:
+                bids.append(bid)
+            errors += [f"{part.name}: {e}" if len(up.parts) > 1 else e for e in errs]
+        return bids, errors, up.notes
+
     def upload(self, data: bytes, filename: str, profile_id: str, account: str,
-               options: Mapping[str, Any], progress: Any = None) -> tuple[int | None, list[str]]:
+               options: Mapping[str, Any], progress: Any = None, *, datasource_id: int | None = None,
+               origin: Mapping[str, Any] | None = None) -> tuple[int | None, list[str]]:
         """Datei einlesen und als Prüf-Stapel anlegen. ``progress``: :class:`app.progress.Progress` (optional)."""
         if len(data) > MAX_UPLOAD:
             return None, [f"Datei zu groß ({len(data) // 1024 // 1024} MB, höchstens 25 MB)."]
         name = (filename or "upload.csv").replace("\\", "/").rsplit("/", 1)[-1][:120] or "upload.csv"
+        if " › " in (filename or ""):  # Eintrag eines Archivs bzw. Tabellenblatt: vollständige Bezeichnung behalten
+            name = filename[:120]
         extra = self.mapping_profiles()
         if progress is not None:
             progress.source = name
@@ -531,11 +565,18 @@ class CsvImportService:
         if "cutoff" not in opts and base is not None and base.valuation_date is not None:
             opts["cutoff"] = base.valuation_date.isoformat()
         stamp = _now()
+        sha = hashlib.sha256(data).hexdigest()
+        org = dict(origin or {"file": name, "sha256": sha, "format": "csv"})
+        same = self.db.q1("SELECT id FROM csv_batch WHERE file_sha256=? AND status <> 'reverted' ORDER BY id DESC "
+                          "LIMIT 1", (sha,))
+        if same is not None:  # gleiche Datei schon eingelesen: Zeilen werden als vorhanden erkannt (idempotent)
+            org["same_as"] = int(same["id"])
         cur = self.db.x(
             "INSERT INTO csv_batch(filename, file_sha256, file_size, raw_gz, profile, account, options_json, status, "
-            "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (name, hashlib.sha256(data).hexdigest(), len(data), gzip.compress(data, 6),
-             prof.id if prof else "unknown", acc, json.dumps(opts, ensure_ascii=False), status, stamp, stamp))
+            "created_at, updated_at, datasource_id, origin_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (name, sha, len(data), gzip.compress(data, 6),
+             prof.id if prof else "unknown", acc, json.dumps(opts, ensure_ascii=False), status, stamp, stamp,
+             datasource_id, json.dumps(org, ensure_ascii=False)))
         bid = int(cur.lastrowid)  # type: ignore[arg-type]
         if prof is not None:
             self.process(bid, progress)

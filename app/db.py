@@ -721,6 +721,12 @@ CREATE TABLE IF NOT EXISTS diag_research_event (
 );
 CREATE INDEX IF NOT EXISTS ix_diag_research_event_ts ON diag_research_event(source_id, status, ts);
 """),
+    (22, """
+-- Financial Integrity (additiv): Herkunft eines Datei-Stapels (Archiv, Eintrag, Tabellenblatt, Prüfsummen, Format)
+-- und Datei-Uploads, die einer Datenquelle zugeordnet sind (beliebige Börse als Dateiquelle).
+ALTER TABLE csv_batch ADD COLUMN origin_json TEXT;
+CREATE INDEX IF NOT EXISTS ix_csv_batch_sha ON csv_batch(file_sha256);
+"""),
 ]
 
 

@@ -153,6 +153,12 @@
   <div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div><b>Zur Prüfung offen: {{ n }} {{ 'Vorgang' if n == 1 else 'Vorgänge' }}</b>
     ({% for st, k in open_counts.items() %}{{ k }}× {{ st }}{% if not loop.last %} · {% endif %}{% endfor %})
     <div class="row" style="margin-top:6px"><a class="btn sm primary" href="/journal/pruefung?source={{ ds.id }}">Jetzt prüfen</a>{% for b in pending %}<a class="btn sm ghost" href="/journal/csv/{{ b.id }}">Prüf-Stapel {{ b.created_at|datetime_de }}</a>{% endfor %}</div></div></div>{% endif %}
+  <details class="box" style="margin-top:10px" id="datei"><summary>Exportdatei dieser Quelle hochladen (CSV, XLSX, ZIP)</summary>
+    <p class="hint">Für jede Börse und Wallet – auch ohne Schnittstelle. Die Datei wird dieser Datenquelle (Konto {{ ds.account }}) zugeordnet; jede Tabelle wird ein Prüf-Stapel mit Herkunft (Archiv, Eintrag, Blatt, Prüfsumme). Bereits vorhandene Vorgänge werden erkannt, nichts wird ohne Prüfung gebucht; Excel-Makros werden nie ausgeführt.</p>
+    <form method="post" action="/settings/datasources/{{ ds.id }}/upload" enctype="multipart/form-data" class="row" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="file" name="file" accept=".csv,.txt,.tsv,.xlsx,.zip,text/csv" required aria-label="Exportdatei">
+      <button class="btn sm" type="submit">Hochladen und prüfen</button></form>
+  </details>
   {% if ds.is_wallet and ds.check %}{% set chk = ds.check %}
   <div style="margin-top:10px"><div class="hint">Letzte Verbindungsprüfung{% if chk.at %} · {{ chk.at|datetime_de }}{% endif %}</div>
     <div class="alert {{ 'good' if chk.ok else 'crit' }}" style="margin-top:4px"><span class="icon">{{ '✓' if chk.ok else '!' }}</span><div class="wrap-any">{{ chk.message }}

@@ -377,6 +377,39 @@ def make_router() -> APIRouter:
         text = res.get("error") or res.get("unsupported") or res.get("message") or "Keine neuen Vorgänge."
         return _back(request, _list_url(sid, **{key: text}))
 
+    @router.post("/settings/datasources/{sid}/upload")
+    async def upload_file(request: Request, sid: int) -> Response:
+        """Exportdatei einer Datenquelle (beliebige Börse bzw. Wallet als Dateiquelle): CSV, XLSX oder ZIP. Die
+        Stapel tragen die Datenquelle (Konto, Herkunft) und erscheinen in deren Prüf- und Abdeckungsübersicht."""
+        from starlette.datastructures import UploadFile
+
+        from app.csvimport.service import MAX_UPLOAD, csv_service
+        from app.datasources.providers import PROVIDERS
+
+        ctx = get_ctx(request)
+        svc = datasource_service(ctx)
+        ds = svc.get(sid)
+        if ds is None:
+            raise HTTPException(404)
+        f = await request.form(max_files=1, max_fields=10)
+        file = f.get("file")
+        if not isinstance(file, UploadFile) or not file.filename:
+            return _back(request, _detail_url(sid, error="Bitte eine Datei auswählen (CSV, XLSX oder ZIP).") +
+                         "#datei")
+        data = await file.read(MAX_UPLOAD + 1)
+        await file.close()
+        prov = PROVIDERS.get(ds.provider)
+        profile = str(f.get("profile") or "") or (prov.csv_profile if prov and prov.csv_profile else "auto")
+        bids, errors, notes = await run_in_threadpool(csv_service(ctx).upload_file, data, file.filename, profile,
+                                                      ds.account, {}, None, datasource_id=sid)
+        if len(bids) == 1 and not errors:
+            return _back(request, f"/journal/csv/{bids[0]}")
+        if not bids:
+            return _back(request, _detail_url(sid, error=" ".join([*errors, *notes])[:600]) + "#datei")
+        text = f"{len(bids)} Prüf-Stapel angelegt." + (" " + " ".join([*errors, *notes])[:400] if errors or notes
+                                                         else "")
+        return _back(request, f"/journal/pruefung?source={sid}&" + urlencode({"msg": "uploaded", "info": text}))
+
     @router.post("/settings/datasources/{sid}/cancel")
     async def cancel(request: Request, sid: int) -> Response:
         """Laufenden Abruf abbrechen (bzw. eine verwaiste Anzeige „Abruf läuft“ beenden)."""

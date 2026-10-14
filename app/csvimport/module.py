@@ -66,7 +66,7 @@ def _profiles_grouped(svc: Any) -> list[tuple[str, list[Any]]]:
 
 
 def _index(request: Request, errors: list[str] | None = None, status_code: int = 200,
-           form: dict[str, Any] | None = None) -> HTMLResponse:
+           form: dict[str, Any] | None = None, created: list[int] | None = None) -> HTMLResponse:
     ctx = get_ctx(request)
     svc = csv_service(ctx)
     batches = []
@@ -85,7 +85,7 @@ def _index(request: Request, errors: list[str] | None = None, status_code: int =
                   accounts=journal_service(ctx).known_accounts(), symbols=svc.symbol_rows(),
                   account_maps=svc.account_rows(), mappings=svc.mapping_profiles(),
                   cutoff=base.valuation_date.isoformat() if base is not None and base.valuation_date else "",
-                  queue=queue,
+                  queue=queue, created=[x for x in batches if int(x["b"]["id"]) in set(created or [])],
                   max_mb=MAX_UPLOAD // 1024 // 1024)
 
 
@@ -232,7 +232,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
                                                               (b["datasource_id"],))),
         sugg=sugg, catalog=catalog, conf_badge=CONF_BADGE, acct=acct, outdated=outdated, compare=compare,
-        funnel=funnel, review_states=RV.STATES,
+        funnel=funnel, review_states=RV.STATES, origin=json.loads(b["origin_json"] or "{}"),
     )
 
 
@@ -344,7 +344,7 @@ def make_router() -> APIRouter:
         form = {k: str(f.get(k) or "") for k in ("profile", "account", "tz", "decimal", "dayfirst", "default_asset",
                                                  "cutoff", "accounts_from_file")}
         if not isinstance(file, UploadFile) or not file.filename:
-            return _index(request, ["Bitte eine CSV-Datei auswählen."], 400, form)
+            return _index(request, ["Bitte eine Datei auswählen (CSV, XLSX oder ZIP)."], 400, form)
         data = await file.read(MAX_UPLOAD + 1)
         await file.close()
         if len(data) > MAX_UPLOAD:
@@ -356,12 +356,16 @@ def make_router() -> APIRouter:
         prog = job_progress(ctx, "csv_upload", "CSV-Import", unit="Zeilen",
                             phases=["prepare", "process", "reconcile", "save"])
         try:
-            bid, errors = await run_in_threadpool(svc.upload, data, file.filename, profile if profile != "mapping:new"
-                                                  else "auto", form["account"], opts, prog)
+            bids, errors, notes = await run_in_threadpool(
+                svc.upload_file, data, file.filename, profile if profile != "mapping:new" else "auto",
+                form["account"], opts, prog)
         finally:
             prog.finish(True, "eingelesen")
-        if bid is None:
-            return _index(request, errors, 400, form)
+        if not bids:
+            return _index(request, [*errors, *notes], 400, form)
+        if len(bids) > 1 or errors or notes:  # Archiv bzw. mehrere Tabellenblätter: Übersicht der neuen Stapel
+            return _index(request, [*errors, *notes], 200, form, created=bids)
+        bid = bids[0]
         b = svc.batch(bid)
         if profile == "mapping:new" or (b is not None and b["status"] == "mapping"):
             return _back(request, f"/journal/csv/{bid}/mapping")
