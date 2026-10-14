@@ -18,6 +18,7 @@
       <a class="btn sm" href="/journal/csv">CSV importieren</a>
       <a class="btn sm" href="/journal/pruefung" title="Alle offenen Vorgänge aus Datenquellen und Dateien an einer Stelle">Prüfung{% if review_open %} <span class="badge warn">{{ review_open }}</span>{% endif %}</a>
       <a class="btn sm" href="/journal/documents">Belege (PDF/Screenshot)</a>
+      <a class="btn sm" href="/journal/ereignisse" title="Ein Vorgang, mehrere Quellen: Widersprüche zwischen API, Datei, Steuertool und Beleg">Ereignisgruppen</a>
       <a class="btn sm" href="/journal/writeoff" title="Bestände als Verlust (Totalverlust, Diebstahl) ausbuchen – einzeln oder gesammelt">Ausbuchen</a>
       {% if has_import %}<a class="btn sm" href="/journal/abgleich" title="Doppelzählungen zwischen kuratiertem Import und App-Buchungen erkennen und entscheiden">Abgleich mit Import</a>{% endif %}
       <a class="btn sm" href="/journal/asset">+ Neues Asset</a>

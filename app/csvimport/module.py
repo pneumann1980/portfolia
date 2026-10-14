@@ -464,6 +464,31 @@ def make_router() -> APIRouter:
         m = "decided" if not res.get("errors") else "decide_failed"
         return _back(request, "/journal/pruefung?" + urlencode({**flt.params(), "tab": tab, "msg": m}))
 
+    @router.get("/journal/ereignisse", response_class=HTMLResponse)
+    def event_conflicts(request: Request, kind: str = "") -> HTMLResponse:
+        """Widersprüche in wirtschaftlichen Ereignisgruppen über Quellen (nur lesend)."""
+        from app.csvimport import groups as G
+
+        ctx = get_ctx(request)
+        items = G.scan(ctx)
+        counts: dict[str, int] = {}
+        for x in items:
+            counts[x.kind] = counts.get(x.kind, 0) + 1
+        shown = [x for x in items if not kind or x.kind == kind]
+        return render(request, "event_groups.html", active="journal", items=shown, counts=counts, kinds=G.KINDS,
+                      kind=kind if kind in G.KINDS else "")
+
+    @router.get("/journal/ereignis/{tx_id}", response_class=HTMLResponse)
+    def event_group(request: Request, tx_id: str) -> HTMLResponse:
+        """Eine Buchung mit allen verknüpften Quelldatensätzen nebeneinander (nur lesend)."""
+        from app.csvimport import groups as G
+
+        ctx = get_ctx(request)
+        g = G.group(ctx, tx_id[:80])
+        if g.booking is None and not g.members:
+            raise HTTPException(404)
+        return render(request, "event_group.html", active="journal", g=g, kinds=G.KINDS, source_label=source_label)
+
     @router.get("/journal/csv/{bid}", response_class=HTMLResponse)
     def batch_page(request: Request, bid: int, status: str = "", offset: int = 0, msg: str = "") -> Response:
         svc = csv_service(get_ctx(request))

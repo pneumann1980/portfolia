@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Ereignisgruppen{% endblock %}
+{% block heading %}Ereignisgruppen über Quellen{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a href="/journal/pruefung">Prüfung</a><a class="active" href="/journal/ereignisse" aria-current="page">Ereignisgruppen</a><a href="/journal/csv">CSV-Import</a></nav>
+<section class="card">
+  <div class="card-head"><h2>Widersprüche zwischen Quellen</h2><span class="badge {{ 'warn' if counts else 'good' }}">{{ counts.values()|sum }}</span></div>
+  <p class="hint">Ein wirtschaftlicher Vorgang wird einmal gebucht; weitere Quellen (API, Datei, Steuertool, Beleg) hängen als Verknüpfung mit Herkunft an dieser Buchung. Hier stehen Widersprüche, die keine Einzelzeile zeigt. Diese Ansicht ändert nichts – gelöst wird im Prüf-Stapel bzw. in der Diagnose mit Vorschau und Rückgängig.</p>
+  <div class="review-stats"><a href="/journal/ereignisse" class="{{ 'active' if not kind }}"><b>{{ counts.values()|sum }}</b><span>alle</span></a>
+    {% for k, l in kinds.items() %}<a href="?kind={{ k }}" class="{{ 'active' if kind == k }}"><b>{{ counts.get(k, 0) }}</b><span>{{ l }}</span></a>{% endfor %}</div>
+</section>
+<section class="card" style="margin-top:16px">
+  {% if not items %}<p class="hint">Keine Widersprüche gefunden.</p>{% else %}
+  <ul class="plain">{% for x in items %}
+    <li><span class="badge warn">{{ x.label }}</span> {{ x.text }}
+      <div class="hint">{% for t in x.tx_ids[:6] %}<a href="/journal/ereignis/{{ t }}">Gruppe {{ t }}</a>{{ ' · ' if not loop.last }}{% endfor %}{% if x.batch_id %}{% if x.tx_ids %} · {% endif %}<a href="/journal/csv/{{ x.batch_id }}?{{ {'ev': x.event}|urlencode }}#zeilen">Prüf-Stapel {{ x.batch_id }}</a>{% endif %}</div></li>
+  {% endfor %}</ul>{% endif %}
+</section>
+{% endblock %}

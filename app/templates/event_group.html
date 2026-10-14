@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Ereignisgruppe {{ g.tx_id }}{% endblock %}
+{% block heading %}Ereignisgruppe {{ g.tx_id }}{% endblock %}
+{% macro leg(l) -%}{% if l %}{{ l[2] }} {{ l[1] }}{% if l[0] %} <span class="hint">({{ l[0] }})</span>{% endif %}{% else %}–{% endif %}{%- endmacro %}
+{% block content %}
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a href="/journal/pruefung">Prüfung</a><a class="active" href="/journal/ereignisse">Ereignisgruppen</a></nav>
+<section class="card">
+  <div class="card-head"><h2>Gebuchter Vorgang</h2>{% if g.conflicts %}<span class="badge warn">{{ g.conflicts|length }} Widerspruch{{ 'e' if g.conflicts|length != 1 }}</span>{% else %}<span class="badge good">stimmig</span>{% endif %}</div>
+  {% set b = g.booking %}{% if b %}
+  <dl class="kv"><dt>Buchung</dt><dd class="mono">{{ b.tx_id }} · {{ b.status }} · {{ 'kuratierter Import' if b.origin == 'import' else source_label(b.source) }}</dd>
+    <dt>Zeitpunkt</dt><dd>{{ b.ts_utc }}</dd><dt>Art</dt><dd>{{ b.type }}{% if b.tag %} · {{ b.tag }}{% endif %}</dd>
+    <dt>Abgang</dt><dd>{% if b.from_asset %}{{ b.from_qty }} {{ b.from_asset }} ({{ b.from_account }}){% else %}–{% endif %}</dd>
+    <dt>Zugang</dt><dd>{% if b.to_asset %}{{ b.to_qty }} {{ b.to_asset }} ({{ b.to_account }}){% else %}–{% endif %}</dd>
+    <dt>Gebühr</dt><dd>{% if b.fee_asset %}{{ b.fee_qty }} {{ b.fee_asset }}{% else %}–{% endif %}</dd>
+    <dt>EUR-Wert</dt><dd>{{ b.value_eur or '–' }}</dd></dl>
+  {% else %}<p class="hint">Die Buchung besteht nicht mehr – Verknüpfungen bleiben zur Nachvollziehbarkeit sichtbar.</p>{% endif %}
+  {% for kind, text in g.conflicts %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div><b>{{ kinds.get(kind, kind) }}:</b> {{ text }}</div></div>{% endfor %}
+</section>
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Quellen dieses Vorgangs <span class="badge">{{ g.members|length }}</span></h2></div>
+  {% if not g.members %}<p class="hint">Keine weiteren Quellen verknüpft.</p>{% else %}
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Quelle</th><th>Rolle</th><th>Zeitpunkt</th><th>Abgang</th><th>Zugang</th><th>Gebühr</th><th>Gebührenbasis</th><th>EUR-Wert</th><th>Kennung</th></tr></thead><tbody>
+  {% for m in g.members %}{% set r = m.record %}<tr><td>{{ source_label(m.source) }}</td><td>{{ m.role }}</td><td class="nowrap">{{ r.ts or 'fehlt' }}</td><td>{{ leg(r.out) }}</td><td>{{ leg(r.inn) }}</td><td>{% if r.fee %}{{ r.fee[1] }} {{ r.fee[0] }}{% else %}–{% endif %}</td><td>{{ {'extra': 'zusätzlich (brutto)', 'inside': 'enthalten (netto)', 'open': 'nicht belegbar'}.get(r.fee_basis, '–') }}</td><td>{{ r.value_eur or '–' }}</td><td class="mono hint">{{ m.ext_id or '' }}{% if m.batch_id %} · <a href="/journal/csv/{{ m.batch_id }}">Stapel {{ m.batch_id }}</a>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+</section>
+{% endblock %}
