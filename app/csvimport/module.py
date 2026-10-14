@@ -294,6 +294,40 @@ def _guess_columns(header: list[str]) -> dict[str, str]:
     return out
 
 
+def _effect_labels() -> dict[str, str]:
+    from app.csvimport.batch import EFFECT_LABEL
+
+    return EFFECT_LABEL
+
+
+def _queue_filter(data: Any) -> Any:
+    from app.csvimport import queue as Q
+
+    return Q.Filter.parse({k: data.get(k) or data.get(f"_{k}") or "" for k in Q.Filter.KEYS})
+
+
+def _queue_page(request: Request, tab: str, offset: int, msg: str = "") -> HTMLResponse:
+    from app.csvimport import bulk as BU
+    from app.csvimport import queue as Q
+    from app.csvimport import review as RV
+
+    ctx = get_ctx(request)
+    flt = _queue_filter(request.query_params)
+    qu = Q.build(ctx.db, tab, flt=flt, offset=offset)
+    params = flt.params()
+    sel = BU.selected(ctx.db, qu.all_items) if qu.tab == "sicher" else {}
+    from app.csvimport import assess as A
+
+    return render(request, "review_queue.html", active="journal", q=qu, tabs=Q.TABS, states=RV.STATES,
+                  params=params, page=Q.PAGE, source_label=source_label, batch_status=BATCH_STATUS, msg=msg,
+                  qs=lambda extra=None: urlencode({k: v for k, v in {**params, **(extra or {})}.items()
+                                                   if v not in (None, "")}),
+                  source_name=next((x["label"] for x in qu.sources if x["key"] == flt.source), None),
+                  sel=sel, checked=lambda it: BU.is_checked(sel, it), key_of=BU.key_of,
+                  n_selected=sum(1 for it in qu.all_items if BU.is_checked(sel, it)) if sel else 0,
+                  cat_label=A.CAT_LABEL, conf_label=A.CONF, kind_label=M.KIND_LABEL)
+
+
 def make_router() -> APIRouter:
     router = APIRouter()
 
@@ -334,23 +368,97 @@ def make_router() -> APIRouter:
         return _back(request, f"/journal/csv/{bid}")
 
     @router.get("/journal/pruefung", response_class=HTMLResponse)
-    def review_queue_page(request: Request, tab: str = "offen", source: str = "", batch: str = "", reason: str = "",
-                          offset: int = 0) -> HTMLResponse:
+    def review_queue_page(request: Request, tab: str = "offen", offset: int = 0, msg: str = "") -> HTMLResponse:
         """Zentrale Prüfwarteschlange: alle offenen Vorgänge aller Datenquellen und Dateien (nur lesend)."""
-        from app.csvimport import queue as Q
-        from app.csvimport import review as RV
+        return _queue_page(request, tab, offset, msg=msg)
+
+    @router.post("/journal/pruefung/auswahl")
+    async def review_queue_select(request: Request) -> Response:
+        """Auswahl sicherer Vorschläge speichern (je Stapel, wie auf der Stapelseite) – ändert keine Buchung."""
+        from app.csvimport import bulk as BU
 
         ctx = get_ctx(request)
-        src = int(source) if source.isdigit() else None
-        bat = int(batch) if batch.isdigit() else None
-        qu = Q.build(ctx.db, tab, source=src, batch=bat, reason=reason[:80], offset=offset)
-        params = {k: v for k, v in {"source": source if src is not None else "",
-                                    "batch": batch if bat is not None else "", "reason": reason[:80]}.items() if v}
-        return render(request, "review_queue.html", active="journal", q=qu, tabs=Q.TABS, states=RV.STATES,
-                      params=params, page=Q.PAGE, source_label=source_label, batch_status=BATCH_STATUS,
-                      qs=lambda extra=None: urlencode({k: v for k, v in {**params, **(extra or {})}.items()
-                                                       if v not in (None, "")}),
-                      source_name=next((x["label"] for x in qu.sources if x["key"] == src), None))
+        f = await request.form(max_fields=20_000)
+        flt = _queue_filter(f)
+        shown = [str(x) for x in f.getlist("shown")][:5000]
+        on = [str(x) for x in f.getlist("on")][:5000]
+        op = str(f.get("op") or "save")
+        svc = csv_service(ctx)
+        from app.csvimport import queue as Q
+
+        if op in ("safe", "none", "all"):
+            qu = Q.build(ctx.db, "sicher", flt=flt, page=0)
+            keys = [BU.key_of(it) for it in qu.all_items]
+            if op == "safe":
+                for bid in {it.batch_id for it in qu.all_items}:
+                    from app.csvimport.batch import set_selection
+
+                    set_selection(ctx.db, bid, None)
+            else:
+                await run_in_threadpool(BU.store, ctx.db, svc, keys, keys if op == "all" else [])
+        else:
+            await run_in_threadpool(BU.store, ctx.db, svc, shown, on)
+        target = "/journal/pruefung/vorschau" if op == "preview" else "/journal/pruefung"
+        qs = urlencode({**flt.params(), **({} if op == "preview" else {"tab": "sicher"})})
+        return _back(request, f"{target}?{qs}")
+
+    @router.get("/journal/pruefung/vorschau", response_class=HTMLResponse)
+    def review_bulk_preview(request: Request) -> HTMLResponse:
+        """Vorschau: ausgewählte sichere Vorschläge aller Stapel – Gesamtwirkung und je Stapel."""
+        from app.csvimport import bulk as BU
+        from app.csvimport import queue as Q
+
+        ctx = get_ctx(request)
+        flt = _queue_filter(request.query_params)
+        qu = Q.build(ctx.db, "sicher", flt=flt, page=0)
+        sel = BU.selected(ctx.db, qu.all_items)
+        mp = BU.preview(csv_service(ctx), sel)
+        return render(request, "review_bulk_preview.html", active="journal", mp=mp, effect_label=_effect_labels(),
+                      params=flt.params(), source_label=source_label, events=sum(
+                          1 for it in qu.all_items if BU.is_checked(sel, it)))
+
+    @router.post("/journal/pruefung/ausfuehren")
+    async def review_bulk_execute(request: Request) -> Response:
+        """Ausführen nach ausdrücklicher Bestätigung – Stapel für Stapel, je Stapel atomar."""
+        from app.csvimport import bulk as BU
+
+        ctx = get_ctx(request)
+        f = await request.form(max_fields=20_000)
+        flt = _queue_filter(f)
+        if str(f.get("confirm") or "") != "1":
+            return _back(request, "/journal/pruefung/vorschau?" + urlencode({**flt.params(), "err": "confirm"}))
+        parts = []
+        for bid in f.getlist("part"):
+            b = str(bid)
+            if not b.isdigit():
+                continue
+            parts.append({"batch_id": int(b), "token": str(f.get(f"token_{b}") or ""),
+                          "fingerprint": str(f.get(f"fp_{b}") or ""),
+                          "idxs": [int(i) for i in str(f.get(f"idx_{b}") or "").split(",") if i.isdigit()]})
+        res = await run_in_threadpool(BU.run, csv_service(ctx), parts)
+        names = {int(r["id"]): r for r in ctx.db.q(
+            f"SELECT id, filename, kind, source FROM csv_batch WHERE id IN ({','.join('?' * len(res)) or 'NULL'})",
+            tuple(r["batch_id"] for r in res))}
+        return render(request, "review_bulk_result.html", active="journal", results=res, names=names,
+                      source_label=source_label, params=flt.params())
+
+    @router.post("/journal/pruefung/entscheiden")
+    async def review_decide(request: Request) -> Response:
+        """Einzelentscheidung aus der Warteschlange (nicht übernehmen, zurückstellen, wieder aufnehmen)."""
+        from app.csvimport import bulk as BU
+
+        ctx = get_ctx(request)
+        f = await request.form(max_fields=200)
+        flt = _queue_filter(f)
+        bid_s, _, idx_s = str(f.get("event") or "").partition(":")
+        op = str(f.get("op") or "")
+        if not bid_s.isdigit():
+            raise HTTPException(400)
+        res = await run_in_threadpool(BU.decide, csv_service(ctx), int(bid_s),
+                                      [int(i) for i in idx_s.split(",") if i.isdigit()], op)
+        tab = str(f.get("tab") or "offen")
+        m = "decided" if not res.get("errors") else "decide_failed"
+        return _back(request, "/journal/pruefung?" + urlencode({**flt.params(), "tab": tab, "msg": m}))
 
     @router.get("/journal/csv/{bid}", response_class=HTMLResponse)
     def batch_page(request: Request, bid: int, status: str = "", offset: int = 0, msg: str = "") -> Response:

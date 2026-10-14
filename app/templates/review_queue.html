@@ -1,23 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Prüfung{% endblock %}
 {% block heading %}Prüfung{% endblock %}
+{% macro filter_hidden() -%}{% for k, v in params.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}{%- endmacro %}
 {% block content %}
 <nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/pruefung" aria-current="page">Prüfung</a><a href="/journal/csv">CSV-Import</a><a href="/journal/documents">PDF &amp; Screenshot</a><a href="/journal/new">Neue Buchung</a></nav>
+{% if msg == 'decided' %}<div class="alert good"><span class="icon">✓</span><div>Entscheidung gespeichert und protokolliert – im Verlauf des Prüf-Stapels jederzeit rückgängig zu machen.</div></div>
+{% elif msg == 'decide_failed' %}<div class="alert warn"><span class="icon">!</span><div>Für diesen Vorgang war nichts zu entscheiden (bereits erledigt oder inzwischen geändert).</div></div>{% endif %}
 
 <section class="card">
   <div class="card-head"><h2>Prüfwarteschlange{% if source_name %} · {{ source_name }}{% endif %}</h2>
     <span class="badge {{ 'warn' if q.counts.offen else 'good' }}">{{ q.counts.offen + q.counts.sicher }} offen</span></div>
-  <p class="hint">Alle offenen Vorgänge aus Datenquellen und Dateien an einer Stelle – gezählt je wirtschaftlichem Vorgang (eine Order mit Gebührenzeile ist ein Vorgang). Diese Ansicht ändert nichts; entschieden wird im jeweiligen Prüf-Stapel mit Vorschau, Protokoll und Rückgängig.</p>
+  <p class="hint">Alle offenen Vorgänge aus Datenquellen und Dateien an einer Stelle – gezählt je wirtschaftlichem Vorgang (eine Order mit Gebührenzeile ist ein Vorgang). Gebucht wird nur nach Vorschau und ausdrücklicher Bestätigung; jede Entscheidung ist im Verlauf des Prüf-Stapels rückgängig zu machen.</p>
   <div class="review-stats">
     {% for t, (label, _s) in tabs.items() %}<a href="?{{ qs({'tab': t}) }}" class="{{ 'active' if q.tab == t }}"><b>{{ q.counts[t] }}</b><span>{{ label }}</span></a>{% endfor %}
   </div>
-  {% if q.reasons and q.tab == 'offen' %}<p class="hint" style="margin-top:8px">Prüfgründe: {% for r, n in q.reasons.most_common() %}<a href="?{{ qs({'tab': 'offen', 'reason': r}) }}">{{ n }}× {{ r }}</a>{{ ' · ' if not loop.last }}{% endfor %}{% if params.get('reason') %} · <a href="?{{ qs({'tab': 'offen', 'reason': ''}) }}">alle Gründe</a>{% endif %}</p>{% endif %}
+  {% if q.reasons and q.tab == 'offen' %}<p class="hint" style="margin-top:8px">Prüfgründe: {% for r, n in q.reasons.most_common() %}<a href="?{{ qs({'tab': 'offen', 'reason': r}) }}">{{ n }}× {{ r }}</a>{{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
   {% if q.history_gaps %}<p class="hint">{{ q.history_gaps }} Vorgänge vor dem Stichtag sind im kuratierten Import nicht zu finden – mögliche Lücken (nur Hinweis, im Reiter <a href="?{{ qs({'tab': 'historie'}) }}">Historie</a>).</p>{% endif %}
+  <details class="box" style="margin-top:8px" {% if params %}open{% endif %}><summary>Filter{% if params %} ({{ params|length }} aktiv){% endif %}</summary>
+    <form method="get" action="/journal/pruefung" class="filters" style="margin-top:8px"><input type="hidden" name="tab" value="{{ q.tab }}">
+      <label class="field">Quelle<select name="source"><option value="">alle</option>{% for s in q.sources if s.datasource %}<option value="{{ s.key }}" {% if params.get('source') == s.key|string %}selected{% endif %}>{{ s.label }} ({{ s.open }})</option>{% endfor %}</select></label>
+      <label class="field">Konto<select name="account"><option value="">alle</option>{% for a in q.accounts %}<option {% if params.get('account') == a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+      <label class="field">Art<select name="kind"><option value="">alle</option>{% for k in q.kinds %}<option value="{{ k }}" {% if params.get('kind') == k %}selected{% endif %}>{{ kind_label.get(k, k) }}</option>{% endfor %}</select></label>
+      <label class="field">Abgleich<select name="evidence"><option value="">alle</option>{% for k, l in cat_label.items() %}<option value="{{ k }}" {% if params.get('evidence') == k %}selected{% endif %}>{{ l }}</option>{% endfor %}<option value="ohne" {% if params.get('evidence') == 'ohne' %}selected{% endif %}>ohne Abgleich</option></select></label>
+      <label class="field">Sicherheit<select name="conf"><option value="">alle</option>{% for c in conf_label %}<option {% if params.get('conf') == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
+      <label class="field">von<input type="date" name="frm" value="{{ params.get('frm', '') }}"></label>
+      <label class="field">bis<input type="date" name="to" value="{{ params.get('to', '') }}"></label>
+      {% if params.get('batch') %}<input type="hidden" name="batch" value="{{ params.batch }}">{% endif %}
+      <div class="filters-go"><button class="btn sm" type="submit">Filtern</button>{% if params %} <a class="btn sm ghost" href="?{{ {'tab': q.tab}|urlencode }}">zurücksetzen</a>{% endif %}</div>
+    </form>
+  </details>
 </section>
 
-{% if q.sources %}
+{% if q.sources and not params %}
 <section class="card" style="margin-top:16px">
-  <div class="card-head"><h2>Quellen mit offenen Vorgängen</h2>{% if params.get('source') or params.get('batch') %}<a class="btn sm ghost" href="?{{ {'tab': q.tab}|urlencode }}">alle Quellen</a>{% endif %}</div>
+  <div class="card-head"><h2>Quellen mit offenen Vorgängen</h2></div>
   <ul class="plain queue">{% for s in q.sources %}
     <li><a href="?{{ (s.param|dictsort|list + [('tab', q.tab)])|urlencode }}"><b>{{ s.label }}</b></a>
       <span class="hint">{{ s.open }} offen{% if s.to_review %} · {{ s.to_review }} zu prüfen{% endif %}{% if s.safe %} · {{ s.safe }} sicher verarbeitbar{% endif %}</span></li>
@@ -25,20 +41,39 @@
 </section>{% endif %}
 
 <section class="card" style="margin-top:16px" id="vorgaenge">
-  <div class="card-head"><h2>{{ tabs[q.tab][0] }} <span class="badge">{{ q.total }}</span></h2></div>
+  <div class="card-head"><h2>{{ tabs[q.tab][0] }} <span class="badge">{{ q.total }}</span></h2>
+    {% if q.tab == 'sicher' and q.total %}<span class="hint">{{ n_selected }} von {{ q.total }} ausgewählt</span>{% endif %}</div>
+  {% if q.tab == 'sicher' %}<p class="hint">Vorausgewählt sind nur sichere Verknüpfungen (Dubletten und Ergänzungen) – sie buchen nichts. Sichere <b>neue</b> Buchungen werden nur gewählt, wenn du sie ausdrücklich anhakst. Eine Abwahl bleibt gespeichert.</p>{% endif %}
   {% if not q.items %}
     <p class="hint">{% if q.tab == 'offen' %}Keine Vorgänge zu prüfen{% if q.counts.sicher %} – {{ q.counts.sicher }} sichere Vorschläge stehen im Reiter <a href="?{{ qs({'tab': 'sicher'}) }}">Sicher verarbeitbar</a> bereit{% endif %}.{% elif q.tab == 'sicher' %}Keine sicheren Vorschläge offen{% if q.counts.offen %} – {{ q.counts.offen }} Vorgänge benötigen eine manuelle Prüfung (Reiter <a href="?{{ qs({'tab': 'offen'}) }}">Zu prüfen</a>){% endif %}.{% else %}Keine Vorgänge.{% endif %}</p>
   {% else %}
+  {% if q.tab == 'sicher' %}<form method="post" action="/journal/pruefung/auswahl" id="bulk-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ filter_hidden() }}{% endif %}
   <div class="table-wrap"><table class="compact">
-    <thead><tr><th>Zeitpunkt</th><th>Vorgang</th><th>Beträge</th><th>Quelle</th><th>Stand</th><th></th></tr></thead>
-    <tbody>{% for it in q.items %}{% set b = q.batches.get(it.batch_id) %}{% set st = states[it.state] %}
-      <tr><td data-label="Zeitpunkt" class="nowrap">{{ it.ts|replace('T', ' ') if it.ts else '–' }}</td>
+    <thead><tr>{% if q.tab == 'sicher' %}<th><span class="sr-only">Auswahl</span></th>{% endif %}<th>Zeitpunkt</th><th>Vorgang</th><th>Beträge</th><th>Quelle</th><th>Stand</th><th></th></tr></thead>
+    <tbody>{% for it in q.items %}{% set b = q.batches.get(it.batch_id) %}{% set st = states[it.state] %}{% set ev_url = '/journal/csv/' ~ it.batch_id ~ '?' ~ ({'ev': it.event}|urlencode) ~ '#zeilen' %}
+      <tr>{% if q.tab == 'sicher' %}<td><input type="hidden" name="shown" value="{{ key_of(it) }}"><input type="checkbox" name="on" value="{{ key_of(it) }}" aria-label="Vorgang auswählen" {% if checked(it) %}checked{% endif %}></td>{% endif %}
+        <td data-label="Zeitpunkt" class="nowrap">{{ it.ts|replace('T', ' ') if it.ts else 'Zeitpunkt fehlt' }}</td>
         <td data-label="Vorgang">{{ it.label or '–' }}{% if it.rows|length > 1 %} <span class="hint">({{ it.rows|length }} Zeilen)</span>{% endif %}{% if it.account %}<div class="hint">{{ it.account }}</div>{% endif %}</td>
         <td data-label="Beträge">{% for l in it.legs %}<div class="nowrap">{{ l }}</div>{% else %}–{% endfor %}</td>
         <td data-label="Quelle">{% if b %}{{ source_label(b.source) if b.kind == 'sync' else b.filename }}<div class="hint">Stapel {{ b.id }} · {{ batch_status.get(b.status, b.status) }}</div>{% endif %}</td>
-        <td data-label="Stand"><span class="badge {{ st[1] }}">{{ st[0] }}</span>{% if it.reason %}<div class="hint">{{ it.reason }}</div>{% endif %}</td>
-        <td><a class="btn sm" href="/journal/csv/{{ it.batch_id }}?{{ {'ev': it.event}|urlencode }}#zeilen">{{ 'Prüfen' if it.state in ('offen', 'zurueckgestellt', 'vorgemerkt', 'sicher') else 'Ansehen' }}</a></td></tr>
+        <td data-label="Stand"><span class="badge {{ st[1] }}">{{ st[0] }}</span>{% if it.state == 'sicher' %}<div class="hint">{{ 'neu buchen' if it.books else 'verknüpfen (bucht nichts)' }}{% if it.cat %} · {{ cat_label.get(it.cat, it.cat) }}{% endif %}{% if it.conf %} · {{ it.conf }}{% endif %}</div>{% endif %}{% if it.reason %}<div class="hint">{{ it.reason }}</div>{% endif %}</td>
+        <td>{% if q.tab == 'offen' %}<div class="stack" style="gap:4px">{% for v in it.variants() %}
+            {% if v.op %}<button class="btn sm ghost" type="submit" form="dec-{{ v.op }}-{{ it.batch_id }}-{{ it.idxs[0] }}" title="{{ v.hint }}">{{ v.label }}</button>
+            {% else %}<a class="btn sm{{ ' ghost' if not loop.first }}" href="{{ ev_url }}" title="{{ v.hint }}">{{ v.label }}</a>{% endif %}
+          {% endfor %}</div>
+          {% for v in it.variants() if v.op %}<form method="post" action="/journal/pruefung/entscheiden" id="dec-{{ v.op }}-{{ it.batch_id }}-{{ it.idxs[0] }}" class="inline" hidden><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ filter_hidden() }}<input type="hidden" name="tab" value="{{ q.tab }}"><input type="hidden" name="event" value="{{ it.batch_id }}:{{ it.idxs|join(',') }}"><input type="hidden" name="op" value="{{ v.op }}"></form>{% endfor %}
+        {% else %}<a class="btn sm ghost" href="{{ ev_url }}">{{ 'Ansehen' if it.state not in ('offen', 'zurueckgestellt', 'vorgemerkt', 'sicher') else 'Einzeln prüfen' }}</a>{% endif %}</td></tr>
     {% endfor %}</tbody></table></div>
+  {% if q.tab == 'sicher' %}
+    <div class="row review-foot" style="margin-top:8px">
+      <button class="btn sm ghost" type="submit" name="op" value="save">Auswahl speichern</button>
+      <button class="btn sm ghost" type="submit" name="op" value="all" title="alle sicheren Vorschläge der Filter – auch neue Buchungen">Alle auswählen</button>
+      <button class="btn sm ghost" type="submit" name="op" value="safe" title="nur sichere Verknüpfungen">Vorauswahl</button>
+      <button class="btn sm ghost" type="submit" name="op" value="none">Leeren</button>
+      <button class="btn primary" type="submit" name="op" value="preview">Sichere Vorschläge gesammelt verarbeiten …</button>
+    </div>
+    <p class="hint">„Gesammelt verarbeiten“ speichert die Auswahl dieser Seite und öffnet die Vorschau aller ausgewählten Vorgänge (auch auf weiteren Seiten) – ausgeführt wird erst nach Bestätigung.</p>
+  </form>{% endif %}
     <div class="row" style="margin-top:8px">{% if q.offset %}<a class="btn sm ghost" href="?{{ qs({'tab': q.tab, 'offset': [q.offset - page, 0]|max}) }}">Zurück</a>{% endif %}
       <span class="hint">{{ q.offset + 1 }}–{{ q.offset + q.items|length }} von {{ q.total }}</span>
       {% if q.offset + page < q.total %}<a class="btn sm ghost" href="?{{ qs({'tab': q.tab, 'offset': q.offset + page}) }}">Weiter</a>{% endif %}</div>

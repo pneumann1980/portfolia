@@ -359,6 +359,9 @@ def _decide(action: str, rc: RowCtx, kind: str, force: bool, by_idx: Mapping[int
         if rc.decision == "defer":
             return None, "bereits zurückgestellt", None
         return "defer", "zurückgestellt – bleibt offen", None
+    if action == "suggest" and rc.decision in ("skip", "defer"):  # eigene Entscheidung hat Vorrang vor Vorschlägen
+        return None, ("eigene Entscheidung: nicht übernehmen" if rc.decision == "skip" else
+                      "eigene Entscheidung: zurückgestellt"), None
     if rc.status == "before" and action == "suggest":
         return None, "vor dem Stichtag – maßgeblich ist der kuratierte Import, keine Entscheidung nötig", None
     want = m.get("action") if action == "suggest" else action

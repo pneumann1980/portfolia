@@ -81,7 +81,7 @@ veraltete Auswahl (wird gegen vorhandene Zeilen geschnitten), Vorschau auf ander
 | # | Phase | Status | Commit | Tests |
 |---|---|---|---|---|
 | 1 | P0 Prüfworkflow reparieren | Tests bestanden | siehe §5 | 15 neu, Suite 929 grün |
-| 2 | Zentrale Prüfung, Sammelverarbeitung | Nicht begonnen | – | – |
+| 2 | Zentrale Prüfung, Sammelverarbeitung | Tests bestanden | siehe §5 | 5 neu, Suite 934 grün |
 | 3 | M29-Hardening | Nicht begonnen | – | – |
 | 4 | Universeller Börsenimport | Nicht begonnen | – | – |
 | 5 | Historische Quellenabdeckung | Nicht begonnen | – | – |
@@ -143,3 +143,23 @@ Quellzeilen), Export/Restore, Bericht `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_R
 | `_present` kannte nur offene Stapel | abgeschlossene, nicht gebuchte Ereignisse werden nicht erneut vorgelegt – außer bei geänderter Lieferung (neue Evidenz) | 08 |
 
 Nur-Lese-Garantie der Ansichten (Vorschau, Warteschlange, Stapel-, Datenquellen-, Diagnoseseite): Test 15.
+
+### Phase 2 – abgeschlossen (Tests bestanden)
+
+* **Warteschlange** `/journal/pruefung`: Reiter Zu prüfen · Sicher verarbeitbar · Abgeschlossen · Historie; Filter
+  Quelle, Konto, Art, Abgleich (Evidenz), Sicherheit, Zeitraum, Prüfgrund (`queue.Filter`); Einheit Vorgang.
+* **Auswahl** (`bulk.selected/store`): je Stapel gespeichert (dieselbe wie auf der Stapelseite). Vorausgewählt nur
+  sichere Verknüpfungen; sichere *neue* Buchungen nur ausdrücklich. Abwahl bleibt. Ein Vorgang wird nie geteilt
+  (Auswahlschlüssel = alle Zeilen mit sicherem Vorschlag eines Vorgangs).
+* **Sammelvorschau** (`bulk.preview`): frisch bewertet; Gesamtwirkung auf Bestände, Gebühren, betroffene FIFO-Reihen ab
+  Datum; je Stapel Wirkung, Ausschlüsse mit Grund, offene Fragen und Korrekturvorschläge (nie automatisch).
+* **Ausführung** (`bulk.run`): ausdrückliche Bestätigung; Stapel für Stapel über `batch.execute` – je Stapel atomar,
+  Token (genau einmal), Prüfsumme (nur unveränderte Vorschau); Ergebnis je Stapel; Undo im Verlauf des Stapels.
+* **Manueller Fall** (`Item.variants`): Lösungswege je Grund (Angabe ergänzen, einordnen, Gegenüberstellung prüfen,
+  Übernahme prüfen) und Entscheidungen Zurückstellen / Nicht übernehmen / Wieder aufnehmen – protokolliert, umkehrbar.
+* **Sicherheitskorrektur:** Vorschläge („suggest“) übergehen keine eigene Entscheidung (nicht übernehmen,
+  zurückgestellt) mehr – zuvor hätte eine Stapelaktion eine zurückgestellte Zeile verknüpfen können.
+* **Tests** (`tests/test_review_bulk.py`): Vorauswahl/Abwahl, Sammelvorschau mit Bestätigung über zwei Stapel inkl.
+  Teilabschluss und Idempotenz, geänderter Stapel wird nicht ausgeführt (andere schon), Lösungsvarianten mit Undo,
+  Filter.
+

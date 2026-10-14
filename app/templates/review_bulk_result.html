@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Ergebnis: sichere Vorschläge{% endblock %}
+{% block heading %}Ergebnis: sichere Vorschläge verarbeitet{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/pruefung">Prüfung</a><a href="/journal/csv">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
+{% set ok = results|selectattr('errors', 'equalto', []) |list %}
+<section class="card">
+  <div class="card-head"><h2>Ergebnis je Prüf-Stapel</h2><span class="badge {{ 'good' if ok|length == results|length else 'warn' }}">{{ ok|length }} von {{ results|length }} ausgeführt</span></div>
+  {% if not results %}<p class="hint">Nichts ausgeführt.</p>{% endif %}
+  <div class="table-wrap"><table class="compact">
+    <thead><tr><th>Stapel</th><th>Ergebnis</th><th></th></tr></thead>
+    <tbody>{% for r in results %}{% set b = names.get(r.batch_id) %}
+      <tr><td>{% if b %}{{ source_label(b.source) if b.kind == 'sync' else b.filename }}{% endif %} <span class="hint">Stapel {{ r.batch_id }}</span></td>
+        <td>{% if r.errors %}<span class="badge warn">nicht ausgeführt</span>{% for e in r.errors %}<div class="hint">{{ e }}</div>{% endfor %}
+          {% else %}<span class="badge good">{{ 'bereits ausgeführt' if r.get('repeat') else 'ausgeführt' }}</span>{% if (r.get('counts') or {}).get('link') %} <span class="hint">{{ r.counts.link }} verknüpft</span>{% endif %}{% if r.get('created') %} <span class="hint">{{ r.created }} gebucht</span>{% endif %}{% endif %}</td>
+        <td><a class="btn sm ghost" href="/journal/csv/{{ r.batch_id }}#verlauf">{{ 'Verlauf / Rückgängig' if not r.errors else 'Stapel öffnen' }}</a></td></tr>
+    {% endfor %}</tbody></table></div>
+  <div class="row" style="margin-top:10px"><a class="btn primary" href="/journal/pruefung?{{ params|urlencode }}">Zur Prüfwarteschlange</a></div>
+</section>
+{% endblock %}

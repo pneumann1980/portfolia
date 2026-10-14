@@ -115,6 +115,9 @@ class Lite:
     datasource_id: int | None = None
     source: str = ""
     rid: int = 0
+    ts: str = ""  # Zeitpunkt laut Quelle (ISO; leer, wenn die Quelle keinen liefert)
+    account: str = ""  # Konto laut Zeile bzw. Stapel
+    kind: str = ""  # Vorgangsart der Quelle (Zwischenformat)
 
     @property
     def state(self) -> str:
@@ -206,7 +209,9 @@ def row_state(rc: Any) -> str:
 
 _SQL = ("SELECT r.id, r.batch_id, r.idx, r.status, r.decision, r.event_key, "
         "json_extract(r.messages, '$.match.cat') AS cat, json_extract(r.messages, '$.match.action') AS action, "
-        "json_extract(r.messages, '$.match.conf') AS conf, "
+        "json_extract(r.messages, '$.match.conf') AS conf, json_extract(r.rec_json, '$.ts') AS ts, "
+        "json_extract(r.rec_json, '$.ts_missing') AS ts_missing, json_extract(r.rec_json, '$.account') AS acc, "
+        "json_extract(r.rec_json, '$.kind') AS rkind, b.account AS bacc, "
         "b.datasource_id, b.source, b.kind, b.profile FROM csv_row r JOIN csv_batch b ON b.id = r.batch_id ")
 
 
@@ -215,7 +220,9 @@ def load(db: Any, where: str = "", params: Iterable[Any] = ()) -> list[Lite]:
     for r in db.q(_SQL + (f"WHERE {where} " if where else "") + "ORDER BY r.batch_id, r.idx", tuple(params)):
         src = r["source"] or (f"csv:{r['profile']}" if r["profile"] else "csv")
         out.append(Lite(int(r["batch_id"]), int(r["idx"]), r["status"], r["decision"], r["event_key"], r["cat"],
-                        r["action"], r["conf"], r["datasource_id"], src, int(r["id"])))
+                        r["action"], r["conf"], r["datasource_id"], src, int(r["id"]),
+                        "" if r["ts_missing"] else str(r["ts"] or ""), str(r["acc"] or r["bacc"] or ""),
+                        str(r["rkind"] or "")))
     return out
 
 
