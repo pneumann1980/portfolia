@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Quellenabdeckung{% endblock %}
+{% block heading %}Datenqualität · Quellenabdeckung{% endblock %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>Historische Quellenabdeckung</h2>
+    <div class="row"><a class="btn sm" href="/quality/diagnose">Diagnose</a><a class="btn sm" href="/quality/diagnose/stock">Bestandsklärung</a><a class="btn sm" href="/journal/pruefung">Prüfung</a></div></div>
+  <p class="hint">Je Konto und Quelle: für welche Monate liegen Daten vor? <b>Lücke</b> heißt: im Aktivitätszeitraum weder Buchung noch eingelesene Lieferung noch vollständiger Abruf – dort fehlen am ehesten Vorgänge. „Abgedeckt, ohne Vorgänge“ ist ein belegter ruhiger Monat (vollständige Datei bzw. vollständiger Abruf). Diese Ansicht ist rein berechnet und ändert nichts.</p>
+  <form method="get" action="/quality/abdeckung" class="filters" style="margin-top:8px">
+    <label class="field">Konto<select name="account"><option value="">alle</option>{% for a in accounts %}<option {% if account == a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+    <label class="field">Bereich<select name="area"><option value="">alle</option>{% for k, l in mx.areas.items() %}<option value="{{ k }}" {% if mx.area == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="field">von (Monat)<input type="month" name="frm" value="{{ mx.frm }}"></label>
+    <label class="field">bis (Monat)<input type="month" name="to" value="{{ mx.to }}"></label>
+    <div class="filters-go"><button class="btn sm" type="submit">Anzeigen</button></div>
+  </form>
+  <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">{% for k, (l, badge) in states.items() %}<span class="badge {{ badge }} cov-{{ k }}">{{ l }}</span>{% endfor %}</div>
+</section>
+
+<section class="card">
+  {% if not mx.rows %}<p class="hint">Keine Daten im gewählten Zeitraum.</p>{% else %}
+  <p class="hint">{{ mx.rows|length }} Konto-/Quellen-Kombinationen · {{ mx.months|length }} Monate · <b>{{ mx.n_gaps }}</b> Lückenzeitr{{ 'aum' if mx.n_gaps == 1 else 'äume' }}</p>
+  <div class="table-wrap cov-wrap" tabindex="0" role="region" aria-label="Abdeckungsmatrix (scrollbar)"><table class="compact cov-table">
+    <thead><tr><th class="sticky">Konto · Quelle</th>{% for m in mx.months %}<th class="num" title="{{ m }}">{{ m[2:4] }}/{{ m[5:7] }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for r in mx.rows %}<tr>
+      <td class="sticky"><b>{{ r.account }}</b><div class="hint">{{ r.source }}</div></td>
+      {% for m in mx.months %}{% set c = r.cells.get(m) %}
+      {% if c %}<td class="cov-{{ c.state }}" title="{{ m }} · {{ states[c.state][0] }}{% if c.booked %} · {{ c.booked }} Buchungen{% endif %}{% if c.staged %} · {{ c.staged }} im Prüf-Stapel{% endif %}{% for a, n in c.areas.items() %} · {{ mx.areas[a] }}: {{ n }}{% endfor %}">{% if c.booked %}{{ c.booked }}{% elif c.staged %}({{ c.staged }}){% elif c.state == 'luecke' %}!{% endif %}</td>
+      {% else %}<td class="cov-out" aria-hidden="true"></td>{% endif %}
+      {% endfor %}</tr>
+    {% endfor %}</tbody></table></div>
+  {% endif %}
+</section>
+
+{% set gappy = mx.rows|selectattr('gaps')|list %}
+{% if gappy %}
+<section class="card">
+  <div class="card-head"><h2>Lücken und nächste Schritte</h2></div>
+  <ul class="plain">{% for r in gappy %}
+    <li><b>{{ r.account }}</b> · {{ r.source }}: {% for a, b in r.gaps %}{{ a }}{% if b != a %} bis {{ b }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
+      <div class="hint">{% if r.periods %}Belegte Lieferungen: {% for a, b, kind in r.periods %}{{ a }}–{{ b }} ({{ kind }}){{ ', ' if not loop.last }}{% endfor %}. {% endif %}Fehlenden Zeitraum als Exportdatei der Quelle hochladen{% if r.datasource_id %} (<a href="/settings/datasources/{{ r.datasource_id }}#datei">bei der Datenquelle</a>){% else %} (<a href="/journal/csv">CSV-Import</a>){% endif %}{% if r.research %} oder bei der Datenquelle lesend recherchieren{% endif %}.</div>
+      {% if r.research %}{% for a, b in r.gaps[:3] %}<form method="post" action="/quality/diagnose/research/start" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="source" value="{{ r.datasource_id }}"><input type="hidden" name="account" value="{{ r.account }}"><input type="hidden" name="win_from" value="{{ a }}-01T00:00:00+00:00"><input type="hidden" name="win_to" value="{{ gap_end(b) }}"><button class="btn sm ghost" type="submit" title="Liest nur – kein Abrufstand, keine Buchung">Recherche {{ a }}{% if b != a %}–{{ b }}{% endif %}</button></form>{% endfor %}{% endif %}
+    </li>{% endfor %}</ul>
+</section>{% endif %}
+</div>
+{% endblock %}

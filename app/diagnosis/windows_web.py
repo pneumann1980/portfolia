@@ -5,6 +5,7 @@ Recherche liest (ausschließlich lesend) bei der Datenquelle – siehe :mod:`app
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC
 from decimal import Decimal
 from typing import Any
@@ -90,6 +91,20 @@ def make_router() -> APIRouter:
                       assets=sorted({t.asset for t in traces.values()}), kind_label=KIND_LABEL, kind_badge=KIND_BADGE,
                       evidence_badge=EVIDENCE_BADGE, source_label=SOURCE_LABEL, research_runs=research_runs, msg=msg,
                       err=err, **_common())
+
+    @router.get("/quality/abdeckung", response_class=HTMLResponse)
+    def coverage_page(request: Request, frm: str = "", to: str = "", area: str = "", account: str = "") -> HTMLResponse:
+        """Historische Quellenabdeckung je Konto, Quelle und Monat (rein lesend)."""
+        from app.diagnosis import coverage as CV
+
+        ctx = get_ctx(request)
+        frm = frm[:7] if re.fullmatch(r"\d{4}-\d{2}(-\d{2})?", frm or "") else ""
+        to = to[:7] if re.fullmatch(r"\d{4}-\d{2}(-\d{2})?", to or "") else ""
+        area = area if area in CV.AREAS else ""
+        mx = CV.build(ctx, frm, to, area, account[:80])
+        accounts = sorted({r.account for r in CV.build(ctx).rows}) if account else sorted({r.account for r in mx.rows})
+        return render(request, "coverage.html", active="quality", mx=mx, states=CV.STATES, accounts=accounts,
+                      account=account, gap_end=CV.month_end, **_common())
 
     @router.get("/quality/diagnose/stock", response_class=HTMLResponse)
     def stock_page(request: Request, view: str = "", p: str = "") -> HTMLResponse:

@@ -819,3 +819,13 @@ details.crop img { display: block; margin-top: 4px; width: 100%; max-width: 420p
 .win > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .win-chart { min-width: 0; }
 @media (max-width: 640px) { .kv.kv-stack { grid-template-columns: 1fr; gap: 2px; } .kv.kv-stack dt { margin-top: 8px; } .kv.kv-stack dd { margin: 0; } }
+
+/* Quellenabdeckung (Monatsmatrix) */
+.cov-wrap { max-height: 70vh; overflow: auto; }
+.cov-table th, .cov-table td { text-align: center; min-width: 2.6em; font-variant-numeric: tabular-nums; }
+.cov-table .sticky { position: sticky; left: 0; background: var(--surface); text-align: left; min-width: 11em; z-index: 1; }
+.cov-table td.cov-gebucht, .badge.cov-gebucht { background: color-mix(in srgb, var(--good-ink, #1a7f37) 18%, transparent); }
+.cov-table td.cov-staged, .badge.cov-staged { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.cov-table td.cov-abgedeckt, .badge.cov-abgedeckt { background: var(--surface-2); }
+.cov-table td.cov-anderweitig, .badge.cov-anderweitig { background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 3px, transparent 3px, transparent 6px); }
+.cov-table td.cov-luecke, .badge.cov-luecke { background: color-mix(in srgb, var(--warn-ink, #9a6700) 22%, transparent); font-weight: 600; }
