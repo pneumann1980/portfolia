@@ -27,6 +27,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.csvimport import assess as A
+from app.csvimport import review as RV
 from app.csvimport.events import derive_tx_hash, identity_keys, normalize_hash
 from app.csvimport.service import _LOCK, STATUS_LABEL, RowCtx, line_key, pair_accepted
 from app.util.timeutil import iso, to_local_date
@@ -39,11 +40,13 @@ ACTIONS: dict[str, tuple[str, str]] = {
     "link": ("Verknüpfen", "nicht buchen – Kennung und Angaben der Quelle bleiben an der vorhandenen Buchung "
                            "erhalten, die Buchung selbst bleibt unverändert"),
     "include": ("Übernehmen", "als neue Buchungen übernehmen"),
-    "skip": ("Auslassen", "in diesem Stapel nicht übernehmen (jederzeit änderbar)"),
+    "skip": ("Nicht übernehmen", "ausdrücklich nicht übernehmen – schließt den Vorgang ab (jederzeit änderbar)"),
+    "defer": ("Zurückstellen", "später entscheiden – bleibt offen, aber ohne Vorschlag"),
     "ignore": ("Dauerhaft ignorieren", "bei keinem Abruf mehr vorlegen (je Anbieter-Ereignis)"),
     "reset": ("Vorschlag wiederherstellen", "eigene Auswahl ja/nein zurücksetzen"),
 }
-EFFECT_LABEL = {"link": "verknüpfen (nicht buchen)", "include": "übernehmen (buchen)", "skip": "auslassen",
+EFFECT_LABEL = {"link": "verknüpfen (nicht buchen)", "include": "übernehmen (buchen)", "skip": "nicht übernehmen",
+                "defer": "zurückstellen",
                 "ignore": "dauerhaft ignorieren", "reset": "Vorschlag wiederherstellen"}
 CONFLICTS = {"ts": "Zeitpunkt", "value": "EUR-Wert", "fee": "Gebühr", "qty": "Menge", "asset": "Asset",
              "acct": "Konto", "type": "Art/Einordnung", "hash": "Hash", "struct": "Struktur/Zuordnung"}
@@ -62,16 +65,16 @@ MAX_RAW = 20_000  # Rohdaten je verknüpftem Datensatz (Zeichen)
 # ----------------------------------------------------------------------------------------------------
 
 def group_of(rc: RowCtx) -> str | None:
-    """Gruppe der Übersicht: dublette | ergaenzung | neu (sichere Vorschläge) | manuell | None (nichts zu tun)."""
-    if not rc.open or rc.status in ("known", "ignored", "before"):
+    """Gruppe der Übersicht: dublette | ergaenzung | neu (sichere Vorschläge) | manuell | None (abgeschlossen bzw. vor
+    dem Stichtag – nichts zu entscheiden). Abgeleitet aus dem zentralen Prüfstatus (:mod:`app.csvimport.review`)."""
+    st = RV.row_state(rc)
+    if not RV.is_open(st):
         return None
-    m = rc.match
-    if not m:
-        return "manuell" if rc.status in ("unclear", "invalid", "duplicate") else None
-    if m["cat"] in ("dublette", "ergaenzung") and m.get("action") == "link" and m["conf"] in A.SAFE_CONF:
+    m = rc.match or {}
+    if st == "sicher":
+        return "neu" if m.get("cat") == "neu" else m["cat"]
+    if st == "vorgemerkt" and m.get("cat") in GROUPS and m.get("conf") in A.SAFE_CONF:
         return m["cat"]
-    if m["cat"] == "neu" and m.get("action") == "include" and m["conf"] in A.SAFE_CONF:
-        return "neu"
     return "manuell"
 
 
@@ -89,7 +92,9 @@ def overview(rows: list[RowCtx]) -> dict[str, Any]:
             cats[rc.match["cat"]] += 1
         if g == "manuell":
             m = rc.match or {}
-            if rc.status == "unclear":
+            if rc.decision == "defer":
+                reasons["zurückgestellt"] += 1
+            elif rc.status == "unclear":
                 reasons["ungeklärte Vorgangsart"] += 1
             elif rc.status == "invalid":
                 reasons["unvollständig (Asset/EUR-Wert)"] += 1
@@ -97,12 +102,14 @@ def overview(rows: list[RowCtx]) -> dict[str, Any]:
                 reasons[A.CAT_LABEL[m["cat"]]] += 1
             else:
                 reasons["mittlere Sicherheit bzw. Prüfhinweis"] += 1
-    before = [rc for rc in rows if rc.open and rc.status == "before"]
+    before = [rc for rc in rows if RV.row_state(rc) == "historie"]
     gaps = sum(1 for rc in before if rc.match and rc.match["cat"] == "neu")
+    summ = RV.summarize(rows)
     return {"groups": groups, "cats": cats, "total": sum(groups.values()), "reasons": dict(reasons),
             "before": len(before), "before_found": sum(1 for rc in before if rc.dup_of), "before_gaps": gaps,
             "known": sum(1 for rc in rows if rc.open and rc.status == "known"),
-            "linked": sum(1 for rc in rows if rc.status == "linked")}
+            "linked": sum(1 for rc in rows if rc.status == "linked"), "events": summ,
+            "skipped": summ.rows["nicht_uebernommen"], "deferred": summ.rows["zurueckgestellt"]}
 
 
 def group_state(rows: list[RowCtx], chosen: set[int]) -> dict[str, tuple[int, int]]:
@@ -126,8 +133,9 @@ class Filters:
     frm: str = ""
     to: str = ""
     conflict: str = ""
+    ev: str = ""  # ein wirtschaftlicher Vorgang (Ereignis-ID bzw. „#<Zeile>“) – Sprung aus der Prüfwarteschlange
 
-    KEYS = ("status", "cat", "conf", "dec", "acc", "frm", "to", "conflict")
+    KEYS = ("status", "cat", "conf", "dec", "acc", "frm", "to", "conflict", "ev")
 
     @classmethod
     def parse(cls, data: Mapping[str, Any], statuses: Iterable[str] = ()) -> Filters:
@@ -141,7 +149,7 @@ class Filters:
             f.cat = ""
         if f.conf not in ("", *A.CONF):
             f.conf = ""
-        if f.dec not in ("", "open", "include", "skip"):
+        if f.dec not in ("", "open", "include", "skip", "defer"):
             f.dec = ""
         if f.conflict not in ("", *CONFLICTS):
             f.conflict = ""
@@ -166,6 +174,8 @@ class Filters:
             return False
         if st and st != "committed" and rc.status != st:
             return False
+        if self.ev and (rc.rec.event_key or f"#{rc.idx}") != self.ev:
+            return False
         m = rc.match or {}
         if self.cat:
             if self.cat == "manuell":
@@ -177,7 +187,7 @@ class Filters:
             return False
         if self.dec == "open" and rc.decision is not None:
             return False
-        if self.dec in ("include", "skip") and rc.decision != self.dec:
+        if self.dec in ("include", "skip", "defer") and rc.decision != self.dec:
             return False
         if self.acc:
             accs = {rc.rec.account, rc.rec.to_account}
@@ -337,12 +347,20 @@ def _decide(action: str, rc: RowCtx, kind: str, force: bool, by_idx: Mapping[int
             return None, "bereits vorhanden – nichts zu ignorieren", None
         return "ignore", "wird bei keinem Abruf mehr vorgelegt", None
     if action == "skip":
-        if rc.status not in ("new", "duplicate"):
+        if rc.status not in ("new", "duplicate", "invalid", "unclear"):
             return None, ("vor dem Stichtag – wird ohnehin nicht übernommen" if rc.status == "before" else
                           f"nicht übernehmbar ({STATUS_LABEL.get(rc.status, rc.status)})"), None
-        if not rc.include():
-            return None, "wird bereits nicht übernommen", None
-        return "skip", "wird nicht übernommen", None
+        if rc.decision == "skip":
+            return None, "bereits als „nicht übernehmen“ entschieden", None
+        return "skip", "wird nicht übernommen (Vorgang abgeschlossen)", None
+    if action == "defer":
+        if rc.status not in ("new", "duplicate", "invalid", "unclear"):
+            return None, f"nichts zu entscheiden ({STATUS_LABEL.get(rc.status, rc.status)})", None
+        if rc.decision == "defer":
+            return None, "bereits zurückgestellt", None
+        return "defer", "zurückgestellt – bleibt offen", None
+    if rc.status == "before" and action == "suggest":
+        return None, "vor dem Stichtag – maßgeblich ist der kuratierte Import, keine Entscheidung nötig", None
     want = m.get("action") if action == "suggest" else action
     if want == "link":
         target = m.get("target")
@@ -356,6 +374,8 @@ def _decide(action: str, rc: RowCtx, kind: str, force: bool, by_idx: Mapping[int
             return None, "mittlere Sicherheit – einzeln prüfen oder ausdrücklich verknüpfen", None
         if rc.status not in ("duplicate", "known", "before", "new"):
             return None, f"nicht verknüpfbar ({STATUS_LABEL.get(rc.status, rc.status)})", None
+        if rc.status == "before" and not force:
+            return None, "vor dem Stichtag – maßgeblich ist der kuratierte Import (verknüpfen nur ausdrücklich)", None
         return "link", f"verknüpfen mit {target}", target
     if want == "include":
         if rc.row is None or rc.errors:
@@ -440,7 +460,7 @@ def _impact(svc: Any, p: Plan) -> None:
         if it.act == "include":
             for k, v in _row_delta(it.rc).items():
                 inc[k] += v
-        elif it.act in ("link", "skip", "ignore") and it.rc.include():
+        elif it.act in ("link", "skip", "defer", "ignore") and it.rc.include():
             for k, v in _row_delta(it.rc).items():
                 prev[k] += v
     led = None
@@ -573,8 +593,8 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
                               (it.target, json.dumps(msgs, ensure_ascii=False), rc.id))
                     rc.status, rc.tx_id = "linked", it.target
                     ops["rows"][str(rc.idx)] = {**prev, "set": {"status": "linked", "tx_id": it.target}}
-                elif it.act in ("skip", "reset", "include"):
-                    dec = {"skip": "skip", "reset": None, "include": "include"}[it.act]
+                elif it.act in ("skip", "defer", "reset", "include"):
+                    dec = {"skip": "skip", "defer": "defer", "reset": None, "include": "include"}[it.act]
                     c.execute("UPDATE csv_row SET decision=? WHERE id=?", (dec, rc.id))
                     ops["rows"][str(rc.idx)] = {**prev, "set": {"decision": dec}}
                 elif it.act == "ignore":

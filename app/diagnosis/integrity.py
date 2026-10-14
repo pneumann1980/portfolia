@@ -509,9 +509,10 @@ def _status(items: list[Item], report: Report, db: Any) -> None:
     fixes = A.active_fixes(db)
     by_id = {f.id: f for f in report.findings}
     for it in items:
-        d = marks.get(it.finding_id) if it.finding_id else None
         f = by_id.get(it.finding_id)
-        if d is not None and f is not None and d.fingerprint == A.fingerprint(f):
+        r = A.mark_of(f, marks) if f is not None else None
+        d = r[0] if r is not None and r[1] else None
+        if d is not None:
             it.status = "verworfen" if (d.note or "").startswith(INDEPENDENT_NOTE) else "geprüft"
         elif it.finding_id and fixes.get(it.finding_id):
             it.status = "korrigiert"

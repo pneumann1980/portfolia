@@ -2,7 +2,7 @@
 {% block title %}CSV-Import · Spalten zuordnen{% endblock %}
 {% block heading %}CSV-Import{% endblock %}
 {% block content %}
-<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/csv">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a href="/journal/pruefung">Prüfung</a><a class="active" href="/journal/csv">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
 {% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
 <section class="card">
   <div class="card-head"><h2>Spalten zuordnen · {{ b.filename }}</h2></div>

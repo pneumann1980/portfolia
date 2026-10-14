@@ -24,7 +24,7 @@ import json
 import logging
 import threading
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -1013,7 +1013,12 @@ def _now() -> str:
 
 
 def fingerprint(f: Finding) -> str:
-    """Prüfsumme der Befunddaten: „geprüft“ gilt nur, solange sie gleich bleibt (Abrufzeit zählt nicht)."""
+    """Prüfsumme der Befunddaten: „geprüft“ gilt nur, solange sie gleich bleibt (Abrufzeit zählt nicht). Befunde mit
+    ausdrücklicher Evidenzbasis (``data["fp"]``, z. B. Bestandsabweichungen) prüfen nur diese – Darstellung, Titel
+    und Abrufzustand ändern die Evidenz nicht."""
+    if (f.data or {}).get("fp") is not None:
+        return hashlib.sha256(json.dumps({"kind": f.kind, "fp": f.data["fp"]}, sort_keys=True, default=str,
+                                         ensure_ascii=False).encode()).hexdigest()[:16]
     data = {k: v for k, v in (f.data or {}).items() if k != "observed_at"}
     payload: dict[str, Any] = {"status": f.status, "title": f.title, "data": data,
                                "txs": sorted(r.tx_id for r in f.txs)}
@@ -1021,6 +1026,77 @@ def fingerprint(f: Finding) -> str:
         payload["known"] = f.known
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False).encode()
                           ).hexdigest()[:16]
+
+
+_HOLDING_LEGACY = {  # Befundschlüssel bis 0.26.0 enthielten den Abrufzustand (Status, Titel)
+    "extern_diff": ("belegt", "Bestand weicht von der externen Quelle ab: {asset} auf {account}"),
+    "extern_unsicher": ("verdacht", "Abweichung zu einem nicht bestätigten externen Bestand: {asset} auf {account}"),
+    "intern_diff": ("belegt", "Berechneter Bestand weicht vom Soll des Imports ab: {asset} auf {account}"),
+}
+
+
+def _legacy_marks(f: Finding) -> list[tuple[str, str]]:
+    """(frühere Befund-ID, frühere Prüfsumme) desselben Sachverhalts – Entscheidungen aus älteren Versionen gelten
+    weiter, wenn die Zahlen gleich geblieben sind."""
+    d = f.data or {}
+    if f.kind != "holdings" or d.get("type") != "holding":
+        return []
+    out = []
+    for st, (status, title) in _HOLDING_LEGACY.items():
+        old = Finding(kind="holdings", status=status, title=title.format(asset=d["asset"], account=d["account"]),
+                      key=f"holding|{d['account']}|{d['asset']}|{st}")
+        data = {"type": "holding", "account": d["account"], "asset": d["asset"], "status": st,
+                "computed": d.get("computed"), "observed": d.get("observed"), "expected": d.get("expected")}
+        payload = {"status": status, "title": old.title, "data": data, "txs": []}
+        out.append((old.id, hashlib.sha256(json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
+                                           .encode()).hexdigest()[:16]))
+    return out
+
+
+def mark_of(f: Finding, marks: Mapping[str, Any]) -> tuple[Any, bool] | None:
+    """Entscheidung ohne Datenänderung zu einem Befund und ob sie noch gilt (gleiche Evidenz). ``marks``: Befund-ID →
+    ``Decision`` bzw. ``(Aktion, Prüfsumme)``. Berücksichtigt frühere Befund-IDs desselben Sachverhalts."""
+    def fp(m: Any) -> str:
+        return (m.fingerprint if hasattr(m, "fingerprint") else m[1]) or ""
+
+    m = marks.get(f.id)
+    if m is not None:
+        return m, (not fp(m) or fp(m) == fingerprint(f))
+    for lid, lfp in _legacy_marks(f):
+        m = marks.get(lid)
+        if m is not None:
+            return m, fp(m) == lfp
+    return None
+
+
+def mark_states(findings: Iterable[Finding], marks: Mapping[str, Any]) -> dict[str, tuple[Any, bool]]:
+    """Befund-ID → (Entscheidung, gilt noch) für alle Befunde mit Entscheidung."""
+    out = {}
+    for f in findings:
+        r = mark_of(f, marks)
+        if r is not None:
+            out[f.id] = r
+    return out
+
+
+def holding_mark(db: Any, account: str, asset: str, computed: Decimal, observed: Decimal | None,
+                 expected: Decimal | None = None, marks: Mapping[str, Any] | None = None) -> str | None:
+    """Stand der Nutzerentscheidung zu einer Bestandsabweichung ohne vollständige Diagnose (Datenquellenseite):
+    ``ungeklaert`` | ``abgelehnt`` | ``spaeter`` bei gültiger Entscheidung, ``ueberholt`` bei geänderten Zahlen,
+    sonst ``None``. Gleiche Prüfsumme wie der Diagnosebefund (:func:`app.diagnosis.engine._holding_finding`)."""
+    from app.diagnosis.engine import _holding_finding
+    from app.diagnosis.model import MARK_STATE, HoldingRow
+
+    row = HoldingRow(account=account, asset=asset, name=asset, computed=computed, observed=observed,
+                     expected=expected, status="extern_diff")
+    f = _holding_finding(None, row)  # type: ignore[arg-type]
+    if f is None:
+        return None
+    r = mark_of(f, marks if marks is not None else active_marks(db))
+    if r is None:
+        return None
+    m, ok = r
+    return MARK_STATE.get(m.action, "offen") if ok else "ueberholt"
 
 
 def _exec(c: Any, ctx: Any, js: Any, op: Op, stamp: str, created: dict[str, str]) -> dict[str, Any]:

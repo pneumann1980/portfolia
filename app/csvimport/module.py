@@ -91,25 +91,27 @@ def _index(request: Request, errors: list[str] | None = None, status_code: int =
 
 def _review_queue(ctx: Any, svc: Any, open_batches: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Bearbeitungsreihenfolge offener Prüf-Stapel: neue Quellen (noch nichts übernommen) und Vorgänge ohne
-    Gegenstück im Bestand zuerst – dort liegen am ehesten fehlende Transaktionen."""
+    Gegenstück im Bestand zuerst – dort liegen am ehesten fehlende Transaktionen. Zähler je wirtschaftlichem Vorgang
+    aus der zentralen Prüflogik (:mod:`app.csvimport.review`)."""
+    from app.csvimport import review as RV
+
+    by_batch: dict[int, list[Any]] = {}
+    for r in RV.load(ctx.db, RV.ACTIVE):
+        by_batch.setdefault(r.batch_id, []).append(r)
     out = []
     for x in open_batches:
         b = x["b"]
-        cats = {r["cat"] or "": r["n"] for r in ctx.db.q(
-            "SELECT json_extract(messages, '$.match.cat') AS cat, COUNT(*) AS n FROM csv_row WHERE batch_id=? AND "
-            "status IN ('new', 'duplicate', 'unclear', 'invalid') GROUP BY cat", (b["id"],))}
-        gaps = ctx.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status='before' AND "
-                             "json_extract(messages, '$.match.cat')='neu'", (b["id"],), default=0)
-        n_open = sum(cats.values())
-        if not n_open and not gaps:
+        s = RV.summarize(by_batch.get(int(b["id"]), []))
+        if not s.open and not s.history_gaps:
             continue
         source = svc.source_of(b)
         fresh = not ctx.db.scalar("SELECT COUNT(*) FROM journal_tx WHERE source=? AND status IN ('active', 'merged')",
                                   (source,), default=0) and not ctx.db.scalar(
             "SELECT COUNT(*) FROM tx_link WHERE source=? AND status='active'", (source,), default=0)
-        manual = cats.get("widerspruch", 0) + cats.get("komplex", 0) + cats.get("", 0)
-        out.append({**x, "open": n_open, "neu": cats.get("neu", 0), "manual": manual, "gaps": gaps,
-                    "linkable": cats.get("dublette", 0) + cats.get("ergaenzung", 0), "fresh": fresh})
+        neu = len({RV.event_key(r.batch_id, r.event, r.idx) for r in by_batch.get(int(b["id"]), [])
+                   if r.state == "sicher" and r.cat == "neu"})
+        out.append({**x, "open": s.open, "neu": neu, "manual": s.to_review, "gaps": s.history_gaps,
+                    "linkable": s.events["sicher"] - neu, "fresh": fresh})
     out.sort(key=lambda q: (not q["fresh"], -(q["neu"] + q["gaps"]), -q["open"], -int(q["b"]["id"])))
     return out
 
@@ -192,6 +194,9 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
     page = sel[offset:offset + PAGE]
     chosen = BA.selection(ctx.db, bid, rows) if b["status"] in ("preview", "partial") else set()
     review = BA.overview(rows)
+    from app.csvimport import review as RV
+
+    funnel = RV.funnel(b, rows, json.loads(b["summary_json"] or "{}")) if b["status"] != "mapping" else None
     actions = BA.actions(ctx.db, bid)
     batch_accounts = sorted({a for rc in rows for a in (rc.rec.account, rc.rec.to_account) if a})
     from app.csvimport.compare import build as build_compare
@@ -227,6 +232,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
                                                               (b["datasource_id"],))),
         sugg=sugg, catalog=catalog, conf_badge=CONF_BADGE, acct=acct, outdated=outdated, compare=compare,
+        funnel=funnel, review_states=RV.STATES,
     )
 
 
@@ -326,6 +332,25 @@ def make_router() -> APIRouter:
         if profile == "mapping:new" or (b is not None and b["status"] == "mapping"):
             return _back(request, f"/journal/csv/{bid}/mapping")
         return _back(request, f"/journal/csv/{bid}")
+
+    @router.get("/journal/pruefung", response_class=HTMLResponse)
+    def review_queue_page(request: Request, tab: str = "offen", source: str = "", batch: str = "", reason: str = "",
+                          offset: int = 0) -> HTMLResponse:
+        """Zentrale Prüfwarteschlange: alle offenen Vorgänge aller Datenquellen und Dateien (nur lesend)."""
+        from app.csvimport import queue as Q
+        from app.csvimport import review as RV
+
+        ctx = get_ctx(request)
+        src = int(source) if source.isdigit() else None
+        bat = int(batch) if batch.isdigit() else None
+        qu = Q.build(ctx.db, tab, source=src, batch=bat, reason=reason[:80], offset=offset)
+        params = {k: v for k, v in {"source": source if src is not None else "",
+                                    "batch": batch if bat is not None else "", "reason": reason[:80]}.items() if v}
+        return render(request, "review_queue.html", active="journal", q=qu, tabs=Q.TABS, states=RV.STATES,
+                      params=params, page=Q.PAGE, source_label=source_label, batch_status=BATCH_STATUS,
+                      qs=lambda extra=None: urlencode({k: v for k, v in {**params, **(extra or {})}.items()
+                                                       if v not in (None, "")}),
+                      source_name=next((x["label"] for x in qu.sources if x["key"] == src), None))
 
     @router.get("/journal/csv/{bid}", response_class=HTMLResponse)
     def batch_page(request: Request, bid: int, status: str = "", offset: int = 0, msg: str = "") -> Response:
@@ -447,6 +472,7 @@ def make_router() -> APIRouter:
             if done:
                 src_svc.changed()
         await run_in_threadpool(svc.evaluate, bid)
+        await run_in_threadpool(svc.refresh_status, bid)
         if errors:
             return _batch_page(request, bid, errors=errors)
         return _back(request, _redir(bid, f, "symbols" if n else ""))

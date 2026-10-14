@@ -87,6 +87,9 @@ class AppContext:
         from app.documentimport.service import document_service
 
         document_service(self).recover()  # Zwischendateien und unterbrochene Dokumentstapel aufräumen
+        from app.csvimport.service import csv_service
+
+        csv_service(self).reconcile_statuses()  # Stapelstatus einmalig an die zentrale Prüflogik angleichen
         if self.prices.cg is not None:
             self.prices.cg.monthly_limit = int(self.settings.get("prices.coingecko_monthly_limit", 10000))
 

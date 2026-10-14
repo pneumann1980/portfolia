@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Prüfung{% endblock %}
+{% block heading %}Prüfung{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/pruefung" aria-current="page">Prüfung</a><a href="/journal/csv">CSV-Import</a><a href="/journal/documents">PDF &amp; Screenshot</a><a href="/journal/new">Neue Buchung</a></nav>
+
+<section class="card">
+  <div class="card-head"><h2>Prüfwarteschlange{% if source_name %} · {{ source_name }}{% endif %}</h2>
+    <span class="badge {{ 'warn' if q.counts.offen else 'good' }}">{{ q.counts.offen + q.counts.sicher }} offen</span></div>
+  <p class="hint">Alle offenen Vorgänge aus Datenquellen und Dateien an einer Stelle – gezählt je wirtschaftlichem Vorgang (eine Order mit Gebührenzeile ist ein Vorgang). Diese Ansicht ändert nichts; entschieden wird im jeweiligen Prüf-Stapel mit Vorschau, Protokoll und Rückgängig.</p>
+  <div class="review-stats">
+    {% for t, (label, _s) in tabs.items() %}<a href="?{{ qs({'tab': t}) }}" class="{{ 'active' if q.tab == t }}"><b>{{ q.counts[t] }}</b><span>{{ label }}</span></a>{% endfor %}
+  </div>
+  {% if q.reasons and q.tab == 'offen' %}<p class="hint" style="margin-top:8px">Prüfgründe: {% for r, n in q.reasons.most_common() %}<a href="?{{ qs({'tab': 'offen', 'reason': r}) }}">{{ n }}× {{ r }}</a>{{ ' · ' if not loop.last }}{% endfor %}{% if params.get('reason') %} · <a href="?{{ qs({'tab': 'offen', 'reason': ''}) }}">alle Gründe</a>{% endif %}</p>{% endif %}
+  {% if q.history_gaps %}<p class="hint">{{ q.history_gaps }} Vorgänge vor dem Stichtag sind im kuratierten Import nicht zu finden – mögliche Lücken (nur Hinweis, im Reiter <a href="?{{ qs({'tab': 'historie'}) }}">Historie</a>).</p>{% endif %}
+</section>
+
+{% if q.sources %}
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Quellen mit offenen Vorgängen</h2>{% if params.get('source') or params.get('batch') %}<a class="btn sm ghost" href="?{{ {'tab': q.tab}|urlencode }}">alle Quellen</a>{% endif %}</div>
+  <ul class="plain queue">{% for s in q.sources %}
+    <li><a href="?{{ (s.param|dictsort|list + [('tab', q.tab)])|urlencode }}"><b>{{ s.label }}</b></a>
+      <span class="hint">{{ s.open }} offen{% if s.to_review %} · {{ s.to_review }} zu prüfen{% endif %}{% if s.safe %} · {{ s.safe }} sicher verarbeitbar{% endif %}</span></li>
+  {% endfor %}</ul>
+</section>{% endif %}
+
+<section class="card" style="margin-top:16px" id="vorgaenge">
+  <div class="card-head"><h2>{{ tabs[q.tab][0] }} <span class="badge">{{ q.total }}</span></h2></div>
+  {% if not q.items %}
+    <p class="hint">{% if q.tab == 'offen' %}Keine Vorgänge zu prüfen{% if q.counts.sicher %} – {{ q.counts.sicher }} sichere Vorschläge stehen im Reiter <a href="?{{ qs({'tab': 'sicher'}) }}">Sicher verarbeitbar</a> bereit{% endif %}.{% elif q.tab == 'sicher' %}Keine sicheren Vorschläge offen{% if q.counts.offen %} – {{ q.counts.offen }} Vorgänge benötigen eine manuelle Prüfung (Reiter <a href="?{{ qs({'tab': 'offen'}) }}">Zu prüfen</a>){% endif %}.{% else %}Keine Vorgänge.{% endif %}</p>
+  {% else %}
+  <div class="table-wrap"><table class="compact">
+    <thead><tr><th>Zeitpunkt</th><th>Vorgang</th><th>Beträge</th><th>Quelle</th><th>Stand</th><th></th></tr></thead>
+    <tbody>{% for it in q.items %}{% set b = q.batches.get(it.batch_id) %}{% set st = states[it.state] %}
+      <tr><td data-label="Zeitpunkt" class="nowrap">{{ it.ts|replace('T', ' ') if it.ts else '–' }}</td>
+        <td data-label="Vorgang">{{ it.label or '–' }}{% if it.rows|length > 1 %} <span class="hint">({{ it.rows|length }} Zeilen)</span>{% endif %}{% if it.account %}<div class="hint">{{ it.account }}</div>{% endif %}</td>
+        <td data-label="Beträge">{% for l in it.legs %}<div class="nowrap">{{ l }}</div>{% else %}–{% endfor %}</td>
+        <td data-label="Quelle">{% if b %}{{ source_label(b.source) if b.kind == 'sync' else b.filename }}<div class="hint">Stapel {{ b.id }} · {{ batch_status.get(b.status, b.status) }}</div>{% endif %}</td>
+        <td data-label="Stand"><span class="badge {{ st[1] }}">{{ st[0] }}</span>{% if it.reason %}<div class="hint">{{ it.reason }}</div>{% endif %}</td>
+        <td><a class="btn sm" href="/journal/csv/{{ it.batch_id }}?{{ {'ev': it.event}|urlencode }}#zeilen">{{ 'Prüfen' if it.state in ('offen', 'zurueckgestellt', 'vorgemerkt', 'sicher') else 'Ansehen' }}</a></td></tr>
+    {% endfor %}</tbody></table></div>
+    <div class="row" style="margin-top:8px">{% if q.offset %}<a class="btn sm ghost" href="?{{ qs({'tab': q.tab, 'offset': [q.offset - page, 0]|max}) }}">Zurück</a>{% endif %}
+      <span class="hint">{{ q.offset + 1 }}–{{ q.offset + q.items|length }} von {{ q.total }}</span>
+      {% if q.offset + page < q.total %}<a class="btn sm ghost" href="?{{ qs({'tab': q.tab, 'offset': q.offset + page}) }}">Weiter</a>{% endif %}</div>
+  {% endif %}
+</section>
+{% endblock %}

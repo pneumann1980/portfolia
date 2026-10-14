@@ -632,11 +632,22 @@ class DataSourceService:
         return self.switch_account(sid, str(sw.get("from") or ""), undo=True)
 
     def open_counts(self, sid: int) -> dict[str, int]:
-        """Offene Zeilen je Status über alle Prüf-Stapel der Quelle (neu, ungeklärt, mögliche Dublette …)."""
-        return {r["status"]: r["n"] for r in self.db.q(
-            "SELECT r.status, COUNT(*) AS n FROM csv_row r JOIN csv_batch b ON b.id = r.batch_id WHERE b.kind='sync' "
-            "AND b.datasource_id=? AND b.status IN ('preview', 'partial') AND r.status NOT IN "
-            "('known', 'ignored', 'committed', 'merged', 'linked') GROUP BY r.status", (sid,))}
+        """Offene **Vorgänge** je Prüfgrund über alle aktiven Prüf-Stapel der Quelle – dieselbe Zählung wie Stapelseite
+        und Prüfwarteschlange (:mod:`app.csvimport.review`). Vorgänge vor dem Stichtag, bereits vorhandene und
+        abgeschlossene zählen nicht; eine Quelle mit fünf offenen Fällen führt über „Jetzt prüfen“ genau zu diesen."""
+        from app.csvimport import review as RV
+
+        s = RV.source_summary(self.db, sid)
+        out = dict(s.reasons.most_common())
+        for st, label in (("sicher", "sicherer Vorschlag bereit"), ("vorgemerkt", "zur Übernahme vorgemerkt")):
+            if s.events[st]:
+                out[label] = s.events[st]
+        return out  # Summe = offene Vorgänge (``Summary.open``)
+
+    def review_summary(self, sid: int) -> Any:
+        from app.csvimport import review as RV
+
+        return RV.source_summary(self.db, sid)
 
     def balances(self, sid: int) -> list[Any]:
         return self.db.q("SELECT asset_key, qty, name, note, observed_at FROM ds_balance WHERE source_id=? "
@@ -680,8 +691,27 @@ class DataSourceService:
             if aid not in seen and q:
                 items.append({"key": aid, "name": None, "note": None, "observed": None, "asset_id": aid,
                               "explained": q, "diff": None, "state": "only_portfolia"})
+        # Entscheidungen der Diagnose gelten auch hier (gleiche Evidenz-Prüfsumme): eine als geklärt bzw. ungeklärt
+        # akzeptierte Abweichung bleibt sichtbar, zählt aber nicht mehr als offene Warnung
+        if any(i["state"] in ("diff", "only_portfolia") for i in items):
+            from app.diagnosis import actions as DA
+
+            marks = DA.active_marks(self.db)
+            pf = self.ctx.portfolio()
+            checks = {(h.get("account"), h.get("asset_id")): h for h in (pf.holdings_check if pf is not None else [])}
+            for i in items:
+                if i["state"] not in ("diff", "only_portfolia") or not i["asset_id"]:
+                    continue
+                exp = checks.get((ds.account, i["asset_id"]))
+                expected = Decimal(str(exp["qty"])) if exp is not None and exp.get("qty") not in (None, "") else None
+                computed = led.balances.get((ds.account, i["asset_id"]), Decimal(0)) if led is not None else \
+                    Decimal(0)
+                i["decision"] = DA.holding_mark(self.db, ds.account, i["asset_id"], computed, i["observed"],
+                                                expected, marks)
         return {"items": items, "observed_at": observed_at,
-                "diffs": sum(1 for i in items if i["state"] in ("diff", "only_portfolia")),
+                "diffs": sum(1 for i in items if i["state"] in ("diff", "only_portfolia")
+                             and i.get("decision") in (None, "ueberholt", "spaeter")),
+                "decided": sum(1 for i in items if i.get("decision") in ("ungeklaert", "abgelehnt")),
                 "unmapped": sum(1 for i in items if i["state"] == "unmapped")}
 
     def accounts(self) -> list[str]:
@@ -1644,12 +1674,45 @@ class DataSourceService:
             "r.event_key FROM csv_row r JOIN csv_batch b ON b.id = r.batch_id WHERE b.kind='sync' AND "
             "b.datasource_id=? AND b.status IN ('preview', 'partial') AND r.event_key IS NOT NULL", (sid,))
 
-    def _present(self, sid: int) -> dict[str, bool]:
+    def _present(self, sid: int, recs: list[Any] | None = None) -> dict[str, bool]:
         """Ereignis → wartet es noch auf eine Entscheidung? Enthalten sind alle Ereignisse offener Prüf-Stapel der
-        Quelle – auch bekannte und ignorierte, damit ein erneuter Abruf sie nicht ein zweites Mal ablegt."""
+        Quelle – auch bekannte und ignorierte – sowie die **abgeschlossenen, nicht gebuchten** Ereignisse (nicht
+        übernommen, vor dem Stichtag, ignoriert, zurückgestellt …) abgeschlossener Stapel: ein erneuter bzw.
+        überlappender Abruf legt sie nicht ein zweites Mal ab und öffnet keinen abgeschlossenen Fall ohne neue Evidenz.
+
+        Neue Evidenz ist eine geänderte Lieferung des Anbieters (andere Beträge, Zeitpunkt, Art bzw. Zeilen): dann wird
+        das Ereignis erneut vorgelegt. Gebuchte bzw. verknüpfte Ereignisse werden wie bisher erneut abgeglichen und als
+        „bekannt“ erkannt (ohne neuen Prüf-Stapel). Geänderte Daten in offenen Stapeln ersetzt :meth:`_repair`."""
         out: dict[str, bool] = {}
         for r in self._open_rows(sid):
             out[r["event_key"]] = out.get(r["event_key"], False) or r["status"] not in DONE_ROWS
+        closed: dict[str, list[Any]] = defaultdict(list)
+        for r in self.db.q("SELECT r.event_key, r.status, r.tx_id, r.rec_json FROM csv_row r JOIN csv_batch b ON "
+                           "b.id = r.batch_id WHERE b.kind='sync' AND b.datasource_id=? AND b.status IN ('committed', "
+                           "'done') AND r.event_key IS NOT NULL", (sid,)):
+            if r["event_key"] not in out:
+                closed[r["event_key"]].append(r)
+        if not closed:
+            return out
+        from app.csvimport.service import rec_from_json
+
+        new: dict[str, set[tuple[Any, ...]]] = defaultdict(set)
+        for rec in recs or ():
+            if rec.event_key in closed:
+                new[rec.event_key].add(_rec_fp(rec))
+        for ev, rows in closed.items():
+            if any(r["status"] in ("committed", "merged", "linked", "known") or r["tx_id"] for r in rows):
+                continue  # gebucht bzw. vorhanden – erneuter Abgleich erkennt es als bekannt
+            if recs is not None and ev in new:
+                old: set[tuple[Any, ...]] = set()
+                for r in rows:
+                    try:
+                        old.add(_rec_fp(rec_from_json(r["rec_json"])))
+                    except (ValueError, KeyError, TypeError):
+                        old.add(("?",))
+                if old != new[ev]:
+                    continue  # geänderte Lieferung = neue Evidenz → erneut vorlegen
+            out[ev] = False
         return out
 
     def _repair(self, sid: int, recs: list[Any]) -> dict[str, int]:
@@ -1823,7 +1886,7 @@ class DataSourceService:
         except Exception as e:
             log.exception("Datenquelle %s: Ersetzen älterer Prüfzeilen fehlgeschlagen", ds.name)
             return self._fail(ds, run_id, e, secret.values(), started, nxt)
-        present = self._present(sid)
+        present = self._present(sid, recs)
         fresh = [r for r in recs if (r.event_key or "") not in present]
         prog.phase("reconcile", len({r.event_key for r in fresh}), "Abgleich mit Buchungen und Prüf-Stapel")
         n_waiting = len({r.event_key for r in recs if present.get(r.event_key or "")})
@@ -1846,12 +1909,13 @@ class DataSourceService:
                     from app.csvimport.batch import auto_link
 
                     linked += auto_link(csv, bid)
-                open_rows = self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status NOT IN "
-                                           "('known', 'ignored', 'committed', 'merged', 'linked')", (bid,), default=0)
-                if not open_rows and not self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status "
-                                                        "IN ('committed', 'merged', 'linked')", (bid,), default=0):
-                    csv.discard(bid)  # nichts Neues – kein leerer Prüf-Stapel
+                informative = self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND status NOT IN "
+                                             "('known', 'ignored')", (bid,), default=0)
+                if not informative:
+                    csv.discard(bid)  # nur Bekanntes – kein leerer Prüf-Stapel
                     bid = None
+                else:  # z. B. nur Vorgänge vor dem Stichtag: gleich abgeschlossen, bleibt in der Historie
+                    csv.refresh_status(bid)
             if bid is not None:  # Konto des kuratierten Imports übernehmen, solange nichts aufgeteilt wird
                 switched = self.adopt_account(ds)
                 if switched:
@@ -2099,3 +2163,11 @@ def _fingerprint(recs: Iterable[Any]) -> list[str]:
 
 def datasource_service(ctx: Any) -> DataSourceService:
     return DataSourceService(ctx)
+
+
+def _rec_fp(rec: Any) -> tuple[Any, ...]:
+    """Fachlicher Inhalt einer Ereigniszeile (ohne Rohdaten und Anzeige) – Vergleich „geänderte Lieferung?“."""
+    def n(v: Any) -> str:
+        return "" if v is None else str(v).rstrip("0").rstrip(".") if "." in str(v) else str(v)
+    return (rec.event_line, str(rec.ts), rec.kind, rec.out_sym, n(rec.out_qty), rec.in_sym, n(rec.in_qty), rec.fee_sym,
+            n(rec.fee_qty), rec.tag, rec.ext_id, rec.txhash)

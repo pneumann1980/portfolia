@@ -248,20 +248,11 @@ def data_notes(ds: Any, value: AccountValue | None, opens: Mapping[str, int], ho
     Zuordnungen, Bestandsabweichungen, Überschneidungen."""
     out: list[dict[str, str]] = []
 
-    def n(k: str, one: str, many: str) -> str:
-        return f"{opens[k]} {one if opens[k] == 1 else many}"
-
-    if opens.get("unclear"):
-        out.append({"kind": "unclear", "text": n("unclear", "ungeklärter bzw. nicht unterstützter Vorgang",
-                                                 "ungeklärte bzw. nicht unterstützte Vorgänge") + " zur Prüfung"})
-    if opens.get("invalid"):
-        out.append({"kind": "invalid", "text": n("invalid", "unvollständiger Vorgang", "unvollständige Vorgänge")
-                                               + " (z. B. Zuordnung oder EUR-Wert fehlt)"})
-    if opens.get("duplicate"):
-        out.append({"kind": "duplicate", "text": n("duplicate", "mögliche Dublette", "mögliche Dubletten")
-                                                 + " zur Entscheidung"})
-    if opens.get("new"):
-        out.append({"kind": "new", "text": n("new", "neuer Vorgang", "neue Vorgänge") + " noch nicht übernommen"})
+    n_open = sum(int(v) for v in opens.values())
+    if n_open:
+        why = ", ".join(f"{v}× {k}" for k, v in sorted(opens.items(), key=lambda kv: -int(kv[1])))
+        out.append({"kind": "review", "text": f"{n_open} {'offener Vorgang' if n_open == 1 else 'offene Vorgänge'} "
+                                              f"zur Prüfung ({why})"})
     if value is not None and value.missing:
         out.append({"kind": "price", "text": "ohne Kurs bzw. Zuordnung: " + ", ".join(value.missing[:5])
                                              + (f" (+{len(value.missing) - 5})" if len(value.missing) > 5 else "")})

@@ -2089,6 +2089,14 @@ def _explain(idx: _Index, row: HoldingRow, open_rows: list[Any], unmapped: list[
                 row.explanations.append(line)
 
 
+def _fp_num(v: Decimal | None) -> str | None:
+    """Zahl für Prüfsummen: unabhängig von der Darstellung (``1.50`` = ``1.5`` = ``1.500``)."""
+    if v is None:
+        return None
+    d = Decimal(v).normalize()
+    return format(d, "f") if d else "0"
+
+
 def _holding_finding(idx: _Index, row: HoldingRow) -> Finding | None:
     if row.status == "extern_diff":
         status, prio = "belegt", 1
@@ -2117,12 +2125,17 @@ def _holding_finding(idx: _Index, row: HoldingRow) -> Finding | None:
                 decision="Ursache klären (Prüf-Stapel, fehlende Buchungen, Gebühren); Portfolia gleicht Bestände nie "
                          "automatisch aus und speichert keine Bestände.",
                 accounts=[row.account], assets=[row.asset], positions=[(row.account, row.asset)],
-                key=f"holding|{row.account}|{row.asset}|{row.status}",
+                # Schlüssel und Prüfsumme ohne Abrufzustand: wird ein Abruf älter als 48 h („extern nicht
+                # bestätigt“), bleibt es derselbe Sachverhalt – eine Entscheidung dazu gilt weiter, solange sich die
+                # Zahlen (berechnet, beobachtet, Soll) nicht ändern
+                key=f"holding|{row.account}|{row.asset}",
                 weight=abs(row.diff if row.diff is not None else row.internal_diff or ZERO),
                 data={"type": "holding", "account": row.account, "asset": row.asset, "status": row.status,
                       "computed": str(row.computed), "observed": None if row.observed is None else str(row.observed),
                       "expected": None if row.expected is None else str(row.expected),
-                      "observed_at": row.observed_at.isoformat() if row.observed_at else None})
+                      "observed_at": row.observed_at.isoformat() if row.observed_at else None,
+                      "fp": {"account": row.account, "asset": row.asset, "computed": _fp_num(row.computed),
+                             "observed": _fp_num(row.observed), "expected": _fp_num(row.expected)}})
     return f
 
 

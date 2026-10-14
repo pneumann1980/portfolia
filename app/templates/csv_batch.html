@@ -7,10 +7,10 @@
 {% macro hidden_nav() -%}<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="_status" value="{{ status }}"><input type="hidden" name="_offset" value="{{ offset }}">{% for k, v in flt.params().items() if k != 'status' %}<input type="hidden" name="_{{ k }}" value="{{ v }}">{% endfor %}{%- endmacro %}
 {% import "partials/compare.html" as cmpm with context %}
 {% import "partials/assess.html" as am %}
-{% set open = b.status in ('preview', 'partial', 'committed') %}
+{% set open = b.status in ('preview', 'partial', 'committed', 'done') %}
 {% set committed_n = ov.counts.get('committed', 0) + ov.counts.get('merged', 0) %}
 {% block content %}
-<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/csv">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a href="/journal/pruefung">Prüfung</a><a class="active" href="/journal/csv">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
 {% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
 {% if msg == 'commit' %}<div class="alert good"><span class="icon">✓</span><div>Übernommen: {{ request.query_params.get('n', '0') }} Buchungen{% if request.query_params.get('t', '0') != '0' %}, {{ request.query_params.get('t') }} Transfers abgeglichen{% endif %}. <a href="/journal">Zu den Buchungen</a></div></div>
 {% elif msg == 'reverted' %}<div class="alert good"><span class="icon">✓</span><div>Import rückgängig gemacht – die Buchungen dieses Imports zählen nicht mehr.</div></div>
@@ -22,7 +22,7 @@
 
 <section class="card">
   <div class="card-head"><h2>{{ b.filename }}</h2>
-    <div class="row"><span class="badge {{ 'good' if b.status == 'committed' else 'warn' if b.status in ('preview', 'partial') else '' }}">{{ batch_status.get(b.status, b.status) }}</span>
+    <div class="row"><span class="badge {{ 'good' if b.status in ('committed', 'done') else 'warn' if b.status in ('preview', 'partial') else '' }}">{{ batch_status.get(b.status, b.status) }}</span>
       <a class="btn sm ghost" href="/journal/csv/{{ b.id }}/file" download>{{ 'Rohdaten' if b.kind == 'sync' else 'Originaldatei' }}</a></div></div>
   <dl class="kv">
     {% if b.kind == 'sync' %}<dt>Datenquelle</dt><dd>{{ source_label(b.source) }}{% if ds_exists %} · <a href="/settings/datasources/{{ b.datasource_id }}">Einstellungen</a>{% else %} <span class="hint">(Datenquelle entfernt)</span>{% endif %}</dd>
@@ -76,6 +76,21 @@
       <button class="btn sm ghost" type="submit">Wechseln</button></form>{% endif %}
   </details>{% endif %}
 </section>
+
+{% if funnel %}{% set fs = funnel.summary %}
+<section class="card" style="margin-top:16px" id="verarbeitung">
+  <div class="card-head"><h2>Prüfstand</h2>
+    <span class="badge {{ 'warn' if funnel.events_open else 'good' }}">{% if funnel.events_open %}{{ funnel.events_open }} {{ 'Vorgang' if funnel.events_open == 1 else 'Vorgänge' }} offen{% else %}abgeschlossen{% endif %}</span></div>
+  <ol class="funnel">
+    <li><b>{{ funnel.rows_read }}</b> Zeilen gelesen{% if funnel.rows_unreadable %} · <b>{{ funnel.rows_unreadable }}</b> nicht lesbar{% endif %}</li>
+    <li><b>{{ funnel.events }}</b> wirtschaftliche Vorgänge ({{ funnel.rows_valid }} Buchungszeilen)</li>
+    <li><b>{{ funnel.events_known }}</b> bereits vorhanden bzw. verknüpft · <b>{{ fs.events.uebernommen }}</b> übernommen · <b>{{ fs.events.nicht_uebernommen + fs.events.ignoriert }}</b> nicht übernommen/ignoriert{% if funnel.events_history %} · <b>{{ funnel.events_history }}</b> vor dem Stichtag{% endif %}</li>
+    <li><b>{{ funnel.safe_link_rows + funnel.safe_new_rows }}</b> sichere Vorschläge ({{ funnel.safe_link_rows }} verknüpfen, {{ funnel.safe_new_rows }} übernehmen) · <b>{{ funnel.manual_events }}</b> {{ 'Vorgang' if funnel.manual_events == 1 else 'Vorgänge' }} manuell zu prüfen{% if fs.events.zurueckgestellt %} (davon {{ fs.events.zurueckgestellt }} zurückgestellt){% endif %}{% if fs.events.vorgemerkt %} · <b>{{ fs.events.vorgemerkt }}</b> zur Übernahme vorgemerkt{% endif %}</li>
+  </ol>
+  {% if funnel.zero_reason %}<p class="hint"><b>{{ funnel.zero_reason }}</b></p>{% endif %}
+  {% if fs.reasons %}<p class="hint">Prüfgründe: {% for r, n in fs.reasons.most_common() %}{{ n }}× {{ r }}{{ ' · ' if not loop.last }}{% endfor %} – <a href="?{{ qs({'cat': 'manuell'}) }}#zeilen">einzeln ansehen</a> · <a href="/journal/pruefung?{{ {'batch': b.id}|urlencode }}">in der Prüfwarteschlange</a></p>{% endif %}
+  {% if b.status == 'done' %}<p class="hint">Alle Vorgänge sind entschieden – der Stapel bleibt in der Historie. Eine geänderte Entscheidung (Zeilenauswahl unten oder Rückgängig im Verlauf) öffnet ihn wieder.</p>{% endif %}
+</section>{% endif %}
 
 {% if b.status in ('preview', 'partial') and (review.total or review.before or review.known) %}{% set gs = group_state %}
 <section class="card review" style="margin-top:16px" id="pruefung">
@@ -250,7 +265,7 @@
     <label class="field">Ergebnis<select name="cat"><option value="">alle</option>{% for k, l in cat_label.items() %}<option value="{{ k }}" {% if flt.cat == k %}selected{% endif %}>{{ l }}</option>{% endfor %}<option value="manuell" {% if flt.cat == 'manuell' %}selected{% endif %}>manuell prüfen</option></select></label>
     <label class="field">Sicherheit<select name="conf"><option value="">alle</option>{% for k in conf_label %}<option value="{{ k }}" {% if flt.conf == k %}selected{% endif %}>{{ k }}</option>{% endfor %}</select></label>
     <label class="field">Abweichung<select name="conflict"><option value="">alle</option>{% for k, l in conflicts.items() %}<option value="{{ k }}" {% if flt.conflict == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
-    <label class="field">Entscheidung<select name="dec"><option value="">alle</option><option value="open" {% if flt.dec == 'open' %}selected{% endif %}>offen</option><option value="include" {% if flt.dec == 'include' %}selected{% endif %}>ja</option><option value="skip" {% if flt.dec == 'skip' %}selected{% endif %}>nein</option></select></label>
+    <label class="field">Entscheidung<select name="dec"><option value="">alle</option><option value="open" {% if flt.dec == 'open' %}selected{% endif %}>offen</option><option value="include" {% if flt.dec == 'include' %}selected{% endif %}>ja</option><option value="skip" {% if flt.dec == 'skip' %}selected{% endif %}>nein</option><option value="defer" {% if flt.dec == 'defer' %}selected{% endif %}>zurückgestellt</option></select></label>
     {% if batch_accounts|length > 1 %}<label class="field">Konto/Wallet<select name="acc"><option value="">alle</option>{% for a in batch_accounts %}<option value="{{ a }}" {% if flt.acc == a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>{% endif %}
     <label class="field">von<input type="date" name="frm" value="{{ flt.frm }}"></label>
     <label class="field">bis<input type="date" name="to" value="{{ flt.to }}"></label>
@@ -298,10 +313,11 @@
           {% if rc.pair_ref %}<div><span class="badge {{ 'good' if pair_accepted(rc) else '' }}">Transfer{{ '' if pair_accepted(rc) else '?' }}</span></div>{% endif %}
           {% for e in rc.errors %}<div class="hint"{% if rc.status != 'before' %} style="color:var(--crit-ink)"{% endif %}>{{ 'Zum Übernehmen fehlt: ' if rc.status == 'before' }}{{ e }}</div>{% endfor %}
           {% for w in rc.warnings %}<div class="hint">{{ w }}</div>{% endfor %}</td>
-        <td class="decide" data-label="Übernehmen">{% if rc.open and (rc.status in ('new', 'duplicate') or rc.status == 'before' and not rc.errors) %}<select name="dec_{{ rc.idx }}" aria-label="Zeile {{ rc.line }} übernehmen">
-            <option value="" {% if rc.decision is none %}selected{% endif %}>auto: {{ 'ja' if rc.default_include else 'nein' }}</option>
-            <option value="include" {% if rc.decision == 'include' %}selected{% endif %}>ja</option>
-            <option value="skip" {% if rc.decision == 'skip' %}selected{% endif %}>nein</option></select>
+        <td class="decide" data-label="Übernehmen">{% if rc.open and (rc.status in ('new', 'duplicate', 'invalid', 'unclear') or rc.status == 'before' and not rc.errors) %}{% set bookable = rc.status in ('new', 'duplicate', 'before') %}<select name="dec_{{ rc.idx }}" aria-label="Zeile {{ rc.line }} übernehmen">
+            <option value="" {% if rc.decision is none %}selected{% endif %}>{{ ('auto: ' ~ ('ja' if rc.default_include else 'nein')) if bookable else 'offen' }}</option>
+            {% if bookable %}<option value="include" {% if rc.decision == 'include' %}selected{% endif %}>ja</option>{% endif %}
+            <option value="skip" {% if rc.decision == 'skip' %}selected{% endif %}>nicht übernehmen</option>
+            {% if rc.status != 'before' %}<option value="defer" {% if rc.decision == 'defer' %}selected{% endif %}>zurückstellen</option>{% endif %}</select>
           {% elif rc.open %}–{% else %}✓{% endif %}
           {% if b.status in ('preview', 'partial') and m and rc.open and m.target and m.action != none and rc.status in ('duplicate', 'known', 'before') %}<div><button class="btn sm ghost" type="submit" formaction="/journal/csv/{{ b.id }}/row-action" name="row_action" value="link:{{ rc.idx }}" title="Nicht buchen; Kennung und Angaben dieser Quelle an {{ m.target }} festhalten (Rückgängig im Verlauf)">verknüpfen</button></div>{% endif %}
           {% if b.kind == 'sync' and rc.open and rc.rec.event_key %}

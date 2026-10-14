@@ -161,11 +161,10 @@ def make_router() -> APIRouter:
         kind = kind if kind in KINDS else ""
         status = status if status in STATUS else ""
         report = report_for(ctx)
-        marks = A.active_marks(ctx.db)
-        prints = {x.id: A.fingerprint(x) for x in report.findings if x.id in marks}
-        checked = {fid for fid, d in marks.items() if fid in prints and d.fingerprint == prints[fid]
-                   and d.action in ("dismiss", "reject")}
-        changed = {fid: d for fid, d in marks.items() if fid in prints and d.fingerprint != prints[fid]}
+        states = A.mark_states(report.findings, A.active_marks(ctx.db))  # auch frühere Befund-IDs
+        marks = {fid: d for fid, (d, _ok) in states.items()}
+        checked = {fid for fid, (d, ok) in states.items() if ok and d.action in ("dismiss", "reject")}
+        changed = {fid: d for fid, (d, ok) in states.items() if not ok}
         # Übersicht: Einzelvorgänge erscheinen unter ihrem Sammelbefund (eigene Prüfansicht je Vorgang)
         open_findings = [x for x in report.findings if x.id not in checked and x.parent is None]
         shown = [x for x in open_findings if (not kind or x.kind == kind) and (not status or x.status == status)]
@@ -362,8 +361,8 @@ def make_router() -> APIRouter:
         marks = A.active_dismissals(ctx.db)
         rows = []
         for f, c, label in B.candidates(report):
-            d = marks.get(f.id)
-            if d is not None and d.fingerprint == A.fingerprint(f):
+            r = A.mark_of(f, marks)
+            if r is not None and r[1]:
                 continue  # geprüft bzw. als unabhängig bestätigt – Nutzerentscheidung gilt
             rows.append({"f": f, "conf": c, "label": label, "value": _value_of(report, f) or 0.0})
         acc_all = sorted({a for r in rows for a in r["f"].accounts})

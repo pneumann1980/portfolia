@@ -722,6 +722,9 @@ details.dup-compare > summary { cursor: pointer; font-size: .82rem; }
 .review-stats > a, .review-stats > div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: inherit; text-decoration: none; min-width: 0; }
 .review-stats b { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
 .review-stats span { font-size: .8rem; color: var(--ink-2); }
+.review-stats > a.active { border-color: var(--accent, currentColor); box-shadow: inset 0 -2px 0 var(--accent, currentColor); }
+ol.funnel { margin: 8px 0; padding-left: 1.4em; display: grid; gap: 4px; }
+ol.funnel b { font-variant-numeric: tabular-nums; }
 .review-groups { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .review-group { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); min-width: 0; }
 .review-group label.check { width: 100%; }

@@ -149,10 +149,10 @@
   {% else %}<p class="hint">Noch keine Bestände beobachtet – „Verbindung testen“ oder synchronisieren.</p>{% endif %}
   {% endif %}
   {% if outdated %}<div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div><b>{{ outdated }} {{ 'Vorgang' if outdated == 1 else 'Vorgänge' }} in offenen Prüf-Stapeln mit älterer Auswertung</b> – unbearbeitete ersetzt die nächste Synchronisierung („Vollständig neu abrufen“ sofort), bearbeitete im Prüf-Stapel über „Veraltete Zeilen neu auswerten“.</div></div>{% endif %}
-  {% if open_counts %}
-  <div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div><b>Zur Prüfung offen:</b>
-    {% for st, n in open_counts.items() %}{{ n }} {{ {'new': 'neu', 'unclear': 'ungeklärt', 'duplicate': 'mögliche Dubletten', 'before': 'vor Stichtag', 'invalid': 'unvollständig'}.get(st, st) }}{% if not loop.last %} · {% endif %}{% endfor %}
-    <div class="row" style="margin-top:6px">{% for b in pending %}<a class="btn sm" href="/journal/csv/{{ b.id }}">Prüf-Stapel {{ b.created_at|datetime_de }}</a>{% endfor %}</div></div></div>{% endif %}
+  {% if open_counts %}{% set n = open_counts.values()|sum %}
+  <div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div><b>Zur Prüfung offen: {{ n }} {{ 'Vorgang' if n == 1 else 'Vorgänge' }}</b>
+    ({% for st, k in open_counts.items() %}{{ k }}× {{ st }}{% if not loop.last %} · {% endif %}{% endfor %})
+    <div class="row" style="margin-top:6px"><a class="btn sm primary" href="/journal/pruefung?source={{ ds.id }}">Jetzt prüfen</a>{% for b in pending %}<a class="btn sm ghost" href="/journal/csv/{{ b.id }}">Prüf-Stapel {{ b.created_at|datetime_de }}</a>{% endfor %}</div></div></div>{% endif %}
   {% if ds.is_wallet and ds.check %}{% set chk = ds.check %}
   <div style="margin-top:10px"><div class="hint">Letzte Verbindungsprüfung{% if chk.at %} · {{ chk.at|datetime_de }}{% endif %}</div>
     <div class="alert {{ 'good' if chk.ok else 'crit' }}" style="margin-top:4px"><span class="icon">{{ '✓' if chk.ok else '!' }}</span><div class="wrap-any">{{ chk.message }}

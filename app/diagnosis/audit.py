@@ -1734,16 +1734,16 @@ def split_cases(idx: _Index, findings: list[Finding]) -> list[Finding]:
 def case_states(snap: Any, findings: list[Finding]) -> None:
     """Stand der Nutzerentscheidung je Befund (Anzeige; ändert nichts): offen, später prüfen, ungeklärt, abgelehnt,
     überholt (Entscheidung zu älteren Daten)."""
-    from app.diagnosis.actions import fingerprint
+    from app.diagnosis.actions import mark_of
     from app.diagnosis.model import MARK_STATE
 
     marks = getattr(snap, "marks", {}) or {}
     for f in findings:
-        m = marks.get(f.id)
-        if m is None:
+        r = mark_of(f, marks)
+        if r is None:
             f.state = "offen"
-        elif m[1] and m[1] != fingerprint(f):
+        elif not r[1]:
             f.state = "ueberholt"
         else:
-            f.state = MARK_STATE.get(m[0], "offen")
+            f.state = MARK_STATE.get(r[0][0], "offen")
 

@@ -36,7 +36,7 @@ import hashlib
 import json
 import logging
 import threading
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -101,7 +101,8 @@ CLOSED = ("committed", "merged", "linked")  # abgeschlossen: gebucht bzw. mit vo
 EVAL_VERSION = 6  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
 RELEVANT = ("new", "invalid", "unclear", "duplicate")  # zu übernehmen bzw. zu entscheiden
 BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial": "teilweise übernommen",
-                "committed": "übernommen", "reverted": "rückgängig gemacht"}
+                "committed": "übernommen", "done": "abgeschlossen", "reverted": "rückgängig gemacht"}
+OPEN_BATCH = ("preview", "partial")  # aktive Prüf-Stapel; abgeschlossen: committed (mit Buchungen) bzw. done
 NEED_VALUE_TAGS = frozenset(C.INCOME_TAGS) | frozenset(C.LOSS_TAGS) | frozenset(C.GIFT_OUT_TAGS) | \
     frozenset(C.GIFT_IN_TAGS)
 
@@ -430,7 +431,7 @@ class RowCtx:
 
     def include(self) -> bool:
         if self.status == "new":
-            return self.decision != "skip"
+            return self.decision not in ("skip", "defer")
         if self.status == "duplicate":
             return self.decision == "include" or (self.decision is None and not self.dup_same_account)
         if self.status == "before":
@@ -538,6 +539,7 @@ class CsvImportService:
         bid = int(cur.lastrowid)  # type: ignore[arg-type]
         if prof is not None:
             self.process(bid, progress)
+            self.refresh_status(bid)  # z. B. alles bereits vorhanden → gleich abgeschlossen (bleibt in der Historie)
         log.info("CSV-Datei hochgeladen: %s (Stapel %s, Profil %s)", name, bid, prof.id if prof else "unbekannt")
         return bid, []
 
@@ -678,6 +680,7 @@ class CsvImportService:
             self.process(bid)
         else:
             self.evaluate(bid)
+        self.refresh_status(bid)
         return []
 
     @_locked
@@ -732,14 +735,74 @@ class CsvImportService:
         self.refresh_status(bid)
         return True
 
-    def refresh_status(self, bid: int) -> None:
-        """Sync-Stapel: „teilweise übernommen“ → „übernommen“, sobald nichts mehr zu entscheiden ist."""
+    def refresh_status(self, bid: int) -> str | None:
+        """Stapelstatus aus dem fachlichen Stand ableiten (:mod:`app.csvimport.review`) – in beide Richtungen:
+
+        * keine offenen Vorgänge mehr → ``committed`` (es wurde etwas gebucht) bzw. ``done`` (nur verknüpft, vorhanden,
+          nicht übernommen, ignoriert oder vor dem Stichtag) – der Stapel verlässt die aktive Prüfung und bleibt in der
+          Historie;
+        * wieder offene Vorgänge (z. B. nach Rückgängig) → ``partial`` bzw. ``preview``.
+
+        Wird nur nach Änderungen aufgerufen (Aktion, Entscheidung, Übernahme, Rückgängig, neue Auswertung), nie beim
+        bloßen Ansehen – ein abgeschlossener Stapel öffnet sich nicht durch erneutes Öffnen."""
+        from app.csvimport import review as RV
+
         batch = self.batch(bid)
-        if batch is None or batch["kind"] != "sync" or batch["status"] != "partial":
-            return
-        if not self.db.scalar("SELECT COUNT(*) FROM csv_row WHERE batch_id=? AND (status IN ('invalid', 'unclear') OR "
-                              "(status IN ('new', 'duplicate', 'before') AND decision IS NULL))", (bid,), default=0):
-            self.db.x("UPDATE csv_batch SET status='committed', updated_at=? WHERE id=?", (_now(), bid))
+        if batch is None or batch["status"] in ("mapping", "reverted"):
+            return None
+        closed = RV.batch_closed(self.db, bid)
+        booked = bool(self.db.scalar("SELECT 1 FROM csv_row WHERE batch_id=? AND status IN ('committed', 'merged')",
+                                     (bid,)))
+        cur = batch["status"]
+        if closed:
+            new = "committed" if booked else "done"
+        else:
+            new = "partial" if booked else "preview"
+        if new != cur:
+            self.db.x("UPDATE csv_batch SET status=?, updated_at=? WHERE id=?", (new, _now(), bid))
+            log.info("Prüf-Stapel %s: %s → %s", bid, cur, new)
+        return new
+
+    REVIEW_STATE_V = 1
+
+    def reconcile_statuses(self) -> dict[str, int]:
+        """Einmalige Angleichung bestehender Stapel an die zentrale Prüflogik (beim Start, idempotent).
+
+        Früher schloss die Übernahme einer Datei den Stapel, obwohl ungeklärte Zeilen offen blieben, und Sync-Stapel
+        mit Zeilen vor dem Stichtag schlossen nie. Hier:
+
+        * In bereits übernommenen Stapeln gelten vorgeschlagene, aber bei der Übernahme nicht gebuchte Zeilen
+          (``new``/``duplicate`` ohne Entscheidung) als „nicht übernommen“ – das war die Wirkung der damaligen
+          Übernahme, sie wird nur sichtbar gemacht (keine Buchung, kein Bestand ändert sich).
+        * Danach wird jeder Stapelstatus aus dem Zeilenstand abgeleitet (:meth:`refresh_status`).
+
+        Jede Änderung wird im Buchungsprotokoll festgehalten; Buchungen und Rohdaten bleiben unverändert."""
+        if int(self.db.get_state("review.state_v", 0) or 0) >= self.REVIEW_STATE_V:
+            return {}
+        stamp = _now()
+        skipped = 0
+        changed: Counter[str] = Counter()
+        with self.db.transaction() as c:
+            for b in c.execute("SELECT id FROM csv_batch WHERE status='committed'").fetchall():
+                ids = [r[0] for r in c.execute("SELECT id FROM csv_row WHERE batch_id=? AND status IN ('new', "
+                                               "'duplicate') AND decision IS NULL", (b[0],))]
+                if ids:
+                    c.executemany("UPDATE csv_row SET decision='skip' WHERE id=?", [(i,) for i in ids])
+                    self.journal._log(c, "review_migration", f"csv:{b[0]}", None,
+                                      {"implicit_skip": len(ids), "reason": "bei Übernahme nicht gebucht"}, stamp)
+                    skipped += len(ids)
+        for b in self.db.q("SELECT id, status FROM csv_batch WHERE status IN ('preview', 'partial', 'committed', "
+                           "'done')"):
+            new = self.refresh_status(int(b["id"]))
+            if new and new != b["status"]:
+                changed[f"{b['status']}→{new}"] += 1
+                with self.db.transaction() as c:
+                    self.journal._log(c, "review_status", f"csv:{b['id']}", {"status": b["status"]},
+                                      {"status": new}, stamp)
+        self.db.set_state("review.state_v", self.REVIEW_STATE_V)
+        if skipped or changed:
+            log.info("Prüfstatus angeglichen: %d Zeilen als „nicht übernommen“, Stapel %s", skipped, dict(changed))
+        return {"implicit_skip": skipped, **changed}
 
     # -- Einlesen -----------------------------------------------------------------------------------------
     @_locked
@@ -1010,12 +1073,48 @@ class CsvImportService:
         from app.csvimport.assess import assess_rows
 
         assess_rows(self.ctx, open_rows, source, pf)
+        self._carry_decisions(bid, source, open_rows)
         self._save(rows)
         self._save_recon(batch, rows, recon)
         counts = defaultdict(int)
         for rc in rows:
             counts[rc.status] += 1
         return dict(counts)
+
+    def _carry_decisions(self, bid: int, source: str, rows: list[RowCtx]) -> None:
+        """„Nicht übernehmen“ aus einem abgeschlossenen früheren Stapel derselben Quelle gilt für dieselbe, unveränderte
+        Zeile weiter (gleiche Kennung der Quelle, gleicher fachlicher Inhalt) – ein erneuter Upload derselben Datei
+        öffnet keinen entschiedenen Fall. Geänderter Inhalt ist neue Evidenz: dann wird die Zeile wieder vorgelegt.
+        Die übernommene Entscheidung ist sichtbar und jederzeit änderbar."""
+        cand = [rc for rc in rows if rc.decision is None and rc.rec.ext_id
+                and rc.status in ("new", "duplicate", "invalid", "unclear")]
+        if not cand:
+            return
+        prior: dict[str, tuple[int, tuple[Any, ...]]] = {}
+        for b in self.db.q("SELECT id, source, profile FROM csv_batch WHERE id <> ? AND status IN ('committed', "
+                           "'done') ORDER BY id", (bid,)):
+            if self.source_of(b) != source:
+                continue
+            for r in self.db.q("SELECT rec_json FROM csv_row WHERE batch_id=? AND decision='skip'", (b["id"],)):
+                try:
+                    rec = rec_from_json(r["rec_json"])
+                except (ValueError, KeyError, TypeError):
+                    continue
+                if rec.ext_id:
+                    prior[rec.ext_id] = (int(b["id"]), _content(rec))
+        if not prior:
+            return
+        upd = []
+        for rc in cand:
+            hit = prior.get(rc.rec.ext_id or "")
+            if hit is None or hit[1] != _content(rc.rec):
+                continue
+            rc.decision = "skip"
+            rc.warnings.insert(0, f"in Prüf-Stapel {hit[0]} ausdrücklich nicht übernommen – Entscheidung gilt für "
+                                  "diese unveränderte Zeile weiter (änderbar)")
+            upd.append((rc.id,))
+        if upd:
+            self.db.xmany("UPDATE csv_row SET decision='skip' WHERE id=? AND decision IS NULL", upd)
 
     def ensure_current(self, bid: int) -> bool:
         """Offenen Stapel neu bewerten, wenn er mit einer älteren Auswertung bewertet wurde (``EVAL_VERSION``) – vor
@@ -1915,7 +2014,7 @@ class CsvImportService:
                 continue
             v = str(form.get(k) or "").strip()
             if kind == "dec":
-                rc.decision = v if v in ("include", "skip") else None
+                rc.decision = v if v in ("include", "skip", "defer") else None
             elif kind == "val":
                 rc.value_in = v[:40] or None
             elif kind == "fee":
@@ -1932,11 +2031,13 @@ class CsvImportService:
                           [(rc.decision, rc.value_in, rc.fee_in, rc.pair_ok, rc.id) for rc in
                            {rc.id: rc for rc in data}.values()])
         self.evaluate(bid)
+        self.refresh_status(bid)
 
     @_locked
     def set_all(self, bid: int, status: str, decision: str | None) -> None:
         self.db.x("UPDATE csv_row SET decision=? WHERE batch_id=? AND status=?", (decision, bid, status))
         self.evaluate(bid)
+        self.refresh_status(bid)
 
     # -- Übernehmen ---------------------------------------------------------------------------------------
     @_locked
@@ -1954,11 +2055,20 @@ class CsvImportService:
         if progress is not None:
             progress.phase("save", len(plan["chosen"]), "Buchungen anlegen")
         stamp = _now()
+        chosen_ids = {rc.idx for rc in plan["chosen"]}
+        # Übernahme des ganzen Stapels: vorgeschlagene, aber nicht übernommene Dubletten (Vorschlag „nicht
+        # übernehmen“) gelten damit als entschieden – sichtbar im Ergebnis, rückgängig über die Zeilenauswahl
+        skipped = [rc for rc in rows if only_idx is None and rc.open and rc.idx not in chosen_ids
+                   and rc.status in ("new", "duplicate") and rc.decision is None and not rc.include()]
         with self.db.transaction() as c:
             res = self.commit_apply(c, batch, rows, plan, only_idx, stamp)
+            if skipped:
+                c.executemany("UPDATE csv_row SET decision='skip' WHERE id=? AND decision IS NULL",
+                              [(rc.id,) for rc in skipped])
+        self.refresh_status(bid)
         self.journal.after_change()
         log.info("CSV-Stapel %s übernommen: %d Buchungen, %d Transfers", bid, res["created"], res["transfers"])
-        return {**res, "errors": []}
+        return {**res, "skipped": len(skipped), "errors": []}
 
     def commit_plan(self, rows: list[RowCtx], only_idx: set[int] | None = None) -> dict[str, Any]:
         """Zu übernehmende Zeilen bestimmen und validieren (ohne Schreibzugriff)."""
@@ -2224,6 +2334,17 @@ def _fee_variant(q: Decimal | None, fee: Decimal | None, t: Tx) -> bool:
     mine = [q, *([q + fee] if fee else [])]
     theirs = [t.from_qty, *([t.from_qty + t_fee] if t_fee else [])]
     return any(_qty_eq(a, b) for a in mine for b in theirs)
+
+
+def _content(rec: Rec) -> tuple[Any, ...]:
+    """Fachlicher Inhalt einer Quellzeile (Vergleich „unverändert?“), unabhängig von Zahlendarstellung."""
+    def n(v: Any) -> str:
+        if v is None:
+            return ""
+        d = Decimal(str(v)).normalize()
+        return format(d, "f") if d else "0"
+    return (str(rec.ts), rec.kind, rec.out_sym, n(rec.out_qty), rec.in_sym, n(rec.in_qty), rec.fee_sym,
+            n(rec.fee_qty), rec.tag, n(rec.value), rec.account, rec.to_account, rec.txhash)
 
 
 def line_key(source: str, rec: Rec) -> str | None:

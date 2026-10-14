@@ -80,7 +80,7 @@ veraltete Auswahl (wird gegen vorhandene Zeilen geschnitten), Vorschau auf ander
 
 | # | Phase | Status | Commit | Tests |
 |---|---|---|---|---|
-| 1 | P0 Prüfworkflow reparieren | In Bearbeitung | – | – |
+| 1 | P0 Prüfworkflow reparieren | Tests bestanden | siehe §5 | 15 neu, Suite 929 grün |
 | 2 | Zentrale Prüfung, Sammelverarbeitung | Nicht begonnen | – | – |
 | 3 | M29-Hardening | Nicht begonnen | – | – |
 | 4 | Universeller Börsenimport | Nicht begonnen | – | – |
@@ -105,6 +105,10 @@ veraltete Auswahl (wird gegen vorhandene Zeilen geschnitten), Vorschau auf ander
 * **Risiken:** Stapel schließen nun auch ohne Übernahme → `_present()` muss geschlossene Stapel berücksichtigen, sonst
   legt ein überlappender Abruf Vorgänge erneut vor; Altentscheidungen zu Bestandsbefunden müssen weiter gelten.
 * **Abnahme:** 15 Pflichttests (siehe Auftrag 4.6) + bestehende Suite grün.
+* **Zusätzlich umgesetzt:** einmalige, protokollierte Angleichung bestehender Stapel beim Start
+  (`CsvImportService.reconcile_statuses`, App-Zustand `review.state_v`); Übernahme ausdrücklicher „nicht übernehmen“-
+  Entscheidungen für unveränderte Zeilen erneut hochgeladener Dateien (`_carry_decisions`); Prüfsumme der
+  Bestandsbefunde mit normalisierten Zahlen (`_fp_num`).
 
 ### Phase 2 – Zentrale Prüfung und Sammelverarbeitung
 `/journal/pruefung` mit Reitern (Zu prüfen · Sicher verarbeiten · Abgeschlossen · Historie), Filter (Quelle, Konto,
@@ -125,4 +129,17 @@ Quellzeilen), Export/Restore, Bericht `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_R
 
 ## 5 Fortschritt
 
-*(wird je Phase ergänzt)*
+### Phase 1 – abgeschlossen (Tests bestanden)
+
+| Ursache (§2) | Behebung | Test |
+|---|---|---|
+| Sieben Definitionen von „offen“ | `review.state_of` als einzige Definition; Stapelseite (`group_of`, `overview`, Prüfstand), Warteschlange, Datenquellen (`open_counts`, Datenhinweis), Stapelstatus leiten daraus ab | 04, 10 |
+| Stapel schließen nie / zu früh | `refresh_status` in beide Richtungen (`committed`/`done` ↔ `partial`/`preview`) nach jeder Änderung; Übernahme markiert nicht gebuchte Vorschläge sichtbar als „nicht übernommen“; Start-Angleichung bestehender Stapel | 01, 02, 03, 07, 09, 13 |
+| „Jetzt prüfen“ nur neuester Stapel | `/journal/pruefung` über alle aktiven Stapel, Filter Quelle/Stapel/Grund, Sprung zum Vorgang (`?ev=`) | 06, 10 |
+| Ungeklärt/unvollständig nicht abschließbar | Entscheidungen „nicht übernehmen“ und „zurückstellen“ für alle offenen Zeilenarten (Zeile und Stapelaktion, mit Undo) | 03, 09, 14 |
+| Nullanzeige ohne Grund | `review.funnel` + `zero_reason` auf der Stapelseite („Prüfstand“) | 05, 07 |
+| Vor-Stichtag-Zeilen verknüpfbar (79 Aktionen) | Zustand „Historie“ (geschlossen), Vorschlag/Auswahl schließen sie aus, Verknüpfen nur ausdrücklich | 11 |
+| BNB-Entscheidung kippt nach 48 h | Befundschlüssel und Prüfsumme ohne Abrufzustand; Datenquellenseite berücksichtigt Diagnose-Entscheidungen (`holding_mark`); Altschlüssel gelten weiter | 12 |
+| `_present` kannte nur offene Stapel | abgeschlossene, nicht gebuchte Ereignisse werden nicht erneut vorgelegt – außer bei geänderter Lieferung (neue Evidenz) | 08 |
+
+Nur-Lese-Garantie der Ansichten (Vorschau, Warteschlange, Stapel-, Datenquellen-, Diagnoseseite): Test 15.

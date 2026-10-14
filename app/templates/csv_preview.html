@@ -6,7 +6,7 @@
 {%- endmacro %}
 {% import "partials/assess.html" as am %}
 {% block content %}
-<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a class="active" href="/journal/csv">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a href="/journal/pruefung">Prüfung</a><a class="active" href="/journal/csv">CSV-Import</a><a href="/journal/new">Neue Buchung</a></nav>
 {% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
 {% set todo = plan.todo %}{% set counts = plan.counts() %}
 

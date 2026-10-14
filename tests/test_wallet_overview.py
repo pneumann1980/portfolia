@@ -158,7 +158,7 @@ def test_sync_states_and_data_notes_are_separate(client, chains):
     assert OV.sync_state(ds) == "ok"
     notes = OV.data_notes(ds, None, svc.open_counts(a), svc.holdings(ds), None)
     kinds = {n["kind"] for n in notes}
-    assert "unclear" in kinds or "new" in kinds  # Prüfpunkte sind Datenhinweise, nicht Abruf-Fehler
+    assert "review" in kinds  # offene Prüfvorgänge sind Datenhinweise (zentral gezählt), nicht Abruf-Fehler
     page = client.get("/settings/datasources").text
     assert "erfolgreich" in page and "Datenhinweise" in page
 

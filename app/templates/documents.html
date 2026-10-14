@@ -4,7 +4,7 @@
 {% block content %}
 {% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
 {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
-<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a href="/journal/csv">CSV-Import</a><a class="active" href="/journal/documents" aria-current="page">PDF &amp; Screenshot</a><a href="/journal/new">Neue Buchung</a></nav>
+<nav class="tabs" aria-label="Buchungen"><a href="/journal">Buchungen</a><a href="/journal/pruefung">Prüfung</a><a href="/journal/csv">CSV-Import</a><a class="active" href="/journal/documents" aria-current="page">PDF &amp; Screenshot</a><a href="/journal/new">Neue Buchung</a></nav>
 
 <section class="card">
   <div class="card-head"><h2>Belege einlesen</h2></div>

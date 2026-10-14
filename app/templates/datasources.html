@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Datenquellen{% endblock %}
 {% block heading %}Datenquellen{% endblock %}
-{% macro open_line(oc, pb) %}{% if oc %}<div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div>Zur Prüfung offen:
-    {% for st, n in oc.items() %}{{ n }} {{ {'new': 'neu', 'unclear': 'ungeklärt', 'duplicate': 'mögliche Dubletten', 'before': 'vor Stichtag', 'invalid': 'unvollständig'}.get(st, st) }}{% if not loop.last %} · {% endif %}{% endfor %}
-    {% if pb %} – <a href="/journal/csv/{{ pb[0].id }}">jetzt prüfen</a>{% endif %}</div></div>{% endif %}{% endmacro %}
+{% macro open_line(oc, pb, sid) %}{% if oc %}{% set n = oc.values()|sum %}<div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div>Zur Prüfung offen: <b>{{ n }} {{ 'Vorgang' if n == 1 else 'Vorgänge' }}</b>
+    ({% for st, k in oc.items() %}{{ k }}× {{ st }}{% if not loop.last %} · {% endif %}{% endfor %})
+    – <a href="/journal/pruefung?source={{ sid }}">jetzt prüfen</a>{% if pb|length > 1 %} <span class="hint">({{ pb|length }} Prüf-Stapel)</span>{% endif %}</div></div>{% endif %}{% endmacro %}
 {% macro holdings_table(h, limit=6) %}
   {% if h and h['items'] %}
   <div class="table-wrap cards-wrap" style="margin-top:8px"><table class="compact cards">
@@ -157,7 +157,7 @@
     {% if st == 'error' and ds.last_error %}<div class="alert crit" style="margin-top:8px"><span class="icon">!</span><div><b>Technischer Fehler:</b> {{ ds.last_error }}{% if ds.last_error_at %} <span class="hint">({{ ds.last_error_at|datetime_de }})</span>{% endif %}<div class="hint">Bisher übernommene Daten und der letzte Bestand bleiben unverändert; der nächste Lauf setzt am gespeicherten Stand fort.</div></div></div>
     {% elif st == 'partial' %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div><b>Teilweise:</b> {% for g in ds.gaps %}{{ g }}{% if not loop.last %}; {% endif %}{% else %}{{ ds.last_error or 'Abruf unvollständig – wird fortgesetzt' }}{% endfor %}</div></div>{% endif %}
     {% set nt = notes.get(ds.id) or [] %}
-    {% if nt %}<div class="ds-notes"><div class="k hint">Datenhinweise (unabhängig vom Abruf)</div><ul class="small">{% for n in nt %}<li class="note-{{ n.kind }} wrap-any">{{ n.text }}</li>{% endfor %}</ul>{% if pb %}<a class="small" href="/journal/csv/{{ pb[0].id }}">Prüf-Stapel öffnen</a>{% endif %}</div>{% endif %}
+    {% if nt %}<div class="ds-notes"><div class="k hint">Datenhinweise (unabhängig vom Abruf)</div><ul class="small">{% for n in nt %}<li class="note-{{ n.kind }} wrap-any">{{ n.text }}</li>{% endfor %}</ul>{% if oc %}<a class="small" href="/journal/pruefung?source={{ ds.id }}">Jetzt prüfen</a>{% endif %}</div>{% endif %}
     <div class="hint wrap-any" style="margin-top:8px">Konto in Portfolia: <b>{{ ds.account }}</b> · hinzugefügt {{ ds.created_at|datetime_de }}</div>
     {% if h and h['items'] %}<details style="margin-top:6px"><summary class="hint">Bestände ({{ h['items']|length }}){% if h.observed_at %} · beobachtet {{ h.observed_at|datetime_de }}{% endif %}</summary>{{ holdings_table(h, 8) }}</details>{% endif %}
     {% if ds.limits %}<details style="margin-top:6px"><summary class="hint">Abdeckungsgrenzen ({{ ds.limits|length }})</summary><ul class="small" style="margin:4px 0 0 16px">{% for l in ds.limits %}<li>{{ l }}</li>{% endfor %}</ul></details>{% endif %}
@@ -215,7 +215,7 @@
     {% if ds.credential_ref and not ds.needs_key %}<div class="fact" style="grid-column:1/-1"><div class="k">Zugangsdaten (Umgebungsvariable)</div><div class="v"><span class="mono">{{ ds.credential_ref }}</span> <span class="badge {{ 'good' if ds.credential_state == 'gesetzt' else 'warn' }}">{{ ds.credential_state }}</span></div></div>{% endif %}
     {% if ds.last_error %}<div class="fact" style="grid-column:1/-1"><div class="k">Letzter Fehler{% if ds.last_error_at %} · {{ ds.last_error_at|datetime_de }}{% endif %}</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
   </div>
-  {{ open_line(oc, pb) }}
+  {{ open_line(oc, pb, ds.id) }}
   <div class="row" style="margin-top:12px">
     {% if ds.supported and ds.enabled %}
       <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit" {% if ds.needs_key and not ds.key_mode %}disabled{% endif %}>{{ 'Jetzt synchronisieren' if ds.last_success_at else 'Historischen Abgleich starten' }}</button></form>
