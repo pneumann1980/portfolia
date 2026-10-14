@@ -104,7 +104,7 @@ BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial":
                 "committed": "übernommen", "done": "abgeschlossen", "reverted": "rückgängig gemacht"}
 OPEN_BATCH = ("preview", "partial")  # aktive Prüf-Stapel; abgeschlossen: committed (mit Buchungen) bzw. done
 NEED_VALUE_TAGS = frozenset(C.INCOME_TAGS) | frozenset(C.LOSS_TAGS) | frozenset(C.GIFT_OUT_TAGS) | \
-    frozenset(C.GIFT_IN_TAGS)
+    frozenset(C.GIFT_IN_TAGS) | frozenset(C.DERIVATIVE_TAGS)
 
 
 ROW_COLS = ("tx_id", "datetime", "type", "tag", "from_account", "from_asset", "from_qty", "to_account", "to_asset",

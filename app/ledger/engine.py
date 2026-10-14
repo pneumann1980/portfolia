@@ -40,6 +40,7 @@ class EngineOptions:
     income_tags: frozenset[str] = frozenset(C.INCOME_TAGS)
     loss_tags: frozenset[str] = frozenset(C.LOSS_TAGS)
     gift_out_tags: frozenset[str] = frozenset(C.GIFT_OUT_TAGS)
+    derivative_tags: frozenset[str] = frozenset(C.DERIVATIVE_TAGS)
     tax_tags: frozenset[str] = frozenset({"withholding_tax", "tax"})
     unmatched_transfers_as_flows: bool = True
     cash_overrides: tuple[tuple[str, bool], ...] = ()  # (account, cash_tracked)
@@ -664,6 +665,12 @@ class _Engine:
                                                False))
                 self.acquire(tx, asset, ta, qty, v, "income", tag)
             return
+        if tag in o.derivative_tags:
+            # Derivat-Ergebnis (Funding, realisierter Gewinn): Bestand ändert sich, aber kein externer Kapitalfluss
+            # und keine automatische Steuer-Einordnung (Lot-Herkunft „derivative“)
+            if not fiat:
+                self.acquire(tx, asset, ta, qty, v, "derivative")
+            return
         if fiat:
             if self.cash.get(ta, False):
                 amt = self.fiat_amount(asset, qty, v)
@@ -691,12 +698,17 @@ class _Engine:
             if tag in o.loss_tags:
                 self.fees.append(FeeEvent(tx.tx_id, tx.date, asset, qty, amt or ZERO, "cost", fa))
                 return
+            if tag in o.derivative_tags:  # Derivat-Ergebnis in Fiat: kein externer Kapitalfluss
+                return
             if self.cash.get(fa, False):
                 self.flow(tx, -amt if amt is not None else None, "withdrawal", fa, asset, -qty)
                 self.aflow(tx, asset, -amt if amt is not None else None, -qty, "withdrawal")
             return
         if tag in ("lost", "stolen", "burn"):
             self.dispose(tx, asset, fa, qty, ZERO, "lost")
+            return
+        if tag in o.derivative_tags:  # Funding gezahlt, Liquidation, realisierter Verlust: Abgang ohne Steuer-Automatik
+            self.dispose(tx, asset, fa, qty, v, "derivative")
             return
         if tag in o.loss_tags:  # cost / fee: Bezahlung mit Krypto
             self.dispose(tx, asset, fa, qty, v, "spend")

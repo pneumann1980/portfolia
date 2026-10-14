@@ -634,14 +634,18 @@ def _neu(rc: Any) -> dict[str, Any]:
                     {"f": "struct", "sev": "relevant", "t": "Transfer mit einer bereits übernommenen Buchung – deren "
                                                             "Lots werden fortgeführt; nur einzeln bestätigen"}],
                 "add": [], "why": BASIS_LABEL["jpair"]}
+    if ((rc.row or {}).get("tag") or rc.rec.tag or "") in C.DERIVATIVE_TAGS:
+        hints.append("Derivat-Vorgang (Futures, Funding, Margin) – steuerliche Einordnung gesondert prüfen; wird nie "
+                     "automatisch übernommen")
     if rc.transfer_unclear:
         hints.append("möglicher Transfer mit mittlerer Sicherheit")
     if rc.errors:
         hints.append("unvollständig: " + rc.errors[0])
     if rc.status == "unclear":
         hints.append("ungeklärte Vorgangsart")
+    derivative = ((rc.row or {}).get("tag") or rc.rec.tag or "") in C.DERIVATIVE_TAGS
     action = "include" if rc.status == "new" and not rc.errors and not rc.rec.review and not rc.transfer_unclear \
-        and rc.row is not None else "review"
+        and rc.row is not None and not derivative else "review"
     return {"cat": "neu", "conf": "hoch" if not hints else "mittel", "basis": None, "target": None, "role": None,
             "action": action, "ok": [], "diff": [], "add": [], "hints": hints,
             "why": "kein Gegenstück im Bestand gefunden (Kennung, Hash, Menge/Zeit, Transfers)"}

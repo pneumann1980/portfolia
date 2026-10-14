@@ -48,7 +48,12 @@ MAPPING_KINDS = {"trade": "Handel/Tausch", "deposit": "Zugang ohne Ertrag", "wit
                  "conversion": "Umstellung (ohne Veräußerung)", "skip": "überspringen",
                  **{f"deposit:{t}": f"Ertrag: {t}" for t in ("staking", "reward", "interest", "lending", "airdrop",
                                                            "mining", "bonus", "cashback", "other_income")},
-                 **{f"withdrawal:{t}": f"Abgang: {t}" for t in ("cost", "fee", "gift", "donation", "lost")}}
+                 **{f"withdrawal:{t}": f"Abgang: {t}" for t in ("cost", "fee", "gift", "donation", "lost")},
+                 # Derivate (Futures/Perpetuals/Margin): Richtung aus Vorzeichen bzw. Zu-/Abgangsspalte
+                 "deposit:funding": "Derivat: Funding (±)",
+                 "deposit:futures_pnl": "Derivat: realisiertes Ergebnis (±)",
+                 "withdrawal:liquidation": "Derivat: Liquidation",
+                 "withdrawal:margin_interest": "Derivat: Margin-Zinsen"}
 
 
 def _back(request: Request, target: str) -> Response:

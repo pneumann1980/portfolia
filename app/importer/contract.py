@@ -47,7 +47,12 @@ GIFT_IN_TAGS = ("gift_received",)
 CORPORATE_TAGS = ("split", "reverse_split", "merger", "spinoff", "migration", "rename", "swap")
 OTHER_TAGS = ("exchange", "internal", "withholding_tax", "tax", "margin", "realized_gain", "realized_loss",
               "bridge", "wrap", "unwrap", "liquidity_in", "liquidity_out", "refund")
-KNOWN_TAGS = frozenset(INCOME_TAGS + LOSS_TAGS + GIFT_OUT_TAGS + GIFT_IN_TAGS + CORPORATE_TAGS + OTHER_TAGS)
+# Derivate (Futures, Perpetuals, Margin): mengenwirksam, aber weder externer Kapitalfluss noch automatisch steuerlich
+# eingeordnet – die Einordnung (z. B. Termingeschäft) ist gesondert zu prüfen; Portfolia rechnet sie nicht still mit.
+DERIVATIVE_TAGS = ("funding", "futures_pnl", "liquidation", "margin_interest", "margin", "realized_gain",
+                   "realized_loss")
+KNOWN_TAGS = frozenset(INCOME_TAGS + LOSS_TAGS + GIFT_OUT_TAGS + GIFT_IN_TAGS + CORPORATE_TAGS + OTHER_TAGS
+                       + DERIVATIVE_TAGS)
 
 ASSET_REQUIRED = ("asset_id", "name", "asset_class", "quote_source", "quote_id")
 ASSET_OPTIONAL = ("wkn", "isin", "koinly_id", "status", "note", "aliases", "category")

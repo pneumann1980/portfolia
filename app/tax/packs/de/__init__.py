@@ -267,7 +267,7 @@ class GermanyPack(RulePack):
 
     # Kryptowerte § 23 ---------------------------------------------------------------------------------
     def _crypto_treatment(self, d: Disposal, o: dict[str, Any]) -> bool:
-        if d.kind in ("gift", "withdrawal"):
+        if d.kind in ("gift", "withdrawal", "derivative"):  # Derivate: Einordnung gesondert (nicht still mitgerechnet)
             return False
         if d.kind == "lost":
             return o.get("lost") == "loss"
