@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Anschaffungsdaten{% endblock %}
+{% block heading %}Datenqualität · Herkunft der Anschaffungsdaten{% endblock %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>Woher stammen Anschaffungszeitpunkt und -kosten?</h2>
+    <div class="row"><a class="btn sm" href="/quality/diagnose">Diagnose</a><a class="btn sm" href="/quality/abdeckung">Quellenabdeckung</a></div></div>
+  <p class="hint">FIFO ordnet jeder Veräußerung Lots zu. Belegt sind Anschaffungen aus Kauf/Tausch, Erträgen (Zuflusswert), fortgeführten Kapitalmaßnahmen und nachgewiesenen Eröffnungspositionen. Externe Zugänge ohne Beleg tragen den Wert beim Zugang als Ersatz bzw. „unbekannt“ – nie 0 €. Transfers zwischen eigenen Konten behalten den ursprünglichen Anschaffungszeitpunkt. Diese Sicht ändert nichts.</p>
+  <div class="row" style="flex-wrap:wrap;gap:6px">{% for k, l in rep.classes.items() %}<span class="badge {{ 'good' if k in evidenced else 'warn' if k in ('unbekannt', 'ohne_basis') else '' }}">{{ l }}</span>{% endfor %}</div>
+</section>
+<section class="card">
+  <div class="card-head"><h2>Offene Bestände je Asset</h2></div>
+  {% if not rep.assets %}<p class="hint">Keine offenen Lots.</p>{% else %}
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Asset</th><th class="num">Menge</th><th class="num">belegt</th><th>Herkunft (Menge)</th><th>ältestes Lot</th></tr></thead><tbody>
+  {% for r in rep.assets %}<tr><td>{{ r.asset }}</td><td class="num">{{ r.qty|qty }}</td>
+    <td class="num">{% if r.evidenced_share is not none %}<span class="badge {{ 'good' if r.evidenced_share == 1 else 'warn' }}">{{ (r.evidenced_share * 100)|round(1) }} %</span>{% else %}–{% endif %}</td>
+    <td>{% for k, q in r.by_class.items() %}<div class="nowrap">{{ rep.classes[k] }}: {{ q|qty }}</div>{% endfor %}</td>
+    <td class="nowrap">{{ r.oldest|date_de if r.oldest else '–' }}</td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+</section>
+<section class="card">
+  <div class="card-head"><h2>Veräußerungen je Jahr nach Herkunft der verbrauchten Lots</h2></div>
+  {% if not rep.years %}<p class="hint">Keine Veräußerungen.</p>{% else %}
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Jahr</th><th>Herkunft</th><th class="num">Menge</th><th class="num">Ergebnis (EUR)</th></tr></thead><tbody>
+  {% for y in rep.years %}{% for k, q in y.qty_by_class.items() %}<tr><td>{{ y.year if loop.first else '' }}</td><td><span class="badge {{ 'good' if k in evidenced else 'warn' if k in ('unbekannt', 'ohne_basis') else '' }}">{{ rep.classes[k] }}</span></td><td class="num">{{ q|qty }}</td><td class="num">{{ y.gain_by_class.get(k, 0)|eur }}</td></tr>{% endfor %}{% endfor %}
+  </tbody></table></div>
+  <p class="hint">Ergebnisse aus Lots ohne Anschaffungsbeleg oder ohne Anschaffungsdaten sind vor der Steuererklärung zu klären; die Steueransicht rechnet nur mit vorhandenen Daten.</p>{% endif %}
+</section>
+</div>
+{% endblock %}

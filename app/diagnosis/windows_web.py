@@ -106,6 +106,14 @@ def make_router() -> APIRouter:
         return render(request, "coverage.html", active="quality", mx=mx, states=CV.STATES, accounts=accounts,
                       account=account, gap_end=CV.month_end, **_common())
 
+    @router.get("/quality/anschaffung", response_class=HTMLResponse)
+    def provenance_page(request: Request) -> HTMLResponse:
+        """Herkunft der Anschaffungsdaten je Lot und je Veräußerungsjahr (rein lesend)."""
+        from app.ledger import provenance as PV
+
+        rep = PV.build(get_ctx(request))
+        return render(request, "provenance.html", active="quality", rep=rep, evidenced=PV.EVIDENCED, **_common())
+
     @router.get("/quality/diagnose/stock", response_class=HTMLResponse)
     def stock_page(request: Request, view: str = "", p: str = "") -> HTMLResponse:
         """Bestandsklärung (A buchhalterisch · B bestätigter Referenzbestand · C ungeklärte Differenz) und die

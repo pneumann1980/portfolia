@@ -19,6 +19,7 @@ import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -173,7 +174,11 @@ def preview(svc: Any, sel: Mapping[int, set[int]]) -> MultiPlan:
             mp.impact.append({"account": acc, "asset": asset, "now": now, "delta": d,
                               "after": (now + d) if now is not None else None,
                               "negative": now is not None and now + d < 0})
-        mp.fifo = [{"account": a, "asset": s, "from": first.get((a, s), "")} for (a, s) in sorted(first)]
+        from app.ledger.provenance import retro_years
+
+        mp.fifo = [{"account": a, "asset": s, "from": first.get((a, s), ""),
+                    "retro": retro_years(led, s, date.fromisoformat(first[(a, s)])) if led is not None else []}
+                   for (a, s) in sorted(first)]
     return mp
 
 
