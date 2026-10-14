@@ -8,7 +8,7 @@
     <div class="row"><a class="btn sm{% if not view %} primary{% endif %}" href="/quality/diagnose/stock">Bestandsklärung</a><a class="btn sm{% if view %} primary{% endif %}" href="/quality/diagnose/stock?view=confirmed">Bestätigte Bestandssicht</a><a class="btn sm" href="/quality/diagnose/windows">Abweichungsentwicklung</a></div></div>
   <div class="alert"><span class="icon">i</span><div>
     <strong>Drei Größen, strikt getrennt.</strong>
-    <b>A · buchhalterisch</b>: Bestand laut Buchungen (Ledger). <b>B · bestätigter Referenzbestand</b>: dein letzter Kontostand-Nachweis, mit den Buchungen <em>danach</em> fortgeschrieben – mit späteren Buchungen heißt er „fortgeschrieben“, nie „verifiziert“.
+    <b>A · buchhalterisch</b>: Bestand laut Buchungen (Ledger). <b>B · bestätigter Bestand</b>: dein letzter Kontostand-Nachweis (Referenzbestand) bzw. – ohne Referenz – der aktuelle, vollständige Abruf der Datenquelle, mit den Buchungen <em>danach</em> fortgeschrieben – mit späteren Buchungen heißt er „fortgeschrieben“, nie „verifiziert“.
     <b>C · ungeklärte Differenz</b> = B − A. Ein ungeklärter Bestand ist <strong>kein</strong> Zugang, Kauf, Transfer, Lot, Gewinn oder Verlust: Er ändert weder Ledger noch FIFO, Einstand, realisierte Ergebnisse, Steuer, Haltefrist oder XIRR. Die Werte werden berechnet, nicht gespeichert.</div></div>
 </section>
 
@@ -18,7 +18,8 @@
   <dl class="kv kv-stack">
     <dt>Buchhalterischer Wert (A)</dt><dd><b>{{ sv.ledger_total|eur }}</b> <span class="hint">nur bewertete Positionen</span></dd>
     <dt>Bestätigte Sicht (B′, indikativ)</dt><dd><b>{{ sv.view_total|eur }}</b> <span class="hint">Differenz {{ (sv.view_total - sv.ledger_total)|eur }}</span></dd>
-    <dt>Positionen ohne Referenzbestand</dt><dd>{{ sv.n_unreferenced }} – Ledger-Menge unverändert, <em>nicht bestätigt</em></dd>
+    <dt>Positionen</dt><dd>{{ sv.n_positions }} gesamt · {{ sv.n_valued }} bewertet{% if sv.n_no_ledger %} · {{ sv.n_no_ledger }} ohne Buchung (nur Referenz bzw. Abruf){% endif %} <span class="hint">– Teilbewertung: Summen nur über bewertete Positionen</span></dd>
+    <dt>Positionen ohne Bestätigung</dt><dd>{{ sv.n_unreferenced }} – Ledger-Menge unverändert, <em>nicht bestätigt</em> (weder Referenzbestand noch aktueller vollständiger Abruf)</dd>
     <dt>Unvollständig bewertet</dt><dd>{{ sv.n_unvalued }}{% if sv.unvalued %} <span class="hint">({{ sv.unvalued[:8]|join(', ') }}{% if sv.unvalued|length > 8 %} …{% endif %}) – ohne Kurs bzw. mit veraltetem Kurs; diese Werte fehlen in beiden Summen, sie gelten nicht als 0.</span>{% endif %}</dd>
   </dl>
 </section>
@@ -29,7 +30,7 @@
   <div class="table-wrap cards-wrap dev-wrap" tabindex="0" role="region" aria-label="Bestandsklärung (scrollbar)"><table class="cards hold-table dev-table">
     <thead><tr><th>Konto · Asset</th><th class="num">A · Ledger</th><th class="num">B · Referenz{% if view %} (fortgeschrieben){% endif %}</th><th class="num">C · Differenz</th>{% if view %}<th class="num">Wert A</th><th class="num">Wert B′</th>{% else %}<th>Nachweis · Status</th>{% endif %}</tr></thead>
     <tbody>{% for r in sv.rows %}<tr id="s-{{ loop.index }}">
-      <td class="who" data-label="Konto · Asset"><b>{{ r.account }}</b> · {{ r.asset }}<div class="hint">{{ r.n_refs }} Referenz{{ 'en' if r.n_refs != 1 }}{% if r.sources %} · {{ r.sources|join(', ') }}{% endif %}</div></td>
+      <td class="who" data-label="Konto · Asset"><b>{{ r.account }}</b> · {{ r.asset }}{% if r.no_ledger %} <span class="badge warn" title="Für diese Position gibt es keine einzige wirksame Buchung – der Bestand ist nur durch Referenz bzw. Abruf belegt.">ohne Buchung</span>{% endif %}<div class="hint">{% if r.confirm_kind %}{{ r.confirm_kind }} · {% endif %}{{ r.n_refs }} Referenz{{ 'en' if r.n_refs != 1 }}{% if r.sources %} · {{ r.sources|join(', ') }}{% endif %}</div></td>
       <td class="num" data-label="A · Ledger">{{ r.ledger|qty_exact }}</td>
       <td class="num" data-label="B · Referenz">{% if r.rolled is not none %}{{ (r.rolled if view else r.point.qty)|qty_exact }}<div class="hint">
         <span class="badge {{ 'good' if r.state == 'bestätigt' and not r.stale else 'warn' }}">{{ r.state }}</span>

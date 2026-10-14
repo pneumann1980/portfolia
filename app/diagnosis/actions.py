@@ -381,7 +381,9 @@ def _stage(st: _State, plan: Plan) -> None:
 
 
 def _book_row(st: _State, plan: Plan) -> None:
-    """Genau eine Zeile eines Prüf-Stapels buchen (alle übrigen bleiben unverändert)."""
+    """Genau einen wirtschaftlichen Vorgang eines Prüf-Stapels buchen – mit **allen** seinen Zeilen (z. B. Tausch mit
+    Abgang, Zugang und Gebühr) in einer Freigabe; alle übrigen Zeilen bleiben unverändert. Ein Vorgang wird nie
+    geteilt: ist eine seiner Zeilen nicht eindeutig übernehmbar oder schon gebucht, wird nichts gebucht."""
     from app.csvimport.service import csv_service
     from app.importer.validate import validate_tx_rows
 
@@ -389,29 +391,45 @@ def _book_row(st: _State, plan: Plan) -> None:
     bid, idx = d.get("batch"), d.get("idx")
     csv = csv_service(st.ctx)
     batch = csv.batch(int(bid)) if bid is not None else None
-    rc = next((r for r in csv._load(int(bid)) if r.idx == idx), None) if batch is not None else None
+    rows = csv._load(int(bid)) if batch is not None else []
+    rc = next((r for r in rows if r.idx == idx), None)
     if rc is None or not rc.open:
         plan.errors.append("Die Zeile steht nicht mehr offen im Prüf-Stapel (bereits gebucht oder verworfen).")
         return
-    if rc.status != "new" or rc.row is None or rc.errors or not rc.include():
-        plan.errors.append("Die Zeile ist nicht eindeutig übernehmbar (Status „" + rc.status + "“) – im Prüf-Stapel "
-                           "prüfen und entscheiden.")
+    legs = [r for r in rows if rc.rec.event_key and r.rec.event_key == rc.rec.event_key] or [rc]
+    legs.sort(key=lambda r: (r.rec.event_line or 0, r.idx))
+    for r in legs:
+        if not r.open or r.status in ("known", "ignored"):
+            plan.errors.append(f"Der Vorgang ist teilweise schon erledigt (Zeile {r.line}: "
+                               f"{r.status}) – eine Teilbuchung würde ihn trennen; bitte im Prüf-Stapel entscheiden.")
+            return
+        if r.status != "new" or r.row is None or r.errors or not r.include():
+            plan.errors.append(f"Zeile {r.line} des Vorgangs ist nicht eindeutig übernehmbar (Status „{r.status}“) – "
+                               "im Prüf-Stapel prüfen und entscheiden.")
+            return
+        if r.pair_ref or r.transfer_unclear:
+            plan.errors.append("Der Vorgang gehört zu einem möglichen Transfer – bitte im Prüf-Stapel entscheiden.")
+            return
+    rep, parsed = validate_tx_rows([{**r.row, "tx_id": f"PF-PRUEFUNG-{i}"} for i, r in enumerate(legs)],  # type: ignore[dict-item]
+                                   st.classes())
+    if rep.errors or len(parsed) != len(legs):
+        plan.errors += [_strip(m.message) for m in rep.errors] or ["Vorgang nicht vollständig übernehmbar."]
         return
-    if rc.pair_ref or rc.transfer_unclear:
-        plan.errors.append("Der Vorgang gehört zu einem möglichen Transfer – bitte im Prüf-Stapel entscheiden.")
-        return
-    rep, parsed = validate_tx_rows([{**rc.row, "tx_id": "PF-PRUEFUNG"}], st.classes())
-    if rep.errors or not parsed:
-        plan.errors += [_strip(m.message) for m in rep.errors]
-        return
-    plan.warnings += [_strip(m.message) for m in rep.warnings if m.code != "value_eur" or rc.row["type"] != "transfer"]
-    key = st.new_key()
-    t = dataclasses.replace(Tx.from_parsed({**parsed[0], "seq": st.next_seq()}), tx_id=f"neu-{key[1:]}",
-                            origin="journal", source=csv.source_of(batch))
-    plan.ops.append(Op("book_row", f"{bid}:{idx}", f"Vorgang {rc.rec.event_key or rc.rec.ext_id} aus Prüf-Stapel "
-                                                   f"#{bid} buchen", row=rc.row, tx=t, ref=st.ref(t),
-                       before={"status": rc.status, "decision": rc.decision, "row": rc.row,
-                               "batch": batch["status"]}))
+    plan.warnings += [_strip(m.message) for m in rep.warnings
+                      if m.code != "value_eur" or all(r.row["type"] != "transfer" for r in legs)]  # type: ignore[index]
+    if len(legs) > 1:
+        plan.warnings.append(f"Der Vorgang besteht aus {len(legs)} Zeilen (z. B. Abgang, Zugang, Gebühr) – sie werden "
+                             "gemeinsam gebucht und gemeinsam zurückgenommen.")
+    for r, p in zip(legs, parsed, strict=True):
+        key = st.new_key()
+        t = dataclasses.replace(Tx.from_parsed({**p, "seq": st.next_seq()}), tx_id=f"neu-{key[1:]}",
+                                origin="journal", source=csv.source_of(batch))
+        plan.ops.append(Op("book_row", f"{bid}:{r.idx}", f"Vorgang {r.rec.event_key or r.rec.ext_id} aus Prüf-Stapel "
+                                                         f"#{bid} buchen" + (f" (Zeile {r.line})" if len(legs) > 1
+                                                                            else ""),
+                           row=r.row, tx=t, ref=st.ref(t),
+                           before={"status": r.status, "decision": r.decision, "row": r.row,
+                                   "batch": batch["status"], "event": r.rec.event_key, "legs": len(legs)}))
 
 
 def _quote(st: _State, aid: str, raw_coin: str, plan: Plan) -> None:

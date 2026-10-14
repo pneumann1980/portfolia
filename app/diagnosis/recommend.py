@@ -943,9 +943,10 @@ def _reconstruction(facts: Facts, f: Finding) -> Recommendation | None:
         if d.get("ev_status") == "new" and strong:
             opts.append(Option(
                 "book_row", "Diesen einen Vorgang buchen",
-                "Bucht genau diesen Vorgang aus dem Prüf-Stapel (Einzelfreigabe, alle anderen Zeilen bleiben "
-                "unverändert). Vorschau rechnet Bestände, Einstand, realisierte Ergebnisse und Steuer durch; "
-                "Rückgängig nimmt die Buchung zurück.", recommended=True,
+                "Bucht genau diesen Vorgang aus dem Prüf-Stapel – mit allen seinen Zeilen (z. B. Abgang, Zugang, "
+                "Gebühr), nie nur einen Teil; alle anderen Zeilen bleiben unverändert. Vorschau rechnet Bestände, "
+                "Einstand, realisierte Ergebnisse und Steuer durch; Rückgängig nimmt den ganzen Vorgang zurück.",
+                recommended=True,
                 caution="Ändert Bestand und – je nach Vorgang – Einstand und Haltedauer."))
         text = ("Der Vorgang liegt ungebucht im Prüf-Stapel. " + (
             "Buchen erst nach Prüfung der Vorschau." if opts else

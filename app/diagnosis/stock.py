@@ -60,6 +60,8 @@ class StockRow:
     view_value: Decimal | None = None
     value_note: str = ""
     sources: list[str] = field(default_factory=list)
+    confirm_kind: str = ""  # Art der Bestätigung: Referenzbestand (Nutzer) | Datenquelle (Abruf)
+    no_ledger: bool = False  # Position ohne eine einzige wirksame Buchung (nur Referenz bzw. externer Bestand)
 
     @property
     def key(self) -> str:
@@ -78,6 +80,9 @@ class StockView:
     view_total: Decimal  # Summe der bestätigten Sicht über alle bewerteten Positionen
     n_unvalued: int  # Positionen ohne belastbare Bewertung (nicht 0, sondern unvollständig)
     unvalued: list[str] = field(default_factory=list)
+    n_positions: int = 0  # alle Positionen (Ledger ∪ Referenz ∪ belastbarer externer Bestand)
+    n_valued: int = 0  # davon mit belastbarem Kurs (Teilbewertung: Summen nur über diese)
+    n_no_ledger: int = 0  # Positionen ohne Buchung (nur Referenz bzw. externer Bestand)
 
 
 def _age_days(p: RefPoint, now: datetime) -> int:
@@ -93,11 +98,48 @@ def _price_ok(idx: Any, aid: str) -> tuple[Any, str]:
     return p, ""
 
 
+EXTERNAL_OK = ("extern_ok", "extern_diff")  # aktueller, vollständiger Abruf einer Datenquelle (nicht „unsicher“)
+
+
+def _external(report: Any) -> dict[tuple[str, str], Any]:
+    """Belastbare externe Bestände je Position: frischer, vollständiger Abruf eines zugeordneten Assets."""
+    out: dict[tuple[str, str], Any] = {}
+    for h in getattr(report, "holdings", None) or []:
+        if h.account == "(alle Konten)" or h.observed is None or h.status not in EXTERNAL_OK or h.observed_at is None:
+            continue
+        out[(h.account, h.asset)] = h
+    return out
+
+
+def _external_point(h: Any) -> RefPoint:
+    soll = h.computed_at_obs if h.computed_at_obs is not None else h.computed
+    at = h.observed_at if h.observed_at.tzinfo else h.observed_at.replace(tzinfo=UTC)
+    return RefPoint(ref_id=0, at=at, basis="exakt", as_of=at.date(), tz="UTC", qty=h.observed, ledger=soll,
+                    diff=h.observed - soll, source=f"Datenquelle: {h.observed_by or 'Abruf'}",
+                    note=h.observed_state or "")
+
+
 def build(report: Any, decisions: list[Any], now: datetime | None = None) -> StockView:
-    """Bestandsklärung aus dem Diagnosebericht (rein lesend, berechnet)."""
+    """Bestandsklärung aus dem Diagnosebericht (rein lesend, berechnet).
+
+    Positionen: Ledger ∪ Referenzbestände ∪ belastbare externe Bestände – auch eine Position ohne jede Buchung (z. B.
+    500 TOKEN laut Kontoauszug, nie gebucht) erscheint, mit Ledger 0 und vollständiger Differenz."""
     now = now or datetime.now(UTC)
     idx = report.index
     traces: dict[tuple[str, str], PositionTrace] = report.traces or {}
+    external = _external(report)
+    positions = sorted(set(idx.led.balances) | set(traces) | set(external))
+    after_obs: dict[tuple[str, str], int] = {}
+    ext_only = [pos for pos in external if not any(not p.conflict for p in (traces[pos].points if pos in traces
+                                                                              else []))]
+    if ext_only:
+        from app.diagnosis.audit import deltas
+
+        all_d = deltas(idx)
+        for pos in ext_only:
+            at = external[pos].observed_at
+            at = at if at.tzinfo else at.replace(tzinfo=UTC)
+            after_obs[pos] = sum(1 for ts, _dd, _v, _i in all_d.get(pos, ()) if ts > at)
     by_pos_findings: dict[tuple[str, str], list[Any]] = {}
     for f in report.findings:
         if f.parent is not None:
@@ -110,8 +152,9 @@ def build(report: Any, decisions: list[Any], now: datetime | None = None) -> Sto
     rows: list[StockRow] = []
     view_total = ledger_total = ZERO
     unvalued: list[str] = []
-    for pos, ledger in sorted(idx.led.balances.items()):
+    for pos in positions:
         acc, aid = pos
+        ledger = idx.led.balances.get(pos, ZERO)
         tr = traces.get(pos)
         a = idx.asset(aid)
         price, why = _price_ok(idx, aid)
@@ -119,10 +162,11 @@ def build(report: Any, decisions: list[Any], now: datetime | None = None) -> Sto
         usable = [p for p in (tr.points if tr else []) if not p.conflict]
         row = StockRow(account=acc, asset=aid, name=a.name or aid, ledger=ledger, point=None, state="keine",
                        ledger_value=led_val, view_qty=ledger, n_refs=len(tr.points) if tr else 0,
-                       sources=list(tr.sources) if tr else [])
+                       sources=list(tr.sources) if tr else [], no_ledger=pos not in idx.led.balances)
         if tr is not None and usable:
             p = usable[-1]
             row.point = p
+            row.confirm_kind = "Referenzbestand"
             row.age_days = _age_days(p, now)
             row.stale = row.age_days > STALE_DAYS
             row.n_after = tr.since_last
@@ -136,9 +180,22 @@ def build(report: Any, decisions: list[Any], now: datetime | None = None) -> Sto
             row.evidence = min((c.evidence for c in cands), key=order.index, default="Ungeklärt") if p.diff else \
                 "keine Abweichung"
             row.candidates = [f"{c.evidence}: {c.title}" for c in cands[:6]]
-        elif tr is not None:
+        elif tr is not None and pos not in external:
             row.state = "widersprüchlich"
-        if row.state != "keine" and tr is not None:
+        elif pos in external:  # kein verwendbarer Referenzbestand: aktueller Abruf der Datenquelle bestätigt
+            h = external[pos]
+            p = _external_point(h)
+            row.point, row.confirm_kind = p, "Datenquelle (Abruf)"
+            row.age_days = _age_days(p, now)
+            row.stale = row.age_days > STALE_DAYS
+            row.n_after = after_obs.get(pos, 0)
+            row.state = "bestätigt" if row.n_after == 0 else "fortgeschrieben"
+            row.rolled = ledger + p.diff
+            row.diff = p.diff
+            row.view_qty = row.rolled
+            row.evidence = "keine Abweichung" if not p.diff else "Ungeklärt"
+            row.sources = [h.observed_by] if h.observed_by else []
+        if row.state != "keine" and (tr is not None or pos in external):
             row.causes = CAUSES_IN if (row.diff or ZERO) > 0 else CAUSES_OUT if row.diff else ()
         fs = by_pos_findings.get(pos, [])
         row.findings = [(f.id, f.title) for f in fs[:8]]
@@ -171,4 +228,6 @@ def build(report: Any, decisions: list[Any], now: datetime | None = None) -> Sto
                               r.account, r.asset))
     return StockView(rows=shown, n_unreferenced=sum(1 for r in rows if r.state == "keine"),
                      ledger_total=ledger_total, view_total=view_total, n_unvalued=len(unvalued),
-                     unvalued=unvalued[:30])
+                     unvalued=unvalued[:30], n_positions=len(rows),
+                     n_valued=sum(1 for r in rows if r.ledger_value is not None or r.view_value is not None),
+                     n_no_ledger=sum(1 for r in rows if r.no_ledger))

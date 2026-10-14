@@ -97,6 +97,7 @@
               <div class="hint">Wäre der Kandidat zutreffend und umgesetzt: Ledger-Bestand {{ '+' if c.ledger_effect > 0 }}{{ c.ledger_effect|qty_exact }}, Differenz am Fensterende {{ c.diff_before|qty_exact }} → {{ c.diff_after|qty_exact }} ({{ c.effect_text }}).
                 {% if c.creates_negative %}<b>Erzeugt negative Zwischenbestände.</b>{% endif %}</div>
               {% if c.other_positions %}<div class="hint">Wirkt auch auf: {% for a, b, v in c.other_positions %}{{ ' · ' if not loop.first }}{{ a }} {{ b }} {{ '+' if v > 0 }}{{ v|qty_exact }}{% endfor %}</div>{% endif %}
+              {% if c.source_level %}<div class="hint">Quellenevidenz: <b>{{ c.source_level }}</b> · Abgleichsevidenz: <b>{{ c.recon_level }}</b></div>{% endif %}
               {% if c.note %}<div class="hint">{{ c.note }}</div>{% endif %}
               {% if c.missing %}<div class="hint caution">Nicht belegt (wird nicht ergänzt): {{ c.missing|join('; ') }}</div>{% endif %}
               {% if c.finding_id %}<div><a class="btn sm" href="/quality/diagnose/case/{{ c.finding_id }}">Vorgang prüfen und entscheiden</a></div>{% endif %}

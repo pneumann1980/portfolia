@@ -82,7 +82,7 @@ veraltete Auswahl (wird gegen vorhandene Zeilen geschnitten), Vorschau auf ander
 |---|---|---|---|---|
 | 1 | P0 Prüfworkflow reparieren | Tests bestanden | siehe §5 | 15 neu, Suite 929 grün |
 | 2 | Zentrale Prüfung, Sammelverarbeitung | Tests bestanden | siehe §5 | 5 neu, Suite 934 grün |
-| 3 | M29-Hardening | Nicht begonnen | – | – |
+| 3 | M29-Hardening | Tests bestanden | siehe §5 | 6 neu, Suite 940 grün |
 | 4 | Universeller Börsenimport | Nicht begonnen | – | – |
 | 5 | Historische Quellenabdeckung | Nicht begonnen | – | – |
 | 6 | Wirtschaftliche Ereignisgruppen | Nicht begonnen | – | – |
@@ -162,4 +162,17 @@ Nur-Lese-Garantie der Ansichten (Vorschau, Warteschlange, Stapel-, Datenquellen-
 * **Tests** (`tests/test_review_bulk.py`): Vorauswahl/Abwahl, Sammelvorschau mit Bestätigung über zwei Stapel inkl.
   Teilabschluss und Idempotenz, geänderter Stapel wird nicht ausgeführt (andere schon), Lösungsvarianten mit Undo,
   Filter.
+
+### Phase 3 – abgeschlossen (Tests bestanden)
+
+| Lücke | Behebung | Test |
+|---|---|---|
+| Bestandsklärung kannte nur Ledger-Positionen | `stock.build`: Positionen = Ledger ∪ Referenzbestände ∪ belastbare externe Bestände (frischer, vollständiger Abruf); Kennzeichen „ohne Buchung“ | `test_reference_without_any_booking_appears_unvalued_not_zero`, `test_unique_external_balance_without_ledger_is_a_position` |
+| Bestätigt vs. fortgeschrieben | je Position Bestätigungsart (Referenzbestand / Datenquelle) und Zustand bestätigt (keine spätere Buchung) bzw. fortgeschrieben (B′ = Nachweis + spätere Wirkung) | `test_rolled_forward_vs_confirmed_reference` |
+| Teilbewertung | Summen nur über bewertete Positionen, Anzahl bewertet/gesamt sichtbar; ohne Kurs „unvollständig“, nie 0 € | wie oben |
+| Quellen- und Abgleichsevidenz vermischt | `research.assess`: `source_level` (Originalbeleg vollständig · vollständig ohne Originalbeleg · teilweise belegt · ungeklärt) und `recon_level` (kein Gegenstück · ähnliche Buchung (Verdacht) · laut Importprüfung gebucht · gebucht) getrennt; Gesamtstufe = schwächere | `test_source_and_reconciliation_evidence_are_separate` |
+| Mehrbein-Vorgang zerfiel | Evidenz je Ereignis (`load_rows` gruppiert); `book_row` bucht alle Zeilen eines Vorgangs in einer Freigabe (eine Transaktion), Undo nimmt alle zurück; teilweise entschiedener Vorgang wird nicht gebucht | `test_multi_leg_event_is_booked_and_undone_as_one`, `test_partially_decided_event_is_never_split` |
+
+Prüfsummen bestehender Entscheidungen bleiben gültig: die neuen Evidenzangaben stehen in `Finding.evidence` (nicht in
+den geprüften Befunddaten).
 

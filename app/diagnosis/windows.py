@@ -112,6 +112,8 @@ class Candidate:
     ev_id: str | None = None  # reconstruction: Evidenz (Prüf-Stapel-Zeile bzw. Recherche-Ergebnis)
     missing: list[str] = field(default_factory=list)  # reconstruction: Angaben, die dem Beleg fehlen (nicht ergänzt)
     similar: list[str] = field(default_factory=list)  # reconstruction: ähnliche vorhandene Buchungen (Verdacht)
+    source_level: str = ""  # reconstruction: Quellenevidenz (getrennt von der Abgleichsevidenz)
+    recon_level: str = ""  # reconstruction: Abgleichsevidenz
 
     @property
     def reduces(self) -> bool:
@@ -503,7 +505,8 @@ def reconstruction(idx: Any, traces: dict[tuple[str, str], PositionTrace],
                     ledger_effect=eff, diff_before=diff_end, diff_after=diff_end - eff,
                     creates_negative=ser.min_with(ev.ts, eff) < min(ZERO, base_min),
                     other_positions=[(x, y, q) for x, y, q in ev.effects if (x, y) != pos],
-                    note=" ".join(a.notes), ev_id=ev.id, missing=a.missing, similar=a.similar)
+                    note=" ".join(a.notes), ev_id=ev.id, missing=a.missing, similar=a.similar,
+                    source_level=a.source_level, recon_level=a.recon_level)
                 out.setdefault(pos, {}).setdefault(seg.key, []).append(cand)
                 found[ev.id].append((pos, seg, cand, a))
     for ev_id, hits in sorted(found.items()):
@@ -517,7 +520,8 @@ def reconstruction(idx: Any, traces: dict[tuple[str, str], PositionTrace],
                    f"Wirkung: {'+' if eff > 0 else '−'}{_q(abs(eff))} {pos[1]} auf {pos[0]} am {_d(ev.ts)}."],
             suspected=[f"Der Vorgang könnte einen Teil der Abweichung im Fenster {seg.label.lower()} erklären – "
                        "das bleibt eine Hypothese."],
-            evidence=[*a.notes, *([f"Hash {h}" for h in ev.hashes[:2]])],
+            evidence=[f"Quellenevidenz: {a.source_level} · Abgleichsevidenz: {a.recon_level}", *a.notes,
+                      *([f"Hash {h}" for h in ev.hashes[:2]])],
             uncertainty=[*(f"Nicht belegt: {m}" for m in a.missing),
                          "Ein zur Differenz passender Betrag ist kein Beleg; maßgeblich ist die Beleglage."],
             accounts=sorted({x for x, _y, _q_ in ev.effects}), assets=sorted({y for _x, y, _q_ in ev.effects}),

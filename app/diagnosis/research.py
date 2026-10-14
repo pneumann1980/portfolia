@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 from bisect import bisect_left, bisect_right
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -133,25 +134,39 @@ def _hashes(recs: list[Any]) -> tuple[str, ...]:
 
 
 def load_rows(db: Any, resolver: Any) -> list[Evidence]:
-    """Offene Zeilen aller Prüf-Stapel als Evidenz (eine Abfrage, kein N+1)."""
+    """Offene Zeilen aller Prüf-Stapel als Evidenz (eine Abfrage, kein N+1) – **je wirtschaftlichem Vorgang** eine
+    Evidenz: die Zeilen eines Ereignisses (z. B. Einzahlung + Gebühr, Tausch mit Abgang/Zugang) bilden zusammen einen
+    Kandidaten, nie mehrere, die einzeln freigegeben werden könnten."""
     from app.csvimport.service import rec_from_json
 
     ph = ",".join("?" * len(OPEN))
-    out: list[Evidence] = []
+    groups: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    order: list[tuple[int, str]] = []
     for r in db.q(
             f"SELECT r.batch_id, r.idx, r.status, r.decision, r.rec_json, r.row_json, r.messages, r.event_key, "
             f"b.source, b.profile, b.account, b.datasource_id, b.kind FROM csv_row r JOIN csv_batch b ON "
             f"b.id = r.batch_id WHERE b.status IN ('preview', 'partial') AND r.status IN ({ph}) "
             f"ORDER BY r.batch_id, r.idx", OPEN):
-        if r["decision"] == "skip":
-            continue
         try:
             rec = rec_from_json(r["rec_json"])
             row = json.loads(r["row_json"]) if r["row_json"] else None
             msgs = json.loads(r["messages"] or "{}")
         except (ValueError, TypeError, AssertionError):
             continue
-        source = r["source"] or (f"csv:{r['profile']}" if r["profile"] else "csv")
+        key = (int(r["batch_id"]), r["event_key"] or f"#{r['idx']}")
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append({"r": r, "rec": rec, "row": row, "msgs": msgs})
+    out: list[Evidence] = []
+    rank = {"duplicate": 0, "unclear": 1, "invalid": 2, "new": 3}
+    for key in order:
+        items = groups[key]
+        live = [x for x in items if x["r"]["decision"] != "skip"]
+        if not live:
+            continue
+        first = live[0]["r"]
+        source = first["source"] or (f"csv:{first['profile']}" if first["profile"] else "csv")
         provider = source.split(":", 1)[1] if source.startswith("sync:") else None
 
         def resolve(sym: str, provider: str | None = provider) -> str | None:
@@ -159,13 +174,24 @@ def load_rows(db: Any, resolver: Any) -> list[Evidence]:
                 return None
             return (resolver.resolve_for(sym, provider)[0] if provider else resolver.resolve(sym)[0])
 
-        effects = effects_of_row(row) if row else effects_of_rec(rec, r["account"] or "", resolve)
-        hashes = _hashes([rec])
+        eff: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+        flags: list[str] = []
+        for x in live:
+            effects = effects_of_row(x["row"]) if x["row"] else effects_of_rec(x["rec"], first["account"] or "",
+                                                                                resolve)
+            for a, b, q in effects:
+                eff[(a, b)] += q
+            flags += list(flags_of_rec(x["rec"], x["msgs"]))
+        if len(live) < len(items):
+            flags.append("Vorgang teilweise als „nicht übernehmen“ entschieden")
+        status = min((x["r"]["status"] for x in live), key=lambda st: rank.get(st, 9))
+        recs = [x["rec"] for x in live]
         out.append(Evidence(
-            kind="row", ref=f"{r['batch_id']}:{r['idx']}", source=source, ts=rec.ts, status=r["status"],
-            effects=effects, label=rec.label or "", flags=flags_of_rec(rec, msgs), hashes=hashes,
-            event_key=r["event_key"], source_id=r["datasource_id"], batch_id=int(r["batch_id"]), idx=int(r["idx"]),
-            ts_missing=bool(rec.ts_missing)))
+            kind="row", ref=f"{first['batch_id']}:{first['idx']}", source=source, ts=recs[0].ts, status=status,
+            effects=tuple((a, b, q) for (a, b), q in sorted(eff.items()) if q), label=recs[0].label or "",
+            flags=tuple(dict.fromkeys(flags)), hashes=_hashes(recs), event_key=first["event_key"],
+            source_id=first["datasource_id"], batch_id=int(first["batch_id"]), idx=int(first["idx"]),
+            ts_missing=any(x.ts_missing for x in recs)))
     return out
 
 
@@ -216,6 +242,14 @@ class Assessment:
     missing: list[str] = field(default_factory=list)
     similar: list[str] = field(default_factory=list)  # ähnliche vorhandene Buchungen (kein Beweis für eine Dublette)
     booked: bool = False  # bereits gebucht (gleicher Hash bzw. Ereignis) – kein Kandidat
+    # zwei getrennte Dimensionen (die Gesamtstufe ``level`` ist die schwächere der beiden):
+    source_level: str = ""  # Quellenevidenz: wie gut belegt die Quelle den Vorgang selbst?
+    recon_level: str = ""  # Abgleichsevidenz: was sagt der Abgleich mit vorhandenen Buchungen?
+
+
+SOURCE_LEVELS = ("Originalbeleg vollständig", "vollständig ohne Originalbeleg", "teilweise belegt", "ungeklärt")
+RECON_LEVELS = ("kein Gegenstück gebucht", "ähnliche Buchung vorhanden (Verdacht)",
+                "laut Importprüfung bereits gebucht", "bereits gebucht")
 
 
 class PositionBookings:
@@ -242,31 +276,42 @@ def assess(ev: Evidence, pos: tuple[str, str], book: PositionBookings, booked_ke
     belegt oder ähnliche Buchung vorhanden) · Ungeklärt (Prüfung unklar/unvollständig) · Widersprüchlich (die
     Importprüfung hält den Vorgang für bereits gebucht)."""
     a = Assessment(level="Ungeklärt")
+    # Quellenevidenz – unabhängig davon, was bereits gebucht ist
+    if ev.status in ("unclear", "invalid"):
+        a.source_level = "ungeklärt"
+    elif ev.flags:
+        a.source_level = "teilweise belegt"
+    elif ev.authority == "sync":
+        a.source_level = "Originalbeleg vollständig"
+    else:
+        a.source_level = "vollständig ohne Originalbeleg"
     if ev.event_key and ev.event_key in booked_keys:
-        a.booked = True
+        a.booked, a.recon_level = True, "bereits gebucht"
         a.notes.append("Ereignis ist bereits gebucht (gleiche Ereignis-ID).")
         return a
     want = ev.effect_on(pos)
     same_hash = sorted({t for h in ev.hashes for t in by_hash.get(h, ()) if book.eff.get(t) == want})
     if same_hash:
-        a.booked = True
+        a.booked, a.recon_level = True, "bereits gebucht"
         a.notes.append(f"Gleicher Transaktions-Hash und gleiche Menge wie {', '.join(same_hash[:3])} – bereits "
                        "gebucht (wirtschaftliche Dublette, keine fehlende Buchung).")
         return a
     a.missing = list(ev.flags)
     if ev.status == "duplicate":
-        a.level = "Widersprüchlich"
+        a.level, a.recon_level = "Widersprüchlich", "laut Importprüfung bereits gebucht"
         a.notes.append("Die Importprüfung hält den Vorgang für bereits gebucht – er erklärt die Differenz nur, "
                        "wenn die vorhandene Buchung falsch ist.")
         return a
+    sim = sorted({tid for eff, tid in book.near(ev.ts) if eff == want and want})
+    a.recon_level = "ähnliche Buchung vorhanden (Verdacht)" if sim else "kein Gegenstück gebucht"
     if ev.status in ("unclear", "invalid"):
         a.level = "Ungeklärt"
         a.notes.append(STATUS_TEXT[ev.status] + ".")
         return a
-    if ev.authority == "sync" and not ev.flags:
+    if a.source_level == "Originalbeleg vollständig":
         a.level = "Belegt"
         a.notes.append("Originalvorgang der Börsen-/Wallet-Schnittstelle, vollständig und noch nicht gebucht.")
-    elif not ev.flags:
+    elif a.source_level == "vollständig ohne Originalbeleg":
         a.level = "Stark gestützt"
         a.notes.append(f"Quelle: {ev.authority_label}, vollständig und noch nicht gebucht – kein Originalbeleg der "
                        "Börse/Wallet.")
@@ -274,7 +319,6 @@ def assess(ev: Evidence, pos: tuple[str, str], book: PositionBookings, booked_ke
         a.level = "Plausibel"
         a.notes.append("Nur teilweise belegt – gesichert sind nur die vorhandenen Felder; fehlende Angaben werden "
                        "nicht ergänzt.")
-    sim = sorted({tid for eff, tid in book.near(ev.ts) if eff == want and want})
     if sim:
         a.similar = sim
         a.notes.append("Ähnliche Buchung(en) vorhanden (" + ", ".join(sim[:3]) + ") – gleicher Betrag in kurzem "
