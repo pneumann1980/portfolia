@@ -395,7 +395,8 @@ def test_source_without_connector_is_honest(client):
     c = client
     sid = create_source(c, provider="bitvavo", name="Bitvavo", credential_ref="", sync_interval_min="60")
     card = c.get("/settings/datasources").text
-    assert "Manuell / noch nicht unterstützt" in card and "keine automatische Anbindung" in card
+    flat = " ".join(card.split())
+    assert "Manuell · Datei-Import" in flat and "keine automatische Anbindung" in flat
     r = sync(c, sid)
     assert r.status_code == 303 and "noch+nicht+unterst" in r.headers["location"]
     ok, msg = datasource_service(c.app.state.ctx).check(sid)

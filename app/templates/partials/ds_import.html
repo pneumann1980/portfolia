@@ -1,0 +1,21 @@
+{# Datei-Import je Konto: Umfang wählen (gesamte Historie / nur neue Vorgänge) – Erklärung siehe DatasourceService.import_options. #}
+{% macro mode_fields(last, default='') %}{% set dflt = default or ('new' if last else 'all') %}
+<fieldset class="ds-mode">
+  <legend class="hint">Umfang</legend>
+  <label class="check"><input type="radio" name="mode" value="new" {% if dflt == 'new' %}checked{% endif %}> <span>Nur neue Transaktionen{% if last %}<span class="hint" style="display:block">ab der letzten Buchung des Kontos am {{ last|date_de }}</span>{% endif %}</span></label>
+  <label class="check"><input type="radio" name="mode" value="all" {% if dflt == 'all' %}checked{% endif %}> <span>Gesamte Historie</span></label>
+  <span class="hint">Beides wird mit den vorhandenen Buchungen abgeglichen – bekannte Vorgänge werden erkannt, nichts doppelt
+    gebucht, nichts ohne Prüfung übernommen. „Nur neue“ legt ältere Zeilen als Historie ab (nicht zu prüfen); „Gesamte
+    Historie“ legt jede fehlende Buchung zur Prüfung vor.</span>
+</fieldset>
+{% endmacro %}
+{% macro import_form(action, last, account='', provider='', default='', label='Importieren und prüfen') %}
+<form method="post" action="{{ action }}" enctype="multipart/form-data" class="stack ds-import" style="gap:6px;margin-top:6px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% if account %}<input type="hidden" name="account" value="{{ account }}">{% endif %}
+  {% if provider %}<input type="hidden" name="provider" value="{{ provider }}">{% endif %}
+  <input type="file" name="file" accept=".csv,.txt,.tsv,.xlsx,.zip,text/csv" required aria-label="Exportdatei (CSV, XLSX oder ZIP)">
+  {{ mode_fields(last, default) }}
+  <div><button class="btn sm primary" type="submit">{{ label }}</button></div>
+</form>
+{% endmacro %}

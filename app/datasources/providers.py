@@ -96,6 +96,18 @@ def provider_label(pid: str) -> str:
     return p.label if p else pid
 
 
+def guess_provider(account: str) -> str:
+    """Börse zu einem Kontonamen („MEXC Global (MXC)“ → mexc, „CoinEx“ → coinex); sonst „Andere Börse“. Nur ein
+    Vorschlag für die Anzeige und das Dateiformat – das Konto selbst bleibt unverändert."""
+    def key(text: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", text.casefold())
+
+    name = key(account or "")
+    hits = [p for p in PROVIDERS.values() if p.kind == EXCHANGE and p.id != "other_exchange" and key(p.label)
+            and name.startswith(key(p.label))]
+    return max(hits, key=lambda p: len(key(p.label))).id if hits else "other_exchange"
+
+
 def providers(kind: str) -> list[Provider]:
     return [p for p in PROVIDERS.values() if p.kind == kind]
 

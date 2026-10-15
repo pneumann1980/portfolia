@@ -17,6 +17,7 @@
   {% if h['items']|length > limit %}<div class="hint">… und {{ h['items']|length - limit }} weitere – siehe Details</div>{% endif %}
   {% endif %}
 {% endmacro %}
+{% from "partials/ds_import.html" import import_form with context %}
 {% block content %}
 <nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a class="active" href="/settings/datasources">Datenquellen</a></nav>
 {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
@@ -198,9 +199,11 @@
       {% if not ds.enabled %}<span class="badge">deaktiviert</span>{% endif %}
     </div>
   </div>
+  {% set li = last_import.get(ds.id) %}{% set lb = last_book.get(ds.id) %}{% set bk = bookings.get(ds.account) %}
   {% if not ds.supported %}
-  <div class="alert"><span class="icon">i</span><div><b>Manuell / noch nicht unterstützt:</b> Für {{ ds.provider_label }} gibt es noch
-    keine automatische Anbindung. Buchungen bitte per <a href="/journal/csv">CSV-Import</a> erfassen{% if ds.provider_obj and ds.provider_obj.csv_profile %} (Format „{{ ds.provider_label }}“ wird erkannt){% endif %}.</div></div>
+  <div class="alert"><span class="icon">i</span><div><b>Manuell · Datei-Import (CSV, XLSX, ZIP):</b> Für {{ ds.provider_label }} gibt es keine
+    automatische Anbindung – Exportdatei hier hochladen; die Vorgänge werden dieser Börse (Konto „{{ ds.account }}“)
+    zugeordnet{% if ds.provider_obj and ds.provider_obj.csv_profile %}, das Format „{{ ds.provider_label }}“ wird erkannt{% endif %}.</div></div>
   {% elif ds.needs_key and not ds.key_mode %}
   <div class="alert warn"><span class="icon">!</span><div>Noch kein API-Key – <a href="/settings/datasources/{{ ds.id }}#zugang">API-Key eingeben</a>.</div></div>
   {% endif %}
@@ -208,7 +211,9 @@
   {% elif ds.key_expiry_state == 'soon' %}<div class="alert warn"><span class="icon">!</span><div>API-Key läuft am {{ ds.key_expiry|date_de }} ab – rechtzeitig <a href="/settings/datasources/{{ ds.id }}#zugang">ersetzen</a>.</div></div>{% endif %}
   <div class="facts">
     <div class="fact"><div class="k">Konto in Portfolia</div><div class="v">{{ ds.account }}</div></div>
-    <div class="fact"><div class="k">Synchronisierung</div><div class="v">{{ ds.interval_label if ds.supported else 'manuell' }}{% if ds.auto_commit and ds.supported %}<div class="hint">eindeutige neue Vorgänge automatisch</div>{% endif %}</div></div>
+    <div class="fact"><div class="k">Synchronisierung</div><div class="v">{{ ds.interval_label if ds.supported else 'manuell · Datei-Import' }}{% if ds.auto_commit and ds.supported %}<div class="hint">eindeutige neue Vorgänge automatisch</div>{% endif %}</div></div>
+    <div class="fact"><div class="k">Buchungen auf dem Konto</div><div class="v">{% if bk %}{{ bk.n }}<div class="hint">{{ bk.first|date_de }} – {{ bk.last|date_de }}</div>{% else %}–{% endif %}</div></div>
+    <div class="fact"><div class="k">Letzter Datei-Import</div><div class="v">{% if li %}{{ li.created_at|datetime_de }}<div class="hint wrap-any">{{ li.filename }}</div>{% else %}–{% endif %}</div></div>
     <div class="fact"><div class="k">Letzte erfolgreiche Synchronisierung</div><div class="v">{{ ds.last_success_at|datetime_de if ds.last_success_at else '–' }}{% if ds.coverage and not ds.coverage.complete %}<div class="hint">unvollständig</div>{% endif %}</div></div>
     <div class="fact"><div class="k">Nächster Lauf</div><div class="v">{% if ds.next_run_at %}{{ ds.next_run_at|datetime_de }}{% else %}–<div class="hint">{{ 'deaktiviert' if not ds.enabled else ('keine automatische Anbindung' if not ds.supported else 'nur manuell') }}</div>{% endif %}</div></div>
     {% if ds.supported and ds.needs_key %}<div class="fact"><div class="k">Zugang</div><div class="v">{% if ds.key_mode == 'app' %}API-Key <span class="mono">{{ ds.key_hint }}</span>{% elif ds.key_mode == 'env' %}<span class="mono">{{ ds.credential_ref }}</span> <span class="badge {{ 'good' if ds.credential_state == 'gesetzt' else 'warn' }}">{{ ds.credential_state }}</span>{% else %}–{% endif %}{% if ds.check %}<div class="hint">Prüfung: {{ 'in Ordnung' if ds.check.ok else 'fehlgeschlagen' }}</div>{% endif %}</div></div>{% endif %}
@@ -216,6 +221,8 @@
     {% if ds.last_error %}<div class="fact" style="grid-column:1/-1"><div class="k">Letzter Fehler{% if ds.last_error_at %} · {{ ds.last_error_at|datetime_de }}{% endif %}</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
   </div>
   {{ open_line(oc, pb, ds.id) }}
+  <details class="box" style="margin-top:10px" {% if not ds.supported and not li %}open{% endif %}><summary>{{ 'Neuer Import' if li or bk else 'Exportdatei importieren' }} (CSV, XLSX, ZIP)</summary>
+    {{ import_form('/settings/datasources/' ~ ds.id ~ '/upload', lb) }}</details>
   <div class="row" style="margin-top:12px">
     {% if ds.supported and ds.enabled %}
       <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit" {% if ds.needs_key and not ds.key_mode %}disabled{% endif %}>{{ 'Jetzt synchronisieren' if ds.last_success_at else 'Historischen Abgleich starten' }}</button></form>
@@ -227,6 +234,27 @@
   </div>
 </section>
 {% endfor %}
+{% if unlinked %}
+<section class="card" id="konten">
+  <div class="card-head"><div><h2>Konten ohne Datenquelle</h2>
+    <div class="hint">{{ unlinked|length }} Konto{{ '' if unlinked|length == 1 else 'n' }} mit Buchungen (kuratierter Import, CSV oder manuell) – manuell bzw. per Datei-Import geführt</div></div></div>
+  <p class="hint">Für mehr Übersicht je Konto: als Datenquelle führen und neue Exportdateien direkt diesem Konto zuordnen –
+    wahlweise die gesamte Historie oder nur neue Transaktionen. Bestehende Buchungen bleiben unverändert.</p>
+  <div class="ds-cards">
+  {% for a in unlinked %}
+  <article class="box ds-card" id="konto-{{ loop.index }}">
+    <div class="ds-card-head"><div class="ds-card-title"><h3 class="wrap-any">{{ a.account }}</h3>
+      <div class="hint">{% for o, n in a.origins.items() %}<span class="badge">{{ o }} · {{ n }}</span> {% endfor %}</div></div></div>
+    <div class="hint" style="margin-top:6px">{{ a.n }} Buchung{{ '' if a.n == 1 else 'en' }} · {{ a.first|date_de }} – {{ a.last|date_de }} {% if a.provider != 'other_exchange' %} · Börse: {{ a.provider_label }}{% endif %}</div>
+    <div class="row" style="margin-top:6px"><span class="badge">manuell · Datei-Import</span></div>
+    <details style="margin-top:8px"><summary class="btn sm">Neuer Import …</summary>
+      {{ import_form('/settings/datasources/account-source', a.last, a.account, a.provider) }}</details>
+    <form method="post" action="/settings/datasources/account-source" class="inline" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ a.account }}"><input type="hidden" name="provider" value="{{ a.provider }}"><button class="btn ghost sm" type="submit">Als Datenquelle führen</button></form>
+  </article>
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
 {% if not items %}
 <section class="card"><p class="hint">Noch keine Datenquelle. Lege ein Wallet-Konto (öffentliche Adresse) oder eine
   Börse an – für Bitpanda holt Portfolia die Vorgänge nach Eingabe eines API-Keys (nur Leserechte) selbst; für andere

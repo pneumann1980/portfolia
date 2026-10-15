@@ -834,3 +834,8 @@ details.crop img { display: block; margin-top: 4px; width: 100%; max-width: 420p
 .cockpit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 10px; }
 .cockpit-dim { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: inherit; text-decoration: none; }
 .cockpit-fig { font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Datei-Import je Konto (Datenquellen) */
+.ds-mode { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ds-mode legend { padding: 0; }
+.ds-import input[type=file] { max-width: 100%; }

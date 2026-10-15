@@ -201,7 +201,7 @@ def test_any_exchange_as_file_source(client):
              account="Pionex", sync_interval_min="0")
     assert r.status_code == 303, r.text[:500]
     sid = int(re.search(r"/settings/datasources/(\d+)", r.headers["location"]).group(1))
-    assert "Exportdatei dieser Quelle hochladen" in c.get(f"/settings/datasources/{sid}").text
+    assert "Datei-Import: Exportdatei dieser Quelle" in c.get(f"/settings/datasources/{sid}").text
     r = c.post(f"/settings/datasources/{sid}/upload", data={"csrf_token": c.token},
                files={"file": ("pionex.xlsx", make_xlsx(kraken_rows(), date_cols=(2,)), "application/octet-stream")},
                follow_redirects=False)

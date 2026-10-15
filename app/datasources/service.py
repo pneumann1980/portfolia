@@ -66,6 +66,7 @@ from app.datasources.providers import (
     PROVIDERS,
     WALLET,
     contains_secret,
+    guess_provider,
     normalize_address,
 )
 from app.datasources.vault import Vault, VaultError
@@ -717,6 +718,73 @@ class DataSourceService:
     def accounts(self) -> list[str]:
         pf = self.ctx.recorded_portfolio()
         return pf.all_accounts() if pf is not None else []
+
+    # -- Konten ohne Datenquelle, Datei-Import je Konto ---------------------------------------------------
+    def account_bookings(self) -> dict[str, dict[str, Any]]:
+        """Je Konto: Anzahl Buchungen, erster/letzter Tag, Herkunft (kuratierter Import, Datei, Abruf, manuell)."""
+        pf = self.ctx.recorded_portfolio()
+        out: dict[str, dict[str, Any]] = {}
+        for t in (pf.txs if pf is not None else []):
+            src = t.source or ""
+            origin = ("Datei-Import" if src.startswith(("csv:", "doc:")) else "Abruf" if src.startswith("sync:")
+                      else "manuell erfasst" if t.origin == "journal" else "kuratierter Import")
+            for acc in {a for a in (t.from_account, t.to_account) if a}:
+                e = out.setdefault(acc, {"n": 0, "first": t.date, "last": t.date, "origins": Counter()})
+                e["n"] += 1
+                e["first"], e["last"] = min(e["first"], t.date), max(e["last"], t.date)
+                e["origins"][origin] += 1
+        return out
+
+    def unlinked_accounts(self) -> list[dict[str, Any]]:
+        """Konten mit Buchungen, aber ohne Datenquelle – erscheinen in der Übersicht als „manuell / Datei-Import“ und
+        lassen sich je Konto per Datei aktualisieren (vollständige Historie oder nur neue Vorgänge)."""
+        linked = {ds.account.casefold() for ds in self.list()}
+        rows = []
+        for acc, e in sorted(self.account_bookings().items(), key=lambda kv: kv[0].casefold()):
+            if acc.casefold() in linked:
+                continue
+            prov = guess_provider(acc)
+            rows.append({"account": acc, "n": e["n"], "first": e["first"], "last": e["last"],
+                         "origins": dict(e["origins"].most_common()), "provider": prov,
+                         "provider_label": PROVIDERS[prov].label})
+        return rows
+
+    def last_import(self, sid: int) -> Any:
+        """Letzter Datei-Import der Quelle (nicht Abruf): Zeitpunkt und Dateiname."""
+        return self.db.q1("SELECT id, filename, created_at FROM csv_batch WHERE datasource_id=? AND kind <> 'sync' AND "
+                          "status <> 'reverted' ORDER BY id DESC LIMIT 1", (sid,))
+
+    def last_booking(self, account: str) -> date | None:
+        e = self.account_bookings().get(account)
+        return e["last"] if e else None
+
+    def import_options(self, mode: str, account: str) -> tuple[dict[str, str], str]:
+        """Einstellungen eines Datei-Imports je Konto: ``all`` – gesamte Historie (kein Stichtag: jede Zeile wird mit
+        den Buchungen abgeglichen, bekannte erkannt, fehlende zur Prüfung vorgelegt); ``new`` – nur neue Vorgänge
+        (Stichtag = Tag vor der letzten Buchung des Kontos; der Überlappungstag wird abgeglichen, nichts doppelt);
+        sonst Standard (Stichtag des kuratierten Imports). Gebucht wird nie automatisch."""
+        if mode == "all":
+            return {"cutoff": ""}, "gesamte Historie"
+        if mode == "new":
+            last = self.last_booking(account)
+            if last is None:
+                return {"cutoff": ""}, "gesamte Historie (noch keine Buchungen auf dem Konto)"
+            cut = last - timedelta(days=1)
+            return {"cutoff": cut.isoformat()}, f"nur neue Vorgänge (ab {last:%d.%m.%Y}, letzte Buchung)"
+        return {}, "Standard"
+
+    def source_for_account(self, account: str, provider: str = "") -> tuple[int | None, list[str]]:
+        """Bestehendes Konto als Datenquelle führen (Börse, manuell bzw. Datei-Import). Buchungen bleiben unverändert;
+        künftige Dateien und Abrufe dieser Quelle landen auf genau diesem Konto."""
+        acc = re.sub(r"\s+", " ", account or "").strip()
+        existing = next((ds for ds in self.list() if ds.account.casefold() == acc.casefold()), None)
+        if existing is not None:
+            return int(existing.id), []
+        if acc not in self.account_bookings():
+            return None, [f"Konto „{acc}“ hat keine Buchungen – bitte als neue Börse anlegen."]
+        prov = provider if provider in PROVIDERS and PROVIDERS[provider].kind == EXCHANGE else guess_provider(acc)
+        return self.create({"kind": EXCHANGE, "provider": prov, "name": acc[:60], "account": acc,
+                            "sync_interval_min": "0", "note": "aus bestehendem Konto übernommen"})
 
     # -- Anlegen / Bearbeiten -----------------------------------------------------------------------------
     def validate(self, data: Mapping[str, Any], current: DataSource | None = None) -> tuple[dict[str, Any], list[str]]:

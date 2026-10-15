@@ -34,6 +34,7 @@
   <p class="hint">Beide werden verschlüsselt gespeichert. An api.binance.com gehen nur der API-Key (Header) und die damit
     berechnete Signatur – der Secret Key selbst verlässt Portfolia nie. Als Umgebungsvariable: Wert <span class="mono">API-Key:Secret-Key</span>.</p>
 </details>{% endmacro %}
+{% from "partials/ds_import.html" import import_form, mode_fields with context %}
 {% block content %}
 <nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a class="active" href="/settings/datasources">Datenquellen</a></nav>
 {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
@@ -153,11 +154,10 @@
   <div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div><b>Zur Prüfung offen: {{ n }} {{ 'Vorgang' if n == 1 else 'Vorgänge' }}</b>
     ({% for st, k in open_counts.items() %}{{ k }}× {{ st }}{% if not loop.last %} · {% endif %}{% endfor %})
     <div class="row" style="margin-top:6px"><a class="btn sm primary" href="/journal/pruefung?source={{ ds.id }}">Jetzt prüfen</a>{% for b in pending %}<a class="btn sm ghost" href="/journal/csv/{{ b.id }}">Prüf-Stapel {{ b.created_at|datetime_de }}</a>{% endfor %}</div></div></div>{% endif %}
-  <details class="box" style="margin-top:10px" id="datei"><summary>Exportdatei dieser Quelle hochladen (CSV, XLSX, ZIP)</summary>
-    <p class="hint">Für jede Börse und Wallet – auch ohne Schnittstelle. Die Datei wird dieser Datenquelle (Konto {{ ds.account }}) zugeordnet; jede Tabelle wird ein Prüf-Stapel mit Herkunft (Archiv, Eintrag, Blatt, Prüfsumme). Bereits vorhandene Vorgänge werden erkannt, nichts wird ohne Prüfung gebucht; Excel-Makros werden nie ausgeführt.</p>
-    <form method="post" action="/settings/datasources/{{ ds.id }}/upload" enctype="multipart/form-data" class="row" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <input type="file" name="file" accept=".csv,.txt,.tsv,.xlsx,.zip,text/csv" required aria-label="Exportdatei">
-      <button class="btn sm" type="submit">Hochladen und prüfen</button></form>
+  <details class="box" style="margin-top:10px" id="datei" {% if not ds.supported or last_import is none %}open{% endif %}><summary>Datei-Import: Exportdatei dieser Quelle (CSV, XLSX, ZIP)</summary>
+    <p class="hint">Für jede Börse und Wallet – auch ohne Schnittstelle. Die Datei wird dieser Datenquelle (Konto <b>{{ ds.account }}</b>) zugeordnet; jede Tabelle wird ein Prüf-Stapel mit Herkunft (Archiv, Eintrag, Blatt, Prüfsumme). Excel-Makros werden nie ausgeführt.
+      {% if last_import %}Letzter Datei-Import: {{ last_import.created_at|datetime_de }} · {{ last_import.filename }}.{% endif %}</p>
+    {{ import_form('/settings/datasources/' ~ ds.id ~ '/upload', last_booking) }}
   </details>
   {% if ds.is_wallet and ds.check %}{% set chk = ds.check %}
   <div style="margin-top:10px"><div class="hint">Letzte Verbindungsprüfung{% if chk.at %} · {{ chk.at|datetime_de }}{% endif %}</div>
@@ -217,7 +217,7 @@
     <div class="row" style="margin-top:8px">{% for p in providers %}{% if p.id not in supported_ids %}<a class="btn sm ghost" href="/settings/datasources/new?kind=wallet&amp;provider={{ p.id }}">{{ p.label }}</a>{% endif %}{% endfor %}</div>
   </details>
   {% else %}
-  <form method="post" action="{{ '/settings/datasources/' ~ ds.id if ds else '/settings/datasources' }}" class="stack" style="gap:12px" autocomplete="off">
+  <form method="post" action="{{ '/settings/datasources/' ~ ds.id if ds else '/settings/datasources' }}" class="stack" style="gap:12px" autocomplete="off"{% if not ds and kind == 'exchange' %} enctype="multipart/form-data"{% endif %}>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% if not ds %}<input type="hidden" name="kind" value="{{ kind }}">{% endif %}
     <div class="grid-2">
@@ -295,6 +295,13 @@
           <input type="text" name="credential_ref" maxlength="64" value="{{ data.get('credential_ref', '') }}" placeholder="PORTFOLIA_DS_BITPANDA" autocomplete="off" autocapitalize="characters" spellcheck="false" class="mono">
           <span class="hint">Nur der Name (Präfix PORTFOLIA_DS_), den Wert im Container setzen – ein in der App gespeicherter Schlüssel hat Vorrang.</span></label>
       </details>
+      {% endif %}
+      {% if kind == 'exchange' and not ds %}
+      <div class="box" style="grid-column:1/-1"><b>Exportdatei (optional): CSV, XLSX oder ZIP</b>
+        <p class="hint">Für Börsen ohne automatische Anbindung – oder zusätzlich zur Anbindung. Die Vorgänge werden direkt
+          dieser Börse (Konto in Portfolia) zugeordnet und zur Prüfung vorgelegt; Format wird erkannt.</p>
+        <input type="file" name="file" accept=".csv,.txt,.tsv,.xlsx,.zip,text/csv" aria-label="Exportdatei (optional)">
+        {{ mode_fields(None, 'all') }}</div>
       {% endif %}
       <label class="field" style="grid-column:1/-1">Notiz (optional)
         <input type="text" name="note" maxlength="300" value="{{ data.get('note', '') }}"></label>

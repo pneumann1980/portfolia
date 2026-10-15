@@ -104,6 +104,8 @@ def _form_page(request: Request, data: dict[str, Any], errors: list[str], sid: i
                   outdated=svc.outdated(int(ds.id)) if ds is not None else 0, quality=_quality(ctx, ds),
                   acct_sug=svc.account_suggestion(ds) if ds is not None else None,
                   acct_sw=svc.account_switch(int(ds.id)) if ds is not None else None, chain_ticker=CHAIN_TICKER,
+                  last_booking=svc.last_booking(ds.account) if ds is not None else None,
+                  last_import=svc.last_import(int(ds.id)) if ds is not None else None,
                   check_labels=CHECK_LABELS)
 
 
@@ -115,6 +117,37 @@ def _quality(ctx: Any, ds: Any) -> Any:
     except Exception:  # Bericht ist Zusatzinformation – die Seite muss immer laden
         log.exception("Vollständigkeitsbericht für Datenquelle %s fehlgeschlagen", getattr(ds, "id", "?"))
         return None
+
+
+async def _import_file(request: Request, ctx: Any, sid: int, f: Any) -> Response:
+    """Exportdatei (CSV, XLSX, ZIP) in eine Datenquelle einlesen – ``mode``: ``all`` gesamte Historie, ``new`` nur
+    neue Vorgänge seit der letzten Buchung des Kontos (Abgleich wie immer; gebucht wird erst nach der Prüfung)."""
+    from starlette.datastructures import UploadFile
+
+    from app.csvimport.service import MAX_UPLOAD, csv_service
+    from app.datasources.providers import PROVIDERS
+
+    svc = datasource_service(ctx)
+    ds = svc.get(sid)
+    if ds is None:
+        raise HTTPException(404)
+    file = f.get("file")
+    if not isinstance(file, UploadFile) or not file.filename:
+        return _back(request, _detail_url(sid, error="Bitte eine Datei auswählen (CSV, XLSX oder ZIP).") + "#datei")
+    data = await file.read(MAX_UPLOAD + 1)
+    await file.close()
+    prov = PROVIDERS.get(ds.provider)
+    profile = str(f.get("profile") or "") or (prov.csv_profile if prov and prov.csv_profile else "auto")
+    opts, mode_label = svc.import_options(str(f.get("mode") or ""), ds.account)
+    bids, errors, notes = await run_in_threadpool(csv_service(ctx).upload_file, data, file.filename, profile,
+                                                  ds.account, opts, None, datasource_id=sid)
+    if len(bids) == 1 and not errors:
+        return _back(request, f"/journal/csv/{bids[0]}")
+    if not bids:
+        return _back(request, _detail_url(sid, error=" ".join([*errors, *notes])[:600]) + "#datei")
+    text = f"{len(bids)} Prüf-Stapel angelegt ({mode_label})." + (
+        " " + " ".join([*errors, *notes])[:400] if errors or notes else "")
+    return _back(request, f"/journal/pruefung?source={sid}&" + urlencode({"msg": "uploaded", "info": text}))
 
 
 def make_router() -> APIRouter:
@@ -144,9 +177,15 @@ def make_router() -> APIRouter:
         states = {ds.id: OV.sync_state(ds) for ds in all_wallets}
         notes = {ds.id: OV.data_notes(ds, values.get(int(ds.id)), opens.get(ds.id) or {}, holdings.get(ds.id),
                                       overlap.get(int(ds.id))) for ds in all_wallets}
+        bookings = svc.account_bookings()
+        exchanges = [ds for ds in items if not ds.is_wallet]
         return render(request, "datasources.html", active="settings", items=items, pending=pending, opens=opens,
+                      unlinked=svc.unlinked_accounts(),
+                      last_import={ds.id: svc.last_import(int(ds.id)) for ds in exchanges},
+                      last_book={ds.id: (bookings.get(ds.account) or {}).get("last") for ds in exchanges},
+                      bookings=bookings,
                       msg=msg, error=error, status_label=STATUS_LABEL, keys=svc.key_stats(),
-                      exchanges=[ds for ds in items if not ds.is_wallet], groups=groups, holdings=holdings,
+                      exchanges=exchanges, groups=groups, holdings=holdings,
                       provider_keys=svc.provider_keys(), values=values, overlap=overlap, sums=sums, total=total,
                       states=states, state_label=OV.STATE_LABEL, state_badge=OV.STATE_BADGE, notes=notes, q=q,
                       sort=sort, desc=bool(desc), sorts=OV.SORTS, n_wallets=len(all_wallets),
@@ -224,7 +263,27 @@ def make_router() -> APIRouter:
             return _form_page(request, _safe_echo(data), errors, status_code=400)
         if errors:
             return _back(request, _detail_url(int(sid), error=" ".join(errors)))  # type: ignore[arg-type]
+        file = f.get("file")
+        if getattr(file, "filename", ""):  # Börse mit Exportdatei angelegt: Buchungen gleich dieser Börse zuordnen
+            return await _import_file(request, get_ctx(request), int(sid), f)  # type: ignore[arg-type]
         return _back(request, _detail_url(int(sid), msg=f"„{data['name'].strip()}“ angelegt."))  # type: ignore[arg-type]
+
+    @router.post("/settings/datasources/account-source")
+    async def account_source(request: Request) -> Response:
+        """Bestehendes Konto (Buchungen ohne Datenquelle) als Börse „manuell / Datei-Import“ führen – optional gleich
+        mit Exportdatei (gesamte Historie oder nur neue Vorgänge)."""
+        ctx = get_ctx(request)
+        svc = datasource_service(ctx)
+        f = await request.form(max_files=1, max_fields=10)
+        account = str(f.get("account") or "")
+        sid, errors = await run_in_threadpool(svc.source_for_account, account, str(f.get("provider") or ""))
+        if sid is None:
+            return _back(request, _list_url(error=" ".join(errors) or "Konto nicht gefunden.") + "#konten")
+        if getattr(f.get("file"), "filename", ""):
+            return await _import_file(request, ctx, sid, f)
+        return _back(request, _detail_url(sid, msg=f"Konto „{account.strip()}“ wird jetzt als Datenquelle geführt – "
+                                                   "Buchungen bleiben unverändert; neue Exportdateien unter "
+                                                   "„Datei-Import“.") + "#datei")
 
     @router.get("/settings/datasources/{sid}", response_class=HTMLResponse)
     def edit_form(request: Request, sid: int, msg: str = "", error: str = "") -> HTMLResponse:
@@ -381,34 +440,11 @@ def make_router() -> APIRouter:
     async def upload_file(request: Request, sid: int) -> Response:
         """Exportdatei einer Datenquelle (beliebige Börse bzw. Wallet als Dateiquelle): CSV, XLSX oder ZIP. Die
         Stapel tragen die Datenquelle (Konto, Herkunft) und erscheinen in deren Prüf- und Abdeckungsübersicht."""
-        from starlette.datastructures import UploadFile
-
-        from app.csvimport.service import MAX_UPLOAD, csv_service
-        from app.datasources.providers import PROVIDERS
-
         ctx = get_ctx(request)
-        svc = datasource_service(ctx)
-        ds = svc.get(sid)
-        if ds is None:
+        if datasource_service(ctx).get(sid) is None:
             raise HTTPException(404)
         f = await request.form(max_files=1, max_fields=10)
-        file = f.get("file")
-        if not isinstance(file, UploadFile) or not file.filename:
-            return _back(request, _detail_url(sid, error="Bitte eine Datei auswählen (CSV, XLSX oder ZIP).") +
-                         "#datei")
-        data = await file.read(MAX_UPLOAD + 1)
-        await file.close()
-        prov = PROVIDERS.get(ds.provider)
-        profile = str(f.get("profile") or "") or (prov.csv_profile if prov and prov.csv_profile else "auto")
-        bids, errors, notes = await run_in_threadpool(csv_service(ctx).upload_file, data, file.filename, profile,
-                                                      ds.account, {}, None, datasource_id=sid)
-        if len(bids) == 1 and not errors:
-            return _back(request, f"/journal/csv/{bids[0]}")
-        if not bids:
-            return _back(request, _detail_url(sid, error=" ".join([*errors, *notes])[:600]) + "#datei")
-        text = f"{len(bids)} Prüf-Stapel angelegt." + (" " + " ".join([*errors, *notes])[:400] if errors or notes
-                                                         else "")
-        return _back(request, f"/journal/pruefung?source={sid}&" + urlencode({"msg": "uploaded", "info": text}))
+        return await _import_file(request, ctx, sid, f)
 
     @router.post("/settings/datasources/{sid}/cancel")
     async def cancel(request: Request, sid: int) -> Response:

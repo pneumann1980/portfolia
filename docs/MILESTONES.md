@@ -1426,6 +1426,24 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.27.1 – Datei-Import je Konto, veraltete Kurse ausblenden, Integritätsprüfung
+
+* **Börse mit Exportdatei anlegen:** Beim Anlegen einer Börse kann direkt eine CSV-, XLSX- oder ZIP-Datei mitgegeben
+  werden; die Vorgänge werden dieser Börse (Konto in Portfolia) zugeordnet und zur Prüfung vorgelegt.
+* **Konten ohne Datenquelle** erscheinen unter *Einstellungen → Datenquellen* (Abschnitt „Konten ohne Datenquelle“)
+  mit Herkunft der Buchungen (kuratierter Import, Datei-Import, manuell), Zeitraum und Kennzeichen
+  „manuell · Datei-Import“. Je Konto: **Neuer Import** oder **Als Datenquelle führen** (Buchungen bleiben unverändert).
+* **Umfang je Import:** *Nur neue Transaktionen* (Stichtag = Tag vor der letzten Buchung des Kontos; ältere Zeilen als
+  Historie, der Überlappungstag wird abgeglichen) oder *Gesamte Historie* (kein Stichtag; jede Zeile wird abgeglichen,
+  fehlende zur Prüfung vorgelegt). Nie automatische Buchung, keine Doppelbuchung.
+* **Börsen-Karten** zeigen Buchungen auf dem Konto, letzten Datei-Import und „Neuer Import“; Börsen ohne Anbindung
+  heißen „manuell · Datei-Import“.
+* **Kurse veraltet:** Unter *Datenqualität → Kurse* lässt sich der Hinweis je Asset ignorieren (und wieder anzeigen); er
+  verschwindet aus der Übersicht. Kurs und Bewertung bleiben unverändert.
+* **Integritätsprüfung:** Nach „Prüfung starten“ blieb „Prüfung gestartet“ stehen, weil der verzögert startende Job noch
+  nicht lief und die Seite daher nicht nachfragte. Jetzt: „Prüfung läuft“ mit Fortschritt, danach „Prüfung
+  abgeschlossen“; die Fortschrittsanzeige der Seite erhält wieder ihre Daten.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
