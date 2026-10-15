@@ -1426,6 +1426,36 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.28.0 – Duplikate zusammenführen, weniger manuelles Abarbeiten (Aufgaben/Hinweise, Regeln, Autopilot, Entscheidungsliste)
+
+Anlass: dieselbe Anlage unter zwei Kennungen, doppelt angelegte Börsen/Wallets und zu viele einzeln zu prüfende Befunde
+(Messung an einer lesend untersuchten Kopie eines realen Exports: 65 Befunde, davon 31 Hinweise; von 34 Abgleichs-Fällen
+sofort ausführbar 0, mit Einbezug prüfbedürftiger 21, 12 widersprüchlich, 1 mit negativem Bestand).
+
+* **Assets zusammenführen** (`/assets/merge`, Migration 23): Zwillingskennungen (z. B. `PEAQ` und `PEAQ#2918…`) werden als
+  **umkehrbare Zuordnung** dem Haupt-Asset zugeschlagen – ohne Buchung, ohne Änderung der Rohdaten. Vorschläge nur aus
+  Kursquelle/ISIN/WKN/Basiskennung; Vorschau rechnet FIFO/Steuer vorher/nachher, Bestätigung ist an eine Prüfsumme gebunden,
+  idempotent, im Export enthalten. Paare, die bereits per Ticker-/Token-Änderung verknüpft sind, werden nicht vorgeschlagen.
+* **Börsen/Wallets:** Doppelte Börse wird beim Anlegen erkannt und muss bewusst bestätigt werden; **doppelte
+  Datenquellen** lassen sich zusammenführen (Vorschau, Prüfsumme; Stapel, Läufe, Verknüpfungen wandern, nicht rückgängig).
+* **Aufgaben und Hinweise getrennt:** die Diagnose zeigt standardmäßig nur **Aufgaben**; Hinweise (Status „hinweis“, kein
+  Fehler festgestellt) lassen sich mit Vorschau und Prüfsumme **gesammelt als geprüft** markieren und gemeinsam
+  rückgängig machen. Keine Datenänderung; bei geänderter Evidenz erscheint der Befund wieder („überholt“).
+* **Entscheidungsregeln** (`/quality/diagnose/regeln`, Migration 24): „Befunde der Art X (Konto/Asset) brauchen keine
+  Handlung“. Bewusst eng: nur Hinweise (optional bis Verdacht), nie wahrscheinlich/belegt; geänderte („überholte“)
+  Befunde werden nicht erneut ausgeblendet; jede Anwendung ist protokolliert und gemeinsam rückgängig.
+* **Importbericht und Autopilot** (`/quality/autopilot`): nach jedem Import/jeder CSV-Übernahme entsteht ein Bericht
+  (Aufgaben, Hinweise, neu/erledigt). Der **Autopilot ist standardmäßig aus**; eingeschaltet wendet er Regeln an und –
+  nur mit eigener, bestätigter Einstellung – **beweisbare Korrekturen** (Stufe „eindeutig“, auf Wunsch „hoch plausibel“;
+  nur Ausblenden/Verknüpfen oder Transfer aus genau zwei vorhandenen Buchungen; gemeinsam kein negativer Bestand, keine
+  neuen Befunde). Jeder Lauf ist protokolliert und gemeinsam rückgängig zu machen.
+* **Entscheidungsliste** (`/quality/diagnose/liste`): die verbleibenden Aufgaben Fall für Fall mit Empfehlung,
+  Alternativen, Belegen, „kein Handlungsbedarf / abgelehnt / später“ und Rückweg aus der Vorschau in die Liste.
+* **Grenzen:** Der Autopilot behebt nur, was mit den vorhandenen Belegen (Hash, Menge, Zeit) eindeutig ist; im
+  gemessenen Realbestand wären das wenige Fälle – der Hauptgewinn liegt in Hinweisen/Regeln und der Reihenfolge der
+  Entscheidungsliste. Zusammengeführte Datenquellen sind nicht umkehrbar; Zwillingskennungen werden nicht automatisch
+  zusammengeführt (Menschen entscheiden, ob es dieselbe Anlage ist). Docker-Build nur in CI.
+
 ## 0.27.2 – Oberfläche: Abstand der Konto-Aktionen, Ignorieren als Umschalter
 
 * Konto-Karten unter *Datenquellen*: Aktionen mit festem Abstand; der geöffnete Import-Block nimmt die volle Breite.
