@@ -23,6 +23,19 @@
 {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
 {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 
+{% if dups %}
+<section class="card" id="doppelt">
+  <div class="card-head"><div><h2>Doppelte Datenquellen</h2>
+    <div class="hint">{{ dups|length }} Paar{{ '' if dups|length == 1 else 'e' }} erfassen dasselbe Konto</div></div></div>
+  <p class="hint">Zwei Quellen für dasselbe Konto verdoppeln Prüfströme und Karten (doppelt gebucht wird nichts – die Kennung
+    der Vorgänge fängt das ab). Zusammenführen ordnet Prüf-Stapel, Läufe und Zuordnungen einer Quelle zu; Buchungen bleiben unverändert.</p>
+  <ul class="plain">{% for d in dups %}
+    <li class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
+      <span><b>{{ d.a.name }}</b> + <b>{{ d.b.name }}</b> <span class="hint">· {{ d.why }}</span></span>
+      <a class="btn sm primary" href="/settings/datasources/merge?keep={{ d.a.id }}&amp;drop={{ d.b.id }}">Zusammenführen …</a></li>
+  {% endfor %}</ul>
+</section>
+{% endif %}
 <section class="card">
   <div class="card-head"><h2>Wallets und Börsen</h2>
     <div class="row">

@@ -30,7 +30,8 @@ from app.web.deps import get_ctx, render
 log = logging.getLogger(__name__)
 
 FORM_FIELDS = ("kind", "provider", "name", "account", "address", "credential_ref", "sync_interval_min", "auto_commit",
-               "note", "key_expires_on", "wallet_group", "script", "gap", "chain_provider", "tokens", "tokens_shown")
+               "note", "key_expires_on", "wallet_group", "script", "gap", "chain_provider", "tokens", "tokens_shown",
+               "allow_duplicate")
 WALLET_CHAINS = ("bitcoin", "ethereum", "bsc", "polygon", "avalanche", "solana", "xrp", "cardano", "polkadot",
                  "kaspa", "pulsechain", "peaq")  # mit Anbindung (Reihenfolge der Auswahl)
 CHECK_LABELS = {"transaction": "Vorgänge", "balances": "Bestände", "assets": "Asset-Stammdaten", "chain": "Chain",
@@ -179,8 +180,9 @@ def make_router() -> APIRouter:
                                       overlap.get(int(ds.id))) for ds in all_wallets}
         bookings = svc.account_bookings()
         exchanges = [ds for ds in items if not ds.is_wallet]
+        dups = svc.duplicates()
         return render(request, "datasources.html", active="settings", items=items, pending=pending, opens=opens,
-                      unlinked=svc.unlinked_accounts(),
+                      unlinked=svc.unlinked_accounts(), dups=dups,
                       last_import={ds.id: svc.last_import(int(ds.id)) for ds in exchanges},
                       last_book={ds.id: (bookings.get(ds.account) or {}).get("last") for ds in exchanges},
                       bookings=bookings,
@@ -243,6 +245,32 @@ def make_router() -> APIRouter:
         if errs:
             return _back(request, _list_url(sid, error=" ".join(errs)))
         return _back(request, _list_url(sid, msg="Gruppe geändert."))
+
+    @router.get("/settings/datasources/merge", response_class=HTMLResponse)
+    def merge_preview(request: Request, keep: int = 0, drop: int = 0, swap: str = "") -> Response:
+        """Vorschau: zwei Datenquellen desselben Kontos zusammenführen (nichts wird verändert)."""
+        svc = datasource_service(get_ctx(request))
+        if swap == "1":
+            keep, drop = drop, keep
+        p = svc.merge_preview(keep, drop)
+        if p["keep"] is None:
+            return _back(request, _list_url(error=" ".join(p["errors"])))
+        return render(request, "datasource_merge.html", active="settings", p=p, keep=keep, drop=drop)
+
+    @router.post("/settings/datasources/merge")
+    async def merge_apply(request: Request) -> Response:
+        svc = datasource_service(get_ctx(request))
+        f = await request.form()
+        try:
+            keep, drop = int(str(f.get("keep") or 0)), int(str(f.get("drop") or 0))
+        except ValueError:
+            raise HTTPException(400) from None
+        if str(f.get("confirm") or "") != "1":
+            return _back(request, _list_url(error="Bitte die Vorschau bestätigen."))
+        errors = await run_in_threadpool(svc.merge, keep, drop, str(f.get("fp") or ""))
+        if errors:
+            return _back(request, _list_url(error=" ".join(errors)))
+        return _back(request, _list_url(keep, msg="Datenquellen zusammengeführt – Buchungen blieben unverändert."))
 
     @router.get("/settings/datasources/new", response_class=HTMLResponse)
     def new_form(request: Request, kind: str = EXCHANGE, provider: str = "", group: str = "") -> HTMLResponse:

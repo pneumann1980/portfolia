@@ -42,6 +42,7 @@ Wallets
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import logging
 import re
@@ -719,6 +720,106 @@ class DataSourceService:
         pf = self.ctx.recorded_portfolio()
         return pf.all_accounts() if pf is not None else []
 
+    # -- Doppelte Datenquellen zusammenführen -------------------------------------------------------------
+    def duplicates(self) -> list[dict[str, Any]]:
+        """Datenquellen, die dasselbe Konto erfassen: Börse mit gleichem Anbieter und Konto; Wallet mit überlappender
+        Adresse bzw. Kontoschlüssel derselben Chain (ältere Bestände – neu angelegt lehnt die Prüfung das ab)."""
+        items = self.list()
+        out: list[dict[str, Any]] = []
+        seen: set[frozenset[int]] = set()
+        for i, a in enumerate(items):
+            for b in items[i + 1:]:
+                if a.provider != b.provider or a.kind != b.kind:
+                    continue
+                why = None
+                if not a.is_wallet and a.account.casefold() == b.account.casefold():
+                    why = f"gleiche Börse und gleiches Konto „{a.account}“"
+                elif a.is_wallet:
+                    why = conflict(identity(a.provider, a.watch, a.address, a.row["cursor_json"]),
+                                   identity(b.provider, b.watch, b.address, b.row["cursor_json"]))
+                key = frozenset((int(a.id), int(b.id)))
+                if why and key not in seen:
+                    seen.add(key)
+                    out.append({"a": a, "b": b, "why": why})
+        return out
+
+    def _merge_facts(self, ds: DataSource) -> dict[str, Any]:
+        sid = int(ds.id)
+        q = self.db.scalar
+        return {"ds": ds,
+                "batches": q("SELECT COUNT(*) FROM csv_batch WHERE datasource_id=?", (sid,), default=0),
+                "open_batches": q("SELECT COUNT(*) FROM csv_batch WHERE datasource_id=? AND status IN "
+                                  "('preview','partial')", (sid,), default=0),
+                "runs": q("SELECT COUNT(*) FROM data_source_run WHERE source_id=?", (sid,), default=0),
+                "bookings": q("SELECT COUNT(*) FROM journal_tx WHERE datasource_id=? AND status IN "
+                              "('active','merged')", (sid,), default=0),
+                "balances": q("SELECT COUNT(*) FROM ds_balance WHERE source_id=?", (sid,), default=0),
+                "has_key": bool(q("SELECT COUNT(*) FROM data_source_secret WHERE source_id=?", (sid,), default=0)
+                                or ds.credential_ref)}
+
+    def merge_preview(self, keep: int, drop: int) -> dict[str, Any]:
+        """Vorschau (rein lesend): was bleibt, was wird zugeordnet, was entfällt."""
+        a, b = self.get(keep), self.get(drop)
+        res: dict[str, Any] = {"errors": [], "warnings": [], "keep": None, "drop": None, "fp": ""}
+        if a is None or b is None or keep == drop:
+            res["errors"].append("Zwei verschiedene Datenquellen wählen.")
+            return res
+        if a.kind != b.kind or a.provider != b.provider:
+            res["errors"].append("Nur Datenquellen desselben Anbieters lassen sich zusammenführen.")
+        if a.account.casefold() != b.account.casefold():
+            res["errors"].append(f"Verschiedene Konten („{a.account}“ / „{b.account}“) – zuerst unter „Bearbeiten“ das "
+                                 "Konto einer Quelle angleichen, damit die Buchungen am selben Konto liegen.")
+        if a.is_wallet and not conflict(identity(a.provider, a.watch, a.address, a.row["cursor_json"]),
+                                        identity(b.provider, b.watch, b.address, b.row["cursor_json"])):
+            res["errors"].append("Die Wallets erfassen verschiedene Adressen – kein Duplikat.")
+        for d in (a, b):
+            if d.progress.get("running"):
+                res["errors"].append(f"„{d.name}“ läuft gerade (Abruf) – abwarten oder abbrechen.")
+        res["keep"], res["drop"] = self._merge_facts(a), self._merge_facts(b)
+        if res["drop"]["has_key"] and not res["keep"]["has_key"]:
+            res["warnings"].append(f"Der Zugang von „{b.name}“ wird übernommen, weil „{a.name}“ keinen hat.")
+        elif res["drop"]["has_key"]:
+            res["warnings"].append(f"Der Zugang (API-Key) von „{b.name}“ wird gelöscht – „{a.name}“ behält seinen.")
+        if res["drop"]["open_batches"]:
+            res["warnings"].append(f"{res['drop']['open_batches']} offene Prüf-Stapel von „{b.name}“ werden „{a.name}“ "
+                                   "zugeordnet; dieselben Vorgänge erscheinen dort ggf. als bereits vorhanden.")
+        res["fp"] = hashlib.sha256(json.dumps([keep, drop, {k: v for k, v in res["keep"].items() if k != "ds"},
+                                               {k: v for k, v in res["drop"].items() if k != "ds"}],
+                                              sort_keys=True, default=str).encode()).hexdigest()[:20]
+        return res
+
+    def merge(self, keep: int, drop: int, fp: str) -> list[str]:
+        """Zweite Datenquelle in die erste überführen: Prüf-Stapel, Läufe, Buchungszuordnung, Recherche und (falls die
+        erste keinen hat) Zugang wandern zur ersten; die zweite wird entfernt. Buchungen selbst bleiben unverändert."""
+        p = self.merge_preview(keep, drop)
+        if p["errors"]:
+            return p["errors"]
+        if p["fp"] != fp:
+            return ["Der Datenstand hat sich seit der Vorschau geändert – bitte erneut prüfen."]
+        a, b = p["keep"]["ds"], p["drop"]["ds"]
+        self.db.x("PRAGMA secure_delete=ON")
+        with self.db.transaction() as c:
+            for sql in ("UPDATE csv_batch SET datasource_id=? WHERE datasource_id=?",
+                        "UPDATE journal_tx SET datasource_id=? WHERE datasource_id=?",
+                        "UPDATE data_source_run SET source_id=? WHERE source_id=?",
+                        "UPDATE OR IGNORE diag_research_event SET source_id=? WHERE source_id=?",
+                        "UPDATE diag_research SET source_id=? WHERE source_id=?"):
+                c.execute(sql, (keep, drop))
+            c.execute("DELETE FROM diag_research_event WHERE source_id=?", (drop,))  # Doppelte aus dem Wegfall
+            c.execute("DELETE FROM ds_balance WHERE source_id=?", (drop,))  # Bestände holt der nächste Lauf neu
+            if not p["keep"]["has_key"]:
+                c.execute("UPDATE OR IGNORE data_source_secret SET source_id=? WHERE source_id=?", (keep, drop))
+                if not a.credential_ref and b.credential_ref:
+                    c.execute("UPDATE data_source SET credential_ref=? WHERE id=?", (b.credential_ref, keep))
+            c.execute("DELETE FROM data_source_secret WHERE source_id=?", (drop,))
+            if not a.row["key_expires_on"] and b.row["key_expires_on"]:
+                c.execute("UPDATE data_source SET key_expires_on=? WHERE id=?", (b.row["key_expires_on"], keep))
+            c.execute("DELETE FROM data_source WHERE id=?", (drop,))
+        self._purge_wal()
+        log.info("Datenquellen zusammengeführt: „%s“ in „%s“ (%s Stapel, %s Läufe, %s Buchungen)", b.name, a.name,
+                 p["drop"]["batches"], p["drop"]["runs"], p["drop"]["bookings"])
+        return []
+
     # -- Konten ohne Datenquelle, Datei-Import je Konto ---------------------------------------------------
     def account_bookings(self) -> dict[str, dict[str, Any]]:
         """Je Konto: Anzahl Buchungen, erster/letzter Tag, Herkunft (kuratierter Import, Datei, Abruf, manuell)."""
@@ -839,6 +940,16 @@ class DataSourceService:
                              (kind, pid, address, current.row["id"] if current else 0))
             if dup is not None:
                 errors.append(f"Diese Adresse ist bereits als „{dup['name']}“ angelegt.")
+        allow_twin = str(data.get("allow_duplicate") or "") in ("1", "on", "true")
+        if kind == EXCHANGE and current is None and not errors and not allow_twin:
+            twin = next((d for d in self.list() if d.provider == pid and d.account.casefold() == account.casefold()),
+                        None)
+            if twin is not None:  # dieselbe Börse mit demselben Konto: zweite Quelle würde Prüfströme verdoppeln
+                errors.append(f"Für das Konto „{account}“ gibt es bereits die Datenquelle „{twin.name}“ "
+                              f"({twin.provider_label}) – dort per „Neuer Import“ weitere Dateien einlesen. Ein "
+                              "zweites Konto derselben Börse braucht einen anderen Namen bei „Konto in "
+                              "Portfolia“. Nur für einen zweiten Zugang zum selben Konto: „Trotzdem als zweite "
+                              "Quelle anlegen“ bestätigen.")
         if kind == WALLET and watch is not None and not errors:
             errors += self._overlap_errors(pid, watch, address, current)
         vals = {"kind": kind, "provider": pid, "name": name, "account": account, "address": address,

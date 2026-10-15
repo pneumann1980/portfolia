@@ -1032,7 +1032,7 @@ def test_waiting_events_are_scoped_per_datasource(client, api):
     c = client
     a = create_bitpanda(c, name="Bitpanda A")
     bid_a = batch_of(sync(c, a))
-    b = create_bitpanda(c, name="Bitpanda B")  # dasselbe Konto ein zweites Mal verbunden
+    b = create_bitpanda(c, name="Bitpanda B", allow_duplicate="1")  # dasselbe Konto ein zweites Mal verbunden
     bid_b = batch_of(sync(c, b))  # offene Prüfung von A blockiert B nicht
     assert bid_b != bid_a and f"{op_key(1)}#0" in rows_by_key(c, bid_b)
     create_unknown_assets(c, bid_a)

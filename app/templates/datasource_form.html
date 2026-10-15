@@ -40,6 +40,17 @@
 {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
 {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 {% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+{% if errors and not ds and kind == 'exchange' and 'bereits die Datenquelle' in errors|join(' ') %}
+<form method="post" action="/settings/datasources" class="box" autocomplete="off" style="margin-top:8px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="kind" value="exchange">
+  {% for k in ('provider', 'name', 'account', 'sync_interval_min', 'note', 'key_expires_on', 'credential_ref') %}<input type="hidden" name="{{ k }}" value="{{ data.get(k, '') }}">{% endfor %}
+  <input type="hidden" name="allow_duplicate" value="1">
+  <b>Zweiter Zugang zum selben Konto?</b>
+  <p class="hint">Beide Quellen würden dasselbe Konto erfassen. Doppelt gebucht wird nichts (die Kennung der Vorgänge fängt das ab), aber
+    Prüfströme und Karten verdoppeln sich – später lassen sie sich unter „Doppelte Datenquellen“ zusammenführen. API-Keys müssen nach dem Anlegen eingegeben werden.</p>
+  <button class="btn sm" type="submit">Trotzdem als zweite Quelle anlegen</button>
+</form>
+{% endif %}
 
 {% if ds and ds.supported and ds.needs_key %}
 <section class="card" id="zugang">
