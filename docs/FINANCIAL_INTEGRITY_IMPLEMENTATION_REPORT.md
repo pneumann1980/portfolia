@@ -116,15 +116,15 @@ Testläufen geprüft; Zahlen aus realen Daten nur aggregiert (keine Beträge, Ad
   | 500 TOKEN ohne Ledger | `test_m29_hardening::test_reference_without_any_booking_appears_unvalued_not_zero` |
   | Mehrteiliger Swap, gemeinsames Undo | `test_m29_hardening::test_multi_leg_event_is_booked_and_undone_as_one` |
 
-* **Bestanden:** vollständige Suite siehe 16.7 (letzter Lauf); keine Tests übersprungen oder ausgelassen, keine
-  Sicherheitsprüfung entfernt.
+* **Bestanden:** vollständige Suite 983/983 (lokal, 8:41 min) und CI; keine Tests übersprungen oder ausgelassen,
+  keine Sicherheitsprüfung entfernt.
 * **Ruff:** `ruff check app tests` ohne Befund.
 * **Massendaten (100 000 synthetische Quellzeilen, 20 Stapel, temporäre DB):** zentrale Prüfzählung 2,2–2,6 s,
   gefilterte Warteschlange 4,5–4,6 s, Abdeckungsmatrix 0,6 s; Einlesen und Auswerten einer 100 000-Zeilen-Datei 5,5 s.
 * **CI:** Lint, Tests, Image-Build und Smoke-Test laufen in GitHub Actions (`.github/workflows/ci.yml`); der Smoke-Test
   ruft zusätzlich Prüfwarteschlange, Ereignisgruppen, Abdeckung, Anschaffungsdaten und Cockpit ab.
 * **Docker:** lokal nicht ausführbar (kein Docker-Daemon in der Entwicklungsumgebung) – Build und Container-Smoke-Test
-  erfolgen in CI (amd64, Image-Größengrenze, native Bibliotheken, Belegimport).
+  in CI erfolgreich (Lauf 38687922607: Image-Größengrenze, native Bibliotheken, Belegimport, neue Seiten).
 * **Smoke-Test lokal:** App im Demo-Modus mit Beispielimport (temporäre Verzeichnisse): alle neuen Seiten HTTP 200,
   keine Fehler im Log.
 * **Export und Restore:** bestehende Roundtrip-/Fehlerinjektionstests (`test_restore_roundtrip`, `test_full_export`,
@@ -161,13 +161,17 @@ Testläufen geprüft; Zahlen aus realen Daten nur aggregiert (keine Beträge, Ad
 | 7 Derivate | Tests bestanden (nur geprüfte Formate) | `b6d0491` | `test_derivatives` (3) | Funding/Liquidation/PnL ohne Kapitalfluss, nicht § 23 |
 | 8 FIFO-Herkunft | Tests bestanden | `5f82d82`, `6e825bd` | `test_lot_provenance` (5) | Herkunftsklassen, rückwirkende Steuerjahre, Schätzungen nie belegt |
 | 9 Cockpit | Tests bestanden | `d40296d` + Phase-10-Korrektur | `test_cockpit` (4) | acht Dimensionen, Fallanalyse, KI aus |
-| 10 Gesamtregression/Release | siehe 16.7 | siehe 16.7 | `test_fi_regression` (6), `test_mass_review` (2), `test_fi_export_restore` (1) | Regressionen 13.2, 100 000 Zeilen, Export/Restore, reale Validierung |
+| 10 Gesamtregression/Release | Tests bestanden, CI grün | `333c3f2`, `febc1de` | `test_fi_regression` (6), `test_mass_review` (2), `test_fi_export_restore` (1) | Regressionen 13.2, 100 000 Zeilen, Export/Restore, reale Validierung |
 
 ## 16.7 Abschluss
 
 * **Neue Version:** 0.27.0.
-* **Letzter Commit, Push- und CI-Status:** werden nach dem Push in `docs/MILESTONES.md` (Abschnitt 0.27.0) und in der
-  Abschlussmeldung festgehalten; der Bericht selbst ist Teil des Release-Commits.
+* **Release-Commit:** `febc1de` (davor `333c3f2` Korrekturen aus der realen Validierung); dieser Nachtrag ist ein
+  reiner Doku-Commit.
+* **Push:** Branch `claude/portfolia-dashboard-s9p6zr`, alle Phasen-Commits `585f96c` … `febc1de` gepusht.
+* **CI:** GitHub-Actions-Lauf 38687922607 auf `febc1de` erfolgreich – Job „test“ (Ruff, Testsuite) und Job „image“
+  (Docker-Build amd64/arm64, Image-Größengrenze, native Bibliotheken, Container-Smoke-Test inkl. der neuen Seiten).
+* **Lokale Suite vor dem Push:** 983 Tests bestanden, 0 fehlgeschlagen, 0 übersprungen; Ruff ohne Befund.
 * **Verbleibende Einschränkungen:**
   * Native Futures-/Margin-Exporte von MEXC, Bybit und Pionex sind nicht verifiziert und werden nicht automatisch
     erkannt (Import über eigene Spaltenzuordnung; EUR-Wert Pflicht; nie automatisch übernommen).
