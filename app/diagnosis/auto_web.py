@@ -16,10 +16,12 @@ from fastapi.responses import HTMLResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.diagnosis import autopilot as AP
+from app.diagnosis import queue as Q
 from app.diagnosis import rules as R
 from app.diagnosis import triage as TR
 from app.diagnosis.engine import report_for
 from app.diagnosis.model import KINDS, STATUS_BADGE
+from app.diagnosis.recommend import recommend
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -121,6 +123,21 @@ def make_router() -> APIRouter:
     async def autopilot_undo(request: Request, token: str) -> Response:
         res = await run_in_threadpool(AP.undo, get_ctx(request), token)
         return _back(_url("/quality/autopilot", res.message, "; ".join(res.errors)))
+
+    @router.get("/quality/diagnose/liste", response_class=HTMLResponse)
+    def queue_page(request: Request, f: str = "", msg: str = "", err: str = "") -> HTMLResponse:
+        """Entscheidungsliste: ein Fall nach dem anderen (ändert nichts)."""
+        from app.diagnosis.web import _common
+
+        ctx = get_ctx(request)
+        report = report_for(ctx)
+        items = Q.queue(ctx, report)
+        i = Q.position(items, f)
+        cur = items[i] if items else None
+        return render(request, "diagnosis_queue.html", active="quality", items=items, i=i, cur=cur,
+                      rec=recommend(report, cur) if cur is not None else None,
+                      prev_id=items[i - 1].id if i > 0 else "", next_id=items[i + 1].id if i + 1 < len(items) else "",
+                      msg=msg[:300], err=err[:300], **_common())
 
     return router
 

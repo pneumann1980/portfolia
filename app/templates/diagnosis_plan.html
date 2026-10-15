@@ -25,7 +25,7 @@
 <section class="card">
   <h2>Auswahl</h2>
   <form method="get" action="/quality/diagnose/plan" class="stack" style="gap:10px">
-    <input type="hidden" name="f" value="{{ f.id }}"><input type="hidden" name="o" value="{{ plan.option.key }}"><input type="hidden" name="p__set" value="1">
+    <input type="hidden" name="f" value="{{ f.id }}"><input type="hidden" name="o" value="{{ plan.option.key }}"><input type="hidden" name="p__set" value="1">{% if request.query_params.get('back') == 'liste' %}<input type="hidden" name="back" value="liste">{% endif %}
     {% for p in plan.option.params %}{{ dm.param_field(p, plan.params.get(p.name, [])) }}{% endfor %}
     <div><button class="btn sm" type="submit">Vorschau aktualisieren</button></div>
   </form>
@@ -62,10 +62,10 @@
   <h2>Übernehmen</h2>
   <p class="hint">{{ plan.ops|length }} Änderung{{ 'en' if plan.ops|length != 1 }} in einer Transaktion. Haben sich die Daten seit dieser Vorschau geändert, wird nichts übernommen. Rückgängig jederzeit unter Diagnose → Entscheidungen und Korrekturen.</p>
   <form method="post" action="/quality/diagnose/apply" class="row">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ f.id }}"><input type="hidden" name="o" value="{{ plan.option.key }}"><input type="hidden" name="token" value="{{ plan.token }}"><input type="hidden" name="p__set" value="1">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ f.id }}"><input type="hidden" name="o" value="{{ plan.option.key }}"><input type="hidden" name="token" value="{{ plan.token }}"><input type="hidden" name="p__set" value="1">{% if request.query_params.get('back') == 'liste' %}<input type="hidden" name="back" value="liste">{% endif %}
     {% for name, values in plan.params.items() %}{% for v in values %}<input type="hidden" name="p_{{ name }}" value="{{ v }}">{% endfor %}{% endfor %}
     <button class="btn primary" type="submit" data-once>Diese Änderung übernehmen</button>
-    <a class="btn ghost" href="/quality/diagnose?f={{ f.id }}#{{ f.id }}">Abbrechen</a>
+    <a class="btn ghost" href="{% if request.query_params.get('back') == 'liste' %}/quality/diagnose/liste?f={{ f.id }}{% else %}/quality/diagnose?f={{ f.id }}#{{ f.id }}{% endif %}">Abbrechen</a>
   </form>
 </section>
 {% endif %}

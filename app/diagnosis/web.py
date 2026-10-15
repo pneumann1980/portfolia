@@ -269,6 +269,8 @@ def make_router() -> APIRouter:
         q = {"msg": res.message} if res.ok else {"err": "; ".join(res.errors)}
         if str(form.get("back") or "") == "case":
             return _back(f"/quality/diagnose/case/{fid}?{urlencode(q)}")
+        if str(form.get("back") or "") == "liste":
+            return _back(f"/quality/diagnose/liste?{urlencode(q)}")
         return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="findings"))
 
     @router.get("/quality/diagnose/plan", response_class=HTMLResponse)
@@ -288,6 +290,8 @@ def make_router() -> APIRouter:
         res = await run_in_threadpool(A.apply, ctx, fid, opt, params, token)
         if not res.ok:
             return await run_in_threadpool(_plan_page, request, fid, opt, params, True, res.errors, 409)
+        if str(form.get("back") or "") == "liste":
+            return _back(f"/quality/diagnose/liste?{urlencode({'msg': res.message})}")
         return _back(_page_url(msg=res.message, anchor="decisions"))
 
     @router.post("/quality/diagnose/live-balances")
@@ -323,6 +327,9 @@ def make_router() -> APIRouter:
         if str(form.get("back") or "") == "/quality/integrity":
             q = urlencode({"msg": res.message} if res.ok else {"err": "; ".join(res.errors)})
             return _back(f"/quality/integrity?{q}#items")
+        if str(form.get("back") or "") == "liste":
+            return _back("/quality/diagnose/liste?" + urlencode({"msg": res.message} if res.ok
+                                                                else {"err": "; ".join(res.errors)}))
         return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="checked" if res.ok else ""))
 
     @router.get("/quality/diagnose/hints", response_class=HTMLResponse)

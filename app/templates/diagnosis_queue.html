@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% import "partials/diag_macros.html" as dm with context %}
+{% block title %}Entscheidungsliste{% endblock %}
+{% block heading %}Datenqualität · Entscheidungsliste{% endblock %}
+{% block content %}
+<div class="stack diag">
+  <p class="hint"><a href="/quality/diagnose">← Diagnose</a> · <a href="/quality/autopilot">Autopilot</a> · <a href="/quality/diagnose/regeln">Regeln</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  {% if not cur %}
+  <section class="card"><h2>Nichts mehr zu entscheiden</h2>
+    <p class="hint">Alle Aufgaben sind entschieden, später vorgemerkt oder bewusst ungeklärt belassen. Neue Fälle erscheinen nach dem nächsten Import hier.</p>
+    <div class="row"><a class="btn sm" href="/quality/diagnose">Zur Diagnose</a><a class="btn sm" href="/quality/autopilot">Importbericht</a></div>
+  </section>
+  {% else %}
+  <section class="card">
+    <div class="card-head"><h2>Fall {{ i + 1 }} von {{ items|length }}</h2>
+      <div class="row">{% if prev_id %}<a class="btn sm ghost" href="/quality/diagnose/liste?f={{ prev_id }}">← zurück</a>{% endif %}{% if next_id %}<a class="btn sm ghost" href="/quality/diagnose/liste?f={{ next_id }}" title="Ohne Entscheidung weiter">überspringen →</a>{% endif %}</div></div>
+    <progress max="{{ items|length }}" value="{{ i + 1 }}" aria-label="Fortschritt" style="width:100%"></progress>
+    <div class="row" style="margin-top:8px"><span class="badge {{ status_badge[cur.status] }}">{{ cur.status }}</span><span class="badge">{{ cur.kind_label }}</span>{% if cur.priority == 1 %}<span class="badge warn">zuerst ansehen</span>{% endif %}{% if cur.state and cur.state != 'offen' %}<span class="badge {{ case_states[cur.state][1] }}">{{ case_states[cur.state][0] }}</span>{% endif %}</div>
+    <div class="f-title" style="margin:6px 0">{{ cur.title }}</div>
+    <div class="f-meta">{% if cur.accounts %}{{ cur.accounts[:4]|join(', ') }}{% endif %}{% if cur.assets %}{% if cur.accounts %} · {% endif %}{{ cur.assets[:6]|join(', ') }}{% endif %} · <a href="/quality/diagnose/case/{{ cur.id }}">Vorgang im Detail</a></div>
+  </section>
+
+  <section class="card"><h2>{{ 'Empfehlung (nach Prüfung)' if rec.conditional else 'Empfehlung' }}</h2>
+    <p>{{ rec.text }}</p>
+    {% if rec.checks %}<details class="box"><summary>Vorher prüfen ({{ rec.checks|length }})</summary><ul class="plain-list" style="margin-top:6px">{% for text, links in rec.checks %}<li>{{ text }}{{ dm.ext_links(links) }}</li>{% endfor %}</ul></details>{% endif %}
+    {% if rec.fixes %}<div class="reco-opts">
+      {% for o in rec.fixes %}<div class="reco-opt{% if o.recommended %} is-rec{% endif %}">
+        <div class="reco-opt-text"><b>{{ o.label }}</b>{% if o.recommended %} <span class="badge good">empfohlen</span>{% else %} <span class="badge">Alternative</span>{% endif %}
+          <div class="hint">{{ o.summary }}</div>{% if o.caution %}<div class="hint caution">⚠ {{ o.caution }}</div>{% endif %}</div>
+        <a class="btn sm{% if o.recommended %} primary{% endif %}" href="/quality/diagnose/plan?f={{ cur.id }}&amp;o={{ o.key }}&amp;back=liste">Vorschau{% if o.params %} &amp; Auswahl{% endif %}</a>
+      </div>{% endfor %}</div>
+    {% else %}<p class="hint">Für diesen Fall gibt es keine Korrektur in der App – Entscheidungen unten.</p>{% endif %}
+  </section>
+
+  <section class="card"><h2>Entscheidung ohne Datenänderung</h2>
+    <form method="post" action="/quality/diagnose/mark" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ cur.id }}"><input type="hidden" name="back" value="liste">
+      <input type="text" name="note" maxlength="500" placeholder="Notiz (optional), z. B. „im Explorer geprüft“" aria-label="Notiz zur Entscheidung">
+      <div class="row">
+        <button class="btn sm primary wrap" type="submit" name="action" value="dismiss">Kein Handlungsbedarf</button>
+        {% if cur.kind in ('duplicate', 'transfer') %}<button class="btn sm ghost wrap" type="submit" name="action" value="reject">Kein Duplikat / Vorschlag falsch</button>{% endif %}
+        <button class="btn sm ghost wrap" type="submit" name="action" value="defer">Später prüfen</button>
+      </div>
+    </form>
+    <p class="hint">Diese Entscheidungen ändern keine Buchung. Sie gelten, solange sich die Daten des Falls nicht ändern; danach erscheint er wieder („überholt“). Rückgängig unter Diagnose → „Als geprüft markiert“.</p>
+    {% if cur.status in ('hinweis', 'verdacht') %}
+    <form method="post" action="/quality/diagnose/regeln/neu" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="kind" value="{{ cur.kind }}"><input type="hidden" name="max_status" value="{{ cur.status }}">
+      {% if cur.accounts|length == 1 %}<input type="hidden" name="account" value="{{ cur.accounts[0] }}">{% endif %}
+      <button class="btn sm ghost wrap" type="submit">Künftig ebenso behandeln (Regel: {{ cur.kind_label }}{% if cur.accounts|length == 1 %} · {{ cur.accounts[0] }}{% endif %}, bis „{{ cur.status }}“)</button>
+    </form>{% endif %}
+  </section>
+
+  <section class="card"><h2>Belege</h2>
+    {% if cur.known %}<div><h4>Was Portfolia aus den Daten weiß</h4><ul>{% for x in cur.known %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if cur.suspected %}<div><h4>Was Portfolia nur vermutet</h4><ul>{% for x in cur.suspected %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if cur.evidence %}<div><h4>Belege</h4><ul>{% for x in cur.evidence %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if cur.uncertainty %}<div><h4>Unsicherheiten</h4><ul>{% for x in cur.uncertainty %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if cur.pairs %}<div><h4>Gegenüberstellung</h4><div class="stack" style="gap:10px">{% for a, b, why in cur.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">Begründung: {{ why }}</div></div>{% endfor %}</div></div>
+    {% elif cur.txs %}<div><h4>Betroffene Buchungen ({{ cur.txs|length }})</h4><div class="tx-grid">{% for t in cur.txs %}{{ dm.txref(t) }}{% endfor %}</div></div>{% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}
