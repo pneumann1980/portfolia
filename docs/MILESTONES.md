@@ -1426,6 +1426,17 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.28.2 – Härtung der Zusammenführungen (Codeprüfung)
+
+* **Konten – Zielvorrang unabhängig von der Reihenfolge:** Bei der Zusammenführung der Konto-Stammdaten (Broker,
+  Depotgruppe, Zusatzfelder) konnte der Alias gewinnen, wenn er vor dem Ziel verarbeitet wurde. Jetzt hat das Ziel immer
+  Vorrang; der Alias füllt nur Lücken (mehrere Aliase in sortierter Reihenfolge, deterministisch). Fehlt das Ziel
+  in den Stammdaten, werden die Alias-Angaben unter dem Ziel-Namen geführt.
+* **Prüfsumme der Vorschau (Konten und Assets):** Sie deckt jetzt den gesamten entscheidungsrelevanten Stand ab –
+  zusätzlich zu Zahlen, Beständen und Jahreswerten auch Warnungen, Hinweise, Fehler, Auffälligkeiten des Ledgers und (bei
+  Konten) betroffene Datenquellen. Ändert sich eines davon zwischen Vorschau und Bestätigung, wird nichts übernommen.
+* Regressionstests für beide Fälle (schlugen vor der Korrektur fehl).
+
 ## 0.28.1 – Konten zusammenführen (Migration 25)
 
 Anlass: dasselbe Depot erscheint unter zwei Namen (z. B. „Wertpapiere Broker unbekannt“ aus dem kuratierten Import und

@@ -24,7 +24,7 @@ from typing import Any
 
 from app.assetchange.merge import YearRow, _issue_counts, _year_stats
 from app.ledger.engine import run_ledger
-from app.ledger.models import AccountInfo, Portfolio, Tx
+from app.ledger.models import Portfolio, Tx
 from app.util.timeutil import iso, utcnow
 
 log = logging.getLogger(__name__)
@@ -77,16 +77,23 @@ def map_portfolio(pf: Portfolio, m: dict[str, str]) -> Portfolio:
     m = {a: t for a, t in m.items() if a != t}
     if not m:
         return pf
-    accounts: dict[str, AccountInfo] = {}
-    for name, info in pf.accounts.items():
-        tgt = m.get(name, name)
-        if tgt in accounts:  # Ziel hat eigene Angaben (Vorrang); fehlende kommen vom Alias
-            have = accounts[tgt]
-            accounts[tgt] = replace(have, broker=have.broker or info.broker,
-                                    depot_group=have.depot_group or info.depot_group,
-                                    extra={**info.extra, **have.extra})
-        else:
-            accounts[tgt] = replace(info, account=tgt) if tgt != name else info
+    accounts = {name: info for name, info in pf.accounts.items() if name not in m}
+    aliases: dict[str, list[str]] = defaultdict(list)
+    for name in pf.accounts:
+        if name in m:
+            aliases[m[name]].append(name)
+    for tgt, names in aliases.items():  # unabhängig von der Reihenfolge: Ziel zuerst, Aliase (sortiert) füllen Lücken
+        base = accounts.get(tgt)
+        for name in sorted(names):
+            info = pf.accounts[name]
+            if base is None:
+                base = replace(info, account=tgt)
+            else:
+                base = replace(base, broker=base.broker or info.broker,
+                               depot_group=base.depot_group or info.depot_group,
+                               extra={**info.extra, **base.extra})
+        assert base is not None
+        accounts[tgt] = base
     # Soll-Bestände des kuratierten Imports: zwei Konten zu einem → Mengen je Asset addieren
     held: dict[tuple[Any, Any], dict[str, Any]] = {}
     for h in pf.holdings_check:
@@ -311,10 +318,14 @@ def preview(ctx: Any, alias: str, target: str) -> Preview:
 
 
 def fingerprint(p: Preview) -> str:
+    """Prüfsumme des gesamten entscheidungsrelevanten Stands der Vorschau: Buchungszahlen, Bestände, Jahreswerte,
+    Auffälligkeiten, Warnungen/Hinweise und betroffene Datenquellen – ändert sich eines davon, ist neu zu bestätigen."""
     data = [p.alias, p.target, p.n_alias_txs, p.n_target_txs, p.n_between, p.n_twins,
             [(b.asset, str(b.alias_qty), str(b.target_qty), str(b.after_qty)) for b in p.balances],
-            [(y.year, y.parts_before, y.parts_after, y.missing_before, y.missing_after, str(y.gain_before),
-              str(y.gain_after)) for y in p.years]]
+            [(y.year, y.parts_before, y.parts_after, y.missing_before, y.missing_after, y.short_before, y.short_after,
+              str(y.gain_before), str(y.gain_after)) for y in p.years],
+            sorted(p.issues_before.items()), sorted(p.issues_after.items()),
+            p.errors, p.warnings, p.info, p.sources]
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:20]
 
 

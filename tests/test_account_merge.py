@@ -186,3 +186,46 @@ def test_transfer_between_the_two_accounts_becomes_internal(cfg):
     led = ctx.ledger()
     assert led.balances[(T, "BTC")] == D("0.1") and (A, "BTC") not in led.balances
     assert not [d for d in led.disposals if d.asset == "BTC"]  # keine Scheinveräußerung
+
+
+def test_target_master_data_wins_regardless_of_order(cfg):
+    from dataclasses import replace
+
+    from app.ledger.models import AccountInfo
+
+    ctx = make_ctx(cfg, ROWS, ASSETS)
+    pf = ctx.portfolio()
+    alias = AccountInfo(account=A, broker="Alt-Broker", depot_group=None, extra={"k": "alias", "a": 1})
+    target = AccountInfo(account=T, broker="DKB AG", depot_group="Depot 1", extra={"k": "ziel"})
+    for order in ((A, T), (T, A)):
+        infos = {A: alias, T: target}
+        out = AM.map_portfolio(replace(pf, accounts={n: infos[n] for n in order}), {A: T})
+        got = out.accounts[T]
+        assert (got.broker, got.depot_group, got.extra["k"], got.extra["a"]) == ("DKB AG", "Depot 1", "ziel", 1)
+        assert A not in out.accounts
+    # Ziel ohne eigene Angaben: Lücken kommen vom Alias, in beiden Reihenfolgen gleich
+    bare = AccountInfo(account=T)
+    for order in ((A, T), (T, A)):
+        infos = {A: alias, T: bare}
+        got = AM.map_portfolio(replace(pf, accounts={n: infos[n] for n in order}), {A: T}).accounts[T]
+        assert got.broker == "Alt-Broker" and got.account == T
+    # Ziel nicht vorhanden: Alias-Angaben werden unter dem Ziel-Namen geführt
+    only = AM.map_portfolio(replace(pf, accounts={A: alias}), {A: T}).accounts
+    assert list(only) == [T] and only[T].broker == "Alt-Broker" and only[T].account == T
+
+
+def test_fingerprint_binds_warnings_sources_and_issues(cfg):
+    ctx = make_ctx(cfg, ROWS, ASSETS)
+    base = AM.preview(ctx, A, T)
+    assert AM.preview(ctx, A, T).fp == base.fp  # stabil bei unverändertem Stand
+    for change in (lambda p: p.warnings.append("neu"), lambda p: p.sources.append("Quelle → DKB"),
+                   lambda p: p.info.append("Hinweis"), lambda p: p.issues_after.update({"x": 1})):
+        q = AM.preview(ctx, A, T)
+        change(q)
+        assert AM.fingerprint(q) != base.fp
+    # Datenquelle kommt dazu → Vorschau (und damit Bestätigung) ist veraltet
+    ctx.db.x("INSERT INTO data_source(kind, provider, name, account, status, created_at, updated_at) VALUES "
+             "('exchange','other_exchange','Neu',?, 'manual','2024-01-01T00:00:00Z','2024-01-01T00:00:00Z')", (A,))
+    assert AM.preview(ctx, A, T).fp != base.fp
+    mid, errors = AM.apply(ctx, A, T, base.fp)
+    assert mid is None and "geändert" in errors[0]

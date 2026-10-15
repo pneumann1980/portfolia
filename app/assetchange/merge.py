@@ -347,11 +347,13 @@ def preview(ctx: Any, alias: str, target: str) -> Preview:
 
 
 def fingerprint(p: Preview) -> str:
-    """Prüfsumme des Datenstands, auf den sich die Vorschau bezieht (Bestätigung nur für genau diesen Stand)."""
+    """Prüfsumme des gesamten entscheidungsrelevanten Stands der Vorschau (Bestätigung nur für genau diesen Stand):
+    Zahlen, Bestände, Jahreswerte, Auffälligkeiten sowie Warnungen und Hinweise."""
     data = [p.alias, p.target, p.n_alias_txs, p.n_same_asset,
             [(b.account, str(b.alias_qty), str(b.target_qty), str(b.after_qty)) for b in p.balances],
-            [(y.year, y.parts_before, y.parts_after, y.missing_before, y.missing_after, str(y.gain_before),
-              str(y.gain_after)) for y in p.years]]
+            [(y.year, y.parts_before, y.parts_after, y.missing_before, y.missing_after, y.short_before, y.short_after,
+              str(y.gain_before), str(y.gain_after)) for y in p.years],
+            sorted(p.issues_before.items()), sorted(p.issues_after.items()), p.errors, p.warnings, p.info]
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:20]
 
 
