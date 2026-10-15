@@ -118,6 +118,12 @@ jobs:
           curl -fsS http://127.0.0.1:8080/ | grep -q Portfolia
           curl -fsS -o /dev/null http://127.0.0.1:8080/plans
           curl -fsS http://127.0.0.1:8080/journal/csv | grep -q "CSV-Import"
+          # Financial Integrity: Prüfwarteschlange, Ereignisgruppen, Abdeckung, Anschaffungsdaten, Cockpit (nur lesend)
+          curl -fsS http://127.0.0.1:8080/journal/pruefung | grep -q "<title>Prüfung"
+          curl -fsS http://127.0.0.1:8080/journal/ereignisse | grep -q "<title>Ereignisgruppen"
+          curl -fsS http://127.0.0.1:8080/quality/abdeckung | grep -q "<title>Quellenabdeckung"
+          curl -fsS http://127.0.0.1:8080/quality/anschaffung | grep -q "<title>Anschaffungsdaten"
+          curl -fsS http://127.0.0.1:8080/quality/cockpit | grep -q "<title>Vollständigkeit"
           # Beleg hochladen (wie die Oberfläche: XHR mit CSRF-Kopfzeile) → Stapel läuft durch, nichts wird gebucht
           curl -fsS -c ci-cookies.txt -o /dev/null http://127.0.0.1:8080/journal/documents
           token=$(awk '$6 == "portfolia_csrf" {print $7}' ci-cookies.txt)

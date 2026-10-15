@@ -80,16 +80,16 @@ veraltete Auswahl (wird gegen vorhandene Zeilen geschnitten), Vorschau auf ander
 
 | # | Phase | Status | Commit | Tests |
 |---|---|---|---|---|
-| 1 | P0 Prüfworkflow reparieren | Tests bestanden | siehe §5 | 15 neu, Suite 929 grün |
-| 2 | Zentrale Prüfung, Sammelverarbeitung | Tests bestanden | siehe §5 | 5 neu, Suite 934 grün |
-| 3 | M29-Hardening | Tests bestanden | siehe §5 | 6 neu, Suite 940 grün |
-| 4 | Universeller Börsenimport | Nicht begonnen | – | – |
-| 5 | Historische Quellenabdeckung | Nicht begonnen | – | – |
-| 6 | Wirtschaftliche Ereignisgruppen | Nicht begonnen | – | – |
-| 7 | Futures, Funding, Margin | Nicht begonnen | – | – |
-| 8 | Anschaffungskosten, FIFO-Herkunft | Nicht begonnen | – | – |
-| 9 | Vollständigkeitscockpit | Nicht begonnen | – | – |
-| 10 | Gesamtregression, Release | Nicht begonnen | – | – |
+| 1 | P0 Prüfworkflow reparieren | Tests bestanden | b88e1f5 | 15 neu, Suite 929 grün |
+| 2 | Zentrale Prüfung, Sammelverarbeitung | Tests bestanden | 204b984 | 5 neu, Suite 934 grün |
+| 3 | M29-Hardening | Tests bestanden | b0b3bbe | 6 neu, Suite 940 grün |
+| 4 | Universeller Börsenimport | Tests bestanden | c28b702 | 13 neu, Suite 953 grün |
+| 5 | Historische Quellenabdeckung | Tests bestanden | d94c6dd, Korrektur Phase 10 | 5 neu |
+| 6 | Wirtschaftliche Ereignisgruppen | Tests bestanden | 30c0f5c, Korrektur Phase 10 | 4 neu |
+| 7 | Futures, Funding, Margin | Tests bestanden (nur geprüfte Formate) | b6d0491 | 3 neu |
+| 8 | Anschaffungskosten, FIFO-Herkunft | Tests bestanden | 5f82d82, 6e825bd | 5 neu |
+| 9 | Vollständigkeitscockpit | Tests bestanden | d40296d, Korrektur Phase 10 | 4 neu |
+| 10 | Gesamtregression, Release | Tests bestanden | siehe Bericht §16.6/16.7 | 9 neu (Regression, Massendaten, Export/Restore) |
 
 ### Phase 1 – Prüfworkflow (P0)
 
@@ -121,7 +121,7 @@ manuellen Fall. Abnahme: HTTP-End-to-End-Tests automatisch/manuell/Sammel/Teilab
 getrennte Quellen-/Reconciliation-Evidenz in `research.assess`; ereignisweite Einzelfreigabe (`book_row`).
 
 ### Phase 4–9
-Siehe Auftrag; Detailplanung wird zu Beginn jeder Phase hier ergänzt (Module, Migrationen, Risiken, Tests).
+Detailplanung und Umsetzung je Phase in §5; Abschlussbericht `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 
 ### Phase 10
 Gesamtregression (synthetische Fälle des Auftrags 13.2), Ruff, CI, Docker-Build, Smoke, Massendaten (≥ 100.000
@@ -176,3 +176,59 @@ Nur-Lese-Garantie der Ansichten (Vorschau, Warteschlange, Stapel-, Datenquellen-
 Prüfsummen bestehender Entscheidungen bleiben gültig: die neuen Evidenzangaben stehen in `Finding.evidence` (nicht in
 den geprüften Befunddaten).
 
+### Phase 4 – abgeschlossen (Tests bestanden)
+
+* **Dateien** (`app/csvimport/files.py`): CSV, XLSX (ohne Makroausführung, XML über `defusedxml`, nur Zellwerte) und
+  ZIP (rekursionsfrei; Grenzen: 50 Einträge, 100 MB entpackt, Kompressionsverhältnis ≤ 100; Pfad-Traversal,
+  verschachtelte Archive und unbekannte Typen werden mit Grund abgewiesen). Jede enthaltene Tabelle wird ein eigener
+  Stapel.
+* **Erkennung:** vorhandene Profile + Portfolia-eigene Exportformate; unbekanntes Format → eigene Spaltenzuordnung.
+* **Herkunft:** Migration 22 (`csv_batch.origin_json`, Index auf `file_sha256`): Archiv, Mitglied, Tabellenblatt,
+  Datenquelle; „identisch mit Stapel …“ statt stiller Doppelanlage. Rohimporte bleiben unveränderlich.
+* **Upload an der Datenquelle:** `POST /settings/datasources/{sid}/upload` (CSRF wie bestehend).
+* **Tests:** `tests/test_universal_import.py` (13).
+
+### Phase 5 – abgeschlossen (Tests bestanden)
+
+`app/diagnosis/coverage.py`, Seite `/quality/abdeckung`: Matrix Konto/Quelle × Monat (Filter Zeitraum, Bereich,
+Konto) mit Zuständen gebucht · nur Prüf-Stapel · abgedeckt ohne Vorgänge · anderweitig belegt · Lücke; Lücken nur
+innerhalb des Aktivitätszeitraums einer Quelle (MEXC-Fall); vollständige Abrufe decken nur ihr Fenster
+(`win_from`/`win_to`) ab. Eine Abfrage je Quelle (Massendaten: 0,6 s bei
+100 000 Zeilen). Tests: `tests/test_coverage.py` (4).
+
+### Phase 6 – abgeschlossen (Tests bestanden)
+
+`app/csvimport/groups.py`, Seiten `/journal/ereignisse` und `/journal/ereignis/{tx_id}`: Vorgang als Gruppe aller
+Quellzeilen (Ereignis-ID, Verknüpfungen); Widerspruchsarten doppelt gebucht, 1:n, n:1, nur teilweise verknüpft,
+Gebühr brutto/netto, Mengenwiderspruch – nur angezeigt, nie automatisch aufgelöst. Tests: `tests/test_event_groups.py` (3).
+
+### Phase 7 – abgeschlossen (Tests bestanden, nur geprüfte Formate)
+
+Derivat-Kennzeichen (`contract.DERIVATIVE_TAGS`: Futures-PnL, Funding, Liquidation, Margin-Zins): Ledger-Ursprung
+„derivative“, keine Zu-/Abflüsse, nicht in § 23; Importbewertung fordert Prüfung. Native Futures-Exporte von MEXC,
+Bybit, Pionex sind **nicht** verifiziert und werden nicht automatisch erkannt (Spaltenzuordnung). Tests:
+`tests/test_derivatives.py` (3).
+
+### Phase 8 – abgeschlossen (Tests bestanden)
+
+`app/ledger/provenance.py`, Seite `/quality/anschaffung`: Herkunftsklasse je Lot und verbrauchtem Lot-Anteil (Kauf,
+Ertrag, Kapitalmaßnahme, Eröffnung, ohne Beleg, unbekannt, Derivat, ohne Basis); unbekannte Kosten nie 0 €.
+Sammelvorschau nennt rückwirkend betroffene Steuerjahre (`retro_years`). Tests: `tests/test_lot_provenance.py` (4).
+
+### Phase 9 – abgeschlossen (Tests bestanden)
+
+`app/diagnosis/cockpit.py`, Seiten `/quality/cockpit` und `/quality/cockpit/fall`: acht getrennte Dimensionen
+(Importprüfung, Quellenabdeckung, Bestandsabgleich, Bewertung, Ereignisgruppen, Anschaffungsdaten, steuerliche
+Einordnung, Diagnose) mit Zustand, Kennzahl und Weg – **keine Gesamtnote**. Fallanalyse je Position mit möglichen
+Belegquellen (Schnittstelle, Exportdatei, Kontoauszug/Beleg, Referenzbestand). Externe KI: standardmäßig aus, nur
+Nachrichten, statisch geprüft, dass Finanzpakete keinen KI-Client importieren. Tests: `tests/test_cockpit.py` (3).
+
+### Phase 10 – Gesamtregression und Release (Tests bestanden)
+
+* Regressionen 13.2 (`tests/test_fi_regression.py`, Zuordnung aller Fälle im Bericht §16.5), Massendaten mit 100 000
+  Quellzeilen (`tests/test_mass_review.py`), Export/Restore nach FI (`tests/test_fi_export_restore.py`), CI-Smoke um
+  die neuen Seiten erweitert, Version 0.27.0.
+* Dabei gefunden und behoben: Lots geschätzter Sparplan-Ausführungen galten als belegter Kauf (`6e825bd`).
+* Lesende Validierung gegen eine Kopie eines realen Exports: kuratierter Import deckt seine Monate bis zum Stichtag ab
+  (117 Scheinlücken), Mengenwidersprüche tolerieren die Rundung der Buchung und erkennen die Gebühr der Quelle
+  (33 + 6 von 48 Scheinwidersprüchen), Fallanalyse für alle Positionen.

@@ -1402,6 +1402,30 @@ Leitsatz: **trennen, was tatsächlich existiert, was Buchungen erklären und was
   (die Wirkung auf FIFO/Steuer zeigt die Vorschau der Buchung); Beleg-Dokumente erscheinen als Evidenz erst nach dem Import
   in den Prüf-Stapel; die Belegprüfung der Eröffnungsposition obliegt dem Nutzer.
 
+## Financial Integrity – Prüfworkflow, Universalimport, Reconciliation, historische Vollständigkeit (0.27.0)
+
+Leitsatz: **was bearbeitet ist, bleibt abgeschlossen; was ungeklärt ist, erscheint zuverlässig in der Prüfung; jede
+Nullanzeige hat einen Grund.** Plan: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_PLAN.md`, Abschlussbericht mit Phasen,
+Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
+
+* **Prüfworkflow:** eine zentrale Zustandsdefinition je Vorgang (`app/csvimport/review.py`), Stapel schließen
+  fachlich korrekt (auch beim Undo und beim Start), Nullanzeigen mit Grund, „nicht übernehmen“/„zurückstellen“ für
+  alle offenen Fälle, keine Wiedervorlage erledigter Vorgänge ohne neue Evidenz, BNB-Entscheidungen bleiben gültig.
+* **Zentrale Prüfung** `/journal/pruefung` über alle Stapel mit Filtern, Vorauswahl sicherer Verknüpfungen, einer
+  gemeinsamen Vorschau (Bestände, Gebühren, FIFO, rückwirkend betroffene Steuerjahre) und Ausführung je Stapel atomar.
+* **M29-Hardening:** Positionen ohne Buchung, bestätigt vs. fortgeschrieben, Teilbewertung, getrennte Quellen- und
+  Abgleichsevidenz, Mehrbein-Vorgang als eine Freigabe.
+* **Universalimport:** CSV, XLSX, ZIP (sicher entpackt), Portfolia-Formate, jede Börse als Datei-Datenquelle,
+  Herkunft je Stapel (Migration 22).
+* **Neue Sichten (rein lesend):** Quellenabdeckung `/quality/abdeckung`, Ereignisgruppen `/journal/ereignisse`,
+  Anschaffungsdaten `/quality/anschaffung`, Vollständigkeitscockpit `/quality/cockpit` mit Fallanalyse.
+* **Derivate:** Funding, Futures-PnL, Liquidation, Margin(-Zins) ohne externen Kapitalfluss, nie still § 23.
+* **Qualität:** Regressionen der gemeldeten Fälle (u. a. Pionex-Rest 0,0000388030 USDT exakt), Massentest mit
+  100 000 Quellzeilen, Export/Restore, lesende Validierung gegen eine Kopie eines realen Exports (drei Befunde
+  behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
+* **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
+  automatische steuerliche Einordnung; Docker-Build nur in CI.
+
 ## Entscheidungen des Auftraggebers (27.09.2026)
 
 * **Lizenz:** MIT (`LICENSE`); Drittkomponenten in `THIRD_PARTY_NOTICES.md`, NOTICE von Apache ECharts und
