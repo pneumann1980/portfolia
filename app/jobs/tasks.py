@@ -75,6 +75,9 @@ def after_import(ctx: AppContext) -> None:
     else:
         refresh_prices(ctx, force=True)
         backfill(ctx)
+    from app.diagnosis import autopilot
+
+    autopilot.after_import(ctx, "import")  # Bericht (immer), Regeln/Korrekturen nur bei eingeschaltetem Autopilot
 
 
 def refresh_prices(ctx: AppContext, force: bool = False, which: str = "all") -> dict[str, Any]:

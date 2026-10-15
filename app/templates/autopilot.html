@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Autopilot{% endblock %}
+{% block heading %}Datenqualität · Autopilot und Importbericht{% endblock %}
+{% macro report(run) %}{% set s = run.s %}
+  <p><b>{{ s.tasks }} offene Aufgaben</b> · {{ s.hints }} Hinweise{% if not s.first %} · <b>{{ s.n_new }} neu</b>, {{ s.n_gone }} erledigt/verschwunden seit dem vorigen Durchgang{% endif %}</p>
+  {% if s.by_kind %}<p class="hint">{% for k, n in s.by_kind.items() %}{{ kinds.get(k, k) }}: {{ n }}{{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
+  {% if s.rules.count %}<p>✓ {{ s.rules.count }} Befund(e) nach Entscheidungsregeln als geprüft markiert (ohne Datenänderung).</p>{% endif %}
+  {% if s.fixes.applied %}<p>✓ {{ s.fixes.applied }} beweisbare Korrektur(en) übernommen (Sammelkorrektur <span class="mono">{{ s.fixes.bulk_id }}</span>).</p>{% endif %}
+  {% if s.fixes.note %}<p class="hint">⚠ {{ s.fixes.note }}</p>{% endif %}
+  {% if s.fixes.skipped %}<details><summary class="hint">{{ s.fixes.skipped|length }} nicht automatisch korrigiert</summary><ul>{% for x in s.fixes.skipped %}<li>{{ x.title }} – {{ x.why }}</li>{% endfor %}</ul></details>{% endif %}
+  {% if s.error %}<div class="alert warn"><span class="icon">!</span><div>Aktion fehlgeschlagen: {{ s.error }}</div></div>{% endif %}
+  {% if s.new %}<details open><summary><b>Neue Aufgaben</b> ({{ s.n_new }})</summary><ul class="plain-list">{% for x in s.new %}<li><span class="badge {{ status_badge[x.status] }}">{{ x.status }}</span> <a href="/quality/diagnose?f={{ x.id }}#{{ x.id }}">{{ x.title }}</a></li>{% endfor %}</ul>{% if s.n_new > s.new|length %}<p class="hint">… und {{ s.n_new - s.new|length }} weitere.</p>{% endif %}</details>{% endif %}
+{% endmacro %}
+{% block content %}
+<div class="stack diag">
+  <p class="hint"><a href="/quality/diagnose">← Diagnose</a> · <a href="/quality/diagnose/regeln">Entscheidungsregeln</a> · <a href="/quality/diagnose/liste">Entscheidungsliste</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+
+  <section class="card"><div class="card-head"><h2>Bericht des letzten Durchgangs</h2>
+    <form method="post" action="/quality/autopilot/lauf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Jetzt durchführen</button></form></div>
+    {% if last %}<p class="hint">{{ last.created_at|datetime_de }} · Auslöser: {{ {'import': 'Import', 'csv': 'CSV-Übernahme', 'manual': 'manuell'}.get(last.trigger, last.trigger) }}{% if last.status == 'reverted' %} · <b>zurückgenommen</b>{% endif %}</p>
+      {{ report(last) }}
+      {% if last.status == 'ok' and (last.s.rules.count or last.s.fixes.applied) %}
+      <form method="post" action="/quality/autopilot/{{ last.token }}/undo"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Diesen Durchgang gemeinsam rückgängig machen</button></form>{% endif %}
+    {% else %}<p class="hint">Noch kein Durchgang. Der Bericht entsteht nach jedem Import automatisch.</p>{% endif %}
+  </section>
+
+  <section class="card"><div class="card-head"><h2>Einstellung</h2></div>
+    <div class="alert"><span class="icon">i</span><div>Der <b>Bericht</b> entsteht immer und ändert nichts. Der <b>Autopilot</b> ist standardmäßig <b>aus</b>. Eingeschaltet erledigt er nach jedem Import nur, was <em>beweisbar</em> ist – nie anhand von Ähnlichkeitswerten, nie mit neuen Buchungen, nie bei konkurrierenden Kandidaten.</div></div>
+    <form method="post" action="/quality/autopilot/einstellungen" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="row"><input type="checkbox" name="enabled" value="1" {% if on %}checked{% endif %}> Autopilot nach Importen einschalten</label>
+      <label class="row"><input type="checkbox" name="rules" value="1" {% if use_rules %}checked{% endif %}> Entscheidungsregeln anwenden (<a href="/quality/diagnose/regeln">Regeln verwalten</a>; ohne Datenänderung)</label>
+      <label class="row"><input type="checkbox" name="fixes" value="1" {% if use_fixes %}checked{% endif %}> Beweisbare Korrekturen übernehmen (verändert den Bestand!)</label>
+      <label>Sicherheitsstufe <select name="fixes_level"><option value="eindeutig" {% if level == 'eindeutig' %}selected{% endif %}>nur eindeutig (Status belegt)</option><option value="hoch plausibel" {% if level == 'hoch plausibel' %}selected{% endif %}>auch hoch plausibel (Status wahrscheinlich, ohne Vorbehalt)</option></select></label>
+      <div class="hint">Nur Dubletten/Transfers mit der gewählten Sicherheitsstufe, deren Lösung bestehende Buchungen ausblendet bzw. verknüpft oder zwei vorhandene Transfer-Seiten zu einem Transfer zusammenfasst (keine erfundenen Buchungen); gemeinsam ohne negativen Bestand und ohne neue Befunde. „Hoch plausibel“ ist kein Beweis – nur wählen, wenn dir die Vorschläge der Sammelbearbeitung bisher durchweg korrekt erschienen. Wie jede Sammelkorrektur: eine Transaktion, je Befund protokolliert, jederzeit zurücknehmbar (Rohimporte bleiben unverändert).</div>
+      <label class="row"><input type="checkbox" name="fixes_confirm" value="1"> Ich verstehe, dass der Autopilot dann ohne Rückfrage Bestände ändern darf (rückgängig machbar).</label>
+      <div class="row"><button class="btn primary" type="submit">Speichern</button></div>
+    </form>
+  </section>
+
+  {% if runs|length > 1 %}
+  <section class="card"><div class="card-head"><h2>Verlauf</h2></div>
+    <ul class="plain-list">{% for r in runs[1:] %}<li>{{ r.created_at|datetime_de }} · {{ r.s.tasks }} Aufgaben, {{ r.s.hints }} Hinweise{% if r.s.rules.count %} · {{ r.s.rules.count }} per Regel{% endif %}{% if r.s.fixes.applied %} · {{ r.s.fixes.applied }} Korrektur(en){% endif %}{% if r.status == 'reverted' %} · zurückgenommen{% endif %}
+      {% if r.status == 'ok' and (r.s.rules.count or r.s.fixes.applied) %}<form method="post" action="/quality/autopilot/{{ r.token }}/undo" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endif %}</li>{% endfor %}</ul>
+  </section>{% endif %}
+</div>
+{% endblock %}

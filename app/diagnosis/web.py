@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.diagnosis import actions as A
+from app.diagnosis import autopilot as AP
 from app.diagnosis import live as L
 from app.diagnosis import triage as TR
 from app.diagnosis.engine import report_for
@@ -219,7 +220,7 @@ def make_router() -> APIRouter:
                       status=status, open_id=f, kinds=KINDS, statuses=STATUS, by_kind=by_kind, by_status=by_status,
                       accounts=accounts, counts=counts, holding_counts=report.holding_counts(),
                       generated=datetime.now(UTC), n_open=len(open_findings), n_tasks=n_tasks, n_hints=n_hints,
-                      bulks=TR.recent_bulks(ctx.db),
+                      bulks=TR.recent_bulks(ctx.db), last_run=(AP.last_runs(ctx.db, 1) or [None])[0],
                       recs={x.id: recommend(report, x) for x in [*shown, *dismissed]}, dismissed=dismissed,
                       marks=marks, changed=changed, fixes=fixes, decisions=A.decisions(ctx.db),
                       msg=msg, err=err, **_common())

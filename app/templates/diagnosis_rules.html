@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Entscheidungsregeln{% endblock %}
+{% block heading %}Datenqualität · Entscheidungsregeln{% endblock %}
+{% block content %}
+<div class="stack diag">
+  <p class="hint"><a href="/quality/diagnose">← Diagnose</a> · <a href="/quality/autopilot">Autopilot</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  <section class="card">
+    <div class="card-head"><h2>Einmal entscheiden, nicht jedes Mal</h2></div>
+    <div class="alert"><span class="icon">i</span><div>Eine Regel markiert wiederkehrende <b>Hinweise</b> (optional auch <b>Verdacht</b>) automatisch als „geprüft, kein Handlungsbedarf“ – z. B. „inaktive Konten: Wallet Alt“. Regeln <b>ändern keine Daten</b> (keine Buchung, kein Bestand, kein FIFO, keine Steuer). Aufgaben mit Status <em>wahrscheinlich</em> oder <em>belegt</em> erfasst keine Regel. Hat sich ein früher geprüfter Befund seither <em>geändert</em> („überholt“), bleibt er offen – neue Evidenz soll auffallen. Jede Anwendung ist protokolliert und gemeinsam rückgängig zu machen.</div></div>
+  </section>
+
+  <section class="card"><div class="card-head"><h2>Neue Regel</h2></div>
+    <form method="post" action="/quality/diagnose/regeln/neu" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Befundart
+        <select name="kind" required>{% for k, label in kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}{% if not kinds %}{% for k, label in all_kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}{% endif %}</select></label>
+      <label>Konto (optional)
+        <select name="account"><option value="">alle Konten</option>{% for a in accounts %}<option>{{ a }}</option>{% endfor %}</select></label>
+      <label>Asset (optional)
+        <select name="asset"><option value="">alle Assets</option>{% for a in assets %}<option>{{ a }}</option>{% endfor %}</select></label>
+      <label>Stufe
+        <select name="max_status"><option value="hinweis">nur Hinweise</option><option value="verdacht">Hinweise und Verdacht</option></select></label>
+      <input type="text" name="note" maxlength="300" placeholder="Begründung (optional), z. B. „Konto bewusst stillgelegt“" aria-label="Begründung">
+      <div class="row"><button class="btn primary" type="submit">Regel anlegen</button></div>
+    </form>
+    <p class="hint">Die Regel wird erst beim nächsten „Regeln jetzt anwenden“ bzw. nach einem Import (bei eingeschaltetem Autopilot) wirksam.</p>
+  </section>
+
+  <section class="card"><div class="card-head"><h2>Regeln ({{ rows|length }})</h2>
+    {% if rows %}<form method="post" action="/quality/diagnose/regeln/anwenden"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Regeln jetzt anwenden</button></form>{% endif %}</div>
+    {% if not rows %}<p class="hint">Noch keine Regeln.</p>{% endif %}
+    <div class="stack" style="gap:8px">
+    {% for row in rows %}{% set r = row.r %}
+      <div class="box">
+        <div><b>#{{ r.id }}</b> {{ r.scope() }} {% if not r.active %}<span class="badge">aus</span>{% else %}<span class="badge good">aktiv</span>{% endif %}</div>
+        {% if r.note %}<div class="hint">„{{ r.note }}“</div>{% endif %}
+        <div class="hint">{% if r.active %}trifft jetzt {{ row.n }} offene(n) Befund(e) · {% endif %}bisher angewandt: {{ r.applied_count }}{% if r.last_applied_at %} · zuletzt {{ r.last_applied_at|datetime_de }}{% endif %}</div>
+        <div class="row" style="margin-top:6px">
+          {% if r.active %}
+          <form method="post" action="/quality/diagnose/regeln/{{ r.id }}/aus"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Ausschalten</button></form>
+          <form method="post" action="/quality/diagnose/regeln/{{ r.id }}/aus"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="revert" value="1"><button class="btn sm ghost" type="submit" title="Regel aus und alle ihre Markierungen zurücknehmen">Ausschalten &amp; Markierungen zurücknehmen</button></form>
+          {% else %}
+          <form method="post" action="/quality/diagnose/regeln/{{ r.id }}/an"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Wieder einschalten</button></form>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+    </div>
+  </section>
+
+  {% if recent %}
+  <section class="card"><div class="card-head"><h2>Letzte Anwendungen</h2></div>
+    <div class="stack" style="gap:6px">{% for b in recent %}
+      <form method="post" action="/quality/diagnose/regeln/zurueck/{{ b.token }}" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><span class="hint">{{ b.at|datetime_de }}: {{ b.active }} Befund(e) markiert</span><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endfor %}</div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

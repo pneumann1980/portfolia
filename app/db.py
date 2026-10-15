@@ -743,6 +743,35 @@ CREATE TABLE IF NOT EXISTS asset_merge (
 CREATE INDEX IF NOT EXISTS ix_asset_merge_status ON asset_merge(status, alias_asset);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_merge_row ON asset_merge(alias_asset, target_asset, created_at);
 """),
+    (24, """
+-- Dauerhafte Entscheidungsregeln (nur Hinweise/Verdacht, ohne Datenänderung) und Autopilot-Läufe
+CREATE TABLE IF NOT EXISTS decision_rule (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind            TEXT NOT NULL,
+  account         TEXT,
+  asset           TEXT,
+  max_status      TEXT NOT NULL DEFAULT 'hinweis',  -- hinweis | verdacht
+  note            TEXT,
+  status          TEXT NOT NULL DEFAULT 'active',   -- active | off
+  created_at      TEXT NOT NULL,
+  off_at          TEXT,
+  applied_count   INTEGER NOT NULL DEFAULT 0,
+  last_applied_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_decision_rule_status ON decision_rule(status);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_decision_rule_row
+  ON decision_rule(kind, COALESCE(account, ''), COALESCE(asset, ''), max_status, created_at);
+CREATE TABLE IF NOT EXISTS autopilot_run (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  token         TEXT NOT NULL UNIQUE,
+  trigger       TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'ok',   -- ok | error | reverted
+  summary_json  TEXT,
+  created_at    TEXT NOT NULL,
+  reverted_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_autopilot_run_created ON autopilot_run(created_at);
+"""),
 ]
 
 

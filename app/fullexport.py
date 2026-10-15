@@ -122,6 +122,8 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
         "asset_changes": _rows(db, "SELECT * FROM asset_change ORDER BY id"),
         # zusammengeführte Zwillingskennungen (Zuordnung ohne Buchung; auch zurückgenommene für die Nachvollziehbarkeit)
         "asset_merges": _rows(db, "SELECT * FROM asset_merge ORDER BY id"),
+        "decision_rules": _rows(db, "SELECT kind, account, asset, max_status, note, status, created_at, off_at, "
+                                    "applied_count, last_applied_at FROM decision_rule ORDER BY id"),
         # Referenzbestände (Prüfwerte der Diagnose, keine Buchungen) – auch entfernte, für die Nachvollziehbarkeit
         "reference_balances": _rows(db, "SELECT * FROM reference_balance ORDER BY id"),
         # Recherche-Ergebnisse der Diagnose (M29): nur lesend gewonnene, noch ungebuchte Ereignisse; je Datenquelle
@@ -222,6 +224,7 @@ def summary(extras: dict[str, bytes]) -> dict[str, Any] | None:
         "checked": len(st.get("diag_dismissed") or []),
         "asset_changes": len(st.get("asset_changes") or []),
         "asset_merges": len(st.get("asset_merges") or []),
+        "decision_rules": len(st.get("decision_rules") or []),
         "references": len(st.get("reference_balances") or []),
         "watchlist": len(st.get("watchlist_items") or []),
         "taxdata": len(json.loads(extras[TAXDATA].decode("utf-8"))) if extras.get(TAXDATA) else 0,
@@ -290,7 +293,7 @@ JOURNAL_KEY = "restore.journal"  # laufende Wiederherstellung: Dateien, die nach
 _RESTORE_LOCK = threading.Lock()
 _LIST_KEYS = ("asset_sources", "plans", "plan_dismissed", "datasources", "event_decisions", "event_aliases",
               "tx_links", "csv_symbols", "csv_accounts", "csv_mappings", "deleted_journal", "diag_dismissed",
-              "asset_changes", "asset_merges", "watchlists", "watchlist_items", "reference_balances",
+              "asset_changes", "asset_merges", "decision_rules", "watchlists", "watchlist_items", "reference_balances",
               "diag_research_events")
 _TMP_MARK = ".restore-"
 
@@ -500,6 +503,7 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
         counts["checked"] = _dismissed(c, st.get("diag_dismissed") or [])
         counts["asset_changes"] = _insert(c, "asset_change", st.get("asset_changes"), "OR IGNORE")
         counts["asset_merges"] = _insert(c, "asset_merge", st.get("asset_merges"), "OR IGNORE")
+        counts["decision_rules"] = _insert(c, "decision_rule", st.get("decision_rules"), "OR IGNORE")
         counts["references"] = _insert(c, "reference_balance", st.get("reference_balances"), "OR IGNORE")
         counts["research"] = _research_events(c, st.get("diag_research_events") or [])
         counts["usage"] = _usage(c, extras.get(USAGE))

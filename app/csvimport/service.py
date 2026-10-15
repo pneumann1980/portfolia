@@ -2113,6 +2113,10 @@ class CsvImportService:
         self.refresh_status(bid)
         self.journal.after_change()
         log.info("CSV-Stapel %s übernommen: %d Buchungen, %d Transfers", bid, res["created"], res["transfers"])
+        if res["created"] or res["transfers"]:
+            from app.diagnosis import autopilot
+
+            autopilot.after_import(self.journal.ctx, "csv")
         return {**res, "skipped": len(skipped), "errors": []}
 
     def commit_plan(self, rows: list[RowCtx], only_idx: set[int] | None = None) -> dict[str, Any]:

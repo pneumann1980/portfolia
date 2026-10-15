@@ -46,6 +46,11 @@ DEFAULTS: dict[str, Any] = {
     "prices.crypto_history_fallback": {"BTC": "BTC-EUR", "ETH": "ETH-EUR"},
     # übrige Krypto-Historie automatisch über Yahoo (SYMBOL-EUR/-USD) – nur nach bestandenem Abgleich mit CoinGecko
     "prices.crypto_history_auto": True,
+    # Autopilot nach Importen (Bericht immer; Aktionen nur bei eingeschaltetem Autopilot, Standard aus)
+    "autopilot.enabled": False,
+    "autopilot.rules": True,  # Entscheidungsregeln (Hinweise/Verdacht, ohne Datenänderung) anwenden
+    "autopilot.fixes": False,  # beweisbare Korrekturen (Ausblenden/Verknüpfen/Transfer aus zwei vorhandenen Buchungen)
+    "autopilot.fixes_level": "eindeutig",  # eindeutig | hoch plausibel
     # News
     "news.min_relevance": 0.2,
     "news.dashboard_count": 5,

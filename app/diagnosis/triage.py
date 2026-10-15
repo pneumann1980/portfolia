@@ -31,12 +31,13 @@ BULK_PREFIX = "Sammelaktion "
 MAX_ITEMS = 500
 
 
-def open_findings(ctx: Any, report: Report | None = None) -> list[Finding]:
-    """Offene Befunde der Übersicht (ohne Einzelvorgänge, ohne bereits als geprüft/abgelehnt markierte)."""
+def open_findings(ctx: Any, report: Report | None = None, *, cases: bool = False) -> list[Finding]:
+    """Offene Befunde der Übersicht (ohne Einzelvorgänge – mit ``cases`` einschließlich –, ohne bereits als
+    geprüft/abgelehnt markierte)."""
     report = report or report_for(ctx)
     states = A.mark_states(report.findings, A.active_marks(ctx.db))
     checked = {fid for fid, (d, ok) in states.items() if ok and d.action in ("dismiss", "reject")}
-    return [f for f in report.findings if f.id not in checked and f.parent is None]
+    return [f for f in report.findings if f.id not in checked and (cases or f.parent is None)]
 
 
 def is_hint(f: Finding) -> bool:
@@ -66,6 +67,32 @@ def plan_hints(ctx: Any, kind: str = "", report: Report | None = None) -> HintPl
     return p
 
 
+def write_dismissals(ctx: Any, items: list[Finding], label: str) -> int:
+    """Befunde als „geprüft, kein Handlungsbedarf“ festhalten (eine Transaktion, je Befund eine Entscheidung mit
+    Prüfsumme). Aufrufer hält ``A._LOCK`` und hat die Auswahl bereits geprüft."""
+    stamp = A._now()
+    version = A.data_version(ctx.db)
+    with ctx.db.transaction() as c:
+        for f in items:
+            c.execute("UPDATE diag_decision SET status='undone', undone_at=? WHERE finding_id=? AND action IN "
+                      "('dismiss', 'reject', 'defer') AND status='active'", (stamp, f.id))
+            tx_ids = list(dict.fromkeys([r.tx_id for r in f.txs] + [x.tx_id for a, b, _w in f.pairs
+                                                                     for x in (a, b)]))
+            c.execute("INSERT INTO diag_decision(finding_id, kind, title, action, fingerprint, note, status, "
+                      "created_at, tx_ids_json, data_version) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      (f.id, f.kind, f.title[:300], "dismiss", A.fingerprint(f), label, "active", stamp,
+                       json.dumps(tx_ids), version))
+    return len(items)
+
+
+def undo_label(ctx: Any, label_prefix: str) -> int:
+    """Alle aktiven Markierungen mit diesem Notiz-Präfix zurücknehmen (Befunde erscheinen wieder)."""
+    with A._LOCK:
+        cur = ctx.db.x("UPDATE diag_decision SET status='undone', undone_at=? WHERE status='active' AND action="
+                       "'dismiss' AND note LIKE ?", (A._now(), f"{label_prefix}%"))
+    return int(cur.rowcount or 0)
+
+
 def dismiss_hints(ctx: Any, fp: str, kind: str = "", note: str = "") -> tuple[A.Result, str]:
     """Hinweise gemeinsam als geprüft markieren – nur für genau den Stand der Vorschau (``fp``). Rückgabe: Ergebnis und
     Sammel-Kennung (für das gemeinsame Rückgängig)."""
@@ -76,33 +103,20 @@ def dismiss_hints(ctx: Any, fp: str, kind: str = "", note: str = "") -> tuple[A.
         if p.fp != fp:
             return A.Result(errors=["Die Hinweise haben sich seit der Vorschau geändert – bitte erneut prüfen."]), ""
         token = uuid.uuid4().hex[:10]
-        stamp = A._now()
         label = f"{BULK_PREFIX}{token}" + (f": {note.strip()[:200]}" if note.strip() else "")
-        version = A.data_version(ctx.db)
-        with ctx.db.transaction() as c:
-            for f in p.items:
-                c.execute("UPDATE diag_decision SET status='undone', undone_at=? WHERE finding_id=? AND action IN "
-                          "('dismiss', 'reject', 'defer') AND status='active'", (stamp, f.id))
-                tx_ids = list(dict.fromkeys([r.tx_id for r in f.txs] + [x.tx_id for a, b, _w in f.pairs
-                                                                         for x in (a, b)]))
-                c.execute("INSERT INTO diag_decision(finding_id, kind, title, action, fingerprint, note, status, "
-                          "created_at, tx_ids_json, data_version) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                          (f.id, f.kind, f.title[:300], "dismiss", A.fingerprint(f), label, "active", stamp,
-                           json.dumps(tx_ids), version))
-    log.info("Hinweise gesammelt als geprüft markiert: %s (%s)", len(p.items), token)
-    return A.Result(ok=True, message=f"{len(p.items)} Hinweise als geprüft markiert – keine Daten geändert."), token
+        n = write_dismissals(ctx, p.items, label)
+    log.info("Hinweise gesammelt als geprüft markiert: %s (%s)", n, token)
+    return A.Result(ok=True, message=f"{n} Hinweise als geprüft markiert – keine Daten geändert."), token
 
 
 def undo_bulk(ctx: Any, token: str) -> A.Result:
     """Gemeinsames Rückgängig einer Sammelaktion (alle Hinweise erscheinen wieder)."""
     if not token or not token.isalnum():
         return A.Result(errors=["Unbekannte Sammelaktion."])
-    with A._LOCK:
-        cur = ctx.db.x("UPDATE diag_decision SET status='undone', undone_at=? WHERE status='active' AND action="
-                       "'dismiss' AND note LIKE ?", (A._now(), f"{BULK_PREFIX}{token}%"))
-    if not cur.rowcount:
+    n = undo_label(ctx, f"{BULK_PREFIX}{token}")
+    if not n:
         return A.Result(errors=["Diese Sammelaktion ist nicht (mehr) aktiv."])
-    return A.Result(ok=True, message=f"{cur.rowcount} Hinweise wieder geöffnet.")
+    return A.Result(ok=True, message=f"{n} Hinweise wieder geöffnet.")
 
 
 def recent_bulks(db: Any, limit: int = 8) -> list[dict[str, Any]]:

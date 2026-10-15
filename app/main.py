@@ -28,7 +28,7 @@ def _load_modules() -> None:
                 "app.datasources.binance", "app.diagnosis.web",
                 "app.diagnosis.integrity_web", "app.diagnosis.windows_web", "app.documentimport.web",
                 "app.watchlist.module", "app.taxdata.module", "app.assetchange.module",
-                "app.assetchange.merge_web"):
+                "app.assetchange.merge_web", "app.diagnosis.auto_web"):
         with contextlib.suppress(ModuleNotFoundError):
             __import__(mod)
 
