@@ -8,6 +8,7 @@ verbrauchten Lots je Veräußerungsjahr, rückwirkende Wirkung einer Anschaffung
 # ruff: noqa: F811
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
@@ -21,10 +22,12 @@ from tests.test_review_workflow import snapshot
 D = Decimal
 
 
-def fake_ctx(rows):
+def fake_ctx(rows, estimated: tuple[str, ...] = ()):
     pf = portfolio(rows, ASSETS)
+    if estimated:  # wie ctx.portfolio(): Sparplan-Schätzungen tragen flag „estimated“
+        pf = replace(pf, txs=[replace(t, flag="estimated") if t.tx_id in estimated else t for t in pf.txs])
     led = run_ledger(pf)
-    return SimpleNamespace(ledger=lambda: led, recorded_portfolio=lambda: pf), led
+    return SimpleNamespace(ledger=lambda: led, portfolio=lambda: pf), led
 
 
 ROWS = [
@@ -50,6 +53,15 @@ def test_lot_classes_and_transfer_keeps_acquisition():
     assert by["BNB"].evidenced_share == 0 and by["BTC"].evidenced_share == 1
     btc_lots = [lot for lot in led.lots if lot.asset == "BTC" and lot.qty > 0]
     assert [(lot.account, lot.acq_date) for lot in btc_lots] == [("Wallet", date(2023, 1, 10))]
+
+
+def test_estimated_savings_plan_lots_are_not_evidenced():
+    rows = [*ROWS, tx("P1", "2024-08-01T10:00:00Z", "buy", frm=("Börse", "EUR", "100"), to=("Börse", "BTC", "0.002"),
+                      value="100")]
+    ctx, _led = fake_ctx(rows, estimated=("P1",))
+    by = {r.asset: r for r in PV.build(ctx).assets}
+    assert by["BTC"].by_class == {"kauf": D("0.05"), "geschaetzt": D("0.002")}
+    assert by["BTC"].evidenced_share < 1  # Schätzung ist kein Anschaffungsbeleg
 
 
 def test_disposals_by_provenance_and_missing_basis():

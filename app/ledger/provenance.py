@@ -11,6 +11,7 @@ das Lot entstanden ist. Diese Sicht ordnet jedes offene Lot und jeden verbraucht
 * **Zugang ohne Anschaffungsbeleg** – externer Zugang: Zeitpunkt = Zugang, Kosten = Wert beim Zugang (Ersatz, kein
   Anschaffungsnachweis) bzw. **unbekannt**, wenn kein Wert vorliegt (nie 0 €);
 * **Derivat** – Ergebnis aus Futures/Funding (gesondert einzuordnen);
+* **Sparplan-Schätzung** – geschätzte, noch nicht erfasste Sparplan-Ausführung (kein Beleg, nur Fortschreibung);
 * **ohne Anschaffungsdaten** – Platzhalter („Phantom“) für Abgänge ohne vorhandene Lots.
 
 Transfers zwischen eigenen Konten führen Lots mit unverändertem Anschaffungszeitpunkt fort (Herkunft bleibt). Eine
@@ -35,14 +36,18 @@ CLASSES = {
     "ohne_beleg": "Zugang ohne Anschaffungsbeleg (Ersatzwert)",
     "unbekannt": "Anschaffungskosten unbekannt",
     "derivat": "Derivat-Ergebnis",
+    "geschaetzt": "Sparplan-Schätzung (nicht belegt)",
     "ohne_basis": "ohne Anschaffungsdaten",
 }
 EVIDENCED = ("kauf", "ertrag", "kapitalmassnahme", "eroeffnung")
 
 
-def classify(origin: str, tag: str | None, cost: Decimal, via: tuple[str, ...] = (), value: Any = "x") -> str:
+def classify(origin: str, tag: str | None, cost: Decimal, via: tuple[str, ...] = (), value: Any = "x",
+             flag: str | None = None) -> str:
     if origin == "phantom":
         return "ohne_basis"
+    if flag == "estimated":
+        return "geschaetzt"
     if via or origin == "corporate_action":
         return "kapitalmassnahme"
     if origin in ("buy", "trade"):
@@ -92,14 +97,15 @@ def build(ctx: Any) -> Report:
     led = ctx.ledger()
     if led is None:  # noch keine Buchungen
         return Report([], [], CLASSES)
-    pf = ctx.recorded_portfolio()
+    pf = ctx.portfolio()  # wie das Ledger: erfasste Buchungen plus Sparplan-Schätzungen (flag „estimated“)
     txs = {t.tx_id: t for t in (pf.txs if pf is not None else [])}
     by_asset: dict[str, AssetRow] = {}
     for lot in led.lots:
         if lot.qty <= 0:
             continue
         t = txs.get(lot.acq_tx)
-        cls = classify(lot.origin, t.tag if t else None, lot.cost, lot.via, t.value_eur if t else "x")
+        cls = classify(lot.origin, t.tag if t else None, lot.cost, lot.via, t.value_eur if t else "x",
+                       t.flag if t else None)
         row = by_asset.setdefault(lot.asset, AssetRow(lot.asset))
         row.qty += lot.qty
         row.by_class[cls] = row.by_class.get(cls, ZERO) + lot.qty
@@ -111,7 +117,8 @@ def build(ctx: Any) -> Report:
         for p in d.parts:
             t = txs.get(p.acq_tx) if getattr(p, "acq_tx", None) else None
             cls = "ohne_basis" if p.missing_basis else classify(p.origin or "", t.tag if t else None,
-                                                                 p.cost, p.via, t.value_eur if t else "x")
+                                                                 p.cost, p.via, t.value_eur if t else "x",
+                                                                 t.flag if t else None)
             y.qty_by_class[cls] = y.qty_by_class.get(cls, ZERO) + p.qty
             y.gain_by_class[cls] = y.gain_by_class.get(cls, ZERO) + (p.proceeds - p.cost)
             y.parts += 1
