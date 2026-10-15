@@ -8,6 +8,7 @@ externe KI-Dienste standardmäßig aus und nie für Finanzdaten, Seiten nur lese
 from __future__ import annotations
 
 import ast
+from decimal import Decimal as D
 from pathlib import Path
 
 from app.diagnosis import cockpit as CP
@@ -69,3 +70,19 @@ def test_external_ai_is_off_by_default_and_never_used_for_financial_data(client)
             assert "anthropic" not in names and "openai" not in names, f
             assert not any((n.module or "").startswith("app.news.llm") for n in ast.walk(tree)
                            if isinstance(n, ast.ImportFrom)), f
+
+
+def test_case_analysis_covers_positions_without_reference(client, monkeypatch):
+    """Positionen ohne Referenzbestand (häufigster Fall) sind in der Fallanalyse wählbar und zeigen ihren Bestand."""
+    from tests.helpers import portfolio, tx
+
+    pf = portfolio([tx("A", "2024-01-10T10:00:00Z", "buy", frm=("Börse", "EUR", "100"), to=("Börse", "BTC", "0.01"),
+                       value="100")])
+    c = ctx(client)
+    monkeypatch.setattr(c, "portfolio", lambda: pf)
+    monkeypatch.setattr(c, "recorded_portfolio", lambda: pf)
+    c.invalidate_data()
+    fall = CP.case(c, "Börse", "BTC")
+    assert fall.stock is not None and fall.stock.ledger == D("0.01") and fall.stock.state == "keine"
+    assert 'value="Börse|BTC"' in client.get("/quality/cockpit").text
+

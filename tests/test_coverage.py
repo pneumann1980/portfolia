@@ -106,3 +106,21 @@ def test_coverage_page_is_read_only_and_offers_next_steps(client):
     assert snapshot(c) == before
     assert CV.month_end("2024-12") == "2025-01-01T00:00:00+00:00" and CV.month_end("2024-02") == \
         "2024-03-01T00:00:00+00:00"
+
+
+def test_curated_import_covers_quiet_months_until_its_cutoff(client, monkeypatch):
+    """Kuratierter Import = maßgebliche Buchführung bis zum Stichtag: ruhige Monate davor sind abgedeckt (keine
+    Lücke); ohne Stichtag bleibt es bei der Regel „Lücke im Aktivitätszeitraum“."""
+    from datetime import date
+
+    from tests.helpers import portfolio, tx
+
+    pf = portfolio([tx("A", "2024-01-10T10:00:00Z", "deposit", to=("Depot", "EUR", "100")),
+                    tx("B", "2024-05-10T10:00:00Z", "deposit", to=("Depot", "EUR", "100"))])
+    monkeypatch.setattr(ctx(client), "recorded_portfolio", lambda: pf)
+    r = row(CV.build(ctx(client)), "Depot")
+    assert r.source.startswith("Import (kuratiert)") and r.gaps == [("2024-02", "2024-04")]
+    pf.valuation_date = date(2024, 6, 30)
+    r = row(CV.build(ctx(client)), "Depot")
+    assert r.gaps == [] and r.cells["2024-03"].state == "abgedeckt" and r.last == "2024-06"
+    assert ("2024-01", "2024-06", "Import bis Stichtag") in r.periods

@@ -113,7 +113,7 @@ def make_router() -> APIRouter:
 
         ctx = get_ctx(request)
         cp = CP.build(ctx)
-        positions = sorted({(r.account, r.asset) for r in ST.build(report_for(ctx), []).rows})
+        positions = sorted({(r.account, r.asset) for r in ST.build(report_for(ctx), []).all_rows})
         return render(request, "cockpit.html", active="quality", cp=cp, labels=CP.STATE_LABEL, positions=positions,
                       **_common())
 

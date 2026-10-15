@@ -95,3 +95,25 @@ def test_one_to_many_and_many_to_one_and_partial_and_double(client, config, api)
     assert "Widersprüche zwischen Quellen" in page and "Ereignis doppelt gebucht" in page
     assert c.get("/journal/ereignisse?kind=1:n").status_code == 200
     assert snapshot(c) == before  # nur lesend
+
+
+def _grp(booking: dict, record: dict) -> G.Group:
+    g = G.Group("T", booking, [G.Member("sync:x", "same", "E1", record)])
+    G.check_group(g)
+    return g
+
+
+def test_precision_and_own_fee_are_not_quantity_conflicts():
+    """Reale Validierung (nur lesend): Quelle mit mehr Nachkommastellen als die Buchung ist kein Mengenwiderspruch;
+    eine Differenz genau in Höhe der Quellgebühr bei Buchung ohne Gebühr ist ein Brutto/Netto-Hinweis."""
+    b = {"from_qty": "0.12345678", "to_qty": None, "fee_qty": None}
+    assert _grp(b, {"out": ["A", "BTC", "0.123456784321"]}).conflicts == []  # gerundet
+    assert _grp(b, {"out": ["A", "BTC", "0.123456789"]}).conflicts == []  # abgeschnitten
+    assert [k for k, _ in _grp(b, {"out": ["A", "BTC", "0.12346"]}).conflicts] == ["qty"]  # echte Abweichung
+    whole = {"from_qty": "100", "to_qty": None, "fee_qty": None}
+    assert [k for k, _ in _grp(whole, {"out": ["A", "USDT", "100.4"]}).conflicts] == ["qty"]  # ohne Stellen: streng
+    gross = {"from_qty": "99.5", "to_qty": None, "fee_qty": None}
+    g = _grp(gross, {"out": ["A", "USDT", "100"], "fee": ["USDT", "0.5"]})
+    assert [k for k, _ in g.conflicts] == ["fee_basis"] and "brutto/netto" in g.conflicts[0][1]
+    other = _grp(gross, {"out": ["A", "USDT", "100"], "fee": ["BNB", "0.5"]})  # Gebühr in anderem Asset erklärt nichts
+    assert [k for k, _ in other.conflicts] == ["qty"]

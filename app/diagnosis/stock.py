@@ -83,6 +83,7 @@ class StockView:
     n_positions: int = 0  # alle Positionen (Ledger ∪ Referenz ∪ belastbarer externer Bestand)
     n_valued: int = 0  # davon mit belastbarem Kurs (Teilbewertung: Summen nur über diese)
     n_no_ledger: int = 0  # Positionen ohne Buchung (nur Referenz bzw. externer Bestand)
+    all_rows: list[StockRow] = field(default_factory=list)  # alle Positionen (auch ohne Referenz), z. B. Fallanalyse
 
 
 def _age_days(p: RefPoint, now: datetime) -> int:
@@ -232,4 +233,4 @@ def build(report: Any, decisions: list[Any], now: datetime | None = None) -> Sto
                      ledger_total=ledger_total, view_total=view_total, n_unvalued=len(unvalued),
                      unvalued=unvalued[:30], n_positions=len(rows),
                      n_valued=sum(1 for r in rows if r.ledger_value is not None or r.view_value is not None),
-                     n_no_ledger=sum(1 for r in rows if r.no_ledger))
+                     n_no_ledger=sum(1 for r in rows if r.no_ledger), all_rows=rows)

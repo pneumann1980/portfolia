@@ -157,7 +157,7 @@ def case(ctx: Any, account: str, asset: str) -> Case:
     from app.ledger import provenance as PV
 
     sv = ST.build(report_for(ctx), [])
-    row = next((r for r in sv.rows if (r.account, r.asset) == (account, asset)), None)
+    row = next((r for r in sv.all_rows if (r.account, r.asset) == (account, asset)), None)
     cov = list(CV.build(ctx, account=account).rows)
     rev = Q.build(ctx.db, "offen", flt=Q.Filter(account=account), page=0).all_items[:50]  # Vorgänge des Kontos
     conf = [c for c in G.scan(ctx) if account in c.text or asset in c.text][:30]

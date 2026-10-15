@@ -10,8 +10,9 @@ Frage: *Für welche Monate liegen für ein Konto überhaupt Daten vor – und wo
 * **Lücke** – innerhalb des Aktivitätszeitraums weder Buchung noch Lieferung noch Abdeckung: hier fehlen am
   ehesten Daten (z. B. ein fehlender Exportzeitraum bei MEXC, wenn zwei Dateien Januar–März und Juni–August abdecken).
 
-Abdeckung entsteht nur aus belegbaren Lieferungen: Zeitraum je eingelesener Datei (frühester bis spätester Vorgang)
-und vollständige API-Abrufe (``coverage_json.history``). Nichts wird angenommen oder gebucht.
+Abdeckung entsteht nur aus belegbaren Lieferungen: Zeitraum je eingelesener Datei (frühester bis spätester Vorgang),
+vollständige API-Abrufe (``coverage_json.history``) und der kuratierte Import bis zu seinem Stichtag (er ist die
+maßgebliche Buchführung; Monate danach deckt er nicht ab). Nichts wird angenommen oder gebucht.
 """
 
 from __future__ import annotations
@@ -152,6 +153,12 @@ def build(ctx: Any, frm: str = "", to: str = "", area: str = "", account: str = 
             c = booked[key].setdefault(m, Cell("gebucht"))
             c.booked += 1
             c.areas[ar] = c.areas.get(ar, 0) + 1
+    # kuratierter Import: vollständige Buchführung bis zum Stichtag – ruhige Monate davor sind abgedeckt, keine Lücke
+    cut = pf.valuation_date if pf is not None else None
+    if cut is not None:
+        for key, cells in booked.items():
+            if key[1].startswith("Import (kuratiert)") and cells and min(cells) <= month(cut):
+                periods[key].append((min(cells), month(cut), "Import bis Stichtag"))
     # eingelesene Dateien und Abrufe: Lieferzeitraum und noch nicht gebuchte Vorgänge
     for b in db.q("SELECT b.id, b.kind, b.source, b.profile, b.account, b.datasource_id, "
                   "MIN(json_extract(r.rec_json, '$.ts')) AS t0, MAX(json_extract(r.rec_json, '$.ts')) AS t1 "

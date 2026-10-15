@@ -8,8 +8,10 @@ Buchung alle Quellen nebeneinander und findet Widersprüche, die keine Einzelzei
 * **1:n** – derselbe Quelldatensatz ist mit mehreren Buchungen verknüpft (außer ausdrücklichen Teil-Zuordnungen);
 * **n:1 aus derselben Quelle** – eine Buchung trägt mehrere verschiedene Datensätze derselben Quelle in derselben
   Rolle (Doppellieferung der Quelle oder falsche Verknüpfung);
-* **Gebühr brutto/netto** – Quellen widersprechen sich, ob die Gebühr im Betrag enthalten oder zusätzlich belastet ist;
-* **Mengenwiderspruch** – eine Quelle nennt eine andere Menge, die sich nicht durch die Gebühr erklären lässt;
+* **Gebühr brutto/netto** – Quellen widersprechen sich, ob die Gebühr im Betrag enthalten oder zusätzlich belastet ist,
+  bzw. die Differenz entspricht genau der Gebühr der Quelle, die Buchung führt aber keine Gebühr (Hinweis);
+* **Mengenwiderspruch** – eine Quelle nennt eine andere Menge, die sich weder durch die Gebühr noch durch die
+  Stellenzahl der Buchung erklären lässt (Quelle genauer als die auf ≥ 2 Nachkommastellen gerundete Buchung);
 * **teilweise verknüpft** – nur ein Teil der Zeilen eines Ereignisses ist verknüpft, der Rest steht offen (ein
   Vorgang darf nicht geteilt werden);
 * **Doppelbuchung** – dasselbe Ereignis (Kennung bzw. Ereigniszeile derselben Quelle) ist zweimal gebucht.
@@ -22,7 +24,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_DOWN, ROUND_HALF_EVEN, Decimal, InvalidOperation
 from typing import Any
 
 KINDS = {"1:n": "ein Quelldatensatz an mehreren Buchungen", "n:1": "mehrere Datensätze derselben Quelle an einer "
@@ -112,6 +114,23 @@ def _leg_qty(rec: dict[str, Any], key: str) -> Decimal | None:
     return _dec(leg[2]) if isinstance(leg, list) and len(leg) > 2 else None
 
 
+def _precision_only(got: Decimal, want: Decimal) -> bool:
+    """Abweichung nur durch die Stellenzahl der Buchung (Quelle genauer, Buchung gerundet bzw. abgeschnitten)? Gilt
+    erst ab zwei Nachkommastellen der Buchung – „100“ gegen „100,4“ bleibt ein Widerspruch."""
+    exp = want.as_tuple().exponent
+    if not isinstance(exp, int) or exp > -2:
+        return False
+    q = Decimal(1).scaleb(exp)
+    return any(abs(got).quantize(q, rounding=r) == abs(want) for r in (ROUND_HALF_EVEN, ROUND_DOWN))
+
+
+def _own_fee(rec: dict[str, Any], asset: Any) -> Decimal | None:
+    fee = rec.get("fee")
+    if isinstance(fee, list) and len(fee) > 1 and fee[0] == asset:
+        return _dec(fee[1])
+    return None
+
+
 def check_group(g: Group) -> None:
     """Widersprüche innerhalb einer Gruppe (Gebührenbasis, Mengen)."""
     bases = {m.record.get("fee_basis") for m in g.members if m.record.get("fee_basis") in ("extra", "inside")}
@@ -130,11 +149,18 @@ def check_group(g: Group) -> None:
             if m.role not in ("same", "out" if key == "out" else "in"):
                 continue
             got = _leg_qty(m.record, key)
-            if got is None or abs(got) == abs(want):
-                continue
+            if got is None or abs(got) == abs(want) or _precision_only(got, want):
+                continue  # gleich bzw. nur Rundung der Buchung auf weniger Stellen
             if fee and abs(abs(got) - abs(want)) == abs(fee):
                 continue  # Differenz genau die Gebühr: brutto/netto, keine echte Mengenabweichung
             side = "Abgang" if key == "out" else "Zugang"
+            leg = m.record.get(key)
+            own = _own_fee(m.record, leg[1] if isinstance(leg, list) and len(leg) > 1 else None)
+            if own and not fee and abs(abs(got) - abs(want)) == abs(own):
+                g.conflicts.append(("fee_basis", f"{m.source} nennt {side} {got} und eine Gebühr {own}; die "
+                                                 f"Buchung {want} enthält keine Gebühr – brutto/netto prüfen (Gebühr "
+                                                 "ggf. nicht gebucht)."))
+                continue
             g.conflicts.append(("qty", f"{m.source} nennt {side} {got}, die Buchung {want} – Differenz "
                                        f"{abs(got) - abs(want)} ist nicht durch die Gebühr erklärt."))
 
