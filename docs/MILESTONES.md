@@ -1426,6 +1426,95 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.29.0 – Konfliktklärung mit gezielter Bestandsbestätigung
+
+Ziel: Portfolia untersucht Konflikte selbst, führt vorhandene Belege zusammen, simuliert Lösungen **gemeinsam** und
+übernimmt nur eindeutig Belegtes. Der Nutzer wird gezielt nach genau der Information gefragt, die fehlt – nie mit dem
+Verweis auf eine allgemeinere Seite. Neue Module: `app/diagnosis/clarify.py` (Kern), `stockconfirm.py`
+(Bestandsbestätigung), `derivatives.py` (Derivate), `clarify_web.py` (Oberfläche `/quality/klaerung`). Migration 26.
+
+**Gap-Analyse (Stand 0.28.3, am Code geprüft)**
+
+| Bereich | vorhanden | erweitert | fehlte |
+|---|---|---|---|
+| Befunde/Empfehlungen/Pläne | `engine`, `audit`, `recommend`, `actions.build_plan` | genutzt, keine zweite Engine | Zusammenfassung abhängiger Befunde |
+| Simulation | `hypothetical` + `run_ledger` + `diagnose` je Einzelplan (`preview`) | gleiche Bausteine für Kombinationen | gemeinsame Bewertung von Kombinationen, Gleichwertigkeit |
+| Ausführung | `bulk.execute/undo`, Entscheidungen mit `bulk`-Kennung | gleiche Mechanik (`kl…`-Kennung) | Nachprüfung mit automatischer Rücknahme, Idempotenz je Gruppe |
+| Automatik | `autopilot.*` (Standard aus) | gilt weiter (`enabled` + `fixes`) | Klärung nach Autopilot, Folgelauf |
+| Nachweise | Referenzbestände mit Zeitpunkt/Zeitzone | Umfang, Unterkonto, gebundene Menge, Margin/Ergebnis (nur Angaben), zusammengefasste Konten | gezielte Frage, Bestätigen+Übernehmen |
+| Recherche | `research.run` (lesend, Staging, idempotent) | gezielt je Fall (Konto, Asset), Schutzregeln beachtet | Auslösung durch einen Fall, Blockaden als konkrete Aussage |
+| Derivate | Kennzeichnungen im Ledger (`derivative`-Lots/-Abgänge, nicht in `REALIZED_KINDS`) | wirtschaftliches Ergebnis getrennt ausgewiesen | Ausweis, Margin-Umbuchung als Kandidat, offene Vorgänge für übersprungene Zeilen |
+
+**Ablauf je Klärungsgruppe:** Erkennen (Gruppen über gemeinsame Buchung/Position; Sammelbefunde zählen über ihre
+Einzelvorgänge) → Dossier (Befunde, Zusammensetzung des Bestands je Position, Derivatebuchungen, Nachweise) →
+Kandidaten (nur Lösungen der vorhandenen Empfehlung ohne freie Eingabe; Paare bei mehrteiligen Vorgängen nur, wenn die
+Zuordnung eindeutig ist) → gemeinsame Simulation aller widerspruchsfreien Kombinationen (Bestände, Lots mit
+Anschaffungsdaten, Gebühren, Zahlungsströme, Ergebnisse je Jahr, Ledger-Probleme, neue Befunde, Zwischen- und
+Endbestände aller Nachweise) → Entscheidung → atomare Übernahme → Nachprüfung → Folgelauf.
+
+**Beleglage der Kandidaten:** *Identität* (gemeinsamer Hash bzw. Quellreferenz), *rechnerisch exakt erklärt* (Brutto −
+Gebühr = Netto, Summe der Teile = Sammelbuchung; keine Identität), *nur Betrag/Zeit ähnlich* (Suchhinweis). Eine
+Differenz ohne dokumentierte Ursache (z. B. XT: 260,86516521 − 255,78917 = 5,07599521) ist nie ein Beleg.
+
+**Automatische Übernahme nur, wenn alles zutrifft:** (1) Identität belegt – oder rechnerisch erklärt **und** genau eine
+Deutung erfüllt einen Bestandsnachweis (und die Ausgangslage nicht); (2) keine konkurrierende zulässige Deutung
+derselben Buchungen (Varianten derselben Deutung, z. B. welche Seite bleibt, entscheidet die vorhandene
+Quellenpriorität nur bei vollständig gleicher wirtschaftlicher Wirkung); (3) gemeinsame Simulation ohne neuen
+negativen Bestand, neues Ledger-Problem, neuen Befund oder widersprüchlichen Zwischenbestand; (4) Plan nur aus
+Verknüpfen/Ausblenden vorhandener Buchungen (Aktionsart „verknüpfen“) – neue Buchungen, Margin-Umbuchungen und
+Bereitstellen nur nach ausdrücklicher Bestätigung; (5) Datenstand und Pläne unter Sperre unverändert; (6) Automatik
+erlaubt (`autopilot.enabled` + `autopilot.fixes`). Ergebnis jeder Prüfung steht im Fall (Regeltabelle).
+
+**Bestandsbestätigung (Abschlussdialog):** Die Frage wird vorab berechnet: Es wird nur nach einer Position gefragt, auf
+der die zulässigen Hypothesen verschiedene Bestände ergeben; erfüllen alle Varianten den Bestand gleich (z. B. reine
+Transfer-Verknüpfung), wird nicht gefragt. Erfasst werden Konto, Unterkonto, Asset, Menge (0 gültig), Datum, Uhrzeit,
+Zeitzone, Quelle, Umfang (Spot/Funding/Derivate/zusammengefasst), gebundene Menge, Margin und offenes Ergebnis (nur
+Angaben; EUR-Gesamtwert ersetzt keine Menge). Spätere Buchungen zählen: Der Vergleich erfolgt zum angegebenen Zeitpunkt.
+Passt der Nachweis zu genau einer belegten Deutung, kann der Nutzer Nachweis und Übernahme in einem Schritt
+bestätigen. Sonst bleibt es beim Nachweis: „Menge bestätigt, historische Zuordnung offen“, **keine Ausgleichsbuchung**.
+Ein bestätigter Endbestand ersetzt weder Anschaffungsbelege noch Gebührenursache noch Verlustursache.
+
+**Qualitätsdimensionen (getrennt):** Bestand/Menge, Transfer und Gegenkonto, Gebühren, wirtschaftliche Vorgangsart,
+Anschaffungsdaten, historische Vollständigkeit, steuerliche Einordnung – je *geklärt/offen/unbekannt/nicht betroffen*.
+Fehlende EUR-Werte machen die Kostenbasis „unbekannt“ (nie 0 €), ohne bestätigte Mengen als ungelöst erscheinen zu
+lassen.
+
+**Derivate (Prüfung der Lücken):** Importkennzeichnungen sind mengenwirksam, das wirtschaftliche Ergebnis war aber nirgends
+ausgewiesen: `derivatives.economics` rechnet es getrennt (Funding, Futures-PnL, Liquidation, Marginzinsen,
+realisierter Gewinn/Verlust; Margin-Umbuchungen zählen nicht; unbekannte Beträge → „unbekannt“). `"derivative"` wurde
+**nicht** zu `REALIZED_KINDS` ergänzt (der Gewinn aus verbrauchten Settlement-Lots ist nicht der Handelsverlust).
+`margin`-Paare gleicher Menge sind nur ein Kandidat für einen internen Transfer (ohne verifizierte Anbietersemantik
+genügt das Etikett nicht; nie automatisch). Von CSV-Profilen übersprungene Margin-/Derivatezeilen bleiben als
+konkrete offene Vorgänge bestehen. Doppelabzug von Gebühren/Funding ist mangels verifizierter Anbietersemantik
+(`derivatives.VERIFIED` leer) nie ausgeschlossen; die steuerliche Behandlung ist nicht implementiert und bleibt offen.
+
+**Automatik, Nachprüfung, Rücknahme:** Nach Importen/Abrufen läuft die Klärung im Anschluss an den Autopilot;
+Nachweise lösen einen Folgelauf aus. Jeder Lauf dokumentiert Belege, Kandidaten, Ausschlüsse, Simulation, Entscheidung
+und Wirkung (`clarify_run`). Übernahme je Gruppe atomar; Wiederholung/Doppelklick führt nichts doppelt aus; parallele
+Durchgänge werden abgewiesen und als Folgelauf vorgemerkt; nach der Übernahme wird nachgeprüft (Befund behoben, nichts
+Neues, kein Nachweis verschlechtert) – sonst vollständige Rücknahme. Rückgängig nimmt alle zusammengehörigen Korrekturen
+gemeinsam zurück. Rückstellungen und Ablehnungen gelten nur bei gleicher Evidenz (Prüfsumme der Befunde und
+Nachweise); ein zurückgenommener oder wiederkehrender Fall wird neu bewertet. Ein „als geprüft“ markierter Hinweis
+zählt nie als behobener Konflikt. Deterministische Grenzen: 64 Hypothesen je Gruppe (darüber „Prüfumfang überschritten“,
+keine Auswahl), 400 Simulationen und 5 Quellenabrufe je Durchgang (übrige Gruppen zuerst im Folgelauf).
+
+**Nachladen:** Je Fall höchstens eine lesende Recherche pro Datenquelle (Konto, Asset), nur bei unterstützter,
+aktivierter, nicht laufender und nicht bereits recherchierter Quelle; deaktivierte/fehlgeschlagene Quellen erscheinen als
+konkrete Blockade. Der reguläre Abrufstand bleibt unverändert (bestehende Recherche legt nur Staging-Ergebnisse ab).
+
+**Export/Restore:** Fälle und Läufe sind Teil des Gesamtexports; Läufe erscheinen nach der Wiederherstellung als
+„aus Wiederherstellung“ (die Wirkung steckt in den exportierten Buchungen).
+
+**Tests:** `tests/test_clarify.py`, `tests/test_clarify_system.py` – die 16 geforderten Regressionsfälle, Oberfläche,
+Recherche, echter Restore, Skalierung (24 Gruppen + 600 Ballast-Buchungen, Budget, Rotation, Prüfumfang).
+
+**Grenzen / offen:** Die Klärung bildet keine Buchungen aus Bestandsdifferenzen und führt `adjust/opening/book_migration`
+nicht aus. Automatisch ausführbar ist ausschließlich „verknüpfen“ (Ausblenden/Verknüpfen vorhandener Buchungen) mit
+Identitätsbeleg oder rechnerischer Erklärung plus Bestandsnachweis. Reale Fallgruppen (K01–K13 der Auswertung vom
+11.10.2026): es stand **keine reale Exportdatei** zur Verfügung – gemessene Zahlen liegen nicht vor; die synthetischen
+Nachbildungen sind keine Erfolgsquote. Anbietersemantik für Derivate ist nicht verifiziert; Pionex-/Bybit-Native-Exporte
+bleiben Spaltenzuordnung.
+
 ## 0.28.3 – Datenquellen: Intervall gilt auch bei unvollständigem Abruf (Kaspa)
 
 Beobachtung: Kaspa-Wallets liefen trotz „einmal täglich“ über den Tag verteilt immer wieder und erreichten teils keinen

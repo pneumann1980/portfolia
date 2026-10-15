@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Konfliktklärung{% endblock %}
+{% block heading %}Datenqualität · Konfliktklärung{% endblock %}
+{% block content %}
+<div class="stack diag">
+  <p class="hint"><a href="/quality/diagnose">← Diagnose</a> · <a href="/quality/autopilot">Autopilot</a> · <a href="/quality/diagnose/liste">Entscheidungsliste</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  {% if followup %}<div class="alert"><span class="icon">i</span><div>Ein Folgelauf ist vorgemerkt (neue Daten trafen während eines Durchgangs ein).</div></div>{% endif %}
+
+  <section class="card"><div class="card-head"><h2>So arbeitet die Klärung</h2>
+    <form method="post" action="/quality/klaerung/lauf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Jetzt untersuchen</button></form></div>
+    <p class="hint">Zusammengehörige Befunde bilden einen Fall. Portfolia sammelt die vorhandenen Belege, bildet nur Lösungen, die sich aus Belegen ableiten lassen, simuliert sie <b>gemeinsam</b> mit der vorhandenen Engine und übernimmt nur, wenn Beleg, Eindeutigkeit und Simulation es tragen{% if auto %} (Automatik ist <b>an</b>){% else %} (Automatik ist <b>aus</b>: Eindeutige Lösungen warten auf deine Bestätigung){% endif %}. Sonst steht hier genau, welche Information fehlt. Ein Bestandsnachweis bucht nie etwas; er wählt nur zwischen belegten Deutungen.</p>
+    <form method="post" action="/quality/klaerung/einstellungen" class="row" style="gap:12px;flex-wrap:wrap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="row"><input type="checkbox" name="enabled" value="1" {% if enabled %}checked{% endif %}> Klärung nach Importen und Abrufen</label>
+      <label class="row"><input type="checkbox" name="research" value="1" {% if research %}checked{% endif %}> Fehlende Informationen gezielt (lesend) bei der Datenquelle nachladen</label>
+      <button class="btn sm ghost" type="submit">Speichern</button>
+    </form>
+  </section>
+
+  <section class="card"><div class="card-head"><h2>Offene Fälle ({{ open_|length }})</h2></div>
+    {% if not open_ %}<p class="hint">Keine offenen Fälle. Nach dem nächsten Import oder über „Jetzt untersuchen“ werden neue Fälle gebildet.</p>{% endif %}
+    <ul class="plain-list">
+    {% for c in open_ %}
+      <li style="margin-bottom:10px">
+        <div class="row"><span class="badge {{ status[c.status][1] }}">{{ status[c.status][0] }}</span>{% if c.kind == 'unsupported' %}<span class="badge warn">nicht unterstützt</span>{% endif %}<a href="/quality/klaerung/{{ c.key }}"><b>{{ c.title }}</b></a></div>
+        <div class="hint">{{ dims_text(c.dims) }}</div>
+        {% if c.state.decision and c.state.decision.reason %}<div class="hint">{{ c.state.decision.reason }}</div>{% endif %}
+        {% if c.state.decision and c.state.decision.missing %}<div class="hint"><b>Es fehlt:</b> {{ c.state.decision.missing|join('; ') }}</div>{% endif %}
+        {% if c.state.question %}<div class="hint"><b>Rückfrage:</b> {{ c.state.question.text }}</div>{% endif %}
+      </li>
+    {% endfor %}
+    </ul>
+  </section>
+
+  {% if econ %}
+  <section class="card"><div class="card-head"><h2>Wirtschaftliches Derivateergebnis (getrennt)</h2></div>
+    <p class="hint">Aus den Buchungen mit Derivate-Kennzeichnung; getrennt vom Spot-Ergebnis, ohne steuerliche Einordnung (nicht implementiert). Margin-Umbuchungen zählen nicht zum Ergebnis; fehlende Beträge machen die EUR-Summe unbekannt (nicht 0 €).</p>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Jahr</th><th>Konto</th><th>Asset</th><th>Ergebnis (Menge)</th><th>Ergebnis (EUR)</th><th>Margin-Umbuchung</th></tr></thead><tbody>
+    {% for r in econ %}<tr><td>{{ r.year }}</td><td>{{ r.account }}</td><td>{{ r.asset }}</td><td class="num">{{ '%+f'|format(r.result_qty) }}</td><td class="num">{% if r.result_eur is none %}unbekannt ({{ r.n_unknown }} ohne Betrag){% else %}{{ '%.2f'|format(r.result_eur) }} €{% endif %}</td><td class="num">{{ '%+f'|format(r.margin_qty) }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>{% endif %}
+
+  {% if done %}
+  <section class="card"><div class="card-head"><h2>Geklärt ({{ done|length }})</h2></div>
+    <ul class="plain-list">{% for c in done %}<li><a href="/quality/klaerung/{{ c.key }}">{{ c.title }}</a> · {{ c.resolved_at|datetime_de if c.resolved_at else '' }}<div class="hint">{{ dims_text(c.dims) }}</div></li>{% endfor %}</ul>
+  </section>{% endif %}
+</div>
+{% endblock %}

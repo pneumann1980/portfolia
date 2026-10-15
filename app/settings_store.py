@@ -51,6 +51,12 @@ DEFAULTS: dict[str, Any] = {
     "autopilot.rules": True,  # Entscheidungsregeln (Hinweise/Verdacht, ohne Datenänderung) anwenden
     "autopilot.fixes": False,  # beweisbare Korrekturen (Ausblenden/Verknüpfen/Transfer aus zwei vorhandenen Buchungen)
     "autopilot.fixes_level": "eindeutig",  # eindeutig | hoch plausibel
+    # Konfliktklärung: untersucht offene Befunde nach Importen/Abrufen/Nachweisen (ändert ohne Freigabe nichts; die
+    # automatische Übernahme folgt ``autopilot.enabled`` + ``autopilot.fixes``)
+    "clarify.enabled": True,
+    "clarify.research": True,  # fehlende Informationen gezielt (lesend, begrenzt) bei der Datenquelle nachladen
+    "clarify.limit": 64,  # Hypothesen je Gruppe (darüber: „Prüfumfang überschritten“)
+    "clarify.budget": 400,  # Simulationen je Durchgang
     # News
     "news.min_relevance": 0.2,
     "news.dashboard_count": 5,

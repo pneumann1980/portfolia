@@ -787,6 +787,54 @@ CREATE TABLE IF NOT EXISTS account_merge (
 CREATE INDEX IF NOT EXISTS ix_account_merge_status ON account_merge(status, alias_account);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_account_merge_row ON account_merge(alias_account, target_account, created_at);
 """),
+    (26, """
+-- Konfliktklärung: Klärungsfälle (Gruppen zusammengehöriger Befunde) mit Dossier/Hypothesen/Frage, Läufe mit
+-- Dokumentation (Belege, Kandidaten, Ausschlüsse, Simulation, Entscheidung, Wirkung); Bestandsnachweise erweitern
+-- den Referenzbestand (Unterkonto, Umfang, gebundene Mengen, gezielte Anforderung durch einen Klärungsfall)
+CREATE TABLE IF NOT EXISTS clarify_case (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_key      TEXT NOT NULL UNIQUE,
+  kind          TEXT NOT NULL DEFAULT 'group',   -- group | unsupported
+  status        TEXT NOT NULL,   -- offen | wartet_bestand | wartet_info | blockiert | umfang | geloest | zurueck
+  title         TEXT NOT NULL,
+  accounts_json TEXT,
+  assets_json   TEXT,
+  finding_ids_json TEXT,
+  tx_ids_json   TEXT,
+  dims_json     TEXT,
+  state_json    TEXT,
+  evidence_fp   TEXT,
+  data_version  TEXT,
+  note          TEXT,
+  opened_count  INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  resolved_at   TEXT,
+  reopened_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_clarify_case_status ON clarify_case(status);
+CREATE TABLE IF NOT EXISTS clarify_run (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  token         TEXT NOT NULL UNIQUE,
+  case_key      TEXT NOT NULL,
+  trigger       TEXT NOT NULL,   -- auto | manual | bestand | import | folgelauf
+  outcome       TEXT NOT NULL,   -- geloest | wartet | blockiert | umfang | keine_aenderung | fehlgeschlagen
+  detail_json   TEXT,
+  bulk_id       TEXT,
+  decision_ids_json TEXT,
+  status        TEXT NOT NULL DEFAULT 'ok',      -- ok | undone
+  created_at    TEXT NOT NULL,
+  undone_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_clarify_run_case ON clarify_run(case_key, id);
+ALTER TABLE reference_balance ADD COLUMN subaccount TEXT;      -- Unterkonto beim Anbieter (Anzeige/Zuordnung)
+ALTER TABLE reference_balance ADD COLUMN scope TEXT;           -- spot | funding | derivatives | combined
+ALTER TABLE reference_balance ADD COLUMN qty_locked TEXT;      -- gebundene Menge (Aufträge, Marktplatz, Staking)
+ALTER TABLE reference_balance ADD COLUMN qty_margin TEXT;      -- gebundene Margin (Derivate), nur Angabe
+ALTER TABLE reference_balance ADD COLUMN qty_pnl TEXT;         -- offenes Ergebnis (Derivate), nur Angabe
+ALTER TABLE reference_balance ADD COLUMN members_json TEXT;    -- combined: Konten, die zusammengefasst angezeigt werden
+ALTER TABLE reference_balance ADD COLUMN case_key TEXT;        -- für diesen Klärungsfall gezielt erfasst
+"""),
 ]
 
 

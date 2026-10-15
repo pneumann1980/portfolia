@@ -7,6 +7,7 @@ Schnappschuss; damit liefert eine erneute Prüfung bei gleichen Daten dieselben 
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from dataclasses import dataclass, field
@@ -80,6 +81,14 @@ class Reference:
     at: datetime | None = None  # exakter Zeitpunkt (UTC), sonst Ende des Stichtags
     tz: str | None = None  # Zeitzone des Belegs (IANA); Stichtag ohne Uhrzeit endet um 24 Uhr in dieser Zone
     basis: str | None = None  # booking | value
+    # Bestandsnachweis (Abschlussdialog der Klärung): Umfang, Unterkonto, gebundene Mengen (nur Angaben)
+    scope: str | None = None  # spot | funding | derivatives | combined
+    subaccount: str | None = None
+    qty_locked: Decimal | None = None
+    qty_margin: Decimal | None = None
+    qty_pnl: Decimal | None = None
+    members: tuple[str, ...] = ()  # combined: Konten, deren Summe angezeigt wurde
+    parts: tuple[tuple[str, str, str], ...] = ()  # zusammengeführte Umfänge: (Umfang, Unterkonto, Menge)
 
 
 @dataclass
@@ -133,6 +142,7 @@ class Snapshot:
     price_gaps: list[dict[str, Any]] = field(default_factory=list)
     series_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
     references: list[Reference] = field(default_factory=list)  # aktive Referenzbestände (M27)
+    combined: list[Reference] = field(default_factory=list)  # Nachweise über zusammengefasste Konten (Summe)
     # ungebuchte Vorgänge mit Beleglage (offene Prüf-Stapel-Zeilen, Recherche-Ergebnisse) für Rekonstruktionskandidaten
     evidence: list[Any] = field(default_factory=list)
     # aktive Nutzerentscheidungen ohne Datenänderung je Befund: (Aktion, Prüfsumme) – dismiss | reject | defer
@@ -206,6 +216,7 @@ def collect(ctx: Any, now: datetime | None = None) -> Snapshot:
     except Exception as e:  # Evidenz ist Zusatz – die Diagnose läuft auch ohne
         log.warning("Evidenz für Rekonstruktionskandidaten nicht verfügbar: %s", e)
     snap.references = references(db)
+    snap.combined = combined_references(db)
     try:
         snap.marks = {r["finding_id"]: (r["action"], r["fingerprint"] or "") for r in db.q(
             "SELECT finding_id, action, fingerprint FROM diag_decision WHERE action IN ('dismiss', 'reject', 'defer') "
@@ -264,33 +275,92 @@ def _sources(ctx: Any, resolver: Any) -> tuple[list[SourceState], list[Observed]
     return states, observed
 
 
-def references(db: Any) -> list[Reference]:
-    """Aktive Referenzbestände (ältere Datenbanken ohne Tabelle: keine)."""
-    out: list[Reference] = []
+def _ref_rows(db: Any) -> list[Any]:
     try:
-        rows = db.q("SELECT * FROM reference_balance WHERE status='active' ORDER BY account, asset_id, as_of, id")
+        return db.q("SELECT * FROM reference_balance WHERE status='active' ORDER BY account, asset_id, as_of, id")
     except Exception as e:  # Datenbank vor Migration 19
         log.debug("Referenzbestände nicht verfügbar: %s", e)
-        return out
+        return []
+
+
+def _row_ref(r: Any, acc: str, aid: str, members: tuple[str, ...] = ()) -> Reference | None:
+    q = _dec(r["qty"])
+    try:
+        d = date.fromisoformat(str(r["as_of"])[:10])
+    except ValueError:
+        return None
+    if q is None:
+        return None
+    keys = r.keys()
+    at = parse_iso(r["as_of_ts"]) if "as_of_ts" in keys and r["as_of_ts"] else None
+
+    def opt(name: str) -> Any:
+        return r[name] if name in keys else None
+
+    return Reference(int(r["id"]), acc, aid, q, d, r["source"] or "statement", r["note"], r["created_at"], at,
+                     opt("tz"), opt("basis"), opt("scope"), opt("subaccount"), _dec(opt("qty_locked")),
+                     _dec(opt("qty_margin")), _dec(opt("qty_pnl")), members)
+
+
+def references(db: Any) -> list[Reference]:
+    """Aktive Referenzbestände (ältere Datenbanken ohne Tabelle: keine). Nachweise desselben Zeitpunkts mit
+    verschiedenem Umfang bzw. Unterkonto (z. B. Spot und Funding) ergeben zusammen den Bestand des Ledger-Kontos;
+    Nachweise über zusammengefasste Konten stehen getrennt in :func:`combined_references`."""
     from app.assetchange.account_merge import active_map as account_map
     from app.assetchange.merge import active_map
 
     accounts = account_map(db)  # Referenzbestand eines zusammengeführten Kontos gilt für das Ziel-Konto
     merged = active_map(db)  # Referenzbestand einer zusammengeführten Zwillingskennung gilt für das Haupt-Asset
-    for r in rows:
-        q = _dec(r["qty"])
+    out: list[Reference] = []
+    for r in _ref_rows(db):
+        if "scope" in r.keys() and r["scope"] == "combined":  # noqa: SIM118 – sqlite3.Row: ``in`` prüft Werte
+            continue
+        ref = _row_ref(r, accounts.get(r["account"], r["account"]), merged.get(r["asset_id"], r["asset_id"]))
+        if ref is not None:
+            out.append(ref)
+    return _merge_scopes(out)
+
+
+def _merge_scopes(refs: list[Reference]) -> list[Reference]:
+    """Mehrere Umfänge zum selben Zeitpunkt (Konto, Asset, Stichtag, Zeitpunkt, Zeitzone) addieren: jeder Umfang zählt
+    einmal (der jüngste Eintrag). Einträge ohne Umfangsangabe bleiben unverändert (Widersprüche bleiben sichtbar)."""
+    groups: dict[tuple[Any, ...], list[Reference]] = {}
+    for ref in refs:
+        if ref.scope or ref.subaccount:
+            groups.setdefault((ref.account, ref.asset_id, ref.as_of, ref.at, ref.tz), []).append(ref)
+    drop: set[int] = set()
+    repl: dict[int, Reference] = {}
+    for items in groups.values():
+        latest: dict[tuple[str, str], Reference] = {}
+        for ref in sorted(items, key=lambda x: x.id):
+            latest[(ref.scope or "", ref.subaccount or "")] = ref
+        if len(latest) < 2:
+            continue
+        parts = tuple((k[0], k[1], str(v.qty)) for k, v in sorted(latest.items()))
+        total = sum((v.qty for v in latest.values()), Decimal(0))
+        first = min(latest.values(), key=lambda x: x.id)
+        note = "Summe der Umfänge: " + " + ".join(f"{k[0] or 'ohne Umfang'}{' ' + k[1] if k[1] else ''} {v.qty}"
+                                                  for k, v in sorted(latest.items()))
+        repl[first.id] = dataclasses.replace(first, qty=total, note=(first.note + "; " if first.note else "") + note,
+                                             scope=None, subaccount=None, parts=parts)
+        drop |= {x.id for x in items if x.id != first.id}
+    return [repl.get(r.id, r) for r in refs if r.id not in drop]
+
+
+def combined_references(db: Any) -> list[Reference]:
+    """Nachweise über zusammengefasste Konten: Summe der Konten ``members`` je Asset (kein Nachweis für ein
+    einzelnes Konto)."""
+    out: list[Reference] = []
+    for r in _ref_rows(db):
+        if "scope" not in r.keys() or r["scope"] != "combined":  # noqa: SIM118 – sqlite3.Row
+            continue
         try:
-            d = date.fromisoformat(str(r["as_of"])[:10])
+            members = tuple(json.loads(r["members_json"] or "[]"))
         except ValueError:
             continue
-        if q is not None:
-            keys = r.keys()
-            at = parse_iso(r["as_of_ts"]) if "as_of_ts" in keys and r["as_of_ts"] else None
-            aid = merged.get(r["asset_id"], r["asset_id"])
-            acc = accounts.get(r["account"], r["account"])
-            out.append(Reference(int(r["id"]), acc, aid, q, d, r["source"] or "statement", r["note"],
-                                 r["created_at"], at, r["tz"] if "tz" in keys else None,
-                                 r["basis"] if "basis" in keys else None))
+        ref = _row_ref(r, "+".join(members), r["asset_id"], members)
+        if ref is not None:
+            out.append(ref)
     return out
 
 

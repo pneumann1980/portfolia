@@ -70,6 +70,12 @@ def after_import(ctx: Any, trigger: str = "import") -> None:
             run(ctx, trigger)
         except Exception:  # pragma: no cover - Absicherung
             log.exception("Autopilot-Lauf fehlgeschlagen")
+        try:
+            from app.diagnosis import clarify
+
+            clarify.run(ctx, trigger)  # Konfliktklärung nach dem Autopilot (Übernahme nur nach dessen Einstellung)
+        except Exception:  # pragma: no cover - Absicherung
+            log.exception("Konfliktklärung fehlgeschlagen")
         finally:
             ctx.db.close_thread_conn()
 
