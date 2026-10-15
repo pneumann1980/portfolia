@@ -253,13 +253,14 @@
     <div class="hint">{{ unlinked|length }} Konto{{ '' if unlinked|length == 1 else 'n' }} mit Buchungen (kuratierter Import, CSV oder manuell) – manuell bzw. per Datei-Import geführt</div></div></div>
   <p class="hint">Für mehr Übersicht je Konto: als Datenquelle führen und neue Exportdateien direkt diesem Konto zuordnen –
     wahlweise die gesamte Historie oder nur neue Transaktionen. Bestehende Buchungen bleiben unverändert.</p>
+  <p class="hint">Taucht ein Konto doppelt auf (z. B. „… Broker unbekannt“ und „DKB“)? <a href="/accounts/merge">Konten zusammenführen</a>.</p>
   <div class="ds-cards">
   {% for a in unlinked %}
   <article class="box ds-card" id="konto-{{ loop.index }}">
     <div class="ds-card-head"><div class="ds-card-title"><h3 class="wrap-any">{{ a.account }}</h3>
       <div class="hint">{% for o, n in a.origins.items() %}<span class="badge">{{ o }} · {{ n }}</span> {% endfor %}</div></div></div>
     <div class="hint" style="margin-top:6px">{{ a.n }} Buchung{{ '' if a.n == 1 else 'en' }} · {{ a.first|date_de }} – {{ a.last|date_de }} {% if a.provider != 'other_exchange' %} · Börse: {{ a.provider_label }}{% endif %}</div>
-    <div class="row" style="margin-top:6px"><span class="badge">manuell · Datei-Import</span></div>
+    <div class="row" style="margin-top:6px"><span class="badge">manuell · Datei-Import</span><a class="btn sm ghost" href="/accounts/merge?alias={{ a.account|urlencode }}#manuell" title="Dasselbe Konto unter anderem Namen? Zuordnung ohne Buchung, rückgängig">Mit anderem Konto zusammenführen …</a></div>
     <div class="ds-actions">
       <details><summary class="btn sm">Neuer Import …</summary>
         {{ import_form('/settings/datasources/account-source', a.last, a.account, a.provider) }}</details>

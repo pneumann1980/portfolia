@@ -772,6 +772,21 @@ CREATE TABLE IF NOT EXISTS autopilot_run (
 );
 CREATE INDEX IF NOT EXISTS ix_autopilot_run_created ON autopilot_run(created_at);
 """),
+    (25, """
+-- Konten zusammenführen: dasselbe Konto/Depot unter zwei Namen (Zuordnung, keine Buchung)
+CREATE TABLE IF NOT EXISTS account_merge (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  alias_account TEXT NOT NULL,
+  target_account TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'active',   -- active | reverted
+  note          TEXT,
+  summary_json  TEXT,
+  created_at    TEXT NOT NULL,
+  reverted_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_account_merge_status ON account_merge(status, alias_account);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_account_merge_row ON account_merge(alias_account, target_account, created_at);
+"""),
 ]
 
 

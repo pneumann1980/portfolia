@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Konten zusammenführen{% endblock %}
+{% block heading %}Konten zusammenführen{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/settings/datasources">← Datenquellen</a> · <a href="/assets/merge">Assets zusammenführen</a> · <a href="/quality/diagnose">Diagnose</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  <section class="card">
+    <div class="card-head"><h2>Dasselbe Konto unter zwei Namen?</h2></div>
+    <p class="hint">Taucht ein Depot oder eine Börse zweimal auf – z. B. <span class="mono">Wertpapiere Broker unbekannt</span> aus dem kuratierten Import und <span class="mono">DKB</span> aus einem Datei-Import –, ordnet die Zusammenführung den Alias-Namen dem Ziel-Konto zu: <b>ohne Buchung, ohne Änderung der Rohdaten</b>, jederzeit rückgängig. Die Vorschau zeigt Bestände vorher/nachher, mögliche Doppelbuchungen, betroffene Datenquellen und die Wirkung auf FIFO/Steuer. Gleichartige Buchungen in beiden Konten entfernt Portfolia nicht selbst – die Diagnose legt sie danach zur Entscheidung vor.</p>
+  </section>
+
+  <section class="card" id="vorschlaege">
+    <div class="card-head"><h2>Vorschläge ({{ cands|length }})</h2></div>
+    {% if cands %}
+    <p class="hint">Nur Vorschläge – ob zwei Konten wirklich dasselbe sind, entscheidest du. Die Richtung („wird zu“) lässt sich in der Vorschau tauschen.</p>
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Konto</th><th>wird zu</th><th>Hinweise</th><th>Buchungen</th><th></th></tr></thead>
+      <tbody>{% for c in cands %}<tr>
+        <td data-label="Konto" class="wrap-any">{{ c.alias }}</td>
+        <td data-label="wird zu" class="wrap-any">{{ c.target }}</td>
+        <td data-label="Hinweise"><span class="hint">{{ c.reasons|join(' · ') }}</span></td>
+        <td data-label="Buchungen" class="num">{{ c.n_alias }} / {{ c.n_target }}</td>
+        <td><form method="post" action="/accounts/merge/preview" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="alias" value="{{ c.alias }}"><input type="hidden" name="target" value="{{ c.target }}"><button class="btn sm primary" type="submit">Vorschau …</button></form></td>
+      </tr>{% endfor %}</tbody></table></div>
+    {% else %}<p><span class="badge good">✓</span> Keine auffälligen Zwillingskonten gefunden – unten selbst auswählen.</p>{% endif %}
+  </section>
+
+  <section class="card" id="manuell">
+    <div class="card-head"><h2>Selbst auswählen</h2></div>
+    <form method="post" action="/accounts/merge/preview" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="grid-2">
+        <label class="field">Konto, das verschwindet (Alias)
+          <select name="alias" required><option value="">– wählen –</option>{% for a in accounts %}<option value="{{ a }}" {% if a == alias %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+        <label class="field">Konto, das bleibt (Ziel)
+          <select name="target" required><option value="">– wählen –</option>{% for a in accounts %}<option value="{{ a }}" {% if a == target %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+      </div>
+      <div><button class="btn primary" type="submit">Vorschau …</button></div>
+    </form>
+  </section>
+
+  <section class="card" id="durchgefuehrt">
+    <div class="card-head"><h2>Durchgeführt</h2></div>
+    {% if hist %}
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Konto</th><th>zugeordnet zu</th><th>Stand</th><th></th></tr></thead>
+      <tbody>{% for h in hist %}<tr>
+        <td data-label="Konto" class="wrap-any">{{ h.alias_account }}</td>
+        <td data-label="zugeordnet zu" class="wrap-any">{{ h.target_account }}</td>
+        <td data-label="Stand"><span class="badge {{ 'good' if h.status == 'active' else '' }}">{{ 'aktiv' if h.status == 'active' else 'zurückgenommen' }}</span>
+          <div class="hint">{{ h.created_at|datetime_de }}{% if h.reverted_at %} · zurückgenommen {{ h.reverted_at|datetime_de }}{% endif %}</div></td>
+        <td>{% if h.status == 'active' %}<form method="post" action="/accounts/merge/{{ h.id }}/revert" class="inline" data-confirm="Zuordnung „{{ h.alias_account }}“ → „{{ h.target_account }}“ zurücknehmen? Bestände werden wieder je Konto geführt."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endif %}</td>
+      </tr>{% endfor %}</tbody></table></div>
+    {% else %}<p class="hint">Noch nichts zusammengeführt.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

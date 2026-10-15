@@ -895,7 +895,11 @@ class CsvImportService:
                 for r in self.db.q("SELECT symbol, asset_id FROM csv_symbol")}
 
     def saved_accounts(self) -> dict[str, str]:
-        return {r["name"]: r["account"] for r in self.db.q("SELECT name, account FROM csv_account")}
+        from app.assetchange.account_merge import active_map
+
+        m = active_map(self.db)  # gespeicherte Zuordnungen auf zusammengeführte Konten → Ziel-Konto
+        rows = self.db.q("SELECT name, account FROM csv_account")
+        return {r["name"]: m.get(r["account"], r["account"]) for r in rows}
 
     def set_symbol(self, symbol: str, asset_id: str | None, origin: str | None = None) -> None:
         """Zuordnung speichern; ``origin`` = 'abgleich' für automatisch abgeleitete (sonst vom Nutzer)."""

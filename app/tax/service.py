@@ -143,6 +143,12 @@ class TaxService:
         s = self.ctx.settings
         types_ov = s.get("tax.asset_types") or {}
         acc_ov = s.get("tax.account_withholding") or {}
+        from app.assetchange.account_merge import active_map as account_map
+
+        am = account_map(self.ctx.db)  # zusammengeführte Konten: Einstellung des Ziel-Kontos hat Vorrang
+        if am:
+            acc_ov = {**{am[k]: v for k, v in acc_ov.items() if k in am},
+                      **{k: v for k, v in acc_ov.items() if k not in am}}
         asset_types, type_src = {}, {}
         for aid, a in pf.assets.items():
             asset_types[aid], type_src[aid] = classify_asset(a, types_ov)

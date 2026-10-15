@@ -164,6 +164,9 @@ class AppContext:
             from app.assetchange.merge import apply_merges
 
             pf = apply_merges(self.db, pf)  # zusammengeführte Zwillingskennungen (Zuordnung, keine Buchung)
+            from app.assetchange.account_merge import apply_merges as apply_account_merges
+
+            pf = apply_account_merges(self.db, pf)  # zusammengeführte Konten (Zuordnung, keine Buchung)
             if self.demo is not None and pf is not start:
                 self._seed_demo(pf)
         with self._lock:
@@ -183,9 +186,10 @@ class AppContext:
 
         extra = overlay_txs(self.db, rec.assets, ("estimated",))
         if extra:
+            from app.assetchange import account_merge as AM
             from app.assetchange.merge import active_map, map_txs
 
-            extra = map_txs(extra, active_map(self.db))
+            extra = AM.map_txs(map_txs(extra, active_map(self.db)), AM.active_map(self.db))
         pf = dataclasses.replace(rec, txs=[*rec.txs, *extra]) if extra else rec
         with self._lock:
             self._pf = (key, pf)
@@ -230,6 +234,12 @@ class AppContext:
 
     def engine_options(self, scope: str | None = None) -> EngineOptions:
         overrides = self.settings.get("ledger.cash_overrides") or {}
+        from app.assetchange.account_merge import active_map as account_map
+
+        am = account_map(self.db)  # zusammengeführte Konten: Einstellung des Ziel-Kontos hat Vorrang
+        if am:
+            overrides = {**{am.get(k, k): v for k, v in overrides.items() if k in am},
+                         **{k: v for k, v in overrides.items() if k not in am}}
         return EngineOptions(
             scope=scope or self.settings.get("ledger.scope", "global"),
             unmatched_transfers_as_flows=bool(self.settings.get("ledger.unmatched_transfers_as_flows", True)),

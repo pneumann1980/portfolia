@@ -1426,6 +1426,26 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.28.1 – Konten zusammenführen (Migration 25)
+
+Anlass: dasselbe Depot erscheint unter zwei Namen (z. B. „Wertpapiere Broker unbekannt“ aus dem kuratierten Import und
+„DKB“ aus einer Datenquelle).
+
+* **Konten zusammenführen** (`/accounts/merge`, erreichbar unter *Datenquellen → Konten ohne Datenquelle* und
+  *Datenqualität*): der Alias-Kontoname wird dem Ziel-Konto **zugeordnet** – ohne Buchung, Rohdaten und Journal bleiben
+  unverändert, Rückgängig löscht nur die Zuordnung. Wirkt an derselben Stelle wie die Asset-Zuordnung (Portfolio-Aufbau):
+  Buchungen, Stammdaten des Kontos, Soll-Bestände des kuratierten Imports (Mengen werden addiert), Referenzbestände,
+  gespeicherte Konto-Zuordnungen des CSV-Imports, Datenquellen (zeigen das Ziel-Konto), Cash-/Quellensteuer-Einstellungen
+  (Ziel-Konto hat Vorrang).
+* **Vorschau:** Bestände je Asset vorher/nachher, FIFO/Steuer je Jahr, Zahl der Buchungen *zwischen* beiden Konten
+  (werden zu Bewegungen innerhalb eines Kontos), **mögliche Doppelbuchungen** (identischer Zeitpunkt/Art/Asset/Menge in
+  beiden Konten), betroffene Datenquellen und offene Prüf-Stapel, abweichende Stammdaten. Bestätigung nur gegen die
+  Prüfsumme der Vorschau; idempotent; im Gesamtexport enthalten.
+* **Keine stille Dublettenbereinigung:** Wurde dasselbe Depot zweimal importiert, entstehen nach der Zusammenführung
+  Dubletten – die Diagnose erkennt sie wie gewohnt und legt sie zur Entscheidung vor.
+* **Grenzen:** Offene Prüf-Stapel des Alias werden weiter unter dem Alias-Namen abgeglichen (vorher abschließen);
+  die Namens-Vorschläge sind Heuristiken (Schreibweise, Teilname, „unbekannt“, identische Buchungen).
+
 ## 0.28.0 – Duplikate zusammenführen, weniger manuelles Abarbeiten (Aufgaben/Hinweise, Regeln, Autopilot, Entscheidungsliste)
 
 Anlass: dieselbe Anlage unter zwei Kennungen, doppelt angelegte Börsen/Wallets und zu viele einzeln zu prüfende Befunde

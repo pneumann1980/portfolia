@@ -56,6 +56,7 @@ from typing import Any
 
 import httpx
 
+from app.assetchange.account_merge import active_map as account_map
 from app.datasources import connector as K
 from app.datasources.catalog import Catalog, ReadOnlyCatalog
 from app.datasources.chainhttp import ENDPOINTS
@@ -483,12 +484,19 @@ class DataSourceService:
         self._progress_written: dict[int, datetime] = {}
 
     # -- Lesen ------------------------------------------------------------------------------------------
+    def _ds(self, r: Any, m: dict[str, str]) -> DataSource:
+        """Datenquelle; gehört ihr Konto zu einem zusammengeführten Konto, gilt das Ziel-Konto."""
+        if m and r["account"] in m:
+            r = {**dict(r), "account": m[r["account"]]}
+        return DataSource(r)
+
     def list(self) -> list[DataSource]:
-        return [DataSource(r) for r in self.db.q(f"{self._SELECT} ORDER BY d.kind, lower(d.name), d.id")]
+        m = account_map(self.db)
+        return [self._ds(r, m) for r in self.db.q(f"{self._SELECT} ORDER BY d.kind, lower(d.name), d.id")]
 
     def get(self, sid: int) -> DataSource | None:
         r = self.db.q1(f"{self._SELECT} WHERE d.id=?", (sid,))
-        return DataSource(r) if r else None
+        return self._ds(r, account_map(self.db)) if r else None
 
     def runs(self, sid: int, limit: int = 10) -> list[Any]:
         return self.db.q("SELECT * FROM data_source_run WHERE source_id=? ORDER BY id DESC LIMIT ?", (sid, limit))
