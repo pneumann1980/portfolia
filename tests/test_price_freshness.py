@@ -141,8 +141,12 @@ def test_stale_price_can_be_ignored_for_the_dashboard(config):
             r = c.post("/actions/prices/stale-ignore", data={"asset_id": aid}, follow_redirects=False)
             assert r.status_code == 303 and r.headers["location"] == "/quality#prices"
         assert "veraltet – es wird" not in c.get("/").text
+        r = c.post("/actions/prices/stale-ignore", data={"asset_id": stale_ids[0], "row": "3", "show": "1"},
+                   follow_redirects=False)
+        assert r.headers["location"] == "/quality#stale-3"  # zurück zur selben Zeile
+        c.post("/actions/prices/stale-ignore", data={"asset_id": stale_ids[0]})  # wieder ignorieren
         q = c.get("/quality").text
-        assert "veraltet · ignoriert" in q and "Wieder anzeigen" in q
+        assert "nicht mehr in der Übersicht" in q and "Wieder aktivieren" in q
         ctx.invalidate_data()
         assert ctx.valuation().total_value == total  # nichts an der Bewertung geändert
         c.post("/actions/prices/stale-ignore", data={"asset_id": btc.asset_id, "show": "1"})

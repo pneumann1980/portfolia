@@ -839,3 +839,10 @@ details.crop img { display: block; margin-top: 4px; width: 100%; max-width: 420p
 .ds-mode { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .ds-mode legend { padding: 0; }
 .ds-import input[type=file] { max-width: 100%; }
+
+/* Aktionen in Konto-Karten: Abstand; geöffneter Import-Block nimmt die volle Breite */
+.ds-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; margin-top: 14px; }
+.ds-actions details[open] { flex-basis: 100%; }
+.ds-actions details[open] > summary { margin-bottom: 8px; }
+tr.muted-row td { color: var(--muted, #6b7280); }
+.stale-toggle { margin-top: 8px; display: block; }

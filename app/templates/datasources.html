@@ -221,7 +221,7 @@
     {% if ds.last_error %}<div class="fact" style="grid-column:1/-1"><div class="k">Letzter Fehler{% if ds.last_error_at %} · {{ ds.last_error_at|datetime_de }}{% endif %}</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
   </div>
   {{ open_line(oc, pb, ds.id) }}
-  <details class="box" style="margin-top:10px" {% if not ds.supported and not li %}open{% endif %}><summary>{{ 'Neuer Import' if li or bk else 'Exportdatei importieren' }} (CSV, XLSX, ZIP)</summary>
+  <details class="box" style="margin-top:14px" {% if not ds.supported and not li %}open{% endif %}><summary>{{ 'Neuer Import' if li or bk else 'Exportdatei importieren' }} (CSV, XLSX, ZIP)</summary>
     {{ import_form('/settings/datasources/' ~ ds.id ~ '/upload', lb) }}</details>
   <div class="row" style="margin-top:12px">
     {% if ds.supported and ds.enabled %}
@@ -247,9 +247,11 @@
       <div class="hint">{% for o, n in a.origins.items() %}<span class="badge">{{ o }} · {{ n }}</span> {% endfor %}</div></div></div>
     <div class="hint" style="margin-top:6px">{{ a.n }} Buchung{{ '' if a.n == 1 else 'en' }} · {{ a.first|date_de }} – {{ a.last|date_de }} {% if a.provider != 'other_exchange' %} · Börse: {{ a.provider_label }}{% endif %}</div>
     <div class="row" style="margin-top:6px"><span class="badge">manuell · Datei-Import</span></div>
-    <details style="margin-top:8px"><summary class="btn sm">Neuer Import …</summary>
-      {{ import_form('/settings/datasources/account-source', a.last, a.account, a.provider) }}</details>
-    <form method="post" action="/settings/datasources/account-source" class="inline" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ a.account }}"><input type="hidden" name="provider" value="{{ a.provider }}"><button class="btn ghost sm" type="submit">Als Datenquelle führen</button></form>
+    <div class="ds-actions">
+      <details><summary class="btn sm">Neuer Import …</summary>
+        {{ import_form('/settings/datasources/account-source', a.last, a.account, a.provider) }}</details>
+      <form method="post" action="/settings/datasources/account-source" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ a.account }}"><input type="hidden" name="provider" value="{{ a.provider }}"><button class="btn ghost sm" type="submit">Als Datenquelle führen</button></form>
+    </div>
   </article>
   {% endfor %}
   </div>

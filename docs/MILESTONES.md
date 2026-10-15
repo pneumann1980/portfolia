@@ -1426,6 +1426,13 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.27.2 – Oberfläche: Abstand der Konto-Aktionen, Ignorieren als Umschalter
+
+* Konto-Karten unter *Datenquellen*: Aktionen mit festem Abstand; der geöffnete Import-Block nimmt die volle Breite.
+* *Datenqualität → Kurse*: „Hinweis ignorieren“ wird nach dem Klick zu **„Wieder aktivieren“** (hervorgehoben), die
+  Zeile zeigt „ignoriert · nicht mehr in der Übersicht“, und die Seite bleibt an derselben Zeile. Die Tabelle
+  nutzt mobil das Kartenlayout (Badges brechen nicht mehr um).
+
 ## 0.27.1 – Datei-Import je Konto, veraltete Kurse ausblenden, Integritätsprüfung
 
 * **Börse mit Exportdatei anlegen:** Beim Anlegen einer Börse kann direkt eine CSV-, XLSX- oder ZIP-Datei mitgegeben
