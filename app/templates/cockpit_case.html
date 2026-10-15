@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Fallanalyse {{ c.account }} · {{ c.asset }}{% endblock %}
+{% block heading %}Fallanalyse · {{ c.account }} · {{ c.asset }}{% endblock %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>Bestand</h2><a class="btn sm ghost" href="/quality/cockpit">Cockpit</a></div>
+  {% set r = c.stock %}{% if r %}
+  <dl class="kv"><dt>A · Ledger</dt><dd>{{ r.ledger|qty_exact }}{% if r.no_ledger %} <span class="badge warn">ohne Buchung</span>{% endif %}</dd>
+    <dt>B · bestätigt</dt><dd>{% if r.rolled is not none %}{{ r.rolled|qty_exact }} <span class="hint">({{ r.confirm_kind }}, {{ r.state }})</span>{% else %}–{% endif %}</dd>
+    <dt>C · ungeklärt</dt><dd>{% if r.diff %}<b>{{ r.diff|qty_exact }}</b>{% else %}0{% endif %}</dd></dl>
+  {% else %}<p class="hint">Keine bestätigte Bestandsangabe (kein Referenzbestand, kein aktueller Abruf) – Ledger-Menge nicht bestätigt.</p>{% endif %}
+</section>
+<section class="card">
+  <div class="card-head"><h2>Quellenabdeckung des Kontos</h2><a class="btn sm ghost" href="/quality/abdeckung?{{ {'account': c.account}|urlencode }}">Matrix</a></div>
+  {% if not c.coverage %}<p class="hint">Keine Daten.</p>{% else %}<ul class="plain">{% for row in c.coverage %}<li>{{ row.source }}: {{ row.first }} bis {{ row.last }}{% if row.gaps %} – <b>Lücken</b> {% for a, b in row.gaps %}{{ a }}{% if b != a %}–{{ b }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}{% else %} – lückenlos{% endif %}</li>{% endfor %}</ul>{% endif %}
+</section>
+<section class="card">
+  <div class="card-head"><h2>Offene Prüfvorgänge des Kontos <span class="badge">{{ c.review|length }}</span></h2><a class="btn sm ghost" href="/journal/pruefung?{{ {'account': c.account}|urlencode }}">Prüfung</a></div>
+  {% if c.review %}<ul class="plain">{% for it in c.review[:10] %}<li><a href="/journal/csv/{{ it.batch_id }}?{{ {'ev': it.event}|urlencode }}#zeilen">{{ it.event }}</a> <span class="hint">{{ it.reason or it.state }}</span></li>{% endfor %}</ul>{% else %}<p class="hint">Keine.</p>{% endif %}
+</section>
+<section class="card">
+  <div class="card-head"><h2>Widersprüche zwischen Quellen <span class="badge">{{ c.conflicts|length }}</span></h2></div>
+  {% if c.conflicts %}<ul class="plain">{% for x in c.conflicts[:10] %}<li><span class="badge warn">{{ x.label }}</span> {{ x.text }}</li>{% endfor %}</ul>{% else %}<p class="hint">Keine.</p>{% endif %}
+</section>
+<section class="card">
+  <div class="card-head"><h2>Anschaffungsdaten</h2></div>
+  {% set p = c.provenance %}{% if p %}<ul class="plain">{% for k, q in p.by_class.items() %}<li>{{ k }}: {{ q|qty }}</li>{% endfor %}</ul>{% else %}<p class="hint">Keine offenen Lots.</p>{% endif %}
+</section>
+<section class="card">
+  <div class="card-head"><h2>Mögliche Belegquellen</h2></div>
+  <ul class="plain">{% for s in c.sources %}<li>{{ s }}</li>{% endfor %}</ul>
+  <p class="hint">Hinweise, keine Annahmen: geschlossen wird ein Fall nur durch eine Lieferung bzw. einen Nachweis und eine ausdrückliche Entscheidung mit Vorschau.</p>
+</section>
+</div>
+{% endblock %}

@@ -106,6 +106,30 @@ def make_router() -> APIRouter:
         return render(request, "coverage.html", active="quality", mx=mx, states=CV.STATES, accounts=accounts,
                       account=account, gap_end=CV.month_end, **_common())
 
+    @router.get("/quality/cockpit", response_class=HTMLResponse)
+    def cockpit_page(request: Request) -> HTMLResponse:
+        """Vollständigkeitscockpit: getrennte Qualitätsdimensionen (rein lesend)."""
+        from app.diagnosis import cockpit as CP
+
+        ctx = get_ctx(request)
+        cp = CP.build(ctx)
+        positions = sorted({(r.account, r.asset) for r in ST.build(report_for(ctx), []).rows})
+        return render(request, "cockpit.html", active="quality", cp=cp, labels=CP.STATE_LABEL, positions=positions,
+                      **_common())
+
+    @router.get("/quality/cockpit/fall", response_class=HTMLResponse)
+    def cockpit_case(request: Request, account: str = "", asset: str = "", pos: str = "") -> Response:
+        """Fallanalyse einer Position: alles Bekannte an einer Stelle, mögliche Belegquellen (rein lesend)."""
+        from app.diagnosis import cockpit as CP
+
+        ctx = get_ctx(request)
+        if pos and "|" in pos and not (account and asset):
+            account, asset = pos.split("|", 1)
+        if not account or not asset:
+            return RedirectResponse("/quality/cockpit", status_code=303)
+        fall = CP.case(ctx, account[:80], asset[:80])
+        return render(request, "cockpit_case.html", active="quality", c=fall, **_common())
+
     @router.get("/quality/anschaffung", response_class=HTMLResponse)
     def provenance_page(request: Request) -> HTMLResponse:
         """Herkunft der Anschaffungsdaten je Lot und je Veräußerungsjahr (rein lesend)."""

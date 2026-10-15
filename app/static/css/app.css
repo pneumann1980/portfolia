@@ -829,3 +829,8 @@ details.crop img { display: block; margin-top: 4px; width: 100%; max-width: 420p
 .cov-table td.cov-abgedeckt, .badge.cov-abgedeckt { background: var(--surface-2); }
 .cov-table td.cov-anderweitig, .badge.cov-anderweitig { background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 3px, transparent 3px, transparent 6px); }
 .cov-table td.cov-luecke, .badge.cov-luecke { background: color-mix(in srgb, var(--warn-ink, #9a6700) 22%, transparent); font-weight: 600; }
+
+/* Vollständigkeitscockpit */
+.cockpit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 10px; }
+.cockpit-dim { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: inherit; text-decoration: none; }
+.cockpit-fig { font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; }

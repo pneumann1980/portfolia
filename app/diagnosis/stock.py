@@ -126,6 +126,8 @@ def build(report: Any, decisions: list[Any], now: datetime | None = None) -> Sto
     500 TOKEN laut Kontoauszug, nie gebucht) erscheint, mit Ledger 0 und vollständiger Differenz."""
     now = now or datetime.now(UTC)
     idx = report.index
+    if idx is None:  # noch keine Buchungen und keine Bestände
+        return StockView(rows=[], n_unreferenced=0, ledger_total=ZERO, view_total=ZERO, n_unvalued=0)
     traces: dict[tuple[str, str], PositionTrace] = report.traces or {}
     external = _external(report)
     positions = sorted(set(idx.led.balances) | set(traces) | set(external))

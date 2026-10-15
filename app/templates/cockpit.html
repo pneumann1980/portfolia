@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Vollständigkeit{% endblock %}
+{% block heading %}Datenqualität · Vollständigkeitscockpit{% endblock %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>Getrennte Qualitätsdimensionen</h2>
+    <div class="row">{% for k, (l, b) in labels.items() %}<span class="badge {{ b }}">{{ cp.counts.get(k, 0) }} {{ l }}</span>{% endfor %}</div></div>
+  <p class="hint">Jede Dimension beantwortet eine eigene Frage; sie werden bewusst nicht zu einer Gesamtnote verrechnet. Alle Zahlen sind berechnet – diese Seite ändert nichts.</p>
+  <div class="cockpit-grid">{% for d in cp.dims %}{% set st = labels[d.state] %}
+    <a class="cockpit-dim" href="{{ d.link }}"><div class="row" style="justify-content:space-between"><b>{{ d.title }}</b><span class="badge {{ st[1] }}">{{ st[0] }}</span></div>
+      <div class="hint">{{ d.question }}</div><div class="cockpit-fig">{{ d.figure }}</div>
+      {% for x in d.details %}<div class="hint">{{ x }}</div>{% endfor %}</a>
+  {% endfor %}</div>
+</section>
+<section class="card">
+  <div class="card-head"><h2>Fallanalyse</h2></div>
+  <form method="get" action="/quality/cockpit/fall" class="filters">
+    <label class="field">Position mit Bestandsnachweis<select name="pos"><option value="">wählen …</option>{% for a, s in positions %}<option value="{{ a }}|{{ s }}">{{ a }} · {{ s }}</option>{% endfor %}</select></label>
+    <label class="field">oder Konto<input name="account"></label><label class="field">und Asset<input name="asset"></label>
+    <div class="filters-go"><button class="btn sm" type="submit">Analysieren</button></div></form>
+</section>
+<section class="card">
+  <div class="card-head"><h2>Externe KI-Dienste</h2><span class="badge {{ 'warn' if cp.ai.enabled else 'good' }}">{{ 'aktiv' if cp.ai.enabled else 'aus' }}</span></div>
+  <p class="hint">Standard: aus. {{ cp.ai.scope|capitalize }}. Einstellung unter Einstellungen → Nachrichten{% if cp.ai.setting and not cp.ai.enabled %} (eingeschaltet, aber ohne API-Schlüssel wirkungslos){% endif %}.</p>
+</section>
+</div>
+{% endblock %}
