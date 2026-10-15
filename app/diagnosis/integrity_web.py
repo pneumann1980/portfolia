@@ -7,7 +7,7 @@ Der Prüflauf liest nur (:mod:`app.diagnosis.integrity`); gespeichert wird allei
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -49,13 +49,57 @@ def _to(**q: str) -> Response:
     return Response(status_code=303, headers={"Location": "/quality/integrity?" + urlencode(q)})
 
 
+PENDING_S = 120  # so lange wartet die Seite nach „Prüfung starten“ auf den Beginn des Laufs
+
+
+def _since(raw: str) -> datetime | None:
+    """Startzeitpunkt aus der Adresse (nur gültige, nicht zukünftige, höchstens einen Tag alte Werte)."""
+    try:
+        t = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        return None
+    age = (datetime.now(UTC) - t).total_seconds()
+    return t if -5 <= age <= 86400 else None
+
+
+def _finished_since(ctx: Any, since: datetime) -> bool:
+    """Liegt ein Prüflauf vor, der nach ``since`` beendet wurde?"""
+    from app.util.timeutil import parse_iso
+
+    r = I.load(ctx.db)
+    t = parse_iso(r.finished_at) if r is not None else None
+    return t is not None and t >= since
+
+
+def _pending(ctx: Any, since: datetime | None) -> dict[str, Any] | None:
+    """Gestartet, aber noch nicht angelaufen (der Job beginnt verzögert): Platzhalter-Fortschritt, damit die Seite
+    weiter abfragt und nach dem Ende „abgeschlossen“ zeigt – statt dauerhaft „gestartet“."""
+    if since is None or _finished_since(ctx, since):
+        return None
+    if (datetime.now(UTC) - since).total_seconds() > PENDING_S:
+        return None
+    return view({"v": 2, "running": True, "label": "Integritätsprüfung", "pct": 1.0, "text": "wird gestartet …"})
+
+
 def make_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/quality/integrity", response_class=HTMLResponse)
     def page(request: Request, category: str = "", severity: str = "", asset: str = "", account: str = "",
-             status: str = "", sort: str = "", msg: str = "", err: str = "") -> HTMLResponse:
+             status: str = "", sort: str = "", msg: str = "", err: str = "", since: str = "") -> HTMLResponse:
         ctx = get_ctx(request)
+        started = _since(since)
+        running = _running(ctx) or _pending(ctx, started)
+        info = ""
+        if started is not None:  # Rückkehr nach „Prüfung starten“: Zustand statt fester Meldung
+            if running is not None:
+                info = "Prüfung läuft – die Seite aktualisiert sich nach dem Ende."
+            elif _finished_since(ctx, started):
+                msg = msg or "Prüfung abgeschlossen."
+            else:
+                err = err or "Die Prüfung ist nicht angelaufen – bitte erneut starten."
         r = I.load(ctx.db)
         items: list[I.Item] = []
         if r is not None:
@@ -67,28 +111,32 @@ def make_router() -> APIRouter:
         live = L.context(ctx, {a for it in (r.items if r else []) if it.status == "offen" for a in it.accounts},
                          "/quality/integrity")
         assets = sorted({a for it in (r.items if r else []) for a in it.assets})
-        return render(request, "integrity.html", active="quality", run=r, items=items, running=_running(ctx), live=live,
+        return render(request, "integrity.html", active="quality", run=r, items=items, running=running, live=live,
                       categories=I.CATEGORIES, severities=I.SEVERITIES, statuses=I.STATUSES, causes=I.CAUSES,
                       f={"category": category, "severity": severity, "asset": asset, "account": account,
                          "status": status, "sort": sort},
-                      all_accounts=accounts, all_assets=assets, msg=msg, err=err, now=datetime.now(UTC),
+                      all_accounts=accounts, all_assets=assets, msg=msg, err=err, info=info, now=datetime.now(UTC),
+                      since=since if started is not None else "",
                       independent_note=I.INDEPENDENT_NOTE)
 
     @router.get("/quality/integrity/progress", response_class=HTMLResponse)
-    def progress(request: Request) -> Response:
+    def progress(request: Request, since: str = "") -> Response:
         ctx = get_ctx(request)
-        p = _running(ctx)
-        if p is None:  # fertig → Seite neu laden
-            return Response(status_code=204, headers={"HX-Redirect": "/quality/integrity"})
-        return render(request, "partials/integrity_progress.html", p=p)
+        started = _since(since)
+        p = _running(ctx) or _pending(ctx, started)
+        if p is None:  # fertig (bzw. nicht angelaufen) → Seite neu laden; die Seite nennt das Ergebnis
+            target = "/quality/integrity" + (f"?{urlencode({'since': since})}" if started is not None else "")
+            return Response(status_code=204, headers={"HX-Redirect": target})
+        return render(request, "partials/integrity_progress.html", p=p, since=since if started is not None else "")
 
     @router.post("/quality/integrity/run")
     async def start(request: Request) -> Response:
         ctx = get_ctx(request)
         if _running(ctx) is not None:
             return _to(err="Eine Prüfung läuft bereits.")
+        since = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         if ctx.scheduler is not None and ctx.scheduler.trigger(I.JOB, 0.2):
-            return _to(msg="Prüfung gestartet.")
+            return _to(since=since)  # die Seite zeigt „läuft“ und nach dem Ende „abgeschlossen“
         try:  # ohne Scheduler (Tests, CLI): direkt ausführen
             await run_in_threadpool(job_run, ctx)
         except RuntimeError as e:

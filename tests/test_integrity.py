@@ -189,3 +189,41 @@ def test_identical_bookings_without_identifier_are_suspected_duplicates(cfg):  #
     b = {**buy, "tx_id": "k2", "source": "bitpanda", "source_ref": "fill-2"}
     ctx2 = make_ctx(cfg, [*base, a, b], ASSETS)
     assert not [i for i in I.run(ctx2).items if "vollständig gleicher" in i.title]
+
+
+def test_started_message_turns_into_finished_after_background_run(cfg):  # noqa: F811
+    """„Prüfung starten“ mit Hintergrundjob: die Seite zeigt nicht dauerhaft „gestartet“, sondern fragt ab und meldet
+    nach dem Lauf „abgeschlossen“ (der Job beginnt verzögert – vorher gab es keine Abfrage)."""
+    from app.diagnosis import integrity_web as W
+
+    make_ctx(cfg, popkat_like_rows(), TOKA_ASSETS)
+    with TestClient(build_app(cfg, start_scheduler=False)) as c:
+        c.get("/settings")
+        c.headers["X-CSRF-Token"] = c.cookies.get("portfolia_csrf")
+        ctx = c.app.state.ctx
+        fired: list[str] = []
+
+        class FakeScheduler:  # Job nur vormerken, wie der echte Scheduler mit Verzögerung
+            def trigger(self, name, delay_s=1.0, **kw):
+                fired.append(name)
+                return True
+
+            def shutdown(self, *a, **kw):
+                pass
+
+            def next_runs(self):
+                return {}
+
+        ctx.scheduler = FakeScheduler()
+        r = c.post("/quality/integrity/run", follow_redirects=False)
+        loc = r.headers["location"]
+        assert r.status_code == 303 and "since=" in loc and fired == [I.JOB] and "gestartet" not in loc
+        page = c.get(loc).text
+        assert "Prüfung läuft" in page and 'id="integrity-progress"' in page and "since=" in page
+        since = loc.split("since=", 1)[1]
+        assert c.get(f"/quality/integrity/progress?since={since}").status_code == 200  # noch nicht gelaufen: weiter
+        W.job_run(ctx)  # Hintergrundlauf beendet
+        done = c.get(f"/quality/integrity/progress?since={since}")
+        assert done.status_code == 204 and "since=" in done.headers["HX-Redirect"]
+        final = c.get(done.headers["HX-Redirect"]).text
+        assert "Prüfung abgeschlossen." in final and "Prüfung läuft" not in final and "integrity-progress" not in final
