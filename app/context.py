@@ -161,6 +161,9 @@ class AppContext:
             confirmed = overlay_txs(self.db, assets, ("confirmed",))
             pf = start if not (j_txs or j_assets or confirmed or assets is not merged) else dataclasses.replace(
                 start, txs=[*start.txs, *j_txs, *confirmed], assets=assets)
+            from app.assetchange.merge import apply_merges
+
+            pf = apply_merges(self.db, pf)  # zusammengeführte Zwillingskennungen (Zuordnung, keine Buchung)
             if self.demo is not None and pf is not start:
                 self._seed_demo(pf)
         with self._lock:
@@ -179,6 +182,10 @@ class AppContext:
         from app.plans.service import overlay_txs
 
         extra = overlay_txs(self.db, rec.assets, ("estimated",))
+        if extra:
+            from app.assetchange.merge import active_map, map_txs
+
+            extra = map_txs(extra, active_map(self.db))
         pf = dataclasses.replace(rec, txs=[*rec.txs, *extra]) if extra else rec
         with self._lock:
             self._pf = (key, pf)

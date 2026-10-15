@@ -200,10 +200,14 @@ class JournalService:
 
     # -- Stammdaten fürs Formular -----------------------------------------------------------------------
     def known_assets(self) -> dict[str, AssetInfo]:
+        from app.assetchange.merge import active_map
+
         pf = self.ctx.recorded_portfolio()
         assets: dict[str, AssetInfo] = dict(pf.assets) if pf is not None else {}
+        merged = active_map(self.db)  # zusammengeführte Zwillingskennungen nicht erneut anbieten
         for aid, a in journal_asset_infos(self.db).items():
-            assets.setdefault(aid, a)
+            if aid not in merged:
+                assets.setdefault(aid, a)
         return assets
 
     def known_accounts(self) -> list[str]:

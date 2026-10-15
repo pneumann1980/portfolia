@@ -120,6 +120,8 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
         # Ticker-/Token-Änderungen: Umbenennungen (Overlay), Umstellungen (Verweis auf exportierte Buchungen),
         # ausgeblendete Hinweise
         "asset_changes": _rows(db, "SELECT * FROM asset_change ORDER BY id"),
+        # zusammengeführte Zwillingskennungen (Zuordnung ohne Buchung; auch zurückgenommene für die Nachvollziehbarkeit)
+        "asset_merges": _rows(db, "SELECT * FROM asset_merge ORDER BY id"),
         # Referenzbestände (Prüfwerte der Diagnose, keine Buchungen) – auch entfernte, für die Nachvollziehbarkeit
         "reference_balances": _rows(db, "SELECT * FROM reference_balance ORDER BY id"),
         # Recherche-Ergebnisse der Diagnose (M29): nur lesend gewonnene, noch ungebuchte Ereignisse; je Datenquelle
@@ -219,6 +221,7 @@ def summary(extras: dict[str, bytes]) -> dict[str, Any] | None:
         "deleted": len(st.get("deleted_journal") or []),
         "checked": len(st.get("diag_dismissed") or []),
         "asset_changes": len(st.get("asset_changes") or []),
+        "asset_merges": len(st.get("asset_merges") or []),
         "references": len(st.get("reference_balances") or []),
         "watchlist": len(st.get("watchlist_items") or []),
         "taxdata": len(json.loads(extras[TAXDATA].decode("utf-8"))) if extras.get(TAXDATA) else 0,
@@ -287,7 +290,8 @@ JOURNAL_KEY = "restore.journal"  # laufende Wiederherstellung: Dateien, die nach
 _RESTORE_LOCK = threading.Lock()
 _LIST_KEYS = ("asset_sources", "plans", "plan_dismissed", "datasources", "event_decisions", "event_aliases",
               "tx_links", "csv_symbols", "csv_accounts", "csv_mappings", "deleted_journal", "diag_dismissed",
-              "asset_changes", "watchlists", "watchlist_items", "reference_balances", "diag_research_events")
+              "asset_changes", "asset_merges", "watchlists", "watchlist_items", "reference_balances",
+              "diag_research_events")
 _TMP_MARK = ".restore-"
 
 
@@ -495,6 +499,7 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
                                                       st.get("deleted_journal") or []], "OR IGNORE")
         counts["checked"] = _dismissed(c, st.get("diag_dismissed") or [])
         counts["asset_changes"] = _insert(c, "asset_change", st.get("asset_changes"), "OR IGNORE")
+        counts["asset_merges"] = _insert(c, "asset_merge", st.get("asset_merges"), "OR IGNORE")
         counts["references"] = _insert(c, "reference_balance", st.get("reference_balances"), "OR IGNORE")
         counts["research"] = _research_events(c, st.get("diag_research_events") or [])
         counts["usage"] = _usage(c, extras.get(USAGE))

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Vorschau Zusammenführung{% endblock %}
+{% block heading %}Vorschau: {{ p.alias }} → {{ p.target }}{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/assets/merge">← Assets zusammenführen</a></p>
+  <section class="card">
+    <div class="card-head"><h2><span class="mono">{{ p.alias }}</span> wird <span class="mono">{{ p.target }}</span> zugeordnet</h2>
+      <span class="hint">{{ p.n_alias_txs }} Buchung{{ '' if p.n_alias_txs == 1 else 'en' }} betroffen</span></div>
+    {% for e in p.errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+    {% for w in p.warnings %}<div class="alert warn"><span class="icon">!</span><div>{{ w }}</div></div>{% endfor %}
+    {% if p.alias_info and p.target_info %}
+    <dl class="kv">
+      <dt>Verschwindet</dt><dd>{{ p.alias_info.name }} · <span class="mono">{{ p.alias_info.asset_id }}</span>{% if p.alias_info.quote_id %} · {{ p.alias_info.quote_source }}:{{ p.alias_info.quote_id }}{% endif %}</dd>
+      <dt>Bleibt</dt><dd>{{ p.target_info.name }} · <span class="mono">{{ p.target_info.asset_id }}</span>{% if p.target_info.quote_id %} · {{ p.target_info.quote_source }}:{{ p.target_info.quote_id }}{% endif %}</dd>
+    </dl>
+    {% endif %}
+    {% if p.ok %}
+    <h3>Bestände je Konto</h3>
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Konto</th><th class="num">{{ p.alias }} vorher</th><th class="num">{{ p.target }} vorher</th><th class="num">{{ p.target }} danach</th></tr></thead>
+      <tbody>{% for b in p.balances %}<tr><td data-label="Konto">{{ b.account }}</td>
+        <td class="num nowrap" data-label="{{ p.alias }} vorher">{{ b.alias_qty|qty_exact }}</td>
+        <td class="num nowrap" data-label="{{ p.target }} vorher">{{ b.target_qty|qty_exact }}</td>
+        <td class="num nowrap" data-label="{{ p.target }} danach"><b>{{ b.after_qty|qty_exact }}</b></td></tr>
+      {% else %}<tr><td colspan="4" class="hint">Kein Bestand auf beiden Kennungen.</td></tr>{% endfor %}</tbody></table></div>
+    <p class="hint">Die Summe je Konto bleibt gleich; es ändert sich nur, auf welcher Kennung der Bestand geführt wird.</p>
+
+    <h3>Wirkung auf FIFO und Steuer je Jahr</h3>
+    {% if p.years %}
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Jahr</th><th class="num">Teile ohne Anschaffung</th><th class="num">Teile ≤ 1 Jahr Haltefrist</th><th class="num">Gewinn/Verlust</th></tr></thead>
+      <tbody>{% for y in p.years %}<tr {% if y.changed %}class="row-changed"{% endif %}>
+        <td data-label="Jahr"><b>{{ y.year }}</b>{% if y.changed %} <span class="badge warn">ändert sich</span>{% endif %}</td>
+        <td class="num" data-label="ohne Anschaffung">{{ y.missing_before }} → <b>{{ y.missing_after }}</b></td>
+        <td class="num" data-label="≤ 1 Jahr">{{ y.short_before }} → <b>{{ y.short_after }}</b></td>
+        <td class="num nowrap" data-label="Gewinn/Verlust">{{ y.gain_before|eur }} → <b>{{ y.gain_after|eur }}</b></td></tr>{% endfor %}</tbody></table></div>
+    <p class="hint">Grobe Anzeige über beide Kennungen (Haltefrist ≤ 365 Tage); maßgeblich ist der Steuerbericht nach der Zusammenführung.</p>
+    {% else %}<p class="hint">Keine Veräußerungen dieser Assets – steuerlich keine Wirkung.</p>{% endif %}
+
+    {% if p.issues_before or p.issues_after %}
+    <h3>Auffälligkeiten des Ledgers</h3>
+    <ul class="small">{% for code in (p.issues_before.keys()|list + p.issues_after.keys()|list)|unique %}<li><span class="mono">{{ code }}</span>: {{ p.issues_before.get(code, 0) }} → <b>{{ p.issues_after.get(code, 0) }}</b></li>{% endfor %}</ul>
+    {% endif %}
+    <ul class="hint">{% for i in p.info %}<li>{{ i }}</li>{% endfor %}</ul>
+
+    <form method="post" action="/assets/merge/apply" class="stack" style="gap:8px;margin-top:10px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="alias" value="{{ p.alias }}"><input type="hidden" name="target" value="{{ p.target }}"><input type="hidden" name="fp" value="{{ p.fp }}">
+      <label class="field">Notiz (optional)<input type="text" name="note" maxlength="200" placeholder="z. B. gleiche Kursquelle laut CoinGecko"></label>
+      <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe die Vorschau geprüft und möchte die Kennungen zusammenführen.</label>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn primary" type="submit">Zusammenführen</button>
+        <a class="btn" href="/assets/merge">Abbrechen</a>
+      </div>
+    </form>
+    <form method="post" action="/assets/merge/preview" class="inline" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="alias" value="{{ p.alias }}"><input type="hidden" name="target" value="{{ p.target }}"><input type="hidden" name="swap" value="1"><button class="btn ghost sm" type="submit">Richtung tauschen ({{ p.target }} → {{ p.alias }})</button></form>
+    <p class="hint">Rückgängig jederzeit unter <a href="/assets/merge#durchgefuehrt">Durchgeführt</a>. Es wird keine Buchung erzeugt oder verändert.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -272,6 +272,9 @@ def references(db: Any) -> list[Reference]:
     except Exception as e:  # Datenbank vor Migration 19
         log.debug("Referenzbestände nicht verfügbar: %s", e)
         return out
+    from app.assetchange.merge import active_map
+
+    merged = active_map(db)  # Referenzbestand einer zusammengeführten Zwillingskennung gilt für das Haupt-Asset
     for r in rows:
         q = _dec(r["qty"])
         try:
@@ -281,7 +284,8 @@ def references(db: Any) -> list[Reference]:
         if q is not None:
             keys = r.keys()
             at = parse_iso(r["as_of_ts"]) if "as_of_ts" in keys and r["as_of_ts"] else None
-            out.append(Reference(int(r["id"]), r["account"], r["asset_id"], q, d, r["source"] or "statement",
+            aid = merged.get(r["asset_id"], r["asset_id"])
+            out.append(Reference(int(r["id"]), r["account"], aid, q, d, r["source"] or "statement",
                                  r["note"], r["created_at"], at, r["tz"] if "tz" in keys else None,
                                  r["basis"] if "basis" in keys else None))
     return out

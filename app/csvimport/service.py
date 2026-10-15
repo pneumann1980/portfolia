@@ -888,7 +888,11 @@ class CsvImportService:
 
     # -- Zuordnungen --------------------------------------------------------------------------------------
     def saved_symbols(self) -> dict[str, str | None]:
-        return {r["symbol"]: r["asset_id"] for r in self.db.q("SELECT symbol, asset_id FROM csv_symbol")}
+        from app.assetchange.merge import active_map
+
+        m = active_map(self.db)  # gespeicherte Zuordnungen auf zusammengeführte Kennungen → Haupt-Asset
+        return {r["symbol"]: (m.get(r["asset_id"], r["asset_id"]) if r["asset_id"] else None)
+                for r in self.db.q("SELECT symbol, asset_id FROM csv_symbol")}
 
     def saved_accounts(self) -> dict[str, str]:
         return {r["name"]: r["account"] for r in self.db.q("SELECT name, account FROM csv_account")}

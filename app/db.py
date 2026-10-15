@@ -727,6 +727,22 @@ CREATE INDEX IF NOT EXISTS ix_diag_research_event_ts ON diag_research_event(sour
 ALTER TABLE csv_batch ADD COLUMN origin_json TEXT;
 CREATE INDEX IF NOT EXISTS ix_csv_batch_sha ON csv_batch(file_sha256);
 """),
+    (23, """
+-- Asset zusammenführen: Zwillingskennung (alias_asset) wird auf das Haupt-Asset (target_asset) abgebildet – ohne neue
+-- Buchung, umkehrbar (status 'reverted'), mit Vorschau-Zusammenfassung als Protokoll.
+CREATE TABLE IF NOT EXISTS asset_merge (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  alias_asset   TEXT NOT NULL,
+  target_asset  TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'active',   -- active | reverted
+  note          TEXT,
+  summary_json  TEXT,
+  created_at    TEXT NOT NULL,
+  reverted_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_asset_merge_status ON asset_merge(status, alias_asset);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_merge_row ON asset_merge(alias_asset, target_asset, created_at);
+"""),
 ]
 
 
