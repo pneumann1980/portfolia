@@ -303,7 +303,8 @@ def test_interrupted_initial_import_resumes_without_loss(client, evm, monkeypatc
     assert sync(client, sid).get("error")
     assert json.loads(source(client, sid)["cursor_json"])["block"] == first_cursor
     ds = datasource_service(ctx(client)).get(sid)
-    assert ds.backfill_pending and ds.row["next_run_at"]  # Erstabruf bleibt geplant, auch ohne Intervall
+    # Fortsetzungspunkt bleibt, aber „nur manuell“ löst nie automatische Läufe aus (Fortsetzung per „Abrufen“)
+    assert ds.backfill_pending and ds.row["next_run_at"] is None and not datasource_service(ctx(client)).due()
     rounds = 0
     while datasource_service(ctx(client)).get(sid).backfill_pending:
         rounds += 1

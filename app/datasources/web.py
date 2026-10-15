@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 FORM_FIELDS = ("kind", "provider", "name", "account", "address", "credential_ref", "sync_interval_min", "auto_commit",
                "note", "key_expires_on", "wallet_group", "script", "gap", "chain_provider", "tokens", "tokens_shown",
-               "allow_duplicate")
+               "catchup", "catchup_shown", "allow_duplicate")
 WALLET_CHAINS = ("bitcoin", "ethereum", "bsc", "polygon", "avalanche", "solana", "xrp", "cardano", "polkadot",
                  "kaspa", "pulsechain", "peaq")  # mit Anbindung (Reihenfolge der Auswahl)
 CHECK_LABELS = {"transaction": "Vorgänge", "balances": "Bestände", "assets": "Asset-Stammdaten", "chain": "Chain",
@@ -323,7 +323,8 @@ def make_router() -> APIRouter:
         if ds.is_wallet:
             w = ds.watch
             data.update({"address": "\n".join(ds.addresses), "script": w.script or "", "gap": str(w.gap),
-                         "chain_provider": w.provider or "", "tokens": "1" if w.tokens else ""})
+                         "chain_provider": w.provider or "", "tokens": "1" if w.tokens else "",
+                         "catchup": "1" if w.catchup else ""})
         return _form_page(request, data, [], sid, msg=msg, error=error)
 
     @router.post("/settings/datasources/{sid}")

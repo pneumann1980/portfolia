@@ -165,12 +165,16 @@ def key_hint(provider: str, value: str) -> str:
 _GROUP_RE = re.compile(r"^[^\x00-\x1f<>]{1,40}$")
 PROGRESS_STALE_S = 600  # ohne Lebenszeichen gilt ein Lauf als abgebrochen (Neustart des Containers)
 BACKFILL_NEXT_S = 90  # Etappen des Erstabrufs: nächster Lauf nach so vielen Sekunden
-MAX_ROUNDS = 40  # Etappen je manuell gestartetem Hintergrundlauf
+MAX_ROUNDS = 40  # Etappen je manuell gestartetem Hintergrundlauf (jede muss Fortschritt bringen)
+CATCHUP_MAX_RUNS = 12  # automatische Fortsetzungen in Folge, danach gilt wieder der reguläre Termin
+STALL_LIMIT = 3  # Läufe in Folge ohne Fortschritt, ab denen der Stillstand ausdrücklich gemeldet wird
+MIN_GAP_S = 300  # frühester Folgetermin nach dem Ende eines Laufs (auch bei kurzen Intervallen)
 RESEARCH_ROUNDS = 12  # Etappen je Recherchelauf (Diagnose); danach Fortsetzungspunkt
 RESEARCH_SECONDS = 240  # Zeitbudget je Recherchelauf
 BATCH_WORKERS = 4  # Anbieter, die beim Aktualisieren mehrerer Konten gleichzeitig abgerufen werden
 MANY_ROUNDS = 3  # Etappen je Konto beim Aktualisieren mehrerer Konten (Erstabrufe setzt der Zeitplan fort)
 BATCH_KEY = "datasources.batch_sync"
+STALE_BALANCE_NOTE = "Stand des letzten vollständigen Abrufs"
 # Anbieter-Schlüssel (je Anbieter, nicht je Datenquelle) – nur Anbieter aus dem geprüften Katalog
 PROVIDER_KEYS: dict[str, Any] = {}
 for _e in ENDPOINTS.values():  # erster Endpunkt je Schlüssel bestimmt die Anzeige (z. B. „Subscan direkt“)
@@ -441,8 +445,33 @@ class DataSource:
 
     @property
     def backfill_pending(self) -> bool:
-        """Erstabruf in Etappen noch nicht abgeschlossen (bleibt auch nach einem Fehler bestehen)."""
+        """Fortsetzungspunkt vorhanden: der Abruf ist unvollständig und setzt beim nächsten Lauf dort fort. Das ist
+        nur der technische Stand – ob und wann automatisch fortgesetzt wird, bestimmen Intervall und ``catchup``."""
         return bool(self.coverage.get("resume"))
+
+    @property
+    def catchup(self) -> bool:
+        """Darf eine unvollständige Historie in kurzen Abständen (begrenzt) automatisch fortgesetzt werden? Wallets nur
+        mit ausdrücklicher Einstellung („Historie automatisch aufholen“), übrige Anbindungen wie bisher."""
+        conn = K.connector_for(self.row["provider"])
+        default = bool(getattr(conn, "catchup_default", True)) if conn is not None else False
+        try:
+            w = json.loads(self._get("watch_json") or "{}")
+        except ValueError:
+            return default
+        return bool(w.get("catchup", default)) if isinstance(w, dict) else default
+
+    @property
+    def sched(self) -> dict[str, Any]:
+        """Zeitplan-Angaben des letzten Laufs: Startgrund, letzter Fortschritt, Stillstand, Grund des Folgetermins."""
+        s = self.coverage.get("sched")
+        return s if isinstance(s, dict) else {}
+
+    @property
+    def parts(self) -> list[dict[str, Any]]:
+        """Teile des Abrufs mit eigenem Stand (z. B. Kaspa: KAS und KRC-20): vollständig, in Bearbeitung, blockiert."""
+        p = self.coverage.get("parts")
+        return [{"key": k, **v} for k, v in p.items() if isinstance(v, dict)] if isinstance(p, dict) else []
 
     @property
     def sync_state(self) -> tuple[str, str]:
@@ -453,14 +482,30 @@ class DataSource:
         cov = self.coverage
         if st == "synced" and cov.get("complete") and not cov.get("gaps"):
             return ("vollständig synchronisiert" if self.is_wallet else "synchronisiert"), "good"
+        sch = self.sched
+        if sch.get("stalled"):
+            return "Abruf unvollständig – Stillstand erkannt", "warn"
         if cov.get("resume"):
-            return ("Erstabruf unvollständig – wird fortgesetzt" if st != "error" else
-                    "Erstabruf unterbrochen – Fehler, neuer Versuch folgt"), "warn"
+            if sch.get("next_kind") == "catchup":
+                return ("Historie unvollständig – wird automatisch fortgesetzt" if st != "error" else
+                        "Historie unterbrochen – Fehler, neuer Versuch folgt"), "warn"
+            return ("Historie unvollständig – Fortsetzung zum nächsten Termin" if st != "error" else
+                    "Historie unterbrochen – Fehler, nächster Versuch zum regulären Termin"), "warn"
         return self.status_label, self.status_badge
 
 
 def _env_name(provider: str) -> str:
     return f"PORTFOLIA_DS_{provider.upper()}"
+
+
+def regular_next(enabled: bool, supported: bool, interval_min: int, started: datetime,
+                 finished: datetime) -> datetime | None:
+    """Regulärer Folgetermin eines Laufs: Start + Intervall, aber nie vor dem Ende des Laufs (+ kurze Pause) – ein
+    langer Lauf darf nicht mit einem bereits abgelaufenen Termin enden. ``None``: keine automatischen Läufe
+    (deaktiviert, ohne Anbindung oder „nur manuell“)."""
+    if not enabled or not supported or interval_min <= 0:
+        return None
+    return max(started + timedelta(minutes=interval_min), finished + timedelta(seconds=MIN_GAP_S))
 
 
 def next_run(enabled: bool, supported: bool, interval_min: int, last_run: datetime | None,
@@ -1054,9 +1099,13 @@ class DataSourceService:
             tokens = str(data.get("tokens") or "") in ("1", "on", "true")
         else:
             tokens = prev.tokens if prev is not None else True
+        if data.get("catchup_shown"):
+            catchup = str(data.get("catchup") or "") in ("1", "on", "true")
+        else:
+            catchup = prev.catchup if prev is not None else False
         watch = WatchConfig(addresses=addrs, xpubs=xpubs[:1], script=script, gap=gap if xpubs else GAP_DEFAULT,
                             provider=provider, watch_id=(prev.watch_id if prev and prev.watch_id else ""),
-                            tokens=tokens)
+                            tokens=tokens, catchup=catchup)
         primary = (xpubs or addrs or [None])[0]
         return primary, watch, errors
 
@@ -1415,7 +1464,7 @@ class DataSourceService:
             with get_redactor().temporary(secret.values()):
                 res = conn.check(ds.config(), secret)
             if res.balances is not None:
-                self._store_balances(sid, res.balances)
+                self._store_balances(sid, res.balances, res.balances_complete)
         except Exception as e:  # Anbieter-/Netzwerkfehler → Anzeige ohne Geheimnisse
             _, msg = describe_error(e, secret.values())
             self.db.x("UPDATE data_source SET status='error', last_error=?, last_error_at=?, last_check_json=?, "
@@ -1559,16 +1608,28 @@ class DataSourceService:
         res_meta["recs"] = recs
         return res_meta
 
+    @staticmethod
+    def _stop_rounds(res: dict[str, Any], ds: DataSource | None, ev: threading.Event, cursor_before: str | None,
+                     was_enabled: bool) -> bool:
+        """Weitere Etappen im selben (manuell gestarteten) Lauf nur, solange jede nachweislich Fortschritt bringt:
+        kein Fehler, kein Abbruch, nicht währenddessen deaktiviert, kein erkannter Stillstand, Abrufstand vorgerückt."""
+        return bool(res.get("error") or ds is None or not ds.backfill_pending or ev.is_set()
+                    or (was_enabled and not ds.enabled) or ds.sched.get("stalled")
+                    or ds.cursor_json == cursor_before)
+
     def _background(self, sid: int, trigger: str, ev: threading.Event) -> None:
         """Hintergrundlauf: so lange Etappen, bis der Erstabruf vollständig ist, ein Fehler auftritt, der Nutzer
         abbricht oder die Etappengrenze erreicht ist (dann setzt der Zeitplan fort)."""
         res: dict[str, Any] = {}
         try:
             with K.cancel_scope(ev):
+                first = self.get(sid)
+                was_enabled = bool(first.enabled) if first is not None else False
                 for _ in range(MAX_ROUNDS):
+                    before = (self.get(sid) or first).cursor_json if first is not None else None
                     res = self._sync(sid, trigger, background=True)
                     ds = self.get(sid)
-                    if res.get("error") or ds is None or not ds.backfill_pending or ev.is_set():
+                    if self._stop_rounds(res, ds, ev, before, was_enabled):
                         break
         except Exception as e:  # pragma: no cover - Absicherung: Hintergrundlauf darf nie hängen bleiben
             log.exception("Datenquelle %s: Hintergrundlauf abgebrochen", sid)
@@ -1671,10 +1732,13 @@ class DataSourceService:
                             ok, text = self.check(sid)
                             res = {"message": text} if ok else {"error": text}
                         else:
+                            first = self.get(sid)
+                            was_enabled = bool(first.enabled) if first is not None else False
                             for _ in range(MANY_ROUNDS):
+                                before = (self.get(sid) or first).cursor_json if first is not None else None
                                 res = self._sync(sid, trigger, background=True)
                                 cur = self.get(sid)
-                                if res.get("error") or cur is None or not cur.backfill_pending or ev.is_set():
+                                if self._stop_rounds(res, cur, ev, before, was_enabled):
                                     break
                 except Exception as e:  # ein Konto darf die übrigen nie aufhalten
                     log.exception("Datenquelle %s: Aktualisierung fehlgeschlagen", sid)
@@ -1820,10 +1884,20 @@ class DataSourceService:
             quota = Quota(self.db, f"wallet:{ep.id}", "day")
             conn.usage = quota.add  # type: ignore[attr-defined]
 
-    def _store_balances(self, sid: int, balances: list[K.Balance]) -> None:
+    def _store_balances(self, sid: int, balances: list[K.Balance], complete: bool = True) -> None:
+        """Beobachtete Bestände speichern. Bei ``complete=False`` (Teilabfrage fehlgeschlagen) werden nur die
+        gelieferten Bestände ersetzt; übrige bleiben mit ihrem alten Stand erhalten – nie als Nullbestand."""
         stamp = iso(_now())
         with self.db.transaction() as c:
-            c.execute("DELETE FROM ds_balance WHERE source_id=?", (sid,))
+            if complete:
+                c.execute("DELETE FROM ds_balance WHERE source_id=?", (sid,))
+            else:
+                keys = [b.asset_key[:120] for b in balances]
+                if keys:
+                    marks = ",".join("?" * len(keys))
+                    c.execute(f"DELETE FROM ds_balance WHERE source_id=? AND asset_key IN ({marks})", (sid, *keys))
+                c.execute("UPDATE ds_balance SET note=COALESCE(note || ' · ', '') || ? WHERE source_id=? AND "
+                          "COALESCE(note, '') NOT LIKE ?", (STALE_BALANCE_NOTE, sid, f"%{STALE_BALANCE_NOTE}%"))
             c.executemany("INSERT OR REPLACE INTO ds_balance(source_id, asset_key, qty, name, note, observed_at) "
                           "VALUES (?,?,?,?,?,?)",
                           [(sid, b.asset_key[:120], format(b.qty.normalize(), "f") if b.qty else "0",
@@ -1832,26 +1906,102 @@ class DataSourceService:
     def _fail(self, ds: DataSource, run_id: int, e: BaseException, secrets: list[str], started: datetime,
               nxt: datetime | None) -> dict[str, Any]:
         """Lauf als Fehler abschließen – Meldung ohne Geheimnisse, Wartezeit des Anbieters beachten. Der
-        Abrufstand bleibt unverändert: der nächste Lauf holt dieselben Vorgänge erneut."""
+        Abrufstand bleibt unverändert: der nächste Lauf holt dieselben Vorgänge erneut. Der nächste Versuch folgt dem
+        regulären Zeitplan (nie schneller, nie bei „nur manuell“ oder deaktiviert); Wartezeiten des Anbieters zählen ab
+        dem Ende des Laufs, nicht ab dem Start."""
         kind, msg = describe_error(e, secrets)
+        finished = _now()
+        cur = self.get(int(ds.id)) or ds
+        nxt = regular_next(bool(cur.enabled), True, int(cur.sync_interval_min or 0), started, finished)
+        stamp = iso(started)
         if kind == "cancelled":  # vom Nutzer abgebrochen: kein Fehlerzustand der Quelle, Zeitplan läuft weiter
-            stamp = iso(started)
             self.db.x("UPDATE data_source SET last_run_at=?, next_run_at=?, updated_at=? WHERE id=?",
                       (stamp, iso(nxt) if nxt else None, stamp, ds.id))
+            self._note_sched(int(ds.id), next_kind="schedule" if nxt else None,
+                             next_reason="Abbruch durch den Nutzer – keine automatische Fortsetzung, nächster Versuch "
+                                         "zum regulären Termin" if nxt else "Abbruch durch den Nutzer")
             self._finish_run(run_id, "error", msg)
             log.info("Datenquelle %s: Abruf abgebrochen", ds.name)
             return {"error": msg, "kind": kind, "cancelled": True}
-        if ds.backfill_pending and ds.enabled:  # Erstabruf nicht liegen lassen: nach einer Pause erneut versuchen
-            nxt = max(nxt or started, started + timedelta(minutes=10))
+        reason = "Fehler – nächster Versuch zum regulären Termin" if nxt else "Fehler – keine automatische Wiederholung"
         if isinstance(e, K.ConnectorError) and e.retry_after_s and nxt is not None:
-            nxt = max(nxt, started + timedelta(seconds=e.retry_after_s))
-        stamp = iso(started)
+            nxt = max(nxt, finished + timedelta(seconds=e.retry_after_s))
+            reason = f"Anbieter bittet um Wartezeit ({e.retry_after_s // 60} min) – nächster Versuch danach"
         self.db.x("UPDATE data_source SET status='error', last_error=?, last_error_at=?, last_run_at=?, "
                   "next_run_at=?, updated_at=? WHERE id=?", (msg, stamp, stamp, iso(nxt) if nxt else None, stamp,
                                                             ds.id))
+        self._note_sched(int(ds.id), next_kind="schedule" if nxt else None, next_reason=reason,
+                         error_kind=kind)
         self._finish_run(run_id, "error", msg)
         log.warning("Datenquelle %s: Synchronisierung fehlgeschlagen (%s): %s", ds.name, kind, msg)
         return {"error": msg, "kind": kind}
+
+    def _note_sched(self, sid: int, **fields: Any) -> None:
+        """Zeitplan-Angaben im gespeicherten Abdeckungsstand ergänzen (übrige Abdeckung bleibt unverändert)."""
+        row = self.db.q1("SELECT coverage_json FROM data_source WHERE id=?", (sid,))
+        if row is None:
+            return
+        try:
+            cov = json.loads(row["coverage_json"] or "{}")
+        except ValueError:
+            cov = {}
+        if not isinstance(cov, dict):
+            cov = {}
+        sched = dict(cov.get("sched") or {})
+        sched.update({k: v for k, v in fields.items() if v is not None or k in ("next_kind",)})
+        cov["sched"] = sched
+        self.db.x("UPDATE data_source SET coverage_json=? WHERE id=?",
+                  (json.dumps(cov, ensure_ascii=False, default=str), sid))
+
+    def _schedule(self, sid: int, ds: DataSource, trigger: str, started: datetime, *, more: bool, resume: bool,
+                  progressed: bool, stalled: str | None, cancelled: bool,
+                  prev: dict[str, Any] | None) -> dict[str, Any]:
+        """Folgetermin und Zeitplan-Angaben nach einem Lauf. Der technische Fortsetzungspunkt (Cursor) ist getrennt von
+        der Erlaubnis, zeitnah neu zu starten:
+
+        * regulärer Termin = Start + Intervall (nie vor dem Ende des Laufs); „nur manuell“/deaktiviert → kein Termin;
+        * zügige Fortsetzung (``BACKFILL_NEXT_S`` nach dem Ende des Laufs) nur mit eingeschalteter Einstellung
+          „Historie automatisch aufholen“, nachweislichem Fortschritt, ohne Abbruch/Stillstand und höchstens
+          ``CATCHUP_MAX_RUNS``-mal in Folge; sonst gilt der reguläre Termin."""
+        prev = prev or {}
+        finished = _now()
+        cur = self.get(sid) or ds  # Einstellungen können sich während des Laufs geändert haben (Deaktivierung)
+        enabled, interval = bool(cur.enabled), int(cur.sync_interval_min or 0)
+        regular = regular_next(enabled, True, interval, started, finished)
+        runs = int(prev.get("catchup_runs") or 0) + 1 if trigger == "catchup" else 0
+        stalls = 0 if (progressed or not resume) else int(prev.get("stalls") or 0) + 1
+        if stalled:
+            stalls = max(stalls, int(prev.get("stalls") or 0) + 1)
+        nxt, kind = regular, "schedule" if regular is not None else None
+        fast = bool(regular is not None and resume and more and cur.catchup and progressed and not cancelled
+                    and runs < CATCHUP_MAX_RUNS)
+        if regular is None:
+            reason = ("deaktiviert – keine automatischen Läufe" if not enabled
+                      else "nur manuell – keine automatischen Läufe")
+        elif fast:
+            assert regular is not None
+            nxt, kind = min(regular, finished + timedelta(seconds=BACKFILL_NEXT_S)), "catchup"
+            reason = f"automatische Fortsetzung (Historie aufholen, {runs + 1}. von höchstens {CATCHUP_MAX_RUNS})"
+        elif not resume:
+            reason = "regulärer Termin"
+        elif cancelled:
+            reason = "Abbruch durch den Nutzer – nächster Versuch zum regulären Termin"
+        elif stalled:
+            reason = f"Stillstand erkannt – nächster Versuch zum regulären Termin (bisher {stalls}× ohne Fortschritt)"
+        elif not more:
+            reason = "Abruf unvollständig (Lücke/Ausfall) – nächster Versuch zum regulären Termin"
+        elif not cur.catchup:
+            reason = "Historie unvollständig – Fortsetzung zum regulären Termin (automatisches Aufholen aus)"
+        elif not progressed:
+            reason = f"kein Fortschritt (bisher {stalls}× in Folge) – nächster Versuch zum regulären Termin"
+        else:
+            reason = f"Grenze von {CATCHUP_MAX_RUNS} automatischen Fortsetzungen erreicht – weiter zum regulären Termin"
+        if stalls >= STALL_LIMIT and resume and not fast and not stalled:
+            reason += f" – wiederholt ohne Fortschritt ({stalls}×)"
+        return {"next": nxt, "next_kind": kind, "next_reason": reason, "start": trigger, "catchup_runs": runs,
+                "stalls": stalls, "stalled": stalled or None,
+                "last_progress_at": iso(finished) if progressed else prev.get("last_progress_at"),
+                "finished_at": iso(finished)}
 
     def _open_rows(self, sid: int) -> list[Any]:
         """Zeilen mit Ereigniskennung in offenen Prüf-Stapeln dieser Datenquelle (nicht des ganzen Anbieters: ein
@@ -2032,7 +2182,7 @@ class DataSourceService:
         ds = self.get(sid)
         if ds is None:
             return {"error": "Datenquelle nicht gefunden."}
-        if not ds.enabled and trigger == "schedule":
+        if not ds.enabled and trigger in ("schedule", "catchup"):
             return {"skipped": "deaktiviert"}
         conn = K.connector_for(ds.provider)
         if conn is None:
@@ -2042,7 +2192,10 @@ class DataSourceService:
         run_id = self._start_run(sid, trigger)
         started = _now()
         stamp = iso(started)
-        nxt = next_run(bool(ds.enabled), True, int(ds.sync_interval_min or 0), started, started)
+        nxt = regular_next(bool(ds.enabled), True, int(ds.sync_interval_min or 0), started, started)
+        # Folgetermin schon beim Start festhalten: bricht der Lauf ab (Neustart, Absturz), gilt der reguläre Termin –
+        # kein sofortiger Neustart des Abrufs und keine Wiederholungsschleife
+        self.db.x("UPDATE data_source SET next_run_at=? WHERE id=?", (iso(nxt) if nxt else None, sid))
         secret = K.Secret(None)
         conn.catalog = Catalog(self.db, ds.provider)
         prog = self._prepare(ds, conn)
@@ -2059,11 +2212,11 @@ class DataSourceService:
         except Exception as e:  # Anbieter-/Netzwerk-/Vertragsfehler → Anzeige ohne Geheimnisse
             return self._fail(ds, run_id, e, secret.values(), started, nxt)
         with _INGEST_LOCK:  # Abgleich/Übernahme quellenübergreifend nacheinander (Abrufe laufen parallel)
-            return self._process(sid, ds, conn, res, recs, run_id, secret, started, stamp, nxt, prog)
+            return self._process(sid, ds, conn, res, recs, run_id, secret, started, stamp, nxt, prog, trigger)
 
     def _process(self, sid: int, ds: DataSource, conn: K.Connector, res: K.FetchResult, recs: list[Any],
                  run_id: int, secret: K.Secret, started: datetime, stamp: str, nxt: datetime | None,
-                 prog: Progress) -> dict[str, Any]:
+                 prog: Progress, trigger: str = "schedule") -> dict[str, Any]:
         """Abgerufene Vorgänge abgleichen, in den Prüf-Stapel legen bzw. übernehmen und den Lauf abschließen."""
         from app.csvimport.service import csv_service, rec_to_json
 
@@ -2129,11 +2282,20 @@ class DataSourceService:
         more = bool(res.resume and not res.complete and res.cursor is not None)
         if res.more is not None:
             more = more and bool(res.more)
-        if not res.complete and not res.gaps:
-            notes.insert(0, "Erstabruf in Etappen – wird automatisch fortgesetzt" if more else
-                         "Abruf unvollständig – der nächste Lauf holt erneut ab")
-        elif more:
-            notes.insert(0, "Erstabruf in Etappen – wird automatisch fortgesetzt")
+        # Abrufstand nur nach vollständigem Abruf bzw. bis zu einem sicheren Fortsetzungspunkt vorrücken
+        cursor_json = json.dumps(res.cursor) if res.cursor is not None and (res.complete or res.resume) \
+            else ds.cursor_json
+        prev_cov = json.loads(ds.coverage_json or "{}")
+        cancel_ev = K.current_cancel()
+        sched = self._schedule(sid, ds, trigger, started, more=more, resume=partial,
+                               progressed=cursor_json != ds.cursor_json, stalled=res.stalled,
+                               cancelled=bool(cancel_ev is not None and cancel_ev.is_set()),
+                               prev=prev_cov.get("sched") if isinstance(prev_cov, dict) else None)
+        nxt = sched.pop("next")
+        if partial and (more or not res.gaps):
+            notes.insert(0, ("Historie in Etappen – wird automatisch fortgesetzt" if sched["next_kind"] == "catchup"
+                             else "Historie in Etappen" if more else "Abruf unvollständig") + ": "
+                         + sched["next_reason"])
         overlap = counts.get("duplicate", 0) + counts.get("before", 0)
         parts = [f"{len(res.events)} Vorgänge", f"neu {counts.get('new', 0)}", f"bekannt {counts.get('known', 0)}"]
         for key, label in (("unclear", "ungeklärt"), ("duplicate", "mögliche Dubletten"), ("before", "vor Stichtag"),
@@ -2158,21 +2320,15 @@ class DataSourceService:
         coverage = {**res.coverage, "complete": res.complete, "at": stamp, "resume": resume,
                     "gaps": [sanitize_error(g, secret.values()) for g in res.gaps[:20]], "repair": repair}
         # Belege zur Vollständigkeit der Historie: nur aus einem vollständigen Abruf ab Beginn, sonst der letzte Stand
-        prev_cov = json.loads(ds.coverage_json or "{}")
         if res.complete and res.coverage.get("mode") == "vollständig":
             coverage["history"] = self._history(sid, recs, stamp)
         elif isinstance(prev_cov, dict) and prev_cov.get("history"):
             coverage["history"] = prev_cov["history"]
         if conn.wallet:
             coverage["limits"] = conn.coverage_limits(ds.config())  # type: ignore[attr-defined]
-        if resume and ds.enabled:  # Erstabruf in Etappen: bald fortsetzen, unabhängig vom Intervall
-            soon = started + timedelta(seconds=BACKFILL_NEXT_S)
-            nxt = min(nxt, soon) if nxt is not None else soon
-        # Abrufstand nur nach vollständigem Abruf bzw. bis zu einem sicheren Fortsetzungspunkt vorrücken
-        cursor_json = json.dumps(res.cursor) if res.cursor is not None and (res.complete or res.resume) \
-            else ds.cursor_json
+        coverage["sched"] = sched
         if res.balances is not None:
-            self._store_balances(sid, res.balances)
+            self._store_balances(sid, res.balances, res.balances_complete)
         # „erfolgreich“ nur nach vollständigem Abruf (bzw. einer Etappe des Erstabrufs) – ein abgebrochener Lauf
         # zieht weder Abrufstand noch Erfolgszeitpunkt vor
         success = stamp if (not partial or more) else ds.last_success_at
@@ -2272,9 +2428,8 @@ class DataSourceService:
         now = now or _now()
         out = []
         for ds in self.list():
-            if not ds.enabled or not ds.supported or (int(ds.sync_interval_min or 0) <= 0
-                                                      and not ds.backfill_pending):
-                continue
+            if not ds.enabled or not ds.supported or int(ds.sync_interval_min or 0) <= 0:
+                continue  # „nur manuell“/deaktiviert: nie automatische Läufe, auch nicht für Fortsetzungen
             if ds.progress.get("running"):
                 continue
             nxt = parse_iso(ds.next_run_at)
@@ -2295,10 +2450,12 @@ class DataSourceService:
                 done[ds.name] = "läuft bereits"
                 continue
 
-            def run(sid: int = sid, ev: threading.Event = ev, name: str = ds.name) -> None:
+            trigger = "catchup" if ds.sched.get("next_kind") == "catchup" else "schedule"
+
+            def run(sid: int = sid, ev: threading.Event = ev, name: str = ds.name, trigger: str = trigger) -> None:
                 try:
                     with K.cancel_scope(ev):
-                        res = self._sync(sid, "schedule")
+                        res = self._sync(sid, trigger)
                     done[name] = res.get("status") or res.get("error") or res.get("skipped") or res.get(
                         "unsupported")
                 except Exception as e:  # pragma: no cover - Absicherung: eine Quelle hält die übrigen nie auf

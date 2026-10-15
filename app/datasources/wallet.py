@@ -60,6 +60,7 @@ class WatchConfig:
     provider: str | None = None  # Endpoint-ID (geprüfter Katalog)
     watch_id: str = ""  # stabile Kennung des Kontos (Ereignis-IDs bei Mehr-Adress-Konten)
     tokens: bool = True  # Tokens (ERC-20/BEP-20, SPL, KRC-20) mit abrufen
+    catchup: bool = False  # unvollständige Historie in kurzen Abständen (begrenzt) automatisch fortsetzen
 
     @classmethod
     def load(cls, raw: str | Mapping[str, Any] | None) -> WatchConfig:
@@ -73,7 +74,7 @@ class WatchConfig:
                    gap=min(max(int(gap), 5), GAP_MAX) if isinstance(gap, int) else GAP_DEFAULT,
                    provider=str(d["provider"]) if d.get("provider") in ENDPOINTS else None,
                    watch_id=str(d.get("watch_id") or "") if _WATCH_ID.match(str(d.get("watch_id") or "")) else "",
-                   tokens=bool(d.get("tokens", True)))
+                   tokens=bool(d.get("tokens", True)), catchup=bool(d.get("catchup", False)))
 
     def dump(self) -> str:
         d: dict[str, Any] = {"addresses": self.addresses}
@@ -87,6 +88,8 @@ class WatchConfig:
             d["provider"] = self.provider
         if not self.tokens:
             d["tokens"] = False
+        if self.catchup:
+            d["catchup"] = True
         return json.dumps(d, sort_keys=True)
 
     def as_dict(self) -> dict[str, Any]:
@@ -290,6 +293,7 @@ class WalletConnector(K.Connector):
     """Gemeinsamer Rahmen der Chain-Adapter: Anbieterwahl, HTTP-Budget, Fortschritt, Abdeckung."""
 
     wallet = True
+    catchup_default = False  # Fortsetzung nur zum regulären Termin, es sei denn die Quelle schaltet es ein
     chain_label: ClassVar[str] = ""
     native: ClassVar[str] = ""
     endpoints: ClassVar[tuple[str, ...]] = ()  # erlaubte Anbieter (erster = Standard)

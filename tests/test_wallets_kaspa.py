@@ -258,3 +258,231 @@ def test_krc20_error_classes(client, kas, resp, kind, text):
     assert not any("Schlüssel unter" in g for g in gaps)  # Kasplex hat keine Schlüssel
     assert rows_for(client, sid, 2) and not rows_for(client, sid, 5001, krc=True)  # KAS ja, KRC-20 nicht
     assert json.loads(source(client, sid)["cursor_json"]).get("krc20") in ({}, None)  # KRC-Zeiger nicht vorgerückt
+
+
+# -- Zeitplan, Stillstand und Teilabrufe (Regression: wiederholtes Synchronisieren trotz „einmal täglich“) -----------
+
+def _page_wallet(client, **form) -> int:
+    return create_wallet(client, "kaspa", A, name="Kaspium KAS", tokens_shown="1", tokens="", **form)
+
+
+def _gap_hist(n: int) -> list[dict]:
+    return [tx(100 + i, T0 + i * 1000, [(E, 2 * KAS)], [(A, KAS + i)]) for i in range(n)]
+
+
+def _lag(row: dict) -> float:
+    from datetime import datetime
+    return (datetime.fromisoformat(row["next_run_at"]) - datetime.fromisoformat(row["last_run_at"])).total_seconds()
+
+
+def test_daily_interval_holds_after_an_incomplete_kaspa_fetch(client, kas, monkeypatch):
+    kas.txs = _gap_hist(40)
+    monkeypatch.setattr(KA, "PAGE", 5)
+    monkeypatch.setattr(KA.KaspaConnector, "max_requests", 2)
+    sid = _page_wallet(client, sync_interval_min="1440")
+    ds = datasource_service(ctx(client)).get(sid)
+    assert not ds.catchup  # Wallet: Fortsetzung in kurzen Abständen nur mit ausdrücklicher Einstellung
+    datasource_service(ctx(client)).sync(sid, "schedule")
+    ds = datasource_service(ctx(client)).get(sid)
+    assert ds.backfill_pending and ds.sched["next_kind"] == "schedule"
+    assert 23 * 3600 < _lag(source(client, sid)) <= 24 * 3600 + 5  # nicht Start + 90 s
+    assert datasource_service(ctx(client)).due() == []
+    assert "Aufholen aus" in ds.sched["next_reason"]
+    assert [p["state"] for p in ds.parts if p["key"] == "kas"] == ["progress"]
+
+
+def test_explicit_catchup_continues_quickly_but_bounded_and_completes_without_gaps(client, kas, monkeypatch):
+    kas.txs = _gap_hist(60)
+    monkeypatch.setattr(KA, "PAGE", 5)
+    monkeypatch.setattr(KA.KaspaConnector, "max_requests", 2)
+    sid = _page_wallet(client, sync_interval_min="1440", catchup_shown="1", catchup="1")
+    svc = datasource_service(ctx(client))
+    assert svc.get(sid).catchup and json.loads(source(client, sid)["watch_json"])["catchup"] is True
+    seen_cursors = set()
+    n = 0
+    while svc.get(sid).backfill_pending or n == 0:
+        out = svc.sync(sid, "catchup" if n else "schedule")
+        assert "error" not in out, out
+        cur = source(client, sid)["cursor_json"]
+        if svc.get(sid).backfill_pending:
+            assert cur not in seen_cursors  # jede unvollständige Etappe rückt nachweislich vor
+        seen_cursors.add(cur)
+        n += 1
+        assert n <= S_CATCHUP_MAX + 25
+    rows = all_rows(client, sid)
+    assert len(rows) == 60 and len(set(rows)) == 60  # lückenlos, keine Doppelten
+    assert svc.get(sid).sync_state[0] == "vollständig synchronisiert"
+    ids = [r["event_key"] for r in ctx(client).db.q(
+        "SELECT r.event_key FROM csv_row r JOIN csv_batch b ON b.id=r.batch_id WHERE b.datasource_id=?", (sid,))]
+    assert len(ids) == len(set(ids))
+
+
+S_CATCHUP_MAX = 12
+
+
+def test_kas_pagination_without_progress_is_detected(client, kas, monkeypatch):
+    kas.txs = _gap_hist(40)
+    monkeypatch.setattr(KA, "PAGE", 5)
+    first = sorted(kas.txs, key=lambda t: t["block_time"])[:5]
+    real = kas.handler
+
+    def stuck(req):
+        if req.url.host == "api.kaspa.org" and "full-transactions-page" in req.url.path and kas.page_calls >= 1:
+            kas.calls.append(req)
+            return httpx.Response(200, json=sorted(first, key=lambda t: -t["block_time"]))  # immer dieselbe Seite
+        if req.url.host == "api.kaspa.org" and "full-transactions-page" in req.url.path:
+            kas.page_calls += 1
+        return real(req)
+
+    kas.page_calls = 0  # type: ignore[attr-defined]
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(stuck))
+    sid = _page_wallet(client, sync_interval_min="60", catchup_shown="1", catchup="1")
+    out = sync(client, sid)
+    st = source(client, sid)
+    cov = json.loads(st["coverage_json"])
+    assert out["status"] == "partial" and st["status"] == "partial"
+    assert cov["sched"]["stalled"] and "KAS: Paginierung ohne Fortschritt" in cov["sched"]["stalled"]
+    pages = [r for r in kas.calls if "full-transactions-page" in r.url.path]
+    assert len(pages) <= 3  # nicht endlos weiterfragen
+    assert json.loads(st["cursor_json"])["after"] == first[-1]["block_time"]  # nur verarbeitete Seiten
+    assert len(all_rows(client, sid)) == 5  # die erste Seite ist verarbeitet, nichts übersprungen
+    assert cov["parts"]["kas"]["state"] == "blocked"
+    ds = datasource_service(ctx(client)).get(sid)
+    assert ds.sync_state[0] == "Abruf unvollständig – Stillstand erkannt"
+    assert _lag(st) >= 3500  # kein zügiger Neustart: reguläres Intervall (60 min)
+
+
+def test_unchanged_full_krc20_page_does_not_repeat_endlessly(client, kas, monkeypatch):
+    many = [op(n, "transfer", "NACHO", KAS, E, A) for n in range(1, 61)]
+    kas.ops = many
+    real = kas.handler
+    newest = sorted(many, key=lambda o: -int(o["opScore"]))[:50]
+
+    def same_page(req):
+        if req.url.host == "api.kasplex.org" and req.url.path.endswith("/krc20/oplist") and (
+                req.url.params.get("next") or req.url.params.get("prev")):
+            kas.calls.append(req)
+            return httpx.Response(200, json={"message": "successful", "result": newest, "prev": newest[0]["opScore"],
+                                             "next": newest[-1]["opScore"]})
+        return real(req)
+
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(same_page))
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS", sync_interval_min="1440", catchup_shown="1",
+                        catchup="1")
+    sync(client, sid)
+    cov = json.loads(source(client, sid)["coverage_json"])
+    assert cov["sched"]["stalled"] and "dieselbe volle Seite" in cov["sched"]["stalled"]
+    assert cov["parts"]["krc20"]["state"] == "blocked" and cov["parts"]["kas"]["state"] == "complete"
+    assert len([r for r in kas.calls if _oplist(r)]) <= 3
+    st = source(client, sid)
+    assert st["status"] == "partial" and _lag(st) > 23 * 3600  # reguläres Tagesintervall, keine Schleife
+    cur = json.loads(st["cursor_json"])["krc20"]
+    assert cur["back"] == newest[-1]["opScore"] and not cur["done"]  # Zeiger nur über verarbeitete Seite
+    n_calls = len([r for r in kas.calls if _oplist(r)])
+    sync(client, sid)  # erneuter Lauf: wieder begrenzt, Zähler für „ohne Fortschritt“ steigt
+    assert len([r for r in kas.calls if _oplist(r)]) - n_calls <= 3
+    assert datasource_service(ctx(client)).get(sid).sched["stalls"] >= 2
+
+
+def test_budget_end_in_the_middle_of_a_krc20_page_loses_nothing(client, kas, monkeypatch):
+    ticks = [f"T{n:03d}" for n in range(50)]  # 50 verschiedene Tokens → je eine Anfrage für die Nachkommastellen
+    kas.ops = [op(100 + i, "transfer", t, KAS, E, A) for i, t in enumerate(ticks)]
+    monkeypatch.setattr(KA.KaspaConnector, "max_requests", 40)  # zu knapp für alle Tokens
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS")
+    n = 0
+    first_back = "unset"
+    while True:
+        out = sync(client, sid)
+        n += 1
+        assert n <= 6, out
+        if n == 1:
+            cur = json.loads(source(client, sid)["cursor_json"])["krc20"]
+            first_back = cur.get("back")
+            assert len(cur["dec"]) >= 20  # Teilfortschritt gesichert
+        if not datasource_service(ctx(client)).get(sid).backfill_pending:
+            break
+    assert n >= 2 and first_back is None  # Zeiger nicht über die unvollständige Seite hinaus
+    rows = {k for k in all_rows(client, sid) if k.startswith("kaspa:krc20-")}
+    assert len(rows) == 50  # keine Operation verloren, keine doppelt
+    assert source(client, sid)["status"] == "synced"
+
+
+def test_indexer_outage_keeps_kas_visible_and_token_balances(client, kas):
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS", sync_interval_min="1440", catchup_shown="1",
+                        catchup="1")
+    assert sync(client, sid)["status"] == "synced"
+    assert balances(client, sid) == {"KAS": "1000", "NACHO@KAS:NACHO": "57", "KASPY@KAS:KASPY": "1000"}
+    kas.bal[A] = 1200 * KAS
+    for _ in range(8):
+        kas.fail_next(httpx.Response(503), lambda r: r.url.host == "api.kasplex.org")
+    sync(client, sid)
+    st = source(client, sid)
+    cov = json.loads(st["coverage_json"])
+    assert st["status"] == "partial" and cov["parts"]["kas"]["state"] == "complete"
+    assert cov["parts"]["krc20"]["state"] == "blocked"
+    bal = balances(client, sid)
+    assert bal["KAS"] == "1200"  # KAS-Erfolg bleibt erkennbar
+    assert bal["NACHO@KAS:NACHO"] == "57" and bal["KASPY@KAS:KASPY"] == "1000"  # nie als Nullbestand
+    notes = {r["asset_key"]: r["note"] for r in ctx(client).db.q("SELECT asset_key, note FROM ds_balance WHERE "
+                                                                 "source_id=?", (sid,))}
+    assert "Stand des letzten vollständigen Abrufs" in (notes["NACHO@KAS:NACHO"] or "")
+    assert not notes["KAS"]
+    assert _lag(st) > 23 * 3600  # Indexer-Ausfall ist kein Grund für eine zügige Wiederholung
+    page = client.get(f"/settings/datasources/{sid}").text
+    assert "KAS · vollständig" in page and "KRC-20 · blockiert" in page
+    assert "Abruf unvollständig (Lücke/Ausfall)" in page and "Letzter Start" in page  # Grund des Folgetermins
+    # auch die Verbindungsprüfung löscht bei KRC-20-Ausfall keine bekannten Token-Bestände
+    for _ in range(8):
+        kas.fail_next(httpx.Response(503), lambda r: r.url.host == "api.kasplex.org")
+    datasource_service(ctx(client)).check(sid)
+    assert balances(client, sid)["NACHO@KAS:NACHO"] == "57"
+    kas.inject.clear()
+    assert sync(client, sid)["status"] == "synced"
+    assert "Stand des letzten" not in " ".join(
+        str(r["note"] or "") for r in ctx(client).db.q("SELECT note FROM ds_balance WHERE source_id=?", (sid,)))
+
+
+def test_rate_limit_waits_after_the_run_and_does_not_loop(client, kas):
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS", sync_interval_min="60", catchup_shown="1",
+                        catchup="1", tokens_shown="1", tokens="")
+    for _ in range(10):
+        kas.fail_next(httpx.Response(429, headers={"Retry-After": "7200"}), lambda r: r.url.host == "api.kaspa.org")
+    out = sync(client, sid)
+    assert "error" in out
+    st = source(client, sid)
+    assert _lag(st) >= 7200 and st["status"] == "error"  # Wartezeit des Anbieters, kein erneuter Versuch davor
+    assert len([r for r in kas.calls if r.url.host == "api.kaspa.org"]) <= 3
+    assert datasource_service(ctx(client)).due() == []
+    assert "Wartezeit" in datasource_service(ctx(client)).get(sid).sched["next_reason"]
+
+
+def test_manual_wallet_never_starts_by_itself_and_continues_on_demand(client, kas, monkeypatch):
+    kas.txs = _gap_hist(40)
+    monkeypatch.setattr(KA, "PAGE", 5)
+    monkeypatch.setattr(KA.KaspaConnector, "max_requests", 2)
+    sid = _page_wallet(client, sync_interval_min="0", catchup_shown="1", catchup="1")
+    svc = datasource_service(ctx(client))
+    sync(client, sid)
+    st = source(client, sid)
+    assert svc.get(sid).backfill_pending and st["next_run_at"] is None and svc.due() == []
+    assert svc.run_due(wait=True)["ran"] == 0
+    before = st["cursor_json"]
+    sync(client, sid)  # manuell: setzt am gespeicherten Fortsetzungspunkt fort
+    assert source(client, sid)["cursor_json"] != before
+
+
+def test_catchup_setting_roundtrip_in_the_form(client, kas):
+    sid = _page_wallet(client, sync_interval_min="1440")
+    assert 'name="catchup"' in client.get(f"/settings/datasources/{sid}").text
+    assert 'name="catchup" value="1" checked' not in client.get(f"/settings/datasources/{sid}").text
+    r = client.post(f"/settings/datasources/{sid}", data={
+        "csrf_token": client.token, "kind": "wallet", "provider": "kaspa", "name": "Kaspium KAS", "address": A,
+        "account": "Kaspium KAS", "sync_interval_min": "1440", "tokens_shown": "1", "catchup_shown": "1",
+        "catchup": "1"}, follow_redirects=False)
+    assert r.status_code == 303 and datasource_service(ctx(client)).get(sid).catchup
+    assert 'name="catchup" value="1" checked' in client.get(f"/settings/datasources/{sid}").text
+    # ohne das Formularfeld (z. B. andere Änderung) bleibt die Einstellung erhalten
+    client.post(f"/settings/datasources/{sid}", data={
+        "csrf_token": client.token, "kind": "wallet", "provider": "kaspa", "name": "Kaspium KAS", "address": A,
+        "account": "Kaspium KAS", "sync_interval_min": "1440", "tokens_shown": "1"}, follow_redirects=False)
+    assert datasource_service(ctx(client)).get(sid).catchup

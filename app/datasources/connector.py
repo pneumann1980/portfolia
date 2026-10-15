@@ -195,6 +195,12 @@ class FetchResult:
     more: bool | None = None  # weitere Etappen ausstehend → bald fortsetzen (Standard: wie ``resume``)
     gaps: list[str] = field(default_factory=list)  # erkannte Lücken dieses Abrufs (→ nie „vollständig“)
     balances: list[Balance] | None = None  # beobachtete Bestände (Plausibilitätsprüfung), None = nicht abgefragt
+    # False: ``balances`` enthält nur einen Teil der Bestände (z. B. KAS, aber KRC-20-Abfrage fehlgeschlagen) – bereits
+    # bekannte übrige Bestände bleiben mit ihrem alten Stand erhalten und erscheinen nicht als Nullbestand
+    balances_complete: bool = True
+    # Paginierung ohne Fortschritt erkannt (wiederholte Seite, gleicher Zeiger): konkreter Grund. Der Abrufstand bleibt
+    # auf vollständig verarbeiteten Daten; es gibt keine zügige Fortsetzung, der reguläre Zeitplan versucht es erneut
+    stalled: str | None = None
 
 
 @dataclass(frozen=True)
@@ -213,6 +219,7 @@ class CheckResult:
     message: str = ""
     details: dict[str, Any] = field(default_factory=dict)  # je Recht/Endpunkt: {"ok": bool, "text": str}
     balances: list[Balance] | None = None
+    balances_complete: bool = True  # False: Teilabfrage fehlgeschlagen – übrige bekannte Bestände bleiben erhalten
 
 
 class Connector(ABC):
@@ -223,6 +230,10 @@ class Connector(ABC):
     # Version der Auswertung (``Rec.raw["parser"]``): Prüfzeilen einer älteren Version werden bei einem Abruf ersetzt,
     # solange niemand sie bearbeitet hat (siehe DataSourceService._repair); None = ohne Versionsführung
     parser_version: ClassVar[int | None] = None
+    # Darf eine unvollständige Historie ohne ausdrückliche Einstellung der Quelle zügig (BACKFILL_NEXT_S) fortgesetzt
+    # werden? Wallets: nein – der reguläre Zeitplan (z. B. „einmal täglich“) gilt; „Historie automatisch aufholen“
+    # schaltet die Fortsetzung in kurzen Abständen (begrenzt) ausdrücklich ein.
+    catchup_default: ClassVar[bool] = True
     # vom Dienst gesetzt: Zwischenspeicher für Stammdaten des Anbieters (z. B. Asset-ID → Symbol), spart Abrufe
     catalog: Any = None
     # vom Dienst gesetzt: Fortschritt melden (Phase, erledigt, gesamt bzw. None, Text)

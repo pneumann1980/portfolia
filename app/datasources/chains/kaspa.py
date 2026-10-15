@@ -113,6 +113,7 @@ class KaspaConnector(WalletConnector):
         a = self._addr(cfg)
         details: dict[str, Any] = {}
         balances: list[K.Balance] = []
+        tokens_ok = True
         with self.http(cfg, secret, max_requests=8, deadline_s=60) as http:
             bal = units(self._balance(http, a), SOMPI)
             balances.append(K.Balance("KAS", bal, "Kaspa"))
@@ -130,6 +131,7 @@ class KaspaConnector(WalletConnector):
                                                                "Kasplex-Indexer meldet „nicht synchron“ – KRC-20 "
                                                                "evtl. unvollständig")}
                 except (K.ConnectorError, Stop) as e:
+                    tokens_ok = False  # bekannte Token-Bestände bleiben stehen, nicht als Nullbestand
                     kind = getattr(e, "kind", "unavailable")
                     details["krc20"] = {"ok": False, "kind": kind,
                                         "text": f"KRC-20 nicht abrufbar ({K.ERROR_KINDS.get(kind, kind)}): "
@@ -137,7 +139,7 @@ class KaspaConnector(WalletConnector):
                 finally:
                     krc.close()
         return K.CheckResult(True, f"Kaspa: Adresse {short(a, 10)} über {http.ep.label} lesbar.", details,
-                             balances=balances)
+                             balances=balances, balances_complete=tokens_ok)
 
     # -- Abrufen ------------------------------------------------------------------------------------------
     def fetch(self, cfg: K.SourceConfig, secret: K.Secret, cursor: dict[str, Any] | None) -> K.FetchResult:
@@ -152,15 +154,26 @@ class KaspaConnector(WalletConnector):
             done_through = after
             caught_up = False
             stopped = None
+            kas_stall: str | None = None
             try:
                 pos = after
+                seen_ids: set[str] = set()
                 while True:
                     since = ts_from_unix(max(pos, 1) // 1000)
                     self.report("KAS", len(txs), None, f"Transaktionen ab {since:%d.%m.%Y}")
                     page = self._page(http, a, pos)
+                    ids = {str(t["transaction_id"]) for t in page}
+                    new_pos = max((t["block_time"] for t in page), default=pos)
+                    if page and len(page) >= PAGE and (new_pos <= pos or ids <= seen_ids):
+                        # volle Seite ohne neuen Zeitpunkt bzw. nur bereits gelieferte Transaktionen: der Server liefert
+                        # dieselbe Seite erneut – nicht endlos weiterfragen, Abrufstand bleibt auf Verarbeitetem
+                        kas_stall = (f"KAS: Paginierung ohne Fortschritt – der Server liefert ab Blockzeit {pos} "
+                                     f"erneut dieselbe volle Seite ({len(page)} Transaktionen)")
+                        break
+                    seen_ids |= ids
                     txs += page
                     if page:
-                        pos = max(t["block_time"] for t in page)
+                        pos = new_pos
                         done_through = pos
                     if len(page) < PAGE:
                         caught_up = True
@@ -173,6 +186,15 @@ class KaspaConnector(WalletConnector):
             res.cursor = {"v": 1, "after": new_after, "krc20": cur.get("krc20") or {}}
             res.coverage = {"mode": "historisch" if not after else "inkrementell", "operations": len(events),
                             "provider": http.ep.label, "kas_until_ms": done_through}
+            parts: dict[str, dict[str, Any]] = {}
+            if kas_stall:
+                parts["kas"] = {"label": "KAS", "state": "blocked", "text": kas_stall, "through_ms": done_through}
+            elif stopped:
+                parts["kas"] = {"label": "KAS", "state": "progress", "through_ms": done_through,
+                                "text": "Historie wird in Etappen abgerufen – Budget des Laufs erreicht"}
+            else:
+                parts["kas"] = {"label": "KAS", "state": "complete", "through_ms": done_through,
+                                "text": "Historie bis zur Kettenspitze abgerufen"}
             bal: list[K.Balance] | None = None
             if stopped is None:
                 try:
@@ -181,57 +203,90 @@ class KaspaConnector(WalletConnector):
                     bal = None  # Budget erschöpft: Historie vollständig, Bestand beim nächsten Lauf
             # KRC-20: eigener Fortsetzungspunkt – ein Ausfall blockiert KAS nicht, wird aber als Lücke gezeigt
             krc_more = False
+            krc_stall: str | None = None
             t_krc = self.clock()
-            if self.watch(cfg).tokens and stopped is None:
-                krc_more = self._krc_fetch(cfg, http, a, cur, res, bal, skipped)
+            if self.watch(cfg).tokens and stopped is None and kas_stall is None:
+                krc_more, krc_stall = self._krc_fetch(cfg, http, a, cur, res, bal, skipped)
+            elif self.watch(cfg).tokens:
+                res.balances_complete = False  # KRC-20 in diesem Lauf nicht abgefragt: Token-Bestände bleiben erhalten
+                parts["krc20"] = {"label": "KRC-20", "state": "progress",
+                                  "text": "wartet – KAS-Historie wird zuerst abgerufen"}
+            else:
+                parts["krc20"] = {"label": "KRC-20", "state": "off", "text": "abgeschaltet (Einstellung)"}
+            if "krc20" not in parts:
+                parts["krc20"] = res.coverage.pop("_krc_part")
             # Laufzeit je Teil (sichtbar in der Abdeckung): zeigt, ob KAS-Historie oder KRC-20-Operationen bremsen
             res.coverage["seconds"] = {"kas": round(t_krc - t_start, 1), "krc20": round(self.clock() - t_krc, 1)}
+            res.coverage["parts"] = parts
             res.balances = bal
             res.skipped = dict(skipped)
-            res.complete = stopped is None and not res.gaps and not krc_more
+            res.stalled = "; ".join(x for x in (kas_stall, krc_stall) if x) or None
+            res.complete = stopped is None and kas_stall is None and not res.gaps and not krc_more and not krc_stall
             res.resume = not res.complete
-            res.more = stopped is not None or krc_more
+            res.more = stopped is not None or krc_more  # Stillstand und Anbieterausfall: regulärer Zeitplan
             if stopped:
                 res.warnings.append(f"{stopped} – Fortsetzung beim nächsten Lauf")
+            if res.stalled:
+                res.gaps.append(res.stalled + " – Abrufstand bleibt auf vollständig verarbeiteten Daten; "
+                                              "nächster Versuch zum regulären Termin")
             res.coverage.update(http.stats())
         return res
 
     def _krc_fetch(self, cfg: K.SourceConfig, http: ChainHttp, a: str, cur: dict[str, Any], res: K.FetchResult,
-                   bal: list[K.Balance] | None, skipped: Counter[str]) -> bool:
+                   bal: list[K.Balance] | None, skipped: Counter[str]) -> tuple[bool, str | None]:
         """KRC-20 über die Indexer der Fallback-Kette (:data:`KRC20_INDEXERS`); ein Ausfall blockiert KAS nie, wird
-        aber als konkrete Lücke mit Fehlerart gezeigt (``coverage.krc20``). Rückgabe: Fortsetzung nötig."""
+        aber als konkrete Lücke mit Fehlerart gezeigt (``coverage.krc20``). Rückgabe: (Fortsetzung nötig, Stillstand-
+        Grund). Fehlgeschlagene Teilabfragen lassen vorhandene Token-Bestände unberührt (``balances_complete``)."""
         errors: list[str] = []
         for indexer in KRC20_INDEXERS:
             krc = self._krc_http(cfg, http, indexer)
             try:
                 self.report("KRC-20", 0, None, f"Token-Bestände und -Vorgänge ({krc.ep.label})")
                 _synced, toks = self._krc_state(krc, a)
-                st, krc_events, more = self._krc_ops(krc, a, dict(cur.get("krc20") or {}), skipped)
+                st, krc_events, more, stall = self._krc_ops(krc, a, dict(cur.get("krc20") or {}), skipped)
                 res.events += krc_events
                 res.cursor["krc20"] = st
                 if bal is not None:
                     bal += toks
+                else:
+                    res.balances_complete = False
                 if more:
                     res.warnings.append("KRC-20: Budget des Laufs erreicht – Fortsetzung beim nächsten Lauf")
-                res.coverage["krc20"] = {"status": "ok", "indexer": krc.ep.label}
-                return more
+                res.coverage["krc20"] = {"status": "stalled" if stall else "ok", "indexer": krc.ep.label}
+                if stall:
+                    part = {"state": "blocked", "text": stall}
+                elif more:
+                    part = {"state": "progress", "text": "Operationen werden in Etappen abgerufen – Budget des Laufs "
+                                                         "erreicht, Fortsetzungspunkt gesichert"}
+                else:
+                    part = {"state": "complete", "text": f"{len(toks)} Token-Bestände, Operationen abgerufen"}
+                res.coverage["_krc_part"] = {"label": "KRC-20", "indexer": krc.ep.label, **part}
+                return more and not stall, stall
             except Stop as e:
+                res.balances_complete = False
                 res.gaps.append(f"KRC-20: {e} – Fortsetzung beim nächsten Lauf")
                 res.coverage["krc20"] = {"status": "budget", "indexer": krc.ep.label}
-                return True
+                res.coverage["_krc_part"] = {"label": "KRC-20", "indexer": krc.ep.label, "state": "progress",
+                                             "text": "Budget des Laufs erreicht – Token-Bestände und Operationen "
+                                                     "folgen im nächsten Lauf (vorhandene Bestände bleiben erhalten)"}
+                return True, None
             except K.ConnectorError as e:
                 errors.append(e.message)
                 res.coverage["krc20"] = {"status": e.kind, "indexer": krc.ep.label, "message": e.message[:300]}
             finally:
                 res.coverage["krc20_requests"] = res.coverage.get("krc20_requests", 0) + krc.requests
                 krc.close()
+        res.balances_complete = False  # vorhandene Token-Bestände bleiben mit altem Stand stehen, nie als 0
         kind = res.coverage.get("krc20", {}).get("status", "unavailable")
         dns = any("DNS" in e for e in errors)
         res.gaps.append(f"KRC-20 nicht abrufbar ({K.ERROR_KINDS.get(kind, kind)}: {'; '.join(errors)}) – KAS ist "
                         "vollständig, KRC-20-Bewegungen fehlen in diesem Lauf; Ergänzung per CSV-Import möglich"
                         + ("; tritt das wiederholt auf: Namensauflösung von api.kasplex.org im Container prüfen "
                            "(DNS des Servers, Werbe-/DNS-Filter wie Pi-hole oder AdGuard)" if dns else ""))
-        return False
+        res.coverage["_krc_part"] = {"label": "KRC-20", "state": "blocked", "kind": kind,
+                                     "text": f"nicht abrufbar ({K.ERROR_KINDS.get(kind, kind)}) – bekannte "
+                                             "Token-Bestände bleiben erhalten; KAS ist davon nicht betroffen"}
+        return False, None
 
     def _kas_events(self, a: str, txs: list[dict[str, Any]], skipped: Counter[str]) -> list[K.SourceEvent]:
         uniq: dict[str, dict[str, Any]] = {}
@@ -410,16 +465,23 @@ class KaspaConnector(WalletConnector):
         return cache[tick]
 
     def _krc_ops(self, krc: ChainHttp, a: str, st: dict[str, Any], skipped: Counter[str]) \
-            -> tuple[dict[str, Any], list[K.SourceEvent], bool]:
+            -> tuple[dict[str, Any], list[K.SourceEvent], bool, str | None]:
         """Operationen der Adresse: Neues aufsteigend ab „head“ (prev), Erstabruf absteigend ab „back“ (next).
-        Zeiger rücken seitenweise vor; Operationen jünger als 10 Minuten bleiben für den nächsten Lauf."""
+        Zeiger rücken seitenweise vor, und zwar nur über vollständig verarbeitete Seiten; Operationen jünger als
+        10 Minuten bleiben für den nächsten Lauf. Rückgabe: (Zeiger, Ereignisse, Fortsetzung nötig, Stillstand-Grund).
+
+        Stillstand: liefert der Indexer auf einen Zeiger erneut dieselbe volle Seite (der Zeiger rückt nicht vor oder
+        kehrt zu einem früheren Stand zurück), endet die Paginierung dieses Laufs mit konkretem Grund – statt bis zum
+        Budgetende zu wiederholen. Der Zeiger bleibt auf den verarbeiteten Seiten; nichts wird übersprungen."""
         st = {"head": st.get("head"), "back": st.get("back"), "done": bool(st.get("done")),
               "dec": dict(st.get("dec") or {})}
         events: dict[str, K.SourceEvent] = {}
         limit_ms = self.now_ms() - OP_MIN_AGE_MS
         more = False
+        stall: str | None = None
         try:
             if st["head"]:
+                seen_heads = {st["head"]}
                 while True:
                     body = self._krc_get(krc, "/krc20/oplist", {"address": a, "prev": st["head"]}, "KRC-20-Vorgänge")
                     ops = sorted(body.get("result") or [], key=lambda o: int(o.get("opScore") or 0))
@@ -429,7 +491,13 @@ class KaspaConnector(WalletConnector):
                         st["head"] = str(o.get("opScore"))
                     if len(ops) < OP_PAGE or len(ready) < len(ops):
                         break
-            while not st["done"]:
+                    if st["head"] in seen_heads:
+                        stall = (f"KRC-20: Indexer liefert für prev={st['head']} erneut dieselbe volle Seite "
+                                 f"({len(ops)} Operationen) – Paginierung ohne Fortschritt")
+                        break
+                    seen_heads.add(st["head"])
+            seen_backs = {st["back"]}
+            while not st["done"] and stall is None:
                 params = {"address": a, **({"next": st["back"]} if st["back"] else {})}
                 body = self._krc_get(krc, "/krc20/oplist", params, "KRC-20-Vorgänge")
                 ops = sorted(body.get("result") or [], key=lambda o: -int(o.get("opScore") or 0))
@@ -440,12 +508,18 @@ class KaspaConnector(WalletConnector):
                         st["head"] = str(o.get("opScore"))
                     self._op(krc, a, o, st["dec"], events, skipped)
                 if ops:
-                    st["back"] = str(ops[-1].get("opScore"))
+                    nxt = str(ops[-1].get("opScore"))
+                    if len(ops) >= OP_PAGE and nxt in seen_backs:
+                        stall = (f"KRC-20: Indexer liefert für next={st['back']} erneut dieselbe volle Seite "
+                                 f"({len(ops)} Operationen) – Paginierung ohne Fortschritt")
+                        break
+                    st["back"] = nxt
+                    seen_backs.add(nxt)
                 if len(ops) < OP_PAGE:
                     st["done"] = True
         except Stop:
             more = True  # Zeiger stehen auf vollständig verarbeiteten Seiten – nächster Lauf setzt dort fort
-        return st, sorted(events.values(), key=lambda e: (e.ts, e.event_key)), more
+        return st, sorted(events.values(), key=lambda e: (e.ts, e.event_key)), more, stall
 
     def _op(self, krc: ChainHttp, a: str, o: dict[str, Any], dec_cache: dict[str, int],
             events: dict[str, K.SourceEvent], skipped: Counter[str]) -> None:

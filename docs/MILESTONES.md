@@ -1426,6 +1426,52 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.28.3 – Datenquellen: Intervall gilt auch bei unvollständigem Abruf (Kaspa)
+
+Beobachtung: Kaspa-Wallets liefen trotz „einmal täglich“ über den Tag verteilt immer wieder und erreichten teils keinen
+Abschluss; beim Öffnen der App war oft schon ein Abruf aktiv.
+
+**Bestätigte Ursachen (am Code, ohne Live-Daten):**
+
+* Ein unvollständiger Abruf (``coverage.resume``) zog ``next_run_at`` auf ``min(regulärer Termin, Start + 90 s)`` vor und
+  ``due()`` ließ Fortsetzungen sogar bei „nur manuell“ zu; nach einem Fehler galt eine Wiederholung nach 10 Minuten.
+  Der technische Fortsetzungspunkt war damit zugleich die Erlaubnis zum sofortigen Neustart.
+* Folgetermine wurden vom **Startzeitpunkt** berechnet: dauerte eine Etappe länger als 90 s, endete sie mit einem bereits
+  abgelaufenen Termin; Wartezeiten des Anbieters (``Retry-After``) zählten ab dem Start.
+* KRC-20-Paginierung ohne Stillstandserkennung: lieferte der Indexer auf ``next``/``prev`` erneut dieselbe volle Seite,
+  blieb der Zeiger stehen und der Lauf wiederholte bis zum Budgetende (``more=True``), über Läufe hinweg endlos. Dasselbe
+  galt für die KAS-Seiten. Ein fehlgeschlagener KRC-20-Teil ließ außerdem die bekannten Token-Bestände verschwinden.
+
+*Nicht* nachgewiesen (Live-Laufdaten nötig): ob beim betroffenen Konto wiederholte Seiten, Budgeterschöpfung, Indexerfehler
+oder anderes den Stillstand ausgelöst hat. Beachtet: ein reiner Indexerausfall setzt ``more`` nicht und führt weiterhin nicht
+zur schnellen Fortsetzung.
+
+**Geändertes Verhalten:**
+
+* **Intervall verlässlich:** Fortsetzung zum regulären Termin (Start + Intervall, nie vor Ende des Laufs + 5 min). „Nur manuell“
+  und deaktiviert lösen nie automatische Läufe aus (auch nicht für Fortsetzungen); „Jetzt abrufen“ setzt am gespeicherten
+  Fortsetzungspunkt fort. Der Folgetermin wird schon beim Start eines Laufs festgehalten (Neustart/Absturz → regulärer Termin,
+  keine Wiederholungsschleife). Wartezeiten des Anbieters zählen ab dem Ende des Laufs.
+* **Aufholen nur ausdrücklich:** Wallets setzen eine unvollständige Historie erst nach Einschalten von „Lange Historie automatisch
+  aufholen“ in kurzen Abständen (90 s nach Laufende) fort – höchstens 12 Mal je regulärem Termin, nur bei nachweislichem
+  Fortschritt des Abrufstands, nie nach Abbruch, Deaktivierung, Fehler oder Stillstand. Börsen-Anbindungen behalten ihr bisheriges
+  Verhalten (jetzt mit denselben Grenzen). Manuell gestartete Mehr-Etappen-Läufe stoppen bei fehlendem Fortschritt, Abbruch,
+  Fehler oder Deaktivierung.
+* **Stillstand erkannt:** KAS (volle Seite ohne neue Blockzeit/bereits gelieferte Transaktionen) und KRC-20 (wiederkehrender
+  ``next``/``prev``-Zeiger bzw. identische volle Seite) enden mit konkretem Grund; der Abrufstand rückt nur über vollständig
+  verarbeitete Seiten vor (Budgetende mitten in einer Seite verliert nichts, bekannte Vorgänge werden erkannt), nichts wird
+  übersprungen. Wiederholte Läufe ohne Fortschritt werden gezählt und angezeigt; es bleibt beim regulären Termin.
+* **Darstellung:** Detailseite und Karte zeigen KAS und KRC-20 getrennt (vollständig / in Bearbeitung / blockiert / aus), Startgrund,
+  letzte Fortschrittsänderung, Stillstandsgrund und den nächsten Versuch samt Begründung. Ein unvollständiger Abruf gilt nie als
+  vollständig.
+* **Bestände:** Schlägt der KRC-20-Teil (Abruf wie Verbindungsprüfung) fehl, bleiben bekannte Token-Bestände mit dem Vermerk „Stand
+  des letzten vollständigen Abrufs“ stehen – nie als Nullbestand; KAS wird trotzdem aktualisiert.
+
+**Grenzen:** Das Verhalten nach einem Absturz mitten im Lauf ist „nächster Versuch zum regulären Termin“ (bei täglichem Intervall bis
+zu 24 h); „Jetzt abrufen“ umgeht das. Für eine Ursachenanalyse am echten Konto werden die Laufprotokolle der Datenquelle benötigt:
+Zeitpunkte (Start/Ende/Auslöser) der letzten Läufe, ``coverage_json`` (``sched``, ``parts``, ``krc20``) und die Zahl der Anfragen
+je Teil – diese Angaben stehen jetzt in der Detailseite unter „Abdeckung“.
+
 ## 0.28.2 – Härtung der Zusammenführungen (Codeprüfung)
 
 * **Konten – Zielvorrang unabhängig von der Reihenfolge:** Bei der Zusammenführung der Konto-Stammdaten (Broker,
