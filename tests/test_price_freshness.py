@@ -106,3 +106,44 @@ def test_dashboard_names_the_reason(config):
         page = c.get("/").text
         assert "veraltet – es wird der letzte bekannte Wert verwendet" in page
         assert "letzter Abruf vor 3 Std." in page
+
+
+def test_stale_price_can_be_ignored_for_the_dashboard(config):
+    """Einzelnen „Kurs veraltet“-Hinweis ignorieren: verschwindet aus der Übersicht, bleibt unter Datenqualität sichtbar
+    (gekennzeichnet) und lässt sich wieder anzeigen; Bewertung und Kurs bleiben unverändert."""
+    import os
+    import shutil
+    import time
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from app.jobs import tasks
+    from app.main import build_app
+
+    dst = config.import_dir / "beispiel.zip"
+    shutil.copy(Path(__file__).resolve().parents[1] / "examples" / "beispiel-import.zip", dst)
+    os.utime(dst, (time.time() - 3600, time.time() - 3600))
+    with TestClient(build_app(config, start_scheduler=False)) as c:
+        ctx = c.app.state.ctx
+        tasks.import_check(ctx, "test")
+        c.get("/settings")
+        c.headers["X-CSRF-Token"] = c.cookies.get("portfolia_csrf")
+        pf = ctx.portfolio()
+        btc = next(a for a in pf.assets.values() if a.is_crypto and ctx.prices.series_for(a))
+        _quote(ctx.prices, btc.asset_id, pf, market_age=timedelta(hours=3), fetched_age=timedelta(hours=3))
+        ctx.invalidate_data()
+        stale_ids = [p.asset_id for p in ctx.valuation().stale]
+        assert btc.asset_id in stale_ids
+        total = ctx.valuation().total_value
+        assert "Kurs" in c.get("/").text and "veraltet – es wird" in c.get("/").text
+        for aid in stale_ids:
+            r = c.post("/actions/prices/stale-ignore", data={"asset_id": aid}, follow_redirects=False)
+            assert r.status_code == 303 and r.headers["location"] == "/quality#prices"
+        assert "veraltet – es wird" not in c.get("/").text
+        q = c.get("/quality").text
+        assert "veraltet · ignoriert" in q and "Wieder anzeigen" in q
+        ctx.invalidate_data()
+        assert ctx.valuation().total_value == total  # nichts an der Bewertung geändert
+        c.post("/actions/prices/stale-ignore", data={"asset_id": btc.asset_id, "show": "1"})
+        assert "veraltet – es wird" in c.get("/").text

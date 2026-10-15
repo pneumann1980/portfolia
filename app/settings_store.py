@@ -29,6 +29,8 @@ DEFAULTS: dict[str, Any] = {
     "prices.stale_crypto_minutes": 60,  # Krypto: Alter des letzten erfolgreichen Abrufs
     "prices.stale_crypto_market_hours": 24,  # Krypto: letzte Kursänderung laut Quelle (wenig Handel)
     "prices.stale_security_hours": 24,
+    # „Kurs veraltet“ für diese Assets nicht in der Übersicht melden (Datenqualität zeigt sie weiter, umkehrbar)
+    "prices.stale_ignored": [],
     # Ersatzkurse (manuell/Transaktionskurs) ohne Marktkurse: Gültigkeit nach dem letzten Kurs, 0 = unbegrenzt
     "prices.fallback_max_age_crypto_days": 30,
     "prices.fallback_max_age_security_days": 365,

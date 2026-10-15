@@ -54,6 +54,23 @@ def refresh_prices(request: Request) -> HTMLResponse:
     return HTMLResponse(f'<span class="badge info">{msg}</span>')
 
 
+@router.post("/actions/prices/stale-ignore")
+async def stale_ignore(request: Request) -> Response:
+    """„Kurs veraltet“ für ein Asset in der Übersicht ausblenden bzw. wieder anzeigen. Ändert keinen Kurs und keine
+    Bewertung – der letzte bekannte Kurs wird weiter verwendet; Datenqualität listet ausgeblendete Assets."""
+    ctx = get_ctx(request)
+    form = await request.form()
+    aid = str(form.get("asset_id") or "").strip()[:120]
+    show = form.get("show") == "1"
+    ignored = [a for a in (ctx.settings.get("prices.stale_ignored") or []) if isinstance(a, str)]
+    if aid:
+        ignored = [a for a in ignored if a != aid] + ([] if show else [aid])
+        ctx.settings.set("prices.stale_ignored", sorted(set(ignored)))
+    back = str(form.get("back") or "")
+    target = back if back in ("/", "/quality") else "/quality"
+    return Response(status_code=303, headers={"Location": target + ("#prices" if target == "/quality" else "")})
+
+
 @router.post("/actions/backfill", response_class=HTMLResponse)
 async def backfill(request: Request) -> HTMLResponse:
     ctx = get_ctx(request)

@@ -126,9 +126,12 @@
   {% if val %}
     {% set problems = val.positions|selectattr('price.stale')|list + val.unvalued %}
     {% if problems %}
+    <p class="hint">„Ignorieren“ blendet den Hinweis „Kurs veraltet“ eines Assets in der Übersicht aus (z. B. kaum gehandelte
+      Token); der letzte bekannte Kurs wird weiter verwendet, nichts wird geändert. Rückgängig mit „Wieder anzeigen“.</p>
     <div class="table-wrap"><table><thead><tr><th>Asset</th><th>Status</th><th>Quelle</th><th>Stand</th><th>Hinweis</th></tr></thead><tbody>
     {% for p in val.unvalued %}<tr><td>{{ p.asset.name }}</td><td><span class="badge crit">unbewertet (0 €)</span></td><td>{{ p.asset.quote_source }}{% if p.asset.quote_id %}: {{ p.asset.quote_id }}{% endif %}</td><td>–</td><td>{{ p.price.note or '' }}</td></tr>{% endfor %}
-    {% for p in val.positions if p.price.valued and p.price.stale %}<tr><td>{{ p.asset.name }}</td><td><span class="badge warn">veraltet</span></td><td>{{ p.price.source }}</td><td>{{ p.price.ts|datetime_de }}</td><td>{{ p.price.note or 'letzter bekannter Kurs wird verwendet' }}</td></tr>{% endfor %}
+    {% for p in val.positions if p.price.valued and p.price.stale %}{% set ign = p.asset_id in stale_ignored %}<tr><td>{{ p.asset.name }}</td><td><span class="badge {{ '' if ign else 'warn' }}">veraltet{% if ign %} · ignoriert{% endif %}</span></td><td>{{ p.price.source }}</td><td>{{ p.price.ts|datetime_de }}</td><td>{{ p.price.note or 'letzter bekannter Kurs wird verwendet' }}
+      <form method="post" action="/actions/prices/stale-ignore" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="asset_id" value="{{ p.asset_id }}">{% if ign %}<input type="hidden" name="show" value="1"><button class="btn ghost xs" type="submit" title="Wieder in der Übersicht melden">Wieder anzeigen</button>{% else %}<button class="btn ghost xs" type="submit" title="In der Übersicht nicht mehr melden – der letzte bekannte Kurs wird weiter verwendet">Ignorieren</button>{% endif %}</form></td></tr>{% endfor %}
     </tbody></table></div>
     {% else %}<p><span class="badge good">✓</span> Alle Positionen aktuell bewertet.</p>{% endif %}
   {% endif %}

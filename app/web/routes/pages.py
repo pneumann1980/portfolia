@@ -84,7 +84,10 @@ def dashboard(request: Request) -> HTMLResponse:
     news = _latest_news(ctx, int(ctx.settings.get("news.dashboard_count", 5)))
     from app.fullexport import status as restore_status
 
+    ignored = set(ctx.settings.get("prices.stale_ignored") or [])
+    stale = [p for p in val.stale if p.asset_id not in ignored]  # ausgeblendete Hinweise (Datenqualität) nicht melden
     return render(request, "dashboard.html", active="dashboard", val=val, kpi=_kpis(ctx, val, hist), gainers=gainers,
+                  stale=stale,
                   losers=losers, gainers_eur=gainers_eur, losers_eur=losers_eur, news=news,
                   threshold=ctx.settings.get("allocation.other_threshold_pct", 1.0),
                   default_range=ctx.settings.get("ui.default_range", "1J"), restore=restore_status(ctx))
@@ -341,6 +344,7 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
     except Exception as e:  # Journal-Modul optional
         log.debug("Journal nicht verfügbar: %s", e)
     return render(request, "quality.html", active="quality", imports=imports, cur=cur, journal=journal,
+                  stale_ignored=set(ctx.settings.get("prices.stale_ignored") or []),
                   active_id=active,
                   report=report, diff=diff, check=check, issues=issues, val=val, ledger_issues=ledger_issues[:300],
                   sources=sources, events=events, jobs=jobs, next_runs=next_runs, cg=ctx.prices.cg_budget(),
