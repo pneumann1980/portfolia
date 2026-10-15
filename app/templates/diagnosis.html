@@ -39,7 +39,7 @@
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
   <div class="alert"><span class="icon">i</span><div><strong>Die Diagnose ändert nichts von selbst.</strong> Je Befund steht eine Empfehlung mit Alternativen. Eine Korrektur wird erst übernommen, wenn du sie in der <em>Vorschau</em> geprüft und bestätigt hast – die Vorschau zeigt jede betroffene Buchung und rechnet Bestände, Einstand, realisierte Ergebnisse und Steuerwerte vorher/nachher durch. Jede Korrektur lässt sich unter <a href="#decisions">Entscheidungen und Korrekturen</a> zurücknehmen; nichts wird physisch gelöscht. Auswirkungen in Kästen <em>„Szenario (hypothetisch)“</em> sind reine Rechenbeispiele.</div></div>
-  <p class="hint">Stand {{ generated|datetime_de }} · {{ report.stats.get('txs', 0) }} Buchungen geprüft · {{ n_open }} offene Befunde{% if dismissed %} · <a href="#checked">{{ dismissed|length }} als geprüft markiert</a>{% endif %}{% if report.stats.get('same_hash_distinct_index') %} · {{ report.stats.same_hash_distinct_index }} Hash-Gruppen mit unterschiedlichem Ereignisindex gelten als legitim{% endif %}</p>
+  <p class="hint">Stand {{ generated|datetime_de }} · {{ report.stats.get('txs', 0) }} Buchungen geprüft · {{ n_tasks }} Aufgaben · {{ n_hints }} Hinweise{% if dismissed %} · <a href="#checked">{{ dismissed|length }} als geprüft markiert</a>{% endif %}{% if report.stats.get('same_hash_distinct_index') %} · {{ report.stats.same_hash_distinct_index }} Hash-Gruppen mit unterschiedlichem Ereignisindex gelten als legitim{% endif %}</p>
   <ul class="diag-counts">
     {% for k, label in kinds.items() %}<li><a href="{{ qurl(k) }}">{{ label }}</a>
       <span class="row">{% for s in statuses %}{% set n = counts[k].get(s, 0) %}{% if n %}<a class="badge {{ status_badge[s] }}" href="{{ qurl(k, s) }}">{{ n }} {{ s }}</a>{% endif %}{% endfor %}{% if not counts[k] %}<span class="muted">keine</span>{% endif %}</span></li>{% endfor %}
@@ -63,14 +63,19 @@
 </section>
 
 <section class="card" id="findings">
-  <div class="card-head"><h2>Befunde ({{ shown|length }}{% if kind or status %} von {{ n_open }}{% endif %})</h2></div>
+  <div class="card-head"><h2>{{ 'Aufgaben' if not status else 'Befunde' }} ({{ shown|length }}{% if kind or status %} von {{ n_open }}{% endif %})</h2>
+    {% if n_hints %}<a class="btn sm" href="/quality/diagnose/hints{% if kind %}?kind={{ kind }}{% endif %}" title="Hinweise ohne festgestellten Fehler gesammelt als geprüft markieren – ändert keine Daten">{{ n_hints }} Hinweise als geprüft markieren …</a>{% endif %}</div>
+  {% if not status and n_hints %}<p class="hint">Angezeigt werden Aufgaben (belegt, wahrscheinlich, Verdacht). Hinweise ohne festgestellten Fehler ({{ n_hints }}) sind ausgeblendet – <a href="{{ qurl(kind, 'hinweis') }}">anzeigen</a> oder <a href="{{ qurl(kind, 'alle') }}">alles zeigen</a>.</p>{% endif %}
+  {% if bulks %}<div class="stack" style="gap:6px;margin-bottom:8px">{% for b in bulks %}
+    <form method="post" action="/quality/diagnose/hints/{{ b.token }}/undo" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><span class="hint">Sammelaktion {{ b.at|datetime_de }}: {{ b.active }} Hinweise als geprüft markiert</span><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endfor %}</div>{% endif %}
   <div class="filters">
     <div class="seg" role="group" aria-label="Befundart">
       <a href="{{ qurl(None, status) }}" class="{% if not kind %}active{% endif %}">Alle</a>
       {% for k, label in kinds.items() if by_kind[k] or kind == k %}<a href="{{ qurl(k, status) }}" class="{% if kind == k %}active{% endif %}">{{ label }} ({{ by_kind[k] }})</a>{% endfor %}
     </div>
     <div class="seg" role="group" aria-label="Status">
-      <a href="{{ qurl(kind, None) }}" class="{% if not status %}active{% endif %}">jeder Status</a>
+      <a href="{{ qurl(kind, None) }}" class="{% if not status %}active{% endif %}">Aufgaben ({{ n_tasks }})</a>
+      <a href="{{ qurl(kind, 'alle') }}" class="{% if status == 'alle' %}active{% endif %}">alle ({{ n_open }})</a>
       {% for s in statuses if by_status[s] or status == s %}<a href="{{ qurl(kind, s) }}" class="{% if status == s %}active{% endif %}">{{ s }} ({{ by_status[s] }})</a>{% endfor %}
     </div>
   </div>

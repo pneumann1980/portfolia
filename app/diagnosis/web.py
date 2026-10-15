@@ -20,6 +20,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.diagnosis import actions as A
 from app.diagnosis import live as L
+from app.diagnosis import triage as TR
 from app.diagnosis.engine import report_for
 from app.diagnosis.model import CASE_STATES, HOLDING_STATUS, KINDS, LOSS_CLASS, SECTIONS, STATUS, STATUS_BADGE
 from app.diagnosis.recommend import recommend
@@ -159,7 +160,7 @@ def make_router() -> APIRouter:
                       err: str = "") -> HTMLResponse:
         ctx = get_ctx(request)
         kind = kind if kind in KINDS else ""
-        status = status if status in STATUS else ""
+        status = status if status in STATUS or status == "alle" else ""
         report = report_for(ctx)
         states = A.mark_states(report.findings, A.active_marks(ctx.db))  # auch frühere Befund-IDs
         marks = {fid: d for fid, (d, _ok) in states.items()}
@@ -167,13 +168,16 @@ def make_router() -> APIRouter:
         changed = {fid: d for fid, (d, ok) in states.items() if not ok}
         # Übersicht: Einzelvorgänge erscheinen unter ihrem Sammelbefund (eigene Prüfansicht je Vorgang)
         open_findings = [x for x in report.findings if x.id not in checked and x.parent is None]
-        shown = [x for x in open_findings if (not kind or x.kind == kind) and (not status or x.status == status)]
+        def in_view(x: Any) -> bool:  # Standard: Aufgaben (ohne Hinweise); „alle“ zeigt auch Hinweise
+            return status == "alle" or x.status == status if status else x.status != "hinweis"
+
+        shown = [x for x in open_findings if (not kind or x.kind == kind) and in_view(x)]
+        n_tasks, n_hints = (len(v) for v in TR.split(open_findings))
         dismissed = [x for x in report.findings if x.id in checked and x.parent is None]
         counts: dict[str, dict[str, int]] = {k: {} for k in KINDS}
         for x in open_findings:
             counts[x.kind][x.status] = counts[x.kind].get(x.status, 0) + 1
-        by_kind = {k: sum(1 for x in open_findings if x.kind == k and (not status or x.status == status))
-                   for k in KINDS}
+        by_kind = {k: sum(1 for x in open_findings if x.kind == k and in_view(x)) for k in KINDS}
         by_status = {s: sum(1 for x in open_findings if x.status == s and (not kind or x.kind == kind))
                      for s in STATUS}
         accounts: dict[str, list[Any]] = {}
@@ -214,7 +218,8 @@ def make_router() -> APIRouter:
                       ref_assets=sorted(pf.assets) if pf is not None else [], today=datetime.now(UTC).date(),
                       status=status, open_id=f, kinds=KINDS, statuses=STATUS, by_kind=by_kind, by_status=by_status,
                       accounts=accounts, counts=counts, holding_counts=report.holding_counts(),
-                      generated=datetime.now(UTC), n_open=len(open_findings),
+                      generated=datetime.now(UTC), n_open=len(open_findings), n_tasks=n_tasks, n_hints=n_hints,
+                      bulks=TR.recent_bulks(ctx.db),
                       recs={x.id: recommend(report, x) for x in [*shown, *dismissed]}, dismissed=dismissed,
                       marks=marks, changed=changed, fixes=fixes, decisions=A.decisions(ctx.db),
                       msg=msg, err=err, **_common())
@@ -318,6 +323,33 @@ def make_router() -> APIRouter:
             q = urlencode({"msg": res.message} if res.ok else {"err": "; ".join(res.errors)})
             return _back(f"/quality/integrity?{q}#items")
         return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="checked" if res.ok else ""))
+
+    @router.get("/quality/diagnose/hints", response_class=HTMLResponse)
+    def hints_preview(request: Request, kind: str = "") -> HTMLResponse:
+        """Vorschau: Hinweise gesammelt als geprüft markieren (ändert keine Daten)."""
+        ctx = get_ctx(request)
+        kind = kind if kind in KINDS else ""
+        plan = TR.plan_hints(ctx, kind)
+        return render(request, "diagnosis_hints.html", active="quality", plan=plan, kind=kind, kinds=KINDS,
+                      status_badge=STATUS_BADGE)
+
+    @router.post("/quality/diagnose/hints/apply")
+    async def hints_apply(request: Request) -> Response:
+        ctx = get_ctx(request)
+        form = await request.form()
+        kind = str(form.get("kind") or "")
+        if str(form.get("confirm") or "") != "1":
+            return _back(_page_url(err="Bitte die Vorschau bestätigen."))
+        res, _token = await run_in_threadpool(TR.dismiss_hints, ctx, str(form.get("fp") or ""),
+                                             kind if kind in KINDS else "", str(form.get("note") or ""))
+        if not res.ok:
+            return _back(_page_url(err="; ".join(res.errors), anchor="findings"))
+        return _back(_page_url(msg=res.message, anchor="findings"))
+
+    @router.post("/quality/diagnose/hints/{token}/undo")
+    async def hints_undo(request: Request, token: str) -> Response:
+        res = await run_in_threadpool(TR.undo_bulk, get_ctx(request), token)
+        return _back(_page_url(msg=res.message, err="; ".join(res.errors), anchor="findings"))
 
     @router.post("/quality/diagnose/reference")
     async def reference_add(request: Request) -> Response:

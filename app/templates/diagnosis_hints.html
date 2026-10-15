@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Hinweise prüfen{% endblock %}
+{% block heading %}Datenqualität · Hinweise als geprüft markieren{% endblock %}
+{% block content %}
+<div class="stack diag">
+<section class="card">
+  <div class="card-head"><h2>Vorschau – noch nichts geändert</h2><div class="row"><a class="btn sm" href="/quality/diagnose">Zurück zur Diagnose</a></div></div>
+  <div class="alert"><span class="icon">i</span><div><strong>Hinweise sind keine Fehler.</strong> Sie dienen der Einordnung (z. B. inaktive Konten). „Als geprüft markieren“ ändert <em>keine Buchung, keinen Bestand, kein FIFO und keine Steuerwerte</em>. Die Markierung gilt nur, solange sich die Daten des Hinweises nicht ändern – danach erscheint er wieder. Alles lässt sich gemeinsam oder einzeln rückgängig machen.</div></div>
+  {% if kind %}<p class="hint">Eingeschränkt auf: {{ kinds.get(kind, kind) }} · <a href="/quality/diagnose/hints">alle Arten</a></p>{% endif %}
+  {% if not plan.items %}<p class="hint">Keine offenen Hinweise.</p>{% endif %}
+  {% if plan.truncated %}<div class="alert warn"><span class="icon">!</span><div>Mehr als {{ plan.items|length }} Hinweise – es werden die ersten {{ plan.items|length }} bearbeitet, danach erneut aufrufen.</div></div>{% endif %}
+</section>
+{% if plan.items %}
+<section class="card"><h2>Betroffene Hinweise ({{ plan.items|length }})</h2>
+  <p class="hint">{% for k, n in plan.by_kind.items() %}{{ kinds.get(k, k) }}: {{ n }}{{ ' · ' if not loop.last }}{% endfor %}</p>
+  <ul class="plain-list">{% for f in plan.items %}<li><span class="badge {{ status_badge[f.status] }}">{{ f.status }}</span> <span class="badge">{{ f.kind_label }}</span> {{ f.title }} <a class="hint" href="/quality/diagnose?status=hinweis&amp;f={{ f.id }}#{{ f.id }}">ansehen</a></li>{% endfor %}</ul>
+</section>
+<section class="card"><h2>Als geprüft markieren</h2>
+  <form method="post" action="/quality/diagnose/hints/apply" class="stack" style="gap:8px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="fp" value="{{ plan.fp }}"><input type="hidden" name="kind" value="{{ kind }}">
+    <input type="text" name="note" maxlength="200" placeholder="Notiz (optional), z. B. „Konten sind bewusst stillgelegt“" aria-label="Notiz">
+    <label class="row"><input type="checkbox" name="confirm" value="1" required> Ich habe die Liste gesehen; es ist keine Datenänderung nötig.</label>
+    <div class="row"><button class="btn primary" type="submit">{{ plan.items|length }} Hinweise als geprüft markieren</button><a class="btn ghost" href="/quality/diagnose">Abbrechen</a></div>
+  </form>
+</section>
+{% endif %}
+</div>
+{% endblock %}
