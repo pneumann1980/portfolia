@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
@@ -35,6 +35,12 @@ def _back(request: Request, target: str) -> Response:
     if request.headers.get("hx-request") == "true":
         return Response(status_code=204, headers={"HX-Redirect": target})
     return Response(status_code=303, headers={"Location": target})
+
+
+# Felder des Buchungsformulars, die beim Rücksprung aus „Neues Asset“ aus der Adresse übernommen werden
+PREFILL_FIELDS = ("date", "time", "tag", "type", "account", "from_account", "to_account", "asset", "from_asset",
+                  "to_asset", "fee_asset", "related_asset", "qty", "amount", "price", "ccy", "fee", "wht", "value_eur",
+                  "from_qty", "to_qty", "fee_qty", "fee_eur", "note")
 
 
 def _form_page(request: Request, data: dict[str, Any], errors: list[str], tx_id: str | None = None,
@@ -195,6 +201,11 @@ def make_router() -> APIRouter:
             data |= {"date": today_local().isoformat(), "time": ""}
         if account and not data.get("account"):
             data["account"] = account
+        if not copy:  # Rücksprung vom Anlegen eines Assets: bereits erfasste Angaben bleiben erhalten
+            for k in PREFILL_FIELDS:
+                v = request.query_params.get(k)
+                if v:
+                    data[k] = v[:200]
         warnings = [w for w in request.query_params.getlist("w") if w][:5]
         return _form_page(request, data, [], saved_tx=saved, warnings=warnings)
 
@@ -261,7 +272,12 @@ def make_router() -> APIRouter:
             return _asset_page(request, data, res.errors, orig, status_code=400)
         nxt = str(f.get("next") or "")
         if nxt.startswith("/journal/new"):
-            return _back(request, nxt)
+            sp = urlsplit(nxt)
+            q = dict(parse_qsl(sp.query))
+            field = q.pop("pickfor", "")
+            if field in PREFILL_FIELDS and res.asset_id:  # das neue Asset im Feld vorauswählen
+                q[field] = res.asset_id
+            return _back(request, "/journal/new" + (f"?{urlencode(q)}" if q else ""))
         return _back(request, "/journal?" + urlencode({"saved": "asset"}) + "#assets")
 
     @router.get("/journal/writeoff", response_class=HTMLResponse)

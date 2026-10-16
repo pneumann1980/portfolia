@@ -363,6 +363,98 @@
     }).catch(function () { /* offline – ignorieren */ });
   }
   setInterval(pollStatus, 60000);
+
+  // --- Konto/Asset wählen: Eingabefeld mit sichtbarer, filterbarer Liste (ohne JS bleibt das Textfeld) -------------
+  function initCombos(root) {
+    (root || document).querySelectorAll("input[data-combo]").forEach(function (input) {
+      if (input.dataset.comboReady) return;
+      var dl = document.getElementById(input.getAttribute("list") || "");
+      if (!dl) return;
+      input.dataset.comboReady = "1";
+      input.removeAttribute("list"); // sonst öffnet der Browser zusätzlich seine eigene, schwer auffindbare Liste
+      var kind = input.dataset.combo, canCreate = input.dataset["new"] === "1";
+      var options = Array.prototype.map.call(dl.options, function (o) {
+        return { v: o.value, t: (o.textContent || "").trim() };
+      });
+      var wrap = document.createElement("div");
+      wrap.className = "combo";
+      input.parentNode.insertBefore(wrap, input);
+      wrap.appendChild(input);
+      var btn = document.createElement("button");
+      btn.type = "button"; btn.className = "combo-btn"; btn.textContent = "\u25BE";
+      btn.setAttribute("aria-label", kind === "asset" ? "Assets anzeigen" : "Konten anzeigen");
+      wrap.appendChild(btn);
+      var list = document.createElement("ul");
+      list.className = "combo-list"; list.setAttribute("role", "listbox"); list.hidden = true;
+      wrap.appendChild(list);
+      input.setAttribute("autocomplete", "off");
+      input.setAttribute("role", "combobox"); input.setAttribute("aria-expanded", "false");
+      var active = -1;
+
+      function close() { list.hidden = true; input.setAttribute("aria-expanded", "false"); active = -1; }
+      function pick(v) { input.value = v; close(); input.dispatchEvent(new Event("change", { bubbles: true })); }
+      function newAsset() {
+        var p = new URLSearchParams();
+        new FormData(input.form).forEach(function (v, k) {
+          if (k !== "csrf_token" && typeof v === "string" && v) p.append(k, v);
+        });
+        p.set("pickfor", input.name);
+        location.href = "/journal/asset?next=" + encodeURIComponent("/journal/new?" + p.toString());
+      }
+      function item(html, cls, fn) {
+        var li = document.createElement("li");
+        li.className = cls; li.setAttribute("role", "option"); li.tabIndex = -1; li.innerHTML = html;
+        if (fn) li.addEventListener("click", function (e) { e.preventDefault(); fn(e); });
+        list.appendChild(li);
+        return li;
+      }
+      function esc(t) { return String(t).replace(/[&<>"]/g, function (c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]; }); }
+      function render(filter) {
+        var q = (filter || "").trim().toLowerCase(), cur = input.value.trim().toLowerCase(), selected = null;
+        list.innerHTML = "";
+        options.filter(function (o) { return !q || o.v.toLowerCase().indexOf(q) >= 0 || o.t.toLowerCase().indexOf(q) >= 0; })
+          .slice(0, 120).forEach(function (o) {
+            var li = item("<b>" + esc(o.v) + "</b>" + (o.t && o.t !== o.v ? " <span class=\"hint\">" + esc(o.t) + "</span>" : ""),
+                          "combo-item" + (o.v.toLowerCase() === cur ? " sel" : ""), function () { pick(o.v); });
+            if (o.v.toLowerCase() === cur) selected = li;
+          });
+        if (kind === "asset") {
+          if (canCreate) item("\uFF0B Neues Asset anlegen \u2026", "combo-item combo-new", newAsset);
+          else item("Fehlt das Asset? Unten \u201ENeues Asset anlegen\u201C verwenden.", "combo-hint");
+        } else if (input.value.trim() && !options.some(function (o) { return o.v.toLowerCase() === cur; })) {
+          item("\uFF0B \u201E" + esc(input.value.trim()) + "\u201C als neues Konto verwenden", "combo-item combo-new", close);
+        } else if (!list.children.length) {
+          item("Kein Konto vorhanden \u2013 den Namen einfach eintippen.", "combo-hint");
+        }
+        list.hidden = false; input.setAttribute("aria-expanded", "true"); active = -1;
+        if (selected) list.scrollTop = Math.max(0, selected.offsetTop - 40);
+      }
+      // Das Feld liegt in einem <label>: Klicks in die Liste dürfen nicht als Klick ins Feld weitergereicht werden
+      list.addEventListener("click", function (e) { e.preventDefault(); });
+      input.addEventListener("focus", function () { render(""); });
+      input.addEventListener("click", function () { if (list.hidden) render(""); });
+      input.addEventListener("input", function () { render(input.value); });
+      btn.addEventListener("click", function () { if (list.hidden) { input.focus(); render(""); } else close(); });
+      input.addEventListener("keydown", function (e) {
+        var items = Array.prototype.slice.call(list.querySelectorAll(".combo-item"));
+        if (e.key === "Escape") { close(); return; }
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          if (list.hidden) render(input.value);
+          items = Array.prototype.slice.call(list.querySelectorAll(".combo-item"));
+          if (!items.length) return;
+          active = (active + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+          items.forEach(function (li, i) { li.classList.toggle("act", i === active); });
+          items[active].scrollIntoView({ block: "nearest" });
+          e.preventDefault();
+        } else if (e.key === "Enter" && !list.hidden && active >= 0 && items[active]) {
+          e.preventDefault(); items[active].click();
+        }
+      });
+      document.addEventListener("pointerdown", function (e) { if (!wrap.contains(e.target)) close(); });
+    });
+  }
+  document.addEventListener("DOMContentLoaded", function () { initCombos(document); });
+  document.addEventListener("htmx:afterSettle", function (e) { initCombos(e.target); });
   document.addEventListener("DOMContentLoaded", function () {
     applyDotColors(document);
     pollStatus();

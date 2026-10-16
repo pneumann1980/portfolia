@@ -1426,6 +1426,22 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.30.1 – Buchungsformular: Konto/Asset wählbar; Diagnose mobil: Zahlen brechen um
+
+Beobachtet (Screenshots): Im Formular „Neue Buchung“ musste man Konto und Asset von Hand eintippen (die Browser-Liste
+war auf dem Handy nicht auffindbar); in der Diagnose liefen lange Mengen (z. B. 0,011404081487101903) aus der Karte.
+
+* **Auswahl statt Eintippen:** Konto- und Asset-Felder zeigen beim Antippen eine Liste der vorhandenen Werte (▾-Knopf,
+  filtert beim Tippen; Asset als „ID Name“). Ein unbekanntes Konto wird einfach eingetippt („als neues Konto verwenden“ –
+  es entsteht mit der ersten Buchung). Ein fehlendes Asset: „＋ Neues Asset anlegen …“ führt zur Asset-Seite und danach
+  zurück ins Formular – **alle bereits erfassten Angaben bleiben erhalten** und das neue Asset ist vorgewählt
+  (`PREFILL_FIELDS`, `pickfor`). In der Bearbeitung einer vorhandenen Buchung wird dieser Weg nicht angeboten (Eingaben
+  gingen verloren). Ohne JavaScript bleibt das bisherige Textfeld mit Vorschlägen.
+* **Diagnose:** Die Regel `.dev-table td.num { white-space: nowrap }` überstimmte das Karten-Layout; auf schmalen
+  Bildschirmen brechen Mengen jetzt innerhalb der Karte um (im Browser bei 390 px geprüft, kein Überlauf).
+* **Grenzen:** Die Liste zeigt höchstens 120 Treffer (Filter eingrenzen); Konten stammen aus Buchungen und Datenquellen,
+  nicht aus einer eigenen Kontenverwaltung.
+
 ## 0.30.0 – Abweichungen selbst erklären: Ausbuchungen, Herkunftskette (Bridge), Erledigt-Bereiche
 
 Beobachtet (Screenshots): Ausgebuchte Coins (Spam, Totalverlust) standen weiter als „Bestand weicht von der externen
