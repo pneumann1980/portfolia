@@ -490,7 +490,7 @@ class KaspaConnector(WalletConnector):
                     body = self._krc_get(krc, "/krc20/oplist", {"address": a, "prev": st["head"]}, "KRC-20-Vorgänge")
                     raw = sorted(body.get("result") or [], key=lambda o: int(o.get("opScore") or 0))
                     # Der Indexer füllt eine kurze „prev“-Seite mit den ÄLTESTEN Operationen auf (Wrap-around). Echt neu
-                    # ist nur, was über dem Zeiger liegt; Auffüller sind bereits verarbeitet und beweisen: Ende erreicht.
+                    # ist nur, was über dem Zeiger liegt; Auffüller sind schon verarbeitet und zeigen: Ende erreicht.
                     head = int(st["head"])
                     ops = [o for o in raw if int(o.get("opScore") or 0) > head]
                     ready = [o for o in ops if int(o.get("mtsAdd") or 0) <= limit_ms]
