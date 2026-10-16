@@ -189,6 +189,22 @@
     if (once) window.setTimeout(function () { once.disabled = true; once.textContent = "Wird übernommen …"; }, 0);
   });
 
+  // --- Auswahlfelder, die sich gegenseitig ausschließen (data-peer = Kennung des anderen Feldes) -------------
+  document.querySelectorAll("select[data-peer]").forEach(function (sel) {
+    var peer = document.getElementById(sel.getAttribute("data-peer"));
+    if (!peer) return;
+    function sync() {
+      Array.prototype.forEach.call(peer.options, function (o) {
+        var same = !!o.value && o.value === sel.value;
+        o.hidden = same;
+        o.disabled = same;
+        if (same && peer.value === o.value) peer.value = "";
+      });
+    }
+    sel.addEventListener("change", sync);
+    sync();
+  });
+
   // --- Mehrfachauswahl: „alle“-Kästchen und Zähler (data-check-all / data-check-count = Feldname) -------
   function syncChecks(form, name) {
     var boxes = form.querySelectorAll('input[type="checkbox"][name="' + name + '"]');

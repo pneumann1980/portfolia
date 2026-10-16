@@ -14,13 +14,13 @@
   <section class="card" id="vorschlaege">
     <div class="card-head"><h2>Vorschläge ({{ cands|length }})</h2></div>
     {% if cands %}
-    <p class="hint">Nur Vorschläge – ob zwei Konten wirklich dasselbe sind, entscheidest du. Die Richtung („wird zu“) lässt sich in der Vorschau tauschen.</p>
+    <p class="hint">Nur Vorschläge – ob zwei Konten wirklich dasselbe sind, entscheidest du. Die Richtung („wird zu“) lässt sich in der Vorschau tauschen. Hat ein Konto eine Datenquelle (Wallet/Börse), bleibt es als Ziel – die Quelle liefert künftig die besseren Daten.</p>
     <div class="table-wrap cards-wrap"><table class="compact cards">
       <thead><tr><th>Konto</th><th>wird zu</th><th>Hinweise</th><th>Buchungen</th><th></th></tr></thead>
       <tbody>{% for c in cands %}<tr>
         <td data-label="Konto" class="wrap-any">{{ c.alias }}</td>
-        <td data-label="wird zu" class="wrap-any">{{ c.target }}</td>
-        <td data-label="Hinweise"><span class="hint">{{ c.reasons|join(' · ') }}</span></td>
+        <td data-label="wird zu" class="wrap-any">{{ c.target }}{% if c.target_source %}<div class="hint"><span class="badge good">Datenquelle</span> {{ c.target_source }}</div>{% endif %}</td>
+        <td data-label="Hinweise">{% if c.strong %}<span class="badge good">Adresse passt</span> {% endif %}<span class="hint">{{ c.reasons|join(' · ') }}</span></td>
         <td data-label="Buchungen" class="num">{{ c.n_alias }} / {{ c.n_target }}</td>
         <td><form method="post" action="/accounts/merge/preview" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="alias" value="{{ c.alias }}"><input type="hidden" name="target" value="{{ c.target }}"><button class="btn sm primary" type="submit">Vorschau …</button></form></td>
       </tr>{% endfor %}</tbody></table></div>
@@ -33,9 +33,9 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="grid-2">
         <label class="field">Konto, das verschwindet (Alias)
-          <select name="alias" required><option value="">– wählen –</option>{% for a in accounts %}<option value="{{ a }}" {% if a == alias %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+          <select name="alias" id="merge-alias" data-peer="merge-target" required><option value="">– wählen –</option>{% for a in accounts %}{% if a.name != target %}<option value="{{ a.name }}" {% if a.name == alias %}selected{% endif %}>{{ a.label }}</option>{% endif %}{% endfor %}</select></label>
         <label class="field">Konto, das bleibt (Ziel)
-          <select name="target" required><option value="">– wählen –</option>{% for a in accounts %}<option value="{{ a }}" {% if a == target %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+          <select name="target" id="merge-target" data-peer="merge-alias" required><option value="">– wählen –</option>{% for a in accounts %}{% if a.name != alias %}<option value="{{ a.name }}" {% if a.name == target %}selected{% endif %}>{{ a.label }}</option>{% endif %}{% endfor %}</select></label>
       </div>
       <div><button class="btn primary" type="submit">Vorschau …</button></div>
     </form>

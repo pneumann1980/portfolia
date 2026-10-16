@@ -1426,6 +1426,27 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.29.1 – Konten zusammenführen: Datenquellen-Konten, Adresserkennung, Auswahl
+
+Beobachtet (Screenshots): Das Konto „Ledger (ADA)“ einer Wallet-Datenquelle fehlte in der Auswahl; „Cardano (ADA) -
+addr1q...47“ wurde nicht als dasselbe Konto erkannt; fast alle gebuchten Wallet-/Börsenkonten standen unter „Konten ohne
+Datenquelle“, obwohl die Datenquelle schon angelegt war; im Feld „Konto, das bleibt (Ziel)“ erschien das gewählte Alias.
+
+* **Ursache 1:** Die Auswahl und die Vorschläge kannten nur Konten mit Buchungen. Eine frisch angelegte Datenquelle hat
+  aber noch keine. Jetzt zählen die Konten aller Datenquellen mit (`known_accounts`); die Vorschau erlaubt sie als Ziel.
+* **Adresserkennung:** Gekürzte Adressen im Kontonamen (`addr1q...47`, `0x20B7...09`, `0x375A.../5Fq31...`) und
+  vollständige Adressen werden mit den Adressen der Datenquellen verglichen (Anfang + Ende; nur der Anfang wird als
+  schwächerer Beleg gekennzeichnet; EVM/Bech32 ohne Beachtung der Schreibweise). Treffer erscheinen als „Adresse passt“.
+  Schwächer: gleiche Chain (nur das native Asset gebucht, genau eine Datenquelle dieser Chain) – ausdrücklich „nicht über
+  die Adresse belegt“; bei mehreren Quellen derselben Chain gibt es keinen Vorschlag.
+* **Richtung:** Hat genau ein Konto eine Datenquelle, bleibt es als Ziel; das gebuchte Konto ohne Quelle ist der Alias.
+* **Konten ohne Datenquelle:** Jede Karte zeigt passende Datenquellen samt Beleg und einen Knopf „Mit … zusammenführen“
+  (Vorschau, nichts wird gelöscht). Die Kopfzeile nennt die Zahl der Konten mit Vorschlag.
+* **Auswahl:** Alias und Ziel schließen sich gegenseitig aus (serverseitig beim Vorbelegen, im Browser beim Wählen);
+  Einträge zeigen Buchungszahl bzw. Datenquelle.
+* **Grenzen:** Nur Vorschläge – die Entscheidung bleibt beim Nutzer. Konten ohne Adresse im Namen und ohne eindeutige
+  Chain-Zuordnung (z. B. „Nova Wallet“) werden nur über Namensähnlichkeit gefunden; sonst manuell wählen.
+
 ## 0.29.0 – Konfliktklärung mit gezielter Bestandsbestätigung
 
 Ziel: Portfolia untersucht Konflikte selbst, führt vorhandene Belege zusammen, simuliert Lösungen **gemeinsam** und

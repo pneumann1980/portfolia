@@ -892,7 +892,14 @@ class DataSourceService:
     def unlinked_accounts(self) -> list[dict[str, Any]]:
         """Konten mit Buchungen, aber ohne Datenquelle – erscheinen in der Übersicht als „manuell / Datei-Import“ und
         lassen sich je Konto per Datei aktualisieren (vollständige Historie oder nur neue Vorgänge)."""
+        from app.assetchange.account_merge import source_suggestions
+
         linked = {ds.account.casefold() for ds in self.list()}
+        try:
+            hints = source_suggestions(self.ctx)
+        except Exception as e:  # Vorschläge sind Zugabe – nie die Übersicht verhindern
+            log.warning("Vorschläge für Konten ohne Datenquelle nicht berechenbar: %s", e)
+            hints = {}
         rows = []
         for acc, e in sorted(self.account_bookings().items(), key=lambda kv: kv[0].casefold()):
             if acc.casefold() in linked:
@@ -900,7 +907,7 @@ class DataSourceService:
             prov = guess_provider(acc)
             rows.append({"account": acc, "n": e["n"], "first": e["first"], "last": e["last"],
                          "origins": dict(e["origins"].most_common()), "provider": prov,
-                         "provider_label": PROVIDERS[prov].label})
+                         "provider_label": PROVIDERS[prov].label, "suggestions": hints.get(acc, [])})
         return rows
 
     def last_import(self, sid: int) -> Any:

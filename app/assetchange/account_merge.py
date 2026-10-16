@@ -17,6 +17,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
@@ -124,6 +125,8 @@ class Candidate:
     reasons: list[str]
     n_alias: int = 0
     n_target: int = 0
+    target_source: str = ""  # Name der Datenquelle des Ziel-Kontos (leer: Ziel hat keine Datenquelle)
+    strong: bool = False  # Adresse belegt die Zuordnung (nicht nur Name/Chain)
 
 
 def _counts(pf: Portfolio) -> Counter[str]:
@@ -139,29 +142,110 @@ def _sig(t: Tx) -> tuple[Any, ...]:
     return (t.ts, t.type, t.from_asset, str(t.from_qty), t.to_asset, str(t.to_qty))
 
 
+def source_accounts(ctx: Any) -> dict[str, list[Any]]:
+    """Konto → Datenquellen (Konto nach Zusammenführungen). Auch Konten ohne Buchungen: eine frisch angelegte Wallet
+    bzw. Börse hat oft noch keine, ist aber das Konto, dem künftige Abrufe zugeordnet werden."""
+    from app.datasources.service import datasource_service
+
+    out: dict[str, list[Any]] = defaultdict(list)
+    try:
+        for ds in datasource_service(ctx).list():
+            if ds.account:
+                out[ds.account].append(ds)
+    except Exception as e:  # Tabelle fehlt (ältere DB) – ohne Datenquellen weiterarbeiten
+        log.debug("Datenquellen nicht lesbar: %s", e)
+    return out
+
+
+def known_accounts(ctx: Any) -> list[str]:
+    """Konten mit Buchungen sowie Konten von Datenquellen (auch ohne Buchungen)."""
+    pf = ctx.portfolio()
+    return sorted({*(pf.all_accounts() if pf is not None else []), *source_accounts(ctx)}, key=str.casefold)
+
+
+_FRAG = re.compile(r"([0-9A-Za-z:]{4,})(?:\.{3}|…)([0-9A-Za-z]{2,})?")
+
+
+def address_fragments(name: str) -> list[tuple[str, str]]:
+    """Gekürzte Adressen in Kontonamen („… - addr1q...47“, „0x20B7...09“, „0x375A.../5Fq31...“) als (Anfang, Ende);
+    das Ende kann fehlen. Zu kurze Bruchstücke (weniger als 5 Zeichen) taugen nicht als Hinweis."""
+    out = []
+    for m in _FRAG.finditer(name or ""):
+        pre, suf = m.group(1), m.group(2) or ""
+        if len(pre) + len(suf) >= 5 and any(ch.isdigit() for ch in pre + suf):
+            out.append((pre, suf))
+    return out
+
+
+def _addr_hit(frag: tuple[str, str], address: str) -> bool:
+    pre, suf = frag
+    a = address or ""
+    if a.lower().startswith(("0x", "addr1", "stake1", "kaspa:", "bc1", "ltc1")):  # Groß-/Kleinschreibung ohne Bedeutung
+        a, pre, suf = a.lower(), pre.lower(), suf.lower()
+    return bool(a) and a.startswith(pre) and (not suf or a.endswith(suf)) and len(a) > len(pre) + len(suf)
+
+
+def _short(a: str) -> str:
+    return a if len(a) <= 16 else f"{a[:8]}…{a[-6:]}"
+
+
+def _native(ds: Any) -> str:
+    from app.datasources.connector import connector_for
+
+    conn = connector_for(ds.provider)
+    return str(getattr(conn, "native", "") or "")
+
+
 def candidates(ctx: Any) -> list[Candidate]:
     """Mögliche Zwillingskonten (nur Vorschläge): Namen, die bis auf Groß-/Kleinschreibung, Leerzeichen und Satzzeichen
-    gleich sind, ein Name, der den anderen enthält, oder eine auffällige Menge identischer Buchungen in beiden Konten.
-    Der Platzhalter „… unbekannt“ (Broker nicht bekannt) wird gegenüber benannten Konten als Alias vorgeschlagen."""
+    gleich sind, ein Name, der den anderen enthält, eine auffällige Menge identischer Buchungen in beiden Konten, eine
+    (gekürzte) Adresse im Kontonamen, die zur Adresse einer Datenquelle passt, oder – schwächer – dieselbe Chain
+    (nur deren natives Asset gebucht, genau eine passende Datenquelle). Konten von Datenquellen zählen auch ohne
+    Buchungen. Hat genau ein Konto eine Datenquelle, wird es als Ziel vorgeschlagen (die Quelle liefert künftig bessere
+    Daten); der Platzhalter „… unbekannt“ wird sonst als Alias vorgeschlagen."""
     pf = ctx.portfolio()
     if pf is None:
         return []
     n = _counts(pf)
-    names = sorted(n)
+    srcs = source_accounts(ctx)
+    names = sorted({*n, *srcs}, key=str.casefold)
     by_acc: dict[str, set[tuple[Any, ...]]] = defaultdict(set)
+    assets_of: dict[str, set[str]] = defaultdict(set)
     for t in pf.txs:
         for a in {t.from_account, t.to_account}:
             if a:
                 by_acc[a].add(_sig(t))
+        for acc, asset in ((t.from_account, t.from_asset), (t.to_account, t.to_asset), (t.from_account, t.fee_asset)):
+            if acc and asset:
+                assets_of[acc].add(asset)
 
     def norm(s: str) -> str:
         return "".join(ch for ch in s.casefold() if ch.isalnum())
 
+    def addr_reason(booked: str, source_acc: str) -> str:
+        frags = address_fragments(booked)
+        for ds in srcs.get(source_acc, []):
+            for addr in ds.addresses if getattr(ds, "is_wallet", False) else []:
+                if len(addr) >= 20 and addr.casefold() in booked.casefold():  # vollständige Adresse im Kontonamen
+                    return f"Adresse stimmt überein: vollständige Adresse im Kontonamen ↔ Datenquelle „{ds.name}“"
+                for frag in frags:
+                    if _addr_hit(frag, addr):
+                        return (f"Adresse stimmt überein: {frag[0]}…{frag[1]} ↔ Datenquelle „{ds.name}“ "
+                                f"({_short(addr)})" + ("" if frag[1] else " – nur der Anfang ist bekannt"))
+        return ""
+
     out: list[Candidate] = []
+    seen: set[frozenset[str]] = set()
     for i, x in enumerate(names):
         for y in names[i + 1:]:
             reasons = []
+            strong = False
             nx, ny = norm(x), norm(y)
+            for a, b in ((x, y), (y, x)):
+                r = addr_reason(a, b) if b in srcs else ""
+                if r:
+                    reasons.append(r)
+                    strong = True
             if nx and nx == ny:
                 reasons.append("Name gleich bis auf Schreibweise")
             elif nx and ny and (nx in ny or ny in nx) and min(len(nx), len(ny)) >= 3:
@@ -173,13 +257,51 @@ def candidates(ctx: Any) -> list[Candidate]:
                 reasons.append("Platzhalter „unbekannt“ – Konto könnte ein bekanntes sein")
             if not reasons:
                 continue
-            # Alias = Platzhalter, sonst das kleinere Konto
-            ranked = sorted((x, y), key=lambda a: ("unbekannt" not in norm(a), n[a], a))
-            alias, target = ranked[0], ranked[1]
-            if "unbekannt" not in norm(alias):
-                alias, target = sorted((x, y), key=lambda a: (n[a], a))
-            out.append(Candidate(alias, target, reasons, n[alias], n[target]))
-    out.sort(key=lambda c: (-len(c.reasons), -(c.n_alias + c.n_target), c.alias))
+            seen.add(frozenset((x, y)))
+            out.append(_oriented(x, y, reasons, strong, n, srcs, norm))
+    # schwächer: dieselbe Chain (nur natives Asset, je Chain genau ein Konto ohne Quelle und genau eine Quelle)
+    wallet_srcs: dict[str, list[tuple[str, Any]]] = defaultdict(list)
+    for acc, lst in srcs.items():
+        for ds in lst:
+            if getattr(ds, "is_wallet", False) and _native(ds):
+                wallet_srcs[_native(ds)].append((acc, ds))
+    for native, items in wallet_srcs.items():
+        if len({acc for acc, _ds in items}) != 1:
+            continue  # mehrere Quellen derselben Chain: nicht eindeutig
+        acc_src, ds = items[0]
+        # trägt der Kontoname eine Adresse, die nicht zur Quelle passt, ist die Chain allein kein Hinweis
+        booked = [a for a in n if a not in srcs and assets_of[a] == {native} and norm(native) in norm(a)
+                  and not address_fragments(a)]
+        if len(booked) != 1 or frozenset((booked[0], acc_src)) in seen or booked[0] == acc_src:
+            continue
+        out.append(Candidate(booked[0], acc_src, [f"Gleiche Chain: Konto bucht nur {native}, Datenquelle „{ds.name}“ "
+                                                   f"({ds.provider_label}) liest dieselbe Chain – nicht über die "
+                                                   "Adresse belegt"], n[booked[0]], n[acc_src], ds.name))
+    out.sort(key=lambda c: (not c.strong, -len(c.reasons), -(c.n_alias + c.n_target), c.alias))
+    return out
+
+
+def _oriented(x: str, y: str, reasons: list[str], strong: bool, n: Counter[str], srcs: dict[str, list[Any]],
+              norm: Any) -> Candidate:
+    """Richtung: Konto mit Datenquelle bleibt (Ziel), das andere verschwindet; sonst Platzhalter bzw. kleineres Konto
+    als Alias."""
+    if (x in srcs) != (y in srcs):
+        alias, target = (y, x) if x in srcs else (x, y)
+    else:
+        ranked = sorted((x, y), key=lambda a: ("unbekannt" not in norm(a), n[a], a))
+        alias, target = ranked[0], ranked[1]
+        if "unbekannt" not in norm(alias):
+            alias, target = sorted((x, y), key=lambda a: (n[a], a))
+    ds_name = srcs[target][0].name if target in srcs else ""
+    return Candidate(alias, target, reasons, n[alias], n[target], ds_name, strong)
+
+
+def source_suggestions(ctx: Any) -> dict[str, list[Candidate]]:
+    """Konto ohne Datenquelle → Vorschläge, es mit dem Konto einer vorhandenen Datenquelle zusammenzuführen."""
+    out: dict[str, list[Candidate]] = defaultdict(list)
+    for c in candidates(ctx):
+        if c.target_source:
+            out[c.alias].append(c)
     return out
 
 
@@ -234,7 +356,7 @@ def preview(ctx: Any, alias: str, target: str) -> Preview:
     if pf is None or led is None:
         p.errors.append("Noch keine Buchungen vorhanden.")
         return p
-    known = set(pf.all_accounts())
+    known = set(known_accounts(ctx))
     cur = active_map(ctx.db)
     if not p.alias or not p.target or p.alias == p.target:
         p.errors.append("Zwei verschiedene Konten wählen.")
@@ -270,6 +392,9 @@ def preview(ctx: Any, alias: str, target: str) -> Preview:
                           "zusammenführen (Einstellungen → Datenquellen).")
     elif _datasources(ctx, p.alias):
         p.info.append(f"Die Datenquelle von „{p.alias}“ gilt künftig für „{p.target}“.")
+    elif _datasources(ctx, p.target):
+        p.info.append(f"Die Datenquelle von „{p.target}“ liefert künftig auf dieses Konto; bereits gebuchte Vorgänge "
+                      "erkennt der Abgleich beim nächsten Abruf (nichts wird doppelt gebucht).")
     ai, ti = pf.accounts.get(p.alias), pf.accounts.get(p.target)
     if ai and ti and (ai.broker, ai.depot_group) != (ti.broker, ti.depot_group) and (ai.broker or ai.depot_group):
         p.warnings.append(f"Unterschiedliche Stammdaten: „{p.alias}“ Broker={ai.broker or '–'}, Depotgruppe="

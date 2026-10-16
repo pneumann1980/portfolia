@@ -20,9 +20,22 @@ def _back(request: Request, target: str) -> Response:
     return Response(status_code=303, headers={"Location": target})
 
 
-def _accounts(ctx: Any) -> list[str]:
+def _accounts(ctx: Any) -> list[dict[str, Any]]:
+    """Konten zur Auswahl: mit Buchungen und/oder Datenquelle (auch ohne Buchungen – z. B. frisch angelegte Wallet)."""
     pf = ctx.portfolio()
-    return pf.all_accounts() if pf is not None else []
+    n: dict[str, int] = {}
+    for t in (pf.txs if pf is not None else []):
+        for a in {t.from_account, t.to_account}:
+            if a:
+                n[a] = n.get(a, 0) + 1
+    srcs = M.source_accounts(ctx)
+    out = []
+    for name in M.known_accounts(ctx):
+        parts = [f"{n[name]} Buchung{'' if n[name] == 1 else 'en'}" if n.get(name) else "keine Buchungen"]
+        if name in srcs:
+            parts.append("Datenquelle " + ", ".join(sorted({d.name for d in srcs[name]})))
+        out.append({"name": name, "label": f"{name} ({' · '.join(parts)})"})
+    return out
 
 
 def _page(request: Request, msg: str = "", err: str = "", alias: str = "", target: str = "",
