@@ -1426,6 +1426,33 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.30.0 – Abweichungen selbst erklären: Ausbuchungen, Herkunftskette (Bridge), Erledigt-Bereiche
+
+Beobachtet (Screenshots): Ausgebuchte Coins (Spam, Totalverlust) standen weiter als „Bestand weicht von der externen
+Quelle ab“ in der Aufgabenliste; POPKAT (Kauf auf ETH → Brücke/Transfer → Kaspa) war als „wahrscheinlich doppelt“ nicht
+lösbar; Erledigtes blieb in der oberen Ansicht.
+
+* **Ausbuchung erklärt die Abweichung** (`engine._holdings`): Zeigt die Wallet/Börse genau die als Verlust, Diebstahl
+  bzw. Burn ausgebuchte Menge weiter an (berechnet 0, beobachtet = Ausbuchung, Toleranz 10⁻⁶ relativ), ist das erwartet.
+  Status „ausgebucht – Quelle zeigt die Menge weiter“, **keine Aufgabe**, keine Ausgleichsbuchung. Mehr oder weniger als
+  ausgebucht, andere Abgangsarten (z. B. Bezahlung) und Ausbuchungen **nach** dem Abruf erklären nichts. Gemessen am realen
+  Export (nur lesend, temporäre Datenbank): BEAR, KPER, MRBEAST, RPEPE, POPKAT folgen diesem Muster.
+* **Herkunftskette** (`engine._supply_chain`): Stammt der gesamte Bestand des Quellkontos vor einem Transfer aus gebuchten
+  Zugängen und entspricht er genau Transfermenge + Gebühr (Rest nur Staub), hat eine zweite, gleich große Gutschrift am Ziel
+  keine Herkunft. Der Befund „Gleiche Menge zweimal gutgeschrieben“ nennt die Käufe und wird – bei 14 identischen
+  signifikanten Stellen, manuell erfasster Gutschrift ohne Hash und belegtem Transfer – **belegt** (vorher „wahrscheinlich“).
+* **Folgeanpassung der Ausbuchung:** Enthielt die Ausbuchung die doppelte Menge mit, ließ das Ausblenden den Bestand negativ
+  werden (Klärung „blockiert“). Neue Lösung `hide_weak_adjust`: Doppelung ausblenden **und** die Ausbuchung auf die tatsächliche
+  Menge kürzen (alte ausblenden, gekürzte neu buchen). Gemeinsam rückgängig zu machen; die Klärung entscheidet „Herkunft belegt“ →
+  übernehmen; Autopilot/Klärung zählen den Plan als sicher (nur Ausblenden + gleichartige gekürzte Ausbuchung).
+* **Erledigt-Bereiche:** Diagnose: aufklappbarer Block „Erledigt“ (automatisch erklärte Positionen mit Link zur Ausbuchung bzw.
+  deren Rücknahme, übernommene Korrekturen mit „Rückgängig“; „Als geprüft markiert“ bleibt). Klärung: „Erledigt – geklärt“ ist
+  auf- und zuklappbar.
+* **Grenzen:** Abweichungen ohne Ausbuchung bzw. Beleg (XEN, MEAT, PLS, TH im Beispiel) bleiben Aufgaben – sie lassen sich nur
+  mit dem aktuellen Stand der Datenquellen (beobachtete Bestände, offene Vorgänge im Prüf-Stapel) beurteilen; der Voll-Export
+  enthält diese nicht. Die Herkunftskette gilt nur für eine Quelle (Transfer von einem Konto); mehrstufige Brücken ohne
+  Zwischenbuchung sind nicht abgedeckt.
+
 ## 0.29.3 – Prüf-Stapel: gleich große Vorgänge zuordnen, klare Empfehlungen, Rücksprung
 
 Beobachtet (Screenshot): Zwei gleich große Einzahlungen der Börse (10:47 und 10:48) standen im Bestand zwei Buchungen

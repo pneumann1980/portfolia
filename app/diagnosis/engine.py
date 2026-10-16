@@ -770,6 +770,33 @@ def _dup_same_qty(idx: _Index, stats: dict[str, int]) -> list[Finding]:
     return out
 
 
+def _supply_chain(idx: _Index, transfer: Tx, aid: str) -> tuple[list[Tx], Decimal, Decimal] | None:
+    """Herkunft einer Transfermenge: Stammt der gesamte Bestand des Quellkontos vor dem Transfer aus gebuchten Zugängen
+    (Käufe, Tausche, Einzahlungen) und entspricht er genau Transfermenge + Gebühr (Rest nur Staub), hat ein zweiter
+    gleich großer Zugang am Ziel keine Herkunft. Rückgabe: (Zugänge, Bestand vor dem Transfer, Rest) oder ``None``."""
+    src = transfer.from_account
+    if not src or transfer.from_asset != aid or not transfer.from_qty:
+        return None
+    key = (transfer.ts, transfer.seq, transfer.tx_id)
+    avail = ZERO
+    sources: list[Tx] = []
+    for x in sorted(idx.txs, key=lambda y: (y.ts, y.seq, y.tx_id)):
+        if (x.ts, x.seq, x.tx_id) >= key:
+            break
+        if x.from_account == src and x.from_asset == aid and x.from_qty:
+            avail -= x.from_qty
+        if x.to_account == src and x.to_asset == aid and x.to_qty:
+            avail += x.to_qty
+            sources.append(x)
+        if x.fee_asset == aid and x.fee_qty and (x.from_account or x.to_account) == src:
+            avail -= x.fee_qty
+    need = transfer.from_qty + (transfer.fee_qty if transfer.fee_asset == aid and transfer.fee_qty else ZERO)
+    rest = avail - need
+    if not sources or rest < -need * Decimal("1e-8") or rest > max(need * Decimal("1e-7"), Decimal("1e-8")):
+        return None
+    return sources, avail, rest
+
+
 def _qty_finding(idx: _Index, side: str, acc: str, aid: str, q: Decimal, a: Tx, b: Tx, ma: list[str],
                  mb: list[str]) -> Finding:
     # die „schwächer belegte“ Buchung (manuell, ohne Hash) ist Gegenstand des Szenarios
@@ -810,6 +837,17 @@ def _qty_finding(idx: _Index, side: str, acc: str, aid: str, q: Decimal, a: Tx, 
                         "bekannte Herkunft.")
     if weak.value_eur in (None, ZERO):
         evidence.append(f"{weak.tx_id}: ohne EUR-Wert (Einstand 0 €)")
+    chain = _supply_chain(idx, strong, aid) if side == "in" and strong.type == "transfer" else None
+    if chain is not None:
+        sources, avail, rest = chain
+        evidence.append(
+            f"Herkunft belegt: Am Quellkonto {strong.from_account} stammen {_q(avail)} {aid} aus {len(sources)} "
+            f"gebuchten Zugang/Zugängen ({', '.join(x.tx_id for x in sources[:4])}"
+            f"{' …' if len(sources) > 4 else ''}) – das ist genau die Transfermenge {_q(strong.from_qty or ZERO)} "
+            f"zuzüglich Gebühr (Rest {_q(rest)}). Eine zweite Gutschrift gleicher Menge auf {acc} hat in den "
+            "Buchungen keine Herkunft.")
+        if distinct and strong_proof and not idx.hashes[weak.tx_id] and m_weak:
+            status = "belegt"
     uncertainty = ["Zwei getrennte Vorgänge gleicher Menge sind möglich (z. B. erneuter Zugang, Bridge in zwei "
                    "Schritten). Nur ein Abgleich mit dem Explorer bzw. der Quelle zeigt, ob der Bestand zweimal "
                    "eingegangen ist."]
@@ -832,7 +870,7 @@ def _qty_finding(idx: _Index, side: str, acc: str, aid: str, q: Decimal, a: Tx, 
                  "löschen (Überlagerung). Portfolia ändert nichts automatisch.",
         key=f"qty|{side}|{'|'.join(sorted((a.tx_id, b.tx_id)))}", weight=abs(q), positions=[(acc, aid)],
         data={"type": "same_qty", "weak": weak.tx_id, "strong": strong.tx_id, "account": acc, "asset": aid,
-              "hashes": sorted(idx.hashes[strong.tx_id])})
+              "side": side, "chain": chain is not None, "hashes": sorted(idx.hashes[strong.tx_id])})
     f.txs = [idx.ref(weak), idx.ref(strong)]
     return idx.attach(f, derive_positions=False)
 
@@ -1875,6 +1913,19 @@ def _tol(v: Decimal) -> Decimal:
     return max(Decimal("1e-8"), abs(v) * Decimal("1e-9"))
 
 
+WRITEOFF_TAGS = ("lost", "stolen", "burn")
+
+
+def _writeoffs(idx: _Index) -> dict[tuple[str, str], list[Any]]:
+    """Ausbuchungen (Verlust, Diebstahl, Burn: Abgang ohne Gegenleistung) je Konto und Asset."""
+    out: dict[tuple[str, str], list[Any]] = defaultdict(list)
+    for t in idx.txs:
+        if t.type == "withdrawal" and (t.tag or "").lower() in WRITEOFF_TAGS and not t.to_asset and t.from_asset \
+                and t.from_qty:
+            out[(t.from_account or "", t.from_asset)].append(t)
+    return out
+
+
 def _soll_eq(expected: Decimal, v: Decimal) -> bool:
     return abs(expected - v) <= max(Decimal("1e-8"), abs(expected) * Decimal("1e-6"))
 
@@ -1960,6 +2011,7 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
     rows: list[HoldingRow] = []
     findings: list[Finding] = []
     totals = idx.led.holdings_by_asset()
+    wo_map = _writeoffs(idx)
     raw, why = _app_changes(idx)
     raw_tot: dict[str, Decimal] = defaultdict(lambda: ZERO)
     why_tot: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -2026,6 +2078,18 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
                                         f"{_q(comp - soll)} (nicht Teil des Vergleichs)")
             equal = abs(row.observed - soll) <= _tol(soll)
             row.status = ("extern_ok" if equal else "extern_diff") if fresh and complete else "extern_unsicher"
+            if not equal:
+                # Totalverlust/Spam: ausgebucht, die Quelle zeigt die Menge aber weiterhin – genau diese Menge erklärt
+                # die Differenz (keine Aufgabe, nichts zu buchen)
+                wos = [t for t in wo_map.get((acc, aid), []) if row.observed_at is None or t.ts <= row.observed_at]
+                wo = sum((t.from_qty for t in wos), ZERO)
+                if wo > ZERO and row.observed > soll and _soll_eq(row.observed, soll + wo):
+                    row.status, row.writeoff = "extern_ausgebucht", wo
+                    row.tx_ids = [t.tx_id for t in wos]
+                    row.explanations.append(
+                        f"{_q(wo)} {aid} sind als Verlust/Diebstahl/Burn ausgebucht ("
+                        + ", ".join(f"{t.tx_id} am {_d(t.ts)}" for t in wos[:3]) + (" …" if len(wos) > 3 else "")
+                        + "); die externe Quelle zeigt diese Menge weiterhin – erwartet, keine Aufgabe")
             if row.status == "extern_ok":
                 row.quality = "aktueller Bestand bestätigt – kein Nachweis einer vollständigen Buchungshistorie"
             if not fresh:
@@ -2053,15 +2117,16 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
                                              "Soll aus Portfolia-Export" if self_ref else
                                              "Soll aus kuratiertem Import" if row.expected is not None else
                                              "nur Buchungen")
-        row.confidence = {"extern_ok": "belegt", "extern_diff": "belegt", "ref_ok": "belegt", "ref_diff": "belegt",
+        row.confidence = {"extern_ok": "belegt", "extern_diff": "belegt", "extern_ausgebucht": "belegt",
+                          "ref_ok": "belegt", "ref_diff": "belegt",
                           "extern_unsicher": "verdacht", "intern_diff": "belegt"}.get(row.status, "hinweis"
                                                                                       if row.status != "offen" else "")
         rows.append(row)
         f = _holding_finding(idx, row) if row.status != "ref_diff" else audit.reference_finding(idx, row)
         if f is not None:
             findings.append(f)
-    for k in ("extern_ok", "extern_diff", "extern_unsicher", "intern_ok", "intern_app", "intern_diff", "ref_ok",
-              "ref_diff", "offen"):
+    for k in ("extern_ok", "extern_diff", "extern_ausgebucht", "extern_unsicher", "intern_ok", "intern_app",
+              "intern_diff", "ref_ok", "ref_diff", "offen"):
         stats[f"holdings_{k}"] = sum(1 for r in rows if r.status == k)
     return rows, findings
 

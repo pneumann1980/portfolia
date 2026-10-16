@@ -201,6 +201,7 @@ def make_router() -> APIRouter:
         for r in (report.snapshot.references if report.snapshot is not None else []):
             ref_rows.append({"r": r, "h": by_pos.get((r.account, r.asset_id))})
         fixes = A.active_fixes(ctx.db)
+        decisions = A.decisions(ctx.db)
         applied_kinds: dict[str, int] = {}
         for lst in fixes.values():
             for d in lst:
@@ -222,7 +223,9 @@ def make_router() -> APIRouter:
                       generated=datetime.now(UTC), n_open=len(open_findings), n_tasks=n_tasks, n_hints=n_hints,
                       bulks=TR.recent_bulks(ctx.db), last_run=(AP.last_runs(ctx.db, 1) or [None])[0],
                       recs={x.id: recommend(report, x) for x in [*shown, *dismissed]}, dismissed=dismissed,
-                      marks=marks, changed=changed, fixes=fixes, decisions=A.decisions(ctx.db),
+                      marks=marks, changed=changed, fixes=fixes, decisions=decisions,
+                      auto_rows=[h for h in report.holdings if h.status == "extern_ausgebucht"],
+                      applied=[d for d in decisions if d.action == "fix" and d.active][:30],
                       msg=msg, err=err, **_common())
 
     @router.get("/quality/diagnose/case/{fid}", response_class=HTMLResponse)

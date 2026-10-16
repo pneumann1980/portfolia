@@ -118,7 +118,11 @@ def test_manual_credit_and_transfer_with_same_quantity_is_probable_duplicate(cfg
     before = fingerprint(ctx.db)
     rep = report_for(ctx)
     (f,) = [x for x in by_kind(rep, "duplicate") if "TOKA" in x.title]
-    assert f.status == "wahrscheinlich" and f.priority == 1
+    # Der Kauf auf dem Quellkonto ergibt genau Transfermenge + Gebühr (50.223,45678901 = 50.123,45678901 + 100): die
+    # zweite Gutschrift hat keine Herkunft – seit 0.30.0 „belegt“ (ohne diese Herkunft bliebe es „wahrscheinlich“,
+    # siehe test_popkat_chain.py)
+    assert f.status == "belegt" and f.priority == 1 and f.data["chain"] is True
+    assert any(e.startswith("Herkunft belegt") and "B1" in e for e in f.evidence)
     assert {t.tx_id for t in f.txs} == {"M1", "T1"}
     weak, strong, why = f.pairs[0]
     assert weak.tx_id == "M1" and strong.tx_id == "T1" and "exakt gleiche Menge" in why

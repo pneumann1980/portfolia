@@ -126,6 +126,26 @@
   </details>
   {% endfor %}
   </div>
+  {% if auto_rows or applied %}
+  <details class="box" id="erledigt" style="margin-top:12px"><summary><strong>Erledigt ({{ auto_rows|length + applied|length }})</strong> <span class="hint">– automatisch erklärt bzw. korrigiert; hier lässt sich alles nachsehen und zurücknehmen</span></summary>
+    <div class="stack" style="gap:8px;margin-top:8px">
+    {% for h in auto_rows %}
+      <div class="checked-row">
+        <div><span class="badge info">automatisch erklärt</span> <span class="badge">Bestand</span> <b>{{ h.asset }}</b> auf {{ h.account }}: ausgebuchte Menge {{ h.writeoff|qty_exact }} wird von der Quelle weiter angezeigt
+          <div class="hint">{{ h.explanations[0] if h.explanations else '' }}</div></div>
+        <a class="btn sm ghost" href="/journal/writeoff?asset={{ h.asset|urlencode }}&amp;account={{ h.account|urlencode }}" title="Die Ausbuchung ansehen bzw. zurücknehmen – danach erscheint die Abweichung wieder">Ausbuchung ansehen / zurücknehmen</a>
+      </div>
+    {% endfor %}
+    {% for d in applied %}
+      <div class="checked-row">
+        <div><span class="badge good">Korrektur #{{ d.id }}</span> {{ d.option_label or d.title }}
+          <div class="hint">{{ d.created|datetime_de }} · {{ d.title }}{% if d.changes %} · {{ d.changes|length }} Änderung{{ 'en' if d.changes|length != 1 }}{% endif %}</div></div>
+        <form method="post" action="/quality/diagnose/decision/{{ d.id }}/undo" class="inline" data-confirm="Korrektur #{{ d.id }} zurücknehmen? Alle {{ d.changes|length }} Änderungen werden rückgängig gemacht."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Rückgängig</button></form>
+      </div>
+    {% endfor %}
+    </div>
+  </details>
+  {% endif %}
   {% if dismissed %}
   <details class="box" id="checked" style="margin-top:12px"><summary><strong>Als geprüft markiert ({{ dismissed|length }})</strong> <span class="hint">– ohne Handlungsbedarf; kommen zurück, sobald sich ihre Daten ändern</span></summary>
     <div class="stack" style="gap:8px;margin-top:8px">

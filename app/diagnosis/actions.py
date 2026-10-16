@@ -578,6 +578,32 @@ def _adjust(st: _State, plan: Plan) -> None:
                      f"{'auf' if diff > 0 else 'von'} {acc} ({tags[tag]}, {eur(value)})", plan)
 
 
+def _hide_and_adjust_writeoff(st: _State, plan: Plan) -> None:
+    """Doppelte Gutschrift ausblenden und die Ausbuchung, die ihre Menge mit enthielt, auf die tatsächliche Menge
+    kürzen (alte Ausbuchung ausblenden, gekürzte neu buchen). Beides ist über die Entscheidung zurücknehmbar."""
+    from app.diagnosis.recommend import writeoff_adjust
+
+    adj = writeoff_adjust(st.facts, plan.finding)
+    weak = st.tx(plan.finding.data["weak"])
+    if adj is None or weak is None:
+        plan.errors.append("Die Ausbuchung lässt sich nicht (mehr) passend kürzen.")
+        return
+    wo, new_q, _short = adj
+    if _hide(st, weak, plan) is None or _hide(st, wo, plan) is None:
+        return
+    if new_q <= 0:
+        return  # die Ausbuchung bestand nur aus der doppelten Menge
+    value = _s(wo.value_eur * new_q / wo.from_qty) if wo.value_eur is not None and wo.from_qty else ""
+    row = {"datetime": _dt(wo), "type": "withdrawal", "tag": wo.tag or "lost", "from_account": wo.from_account or "",
+           "from_asset": wo.from_asset or "", "from_qty": _s(new_q), "to_account": "", "to_asset": "", "to_qty": "",
+           "fee_asset": "", "fee_qty": "", "fee_eur": "", "value_eur": value, "orig_price": "", "orig_ccy": "",
+           "related_asset": "",
+           "note": f"Ausbuchung gekürzt (Diagnose): {qty_exact(wo.from_qty or Decimal(0))} → {qty_exact(new_q)} "
+                   f"{wo.from_asset}; ersetzt {wo.tx_id}, die doppelte Gutschrift {weak.tx_id} ist ausgeblendet"}
+    _create(st, row, f"Ausbuchung {qty_exact(new_q)} {wo.from_asset} von {wo.from_account} (statt "
+                     f"{qty_exact(wo.from_qty or Decimal(0))})", plan, refs=wo.tx_id)
+
+
 def _migration(st: _State, plan: Plan) -> None:
     d = plan.finding.data
     r = st.tx(d.get("receipt") or "")
@@ -639,6 +665,8 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
     key = opt.key
     if key in ("hide_weak", "hide_strong"):
         _hide(st, st.tx(d["weak" if key == "hide_weak" else "strong"]), plan)
+    elif key == "hide_weak_adjust":
+        _hide_and_adjust_writeoff(st, plan)
     elif key == "hide_second":
         sel = _pair_sel(plan, d["pairs"])
         for a_id, b_id in d["pairs"] if sel else []:

@@ -43,8 +43,8 @@
   </section>{% endif %}
 
   {% if done %}
-  <section class="card"><div class="card-head"><h2>Geklärt ({{ done|length }})</h2></div>
-    <ul class="plain-list">{% for c in done %}<li><a href="/quality/klaerung/{{ c.key }}">{{ c.title }}</a> · {{ c.resolved_at|datetime_de if c.resolved_at else '' }}<div class="hint">{{ dims_text(c.dims) }}</div></li>{% endfor %}</ul>
-  </section>{% endif %}
+  <section class="card"><details id="erledigt"><summary><b>Erledigt – geklärt ({{ done|length }})</b> <span class="hint">– aufklappen, um einen Fall anzusehen oder die Übernahme zurückzunehmen</span></summary>
+    <ul class="plain-list" style="margin-top:8px">{% for c in done %}<li><a href="/quality/klaerung/{{ c.key }}">{{ c.title }}</a> · {{ c.resolved_at|datetime_de if c.resolved_at else '' }}<div class="hint">{{ dims_text(c.dims) }}</div></li>{% endfor %}</ul>
+  </details></section>{% endif %}
 </div>
 {% endblock %}

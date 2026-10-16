@@ -75,6 +75,10 @@ HOLDING_STATUS: dict[str, tuple[str, str, str]] = {
                   "Börse bzw. Blockchain meldet denselben Bestand; Abruf aktuell und ohne erkannte Lücke"),
     "extern_diff": ("Differenz zur externen Quelle", "crit",
                     "Börse bzw. Blockchain meldet einen anderen Bestand (aktueller, vollständiger Abruf)"),
+    "extern_ausgebucht": ("ausgebucht – Quelle zeigt die Menge weiter", "info",
+                          "die Abweichung entspricht genau der als Verlust, Diebstahl bzw. Burn ausgebuchten Menge "
+                          "(Totalverlust, Spam): Börse bzw. Blockchain zeigt sie weiterhin an – erwartet, keine "
+                          "Aufgabe"),
     "extern_unsicher": ("extern nicht bestätigt", "warn",
                         "externer Bestand liegt vor, aber der Abruf ist veraltet oder unvollständig – kein „stimmt“"),
     "intern_ok": ("intern konsistent", "info",
@@ -192,6 +196,7 @@ class HoldingRow:
     quality: str = ""  # Datenqualität (Abrufzustand bzw. Herkunft des Solls)
     confidence: str = ""  # Sicherheit der Diagnose (belegt | wahrscheinlich | verdacht | hinweis)
     tx_ids: list[str] = field(default_factory=list)  # Buchungen der erkannten möglichen Ursachen
+    writeoff: Decimal | None = None  # ausgebuchte Menge (Verlust/Diebstahl/Burn) bis zum Abrufzeitpunkt
     families: list[tuple[str, Decimal, int, datetime, datetime]] = field(default_factory=list)  # je Quelle
 
     @property

@@ -49,8 +49,13 @@ def _safe(plan: A.Plan) -> bool:
     for op in plan.ops:
         if op.kind in SAFE_OPS:
             continue
-        if not (op.kind == "create" and op.tx is not None and op.tx.type == "transfer" and hides >= 2):
-            return False
+        if op.kind == "create" and op.tx is not None and op.tx.type == "transfer" and hides >= 2:
+            continue
+        # gekürzte Ausbuchung: ersetzt eine ausgeblendete Ausbuchung gleicher Art durch eine kleinere Menge
+        if op.kind == "create" and op.tx is not None and op.tx.type == "withdrawal" and not op.tx.to_asset \
+                and (op.tx.tag or "").lower() in ("lost", "stolen", "burn") and hides >= 2:
+            continue
+        return False
     return True
 
 

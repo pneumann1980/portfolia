@@ -287,13 +287,45 @@ def recommend(report: Any, f: Finding) -> Recommendation:
     return rec
 
 
+WRITEOFF_TAGS = ("lost", "stolen", "burn")
+
+
+def writeoff_adjust(facts: Facts, f: Finding) -> tuple[Tx, Decimal, Decimal] | None:
+    """Wird die doppelte Gutschrift ausgeblendet, reicht der Bestand nicht mehr für eine spätere Ausbuchung (sie
+    enthielt die doppelte Menge mit). Rückgabe: (Ausbuchung, neue Menge, Fehlmenge) – die jüngste manuell gebuchte
+    Ausbuchung der Position, die die Fehlmenge aufnehmen kann – sonst ``None``."""
+    d = f.data or {}
+    weak = facts.tx(d.get("weak", ""))
+    snap = facts.snap
+    if weak is None or d.get("side") != "in" or not weak.to_qty or snap is None or snap.ledger is None \
+            or facts.pf is None:
+        return None
+    acc, aid = d["account"], d["asset"]
+    short = weak.to_qty - snap.ledger.balances.get((acc, aid), Decimal(0))
+    if short <= 0:
+        return None
+    cands = []
+    for t in facts.pf.txs:
+        m = snap.journal.get(t.tx_id) if t.origin == "journal" else None
+        mine = (m is not None and m.source == "manual") or (
+            t.origin == "import" and (t.source or "").lower() in ("manual", "portfolia:manual"))  # auch im Export
+        if t.type == "withdrawal" and (t.tag or "").lower() in WRITEOFF_TAGS and not t.to_asset \
+                and t.from_account == acc and t.from_asset == aid and t.from_qty and t.from_qty >= short \
+                and mine and facts.hideable(t) and t.ts >= weak.ts:
+            cands.append(t)
+    if not cands:
+        return None
+    wo = max(cands, key=lambda t: (t.ts, t.seq, t.tx_id))
+    return wo, wo.from_qty - short, short
+
+
 def _same_qty(facts: Facts, f: Finding) -> Recommendation | None:
     d = f.data
     weak, strong = facts.tx(d["weak"]), facts.tx(d["strong"])
     if weak is None or strong is None:
         return None
     q = weak.to_qty or weak.from_qty
-    likely = f.status == "wahrscheinlich"
+    likely = f.status in ("wahrscheinlich", "belegt")
     text = (f"{weak.tx_id} ausblenden. Die manuell erfasste Buchung bildet sehr wahrscheinlich denselben Vorgang ab "
             f"wie {strong.tx_id}, der durch einen Transaktions-Hash belegt ist. Vorher im Explorer bzw. beim Anbieter "
             f"prüfen, ob {_q(q)} {d['asset']} nur einmal auf {d['account']} gebucht wurden." if likely else
@@ -307,6 +339,17 @@ def _same_qty(facts: Facts, f: Finding) -> Recommendation | None:
         opts.append(Option("hide_strong", f"Stattdessen {strong.tx_id} ausblenden",
                            hide_text(strong) + f"; {weak.tx_id} bleibt. Sinnvoll, wenn die manuelle Buchung die "
                                                "genauere ist."))
+    adj = writeoff_adjust(facts, f) if facts.hideable(weak) else None
+    if adj is not None:
+        wo, new_q, short = adj
+        for o in opts:
+            o.recommended = False  # nur „ausblenden“ ließe den Bestand negativ werden
+        opts.insert(0, Option(
+            "hide_weak_adjust", f"{weak.tx_id} ausblenden und Ausbuchung {wo.tx_id} anpassen",
+            hide_text(weak) + f"; die Ausbuchung {wo.tx_id} ({_q(wo.from_qty)} {d['asset']}) enthielt die doppelte "
+            f"Menge mit und wird auf {_q(new_q)} gekürzt (Fehlmenge {_q(short)}), sonst wäre der Bestand negativ. "
+            "Beides lässt sich gemeinsam zurücknehmen.", recommended=True))
+        text += (f" Die Ausbuchung {wo.tx_id} wurde auf Basis der doppelten Menge gebucht und wird passend gekürzt.")
     opts.append(_dismiss("Beide Buchungen sind richtig – als geprüft markieren"))
     checks = _hash_checks(facts, [strong, weak], f"Explorer: Vorgang {strong.tx_id} ansehen")
     if not checks:

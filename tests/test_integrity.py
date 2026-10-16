@@ -38,9 +38,10 @@ def test_run_is_read_only_and_reports_duplicate_with_preferred_solution(cfg):  #
     assert r.ok and not r.stale and r.txs == 4
     assert finger(ctx.db) == before  # Buchungen, Zuordnungen, Entscheidungen unverändert
     dup = next(it for it in r.items if it.category == "dublette" and "TOKA" in it.title)
-    assert dup.severity == "kritisch" and dup.confidence == "hoch plausibel" and dup.status == "offen"
+    # Herkunft belegt (Kauf = Transfermenge + Gebühr, seit 0.30.0): Befund „belegt“ → Stufe „eindeutig“
+    assert dup.severity == "kritisch" and dup.confidence == "eindeutig" and dup.status == "offen"
     assert dup.preferred and dup.preferred_key and dup.finding_id
-    assert set(dup.tx_ids) >= {"M1", "T1"} and dup.cause_kind == "verdacht"
+    assert set(dup.tx_ids) >= {"M1", "T1"} and dup.cause_kind == "nachgewiesen"  # folgt dem Status „belegt“
     assert len({it.id for it in r.items}) == len(r.items)  # keine doppelten Befunde
     # gespeichert und wieder lesbar
     again = I.load(ctx.db)

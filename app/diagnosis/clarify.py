@@ -59,10 +59,11 @@ CENT = Decimal("0.01")
 CLARIFY_KINDS = frozenset({"duplicate", "transfer", "holdings", "loss", "reconstruction", "migration"})
 # Lösungen, die aus Belegen ableitbar sind und keine freie Eingabe brauchen (Bestandsdifferenzen erzeugen keine
 # Buchung: ``adjust``/``opening``/``book_migration`` und freie Auswahl gehören nicht dazu)
-CAND_OPTIONS = frozenset({"hide_weak", "hide_strong", "hide_second", "cover_twin", "cover", "link_econ",
-                          "link_econ_swap", "hide_import", "link", "stage"})
+CAND_OPTIONS = frozenset({"hide_weak", "hide_weak_adjust", "hide_strong", "hide_second", "cover_twin", "cover",
+                          "link_econ", "link_econ_swap", "hide_import", "link", "stage"})
 # Varianten derselben Deutung (nur die Darstellung – welche Seite bleibt – unterscheidet sich)
-FAMILY = {"link_econ": "econ", "link_econ_swap": "econ", "hide_weak": "hide", "hide_strong": "hide"}
+FAMILY = {"link_econ": "econ", "link_econ_swap": "econ", "hide_weak": "hide", "hide_strong": "hide",
+          "hide_weak_adjust": "hide"}
 AUTO_TYPES = frozenset({"verknüpfen"})  # automatisch ausführbare Aktionsart
 DEFAULT_LIMIT = 64  # Hypothesen je Gruppe (deterministisch)
 DEFAULT_BUDGET = 400  # Simulationen je Lauf
@@ -89,9 +90,10 @@ DIM_LABEL = {"bestand": "Bestand/Menge", "transfer": "Transfer und Gegenkonto", 
 DIM_STATE = {"geklaert": ("geklärt", "good"), "offen": ("offen", "warn"), "unbekannt": ("unbekannt", ""),
              "n/a": ("nicht betroffen", "")}
 EVIDENCE = {"identitaet": "Identität belegt (gemeinsamer Hash/Quellreferenz)",
+            "herkunft": "Herkunft belegt (gebuchte Zugänge = Transfermenge; zweite Gutschrift ohne Herkunft)",
             "betrag_gebuehr": "rechnerisch exakt erklärt (Brutto − Gebühr = Netto), keine Identität",
             "betrag": "nur Betrag/Zeit ähnlich – Suchhinweis, kein Beleg", "ohne": "kein Beleg"}
-_RANK = {"identitaet": 3, "betrag_gebuehr": 2, "betrag": 1, "ohne": 0}
+_RANK = {"identitaet": 3, "herkunft": 3, "betrag_gebuehr": 2, "betrag": 1, "ohne": 0}
 
 _RUN = threading.Lock()
 _FLAG = {"dirty": False}
@@ -317,6 +319,12 @@ def _evidence(report: Report, f: Finding, plan: A.Plan) -> tuple[str, list[str],
     txs = {t: idx.by_id.get(t) for t in tx_ids}
     if any(v is None for v in txs.values()) or not tx_ids:
         return "ohne", ["Buchungen nicht auffindbar"], False
+    # Herkunftskette: die gesamte Transfermenge stammt aus gebuchten Zugängen des Quellkontos – die zweite, gleich
+    # große Gutschrift am Ziel (ohne Hash, manuell erfasst) hat keine Herkunft und wird ausgeblendet
+    d = f.data or {}
+    if d.get("type") == "same_qty" and d.get("chain") and d.get("weak") in dropped:
+        return "herkunft", [e for e in f.evidence if e.startswith("Herkunft belegt")][:1] or [
+            "Herkunft der Transfermenge aus gebuchten Zugängen belegt"], True
     # Identität: gemeinsamer Hash oder gleiche Quellreferenz je Paar der Gegenüberstellung
     pairs: list[tuple[str, str]] = []
     for a, b, _w in f.pairs:
@@ -880,7 +888,7 @@ def decide(ctx: Any, report: Report, case: Case, truncated: bool) -> Decision:
         by_finding[c.finding_id].append(c)
     picks = {fid: _pick(report, case, cs) for fid, cs in sorted(by_finding.items())}
     # Pfad A: Identität belegt (gemeinsamer Hash/Quellreferenz) – maßgeblich ist der Beleg
-    ident = tuple(c for c, _why in picks.values() if c is not None and c.evidence == "identitaet")
+    ident = tuple(c for c, _why in picks.values() if c is not None and c.evidence in ("identitaet", "herkunft"))
     if ident:
         h_star = _hyp_for(case, ident)
         if h_star is None:
@@ -891,7 +899,8 @@ def decide(ctx: Any, report: Report, case: Case, truncated: bool) -> Decision:
         if not h_star.ok or not all(r[1] for r in rules):
             return Decision("blocked", h_star, "Beleglage eindeutig, aber die gemeinsame Simulation oder die "
                                                "Aktionsart steht der Übernahme entgegen.", rules)
-        return Decision("apply", h_star, "Identität belegt, gemeinsame Simulation unauffällig.", rules)
+        what = "Herkunft" if any(c.evidence == "herkunft" for c in h_star.cands) else "Identität"
+        return Decision("apply", h_star, f"{what} belegt, gemeinsame Simulation unauffällig.", rules)
     # Pfad B: rechnerisch erklärt – ein Bestandsnachweis muss genau eine Hypothese erfüllen
     calc = [h for h in ok if all(_RANK[c.evidence] >= 2 for c in h.cands)]
     for h in ok:
@@ -949,7 +958,9 @@ def _rules(case: Case, h: Hyp, path: str) -> list[tuple[str, bool, str]]:
     base = case.baseline
     rules: list[tuple[str, bool, str]] = []
     if path == "identitaet":
-        rules.append(("1 Belege", True, "Identität belegt (gemeinsamer Hash bzw. Quellreferenz)"))
+        rules.append(("1 Belege", True, "Herkunft der Menge belegt (gebuchte Zugänge = Transfermenge)"
+                      if any(c.evidence == "herkunft" for c in h.cands) else
+                      "Identität belegt (gemeinsamer Hash bzw. Quellreferenz)"))
         rules.append(("2 Eindeutigkeit", True, "keine konkurrierende Deutung derselben Buchungen"))
     else:
         ok_calc = all(_RANK[c.evidence] >= 2 for c in h.cands)
