@@ -11,20 +11,8 @@
     <p class="hint">Taucht ein Depot oder eine Börse zweimal auf – z. B. <span class="mono">Wertpapiere Broker unbekannt</span> aus dem kuratierten Import und <span class="mono">DKB</span> aus einem Datei-Import –, ordnet die Zusammenführung den Alias-Namen dem Ziel-Konto zu: <b>ohne Buchung, ohne Änderung der Rohdaten</b>, jederzeit rückgängig. Die Vorschau zeigt Bestände vorher/nachher, mögliche Doppelbuchungen, betroffene Datenquellen und die Wirkung auf FIFO/Steuer. Gleichartige Buchungen in beiden Konten entfernt Portfolia nicht selbst – die Diagnose legt sie danach zur Entscheidung vor.</p>
   </section>
 
-  <section class="card" id="vorschlaege">
-    <div class="card-head"><h2>Vorschläge ({{ cands|length }})</h2></div>
-    {% if cands %}
-    <p class="hint">Nur Vorschläge – ob zwei Konten wirklich dasselbe sind, entscheidest du. Die Richtung („wird zu“) lässt sich in der Vorschau tauschen. Hat ein Konto eine Datenquelle (Wallet/Börse), bleibt es als Ziel – die Quelle liefert künftig die besseren Daten.</p>
-    <div class="table-wrap cards-wrap"><table class="compact cards">
-      <thead><tr><th>Konto</th><th>wird zu</th><th>Hinweise</th><th>Buchungen</th><th></th></tr></thead>
-      <tbody>{% for c in cands %}<tr>
-        <td data-label="Konto" class="wrap-any">{{ c.alias }}</td>
-        <td data-label="wird zu" class="wrap-any">{{ c.target }}{% if c.target_source %}<div class="hint"><span class="badge good">Datenquelle</span> {{ c.target_source }}</div>{% endif %}</td>
-        <td data-label="Hinweise">{% if c.strong %}<span class="badge good">Adresse passt</span> {% endif %}<span class="hint">{{ c.reasons|join(' · ') }}</span></td>
-        <td data-label="Buchungen" class="num">{{ c.n_alias }} / {{ c.n_target }}</td>
-        <td><form method="post" action="/accounts/merge/preview" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="alias" value="{{ c.alias }}"><input type="hidden" name="target" value="{{ c.target }}"><button class="btn sm primary" type="submit">Vorschau …</button></form></td>
-      </tr>{% endfor %}</tbody></table></div>
-    {% else %}<p><span class="badge good">✓</span> Keine auffälligen Zwillingskonten gefunden – unten selbst auswählen.</p>{% endif %}
+  <section class="card" id="hinweis">
+    <p class="hint">Passende Datenquellen für Konten ohne Datenquelle schlägt Portfolia direkt unter <a href="/settings/datasources#konten">Datenquellen → Konten ohne Datenquelle</a> vor (mit Beleg, z. B. gleiche Adresse). Hier reicht es, die beiden Konten selbst zu wählen.</p>
   </section>
 
   <section class="card" id="manuell">
@@ -33,11 +21,22 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="grid-2">
         <label class="field">Konto, das verschwindet (Alias)
-          <select name="alias" id="merge-alias" data-peer="merge-target" required><option value="">– wählen –</option>{% for a in accounts %}{% if a.name != target %}<option value="{{ a.name }}" {% if a.name == alias %}selected{% endif %}>{{ a.label }}</option>{% endif %}{% endfor %}</select></label>
+          <select name="alias" id="merge-alias" data-peer="merge-target" required><option value="">– wählen –</option>{% for g, items in alias_groups %}<optgroup label="{{ g }}">{% for a in items %}<option value="{{ a.name }}" {% if a.name == alias %}selected{% endif %}>{{ a.label }}</option>{% endfor %}</optgroup>{% endfor %}</select></label>
         <label class="field">Konto, das bleibt (Ziel)
-          <select name="target" id="merge-target" data-peer="merge-alias" required><option value="">– wählen –</option>{% for a in accounts %}{% if a.name != alias %}<option value="{{ a.name }}" {% if a.name == target %}selected{% endif %}>{{ a.label }}</option>{% endif %}{% endfor %}</select></label>
+          <select name="target" id="merge-target" data-peer="merge-alias" required><option value="">– wählen –</option>{% for g, items in target_groups %}<optgroup label="{{ g }}">{% for a in items %}<option value="{{ a.name }}" {% if a.name == target %}selected{% endif %}>{{ a.label }}</option>{% endfor %}</optgroup>{% endfor %}</select></label>
       </div>
       <div><button class="btn primary" type="submit">Vorschau …</button></div>
+    </form>
+  </section>
+
+  <section class="card" id="entfernen">
+    <div class="card-head"><h2>Konto entfernen</h2></div>
+    <p class="hint">Ein Konto, das es nicht (mehr) geben soll – z. B. ein Test- oder Doppelkonto: Seine Buchungen werden <b>ausgeblendet</b> (nichts wird gelöscht, jederzeit rückgängig; Transfers zu anderen Konten sind ausgeschlossen). Eine Wallet bzw. Börse selbst entfernst du unter <a href="/settings/datasources">Datenquellen</a> („Entfernen“ – Zugangsdaten werden gelöscht, Buchungen bleiben).</p>
+    <form method="post" action="/accounts/remove/preview" class="row" style="gap:8px;flex-wrap:wrap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="field">Konto
+        <select name="account" required><option value="">– wählen –</option>{% for g, items in all_groups %}<optgroup label="{{ g }}">{% for a in items %}<option value="{{ a.name }}">{{ a.label }}</option>{% endfor %}</optgroup>{% endfor %}</select></label>
+      <div style="align-self:end"><button class="btn" type="submit">Vorschau …</button></div>
     </form>
   </section>
 
@@ -54,6 +53,17 @@
         <td>{% if h.status == 'active' %}<form method="post" action="/accounts/merge/{{ h.id }}/revert" class="inline" data-confirm="Zuordnung „{{ h.alias_account }}“ → „{{ h.target_account }}“ zurücknehmen? Bestände werden wieder je Konto geführt."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endif %}</td>
       </tr>{% endfor %}</tbody></table></div>
     {% else %}<p class="hint">Noch nichts zusammengeführt.</p>{% endif %}
+    {% if removed %}
+    <h3>Entfernte Konten</h3>
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Konto</th><th>Stand</th><th></th></tr></thead>
+      <tbody>{% for r in removed %}<tr>
+        <td data-label="Konto" class="wrap-any">{{ r.account }}</td>
+        <td data-label="Stand"><span class="badge {{ 'good' if r.status == 'active' else '' }}">{{ {'active': 'ausgeblendet', 'restored': 'aus Wiederherstellung (Buchungen nicht mehr im Bestand)'}.get(r.status, 'wieder eingeblendet') }}</span>
+          <div class="hint">{{ r.created_at|datetime_de }}{% if r.reverted_at %} · zurückgenommen {{ r.reverted_at|datetime_de }}{% endif %}</div></td>
+        <td>{% if r.status == 'active' %}<form method="post" action="/accounts/remove/{{ r.id }}/revert" class="inline" data-confirm="Konto „{{ r.account }}“ wieder einblenden?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endif %}</td>
+      </tr>{% endfor %}</tbody></table></div>
+    {% endif %}
   </section>
 </div>
 {% endblock %}

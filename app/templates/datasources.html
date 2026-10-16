@@ -273,6 +273,7 @@
       <details><summary class="btn sm">Neuer Import …</summary>
         {{ import_form('/settings/datasources/account-source', a.last, a.account, a.provider) }}</details>
       <form method="post" action="/settings/datasources/account-source" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ a.account }}"><input type="hidden" name="provider" value="{{ a.provider }}"><button class="btn ghost sm" type="submit">Als Datenquelle führen</button></form>
+      <form method="post" action="/accounts/remove/preview" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ a.account }}"><button class="btn ghost sm" type="submit" title="Buchungen des Kontos ausblenden (Vorschau, rückgängig)">Konto entfernen …</button></form>
     </div>
   </article>
   {% endfor %}

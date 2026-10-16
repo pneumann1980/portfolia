@@ -167,6 +167,9 @@ class AppContext:
             from app.assetchange.account_merge import apply_merges as apply_account_merges
 
             pf = apply_account_merges(self.db, pf)  # zusammengeführte Konten (Zuordnung, keine Buchung)
+            from app.assetchange.account_remove import apply_removals
+
+            pf = apply_removals(self.db, pf)  # entfernte Konten (Buchungen ausgeblendet, rückgängig)
             if self.demo is not None and pf is not start:
                 self._seed_demo(pf)
         with self._lock:
@@ -190,6 +193,10 @@ class AppContext:
             from app.assetchange.merge import active_map, map_txs
 
             extra = AM.map_txs(map_txs(extra, active_map(self.db)), AM.active_map(self.db))
+            from app.assetchange.account_remove import filter_txs, hidden_ids
+
+            hid = set().union(*hidden_ids(self.db).values()) if hidden_ids(self.db) else set()
+            extra = filter_txs(extra, hid)
         pf = dataclasses.replace(rec, txs=[*rec.txs, *extra]) if extra else rec
         with self._lock:
             self._pf = (key, pf)

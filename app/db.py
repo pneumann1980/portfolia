@@ -835,6 +835,20 @@ ALTER TABLE reference_balance ADD COLUMN qty_pnl TEXT;         -- offenes Ergebn
 ALTER TABLE reference_balance ADD COLUMN members_json TEXT;    -- combined: Konten, die zusammengefasst angezeigt werden
 ALTER TABLE reference_balance ADD COLUMN case_key TEXT;        -- für diesen Klärungsfall gezielt erfasst
 """),
+    (27, """
+-- Konto entfernen: Buchungen eines Kontos ausblenden (Überlagerung nach Buchungskennung, keine Löschung, rückgängig)
+CREATE TABLE IF NOT EXISTS account_remove (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  account       TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'active',   -- active | reverted
+  tx_ids_json   TEXT NOT NULL,                    -- zum Zeitpunkt des Entfernens ausgeblendete Buchungen
+  note          TEXT,
+  summary_json  TEXT,
+  created_at    TEXT NOT NULL,
+  reverted_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_account_remove_status ON account_remove(status, account);
+"""),
 ]
 
 

@@ -1426,6 +1426,28 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.29.2 – Konten zusammenführen: Gruppensortierung, Konto entfernen
+
+Beobachtet (Screenshot): Im Feld „Konto, das bleibt (Ziel)“ ließen sich gleichnamige Positionen nicht unterscheiden;
+Konten/Wallets/Börsen ließen sich nicht entfernen; die Vorschlagsliste auf der Zusammenführungsseite war überflüssig
+(die Empfehlung bei „Konten ohne Datenquelle“ genügt).
+
+* **Auswahl:** Alias und Ziel sind nach Gruppen sortiert (`Wallet-Gruppe …`, `Wallets`, `Börsen`, `Konten ohne
+  Datenquelle`), innerhalb natürlich (Zahlen numerisch). Einträge nennen Buchungszahl, Datenquelle, Anbieter und
+  Kurzadresse. Die Vorschlagsliste der Seite entfällt; es bleibt ein Hinweis auf die Karten bei den Datenquellen.
+* **Konto entfernen** (`/accounts/remove/preview` → Bestätigung → `…/apply`, Rücknahme `…/{id}/revert`): umkehrbare
+  Überlagerung über Buchungskennungen (Tabelle `account_remove`, Migration 27). Rohdaten und Importe bleiben unverändert;
+  die Buchungen werden nur aus dem wirksamen Bestand ausgeblendet. Spätere Buchungen gleichen Kontonamens bleiben
+  sichtbar. Vorschau mit Herkunft, betroffenen Beständen, FIFO-/Steuerjahren, Befunden vorher/nachher; Bestätigung nur
+  mit Fingerabdruck (Zustand zwischen Vorschau und Bestätigung geändert → abgelehnt); Verlauf mit Rücknahme.
+* **Sperren:** Konten mit Transfers zu anderen Konten werden nicht entfernt (sie würden Bestände dort verfälschen);
+  erst Transfer klären oder zusammenführen.
+* **Datenquellen:** Wallet/Börse (Datenquelle) wird mit der bestehenden Funktion „Entfernen“ gelöscht; die Vorschau
+  verweist darauf. Die Entfernung des Kontos löscht eine Datenquelle nie still.
+* **Export/Restore:** Entfernungen sind Teil des Voll-Exports (`account_removals`); der Export enthält nur den
+  wirksamen Bestand, daher werden sie nach Restore als „aus Wiederherstellung“ geführt (nicht mehr rücknehmbar).
+* **Grenzen:** Entfernen ist eine Ausblendung, keine Löschung; nach Restore nicht rücknehmbar; nur synthetische Tests.
+
 ## 0.29.1 – Konten zusammenführen: Datenquellen-Konten, Adresserkennung, Auswahl
 
 Beobachtet (Screenshots): Das Konto „Ledger (ADA)“ einer Wallet-Datenquelle fehlte in der Auswahl; „Cardano (ADA) -

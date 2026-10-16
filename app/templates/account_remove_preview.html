@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Vorschau Konto entfernen{% endblock %}
+{% block heading %}Vorschau: Konto „{{ p.account }}“ entfernen{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/accounts/merge#entfernen">← Konten</a></p>
+  <section class="card">
+    <div class="card-head"><h2>Buchungen von „{{ p.account }}“ ausblenden</h2>
+      <span class="hint">{{ p.n_txs }} Buchung{{ '' if p.n_txs == 1 else 'en' }}{% if p.first %} · {{ p.first|date_de }} – {{ p.last|date_de }}{% endif %}</span></div>
+    {% for e in p.errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+    {% if p.cross %}<ul class="small">{% for c in p.cross %}<li class="mono wrap-any">{{ c }}</li>{% endfor %}</ul>{% endif %}
+    {% for w in p.warnings %}<div class="alert warn"><span class="icon">!</span><div>{{ w }}</div></div>{% endfor %}
+    {% if p.origins %}<p class="hint">{% for o, n in p.origins.items() %}<span class="badge">{{ o }} · {{ n }}</span> {% endfor %}</p>{% endif %}
+    {% if p.sources %}
+    <h3>Datenquellen dieses Kontos</h3>
+    <ul class="plain-list">{% for sid, name, prov in p.sources %}<li>{{ name }} <span class="hint">({{ prov }})</span>
+      <form method="post" action="/settings/datasources/{{ sid }}/delete" class="inline" data-confirm="„{{ name }}“ entfernen? Zugangsdaten werden gelöscht, übernommene Buchungen bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Datenquelle entfernen</button></form></li>{% endfor %}</ul>
+    {% endif %}
+    {% if p.ok %}
+    <h3>Bestände, die im Portfolio fehlen werden</h3>
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Asset</th><th class="num">Bestand laut Buchungen</th></tr></thead>
+      <tbody>{% for b in p.balances %}<tr><td data-label="Asset">{{ b.asset }}</td><td class="num nowrap" data-label="Bestand">{{ b.qty|qty_exact }}</td></tr>
+      {% else %}<tr><td colspan="2" class="hint">Kein Bestand auf dem Konto.</td></tr>{% endfor %}</tbody></table></div>
+
+    <h3>Wirkung auf FIFO und Steuer je Jahr</h3>
+    {% if p.years %}
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Jahr</th><th class="num">Teile ohne Anschaffung</th><th class="num">Teile ≤ 1 Jahr Haltefrist</th><th class="num">Gewinn/Verlust</th></tr></thead>
+      <tbody>{% for y in p.years %}<tr {% if y.changed %}class="row-changed"{% endif %}>
+        <td data-label="Jahr"><b>{{ y.year }}</b>{% if y.changed %} <span class="badge warn">ändert sich</span>{% endif %}</td>
+        <td class="num" data-label="ohne Anschaffung">{{ y.missing_before }} → <b>{{ y.missing_after }}</b></td>
+        <td class="num" data-label="≤ 1 Jahr">{{ y.short_before }} → <b>{{ y.short_after }}</b></td>
+        <td class="num nowrap" data-label="Gewinn/Verlust">{{ y.gain_before|eur }} → <b>{{ y.gain_after|eur }}</b></td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<p class="hint">Keine Veräußerungen der betroffenen Assets – steuerlich keine Wirkung.</p>{% endif %}
+    {% if p.issues_before or p.issues_after %}
+    <h3>Auffälligkeiten des Ledgers</h3>
+    <ul class="small">{% for code in (p.issues_before.keys()|list + p.issues_after.keys()|list)|unique %}<li><span class="mono">{{ code }}</span>: {{ p.issues_before.get(code, 0) }} → <b>{{ p.issues_after.get(code, 0) }}</b></li>{% endfor %}</ul>
+    {% endif %}
+    <ul class="hint">{% for i in p.info %}<li>{{ i }}</li>{% endfor %}</ul>
+    <form method="post" action="/accounts/remove/apply" class="stack" style="gap:8px;margin-top:10px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ p.account }}"><input type="hidden" name="fp" value="{{ p.fp }}">
+      <label class="field">Notiz (optional)<input type="text" name="note" maxlength="200" placeholder="z. B. Testkonto"></label>
+      <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe die Vorschau geprüft und möchte die Buchungen des Kontos ausblenden.</label>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn primary" type="submit">Konto entfernen</button><a class="btn" href="/accounts/merge#entfernen">Abbrechen</a></div>
+    </form>
+    <p class="hint">Es wird nichts gelöscht: Rückgängig jederzeit unter <a href="/accounts/merge#durchgefuehrt">Durchgeführt</a>. Später neu eintreffende Buchungen desselben Kontonamens sind nicht betroffen.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

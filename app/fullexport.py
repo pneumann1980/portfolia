@@ -123,6 +123,11 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
         # zusammengeführte Zwillingskennungen (Zuordnung ohne Buchung; auch zurückgenommene für die Nachvollziehbarkeit)
         "asset_merges": _rows(db, "SELECT * FROM asset_merge ORDER BY id"),
         "account_merges": _rows(db, "SELECT * FROM account_merge ORDER BY id"),
+        # entfernte Konten: der Export enthält deren Buchungen nicht mehr – der Eintrag bleibt als Historie („aus
+        # Wiederherstellung“), ohne Buchungskennungen (nichts mehr einzublenden)
+        "account_removals": _rows(db, "SELECT account, CASE status WHEN 'active' THEN 'restored' ELSE status END AS "
+                                      "status, '[]' AS tx_ids_json, note, summary_json, created_at, reverted_at FROM "
+                                      "account_remove ORDER BY id"),
         "decision_rules": _rows(db, "SELECT kind, account, asset, max_status, note, status, created_at, off_at, "
                                     "applied_count, last_applied_at FROM decision_rule ORDER BY id"),
         # Referenzbestände (Prüfwerte der Diagnose, keine Buchungen) – auch entfernte, für die Nachvollziehbarkeit
@@ -299,7 +304,8 @@ JOURNAL_KEY = "restore.journal"  # laufende Wiederherstellung: Dateien, die nach
 _RESTORE_LOCK = threading.Lock()
 _LIST_KEYS = ("asset_sources", "plans", "plan_dismissed", "datasources", "event_decisions", "event_aliases",
               "tx_links", "csv_symbols", "csv_accounts", "csv_mappings", "deleted_journal", "diag_dismissed",
-              "asset_changes", "asset_merges", "account_merges", "decision_rules", "watchlists", "watchlist_items",
+              "asset_changes", "asset_merges", "account_merges", "account_removals", "decision_rules", "watchlists",
+              "watchlist_items",
               "reference_balances", "diag_research_events", "clarify_cases", "clarify_runs")
 _TMP_MARK = ".restore-"
 
@@ -510,6 +516,7 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
         counts["asset_changes"] = _insert(c, "asset_change", st.get("asset_changes"), "OR IGNORE")
         counts["asset_merges"] = _insert(c, "asset_merge", st.get("asset_merges"), "OR IGNORE")
         counts["account_merges"] = _insert(c, "account_merge", st.get("account_merges"), "OR IGNORE")
+        counts["account_removals"] = _insert(c, "account_remove", st.get("account_removals"), "OR IGNORE")
         counts["decision_rules"] = _insert(c, "decision_rule", st.get("decision_rules"), "OR IGNORE")
         counts["references"] = _insert(c, "reference_balance", st.get("reference_balances"), "OR IGNORE")
         counts["clarify_cases"] = _insert(c, "clarify_case", st.get("clarify_cases"), "OR IGNORE")

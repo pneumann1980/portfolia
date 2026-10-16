@@ -136,7 +136,10 @@ def test_web_dropdowns_exclude_each_other_and_show_source_accounts(cfg):
         assert "keine Buchungen · Datenquelle ADA" in target_sel
         assert ADA_ACC in alias_sel and ADA_ACC not in target_sel  # das Alias erscheint nicht als Ziel
         assert 'data-peer="merge-alias"' in target_sel and 'data-peer="merge-target"' in alias_sel
-        assert "Adresse passt" in page.text  # Vorschlag mit Adressbeleg
+        # die Empfehlung steht bei „Konten ohne Datenquelle“, hier wählt man selbst
+        assert "Vorschläge (" not in page.text
+        assert '<optgroup label="Wallets">' in target_sel
+        assert '<optgroup label="Konten ohne Datenquelle">' in alias_sel
         ds = c.get("/settings/datasources")
         assert "Mögliche Datenquelle:" in ds.text and "Mit „ADA“ zusammenführen" in ds.text
         assert "davon mit passender Datenquelle" in ds.text
@@ -153,3 +156,21 @@ def test_full_address_in_account_name_matches(cfg):
     add_source(ctx, "cardano", "ADA", "Ledger (ADA)", ADA_ADDR)
     c = next(c for c in AM.candidates(ctx) if c.target == "Ledger (ADA)")
     assert c.strong and "vollständige Adresse" in c.reasons[0]
+
+
+def test_groups_and_natural_order_in_selection(cfg):
+    from app.assetchange import account_merge_web as W
+
+    ctx = make_ctx(cfg, ROWS, ASSETS_W)
+    for i in (10, 2, 1):
+        add_source(ctx, "cardano", f"Konto {i}", f"Account {i}", None)
+    ctx.db.x("UPDATE data_source SET wallet_group='Ledger' WHERE name IN ('Konto 10', 'Konto 2')")
+    add_source(ctx, "kraken", "Kraken API", "Kraken", kind="exchange")
+    groups = dict(W._grouped(W._accounts(ctx)))
+    assert [a["name"] for a in groups["Wallet-Gruppe Ledger"]] == ["Account 2", "Account 10"]  # natürlich sortiert
+    assert [a["name"] for a in groups["Wallets"]] == ["Account 1"]
+    assert "Datenquelle Kraken API · Kraken" in groups["Börsen"][0]["label"]
+    order = [g for g, _ in W._grouped(W._accounts(ctx))]
+    assert order.index("Wallet-Gruppe Ledger") < order.index("Börsen") < order.index("Konten ohne Datenquelle")
+    assert all(a["name"] != "Account 2" for a in dict(W._grouped(W._accounts(ctx), exclude="Account 2"))[
+        "Wallet-Gruppe Ledger"])
