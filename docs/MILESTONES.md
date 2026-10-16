@@ -1426,6 +1426,22 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.30.2 – KAS-Sync: KRC-20 „prev“-Paginierung ohne Dauerstillstand (vormals als 0.29.4 geplant)
+
+Beobachtet: „Letzter Abruf … KRC-20 … Stillstand erkannt“ bei jedem Lauf, obwohl nichts fehlte.
+
+* **Ursache:** Der Kasplex-Indexer füllt eine `oplist?address=&prev=`-Seite, die weniger als 50 neue Operationen hat, mit den
+  *ältesten* Operationen der Adresse auf (Wrap-around). Die Seite war damit „voll“, wurde als „es kommt mehr“ gelesen,
+  setzte den Zeiger auf die Auffüller zurück und lieferte danach wieder dieselbe Seite → Stillstandsmeldung.
+* **Fix:** Nur Operationen **über** dem Zeiger zählen als neu. Enthält eine Seite Auffüller, ist sie die letzte; der
+  Zeiger rückt nur auf echt Neues, nichts wird erneut verarbeitet. Eine Seite mit 50 echt neuen Operationen läuft
+  weiter wie bisher; die Stillstandserkennung für wirklich festhängende Seiten bleibt als Sicherung bestehen.
+* **Tests:** Fake-Indexer mit Wrap-around (`FakeKaspa.wrap_prev`); drei Fälle (Neues + Auffüller, nur Auffüller, mehrere
+  volle neue Seiten) schlagen ohne den Fix fehl.
+* **Grenzen:** Setzt voraus, dass `opScore` je Adresse streng aufsteigend vergeben wird (laut Indexer-Verhalten der Fall).
+  Ein bereits gespeicherter, fehlerhaft zurückgesetzter Zeiger wird nicht rückwirkend korrigiert – der nächste Lauf
+  bringt ihn über die neuen Operationen wieder auf den höchsten Stand; Dubletten verhindert der Ereignisschlüssel.
+
 ## 0.30.1 – Buchungsformular: Konto/Asset wählbar; Diagnose mobil: Zahlen brechen um
 
 Beobachtet (Screenshots): Im Formular „Neue Buchung“ musste man Konto und Asset von Hand eintippen (die Browser-Liste

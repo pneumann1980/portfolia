@@ -281,6 +281,7 @@ class FakeKaspa(Recorder):
         super().__init__()
         self.txs, self.bal, self.ops, self.tokenlist, self.decimals = txs, balances, ops, tokenlist, decimals
         self.krc_status = "synced"
+        self.wrap_prev = False
 
     @staticmethod
     def _involves(t: dict[str, Any], a: str) -> bool:
@@ -328,6 +329,9 @@ class FakeKaspa(Recorder):
             if p.get("prev"):
                 page = sorted((o for o in mine if int(o["opScore"]) > int(p["prev"])),
                               key=lambda o: int(o["opScore"]))[:50]
+                if self.wrap_prev and len(page) < 50:  # Kasplex-Verhalten: kurze Seite wird mit den ältesten aufgefüllt
+                    fill = sorted((o for o in mine if o not in page), key=lambda o: int(o["opScore"]))
+                    page += fill[:50 - len(page)]
                 page.reverse()
             else:
                 nxt = int(p.get("next") or 9199999999999999999)

@@ -470,6 +470,10 @@ class KaspaConnector(WalletConnector):
         Zeiger rücken seitenweise vor, und zwar nur über vollständig verarbeitete Seiten; Operationen jünger als
         10 Minuten bleiben für den nächsten Lauf. Rückgabe: (Zeiger, Ereignisse, Fortsetzung nötig, Stillstand-Grund).
 
+        Auffüll-Seiten (0.29.4): Hat ein „prev“-Abruf weniger neue Operationen als eine Seite, füllt der Indexer mit den
+        ältesten Operationen auf. Diese liegen nicht über dem Zeiger und werden verworfen; die Seite gilt dann als
+        letzte (kein Stillstand, kein Wiederholen).
+
         Stillstand: liefert der Indexer auf einen Zeiger erneut dieselbe volle Seite (der Zeiger rückt nicht vor oder
         kehrt zu einem früheren Stand zurück), endet die Paginierung dieses Laufs mit konkretem Grund – statt bis zum
         Budgetende zu wiederholen. Der Zeiger bleibt auf den verarbeiteten Seiten; nichts wird übersprungen."""
@@ -484,12 +488,16 @@ class KaspaConnector(WalletConnector):
                 seen_heads = {st["head"]}
                 while True:
                     body = self._krc_get(krc, "/krc20/oplist", {"address": a, "prev": st["head"]}, "KRC-20-Vorgänge")
-                    ops = sorted(body.get("result") or [], key=lambda o: int(o.get("opScore") or 0))
+                    raw = sorted(body.get("result") or [], key=lambda o: int(o.get("opScore") or 0))
+                    # Der Indexer füllt eine kurze „prev“-Seite mit den ÄLTESTEN Operationen auf (Wrap-around). Echt neu
+                    # ist nur, was über dem Zeiger liegt; Auffüller sind bereits verarbeitet und beweisen: Ende erreicht.
+                    head = int(st["head"])
+                    ops = [o for o in raw if int(o.get("opScore") or 0) > head]
                     ready = [o for o in ops if int(o.get("mtsAdd") or 0) <= limit_ms]
                     for o in ready:
                         self._op(krc, a, o, st["dec"], events, skipped)
                         st["head"] = str(o.get("opScore"))
-                    if len(ops) < OP_PAGE or len(ready) < len(ops):
+                    if len(ops) < len(raw) or len(ops) < OP_PAGE or len(ready) < len(ops):
                         break
                     if st["head"] in seen_heads:
                         stall = (f"KRC-20: Indexer liefert für prev={st['head']} erneut dieselbe volle Seite "

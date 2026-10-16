@@ -384,6 +384,66 @@ def test_unchanged_full_krc20_page_does_not_repeat_endlessly(client, kas, monkey
     assert datasource_service(ctx(client)).get(sid).sched["stalls"] >= 2
 
 
+def _prev_calls(kas) -> list:
+    return [r for r in kas.calls if _oplist(r) and r.url.params.get("prev")]
+
+
+def test_prev_page_filled_up_with_oldest_ops_is_no_stall(client, kas):
+    """0.29.4: Kasplex füllt eine kurze „prev“-Seite mit den ältesten Operationen auf. Das ist weder Fortschritt noch
+    Stillstand: die Auffüller werden verworfen, die Seite gilt als letzte, der Zeiger rückt nur auf echt Neues."""
+    kas.ops = [op(n, "transfer", "NACHO", KAS, E, A) for n in range(1, 61)]
+    kas.wrap_prev = True
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS", sync_interval_min="1440", catchup_shown="1",
+                        catchup="1")
+    sync(client, sid)
+    assert len(all_rows(client, sid)) >= 60 and json.loads(source(client, sid)["cursor_json"])["krc20"]["done"]
+    assert json.loads(source(client, sid)["cursor_json"])["krc20"]["head"] == str(900_000_060)
+
+    kas.ops += [op(61, "transfer", "NACHO", 3 * KAS, E, A), op(62, "transfer", "NACHO", 4 * KAS, E, A)]
+    kas.calls.clear()
+    out = sync(client, sid)
+    st = source(client, sid)
+    cov = json.loads(st["coverage_json"])
+    assert out["status"] == "synced" and st["status"] == "synced", out
+    assert not cov["sched"].get("stalled")
+    assert cov["parts"]["krc20"]["state"] == "complete"
+    assert len(_prev_calls(kas)) == 1  # eine Seite genügt, kein Wiederholen
+    assert json.loads(st["cursor_json"])["krc20"]["head"] == str(900_000_062)  # Zeiger nur auf echt Neues
+    assert rows_for(client, sid, 5061, krc=True)[0].rec.in_qty == D("3")
+    assert rows_for(client, sid, 5062, krc=True)[0].rec.in_qty == D("4")
+    assert len(all_rows(client, sid)) >= 62  # keine Dubletten durch Auffüller
+
+
+def test_prev_page_with_only_filler_ends_without_change(client, kas):
+    kas.ops = [op(n, "transfer", "NACHO", KAS, E, A) for n in range(1, 61)]
+    kas.wrap_prev = True
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS", sync_interval_min="1440", catchup_shown="1",
+                        catchup="1")
+    sync(client, sid)
+    n_rows = len(all_rows(client, sid))
+    kas.calls.clear()
+    out = sync(client, sid)  # nichts Neues: die Seite besteht nur aus Auffüllern
+    cov = json.loads(source(client, sid)["coverage_json"])
+    assert out["status"] == "synced" and not cov["sched"].get("stalled")
+    assert len(_prev_calls(kas)) == 1 and len(all_rows(client, sid)) == n_rows
+    assert json.loads(source(client, sid)["cursor_json"])["krc20"]["head"] == str(900_000_060)
+
+
+def test_full_new_prev_page_still_continues_with_next_page(client, kas):
+    """Eine Seite mit 50 echt neuen Operationen ist nicht die letzte: es geht weiter, bis die Seite kürzer ist."""
+    kas.ops = [op(n, "transfer", "NACHO", KAS, E, A) for n in range(1, 11)]
+    kas.wrap_prev = True
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS")
+    sync(client, sid)
+    kas.ops += [op(n, "transfer", "NACHO", KAS, E, A) for n in range(11, 121)]  # 110 neue → 50 + 50 + 10(+Auffüller)
+    kas.calls.clear()
+    out = sync(client, sid)
+    assert out["status"] == "synced", out
+    assert json.loads(source(client, sid)["cursor_json"])["krc20"]["head"] == str(900_000_120)
+    assert len(_prev_calls(kas)) == 3
+    assert all(rows_for(client, sid, 5000 + n, krc=True) for n in (11, 60, 61, 120))
+
+
 def test_budget_end_in_the_middle_of_a_krc20_page_loses_nothing(client, kas, monkeypatch):
     ticks = [f"T{n:03d}" for n in range(50)]  # 50 verschiedene Tokens → je eine Anfrage für die Nachkommastellen
     kas.ops = [op(100 + i, "transfer", t, KAS, E, A) for i, t in enumerate(ticks)]
