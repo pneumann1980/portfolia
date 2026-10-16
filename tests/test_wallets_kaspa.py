@@ -429,6 +429,35 @@ def test_prev_page_with_only_filler_ends_without_change(client, kas):
     assert json.loads(source(client, sid)["cursor_json"])["krc20"]["head"] == str(900_000_060)
 
 
+def test_prev_page_returning_the_newest_ops_up_to_the_pointer_is_no_stall(client, kas, monkeypatch):
+    """Beobachtet auf echten Daten: prev=<Zeiger> liefert erneut dieselbe volle Seite, deren höchste Operation genau der
+    Zeiger ist (nichts Neues darüber). Das ist das Ende der Kette, kein Stillstand."""
+    kas.ops = [op(n, "transfer", "NACHO", KAS, E, A) for n in range(1, 61)]
+    sid = create_wallet(client, "kaspa", A, name="Kaspium KAS", sync_interval_min="1440", catchup_shown="1",
+                        catchup="1")
+    sync(client, sid)
+    head = json.loads(source(client, sid)["cursor_json"])["krc20"]["head"]
+    top = sorted(kas.ops, key=lambda o: -int(o["opScore"]))[:50]
+    real = kas.handler
+
+    def newest_again(req):
+        if _oplist(req) and req.url.params.get("prev"):
+            kas.calls.append(req)
+            return httpx.Response(200, json={"message": "successful", "result": top, "prev": top[0]["opScore"],
+                                             "next": top[-1]["opScore"]})
+        return real(req)
+
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(newest_again))
+    kas.calls.clear()
+    out = sync(client, sid)
+    st = source(client, sid)
+    cov = json.loads(st["coverage_json"])
+    assert head == top[0]["opScore"]
+    assert out["status"] == "synced" and not cov["sched"].get("stalled"), cov["sched"]
+    assert cov["parts"]["krc20"]["state"] == "complete" and len(_prev_calls(kas)) == 1
+    assert json.loads(st["cursor_json"])["krc20"]["head"] == head
+
+
 def test_full_new_prev_page_still_continues_with_next_page(client, kas):
     """Eine Seite mit 50 echt neuen Operationen ist nicht die letzte: es geht weiter, bis die Seite kürzer ist."""
     kas.ops = [op(n, "transfer", "NACHO", KAS, E, A) for n in range(1, 11)]
