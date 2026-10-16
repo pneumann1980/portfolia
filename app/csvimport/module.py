@@ -530,6 +530,21 @@ def make_router() -> APIRouter:
               if k != "status"}
         return f"/journal/csv/{bid}" + (f"?{urlencode(q)}" if q else "")
 
+    def _finish(request: Request, bid: int, f: dict[str, Any], msg: str = "") -> Response:
+        """Nach einer Einzel- oder Stapelaktion: auf der Prüfseite bleiben (an der Zeilenliste, nicht am Seitenanfang),
+        solange etwas offen ist – sonst zurück zur Übersicht der Börsen und Wallets (bzw. der Importe)."""
+        svc = csv_service(get_ctx(request))
+        b = svc.batch(bid)
+        if b is not None and b["status"] in ("done", "committed"):
+            if b["kind"] == "sync" and b["datasource_id"] and svc.db.scalar(
+                    "SELECT 1 FROM data_source WHERE id=?", (b["datasource_id"],)):
+                text = (f"Prüfung abgeschlossen: {source_label(b['source'])} – alle Vorgänge sind geklärt "
+                        f"(Stapel {bid}; im Verlauf des Stapels jederzeit rückgängig zu machen).")
+                return _back(request, "/settings/datasources?" + urlencode({"msg": text}) + f"#ds-{b['datasource_id']}")
+            if b["kind"] != "sync":
+                return _back(request, "/journal/csv")
+        return _back(request, _redir(bid, f, msg) + "#zeilen")
+
     @router.post("/journal/csv/{bid}/options")
     async def options(request: Request, bid: int) -> Response:
         svc = csv_service(get_ctx(request))
@@ -689,7 +704,7 @@ def make_router() -> APIRouter:
         if not await run_in_threadpool(svc.set_ignored, bid, key, bool(f.get("ignore")),
                                        str(f.get("reason") or "vom Nutzer entschieden")):
             return _batch_page(request, bid, errors=["Vorgang nicht gefunden."])
-        return _back(request, _redir(bid, f, "rows"))
+        return _finish(request, bid, f, "rows")
 
     @router.post("/journal/csv/{bid}/refresh-outdated")
     async def refresh_outdated(request: Request, bid: int) -> Response:
@@ -823,7 +838,7 @@ def make_router() -> APIRouter:
         if res.get("errors"):
             reason = p.items[0].note if p.items else ""
             return _batch_page(request, bid, errors=[*res["errors"], *([reason] if reason else [])])
-        return _back(request, _redir(bid, f, "action"))
+        return _finish(request, bid, f, "action")
 
     @router.post("/journal/csv/{bid}/actions/{aid}/undo")
     async def undo_action(request: Request, bid: int, aid: int) -> Response:

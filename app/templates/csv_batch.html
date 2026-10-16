@@ -22,7 +22,7 @@
 
 <section class="card">
   <div class="card-head"><h2>{{ b.filename }}</h2>
-    <div class="row"><span class="badge {{ 'good' if b.status in ('committed', 'done') else 'warn' if b.status in ('preview', 'partial') else '' }}">{{ batch_status.get(b.status, b.status) }}</span>
+    <div class="row">{% if b.kind == 'sync' and ds_exists %}<a class="btn sm ghost" href="/settings/datasources#ds-{{ b.datasource_id }}">← Börsen &amp; Wallets</a>{% elif b.kind != 'sync' %}<a class="btn sm ghost" href="/journal/csv">← Alle Importe</a>{% endif %}<span class="badge {{ 'good' if b.status in ('committed', 'done') else 'warn' if b.status in ('preview', 'partial') else '' }}">{{ batch_status.get(b.status, b.status) }}</span>
       <a class="btn sm ghost" href="/journal/csv/{{ b.id }}/file" download>{{ 'Rohdaten' if b.kind == 'sync' else 'Originaldatei' }}</a></div></div>
   <dl class="kv">
     {% if b.kind == 'sync' %}<dt>Datenquelle</dt><dd>{{ source_label(b.source) }}{% if ds_exists %} · <a href="/settings/datasources/{{ b.datasource_id }}">Einstellungen</a>{% else %} <span class="hint">(Datenquelle entfernt)</span>{% endif %}</dd>
@@ -311,11 +311,11 @@
         <td class="num" data-label="EUR-Wert">{% if r and r.value_eur %}{{ r.value_eur|eur }}{% if rc.value_src %}<div class="hint wrap">{{ rc.value_src }}</div>{% endif %}{% else %}–{% endif %}
           {% if rc.open and r and (rc.missing_value or rc.value_in) %}<input type="text" name="val_{{ rc.idx }}" value="{{ rc.value_in or '' }}" inputmode="decimal" placeholder="Wert in €" aria-label="EUR-Wert" style="max-width:8em">{% endif %}</td>
         <td data-label="Status"><span class="badge {{ status_badge.get(rc.status, '') }}">{{ status_label.get(rc.status, rc.status) }}</span>{% if rc.tx_id %} <span class="mono hint">{{ rc.tx_id }}</span>{% endif %}
-          {% if m and rc.open %}<div class="assess-badges">{{ am.badges(m) }}</div>{{ am.summary(m) }}{% endif %}
+          {% if m and rc.open %}<div class="assess-badges">{{ am.badges(m) }}</div>{% if m.rec %}{{ am.recommendation(m.rec) }}{{ am.summary(m, false) }}{% else %}{{ am.summary(m) }}{% endif %}{% endif %}
           {% if rc.pair_ref %}<div><span class="badge {{ 'good' if pair_accepted(rc) else '' }}">Transfer{{ '' if pair_accepted(rc) else '?' }}</span></div>{% endif %}
           {% for e in rc.errors %}<div class="hint"{% if rc.status != 'before' %} style="color:var(--crit-ink)"{% endif %}>{{ 'Zum Übernehmen fehlt: ' if rc.status == 'before' }}{{ e }}</div>{% endfor %}
-          {% for w in rc.warnings %}<div class="hint">{{ w }}</div>{% endfor %}</td>
-        <td class="decide" data-label="Übernehmen">{% if rc.open and (rc.status in ('new', 'duplicate', 'invalid', 'unclear') or rc.status == 'before' and not rc.errors) %}{% set bookable = rc.status in ('new', 'duplicate', 'before') %}<select name="dec_{{ rc.idx }}" aria-label="Zeile {{ rc.line }} übernehmen">
+          {% if m and rc.open and m.rec and rc.warnings %}<details class="tech"><summary class="hint">Technische Hinweise</summary>{% for w in rc.warnings %}<div class="hint">{{ w }}</div>{% endfor %}</details>{% else %}{% for w in rc.warnings %}<div class="hint">{{ w }}</div>{% endfor %}{% endif %}</td>
+        <td class="decide" data-label="Übernehmen">{% set rec = m.rec if m and rc.open and b.status in ('preview', 'partial') else none %}{% if rec %}{{ am.rec_actions(rec, b.id, rc.idx) }}<details class="more"><summary class="hint">Andere Entscheidung</summary>{% endif %}{% if rc.open and (rc.status in ('new', 'duplicate', 'invalid', 'unclear') or rc.status == 'before' and not rc.errors) %}{% set bookable = rc.status in ('new', 'duplicate', 'before') %}<select name="dec_{{ rc.idx }}" aria-label="Zeile {{ rc.line }} übernehmen">
             <option value="" {% if rc.decision is none %}selected{% endif %}>{{ ('auto: ' ~ ('ja' if rc.default_include else 'nein')) if bookable else 'offen' }}</option>
             {% if bookable %}<option value="include" {% if rc.decision == 'include' %}selected{% endif %}>ja</option>{% endif %}
             <option value="skip" {% if rc.decision == 'skip' %}selected{% endif %}>nicht übernehmen</option>
@@ -325,7 +325,7 @@
           {% if b.kind == 'sync' and rc.open and rc.rec.event_key %}
             {% if rc.status in ('unclear', 'duplicate', 'new', 'invalid', 'before') %}<div><button class="btn sm ghost" type="submit" formaction="/journal/csv/{{ b.id }}/ignore" name="ignore" value="{{ rc.rec.event_key }}" title="Dieser Vorgang wird bei keinem Abruf mehr zur Prüfung vorgelegt (Entscheidung gespeichert, jederzeit aufhebbar).">dauerhaft ignorieren</button></div>
             {% elif rc.status == 'ignored' and rc.warnings and rc.warnings[0].startswith('dauerhaft ignoriert') %}<div><button class="btn sm ghost" type="submit" formaction="/journal/csv/{{ b.id }}/ignore" name="release" value="{{ rc.rec.event_key }}">Ignorieren aufheben</button></div>{% endif %}
-          {% endif %}</td></tr>
+          {% endif %}{% if rec %}</details>{% endif %}</td></tr>
       {% if cmp or (m and rc.open and (m.ok or m.diff or m.add or m.fee)) %}<tr class="dup-row"><td colspan="9" class="wide">{% if m and rc.open %}{{ am.detail(m, m.cat in ('widerspruch', 'komplex') and rc.status == 'duplicate') }}{% endif %}{% if cmp %}{{ cmpm.compare_block(cmp, rc.status == 'duplicate') }}{% endif %}</td></tr>{% endif %}
     {% endfor %}</tbody>
   </table></div>

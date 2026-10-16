@@ -15,10 +15,10 @@
   <span class="badge {{ CONF_BADGE.get(m.conf, '') }}" title="Sicherheit (qualitativ)">{{ m.conf }}</span>{%- endif -%}
 {%- endmacro %}
 
-{% macro summary(m) -%}
+{% macro summary(m, why=true) -%}
   {%- if m -%}
   {%- set rel = (m.diff or [])|selectattr('sev', 'equalto', 'relevant')|list -%}
-  <div class="hint assess-why">{{ m.why }}{% if m.target %} · {{ m.target }}{% if m.role and m.role != 'same' %} ({{ ROLE_LABEL.get(m.role, m.role) }}){% endif %}{% endif %}</div>
+  {% if why %}<div class="hint assess-why">{{ m.why }}{% if m.target %} · {{ m.target }}{% if m.role and m.role != 'same' %} ({{ ROLE_LABEL.get(m.role, m.role) }}){% endif %}{% endif %}</div>{% endif %}
   {%- for d in rel[:2] %}<div class="hint assess-diff">≠ {{ d.t }}</div>{% endfor -%}
   {%- if m.fee and m.fee.state in ('conflict', 'open') %}<div class="hint assess-fee {{ m.fee.state }}">Gebühr: {{ 'Widerspruch' if m.fee.state == 'conflict' else 'nicht belegbar' }}</div>{% endif -%}
   {%- for h in (m.hints or [])[:2] %}<div class="hint">{{ h }}</div>{% endfor -%}
@@ -38,5 +38,19 @@
   </ul>
   {% if m.src %}<p class="hint">Quellen: neu {{ KIND.get(m.src.new, m.src.new) }} · vorhanden {{ KIND.get(m.src.old, m.src.old) }}{% if m.src.old_manual %} (in der App korrigiert bzw. manuell – hat Vorrang){% endif %}</p>{% endif %}
 </details>
+{%- endif -%}
+{%- endmacro %}
+
+{# Empfehlung in einfacher Sprache (assess.recommend): Überschrift, Begründung – die Aktion steht in der Spalte „Übernehmen“ #}
+{% macro recommendation(r) -%}
+<div class="rec rec-{{ r.tone }}"><b>Empfehlung: {{ r.head }}</b><div class="hint">{{ r.text }}</div></div>
+{%- endmacro %}
+
+{# Knopf zur Empfehlung: ein Klick führt sie aus (Protokoll und Rückgängig wie bei jeder Einzelaktion) #}
+{% macro rec_actions(r, bid, idx) -%}
+{%- if r.act in ('link', 'include') -%}
+<div><button class="btn sm primary" type="submit" formaction="/journal/csv/{{ bid }}/row-action" name="row_action" value="{{ r.act }}:{{ idx }}" title="Führt die Empfehlung aus – bucht {{ 'nichts' if r.act == 'link' else 'diese Zeile als neue Buchung' }}; im Verlauf rückgängig zu machen">{{ r.button }}</button></div>
+{%- else -%}
+{%- for o in r.options or [] %}<div><button class="btn sm" type="submit" formaction="/journal/csv/{{ bid }}/row-action" name="row_action" value="{{ o }}:{{ idx }}">{% if o == 'link' %}Mit {{ r.target }} verknüpfen{% else %}Als neue Buchung übernehmen{% endif %}</button></div>{% endfor -%}
 {%- endif -%}
 {%- endmacro %}

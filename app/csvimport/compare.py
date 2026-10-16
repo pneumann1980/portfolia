@@ -61,6 +61,7 @@ class Compare:
     deltas: list[str | None]  # je vorhandener Buchung: zeitlicher Abstand als Text
     more: list[str] = field(default_factory=list)  # weitere Verweise (ohne Spalte)
     new_title: str = "Neu"  # Spaltenkopf der verglichenen Seite („Neu“ im Prüf-Stapel, „Diese Buchung“ im Journal)
+    focus: str | None = None  # der Zeile zugeordnete vorhandene Buchung (bei mehreren gleich großen Kandidaten)
 
     @property
     def has_hash(self) -> bool:
@@ -254,4 +255,6 @@ def build(ctx: Any, rows: list[Any], origin: str) -> dict[int, Compare]:
         ids = list(dict.fromkeys(rc.dup_of))
         out[rc.idx] = _compare(new_side(rc, f"Zeile {rc.line}", origin), look.sides(ids[:MAX_SIDES]),
                                ids[MAX_SIDES:], "Neu")
+        if (rc.match or {}).get("group"):
+            out[rc.idx].focus = rc.match.get("target")
     return out

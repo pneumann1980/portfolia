@@ -742,6 +742,15 @@ label.sel-line { display: inline-flex; align-items: center; gap: 6px; cursor: po
 label.sel-line input { width: 18px; height: 18px; margin: 0; }
 .assess-badges { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px; }
 .assess-diff { color: var(--warn-ink); }
+.rec { margin: 6px 0 2px; padding: 6px 10px; border-left: 4px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.rec b { display: block; }
+.rec-good { border-left-color: var(--good-ink); background: var(--good-bg); }
+.rec-info { border-left-color: var(--info-ink); background: var(--info-bg); }
+.rec-warn { border-left-color: var(--warn-mark); background: var(--warn-bg); }
+td.decide details.more { margin-top: 6px; }
+td.decide details.more > summary { cursor: pointer; }
+details.tech { margin-top: 4px; }
+details.tech > summary { cursor: pointer; }
 .assess-fee.conflict { color: var(--crit-ink); }
 details.assess { margin: 0 0 6px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 details.assess > summary { cursor: pointer; font-size: .82rem; }

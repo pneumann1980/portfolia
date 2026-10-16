@@ -29,6 +29,9 @@ Verknüpfungen und Einordnung), manuelle Korrekturen haben immer Vorrang. Der Vo
 
 from __future__ import annotations
 
+import contextlib
+import copy
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -798,28 +801,260 @@ def assess_rows(ctx: Any, rows: list[Any], source: str, pf: Any) -> None:
                         "role": None, "action": "review", "ok": [], "add": [],
                         "diff": [{"f": "struct", "sev": "relevant", "t": "Abgleich nicht auswertbar – bitte prüfen"}],
                         "why": "Fehler im Abgleich"}
-    _competing(rows)
+    with contextlib.suppress(ArithmeticError, TypeError, ValueError, KeyError):  # nie die Auswertung blockieren
+        _competing(rows, books, kind, source, _claimed(ctx))
+    for rc in rows:
+        if rc.match and rc.open:
+            with contextlib.suppress(ArithmeticError, TypeError, ValueError, KeyError, AttributeError):
+                rc.match["rec"] = recommend(rc, rows)
 
 
-def _competing(rows: list[Any]) -> None:
-    """Mehrere offene Zeilen passen nur unscharf (gleiche Menge/Zeit, ohne Kennung oder Hash) auf *dieselbe*
-    vorhandene Buchung: höchstens eine kann sie sein. Keine davon gilt dann als sichere Dublette – sonst würden zwei
-    echte, gleich große Vorgänge mit einer Buchung verknüpft und einer ginge verloren. → einzeln prüfen."""
-    by_target: dict[str, list[Any]] = {}
+def _what(rc: Any) -> str:
+    """Kurzbeschreibung der Zeile für Empfehlungstexte: „Einzahlung 715 EUR · Bitpanda“."""
+    r = rc.row or {}
+    labels = {"deposit": "Einzahlung", "withdrawal": "Auszahlung", "buy": "Kauf", "sell": "Verkauf",
+              "transfer": "Transfer", "trade": "Tausch"}
+    kind = labels.get(str(r.get("type") or ""), "Vorgang")
+    legs = []
+    for side in ("to", "from"):
+        q, a = _d(r.get(f"{side}_qty")), r.get(f"{side}_asset")
+        if q and a:
+            legs.append(f"{_q(abs(q))} {a}")
+    acct = r.get("to_account") or r.get("from_account") or ""
+    return f"{kind} {' / '.join(legs)}".strip() + (f" · {acct}" if acct else "")
+
+
+def recommend(rc: Any, rows: list[Any]) -> dict[str, Any] | None:
+    """Klare Empfehlung zu einer offenen Zeile – in einfacher Sprache, mit der Aktion, die sie umsetzt.
+
+    ``act``: ``link`` (mit vorhandener Buchung verknüpfen, bucht nichts), ``include`` (als neue Buchung übernehmen)
+    oder ``choose`` (keine eindeutige Empfehlung: Nutzer entscheidet; ``options`` nennt die Möglichkeiten).
+    Die Empfehlung führt nichts aus – der Nutzer bestätigt mit einem Klick; Protokoll und Rückgängig wie bei jeder
+    Einzelaktion."""
+    m = rc.match
+    if not m or not rc.open or rc.status in ("known", "ignored", "before", "invalid"):
+        return None
+    cat, target, what = m["cat"], m.get("target"), _what(rc)
+    sug = m.get("suggest") or {}
+    grp = m.get("group")
+    diffs = [d["t"] for d in m.get("diff", []) if d["sev"] == "relevant"]
+    gap = next((d["t"] for d in m.get("diff", []) if d["f"] == "ts"), None)
+
+    def rec(act: str, head: str, text: str, button: str, tone: str = "good", **kw: Any) -> dict[str, Any]:
+        return {"act": act, "head": head, "text": text, "button": button, "tone": tone, "target": target, **kw}
+
+    if cat in ("dublette", "ergaenzung") and m.get("action") == "link" and target:
+        text = f"{what} ist bereits als {target} gebucht – dieselbe Angabe aus einer weiteren Quelle."
+        if grp:
+            text += (f" Es gibt {grp['n']} gleich große Vorgänge; diese Zeile gehört zeitlich zu {target}, die anderen "
+                     "zu den übrigen Buchungen.")
+        if m.get("add"):
+            text += " Ergänzt werden: " + ", ".join(a["t"] for a in m["add"][:3]) + "."
+        text += " Verknüpfen bucht nichts doppelt."
+        return rec("link", f"Mit {target} verknüpfen", text, f"Mit {target} verknüpfen")
+    if cat == "neu" and m.get("action") == "include":
+        text = f"Zu {what} gibt es keine Gegenbuchung im Bestand."
+        if m.get("hints"):
+            text = f"{m['hints'][0][0].upper()}{m['hints'][0][1:]}. " + text
+        return rec("include", "Als neue Buchung übernehmen", text, "Als neue Buchung übernehmen",
+                   "good" if m["conf"] in SAFE_CONF else "info")
+    if sug.get("act") == "link" and target:
+        n_rows = len([r for r in rows if r.open and r.match and r.match.get("target") == target
+                      and r.match.get("cat") == "komplex"])
+        text = (f"{what}: {n_rows} gleich große Zeilen passen auf nur eine vorhandene Buchung ({target}). "
+                "Diese Zeile liegt zeitlich am nächsten – die anderen sind dann eigene Vorgänge.")
+        return rec("link", f"Wahrscheinlich {target} – verknüpfen", text, f"Mit {target} verknüpfen", "info")
+    if sug.get("act") == "include":
+        text = (f"{what}: die ähnliche vorhandene Buchung passt zeitlich besser zu einer anderen Zeile. "
+                "Diese Zeile ist vermutlich ein eigener Vorgang.")
+        return rec("include", "Vermutlich eigener Vorgang – als neue Buchung übernehmen", text,
+                   "Als neue Buchung übernehmen", "info")
+    if cat == "neu":
+        return rec("choose", "Bitte prüfen", "; ".join(m.get("hints") or ["Zeile ist nicht eindeutig."]), "",
+                   "warn", options=["include"] if rc.row is not None and not rc.errors else [])
+    problem = diffs[0] if diffs else (gap or "Die Zuordnung ist nicht eindeutig.")
+    opts = (["link"] if target else []) + (["include"] if rc.row is not None and not rc.errors else [])
+    return rec("choose", "Bitte prüfen – nicht eindeutig", f"{what}: {problem}", "", "warn", options=opts)
+
+
+def _claimed(ctx: Any) -> set[str]:
+    """Vorhandene Buchungen, die bereits mit einem Datensatz verknüpft sind (ganze Buchung): ein weiterer Datensatz
+    gleicher Größe ist dann ein eigener Vorgang, nicht derselbe."""
+    try:
+        return {r["tx_id"] for r in ctx.db.q("SELECT DISTINCT tx_id FROM tx_link WHERE status='active' "
+                                             "AND COALESCE(role,'same')='same'")}
+    except sqlite3.Error:
+        return set()
+
+
+_BIG = 1e9  # Kosten einer nicht zulässigen Paarung (Sekunden; weit über jedem echten Zeitabstand)
+
+
+def _hungarian(a: list[list[float]]) -> list[int]:
+    """Kostenminimale Zuordnung (jede Zeile genau einer Spalte; Zeilen ≤ Spalten). Rückgabe: Spalte je Zeile."""
+    n, m = len(a), len(a[0])
+    inf = float("inf")
+    u, v, p, way = [0.0] * (n + 1), [0.0] * (m + 1), [0] * (m + 1), [0] * (m + 1)
+    for i in range(1, n + 1):
+        p[0], j0 = i, 0
+        minv, used = [inf] * (m + 1), [False] * (m + 1)
+        while True:
+            used[j0] = True
+            i0, delta, j1 = p[j0], inf, 0
+            for j in range(1, m + 1):
+                if not used[j]:
+                    cur = a[i0 - 1][j - 1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j], way[j] = cur, j0
+                    if minv[j] < delta:
+                        delta, j1 = minv[j], j
+            for j in range(m + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while j0:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+    res = [-1] * n
+    for j in range(1, m + 1):
+        if p[j]:
+            res[p[j] - 1] = j - 1
+    return res
+
+
+def _gap(rc: Any, old: Book) -> float:
+    """Zeitabstand in Sekunden zwischen Zeile und vorhandener Buchung (tagesgenaue Angaben zählen als 0)."""
+    if rc.rec.ts_missing or old.ts is None or rc.rec.date_only or old.date_only:
+        return 0.0
+    return abs((rc.ts - old.ts).total_seconds())
+
+
+def _optimal(rows: list[Any], cands: dict[int, list[str]], books: Books) -> dict[int, str]:
+    """Zeile (Index) → vorhandene Buchung: höchstmögliche Zahl Paare, dabei kleinster Gesamtzeitabstand."""
+    cols = sorted({t for r in rows for t in cands[r.idx]})
+    if not rows or not cols:
+        return {}
+    cost = [[(_gap(r, books.get(t)) if t in cands[r.idx] else _BIG) for t in cols] for r in rows]
+    if len(rows) <= len(cols):
+        pick = _hungarian(cost)
+        pairs = [(i, j) for i, j in enumerate(pick)]
+    else:  # mehr Zeilen als Buchungen: jede Buchung bekommt höchstens eine Zeile
+        pick = _hungarian([[cost[i][j] for i in range(len(rows))] for j in range(len(cols))])
+        pairs = [(i, j) for j, i in enumerate(pick)]
+    return {rows[i].idx: cols[j] for i, j in pairs if i >= 0 and cost[i][j] < _BIG}
+
+
+def _reassess(rc: Any, target: str, books: Books, kind: str, source: str) -> dict[str, Any] | None:
+    """Zeile gegen genau eine (zugeordnete) vorhandene Buchung bewerten."""
+    alt = copy.copy(rc)
+    alt.dup_of = [target]
+    alt.roles = {target: "same"}
+    return assess(alt, books, kind, source)
+
+
+def _competing(rows: list[Any], books: Books, kind: str, source: str, claimed: set[str]) -> None:
+    """Mehrere offene Zeilen passen nur unscharf (gleiche Menge/Zeit, ohne Kennung oder Hash) auf dieselben
+    vorhandenen Buchungen. Eine vorhandene Buchung kann höchstens eine dieser Zeilen sein – sonst gingen echte,
+    gleich große Vorgänge verloren. Deshalb wird je Gruppe zugeordnet:
+
+    * genauso viele Zeilen wie freie Buchungen (z. B. zwei gleich große Einzahlungen, zwei Buchungen der
+      Steuersoftware): jede Zeile bekommt ihre zeitlich nächste freie Buchung (kleinster Gesamtabstand) und
+      gilt wie eine einzelne Dublette – die Zuordnung ist wirtschaftlich gleichwertig, weil sich die Zeilen nur
+      im Zeitpunkt unterscheiden;
+    * mehr Zeilen als Buchungen: höchstens so viele Zeilen sind Dubletten, der Rest sind eigene Vorgänge –
+      welche Zeile welche ist, entscheidet der Nutzer (mit Vorschlag nach Zeitabstand, nie automatisch);
+    * mehr Buchungen als Zeilen: Zuordnung nicht eindeutig → einzeln prüfen;
+    * bereits mit einem anderen Datensatz verknüpfte Buchungen zählen nicht mehr als Kandidaten.
+    """
+    elig: list[Any] = []
+    cands: dict[int, list[str]] = {}
     for rc in rows:
         m = getattr(rc, "match", None)
-        if not m or not rc.open or m.get("basis") in IDENTITY or not m.get("target"):
+        if not m or not rc.open or m.get("basis") != "sig" or not m.get("target") or m.get("role") != "same":
             continue
-        by_target.setdefault(m["target"], []).append(rc)
-    for target, rcs in by_target.items():
-        if len(rcs) < 2:
+        ids = list(dict.fromkeys(rc.dup_of))
+        free = [t for t in ids if t not in claimed and books.get(t).found and books.get(t).status is None
+                and (rc.roles.get(t) or "same") == "same"]
+        if len(free) == len(ids):
+            pass
+        elif not free:  # alle ähnlichen Buchungen gehören schon zu anderen Datensätzen → eigener Vorgang
+            neu = _neu(rc)
+            neu["conf"] = "mittel"
+            neu["action"] = "include" if rc.row is not None and not rc.errors else "review"
+            neu["hints"] = [f"ähnliche vorhandene Buchung{'en' if len(ids) > 1 else ''} {', '.join(ids[:3])} "
+                            "gehört/gehören bereits zu einem anderen Datensatz – vermutlich ein eigener Vorgang",
+                            *neu["hints"]]
+            neu["why"] = "gleich große Vorgänge: die ähnlichen Buchungen sind bereits zugeordnet"
+            rc.match = neu
             continue
-        for rc in rcs:
+        elig.append(rc)
+        cands[rc.idx] = free
+    if not elig:
+        return
+    # Gruppen: Zeilen, die sich Kandidaten teilen
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for rc in elig:
+        for t in cands[rc.idx]:
+            parent[find(f"r{rc.idx}")] = find(t)
+    groups: dict[str, list[Any]] = {}
+    for rc in elig:
+        groups.setdefault(find(f"r{rc.idx}"), []).append(rc)
+    for grp in groups.values():
+        grp.sort(key=lambda r: (r.line or 0, r.idx))
+        pool = sorted({t for r in grp for t in cands[r.idx]})
+        n, k = len(grp), len(pool)
+        if n == 1:
+            rc = grp[0]
+            if k == 1 and rc.dup_of != [pool[0]]:  # die übrigen Kandidaten sind schon vergeben
+                m = _reassess(rc, pool[0], books, kind, source)
+                if m is not None:
+                    rc.match = m
+                    rc.dup_of = [pool[0]]
+            continue
+        assign = _optimal(grp, cands, books)
+        if n == k and len(assign) == n:
+            for rc in grp:
+                t = assign[rc.idx]
+                m = _reassess(rc, t, books, kind, source)
+                if m is None:
+                    continue
+                gap = _gap(rc, books.get(t))
+                m["ok"] = [f"{n} gleich große Zeilen ↔ {n} vorhandene Buchungen: nächstliegende freie Buchung {t} "
+                           "zugeordnet" + (f" (Abstand {_span_text(gap)})" if gap else ""), *m["ok"]][:8]
+                m["group"] = {"n": n, "lines": [r.line for r in grp], "targets": [assign[r.idx] for r in grp]}
+                rc.match = m
+                rc.dup_of = [t, *(x for x in rc.dup_of if x != t)]
+            continue
+        # keine eindeutige 1:1-Zuordnung: einzeln prüfen, mit Vorschlag nach Zeitabstand
+        if n > k:
+            msg = (f"{n - 1} weitere Zeile(n) dieses Stapels passen auf dieselbe Buchung {', '.join(pool[:3])} – "
+                   f"höchstens {k} Zeile(n) {'kann' if k == 1 else 'können'} diese sein; die anderen sind eigene "
+                   "Vorgänge")
+        else:
+            msg = (f"{n} Zeilen, aber {k} ähnliche vorhandene Buchungen ({', '.join(pool[:3])}) – "
+                   "die Zuordnung ist nicht eindeutig")
+        for rc in grp:
             m = rc.match
             m.update(cat="komplex", conf="mittel", action="review")
-            m["diff"] = [{"f": "struct", "sev": "relevant",
-                          "t": f"{len(rcs) - 1} weitere Zeile(n) dieses Stapels passen auf dieselbe Buchung {target} "
-                               "– höchstens eine kann diese sein; die anderen sind eigene Vorgänge"}, *m["diff"]][:8]
+            m["diff"] = [{"f": "struct", "sev": "relevant", "t": msg}, *m["diff"]][:8]
+            t = assign.get(rc.idx)
+            if n > k and t is not None:
+                m["suggest"] = {"act": "link", "target": t}
+            elif n > k:
+                m["suggest"] = {"act": "include"}
 
 
 def counts(rows: list[Any]) -> dict[str, int]:

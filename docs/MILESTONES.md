@@ -1426,6 +1426,35 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.29.3 – Prüf-Stapel: gleich große Vorgänge zuordnen, klare Empfehlungen, Rücksprung
+
+Beobachtet (Screenshot): Zwei gleich große Einzahlungen der Börse (10:47 und 10:48) standen im Bestand zwei Buchungen
+der Steuersoftware (10:46 und 10:47) gegenüber – beide Zeilen als „Komplexe Zuordnung, mittel“ ohne Lösung, obwohl zwei
+Kennungen und zwei korrekte Buchungen vorlagen.
+
+* **Ursache:** Beide Zeilen passten (gleiche Assets, Menge, Zeit ≤ 10 min) auf *beide* Buchungen. Die Schutzregel gegen
+  das Verknüpfen zweier echter Vorgänge mit einer Buchung (0.2x, AP3) stufte jede Zeile pauschal als „komplex“ ein –
+  auch dann, wenn eine eindeutige 1:1-Zuordnung existiert.
+* **Zuordnung statt Pauschalurteil** (`assess._competing`): Zeilen, die sich Kandidaten teilen, bilden eine Gruppe.
+  Kostenminimale Zuordnung nach Zeitabstand (ungarisches Verfahren, deterministisch, unabhängig von der Zeilenfolge).
+  * *Zeilen = freie Buchungen:* jede Zeile gilt wie eine einzelne Dublette/Ergänzung (Sicherheit „hoch“, Gruppenhinweis,
+    im Vergleich „zugeordnet“). Wirtschaftlich gleichwertig, weil sich die Zeilen nur im Zeitpunkt unterscheiden.
+  * *mehr Zeilen als Buchungen:* bleibt Einzelentscheidung (nie automatisch), mit Vorschlag nach Zeitabstand.
+  * *mehr Buchungen als Zeilen:* nicht eindeutig → einzeln prüfen.
+  * Bereits mit einem anderen Datensatz verknüpfte Buchungen sind keine Kandidaten mehr; eine Zeile, deren ähnliche
+    Buchungen alle vergeben sind, gilt als eigener Vorgang (Sicherheit „mittel“, nie vorausgewählt).
+* **Empfehlungen** (`assess.recommend`): je offener Zeile eine Überschrift und Begründung in einfacher Sprache („Mit X
+  verknüpfen – dieselbe Einzahlung ist schon gebucht“, „Als neue Buchung übernehmen“, „Bitte prüfen – nicht eindeutig“)
+  und ein Knopf, der sie per Einzelaktion ausführt (Protokoll und Rückgängig wie bisher). Technische Hinweise und die
+  übrigen Auswahlfelder stehen unter „Technische Hinweise“ bzw. „Andere Entscheidung“.
+* **Ablauf:** Nach einer Einzelaktion bleibt die Prüfseite an der Zeilenliste (nicht am Seitenanfang); sind alle
+  Vorgänge geklärt, geht es zurück zur Übersicht der Börsen und Wallets (bei CSV-Dateien zur Importliste). Oben auf der
+  Prüfseite steht ein fester Link dorthin.
+* **Grenzen:** Die Zuordnung bei gleich großen Vorgängen ist eine Annahme über die Zeitnähe; weicht die tatsächliche
+  Zuordnung ab, bleibt die Summe der Bestände identisch, nur Zeitpunkt/Kennung hängen an der anderen Buchung (im
+  Verlauf rückgängig zu machen). Stapelaktionen („Vorschläge ausführen“) verhalten sich unverändert; die Rückkehr zur
+  Übersicht gilt für Einzelaktionen und „dauerhaft ignorieren“.
+
 ## 0.29.2 – Konten zusammenführen: Gruppensortierung, Konto entfernen
 
 Beobachtet (Screenshot): Im Feld „Konto, das bleibt (Ziel)“ ließen sich gleichnamige Positionen nicht unterscheiden;
