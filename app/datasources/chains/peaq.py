@@ -22,9 +22,12 @@ Adressarten
         mit dem vorhandenen EVM-Adapter – vollständig inkl. Gas und Tokens. Über PubFi lässt diese Route keine
         Abfrageparameter zu (``query: deny`` laut OpenAPI).
 
-Grenze
-    Portfolia rechnet EVM-Adresse und Substrate-Konto nicht selbst um, sondern übernimmt nur die Auflösung durch
-    Subscan.
+Zuordnung 0x ↔ SS58
+    Findet Subscan zur 0x-Adresse kein Konto, berechnet Portfolia die Standard-Zuordnung der EVM-Seite selbst
+    (``blake2b-256("evm:" ‖ H160)``, Frontier ``HashedAddressMapping``) und fragt Subscan nach diesem Konto. Belegt am
+    10/2026: ``System.Account`` dieses Kontos (``state_getStorage``) und ``eth_getBalance`` der 0x-Adresse liefern
+    denselben Bestand. Ein per „Address Unification“ verknüpftes, abweichendes SS58-Konto löst weiterhin Subscan
+    selbst auf (Schritt 1).
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from typing import Any, ClassVar
 from app.datasources import connector as K
 from app.datasources.chainhttp import ENDPOINTS, ChainHttp, Endpoint, Stop
 from app.datasources.chains.addresses import PEAQ_SS58
-from app.datasources.chains.codec import ss58_decode, ss58_encode
+from app.datasources.chains.codec import evm_account_id, ss58_decode, ss58_encode
 from app.datasources.chains.evm import PeaqEvmConnector
 from app.datasources.chains.polkadot import PolkadotConnector
 from app.datasources.wallet import WalletConnector, units
@@ -61,6 +64,7 @@ class PeaqSubstrateConnector(PolkadotConnector):
     chain_label = "peaq"
     native = "PEAQ"
     nets: ClassVar[tuple[tuple[str, str, str], ...]] = (("peaq", "pq", "peaq"),)
+    rpc_nets: ClassVar[tuple[tuple[str, str], ...]] = ()  # EVM-RPC-Weg liegt im PeaqConnector
     decimals = 18
     ss58_prefix = PEAQ_SS58
     token_tag = "PEAQ"  # noqa: S105 - Kennung für Tokens, kein Geheimnis
@@ -125,19 +129,32 @@ class PeaqConnector(WalletConnector):
             return ENDPOINTS["subscan_evm"]
         return super().endpoint(cfg)
 
-    def _substrate_cfg(self, impl: PeaqSubstrateConnector, cfg: K.SourceConfig, secret: K.Secret) -> K.SourceConfig:
-        """0x-Adresse über PubFi: zugehöriges Substrate-Konto bei Subscan nachschlagen (``v2/scan/search``)."""
-        if not self.is_evm(cfg):
-            return cfg
-        evm = (cfg.address or "").lower()
-        with impl.http(cfg, secret, max_requests=4, deadline_s=60, network="peaq") as http:
-            data = impl._call(http, "v2/scan/search", {"key": evm}, "Substrate-Konto zur EVM-Adresse")
+    def _lookup(self, impl: PeaqSubstrateConnector, http: ChainHttp, key: str) -> bytes | None:
+        """Substrate-Konto (öffentlicher Schlüssel) laut Subscan-Suche zu einer Adresse; ``None`` = unbekannt."""
+        data = impl._call(http, "v2/scan/search", {"key": key}, "Substrate-Konto zur EVM-Adresse")
         acct = data.get("account") if isinstance(data, dict) else None
         raw = acct.get("address") if isinstance(acct, dict) else None
         try:
-            _prefix, pub = ss58_decode(str(raw or ""))
+            return ss58_decode(str(raw or ""))[1]
         except ValueError:
-            raise UnknownAccount(evm) from None
+            return None
+
+    def _substrate_cfg(self, impl: PeaqSubstrateConnector, cfg: K.SourceConfig, secret: K.Secret) -> K.SourceConfig:
+        """0x-Adresse über PubFi: zugehöriges Substrate-Konto bestimmen.
+
+        1. Subscan löst die 0x-Adresse selbst auf (``v2/scan/search``).
+        2. Sonst die Standard-Zuordnung der EVM-Seite (Frontier ``HashedAddressMapping``, :func:`evm_account_id`:
+           ``blake2b-256("evm:" ‖ H160)``) – dasselbe Konto, dessen Bestand ``eth_getBalance`` liefert. Subscan kennt es
+           unter dieser SS58-Adresse, auch wenn die 0x-Suche nichts findet (reine Substrate-Zugänge)."""
+        if not self.is_evm(cfg):
+            return cfg
+        evm = (cfg.address or "").lower()
+        with impl.http(cfg, secret, max_requests=6, deadline_s=60, network="peaq") as http:
+            pub = self._lookup(impl, http, evm)
+            if pub is None:
+                pub = self._lookup(impl, http, ss58_encode(evm_account_id(evm), PEAQ_SS58))
+        if pub is None:
+            raise UnknownAccount(evm)
         return replace(cfg, address=ss58_encode(pub, PEAQ_SS58))
 
     def _chain_state(self, addr: str) -> tuple[Decimal, int] | None:

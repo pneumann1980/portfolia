@@ -130,6 +130,12 @@ ENDPOINTS: dict[str, Endpoint] = {e.id: e for e in (
              read_timeout_s=75.0, block_param_alias=True,
              terms="ohne Key; offizieller Explorer scan.pulsechain.com (Blockscout) – Limit nicht beziffert, "
                    "Portfolia fragt höchstens 2×/s"),
+    Endpoint("blockscout_pulsechain_v2", "PulseChain-Explorer (Blockscout REST v2, ohne Key)",
+             "https://api.scan.pulsechain.com/api/v2", rps=2.0, docs="https://docs.blockscout.com/devs/apis/rest",
+             read_timeout_s=45.0,
+             terms="ohne Key; Listen je Adresse in Seiten zu 50 (neueste zuerst), Token-Transfers je Richtung – die "
+                   "ungefilterte Token-Liste und die Etherscan-kompatiblen Listen hängen bei Spam-lastigen Adressen "
+                   "(Stand 10/2026); Limit nicht beziffert – Portfolia fragt höchstens 2×/s"),
     Endpoint("pulsechain_rpc", "PulseChain RPC (rpc.pulsechain.com)", "https://rpc.pulsechain.com", rps=1.0,
              docs="https://pulsechain.com",
              terms="ohne Key; kopierter Bestand am Fork-Block (eine Anfrage je Adresse) und Bestandsabfrage als "
@@ -169,6 +175,13 @@ ENDPOINTS: dict[str, Endpoint] = {e.id: e for e in (
              key_provider="koios", rps_with_key=4.0, docs="https://api.koios.rest",
              terms="ohne Key: öffentlicher Tarif (5.000 Anfragen/Tag, 100 je 10 s); kostenloser Key (Bearer-Token, "
                    "koios.rest): 50.000 Anfragen/Tag"),
+    Endpoint("polkadot_rpc", "Polkadot öffentlicher RPC (Parity, Relay Chain)", "https://rpc.polkadot.io", rps=1.0,
+             docs="https://wiki.polkadot.network/docs/maintain-endpoints",
+             terms="ohne Key; nur Bestandsabfrage (state_getStorage System.Account) als Ausweichweg"),
+    Endpoint("polkadot_assethub_rpc", "Polkadot Asset Hub öffentlicher RPC (Parity)",
+             "https://polkadot-asset-hub-rpc.polkadot.io", rps=1.0,
+             docs="https://wiki.polkadot.network/docs/maintain-endpoints",
+             terms="ohne Key; nur Bestandsabfrage (state_getStorage System.Account) als Ausweichweg"),
     Endpoint("pubfi", "PubFi-Gateway für Subscan (kostenloser Key)",
              "https://api.pubfi.ai/v1/gateway/subscan/{network}", rps=1.5, auth="bearer", key_provider="pubfi",
              key_required=True, docs="https://support.subscan.io/doc-360177",
@@ -456,6 +469,9 @@ class ChainHttp:
         blocked = _blocked(resp)
         detail = f"HTTP {code}" + (f": „{msg}“" if msg and not blocked else "")
         rid = resp.headers.get("pubfi-request-id")
+        if "row_limit" in (msg or "").lower() and not blocked:  # Zeilenzahl je Anfrage über dem Limit der Route
+            return K.ConnectorError("row_limit", f"{self.ep.label} begrenzt die Zeilenzahl je Anfrage ({what}, "
+                                                 f"{detail}).")
         if self.ep.key_provider == "pubfi" and self._key and not blocked:
             ref = f" (Anfrage-ID {rid[:36]})" if rid else ""
             if code == 401:

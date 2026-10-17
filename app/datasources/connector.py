@@ -65,7 +65,8 @@ ERROR_KINDS = {"auth": "Zugangsdaten abgelehnt", "scope": "Berechtigung fehlt", 
                "rate_limit": "Anbieter drosselt Anfragen", "unavailable": "Anbieter vorübergehend nicht erreichbar",
                "gone": "Endpunkt nicht mehr unterstützt", "no_data": "Keine Daten beim Anbieter",
                "config": "Einstellung unvollständig", "data": "Unerwartete Antwort des Anbieters",
-               "unsupported": "Nicht unterstützt", "cancelled": "Abgebrochen"}
+               "unsupported": "Nicht unterstützt", "cancelled": "Abgebrochen",
+               "row_limit": "Zeilenzahl je Anfrage zu hoch"}
 
 
 class ConnectorError(Exception):

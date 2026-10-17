@@ -269,6 +269,16 @@ def ss58_encode(account_id: bytes, prefix: int = 0) -> str:
     return b58encode(data + hashlib.blake2b(b"SS58PRE" + data, digest_size=64).digest()[:2])
 
 
+def evm_account_id(h160: str) -> bytes:
+    """Substrate-Konto (32 Byte) zu einer EVM-Adresse (H160) nach der Standard-Zuordnung von Frontier-Chains
+    (``HashedAddressMapping<BlakeTwo256>``): ``blake2b-256(b"evm:" ‖ H160)``. Gilt für peaq: ``System.Account`` dieses
+    Kontos entspricht ``eth_getBalance`` der 0x-Adresse."""
+    raw = h160.lower().removeprefix("0x")
+    if len(raw) != 40:
+        raise ValueError("EVM-Adresse muss 20 Byte lang sein")
+    return hashlib.blake2b(b"evm:" + bytes.fromhex(raw), digest_size=32).digest()
+
+
 # ----------------------------------------------------------------------------------------------------
 # Kaspa-Adressen (kaspad: CashAddr-Prüfsumme, 8 Zeichen)
 # ----------------------------------------------------------------------------------------------------

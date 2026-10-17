@@ -33,6 +33,7 @@ Einordnung
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
@@ -42,7 +43,7 @@ from typing import Any, ClassVar
 from app.csvimport import model as M
 from app.csvimport.model import Rec
 from app.datasources import connector as K
-from app.datasources.chainhttp import ChainHttp, Stop
+from app.datasources.chainhttp import ENDPOINTS, ChainHttp, Stop
 from app.datasources.chains.codec import ss58_decode
 from app.datasources.wallet import (
     Move,
@@ -58,6 +59,10 @@ from app.datasources.wallet import (
 
 DOT_DECIMALS = 10
 ROW = 100
+ROW_STEPS = (100, 50, 20, 10, 5, 1)  # Zeilen je Anfrage: Rückfallstufen, wenn eine Route weniger zulässt
+_ROW_CAP: dict[str, int] = {}  # Endpunkt → zuletzt zulässige Zeilenzahl (je Prozess; spart Fehlversuche)
+# System.Account = twox128("System") ‖ twox128("Account") – feste Speicher-Präfix aller Substrate-Chains
+_SYSTEM_ACCOUNT = "26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9"
 MAX_PAGES = 100  # 10.000 Einträge je Liste und Lauf – danach Fortsetzung im nächsten Lauf
 NETS = (("polkadot", "rc", "Relay Chain"), ("assethub-polkadot", "ah", "Asset Hub"))
 ASSET_HUB_TAG = "DOTAH"
@@ -78,6 +83,10 @@ def amount(raw: Any, decimals: int = DOT_DECIMALS) -> Decimal:
         return Decimal(s)
     except InvalidOperation:
         raise ValueError("Betrag nicht lesbar") from None
+
+
+class _RowReduced(Exception):
+    """Die Route lässt weniger Zeilen je Anfrage zu: eine laufende Seitenfolge muss mit neuer Größe neu beginnen."""
 
 
 class _Net:
@@ -103,6 +112,9 @@ class PolkadotConnector(WalletConnector):
     chain_label = "Polkadot"
     native = "DOT"
     endpoints = ("pubfi", "subscan")
+    # öffentliche RPCs (Endpunkt, Anzeige) für den Bestand, wenn der Anbieter nichts liefert (peaq: eigener Weg)
+    rpc_nets: ClassVar[tuple[tuple[str, str], ...]] = (("polkadot_rpc", "Relay Chain"),
+                                                       ("polkadot_assethub_rpc", "Asset Hub"))
     # Netzparameter (Unterklassen, z. B. peaq): Netze (Subscan-Name, Kürzel, Anzeige), Dezimalstellen, SS58-Präfix
     nets: ClassVar[tuple[tuple[str, str, str], ...]] = NETS
     decimals: ClassVar[int] = DOT_DECIMALS
@@ -123,8 +135,30 @@ class PolkadotConnector(WalletConnector):
     def _path(http: ChainHttp, route: str) -> str:
         return f"/api/{route}" + (":free" if http.ep.id == "pubfi" else "")
 
+    @staticmethod
+    def _row(http: ChainHttp) -> int:
+        return min(ROW, _ROW_CAP.get(http.ep.id, ROW))
+
     def _call(self, http: ChainHttp, route: str, body: dict[str, Any], what: str) -> Any:
-        out = http.post(self._path(http, route), body, what=what)
+        """Eine Route aufrufen. Lehnt der Anbieter die Zeilenzahl ab (PubFi „row_limit_exceeded“), wird die nächst
+        kleinere Stufe versucht und gemerkt; eine Seitenfolge (``page`` > 0) beginnt dann neu (:class:`_RowReduced`)."""
+        while True:
+            try:
+                out = http.post(self._path(http, route), body, what=what)
+                break
+            except K.ConnectorError as e:
+                cur = int(body.get("row") or 0)
+                lower = next((r for r in ROW_STEPS if r < cur), None)
+                if e.kind != "row_limit" or lower is None:
+                    if e.kind == "row_limit":
+                        raise K.ConnectorError("scope", f"{http.ep.label} lehnt selbst eine einzelne Zeile je Anfrage "
+                                                        f"ab ({what}) – Konto bzw. Tarif beim Anbieter prüfen oder "
+                                                        "„Subscan direkt“ wählen.") from None
+                    raise
+                _ROW_CAP[http.ep.id] = lower
+                if int(body.get("page") or 0):
+                    raise _RowReduced from None
+                body = {**body, "row": lower}
         if not isinstance(out, dict):
             raise K.ConnectorError("data", f"Unerwartete Antwort von {http.ep.label} ({what}).")
         code = out.get("code")
@@ -181,7 +215,63 @@ class PolkadotConnector(WalletConnector):
                                            deadline_s=deadline_s)) for key, sh, label in self.nets]
 
     # -- Prüfen -------------------------------------------------------------------------------------------
+    @property
+    def rpc_endpoints(self) -> tuple[str, ...]:
+        """Endpunkte des RPC-Ausweichwegs (der Dienst prüft damit auch ohne Anbieter-Schlüssel)."""
+        return tuple(eid for eid, _label in self.rpc_nets)
+
+    def _rpc_balance(self, addr: str) -> tuple[Decimal, list[str]] | None:
+        """Bestand (frei + reserviert) laut öffentlichem RPC über alle Netze – ``System.Account`` per
+        ``state_getStorage``; ``None``, wenn kein RPC antwortet. Eine Abfrage je Netz, keine Historie."""
+        _prefix, pub = ss58_decode(addr)
+        key = "0x" + _SYSTEM_ACCOUNT + hashlib.blake2b(pub, digest_size=16).hexdigest() + pub.hex()
+        total, parts = Decimal(0), []
+        for eid, label in self.rpc_nets:
+            try:
+                with ChainHttp(ENDPOINTS[eid], transport=self.transport, sleep=self.sleep, clock=self.clock,
+                               max_requests=3, deadline_s=30, usage=self.usage) as http:
+                    raw = http.rpc("state_getStorage", [key], what="Bestand laut Kette")
+            except (K.ConnectorError, Stop):
+                return None
+            if raw is None:  # Konto existiert in diesem Netz nicht
+                continue
+            try:
+                data = bytes.fromhex(str(raw)[2:])
+                free, reserved = int.from_bytes(data[16:32], "little"), int.from_bytes(data[32:48], "little")
+            except ValueError:
+                return None
+            if len(data) < 48:
+                return None
+            qty = units(free + reserved, self.decimals)
+            total += qty
+            if qty:
+                parts.append(f"{label} {qty.normalize():f}")
+        return total, parts
+
     def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
+        """Verbindung prüfen. Scheitert der Anbieter (Schlüssel/Tarif/Ausfall), liefert ein öffentlicher RPC wenigstens
+        den aktuellen Bestand als Ist-Bestand für den Abgleich (nur Bestand, keine Historie); der Fehler des Anbieters
+        bleibt sichtbar."""
+        try:
+            return self._check_api(cfg, secret)
+        except (K.ConnectorError, Stop) as e:
+            if not self.rpc_nets or (isinstance(e, K.ConnectorError) and e.kind in ("cancelled", "config")):
+                raise
+            try:
+                fb = self._rpc_balance(self._addr(cfg))
+            except (K.ConnectorError, ValueError):
+                fb = None
+            if fb is None:
+                raise
+            qty, parts = fb
+            reason = getattr(e, "message", None) or str(e)
+            text = (f"Bestand laut öffentlichem RPC: {qty.normalize():f} {self.native}"
+                    + (f" ({' + '.join(parts)})" if len(parts) > 1 else "") + " (nur Bestand, keine Historie)")
+            return K.CheckResult(False, f"{reason} – {text}",
+                                 {"api": {"ok": False, "text": reason}, "balance": {"ok": True, "text": text}},
+                                 balances=[K.Balance(self.native, qty, self.chain_label, "laut öffentlichem RPC")])
+
+    def _check_api(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
         addr = self._addr(cfg)
         details: dict[str, Any] = {}
         nets = self._nets(cfg, secret, 24, 60)
@@ -211,7 +301,7 @@ class PolkadotConnector(WalletConnector):
         locked: dict[str, Decimal] = defaultdict(Decimal)
         tokens: dict[str, list[Any]] = {}
         for _key, _sh, label, http in nets:
-            data = self._call(http, "v2/scan/account/tokens", {"address": addr, "row": ROW, "page": 0},
+            data = self._call(http, "v2/scan/account/tokens", {"address": addr, "row": self._row(http), "page": 0},
                               "Bestand") or {}
             rows = data.get("list") if isinstance(data, dict) else None
             for r in rows or []:
@@ -250,17 +340,26 @@ class PolkadotConnector(WalletConnector):
     def _list(self, http: ChainHttp, route: str, field: str, addr: str, net: _Net, what: str,
               extra: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], int]:
         """Alle Einträge im Blockbereich (aufsteigend); (Einträge, vollständig bis Block)."""
-        out: list[dict[str, Any]] = []
         end = net.safe
-        for page in range(MAX_PAGES):
-            body = {"address": addr, "row": ROW, "page": page, "order": "asc",
-                    "block_range": f"{net.start}-{net.safe}", **(extra or {})}
-            self.report("Abruf", len(out), None, f"{net.label}: {what} ab Block {net.start:,}".replace(",", "."))
-            data = self._call(http, route, body, what) or {}
-            rows = [r for r in (data.get(field) if isinstance(data, dict) else None) or [] if isinstance(r, dict)]
-            out += rows
-            if len(rows) < ROW:
-                return out, end
+        while True:
+            row = self._row(http)
+            out: list[dict[str, Any]] = []
+            try:
+                for page in range(MAX_PAGES):
+                    body = {"address": addr, "row": row, "page": page, "order": "asc",
+                            "block_range": f"{net.start}-{net.safe}", **(extra or {})}
+                    self.report("Abruf", len(out), None,
+                                f"{net.label}: {what} ab Block {net.start:,}".replace(",", "."))
+                    data = self._call(http, route, body, what) or {}
+                    rows = [r for r in (data.get(field) if isinstance(data, dict) else None) or []
+                            if isinstance(r, dict)]
+                    out += rows
+                    if len(rows) < row:
+                        return out, end
+            except _RowReduced:
+                net.notes.append(f"{http.ep.label} begrenzt die Zeilen je Anfrage – jetzt {self._row(http)}")
+                continue  # Seitenfolge mit der kleineren Zeilenzahl neu beginnen
+            break
         blocks = [int(r.get("block_num") or 0) for r in out]
         net.capped.append(what)
         end = max(blocks) - 1 if blocks else net.start - 1

@@ -228,3 +228,127 @@ def test_pubfi_401_and_403_are_told_apart(client, scan):
     scan.fail_next(httpx.Response(401, json={"error": {"code": "pubfi.unauthorized", "message": "Unauthorized"}}))
     err = sync(client, sid)["error"]
     assert "kennt den Schlüssel nicht" in err and "pubfi.unauthorized" in err and "pubfi.ai" in err
+
+
+# ---- Zeilenlimit der kostenlosen Route, Bestand per öffentlichem RPC -----------------------------------------------
+
+def _row_capped(scan, limit: int, routes: tuple[str, ...], seen: list[int], min_page: int = 0):
+    real = scan.handler
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.host == "api.pubfi.ai" and any(r in req.url.path for r in routes):
+            body = json.loads(req.content or b"{}")
+            row, page = int(body.get("row") or 0), int(body.get("page") or 0)
+            seen.append(row)
+            if row > limit and page >= min_page:  # wie live: „row_limit_exceeded“ der kostenlosen Route
+                return httpx.Response(403, json={"error": {"code": "row_limit_exceeded",
+                                                           "message": "row limit exceeded for this route"}},
+                                      headers={"pubfi-request-id": "req-row"})
+        return real(req)
+
+    return handler
+
+
+def test_row_limit_of_the_free_route_reduces_rows_and_is_remembered(client, scan, monkeypatch):
+    """Beobachtet (10/2026): PubFi lehnte die Bestandsabfrage mit row=100 ab (HTTP 403 „row_limit_exceeded“). Die
+    Zeilenzahl wird stufenweise verkleinert (100 → 50 → 20 …), die zulässige Stufe für den Prozess gemerkt."""
+    seen: list[int] = []
+    monkeypatch.setattr(WalletConnector, "transport",
+                        httpx.MockTransport(_row_capped(scan, 20, ("account/tokens",), seen)))
+    monkeypatch.setattr(PD, "_ROW_CAP", {})
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    ok, msg = datasource_service(ctx(client)).check(sid)
+    assert ok, msg
+    assert seen[:3] == [100, 50, 20]  # Stufen bis zur zulässigen Größe
+    assert PD._ROW_CAP == {"pubfi": 20} and balances(client, sid)["DOT"] == "35"
+    seen.clear()
+    assert datasource_service(ctx(client)).check(sid)[0]
+    assert set(seen) == {20}  # gemerkt: keine Fehlversuche mehr
+
+
+def test_row_limit_in_the_middle_of_a_paged_list_restarts_with_smaller_pages(client, scan, monkeypatch):
+    seen: list[int] = []
+    monkeypatch.setattr(PD, "ROW", 2)
+    monkeypatch.setattr(PD, "_ROW_CAP", {})
+    monkeypatch.setattr(WalletConnector, "transport",
+                        httpx.MockTransport(_row_capped(scan, 1, ("v2/scan/transfers",), seen, min_page=1)))
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    res = sync(client, sid)
+    assert res["status"] == "synced", res
+    rows = all_rows(client, sid)
+    assert rows[k("rc", "100-2", "tr:5")].rec.in_qty == D(50) and rows[k("rc", "110-1", "tr:3")].rec.out_qty == D(10)
+    assert PD._ROW_CAP == {"pubfi": 1}
+    assert len([r for r in rows if "rc-100" in r]) == len({r for r in rows if "rc-100" in r})  # keine Dubletten
+
+
+def test_row_limit_even_for_a_single_row_is_a_clear_scope_error(client, scan, monkeypatch):
+    """Selbst eine Zeile wird abgelehnt: klare Meldung, der Bestand kommt trotzdem aus dem öffentlichen RPC."""
+    seen: list[int] = []
+    monkeypatch.setattr(PD, "_ROW_CAP", {})
+    monkeypatch.setattr(WalletConnector, "transport",
+                        httpx.MockTransport(_row_capped(scan, 0, ("account/tokens",), seen)))
+    _with_rpc_on(monkeypatch, free=2 * 10**10)
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    ok, msg = datasource_service(ctx(client)).check(sid)
+    assert not ok and "einzelne Zeile" in msg and "Subscan direkt" in msg
+    assert "Bestand laut öffentlichem RPC: 2 DOT" in msg
+    assert seen == [100, 50, 20, 10, 5, 1]  # alle Stufen versucht
+
+
+def _with_rpc_on(monkeypatch, free: int, reserved: int = 0):
+    """Wie :func:`_with_rpc`, aber über dem bereits gesetzten Transport (z. B. mit Zeilenlimit)."""
+    cur = WalletConnector.transport
+    inner = cur.handler  # type: ignore[union-attr]
+
+    class _Scan:
+        handler = staticmethod(inner)
+
+    return _with_rpc(_Scan, monkeypatch, free, reserved)
+
+
+def _with_rpc(scan, monkeypatch, free: int, reserved: int = 0, on_assethub: bool = True):
+    """Öffentliche Parity-RPCs: ``state_getStorage`` für System.Account (SCALE AccountInfo, 80 Byte)."""
+    real = scan.handler
+    asked: list[dict] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.host in ("rpc.polkadot.io", "polkadot-asset-hub-rpc.polkadot.io"):
+            body = json.loads(req.content)
+            asked.append({"host": req.url.host, **body})
+            assert body["method"] == "state_getStorage"
+            if req.url.host.startswith("rpc.") or not on_assethub:
+                return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": None})
+            info = (0).to_bytes(16, "little") + free.to_bytes(16, "little") + reserved.to_bytes(16, "little") \
+                + bytes(32)
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": "0x" + info.hex()})
+        return real(req)
+
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(handler))
+    return asked
+
+
+def test_without_any_key_the_balance_still_comes_from_the_public_rpc(client, scan, monkeypatch):
+    """Kein PubFi-Schlüssel (oder Anbieter gesperrt): Bestand laut öffentlichem RPC als Ist-Bestand."""
+    asked = _with_rpc(scan, monkeypatch, free=350_000_000_000, reserved=10_000_000_000)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")  # kein Schlüssel
+    ok, msg = datasource_service(ctx(client)).check(sid)
+    assert not ok and "Schlüssel" in msg and "Bestand laut öffentlichem RPC: 36 DOT" in msg
+    assert balances(client, sid) == {"DOT": "36"}
+    assert not [c for c in scan.calls if c.url.host == "api.pubfi.ai"]
+    from app.datasources.chains.codec import ss58_decode
+
+    pub = ss58_decode(ME)[1]
+    key = asked[0]["params"][0]
+    assert key.startswith("0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9")
+    assert key.endswith(pub.hex())
+    assert {a["host"] for a in asked} == {"rpc.polkadot.io", "polkadot-asset-hub-rpc.polkadot.io"}
+
+
+def test_unknown_account_on_both_chains_has_balance_zero_via_rpc(client, scan, monkeypatch):
+    _with_rpc(scan, monkeypatch, free=0, on_assethub=False)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    ok, msg = datasource_service(ctx(client)).check(sid)
+    assert not ok and "Bestand laut öffentlichem RPC: 0 DOT" in msg and balances(client, sid) == {"DOT": "0"}

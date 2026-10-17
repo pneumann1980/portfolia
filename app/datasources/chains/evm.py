@@ -48,7 +48,8 @@ from typing import Any, ClassVar
 from app.csvimport import model as M
 from app.csvimport.model import Rec
 from app.datasources import connector as K
-from app.datasources.chainhttp import ChainHttp, Stop
+from app.datasources.chainhttp import ENDPOINTS, ChainHttp, Stop
+from app.datasources.chains.blockscout_v2 import MAX_PAGES, BlockscoutV2, unix
 from app.datasources.wallet import (
     Move,
     TxView,
@@ -210,8 +211,6 @@ class EvmConnector(WalletConnector):
 
     def _rpc_balance(self, addr: str) -> Decimal | None:
         """Nativer Bestand laut öffentlichem RPC (``eth_getBalance``); ``None``, wenn keiner antwortet."""
-        from app.datasources.chainhttp import ENDPOINTS
-
         for eid in self.rpc_endpoints:
             try:
                 with ChainHttp(ENDPOINTS[eid], transport=self.transport, sleep=self.sleep, clock=self.clock,
@@ -453,7 +452,7 @@ class EvmConnector(WalletConnector):
                 if block > through:
                     continue  # nächste Etappe
                 slot = by_hash[h]
-                slot["block"] = block
+                slot["block"] = max(block, slot.get("block") or 0)  # 0 = unbekannt (Token-Transfers aus Blockscout v2)
                 slot["ts"] = r.get("timeStamp")
                 if key == "n":
                     slot["n"] = r
@@ -538,6 +537,8 @@ class EvmConnector(WalletConnector):
                     moves.append(Move(native, value, _sub(base + (":in" if both else ""), k)))
                 if frm == addr:
                     moves.append(Move(native, -value, _sub(base + (":out" if both else ""), k)))
+                if r.get("note"):
+                    hints.append(str(r["note"]))
                 raw_moves.append({"kind": "internal", "from": frm, "to": to, "value": str(r.get("value")),
                                   "trace": tid or None})
             seen_t: Counter[str] = Counter()
@@ -581,7 +582,7 @@ class EvmConnector(WalletConnector):
                 raw_moves.append({"kind": "token", "contract": contract, "from": frm, "to": to, "value": raw_v,
                                   "decimals": dec_raw, "symbol": (sym or "")[:20]})
                 meta["dec"] = meta.get("dec") if meta.get("dec") is not None else int(dec_raw)
-        raw = {"block": slot.get("block"), "from": (n or {}).get("from"), "to": (n or {}).get("to"),
+        raw = {"block": slot.get("block") or None, "from": (n or {}).get("from"), "to": (n or {}).get("to"),
                "fee": f"{fee.normalize():f}" if fee else None, "status": "failed" if failed else "ok",
                "confirmed": True, "min_confirmations": self.confirmations, "moves": raw_moves[:20]}
         return TxView(self.provider, h, ts, moves, fee=fee, fee_asset=native, initiated=initiated,
@@ -904,8 +905,41 @@ class PulseChainConnector(EvmConnector):
               "Beim Fork kopierter PLS-Bestand: einmalige Eröffnung zur Prüfung (aus eth_getBalance am Fork-Block); "
               "kopierte Tokens werden nicht eröffnet, Abweichungen zeigt die Bestandsprüfung")
 
+    # -- Blockscout REST v2 (Standardweg) ------------------------------------------------------------------
+    now_s = staticmethod(lambda: int(datetime.now(UTC).timestamp()))
+    safe_age_s = 600  # jüngere Einträge folgen im nächsten Lauf (Finalität/Reorg: 32 Blöcke ≈ 5 Minuten + Puffer)
+    overlap_s = 3600  # Überlappung des Fortsetzungspunkts (spät indexierte Einträge); Dubletten fängt die Kennung ab
+
+    def _v2(self) -> ChainHttp:
+        return ChainHttp(ENDPOINTS["blockscout_pulsechain_v2"], transport=self.transport, sleep=self.sleep,
+                         clock=self.clock, max_requests=self.max_requests, deadline_s=self.deadline_s,
+                         usage=self.usage)
+
+    def _check_api(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
+        addr = self._addr(cfg)
+        details: dict[str, Any] = {}
+        with self._v2() as http:
+            api = BlockscoutV2(http, addr)
+            bal = units(api.native_balance(), 18)
+            details["balance"] = {"ok": True, "text": f"Bestand {bal.normalize():f} {self.native}"}
+            n = int(str(api.counters().get("transactions_count") or 0))
+            details["history"] = {"ok": True, "text": f"Historie abrufbar, {n} Transaktion(en) laut Explorer" if n
+                                  else "Historie abrufbar – noch keine eigene Transaktion"}
+            nft = api.has_nft()
+            details["nft"] = {"ok": not nft, "text": "NFT-Bewegungen vorhanden – werden nicht gebucht (Abdeckungs"
+                                                     "grenze)" if nft else "keine NFT-Bewegungen gefunden"}
+        return K.CheckResult(True, f"{self.chain_label}: Adresse {short(addr)} über {http.ep.label} lesbar.", details,
+                             balances=[K.Balance(self.native, bal, self.chain_label)])
+
     def fetch(self, cfg: K.SourceConfig, secret: K.Secret, cursor: dict[str, Any] | None) -> K.FetchResult:
-        res = super().fetch(cfg, secret, cursor)
+        try:
+            res = self._fetch_v2(cfg, cursor)
+        except K.ConnectorError as e:
+            if e.kind not in ("gone", "data"):
+                raise
+            res = super().fetch(cfg, secret, cursor)  # Schnittstelle geändert: Etherscan-kompatibler Weg
+            res.warnings.append(f"Blockscout v2 nicht nutzbar ({e.message}) – stattdessen die Etherscan-kompatiblen "
+                                "Listen verwendet")
         if int((cursor or {}).get("block", 0) or 0) > self.first_block:
             return res  # Eröffnung nur beim Erstabruf (bekannte Kennung wird ohnehin erkannt)
         addr = self._addr(cfg)
@@ -927,9 +961,117 @@ class PulseChainConnector(EvmConnector):
                                                rec.label))
         return res
 
-    def _fork_balance(self, addr: str) -> Decimal:
-        from app.datasources.chainhttp import ENDPOINTS
+    def _fetch_v2(self, cfg: K.SourceConfig, cursor: dict[str, Any] | None) -> K.FetchResult:
+        """Abruf über die REST-API v2: Listen neueste zuerst bis zum Fortsetzungspunkt (Zeitstempel), nur Einträge
+        älter als ``safe_age_s``; der Fortsetzungspunkt rückt erst nach lückenlosem Lesen vor."""
+        addr = self._addr(cfg)
+        w = self.watch(cfg)
+        cur = dict(cursor or {})
+        tokens_seen: dict[str, dict[str, Any]] = dict(cur.get("tokens") or {})
+        res = K.FetchResult(complete=True)
+        safe_ts = self.now_s() - self.safe_age_s
+        with self._v2() as http:
+            api = BlockscoutV2(http, addr, lambda t: self.report("Abruf", 0, None, t))
+            ts0 = int(cur["ts"]) if cur.get("ts") else 0
+            if not ts0 and int(cur.get("block", 0) or 0) > self.first_block:  # Fortsetzungspunkt der Etherscan-Zeit
+                try:
+                    ts0 = api.block_ts(int(cur["block"]))
+                except K.ConnectorError:
+                    ts0 = 0  # alles erneut lesen – bekannte Kennungen werden erkannt
+            since = max(ts0 - self.overlap_s, 0) if ts0 else 0
+            lists: dict[str, list[dict[str, Any]]] = {"txlist": api.transactions(since),
+                                                      "txlistinternal": api.internal(since)}
+            if w.tokens:
+                lists["tokentx"] = api.tokens(since)
+            start_ts = int(PULSE_START.timestamp())
 
+            def keep(r: dict[str, Any]) -> bool:  # PulseChain-Historie, bestätigt (der Explorer führt die kopierte
+                # Ethereum-Historie mit; Blocknummer 0 = unbekannt, dann entscheidet der Zeitstempel)
+                ts, blk = int(r["timeStamp"]), int(r["blockNumber"])
+                return start_ts <= ts <= safe_ts and (blk == 0 or blk >= self.first_block)
+
+            for k, rows in lists.items():
+                lists[k] = sorted((r for r in rows if keep(r)), key=lambda r: (int(r["timeStamp"]), r["hash"]))
+            by_hash = {r["hash"]: r["blockNumber"] for k in ("txlist", "txlistinternal") for r in lists[k]
+                       if r["blockNumber"] != "0"}
+            for r in lists.get("tokentx", []):  # Blocknummer aus derselben Transaktion, sonst unbekannt (0)
+                r["blockNumber"] = by_hash.get(r["hash"], r["blockNumber"])
+            events, skipped, _delta = self._events(addr, lists, 10**15, tokens_seen)
+            if not api.capped:
+                events += self._balance_gaps(addr, api, lists, since, safe_ts)
+            res.events = events
+            res.skipped = dict(skipped)
+            for what in api.capped:
+                res.gaps.append(f"{http.ep.label}: {what} an der Seitengrenze ({MAX_PAGES} Seiten) beendet – ältere "
+                                "Einträge fehlen ggf.; der nächste Lauf liest ab dem Fortsetzungspunkt weiter")
+            res.complete = not api.capped
+            top = max((int(r["blockNumber"]) for rows in lists.values() for r in rows), default=0)
+            block = max(top, int(cur.get("block", 0) or 0), self.first_block + 1)
+            res.cursor = {"v": 2, "ts": safe_ts if res.complete else ts0, "block": block,
+                          "tokens": _trim_tokens(tokens_seen)}
+            try:
+                res.balances = self._balances_v2(api, addr, tokens_seen)
+            except (K.ConnectorError, Stop):
+                res.balances = None
+            res.coverage = {"mode": "historisch" if not ts0 else "ab Fortsetzungspunkt", "api": "Blockscout REST v2",
+                            "since": since or None, "to_ts": safe_ts, "operations": len(events),
+                            "provider": http.ep.label,
+                            "records": {a: len(v) for a, v in lists.items()}, **http.stats()}
+        return res
+
+    def _balance_gaps(self, addr: str, api: BlockscoutV2, lists: dict[str, list[dict[str, Any]]], since: int,
+                      safe_ts: int) -> list[K.SourceEvent]:
+        """Bestandsverlauf-Abgleich des nativen Coins: Der Knoten meldet je Block die Änderung des Bestands (``delta``).
+        Was davon durch die Transaktionen, internen Bewegungen und Gebühren des Blocks nicht erklärt ist (z. B. interne
+        Gutschrift ohne Spur beim Indexer), wird als eigener Vorschlag zur Prüfung vorgelegt – nie still verworfen und
+        nie als bekannter Vorgang behandelt. Ohne diesen Abgleich fehlte der Betrag im Bestand dauerhaft."""
+        explained: dict[int, int] = defaultdict(int)
+        for r in lists.get("txlist", []):
+            blk = int(r["blockNumber"])
+            if r["from"] == addr:
+                explained[blk] -= int(r["gasUsed"] or 0) * int(r["gasPrice"] or 0)
+            if r["isError"] != "1":
+                explained[blk] += int(r["value"] or 0) * ((r["to"] == addr) - (r["from"] == addr))
+        for r in lists.get("txlistinternal", []):
+            if r["isError"] != "1":
+                explained[int(r["blockNumber"])] += int(r["value"] or 0) * ((r["to"] == addr) - (r["from"] == addr))
+        out: list[K.SourceEvent] = []
+        for it in api.balance_history(since):
+            try:
+                blk, delta = int(it["block_number"]), int(str(it["delta"]))
+                ts = ts_from_unix(unix(it.get("block_timestamp")))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if blk < self.first_block or int(ts.timestamp()) > safe_ts:
+                continue
+            rest = delta - explained.get(blk, 0)
+            if rest == 0:
+                continue
+            h = str(it.get("transaction_hash") or "")
+            where = f"Transaktion {h}" if h else "ohne Transaktion"
+            hint = (f"Bestandsänderung laut Knoten in Block {blk:,} ({where}) ohne zugehörige Bewegung in den Listen "
+                    f"des Explorers – möglicherweise eine interne Gutschrift/Abbuchung ohne Spur; Art prüfen"
+                    ).replace(",", ".")
+            view = TxView(self.provider, f"bal-{blk}", ts, [Move(self.native, units(rest, 18), f"b:{blk}")],
+                          fee_asset=self.native, plain=False, hint=hint, label="Bestandsänderung ohne Bewegungsspur",
+                          raw={"block": blk, "delta": str(delta), "explained": str(explained.get(blk, 0)),
+                               "transaction": h or None, "source": "coin-balance-history"})
+            recs = classify(view)
+            if recs:
+                out.append(event(self.provider, view.txid, addr, ts, recs, view.label))
+        return out
+
+    def _balances_v2(self, api: BlockscoutV2, addr: str, tokens: dict[str, dict[str, Any]]) -> list[K.Balance]:
+        out = [K.Balance(self.native, units(api.native_balance(), 18), self.chain_label)]
+        wanted = [(c, m) for c, m in sorted(tokens.items()) if not m.get("spam") and m.get("dec") is not None]
+        if wanted:
+            have = api.token_balances()
+            for contract, meta in wanted[:MAX_TOKEN_BALANCES]:
+                out.append(K.Balance(token_key(meta.get("sym"), self.chain_tag, contract),
+                                     units(have.get(contract, 0), int(meta["dec"])), meta.get("name")))
+        return out
+
+    def _fork_balance(self, addr: str) -> Decimal:
         with ChainHttp(ENDPOINTS["pulsechain_rpc"], transport=self.transport, sleep=self.sleep, clock=self.clock,
                        max_requests=3, deadline_s=30) as http:
             body = http.post("", {"jsonrpc": "2.0", "id": 1, "method": "eth_getBalance",
