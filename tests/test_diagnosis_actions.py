@@ -497,3 +497,33 @@ def test_dismissals_travel_with_the_full_export(cfg):
     counts = apply(ctx, iid)
     assert counts["checked"] == 1 and A.active_dismissals(ctx.db)[f.id].note == "zwei Eingänge belegt"
     assert apply(ctx, iid)["checked"] == 0  # nicht doppelt
+
+
+def test_transfer_link_keeps_both_fees_on_their_accounts_and_undo_restores(cfg):
+    """C erhält 2 BTC, sendet 1 BTC an D; C zahlt zusätzlich 0,01, D zusätzlich 0,02: nach der Verknüpfung weiterhin
+    C = 0,99 und D = 0,98 BTC – die Empfängergebühr wird eine eigene Buchung am Zugangskonto."""
+    rows = [tx("E0", "2025-02-01T09:00:00Z", "deposit", to=("C", "BTC", "2"), value="60000"),
+            tx("W1", "2025-02-02T10:00:00Z", "withdrawal", frm=("C", "BTC", "1"), fee=("BTC", "0.01", "300"),
+               value="30000"),
+            tx("D1", "2025-02-02T10:40:00Z", "deposit", to=("D", "BTC", "1"), fee=("BTC", "0.02", "600"),
+               value="30000")]
+    ctx = make_ctx(cfg, rows, ASSETS)
+
+    def bal():
+        return {k: v for k, v in ctx.ledger().balances.items() if k[1] == "BTC" and v}
+
+    before = bal()
+    assert before == {("C", "BTC"): Decimal("0.99"), ("D", "BTC"): Decimal("0.98")}
+    rep, f, plan = plan_for(ctx, "transfer", "link")
+    kinds = [(op.kind, op.tx.type if op.tx else None, op.tx.tag if op.tx else None) for op in plan.ops]
+    assert kinds == [("create", "transfer", None), ("create", "withdrawal", "fee"), ("hide", None, None),
+                     ("hide", None, None)]
+    fee = plan.ops[1].tx
+    assert (fee.from_account, fee.from_asset, fee.from_qty) == ("D", "BTC", Decimal("0.02"))
+    assert plan.ops[0].tx.fee_qty == Decimal("0.01")  # die Abgangsgebühr bleibt am Transfer (Abgangskonto)
+    eff = A.preview(ctx, rep, plan)
+    assert all(p.bal[0] == p.bal[1] for p in eff.positions)  # Vorschau: Bestände je Konto unverändert
+    did = A.apply(ctx, f.id, "link", plan.params, plan.token).decision_id
+    assert bal() == before
+    assert A.undo(ctx, did).ok
+    assert bal() == before

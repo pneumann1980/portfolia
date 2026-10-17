@@ -77,6 +77,7 @@ BASIS_LABEL = {
     "jpair": "Transfer mit bereits übernommener Buchung",
     "asset_mismatch": "gleiche Menge, Konto und Zeit, aber anderes Asset",
     "conversion_twin": "derselbe Umtausch aus einem anders benannten Ausgangs-Asset (Ticker-Umbenennung?)",
+    "revision": "gleiche Kennung derselben Quelle, aber geänderter Inhalt (Revision der Quelle)",
 }
 IDENTITY = frozenset({"ext", "event", "link", "ref", "id", "hash", "hash_full", "file_dup"})
 SAME_SOURCE = frozenset({"ext", "event", "file_dup", "link"})  # nichts zu verknüpfen: bereits entschieden/übernommen
@@ -706,6 +707,11 @@ def assess(rc: Any, books: Books, new_kind: str, source: str) -> dict[str, Any] 
     if old.status in ("deleted", "reverted", "replaced"):
         state = {"deleted": "gelöscht", "reverted": "rückgängig gemacht", "replaced": "ersetzt"}[old.status]
         acc.d("struct", "relevant", f"vorhandene Buchung {target} ist {state}")
+    if basis == "revision":  # geänderte Lieferung derselben Kennung: Konflikt, alte und neue Fassung bleiben erhalten
+        for t in ((getattr(rc, "revision", None) or {}).get("diffs") or []):
+            acc.d("struct", "relevant", f"Quellenrevision: {t}")
+        acc.fix.append(f"Nicht zusätzlich buchen. Prüfen, welche Fassung stimmt: Stimmt die neue, die Buchung {target} "
+                       "bearbeiten (Vorschau mit Wirkung); stimmt die alte, die neue Lieferung nicht übernehmen")
     # Felder
     seconds = _cmp_time(acc, new, old, role, delayed_ok=basis in TRANSFER_BASES)
     if role == "part":

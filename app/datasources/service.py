@@ -2028,8 +2028,11 @@ class DataSourceService:
         das Ereignis erneut vorgelegt. Gebuchte bzw. verknüpfte Ereignisse werden wie bisher erneut abgeglichen und als
         „bekannt“ erkannt (ohne neuen Prüf-Stapel). Geänderte Daten in offenen Stapeln ersetzt :meth:`_repair`."""
         out: dict[str, bool] = {}
-        for r in self._open_rows(sid):
+        open_rows = self._open_rows(sid)
+        for r in open_rows:
             out[r["event_key"]] = out.get(r["event_key"], False) or r["status"] not in DONE_ROWS
+        for ev in self._revised(open_rows, recs):  # gebucht, aber der Anbieter liefert jetzt anderen Inhalt
+            out.pop(ev, None)
         closed: dict[str, list[Any]] = defaultdict(list)
         for r in self.db.q("SELECT r.event_key, r.status, r.tx_id, r.rec_json FROM csv_row r JOIN csv_batch b ON "
                            "b.id = r.batch_id WHERE b.kind='sync' AND b.datasource_id=? AND b.status IN ('committed', "
@@ -2057,6 +2060,29 @@ class DataSourceService:
                 if old != new[ev]:
                     continue  # geänderte Lieferung = neue Evidenz → erneut vorlegen
             out[ev] = False
+        return out
+
+    @staticmethod
+    def _revised(rows: list[Any], recs: list[Any] | None) -> set[str]:
+        """Ereignisse mit bereits gebuchten Zeilen in offenen Stapeln, die der Anbieter jetzt materiell anders liefert
+        (Menge, Art, Asset, Zeitpunkt ab 24 h): sie gelten nicht als „schon vorgelegt“ – der neue Abruf legt sie erneut
+        vor und der Abgleich zeigt sie als Quellenrevision. Reine Darstellungsänderungen lösen nichts aus."""
+        if not recs:
+            return set()
+        from app.csvimport.service import _revision, rec_from_json
+
+        new = {r.ext_id: r for r in recs if r.ext_id}
+        out: set[str] = set()
+        for r in rows:
+            if r["status"] not in ("committed", "merged", "linked") and not r["tx_id"]:
+                continue
+            try:
+                old = rec_from_json(r["rec_json"])
+            except (ValueError, KeyError, TypeError, AssertionError):
+                continue
+            fresh = new.get(old.ext_id or "")
+            if fresh is not None and _revision(fresh, old):
+                out.add(r["event_key"])
         return out
 
     def _repair(self, sid: int, recs: list[Any]) -> dict[str, int]:

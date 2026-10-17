@@ -42,6 +42,7 @@ CONF_BADGE = {"hoch": "good", "mittel": "info", "niedrig": "warn"}
 TZ_CHOICES = [("", "wie Format (Standard)"), ("UTC", "UTC"), ("Europe/Berlin", "Europe/Berlin (Ortszeit)")]
 FILTERS = {"": "alle", "new": "neu", "unclear": "ungeklärt", "duplicate": "Dubletten", "invalid": "unvollständig",
            "before": "vor Stichtag", "known": "bereits vorhanden", "ignored": "ignoriert", "committed": "übernommen",
+           "revision": "Quellenrevision",
            "linked": "verknüpft"}
 CAT_ORDER = {"dublette": 0, "ergaenzung": 1, "neu": 2, "widerspruch": 3, "komplex": 4}
 MAPPING_KINDS = {"trade": "Handel/Tausch", "deposit": "Zugang ohne Ertrag", "withdrawal": "Abgang ohne Kosten",

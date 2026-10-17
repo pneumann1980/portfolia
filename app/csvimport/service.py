@@ -35,6 +35,7 @@ import gzip
 import hashlib
 import json
 import logging
+import re
 import threading
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
@@ -93,12 +94,12 @@ def _locked(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 STATUS_LABEL = {"new": "neu", "known": "bereits vorhanden", "duplicate": "mögliche Dublette", "before": "vor Stichtag",
                 "ignored": "ignoriert", "invalid": "unvollständig", "unclear": "ungeklärt", "committed": "übernommen",
-                "merged": "als Transfer übernommen", "linked": "verknüpft"}
+                "merged": "als Transfer übernommen", "linked": "verknüpft", "revision": "Quellenrevision"}
 STATUS_BADGE = {"new": "good", "known": "", "duplicate": "warn", "before": "", "ignored": "", "invalid": "crit",
-                "unclear": "warn", "committed": "info", "merged": "info", "linked": "info"}
+                "unclear": "warn", "committed": "info", "merged": "info", "linked": "info", "revision": "warn"}
 DONE = ("known", "ignored", "committed", "merged", "linked")  # Zeilen ohne offene Entscheidung
 CLOSED = ("committed", "merged", "linked")  # abgeschlossen: gebucht bzw. mit vorhandener Buchung verknüpft
-EVAL_VERSION = 6  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
+EVAL_VERSION = 7  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
 RELEVANT = ("new", "invalid", "unclear", "duplicate")  # zu übernehmen bzw. zu entscheiden
 BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial": "teilweise übernommen",
                 "committed": "übernommen", "done": "abgeschlossen", "reverted": "rückgängig gemacht"}
@@ -392,6 +393,8 @@ class RowCtx:
     dup_same_account: bool = False
     prev_ref: str | None = None
     pair_why: str | None = None  # Begründung des Transfer-Vorschlags (Anzeige)
+    pair_alts: list[str] = field(default_factory=list)  # weitere mögliche Gegenbuchungen (Mehrdeutigkeit, offen)
+    revision: dict[str, Any] | None = None  # Quellenrevision: {"old": …, "new": …, "diffs": […]} (nur Anzeige/Beleg)
     recon: dict[str, Any] | None = None  # Abgleich über den Transaktions-Hash (siehe reconcile.py)
     counterpart: str | None = None  # passende Gegenbuchung im kuratierten Import (möglicher Transfer)
     basis: str | None = None  # Grundlage des Treffers auf vorhandene Buchungen (Erkennungsregel, siehe assess.py)
@@ -427,6 +430,8 @@ class RowCtx:
         als einfacher Zu-/Abgang verbucht, gingen Einstand und Haltedauer verloren."""
         if self.pair_ref and self.pair_ok is None and self.pair_conf != "hoch":
             return True
+        if self.pair_alts and not (self.pair_ref and self.pair_ok == 1):
+            return True  # konkurrierende mögliche Gegenbuchungen, ungeklärt – nie still als Einzelvorgang buchen
         return self.counterpart is not None and not (self.pair_ref and self.pair_ok == 1)
 
     def include(self) -> bool:
@@ -955,6 +960,8 @@ class CsvImportService:
             rc.dup_of, rc.dup_same_account = msgs.get("dup_of", []), bool(msgs.get("dup_same"))
             rc.symbols = msgs.get("symbols", {})
             rc.pair_why = msgs.get("pair_why")
+            rc.pair_alts = list(msgs.get("pair_alts") or [])
+            rc.revision = msgs.get("revision")
             rc.recon = msgs.get("recon")
             rc.counterpart = msgs.get("counterpart")
             rc.basis = msgs.get("basis")
@@ -983,6 +990,7 @@ class CsvImportService:
         known = {r["external_id"]: r for r in self.db.q(
             "SELECT external_id, status, tx_id, batch_id FROM journal_tx WHERE source=? AND external_id IS NOT NULL "
             "AND status <> 'reverted'", (source,))}
+        delivered = self._delivered({k["tx_id"] for k in known.values()} if known else set())  # bisherige Lieferungen
         # Datenquellen mit versionierter Auswertung (Bitpanda): ein Ereignis, das aus einem anderen Stapel bereits
         # übernommen ist, bleibt bekannt – auch wenn eine neuere Auswertung es in andere Zeilen teilt (sonst entstünden
         # Doppelbuchungen). Nicht bei Wallets: dort sind Zeilen eines Ereignisses eigene Bewegungen (Unterkennung).
@@ -1039,6 +1047,16 @@ class CsvImportService:
             m = recon.rows.get(rc.idx)
             if rc.symbols and any(v == "ignored" for v in rc.symbols.values()):
                 rc.status = "ignored"
+            elif ext and ext in known and (rev := _revision(rc.rec, delivered.get(known[ext]["tx_id"]))):
+                # gleiche stabile Kennung, aber materiell andere Lieferung: Identität ≠ Inhaltsgleichheit → offener
+                # Konflikt mit alter und neuer Fassung; weder zweite Buchung noch stille Überschreibung
+                k = known[ext]
+                rc.status, rc.basis, rc.revision = "revision", "revision", rev
+                rc.dup_of = [k["tx_id"]]
+                changed = "; ".join(rev["diffs"])
+                rc.warnings.insert(0, f"Quelle liefert dieselbe Kennung mit geändertem Inhalt ({changed}) – die "
+                                      f"Buchung {k['tx_id']} bleibt unverändert, die Rohdaten beider Fassungen "
+                                      "bleiben erhalten")
             elif ext and ext in known:
                 k = known[ext]
                 rc.status, rc.basis = "known", "ext"
@@ -1844,6 +1862,21 @@ class CsvImportService:
                                       f"({', '.join(targets[:3])}) – vor dem Übernehmen prüfen, ob die vorhandene "
                                       "Buchung diesen Teil (z. B. die Gebühr) schon enthält")
 
+    def _delivered(self, tx_ids: set[str]) -> dict[str, Rec]:
+        """Zuletzt gelieferte Fassung (Quellzeile) je übernommener Buchung – Vergleichsbasis für Revisionen; die Buchung
+        selbst kann der Nutzer bearbeitet haben und ist deshalb kein Maßstab."""
+        out: dict[str, Rec] = {}
+        ids = sorted(tx_ids)
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            for r in self.db.q(f"SELECT tx_id, rec_json FROM csv_row WHERE tx_id IN ({','.join('?' * len(part))}) "
+                               "ORDER BY id", part):
+                try:
+                    out[r["tx_id"]] = rec_from_json(r["rec_json"])
+                except (ValueError, KeyError, TypeError, AssertionError):
+                    continue
+        return out
+
     # -- Transfers ----------------------------------------------------------------------------------------
     def _transfers(self, bid: int, rows: list[RowCtx], pf: Portfolio | None, V: Valuer) -> None:
         """Abgänge und Zugänge desselben Kryptowerts auf verschiedenen Konten zu Transfer-Paaren zuordnen."""
@@ -1872,6 +1905,7 @@ class CsvImportService:
                 continue
             prev = (rc.pair_ref, rc.pair_ok)
             rc.pair_ref = rc.pair_conf = None
+            rc.pair_alts = []
             rc.counterpart = None
             if eligible(rc, "withdrawal"):
                 assert rc.row is not None
@@ -1904,7 +1938,7 @@ class CsvImportService:
             ins_by[i.asset].append(i)
         for lst in ins_by.values():
             lst.sort(key=lambda x: x.ts)
-        cands: list[tuple[tuple[int, Decimal, float], Side, Side, str, str]] = []
+        edges: list[_Edge] = []
         for o in outs:
             lst = ins_by.get(o.asset)
             if not lst:
@@ -1915,26 +1949,69 @@ class CsvImportService:
                     break
                 if i.account == o.account or (o.rc is None and i.rc is None):
                     continue
-                hash_eq = bool(o.txhash and i.txhash and normalize_hash(o.txhash) == normalize_hash(i.txhash))
+                ho, hi = chain_hash(o.txhash), chain_hash(i.txhash)
+                if ho and hi and ho != hi:
+                    continue  # dieselbe Onchain-Bewegung hat einen Hash: zwei verschiedene sind ein Ausschlussgrund
+                hash_eq = bool(ho and ho == hi)
                 ratio = i.qty / o.qty if o.qty else Decimal(0)
                 if not hash_eq and not (TRANSFER_MIN_RATIO <= ratio <= Decimal("1.001")):
                     continue
-                dt = abs((i.ts - o.ts).total_seconds())
-                conf = "hoch" if hash_eq or (ratio >= Decimal("0.98") and dt <= 86400) else "mittel"
-                why = ("gleiche Blockchain-Transaktion" if hash_eq else
-                       f"Menge {ratio * 100:.1f} % des Abgangs, {_span(i.ts - o.ts)}")
-                cands.append(((0 if hash_eq else 1, abs(1 - ratio), dt), o, i, conf, why))
-        cands.sort(key=lambda x: x[0])
+                edges.append(_Edge(o, i, hash_eq, ratio, abs((i.ts - o.ts).total_seconds())))
+        # Kandidatensuche und Freigabe trennen: „hoch“ (später automatisch übernommen) nur mit Identitätsbeleg
+        # (gleicher Hash, Menge ohne ungeklärte Differenz) und ohne konkurrierende Ansprüche auf eine der beiden
+        # Buchungen. Menge und Zeit allein ergeben nur einen Vorschlag („mittel“); bei mehreren Möglichkeiten offen.
+        by_o: dict[str, list[_Edge]] = defaultdict(list)
+        by_i: dict[str, list[_Edge]] = defaultdict(list)
+        for e in edges:
+            by_o[e.o.ref].append(e)
+            by_i[e.i.ref].append(e)
+
+        def rivals(e: _Edge) -> int:
+            """Gleichrangige Möglichkeiten für diese Paarung (ein Hash-Beleg sticht reine Ähnlichkeit)."""
+            n = 0
+            for group in (by_o[e.o.ref], by_i[e.i.ref]):
+                rank = [x for x in group if x.hash_eq] if any(x.hash_eq for x in group) else group
+                n = max(n, len(rank))
+            return n
+
+        for e in edges:
+            e.unique = e.hash_eq and rivals(e) == 1 and e.ratio >= Decimal("0.98")
+            e.conf = "hoch" if e.unique else "mittel"
+        edges.sort(key=lambda e: (0 if e.hash_eq else 1, abs(1 - e.ratio), e.dt, e.o.ref, e.i.ref))
         used: set[str] = set()
-        for _score, o, i, conf, why in cands:
+        for e in edges:
+            o, i = e.o, e.i
             if o.ref in used or i.ref in used:
                 continue
             used.update((o.ref, i.ref))
+            n_o, n_i = len(by_o[o.ref]), len(by_i[i.ref])
+            if e.unique:
+                why = "gleiche Blockchain-Transaktion"
+            elif e.hash_eq:
+                rest = (f"Menge nur {e.ratio * 100:.1f} % des Abgangs (Differenz ungeklärt)"
+                        if e.ratio < Decimal("0.98") else "mehrere Möglichkeiten")
+                why = f"gleiche Blockchain-Transaktion, aber {rest}"
+            elif n_o > 1 or n_i > 1:
+                why = (f"mehrdeutig: {max(n_o, n_i)} mögliche Gegenbuchungen – Betrag und Zeit reichen zur "
+                       "eindeutigen Zuordnung nicht aus")
+            else:
+                why = (f"nur Vorschlag: Menge {e.ratio * 100:.1f} % des Abgangs, {_span(i.ts - o.ts)} – ohne "
+                       "Identitätsbeleg (gleicher Hash) wird nichts automatisch zugeordnet")
             for me, other in ((o, i), (i, o)):
                 if me.rc is not None:
-                    me.rc.pair_ref, me.rc.pair_conf, me.rc.pair_why = other.ref, conf, why
+                    me.rc.pair_ref, me.rc.pair_conf, me.rc.pair_why = other.ref, e.conf, why
                     if me.rc.prev_ref != other.ref:
                         me.rc.pair_ok = None
+        for side in (*outs, *ins):  # konkurrierende Möglichkeiten sichtbar halten, auch für leer ausgegangene Zeilen
+            if side.rc is None:
+                continue
+            group = by_o.get(side.ref) or by_i.get(side.ref) or []
+            others = sorted({(x.i.ref if x.o.ref == side.ref else x.o.ref) for x in group} - {side.rc.pair_ref or ""})
+            if others and (len(group) > 1 or side.ref not in used):
+                side.rc.pair_alts = others
+                if side.rc.pair_ref is None:
+                    side.rc.pair_why = ("mehrdeutig: mehrere mögliche Gegenbuchungen, die schon anderweitig "
+                                        "beansprucht sind – Betrag und Zeit reichen zur Zuordnung nicht aus")
         for rc in rows:
             if rc.open and rc.pair_ref is None:
                 rc.pair_ok = None
@@ -1978,7 +2055,8 @@ class CsvImportService:
                 continue
             msgs = {"errors": rc.errors[:10], "warnings": rc.warnings[:10], "value_src": rc.value_src,
                     "fee_src": rc.fee_src, "dup_of": rc.dup_of[:5], "dup_same": rc.dup_same_account,
-                    "symbols": rc.symbols, "pair_why": rc.pair_why if rc.pair_ref else None, "recon": rc.recon,
+                    "symbols": rc.symbols, "pair_why": rc.pair_why if rc.pair_ref or rc.pair_alts else None,
+                    "pair_alts": rc.pair_alts[:10] or None, "revision": rc.revision, "recon": rc.recon,
                     "counterpart": rc.counterpart, "basis": rc.basis if rc.dup_of else None,
                     "roles": {k: v for k, v in rc.roles.items() if k in rc.dup_of[:5]} or None, "match": rc.match}
             data.append((json.dumps(rc.row, ensure_ascii=False) if rc.row is not None else None, rc.status,
@@ -2221,10 +2299,13 @@ class CsvImportService:
         if w["type"] != "withdrawal" or dpt["type"] != "deposit" or w["from_asset"] != dpt["to_asset"]:
             return None
         fq, tq = Decimal(w["from_qty"]), Decimal(dpt["to_qty"])
+        # Gebühren behalten ihr Belastungskonto: die des Abgangs liegt am Transfer (belastet das Abgangskonto), die des
+        # Zugangs wird eine eigene Gebührenbuchung am Zugangskonto (siehe unten) – nie vermischt, nie verloren.
         fee_asset, fee_qty, fee_eur = w["fee_asset"], w["fee_qty"], w["fee_eur"]
-        if not fee_qty and dpt["fee_qty"]:
-            fee_asset, fee_qty, fee_eur = dpt["fee_asset"], dpt["fee_qty"], dpt["fee_eur"]
+        d_fee = _recipient_fee(w, dpt)
         note = f"Transfer {w['from_account']} → {dpt['to_account']} (abgeglichen: {w['tx_id']}, {dpt['tx_id']})"
+        if d_fee is not None and d_fee[0] is None:
+            note += (f"; Gebühr der Gegenbuchung {d_fee[2]} EUR ohne Asset nicht gebucht (Gebührenasset unbekannt)")
         row = {"tx_id": "T", "datetime": w["ts_utc"], "type": "transfer", "tag": "",
                "from_account": w["from_account"], "from_asset": w["from_asset"], "from_qty": s(fq),
                "to_account": dpt["to_account"], "to_asset": dpt["to_asset"], "to_qty": s(min(tq, fq)),
@@ -2237,8 +2318,25 @@ class CsvImportService:
         if rep.errors or not parsed:
             log.warning("Transfer %s/%s nicht zusammenführbar: %s", a_tx, b_tx, [m.message for m in rep.errors])
             return None
-        t_id = js._insert(c, parsed[0], None, None, stamp, None, "transfer", batch_id=bid,
-                          pair_refs=f"{w['tx_id']},{dpt['tx_id']}", log=True)
+        fee_parsed = None
+        if d_fee is not None and d_fee[0] is not None:
+            f_asset, f_qty, f_eur = d_fee
+            f_row = {"tx_id": "F", "datetime": dpt["ts_utc"], "type": "withdrawal", "tag": "fee", "from_account":
+                     dpt["to_account"], "from_asset": f_asset, "from_qty": f_qty, "to_account": "", "to_asset": "",
+                     "to_qty": "", "fee_asset": "", "fee_qty": "", "fee_eur": "", "value_eur": f_eur or "",
+                     "note": f"Gebühr am Zugangskonto {dpt['to_account']} zum Transfer von {w['from_account']} "
+                             f"(abgeglichen: {w['tx_id']}, {dpt['tx_id']})"}
+            f_classes = {f_asset: {"asset_class": "fiat" if f_asset in C.ISO_CURRENCIES else "crypto"}}
+            f_rep, fee_parsed = validate_tx_rows([f_row], f_classes)
+            if f_rep.errors or not fee_parsed:  # lieber nicht zusammenführen als eine Gebühr zu verlieren
+                log.warning("Transfer %s/%s: Gebühr am Zugangskonto nicht buchbar: %s", a_tx, b_tx,
+                            [m.message for m in f_rep.errors])
+                return None
+        refs = f"{w['tx_id']},{dpt['tx_id']}"
+        t_id = js._insert(c, parsed[0], None, None, stamp, None, "transfer", batch_id=bid, pair_refs=refs, log=True)
+        if fee_parsed:  # gehört zum Transfer (group_ref): wird mit ihm aufgelöst, zurückgenommen und exportiert
+            js._insert(c, fee_parsed[0], None, None, stamp, t_id, "transfer_fee", batch_id=bid, pair_refs=refs,
+                       log=True)
         c.execute("UPDATE journal_tx SET status='merged', merged_into=?, updated_at=? WHERE tx_id IN (?,?)",
                   (t_id, stamp, w["tx_id"], dpt["tx_id"]))
         return t_id
@@ -2342,6 +2440,75 @@ def _recon_text(m: R.RowMatch) -> str:
     for sym, aid in m.other_asset.items():
         txt += f" – Gegenbuchung mit {aid} statt {sym}: Zuordnung prüfen"
     return txt
+
+
+REVISION_SHIFT = timedelta(hours=24)  # Zeitversatz einer Neulieferung, ab dem er als Änderung zählt
+
+
+def _revision(new: Rec, old: Rec | None) -> dict[str, Any] | None:
+    """Materielle Änderung einer erneut gelieferten Quellzeile gegenüber der bisherigen Lieferung (Art, Assets,
+    Mengen, Zeitpunkt ab 24 h Versatz). Schreibweise normalisierter Werte (``1.0`` ↔ ``1``), Zeitzonen-Darstellung
+    und Anzeigefelder zählen nicht. ``None``: unverändert bzw. keine frühere Lieferung bekannt."""
+    if old is None:
+        return None
+
+    def q(v: Any) -> str:
+        return "–" if v is None else format(Decimal(str(v)).normalize(), "f")
+
+    diffs: list[str] = []
+    if new.kind != old.kind:
+        diffs.append(f"Art {old.kind} → {new.kind}")
+    for label, a, b in (("Abgang", (old.out_sym, old.out_qty), (new.out_sym, new.out_qty)),
+                        ("Zugang", (old.in_sym, old.in_qty), (new.in_sym, new.in_qty)),
+                        ("Gebühr", (old.fee_sym, old.fee_qty), (new.fee_sym, new.fee_qty))):
+        if str(a[0] or "").upper() != str(b[0] or "").upper() or q(a[1]) != q(b[1]):
+            diffs.append(f"{label} {q(a[1])} {a[0] or ''} → {q(b[1])} {b[0] or ''}".replace("  ", " "))
+    if (new.tag or None) != (old.tag or None):
+        diffs.append(f"Einordnung {old.tag or 'ohne'} → {new.tag or 'ohne'}")
+    if not (new.ts_missing or old.ts_missing) and abs(new.ts - old.ts) >= REVISION_SHIFT:
+        diffs.append(f"Zeitpunkt {iso(old.ts)} → {iso(new.ts)}")
+    if not diffs:
+        return None
+    return {"old": rec_to_json(old), "new": rec_to_json(new), "diffs": diffs[:6]}
+
+
+_CHAIN_HASH = re.compile(r"^[0-9a-f]{64}$")
+
+
+def chain_hash(h: str | None) -> str | None:
+    """Onchain-Transaktionshash in vereinheitlichter Form – nur ein wohlgeformter (64 Hex-Zeichen) gilt als Beleg;
+    Börsen-interne Kennungen und andere Formate begründen weder eine Verknüpfung noch einen Ausschluss."""
+    v = normalize_hash(h)
+    return v if v and _CHAIN_HASH.match(v) else None
+
+
+@dataclass
+class _Edge:
+    """Mögliche Paarung Abgang ↔ Zugang (Kandidat; die Freigabe entscheidet ``conf``)."""
+
+    o: Any
+    i: Any
+    hash_eq: bool
+    ratio: Decimal
+    dt: float
+    unique: bool = False
+    conf: str = "mittel"
+
+
+def _recipient_fee(w: Any, dpt: Any) -> tuple[str | None, str, str] | None:
+    """Gebühr der Zugangsbuchung (Belastungskonto: Zugangskonto) als (Asset, Menge, EUR); ``None``, wenn es keine gibt
+    oder sie dieselbe Netzwerkgebühr nur wiederholt (gleiche Onchain-Transaktion, gleiches Asset und gleiche Menge –
+    eine Transaktion hat eine Gebühr). Ohne Asset (nur EUR) ist sie nicht buchbar: Asset ``None``."""
+    qty, eur = dpt["fee_qty"], dpt["fee_eur"]
+    if qty and Decimal(qty) > 0:
+        h_w, h_d = chain_hash(w["tx_hash"]), chain_hash(dpt["tx_hash"])
+        if h_w and h_w == h_d and dpt["fee_asset"] == w["fee_asset"] and w["fee_qty"] \
+                and Decimal(qty) == Decimal(w["fee_qty"]):
+            return None
+        return dpt["fee_asset"] or None, str(qty), str(eur or "")
+    if eur and Decimal(eur) > 0:
+        return None, "", str(eur)
+    return None
 
 
 def _span(d: timedelta) -> str:

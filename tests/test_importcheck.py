@@ -518,7 +518,8 @@ def test_transfer_pair_in_one_batch_is_only_booked_together(client, config):
     bid = _upload_csv(c, "own.csv", csv, "Börse A")
     rows = sorted(csv_service(ctx(c)).rows(bid), key=lambda rc: rc.line)
     w, d = rows
-    assert w.pair_ref == f"b:{d.idx}" and w.pair_conf == "hoch" and w.match["cat"] == "neu"
+    assert w.pair_ref == f"b:{d.idx}" and w.pair_conf == "mittel" and w.match["cat"] == "neu"  # nur Vorschlag
+    csv_service(ctx(c)).set_rows(bid, {f"pair_{w.idx}": "1"})  # bestätigt (die Gegenbuchung folgt automatisch)
     from app.csvimport import batch as BA
 
     p = BA.plan(csv_service(ctx(c)), bid, "include", {w.idx})

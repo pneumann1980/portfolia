@@ -500,12 +500,13 @@ def _transfer(st: _State, w: Tx | None, d: Tx | None, plan: Plan) -> None:
         plan.errors.append("Abgang und Zugang passen nicht (mehr) zueinander.")
         return
     fq, tq = w.from_qty, d.to_qty
-    src = w if w.fee_qty else d
+    # Gebühren behalten ihr Belastungskonto: die des Abgangs liegt am Transfer (belastet das Abgangskonto), die des
+    # Zugangs wird eine eigene Gebührenbuchung am Zugangskonto – nie vermischt, nie verloren
     row = {"datetime": _dt(w), "type": "transfer", "tag": "",
            "from_account": w.from_account or "", "from_asset": w.from_asset or "", "from_qty": _s(fq),
            "to_account": d.to_account or "", "to_asset": d.to_asset or "", "to_qty": _s(min(tq, fq)),
-           "fee_asset": (src.fee_asset or "") if src.fee_qty else "", "fee_qty": _s(src.fee_qty),
-           "fee_eur": _s(src.fee_eur) if src.fee_qty else "", "value_eur": "", "orig_price": "", "orig_ccy": "",
+           "fee_asset": (w.fee_asset or "") if w.fee_qty else "", "fee_qty": _s(w.fee_qty),
+           "fee_eur": _s(w.fee_eur) if w.fee_qty else "", "value_eur": "", "orig_price": "", "orig_ccy": "",
            "related_asset": "",
            "note": f"Interner Transfer {w.from_account} → {d.to_account} (Korrektur aus der Diagnose: {w.tx_id} + "
                    f"{d.tx_id})"}
@@ -517,6 +518,19 @@ def _transfer(st: _State, w: Tx | None, d: Tx | None, plan: Plan) -> None:
                           + (f" (Gebühr {qty_exact(fq - tq)} {w.from_asset})" if fq > tq else ""), plan,
                  refs=f"{w.tx_id},{d.tx_id}")
     if op is not None:
+        idx = st.report.index
+        echo = (idx is not None and d.fee_asset == w.fee_asset and d.fee_qty == w.fee_qty
+                and bool(idx._hashes(w) & idx._hashes(d)))  # gleiche Onchain-Transaktion: Gebühr nur einmal
+        if d.fee_qty and d.fee_asset and not echo:
+            _create(st, {"datetime": _dt(d), "type": "withdrawal", "tag": "fee", "from_account": d.to_account or "",
+                         "from_asset": d.fee_asset, "from_qty": _s(d.fee_qty), "to_account": "", "to_asset": "",
+                         "to_qty": "", "fee_asset": "", "fee_qty": "", "fee_eur": "",
+                         "value_eur": _s(d.fee_eur) if d.fee_eur else "", "orig_price": "", "orig_ccy": "",
+                         "related_asset": "",
+                         "note": f"Gebühr am Zugangskonto {d.to_account} zum Transfer von {w.from_account} "
+                                 f"(Korrektur aus der Diagnose: {w.tx_id} + {d.tx_id})"},
+                    f"Gebühr {qty_exact(d.fee_qty)} {d.fee_asset} am Zugangskonto {d.to_account}", plan,
+                    refs=f"{w.tx_id},{d.tx_id}")
         _hide(st, w, plan, mode="merged", link=op.target)
         _hide(st, d, plan, mode="merged", link=op.target)
 

@@ -36,7 +36,8 @@ from app.util.timeutil import iso, local_tz, parse_iso, to_local_date, today_loc
 
 log = logging.getLogger(__name__)
 
-SOURCE_LABEL = {"manual": "manuell", "transfer": "Transfer-Abgleich", "diagnose": "Korrektur aus der Diagnose"}
+SOURCE_LABEL = {"manual": "manuell", "transfer": "Transfer-Abgleich", "diagnose": "Korrektur aus der Diagnose",
+                "transfer_fee": "Transfer-Abgleich (Gebühr am Zugangskonto)"}
 TX_PREFIX = {"manual": "PF-M-", "csv": "PF-C-", "transfer": "PF-T-", "sync": "PF-S-", "diagnose": "PF-D-",
              "doc": "PF-B-"}
 EDITABLE_SOURCES = ("manual", "transfer")
@@ -499,6 +500,8 @@ class JournalService:
     def unpair_in(self, c: Any, row: Any, stamp: str, keep: frozenset[int] = frozenset()) -> None:
         """Transfer ``row`` zurücknehmen; Einzelbuchungen (außer aus Stapeln in ``keep``) wieder aktiv."""
         c.execute("UPDATE journal_tx SET status='reverted', updated_at=? WHERE id=?", (stamp, row["id"]))
+        c.execute("UPDATE journal_tx SET status='reverted', updated_at=? WHERE group_ref=? AND source='transfer_fee' "
+                  "AND status<>'reverted'", (stamp, row["tx_id"]))  # Gebühr am Zugangskonto gehört zum Transfer
         self._log(c, "unpair", row["tx_id"], None, None, stamp)
         for ref in (row["pair_refs"] or "").split(","):
             ref = ref.strip()

@@ -372,8 +372,10 @@ def test_exchange_withdrawal_and_wallet_deposit_become_one_transfer(client, evm)
     sid = eth_wallet(client, auto_commit="1")
     res = sync(client, sid)
     dep = all_rows(client, sid)[key(1, "n:in")]
-    assert dep.pair_ref == f"j:{wd}" and dep.pair_conf == "hoch" and "Menge 100.0 %" in dep.pair_why
+    # Menge und Zeit passen, aber die Börsenbuchung trägt keinen Hash: nur ein Vorschlag, bis jemand bestätigt
+    assert dep.pair_ref == f"j:{wd}" and dep.pair_conf == "mittel" and "Menge 100.0 %" in dep.pair_why
     assert dep.status == "new" and not dep.tx_id  # nicht automatisch: bestehende Lots nie stillschweigend ändern
+    csv_service(ctx(client)).set_rows(res["batch_id"], {f"pair_{dep.idx}": "1"})
     out = csv_service(ctx(client)).commit(res["batch_id"], only_idx={dep.idx})
     assert out["transfers"] == 1, out
     t = ctx(client).db.q1("SELECT * FROM journal_tx WHERE source='transfer' AND status='active'")
@@ -569,3 +571,69 @@ def test_public_rpc_gives_the_balance_when_the_explorer_api_has_no_key(client, e
     rpc.clear()
     set_provider_key(client, "etherscan", ETHERSCAN_KEY)
     assert datasource_service(ctx(client)).check(sid)[0] and not rpc
+
+
+# ----------------------------------------------------------------------------------------------------
+# Quellenrevision: gleiche stabile Kennung, anderer Inhalt
+# ----------------------------------------------------------------------------------------------------
+
+def test_revised_delivery_of_a_booked_event_becomes_an_open_conflict(client, evm):
+    """Dieselbe Kennung wird zunächst mit 1,5 ETH, später mit 3 ETH geliefert: kein stilles „bereits vorhanden“, keine
+    zweite Buchung, keine Überschreibung – offener Revisionskonflikt mit alter und neuer Fassung."""
+    sid = eth_wallet(client)
+    first = sync(client, sid)
+    svc = csv_service(ctx(client))
+    dep = rows_by_ext(client, first["batch_id"])[key(1, "n:in")]
+    svc.commit(first["batch_id"], only_idx={dep.idx})
+    booked = ctx(client).db.q1("SELECT * FROM journal_tx WHERE external_id=?", (key(1, "n:in"),))
+    assert booked["to_qty"] == "1.5"
+    # unveränderte Wiederholung: bekannt, nichts zu entscheiden
+    again = sync(client, sid)
+    if again.get("batch_id"):
+        assert rows_by_ext(client, again["batch_id"]).get(key(1, "n:in")) is None or \
+            rows_by_ext(client, again["batch_id"])[key(1, "n:in")].status == "known"
+    # der Anbieter korrigiert die Menge rückwirkend
+    d = evm.chains[1]
+    d["txlist"][0] = {**d["txlist"][0], "value": "3000000000000000000"}
+    ctx(client).db.x("UPDATE data_source SET cursor_json=NULL WHERE id=?", (sid,))  # Neuabruf ab Anfang (Überlappung)
+    res = sync(client, sid)
+    assert res["status"] == "synced", res
+    rev = rows_by_ext(client, res["batch_id"])[key(1, "n:in")]
+    assert rev.status == "revision" and rev.open and rev.basis == "revision" and rev.dup_of == [booked["tx_id"]]
+    assert rev.revision and any("1.5 ETH → 3 ETH" in x for x in rev.revision["diffs"])
+    assert not rev.include() and rev.match["cat"] == "widerspruch" and rev.match["action"] == "review"
+    from app.csvimport.review import state_of
+
+    assert state_of(rev.status, rev.decision, rev.match) == "offen"  # bleibt in der offenen Prüfung
+    # Originalfassung und neue Fassung bleiben als Rohdaten erhalten; die Buchung ist unverändert
+    old_row = ctx(client).db.q1("SELECT rec_json FROM csv_row WHERE tx_id=?", (booked["tx_id"],))
+    assert '"in_qty": "1.5"' in old_row["rec_json"] and '"in_qty": "3"' in rev.revision["new"]
+    assert ctx(client).db.q1("SELECT to_qty FROM journal_tx WHERE tx_id=?", (booked["tx_id"],))["to_qty"] == "1.5"
+    assert not svc.commit(res["batch_id"]).get("created")  # „Übernehmen“ bucht die Revision nicht
+    assert ctx(client).db.scalar("SELECT COUNT(*) FROM journal_tx WHERE external_id=? AND status='active'",
+                                 (key(1, "n:in"),)) == 1  # nie eine zweite Buchung
+    # erneuter Abruf derselben geänderten Lieferung: kein weiterer Konflikt-Stapel
+    n = ctx(client).db.scalar("SELECT COUNT(*) FROM csv_batch")
+    ctx(client).db.x("UPDATE data_source SET cursor_json=NULL WHERE id=?", (sid,))
+    sync(client, sid)
+    assert ctx(client).db.scalar("SELECT COUNT(*) FROM csv_batch") == n
+
+
+def test_presentation_changes_of_normalized_values_are_no_revision():
+    from datetime import UTC, datetime, timedelta, timezone
+
+    from app.csvimport import model as M
+    from app.csvimport.service import _revision
+
+    t = datetime(2026, 3, 1, 10, 0, tzinfo=UTC)
+    old = M.Rec(line=1, ts=t, kind=M.DEPOSIT, in_sym="ETH", in_qty=D("1.5"), ext_id="x:1")
+    same = M.Rec(line=9, ts=t.astimezone(timezone(timedelta(hours=2))), kind=M.DEPOSIT, in_sym="eth",
+                 in_qty=D("1.500"), ext_id="x:1")  # andere Zeile/Zeitzone/Schreibweise, gleicher Inhalt
+    assert _revision(same, old) is None
+    assert _revision(old, None) is None  # keine frühere Lieferung bekannt
+    shifted = M.Rec(line=1, ts=t + timedelta(minutes=5), kind=M.DEPOSIT, in_sym="ETH", in_qty=D("1.5"), ext_id="x:1")
+    assert _revision(shifted, old) is None  # Minuten-Versatz der Abrechnung ist keine materielle Änderung
+    more = M.Rec(line=1, ts=t, kind=M.DEPOSIT, in_sym="ETH", in_qty=D("3"), ext_id="x:1")
+    assert _revision(more, old)["diffs"] == ["Zugang 1.5 ETH → 3 ETH"]
+    later = M.Rec(line=1, ts=t + timedelta(days=2), kind=M.DEPOSIT, in_sym="ETH", in_qty=D("1.5"), ext_id="x:1")
+    assert "Zeitpunkt" in _revision(later, old)["diffs"][0]
