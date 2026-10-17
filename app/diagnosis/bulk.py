@@ -232,6 +232,7 @@ def execute(ctx: Any, finding_ids: list[str], token: str, *, include_review: boo
         ids: list[int] = []
         try:
             with ctx.db.transaction() as c:
+                A.assert_version(c, bp.version)
                 for it in bp.ready:
                     assert it.plan is not None
                     created: dict[str, str] = {}

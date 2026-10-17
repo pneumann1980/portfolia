@@ -1394,6 +1394,7 @@ def apply_hypothesis(ctx: Any, case_key: str, hyp_id: str, trigger: str = "manua
         ids: list[int] = []
         try:
             with ctx.db.transaction() as c:
+                A.assert_version(c, case.version)  # Datenstand erneut in der Schreibtransaktion prüfen
                 for cand in hyp.cands:
                     created: dict[str, str] = {}
                     recs = [A._exec(c, ctx, js, op, stamp, created) for op in sorted(

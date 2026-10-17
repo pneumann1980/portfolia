@@ -123,13 +123,32 @@ class Plan:
         return any(op.kind in ("quote", "unmap") for op in self.ops)
 
 
+# Datenstand, auf dem Vorschau und Übernehmen beruhen: alle Tabellen, aus denen Buchungen, Verknüpfungen, Zuordnungen,
+# Bestandsnachweise und entscheidungsrelevante Einstellungen kommen – je Tabelle Anzahl und jüngster Zeitstempel
+# (Anlegen, Ändern, Rücknahme). Rein aus der Datenbank berechnet: gilt prozessübergreifend und wird beim Übernehmen
+# innerhalb der Schreibtransaktion erneut geprüft.
 _VERSION_SQL = (
     "SELECT (SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM journal_tx), "
     "(SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM tx_override), "
     "(SELECT COUNT(*) || '/' || COALESCE(MAX(decided_at), '') FROM journal_import_link), "
     "(SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM asset_source WHERE status='active'), "
     "(SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM csv_symbol), "
-    "(SELECT COALESCE(MAX(id), 0) FROM imports WHERE status='active')")
+    "(SELECT COALESCE(MAX(id), 0) FROM imports WHERE status='active'), "
+    "(SELECT COUNT(*) || '/' || COALESCE(MAX(created_at), '') || '/' || COALESCE(MAX(deleted_at), '') "
+    "FROM reference_balance), "
+    "(SELECT COUNT(*) || '/' || COALESCE(MAX(observed_at), '') FROM ds_balance), "
+    "(SELECT COUNT(*) || '/' || COALESCE(MAX(created_at), '') || '/' || COALESCE(MAX(reverted_at), '') "
+    "FROM asset_merge), "
+    "(SELECT COUNT(*) || '/' || COALESCE(MAX(created_at), '') || '/' || COALESCE(MAX(reverted_at), '') "
+    "FROM account_merge), "
+    "(SELECT COUNT(*) || '/' || COALESCE(MAX(created_at), '') || '/' || COALESCE(MAX(reverted_at), '') "
+    "FROM account_remove), "
+    "(SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM account_meta), "
+    "(SELECT COUNT(*) || '/' || COALESCE(MAX(created_at), '') FROM tx_link), "
+    "(SELECT COUNT(*) FROM journal_event_alias), "
+    "(SELECT COUNT(*) || '/' || COALESCE(MAX(decided_at), '') FROM event_decision), "
+    "(SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM settings WHERE key LIKE 'ledger.%' "
+    "OR key LIKE 'tax.%')")
 
 
 def data_version(db: Any) -> str:
@@ -138,6 +157,18 @@ def data_version(db: Any) -> str:
         return "|".join(str(v) for v in tuple(db.q1(_VERSION_SQL)))
     except Exception:  # Tabellen fehlen (sehr alte DB) – dann zählen nur die Objekte selbst
         return ""
+
+
+def assert_version(c: Any, version: str) -> None:
+    """Als Erstes in der Schreibtransaktion: hat sich der Datenstand seit der Vorschau geändert (auch durch einen
+    gleichzeitigen Import oder Abruf), bricht die Übernahme vor jeder Änderung ab."""
+    try:
+        now = "|".join(str(v) for v in tuple(c.execute(_VERSION_SQL).fetchone()))
+    except Exception:  # sehr alte DB ohne alle Tabellen: dann gilt die Prüfung über den Plan-Token
+        return
+    if version and now != version:
+        raise Conflict("Die Daten haben sich seit der Vorschau geändert (z. B. durch einen Import, Abruf oder "
+                       "Nachweis).")
 
 
 def _s(v: Decimal | None) -> str:
@@ -1343,6 +1374,7 @@ def apply_plan(ctx: Any, f: Finding, plan: Plan, token: str, rebuild: Any) -> Re
         created: dict[str, str] = {}
         try:
             with ctx.db.transaction() as c:
+                assert_version(c, plan.version)
                 recs = [_exec(c, ctx, js, op, stamp, created) for op in plan.ops]
                 cur = c.execute(
                     "INSERT INTO diag_decision(finding_id, kind, title, action, option, option_label, params_json, "
@@ -1419,6 +1451,7 @@ def apply(ctx: Any, finding_id: str, option_key: str, params: Mapping[str, list[
         created: dict[str, str] = {}
         try:
             with ctx.db.transaction() as c:
+                assert_version(c, plan.version)
                 recs = [_exec(c, ctx, js, op, stamp, created) for op in sorted(
                     plan.ops, key=lambda o: 0 if o.kind == "create" else 1)]
                 cur = c.execute(

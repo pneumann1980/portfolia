@@ -228,3 +228,63 @@ def test_started_message_turns_into_finished_after_background_run(cfg):  # noqa:
         assert done.status_code == 204 and "since=" in done.headers["HX-Redirect"]
         final = c.get(done.headers["HX-Redirect"]).text
         assert "Prüfung abgeschlossen." in final and "Prüfung läuft" not in final and "integrity-progress" not in final
+
+
+def _reference(db, account="Wallet K", asset_id="TOKA", qty="10", created="2026-10-17T08:00:00Z") -> None:
+    db.x("INSERT INTO reference_balance(account, asset_id, qty, as_of, source, created_at) VALUES (?,?,?,?,?,?)",
+         (account, asset_id, qty, "2026-10-01", "statement", created))
+
+
+@pytest.mark.parametrize(("sql", "args"), [
+    ("INSERT INTO reference_balance(account, asset_id, qty, as_of, source, created_at) VALUES (?,?,?,?,?,?)",
+     ("Wallet K", "TOKA", "10", "2026-10-01", "statement", "2026-10-17T08:00:00Z")),
+    ("INSERT INTO ds_balance(source_id, asset_key, qty, observed_at) "
+     "SELECT id, 'TOKA', '5', '2026-10-17T08:00:00Z' FROM data_source LIMIT 1", ()),
+    ("INSERT INTO asset_merge(alias_asset, target_asset, created_at) VALUES ('A', 'B', '2026-10-17T08:00:00Z')", ()),
+    ("INSERT INTO account_merge(alias_account, target_account, created_at) VALUES ('A', 'B', '2026-10-17T08:00:00Z')",
+     ()),
+    ("INSERT INTO account_remove(account, tx_ids_json, created_at) VALUES ('A', '[]', '2026-10-17T08:00:00Z')", ()),
+    ("INSERT INTO account_meta(account, created_at, updated_at) VALUES ('Neu', '2026-10-17', '2026-10-17')", ()),
+    ("INSERT INTO settings(key, value_json, updated_at) VALUES ('ledger.scope', '\"account\"', '2026-10-17')", ()),
+])
+def test_data_version_covers_every_dependency_of_preview_and_apply(cfg, sql, args):  # noqa: F811
+    """Beobachtet: ein neuer Referenzbestand ließ einen gespeicherten Bericht fälschlich aktuell. Jede Datenabhängigkeit
+    der Fallansicht – Buchungen, Verknüpfungen, Zuordnungen, Nachweise, Einstellungen – ändert den Datenstand."""
+    ctx = make_ctx(cfg, popkat_like_rows(), TOKA_ASSETS)
+    if "ds_balance" in sql:
+        ctx.db.x("INSERT INTO data_source(kind, provider, name, account, status, created_at, updated_at) VALUES "
+                 "('wallet', 'kaspa', 'W', 'Wallet K', 'created', '2026-10-17', '2026-10-17')")
+    before = A.data_version(ctx.db)
+    ctx.db.x(sql, args)
+    assert A.data_version(ctx.db) != before
+
+
+def test_stored_report_turns_stale_after_a_new_reference_balance(cfg):  # noqa: F811
+    ctx = make_ctx(cfg, popkat_like_rows(), TOKA_ASSETS)
+    r = I.run(ctx)
+    assert not r.stale and not I.refresh_status(ctx, I.load(ctx.db)).stale
+    _reference(ctx.db)
+    assert I.refresh_status(ctx, I.load(ctx.db)).stale  # vorher fälschlich weiter „aktuell“
+
+
+def test_apply_aborts_before_any_change_when_data_changes_after_the_check(cfg, monkeypatch):  # noqa: F811
+    """Konkurrierender Import/Nachweis zwischen Token-Prüfung und Schreibtransaktion: Abbruch vor jeder Buchung."""
+    from tests.test_diagnosis_actions import data_fp, is_toka, plan_for
+
+    ctx = make_ctx(cfg, popkat_like_rows(), TOKA_ASSETS)
+    _rep, f, plan = plan_for(ctx, "duplicate", "hide_weak", pred=is_toka)
+    real = A._effects_summary
+
+    def concurrent(c, report, p):  # läuft nach der Token-Prüfung und vor der Schreibtransaktion
+        _reference(c.db)
+        return real(c, report, p)
+
+    monkeypatch.setattr(A, "_effects_summary", concurrent)
+    res = A.apply(ctx, f.id, "hide_weak", plan.params, plan.token)
+    assert not res.ok and "seit der Vorschau geändert" in res.errors[0]
+    assert not ctx.db.q("SELECT 1 FROM diag_decision") and not ctx.db.q("SELECT 1 FROM tx_override")
+    # frische Vorschau auf dem neuen Datenstand lässt sich dann übernehmen
+    monkeypatch.setattr(A, "_effects_summary", real)
+    before = data_fp(ctx.db)
+    _rep, f, plan = plan_for(ctx, "duplicate", "hide_weak", pred=is_toka)
+    assert A.apply(ctx, f.id, "hide_weak", plan.params, plan.token).ok and data_fp(ctx.db) != before
