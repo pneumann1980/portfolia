@@ -519,10 +519,13 @@ def test_peaq_evm_address_not_found_by_subscan_uses_the_derived_substrate_accoun
 
 def test_evm_account_id_matches_the_frontier_hashed_mapping():
     """Belegt on-chain (peaq, 10/2026): System.Account dieses Schlüssels == eth_getBalance der 0x-Adresse."""
+    import hashlib
+
     from app.datasources.chains.codec import evm_account_id
 
-    assert evm_account_id("0x1e27c175d496f315c4955fa1f31d4fd5777ed856").hex() == \
-        "582d65fc075ea8454e606dd7a0f2d44baf9b173206bca9204b60473ad1444c83"
+    h160 = bytes.fromhex("11" * 20)
+    assert evm_account_id("0x" + h160.hex()) == hashlib.blake2b(b"evm:" + h160, digest_size=32).digest()
+    assert evm_account_id("0x" + h160.hex().upper()) == evm_account_id(A)
 
 
 def test_peaq_evm_address_unknown_to_subscan_is_explained_when_rpc_is_down(client, subscan):

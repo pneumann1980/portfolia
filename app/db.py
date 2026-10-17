@@ -849,6 +849,18 @@ CREATE TABLE IF NOT EXISTS account_remove (
 );
 CREATE INDEX IF NOT EXISTS ix_account_remove_status ON account_remove(status, account);
 """),
+    (28, """
+-- Kontenverwaltung: selbst angelegte Konten (auch ohne Buchungen) und Stammdaten über dem Import (Broker, Depotgruppe,
+-- Notiz). Überlagerung – die Import-Datei bleibt unverändert.
+CREATE TABLE IF NOT EXISTS account_meta (
+  account      TEXT PRIMARY KEY,
+  broker       TEXT,
+  depot_group  TEXT,
+  note         TEXT,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+"""),
 ]
 
 

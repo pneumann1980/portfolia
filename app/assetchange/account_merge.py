@@ -159,8 +159,11 @@ def source_accounts(ctx: Any) -> dict[str, list[Any]]:
 
 def known_accounts(ctx: Any) -> list[str]:
     """Konten mit Buchungen sowie Konten von Datenquellen (auch ohne Buchungen)."""
+    from app.accounts.service import meta_names
+
     pf = ctx.portfolio()
-    return sorted({*(pf.all_accounts() if pf is not None else []), *source_accounts(ctx)}, key=str.casefold)
+    return sorted({*(pf.all_accounts() if pf is not None else []), *source_accounts(ctx), *meta_names(ctx.db)},
+                  key=str.casefold)
 
 
 _FRAG = re.compile(r"([0-9A-Za-z:]{4,})(?:\.{3}|…)([0-9A-Za-z]{2,})?")

@@ -23,7 +23,7 @@ def _back(request: Request, target: str) -> Response:
 
 def _page(request: Request, msg: str = "", err: str = "", status_code: int = 200) -> HTMLResponse:
     ctx = get_ctx(request)
-    return render(request, "accounts.html", status_code=status_code, active="settings", msg=msg, err=err,
+    return render(request, "accounts.html", status_code=status_code, active="accounts", msg=msg, err=err,
                   rows=S.rows(ctx), brokers=sorted({r.broker for r in S.rows(ctx) if r.broker}, key=str.casefold),
                   groups=sorted({r.depot_group for r in S.rows(ctx) if r.depot_group}, key=str.casefold))
 

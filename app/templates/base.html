@@ -80,7 +80,7 @@
   <a href="/positions" class="{% if active == 'positions' %}active{% endif %}"><svg><use href="#i-list"/></svg>Positionen</a>
   <a href="/performance" class="{% if active == 'performance' %}active{% endif %}"><svg><use href="#i-chart"/></svg>Performance</a>
   <a href="/news" class="{% if active == 'news' %}active{% endif %}"><svg><use href="#i-news"/></svg>News</a>
-  <button type="button" data-more-toggle class="{% if active in ('journal','plans','tax','quality','settings','watchlist') %}active{% endif %}" aria-expanded="false"><svg><use href="#i-more"/></svg>Mehr</button>
+  <button type="button" data-more-toggle class="{% if active in ('journal','plans','tax','quality','settings','watchlist','accounts') %}active{% endif %}" aria-expanded="false"><svg><use href="#i-more"/></svg>Mehr</button>
 </nav>
 <div class="more-menu" id="more-menu">
   <a href="/watchlist"><svg><use href="#i-eye"/></svg>Watchlist</a>
@@ -88,6 +88,7 @@
   <a href="/plans"><svg><use href="#i-repeat"/></svg>Sparpläne</a>
   <a href="/tax"><svg><use href="#i-tax"/></svg>Steuern &amp; Haltefristen</a>
   <a href="/quality"><svg><use href="#i-check"/></svg>Datenqualität</a>
+  <a href="/accounts"><svg><use href="#i-list"/></svg>Konten</a>
   <a href="/settings"><svg><use href="#i-gear"/></svg>Einstellungen</a>
 </div>
 <div class="panel-backdrop" data-panel-close></div>

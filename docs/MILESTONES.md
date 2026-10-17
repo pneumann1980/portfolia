@@ -1426,6 +1426,37 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.31.0 – Chain-Sync dauerhaft (PulseChain, peaq, Polkadot), Bestandsabweichungen erklären, Kontenverwaltung
+
+Beobachtet (Screenshots + realer Export, lokal ausgewertet, nie im Git): DOT „403 row_limit_exceeded“, PulseChain
+„Blockscout 502“, peaq „Adresse bei Subscan unbekannt“; Bestandsabweichungen bei XEN, MEAT, PLS, TH, KET.
+
+* **PulseChain → Blockscout REST v2** (`blockscout_v2.py`): Die Etherscan-kompatiblen Listen hängen (502) bzw. liefern
+  Token-Transfers nur ungefiltert und endlos. v2 paginiert seitenweise (50, neueste zuerst, `next_page_params`),
+  Token-Transfers je Richtung (`filter=to|from`), Zeitzeiger-Cursor mit Sicherheitsabstand (600 s) und Überlappung
+  (3600 s), Dubletten fängt der Ereignisschlüssel. Fallback auf die alte Schnittstelle bleibt. Interne Gutschriften ohne
+  Spur (Delta aus `coin-balance-history`) werden als eigene Zeile mit Hinweis erzeugt. Gegen die Live-API geprüft:
+  Bestand stimmt exakt.
+* **peaq-EVM-Adresse:** Die 0x-Adresse wird per Frontier-Zuordnung (`blake2b-256("evm:"‖H160)`, SS58-Präfix 1221) auf das
+  Substrate-Konto abgebildet (on-chain belegt: `System.Account` == `eth_getBalance`). Unbekannt bei Subscan →
+  Suche über das berechnete Konto, sonst verständliche Meldung statt Fehler.
+* **Polkadot (PubFi-Gateway):** Neue Fehlerart `row_limit`; die Zeilenzahl je Anfrage fällt adaptiv (100→50→20→10→5→1),
+  der Wert wird prozessweit gemerkt. Der Bestand kommt zusätzlich per Substrate-RPC (`System.Account`, frei+reserviert),
+  damit die Prüfung nicht an der Historie scheitert.
+* **Abweichungsanalyse** (`engine`, `recommend`, `clarify`): XEN = Fork-Kopie XEN@PLS (verschwindet mit dem v2-Sync);
+  MEAT = Doppelzugang derselben Transaktion (Dublette, Ausblenden belegt); PLS = interne Gutschrift ohne Spur
+  (Ursache benannt); TH = Zwillings-Asset T/TH → Empfehlung „Assets zusammenführen“ mit Direktlink, **nie automatisch**;
+  KET = Rundung (Toleranz relativ 10⁻⁹ in der Klärung).
+* **Export:** `ds_balances` (letzte Bestandswerte der Datenquellen) und `account_meta` sind Teil von `state.json`
+  (Export + Restore); damit lassen sich Abweichungen künftig offline aus dem Export analysieren.
+* **Hochstufung „wahrscheinlich → belegt“** bei belegter Herkunftskette: bereits seit 0.30.0 aktiv (bestätigt).
+* **Kontenverwaltung `/accounts`** (Migration 28, Überlagerung `account_meta`): Konto vorab anlegen, Broker/Depotgruppe/
+  Notiz überlagern den Import, Umbenennen über Zusammenführen (Vorschau, Prüfsumme, rückgängig), leeres selbst
+  angelegtes Konto löschen. Konten mit Buchungen nur über „Entfernen“ (reversibel). Mobil (390 px) geprüft.
+* **Grenzen:** Die PubFi-Row-Limit-Hypothese ist nur mit einem echten Schlüssel prüfbar (nicht bestätigt). Statescan/
+  Asset-Hub als Zusatzquelle für DOT-Historie nicht umgesetzt. Ein neuer Sync ist nötig, damit `ds_balances` gefüllt wird.
+  RPEPE-Statistik gestrichen. Zwillings-Assets werden nie automatisch zusammengeführt.
+
 ## 0.30.2 – KAS-Sync: KRC-20 „prev“-Paginierung ohne Dauerstillstand (vormals als 0.29.4 geplant)
 
 Beobachtet: „Letzter Abruf … KRC-20 … Stillstand erkannt“ bei jedem Lauf, obwohl nichts fehlte.

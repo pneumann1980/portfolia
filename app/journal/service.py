@@ -211,8 +211,11 @@ class JournalService:
         return assets
 
     def known_accounts(self) -> list[str]:
+        from app.accounts.service import meta_names
+
         pf = self.ctx.recorded_portfolio()
-        return pf.all_accounts() if pf is not None else []
+        names = {*(pf.all_accounts() if pf is not None else []), *meta_names(self.db)}  # auch selbst angelegte Konten
+        return sorted(names)
 
     def _valuers(self) -> tuple[forms.PriceFn, forms.FxFn]:
         pf = self.ctx.recorded_portfolio() or Portfolio(import_id=None, txs=[], assets=self.known_assets(),

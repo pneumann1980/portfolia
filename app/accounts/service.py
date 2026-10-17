@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -20,6 +21,7 @@ from typing import Any
 from app.ledger.models import AccountInfo, Portfolio
 from app.util.timeutil import iso, utcnow
 
+log = logging.getLogger(__name__)
 NAME_MAX = 80
 FIELD_MAX = 120
 NOTE_MAX = 300
@@ -131,10 +133,10 @@ def rows(ctx: Any) -> list[Row]:
         r.sources = [f"{d.name} ({d.provider_label})" for d in srcs.get(name, [])]
     try:
         for h in AM.history(ctx.db):
-            if h.status == "active" and h.target_account in out:
-                out[h.target_account].merged_from.append(h.alias_account)
-    except Exception:  # noqa: BLE001 - Verlauf ist nur Anzeige
-        pass
+            if h["status"] == "active" and h["target_account"] in out:
+                out[h["target_account"]].merged_from.append(h["alias_account"])
+    except Exception as e:  # Verlauf ist nur Anzeige
+        log.debug("Verlauf der Zusammenführungen nicht lesbar: %s", e)
     return sorted(out.values(), key=lambda r: r.name.casefold())
 
 
@@ -164,9 +166,10 @@ def update(ctx: Any, name: str, broker: str, depot_group: str, note: str) -> str
         return f"Konto „{name}“ ist nicht (mehr) vorhanden."
     now = iso(utcnow())
     vals = (_field(broker, FIELD_MAX), _field(depot_group, FIELD_MAX), _field(note, NOTE_MAX))
-    ctx.db.x("INSERT INTO account_meta(account, broker, depot_group, note, created_at, updated_at) VALUES (?,?,?,?,?,?) "
-             "ON CONFLICT(account) DO UPDATE SET broker=excluded.broker, depot_group=excluded.depot_group, "
-             "note=excluded.note, updated_at=excluded.updated_at", (name, *vals, now, now))
+    ctx.db.x("INSERT INTO account_meta(account, broker, depot_group, note, created_at, updated_at) "
+             "VALUES (?,?,?,?,?,?) ON CONFLICT(account) DO UPDATE SET broker=excluded.broker, "
+             "depot_group=excluded.depot_group, note=excluded.note, updated_at=excluded.updated_at",
+             (name, *vals, now, now))
     ctx.invalidate_overlay()
     return None
 
@@ -191,9 +194,9 @@ def start_rename(ctx: Any, old: str, new: str) -> tuple[str, str | None]:
     info = pf.accounts.get(old) if pf is not None else None
     meta = meta_rows(ctx.db).get(old)
     now = iso(utcnow())
-    ctx.db.x("INSERT INTO account_meta(account, broker, depot_group, note, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-             (new, (info.broker if info else None), (info.depot_group if info else None),
-              (meta["note"] if meta else None), now, now))
+    ctx.db.x("INSERT INTO account_meta(account, broker, depot_group, note, created_at, updated_at) "
+             "VALUES (?,?,?,?,?,?)", (new, (info.broker if info else None), (info.depot_group if info else None),
+                                      (meta["note"] if meta else None), now, now))
     ctx.invalidate_overlay()
     return new, None
 
@@ -210,7 +213,8 @@ def delete_empty(ctx: Any, name: str) -> str | None:
         return f"„{name}“ hat eine Datenquelle ({r.sources[0]}) – diese zuerst unter Datenquellen entfernen."
     if not r.own:
         return f"„{name}“ stammt aus dem Import und lässt sich hier nicht löschen."
-    if any(h.status == "active" and name in (h.alias_account, h.target_account) for h in AM.history(ctx.db)):
+    if any(h["status"] == "active" and name in (h["alias_account"], h["target_account"])
+           for h in AM.history(ctx.db)):
         return f"„{name}“ ist Teil einer Zusammenführung – diese zuerst zurücknehmen."
     ctx.db.x("DELETE FROM account_meta WHERE account=?", (name,))
     ctx.invalidate_overlay()

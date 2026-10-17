@@ -3,7 +3,7 @@
 {% block heading %}Konten zusammenführen{% endblock %}
 {% block content %}
 <div class="stack">
-  <p class="hint"><a href="/settings/datasources">← Datenquellen</a> · <a href="/assets/merge">Assets zusammenführen</a> · <a href="/quality/diagnose">Diagnose</a></p>
+  <p class="hint"><a href="/accounts">← Konten</a> · <a href="/settings/datasources">Datenquellen</a> · <a href="/assets/merge">Assets zusammenführen</a> · <a href="/quality/diagnose">Diagnose</a></p>
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
   <section class="card">

@@ -170,6 +170,9 @@ class AppContext:
             from app.assetchange.account_remove import apply_removals
 
             pf = apply_removals(self.db, pf)  # entfernte Konten (Buchungen ausgeblendet, rückgängig)
+            from app.accounts.service import apply_meta
+
+            pf = apply_meta(self.db, pf)  # selbst angelegte Konten und Stammdaten (Überlagerung über dem Import)
             if self.demo is not None and pf is not start:
                 self._seed_demo(pf)
         with self._lock:
