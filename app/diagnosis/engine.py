@@ -312,8 +312,8 @@ def diagnose(snap: Snapshot) -> Report:
         from app.diagnosis import audit
 
         idx = _Index(snap)
-        for rule in (_dup_same_hash, _dup_same_qty, _dup_same_id, _dup_identical, _dup_conversion_twin,
-                     _dup_transfer_side, audit.econ_duplicates, _transfers, audit.outflows,
+        for rule in (_dup_same_hash, _dup_same_qty, _dup_credit_twin, _dup_same_id, _dup_identical,
+                     _dup_conversion_twin, _dup_transfer_side, audit.econ_duplicates, _transfers, audit.outflows,
                      _assets, _history,
                      _estimated, _prices, _price_history, _migrations, _rename_trades):
             findings += rule(idx, stats)
@@ -768,6 +768,80 @@ def _dup_same_qty(idx: _Index, stats: dict[str, int]) -> list[Finding]:
                                         manual.get(b.tx_id, [])))
     stats["same_qty_pairs"] = len(out)
     return out
+
+
+def _dup_credit_twin(idx: _Index, stats: dict[str, int]) -> list[Finding]:
+    """Derselbe Zugang einer On-Chain-Transaktion zweimal gebucht, aber in verschiedener Form: z. B. als Einzahlung
+    **und** als Zielseite eines Tauschs (Koinly führt manche Swaps doppelt, einmal mit und einmal ohne Gegenleistung).
+    Gleiches Konto, gleiches Asset, gleicher Hash, Mengen bis auf Rundung (≤ 1e-6) gleich, verschiedene Buchungsart.
+    Ausgeblendet würde die Buchung ohne Gegenleistung – der Tausch behält sein Abgangsbein."""
+    by: dict[tuple[str, str, str], dict[str, Tx]] = defaultdict(dict)
+    for t in idx.txs:
+        if t.origin == "plan" or not (t.to_asset and t.to_account and t.to_qty) or t.type not in (
+                "deposit", "trade", "buy"):
+            continue
+        for h in idx.hashes[t.tx_id]:
+            by[(t.to_account, t.to_asset, h)][t.tx_id] = t
+    out: list[Finding] = []
+    done: set[frozenset[str]] = set()
+    for (acc, aid, h), members in sorted(by.items()):
+        txs = sorted(members.values(), key=lambda t: (t.ts, t.seq, t.tx_id))
+        for i, a in enumerate(txs):
+            for b in txs[i + 1:]:
+                pair = frozenset((a.tx_id, b.tx_id))
+                if pair in done or a.tx_id in idx.dup_txs or b.tx_id in idx.dup_txs or _signature(a) == _signature(b):
+                    continue
+                qa, qb = a.to_qty or ZERO, b.to_qty or ZERO
+                if abs(qa - qb) > max(qa, qb) * Decimal("1e-6") or (a.type == b.type and a.from_asset == b.from_asset):
+                    continue
+                ia, ib = idx.event_index(a), idx.event_index(b)
+                if ia is not None and ib is not None and ia != ib:
+                    continue  # verschiedene Bewegungen derselben Transaktion
+                if _sig_digits(max(qa, qb)) < DISTINCT_DIGITS:
+                    continue  # runde Mengen: Gleichheit kann Zufall sein
+                done.add(pair)
+                out.append(_credit_twin_finding(idx, acc, aid, h, a, b))
+    stats["credit_twins"] = len(out)
+    return out
+
+
+def _credit_twin_finding(idx: _Index, acc: str, aid: str, h: str, a: Tx, b: Tx) -> Finding:
+    # schwächer ist die Buchung ohne Gegenleistung (reine Einzahlung); sonst die spätere
+    def counter(t: Tx) -> int:
+        return 1 if (t.from_asset and t.from_qty) else 0
+
+    weak, strong = (a, b) if (counter(a), a.ts, a.seq) <= (counter(b), b.ts, b.seq) else (b, a)
+    qw, qs = weak.to_qty or ZERO, strong.to_qty or ZERO
+    known = [f"Die Transaktion {_short(h)} ist auf {acc} zweimal als Zugang von {aid} gebucht: {_q(qw)} "
+             f"({_TYPE_LABEL.get(weak.type, weak.type)}, {weak.tx_id}) und {_q(qs)} "
+             f"({_TYPE_LABEL.get(strong.type, strong.type)}, {strong.tx_id}) – Differenz {_q(abs(qw - qs))} "
+             "(Rundung der Quelle).", idx.describe(weak), idx.describe(strong)]
+    evidence = [f"Gleicher Hash {_short(h)}, gleiches Konto, gleiches Asset, Mengen auf {_sig_digits(max(qw, qs))} "
+                "signifikante Stellen praktisch gleich – zufällig ist das unwahrscheinlich."]
+    if counter(strong) and not counter(weak):
+        evidence.append(f"{strong.tx_id} hat ein Gegenstück ({_q(strong.from_qty or ZERO)} {strong.from_asset}) und "
+                        f"bleibt; {weak.tx_id} ist eine reine Einzahlung ohne Gegenleistung.")
+    f = Finding(
+        kind="duplicate", status="wahrscheinlich", priority=1,
+        title=f"Zugang einer Transaktion doppelt gebucht: ≈ {_q(strong.to_qty or ZERO)} {aid} auf {acc}",
+        known=known,
+        suspected=[f"{weak.tx_id} bildet denselben Zugang ein zweites Mal ab wie {strong.tx_id}; {aid} zählt dadurch "
+                   "doppelt."],
+        evidence=evidence,
+        uncertainty=["Eine Transaktion kann mehrere gleichartige Zugänge enthalten; der Explorer zeigt, ob der Bestand "
+                     "einmal oder zweimal eingegangen ist (Abgleich mit dem Bestand laut Quelle genügt)."],
+        pairs=[(idx.ref(weak), idx.ref(strong), f"gleicher Hash, gleiches Konto und Asset, Menge ≈ gleich "
+                                                f"(Δ {_q(abs(qw - qs))})")],
+        scenario=_scenario_without(idx, [weak], f"Szenario (hypothetisch): ohne die Buchung {weak.tx_id}. Es wird "
+                                                "nichts gebucht und nichts ausgeschlossen."),
+        decision=f"Bestand von {aid} auf {acc} bei der Quelle prüfen: Stimmt er nur ohne {weak.tx_id}, ist die "
+                 f"Buchung zu viel. Portfolia ändert nichts automatisch.",
+        key=f"credit-twin|{'|'.join(sorted((a.tx_id, b.tx_id)))}", weight=abs(qw), positions=[(acc, aid)],
+        data={"type": "same_qty", "twin": True, "weak": weak.tx_id, "strong": strong.tx_id, "account": acc,
+              "asset": aid, "side": "in", "chain": False, "hashes": [h]})
+    f.txs = [idx.ref(weak), idx.ref(strong)]
+    idx.dup_txs.update((a.tx_id, b.tx_id))
+    return idx.attach(f, derive_positions=False)
 
 
 def _supply_chain(idx: _Index, transfer: Tx, aid: str) -> tuple[list[Tx], Decimal, Decimal] | None:

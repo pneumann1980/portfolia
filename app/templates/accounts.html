@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Konten{% endblock %}
+{% block heading %}Konten{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/settings/datasources">Datenquellen</a> · <a href="/accounts/merge">Konten zusammenführen</a> · <a href="/journal">Buchungen</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+
+  <section class="card" id="neu">
+    <div class="card-head"><h2>Konto anlegen</h2></div>
+    <p class="hint">Ein Konto entsteht sonst erst mit der ersten Buchung oder Datenquelle. Hier legst du es vorab an – es steht danach im Buchungsformular, bei den Datenquellen und beim Zusammenführen zur Auswahl.</p>
+    <form method="post" action="/accounts/new" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="grid-2">
+        <label class="field">Name<input name="name" required maxlength="80" placeholder="z. B. Scalable Capital" autocomplete="off"></label>
+        <label class="field">Broker (optional)<input name="broker" maxlength="120" list="acc-brokers" autocomplete="off"></label>
+        <label class="field">Depotgruppe (optional)<input name="depot_group" maxlength="120" list="acc-groups" autocomplete="off"></label>
+        <label class="field">Notiz (optional)<input name="note" maxlength="300" autocomplete="off"></label>
+      </div>
+      <div><button class="btn primary" type="submit">Konto anlegen</button></div>
+    </form>
+    <datalist id="acc-brokers">{% for b in brokers %}<option value="{{ b }}">{% endfor %}</datalist>
+    <datalist id="acc-groups">{% for g in groups %}<option value="{{ g }}">{% endfor %}</datalist>
+  </section>
+
+  <section class="card" id="liste">
+    <div class="card-head"><h2>Alle Konten <span class="badge">{{ rows|length }}</span></h2></div>
+    {% if not rows %}<p class="hint">Noch keine Konten. Lege oben eines an oder importiere Buchungen.</p>{% endif %}
+    {% for r in rows %}
+    <div class="box" style="margin:8px 0" id="konto-{{ loop.index }}">
+      <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div style="min-width:0"><b class="wrap-any">{{ r.name }}</b>
+          {% if r.empty %}<span class="badge">leer</span>{% endif %}
+          {% if r.own %}<span class="badge" title="Selbst angelegt bzw. mit eigenen Stammdaten">eigene Angaben</span>{% endif %}
+          <div class="hint">
+            {% if r.n_txs %}{{ r.n_txs }} Buchung{{ '' if r.n_txs == 1 else 'en' }}{% if r.first %} · {{ r.first|date_de }} – {{ r.last|date_de }}{% endif %}{% if r.positions %} · {{ r.positions }} Position{{ '' if r.positions == 1 else 'en' }}{% endif %}{% else %}keine Buchungen{% endif %}
+            {% if r.broker %} · Broker {{ r.broker }}{% endif %}{% if r.depot_group %} · Depotgruppe {{ r.depot_group }}{% endif %}
+          </div>
+          {% for s in r.sources %}<div class="hint">Datenquelle: {{ s }}</div>{% endfor %}
+          {% if r.merged_from %}<div class="hint">enthält zusammengeführt: {{ r.merged_from|join(', ') }}</div>{% endif %}
+          {% if r.note %}<div class="hint">{{ r.note }}</div>{% endif %}
+        </div>
+        <div class="row" style="gap:6px;flex-wrap:wrap;align-items:flex-start">
+          {% if r.n_txs %}<a class="btn sm ghost" href="/journal?account={{ r.name|urlencode }}">Buchungen</a>{% endif %}
+          <a class="btn sm ghost" href="/accounts/merge?alias={{ r.name|urlencode }}#manuell" title="Dasselbe Konto unter anderem Namen? Zuordnung ohne Buchung, rückgängig">Zusammenführen …</a>
+          {% if r.n_txs %}<form method="post" action="/accounts/remove/preview" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ r.name }}"><button class="btn sm ghost" type="submit" title="Buchungen ausblenden (rückgängig zu machen)">Entfernen …</button></form>{% endif %}
+          {% if r.deletable %}<form method="post" action="/accounts/delete" class="inline" data-confirm="Leeres Konto „{{ r.name }}“ löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ r.name }}"><button class="btn sm ghost" type="submit">Löschen</button></form>{% endif %}
+        </div>
+      </div>
+      <details style="margin-top:6px"><summary class="small">Stammdaten ändern</summary>
+        <form method="post" action="/accounts/meta" class="stack" style="gap:8px;margin-top:6px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ r.name }}">
+          <div class="grid-2">
+            <label class="field">Broker<input name="broker" maxlength="120" value="{{ r.broker }}" list="acc-brokers" autocomplete="off"></label>
+            <label class="field">Depotgruppe<input name="depot_group" maxlength="120" value="{{ r.depot_group }}" list="acc-groups" autocomplete="off"></label>
+          </div>
+          <label class="field">Notiz<input name="note" maxlength="300" value="{{ r.note }}" autocomplete="off"></label>
+          <div><button class="btn sm primary" type="submit">Speichern</button> <span class="hint">Überlagert die Angaben des Imports; die Import-Datei bleibt unverändert.</span></div>
+        </form>
+      </details>
+      <details style="margin-top:4px"><summary class="small">Umbenennen</summary>
+        <form method="post" action="/accounts/rename" class="row" style="gap:8px;flex-wrap:wrap;margin-top:6px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ r.name }}">
+          <label class="field">Neuer Name<input name="new_name" required maxlength="80" autocomplete="off"></label>
+          <div style="align-self:end"><button class="btn sm" type="submit">Vorschau …</button></div>
+        </form>
+        <p class="hint">Der neue Name wird als Konto angelegt und das alte darauf zusammengeführt – mit Vorschau, ohne Änderung an Buchungen, jederzeit rückgängig. Eine Datenquelle des alten Kontos gilt danach für den neuen Namen.</p>
+      </details>
+    </div>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

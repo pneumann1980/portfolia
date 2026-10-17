@@ -91,6 +91,8 @@ def source(config, monkeypatch):
                                                    "account": "Bitpanda", "sync_interval_min": "60",
                                                    "api_key": SECRET})
         assert not err
+        db.x("INSERT INTO ds_balance(source_id, asset_key, qty, name, note, observed_at) VALUES (?, 'ADA', "
+             "'12.500000000000000001', 'Cardano', NULL, '2026-10-17T06:00:00Z')", (_sid,))
         ctx.store.upsert_daily("cg:old-coin", [Bar(date=date(2020, 1, 1), close=1.5),
                                                Bar(date=date(2020, 1, 2), close=1.6)], "coingecko", "EUR")
         ctx.store.set_meta("cg:old-coin", history_from="2020-01-01", history_to="2020-01-02", history_status="ok")
@@ -117,6 +119,10 @@ def test_export_contains_everything_but_secrets(source):
         assert state["settings"]["prices.crypto_interval_min"] == 15
         assert state["datasources"][0]["provider"] == "bitpanda" and "api_key" not in state["datasources"][0]
         assert all("ciphertext" not in json.dumps(v) for v in state.values())
+        (bal,) = state["ds_balances"]  # beobachtete Bestände samt Zustand der Quelle (für die Auswertung außerhalb)
+        assert (bal["provider"], bal["account"], bal["asset_key"], bal["qty"]) == ("bitpanda", "Bitpanda", "ADA",
+                                                                                   "12.500000000000000001")
+        assert {"source_status", "source_last_success_at", "source_coverage_json"} <= set(bal)
         tx = z.read("transactions.csv").decode()
         assert source["deleted"] not in tx  # in der App gelöschte Import-Buchung fehlt
         assets = z.read("assets.csv").decode()
@@ -152,6 +158,9 @@ def test_fresh_install_restores_everything(source, tmp_path, monkeypatch):
         ds = db.q1("SELECT * FROM data_source")
         assert ds["provider"] == "bitpanda" and ds["sync_interval_min"] == 60
         assert db.scalar("SELECT COUNT(*) FROM data_source_secret") == 0  # API-Key neu eingeben
+        row = db.q1("SELECT asset_key, qty, observed_at FROM ds_balance")  # beobachteter Bestand kommt mit
+        assert (row["asset_key"], row["qty"], row["observed_at"]) == ("ADA", "12.500000000000000001",
+                                                                      "2026-10-17T06:00:00Z")
         assert db.scalar("SELECT close FROM price_daily WHERE series='cg:old-coin' AND date='2020-01-02'") == 1.6
         assert db.scalar("SELECT history_from FROM series_meta WHERE series='cg:old-coin'") == "2020-01-01"
         assert cfg.sources_path.read_text(encoding="utf-8").startswith("# eigene Quellen")

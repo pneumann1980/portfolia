@@ -489,15 +489,21 @@ def _issue_keys(led: LedgerResult) -> set[tuple[Any, ...]]:
     return set(A._issue_keys(led))
 
 
+def _rounded(diff: Decimal, ref: Decimal) -> Decimal:
+    """Rundungsrest der Quelle (Koinly 3–9, Explorer 18 Nachkommastellen) gilt als erfüllt – gleiche Toleranz wie der
+    Bestandsvergleich der Diagnose (1e-8 bzw. 1e-9 relativ), nie darüber hinaus."""
+    return ZERO if abs(diff) <= max(Decimal("1e-8"), abs(ref) * Decimal("1e-9")) else diff
+
+
 def _stock_points(rep: Report, positions: set[tuple[str, str]]) -> dict[str, list[Decimal]]:
     """Nachweise je Position: Differenz (Nachweis − Ledger) je Referenzzeitpunkt bzw. aktuellem externen Bestand."""
     out: dict[str, list[Decimal]] = {}
     for pos in positions:
         tr = rep.traces.get(pos)
-        diffs = [p.diff for p in tr.points] if tr is not None else []
+        diffs = [_rounded(p.diff, p.qty) for p in tr.points] if tr is not None else []
         for h in rep.holdings:
             if (h.account, h.asset) == pos and h.observed is not None and h.status in ("extern_ok", "extern_diff"):
-                diffs.append(h.diff if h.diff is not None else ZERO)
+                diffs.append(_rounded(h.diff, h.observed) if h.diff is not None else ZERO)
         if diffs:
             out[f"{pos[0]} · {pos[1]}"] = diffs
     out.update(_combined_points(rep, positions))

@@ -141,6 +141,14 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
             db, "SELECT d.provider, d.account, d.name, e.event_key, e.ts, e.lines_json, "
                 "CASE e.status WHEN 'staged' THEN 'new' ELSE e.status END AS status, e.created_at, e.decided_at "
                 "FROM diag_research_event e JOIN data_source d ON d.id = e.source_id ORDER BY e.id", drop=()),
+        # beobachtete Bestände laut Anbieter (Soll/Ist-Abgleich) samt Zustand der Quelle – für die Auswertung von
+        # Abweichungen außerhalb der App; wiederhergestellt werden nur die Bestände (der Abruf-Zustand gehört zur alten
+        # Instanz)
+        "ds_balances": _rows(
+            db, "SELECT d.provider, d.account, d.name, b.asset_key, b.qty, b.name AS asset_name, b.note, "
+                "b.observed_at, d.status AS source_status, d.last_success_at AS source_last_success_at, "
+                "d.coverage_json AS source_coverage_json FROM ds_balance b JOIN data_source d ON d.id = b.source_id "
+                "ORDER BY d.id, b.asset_key", drop=()),
         "watchlists": _rows(db, "SELECT name, position, is_default, created_at FROM watchlist ORDER BY id", drop=()),
         "watchlist_items": _rows(db, "SELECT w.name AS list_name, i.quote_source, i.quote_id, i.asset_class, "
                                      "i.asset_id, i.symbol, i.name, i.position, i.added_at FROM watchlist_item i "
@@ -306,7 +314,7 @@ _LIST_KEYS = ("asset_sources", "plans", "plan_dismissed", "datasources", "event_
               "tx_links", "csv_symbols", "csv_accounts", "csv_mappings", "deleted_journal", "diag_dismissed",
               "asset_changes", "asset_merges", "account_merges", "account_removals", "decision_rules", "watchlists",
               "watchlist_items",
-              "reference_balances", "diag_research_events", "clarify_cases", "clarify_runs")
+              "reference_balances", "diag_research_events", "clarify_cases", "clarify_runs", "ds_balances")
 _TMP_MARK = ".restore-"
 
 
@@ -526,6 +534,7 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
             c, "clarify_run", [{**r, "status": "restored"} if r.get("status") == "ok" and r.get("bulk_id") else r
                                for r in st.get("clarify_runs") or []], "OR IGNORE")
         counts["research"] = _research_events(c, st.get("diag_research_events") or [])
+        counts["ds_balances"] = _ds_balances(c, st.get("ds_balances") or [])
         counts["usage"] = _usage(c, extras.get(USAGE))
         counts["prices"] = _prices(c, extras.get(PRICES))
         counts["series_meta"] = _meta(c, extras.get(META))
@@ -747,6 +756,23 @@ def _research_events(c: Any, rows: list[Any]) -> int:
                         (src["id"], r["event_key"], r.get("ts"), r["lines_json"],
                          r.get("status") if r.get("status") in ("new", "dismissed") else "new",
                          r.get("created_at") or "", r.get("decided_at")))
+        n += max(cur.rowcount, 0)
+    return n
+
+
+def _ds_balances(c: Any, rows: list[Any]) -> int:
+    """Beobachtete Bestände je Datenquelle (Anbieter/Konto/Name) wieder ablegen; ältere Exporte kennen sie nicht."""
+    n = 0
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("asset_key") or r.get("qty") is None:
+            continue
+        src = c.execute("SELECT id FROM data_source WHERE provider=? AND account IS ? AND name=?",
+                        (r.get("provider"), r.get("account"), r.get("name"))).fetchone()
+        if src is None:
+            continue
+        cur = c.execute("INSERT OR IGNORE INTO ds_balance(source_id, asset_key, qty, name, note, observed_at) "
+                        "VALUES (?,?,?,?,?,?)", (src["id"], str(r["asset_key"]), str(r["qty"]), r.get("asset_name"),
+                                                 r.get("note"), r.get("observed_at") or ""))
         n += max(cur.rowcount, 0)
     return n
 

@@ -326,11 +326,18 @@ def _same_qty(facts: Facts, f: Finding) -> Recommendation | None:
         return None
     q = weak.to_qty or weak.from_qty
     likely = f.status in ("wahrscheinlich", "belegt")
-    text = (f"{weak.tx_id} ausblenden. Die manuell erfasste Buchung bildet sehr wahrscheinlich denselben Vorgang ab "
-            f"wie {strong.tx_id}, der durch einen Transaktions-Hash belegt ist. Vorher im Explorer bzw. beim Anbieter "
-            f"prüfen, ob {_q(q)} {d['asset']} nur einmal auf {d['account']} gebucht wurden." if likely else
-            f"Erst prüfen, ob {_q(q)} {d['asset']} einmal oder zweimal auf {d['account']} gebucht wurden. Nur wenn "
-            f"einmal: {weak.tx_id} ausblenden (die schwächer belegte Buchung). Sonst als geprüft markieren.")
+    if d.get("twin"):
+        text = (f"{weak.tx_id} ausblenden: Dieselbe Transaktion ist zweimal als Zugang gebucht – als "
+                f"{_what(weak)} und als {_what(strong)}. {strong.tx_id} bleibt (es hat ein Gegenstück bzw. ist die "
+                f"genauere Buchung). Bestätigung: Der Bestand von {d['asset']} auf {d['account']} laut Quelle passt "
+                f"nur ohne {weak.tx_id}.")
+    elif likely:
+        text = (f"{weak.tx_id} ausblenden. Die manuell erfasste Buchung bildet sehr wahrscheinlich denselben Vorgang "
+                f"ab wie {strong.tx_id}, der durch einen Transaktions-Hash belegt ist. Vorher im Explorer bzw. beim "
+                f"Anbieter prüfen, ob {_q(q)} {d['asset']} nur einmal auf {d['account']} gebucht wurden.")
+    else:
+        text = (f"Erst prüfen, ob {_q(q)} {d['asset']} einmal oder zweimal auf {d['account']} gebucht wurden. Nur "
+                f"wenn einmal: {weak.tx_id} ausblenden (die schwächer belegte Buchung). Sonst als geprüft markieren.")
     opts = []
     if facts.hideable(weak):
         opts.append(Option("hide_weak", f"{weak.tx_id} ausblenden", hide_text(weak) + f"; {strong.tx_id} bleibt.",
@@ -764,7 +771,15 @@ def _holding(facts: Facts, f: Finding) -> Recommendation | None:
             + (" Der externe Bestand ist nicht bestätigt (Abruf veraltet oder unvollständig)."
                if st == "extern_unsicher" else "")))
     opts.append(_dismiss("Differenz ist erklärt – als geprüft markieren"))
-    if st == "extern_diff":
+    twin = _twin_asset(facts, acc, aid, target - comp) if target is not None else None
+    if st == "extern_diff" and twin is not None:
+        other, q = twin
+        text = (f"Vermutlich dieselbe Anlage unter zwei Kennungen: {other} hat auf {acc} genau die fehlende Menge "
+                f"({_q(q)}) und dieselbe Kursquelle wie {aid}; {aid} + {other} ergibt den Bestand laut Quelle. "
+                f"Empfehlung: {other} in {aid} zusammenführen (Vorschau mit Wirkung auf Bestände, FIFO und "
+                "Steuerjahre, Rückgängig möglich). Eine Ausgleichsbuchung wäre dann falsch – sie würde die Menge "
+                "doppelt zählen.")
+    elif st == "extern_diff":
         text = ("Ursache klären: fehlende Buchungen (Prüf-Stapel, nicht abgerufene Vorgänge), Netzwerkgebühren, "
                 "falsche Zuordnung. Erst wenn die Ursache nicht zu finden ist, als Notlösung eine Ausgleichsbuchung.")
     elif st == "extern_unsicher":
@@ -774,9 +789,30 @@ def _holding(facts: Facts, f: Finding) -> Recommendation | None:
         text = ("Prüfen, welche Buchung im Import bzw. in der App fehlt oder doppelt ist (Buchungen des Kontos). Ein "
                 "Ausgleich auf das Soll ist nur sinnvoll, wenn das Soll des Imports stimmt.")
     links = _journal_links(acc, aid)
+    if st == "extern_diff" and twin is not None:
+        links.insert(0, Link(f"{twin[0]} in {aid} zusammenführen (Vorschau)",
+                             "/assets/merge?" + urlencode({"alias": twin[0], "target": aid})))
     if st.startswith("extern"):
         links.append(Link("Datenquellen", "/settings/datasources"))
     return Recommendation(text=text, conditional=True, options=opts, links=links)
+
+
+def _twin_asset(facts: Facts, acc: str, aid: str, diff: Decimal) -> tuple[str, Decimal] | None:
+    """Ein zweites Asset derselben Kursquelle auf demselben Konto, dessen Bestand genau die fehlende Menge ausmacht
+    (Beispiel: Börse meldet ``T`` 100.000, Buchungen ``T`` 80.000 + ``TH`` 20.000). Nur ein Hinweis – gleiche
+    Kursquelle beweist keine Identität, die Zusammenführung bleibt eine Entscheidung mit Vorschau."""
+    if diff <= 0 or facts.pf is None or facts.snap is None or facts.snap.ledger is None:
+        return None
+    a = facts.pf.assets.get(aid)
+    if a is None or not a.quote_id:
+        return None
+    tol = max(Decimal("1e-8"), diff * Decimal("1e-6"))
+    for (acc2, other), q in sorted(facts.snap.ledger.balances.items()):
+        b = facts.pf.assets.get(other)
+        if acc2 == acc and other != aid and b is not None and b.quote_id \
+                and (b.quote_source, b.quote_id) == (a.quote_source, a.quote_id) and abs(q - diff) <= tol:
+            return other, q
+    return None
 
 
 # ----------------------------------------------------------------------------------------------------
