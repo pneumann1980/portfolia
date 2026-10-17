@@ -874,6 +874,7 @@ tr.muted-row td { color: var(--muted, #6b7280); }
 
 /* Visuelle Fallklärung: Geldweg. Zustand immer auch als Text/Symbol, Linienart zusätzlich zur Farbe. */
 .vk-h { margin: 16px 0 6px; font-size: 1rem; }
+.vk .badge { white-space: normal; overflow-wrap: anywhere; }
 .vk-next { border: 2px solid var(--info-ink); background: var(--info-bg); color: var(--info-ink); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 12px; }
 .vk-next p { margin: 6px 0; color: var(--ink); }
 .vk-modes { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }

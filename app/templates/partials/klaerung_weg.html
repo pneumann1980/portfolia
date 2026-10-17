@@ -17,7 +17,11 @@
     <div class="row" style="gap:8px;flex-wrap:wrap"><b>Nächster Schritt: {{ view.action.label }}</b>
       <span class="badge {{ {'automatisch': 'good', 'bestaetigung': 'info', 'information': 'warn'}[view.action.mode] }}">{{ {'automatisch': 'automatisch möglich', 'bestaetigung': 'braucht Ihre Bestätigung', 'information': 'braucht weitere Information'}[view.action.mode] }}</span></div>
     <p>{{ view.action.why }}</p>
-    {% if view.action.href %}<a class="btn sm primary" href="{{ view.action.href }}">{{ view.action.label }}</a>{% endif %}
+    {% if view.action.key == 'hyp' and view.hyp_id == view.action.hyp_id and view.impact and view.impact.ok %}
+      <form method="post" action="/quality/klaerung/{{ case.key }}/uebernehmen" class="row" style="gap:8px;flex-wrap:wrap">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="hyp" value="{{ view.hyp_id }}"><input type="hidden" name="version" value="{{ case.version }}"><input type="hidden" name="tokens" value="{{ tokens(case.decision.hyp) }}">
+        <button class="btn sm primary" type="submit">Diese Lösung jetzt übernehmen</button><span class="hint">atomar, nachgeprüft, gemeinsam rückgängig zu machen</span></form>
+    {% elif view.action.href %}<a class="btn sm primary" href="{{ view.action.href }}">{{ view.action.label }}</a>{% endif %}
   </div>
   {% endif %}
 
@@ -27,6 +31,30 @@
     {% for h in case.hyps if not h.base %}<a class="btn sm {{ 'primary' if view.hyp_id == h.id else 'ghost' }}" href="?{{ qs(hyp=h.id, sel='') }}#geldweg" {% if view.hyp_id == h.id %}aria-current="true"{% endif %} title="{{ h.label }}">Simulation {{ loop.index }}</a>{% endfor %}
   </nav>
   <p class="hint">{% if view.simulated %}Simulation: Es wurde <b>nichts gebucht</b>. Durchgestrichene Verbindungen entfallen, gestrichelte würden neu entstehen.{% else %}Zeigt den Stand der Buchungen. Eine Simulation ändert nichts, bis Sie ausdrücklich übernehmen.{% endif %}</p>
+  {% endif %}
+
+  {% if view.impact %}{% set im = view.impact %}
+  <div class="vk-impact" id="wirkung" role="region" aria-label="Wirkung der Simulation">
+    <h3 class="vk-h">Wirkung dieser Simulation <span class="badge warn">berechnet – nichts gebucht</span></h3>
+    {% if not im.ok %}<div class="alert crit" role="alert"><span class="icon">!</span><div><b>Nicht zulässig:</b> {{ im.reasons|join('; ') }}<div class="hint">Diese Lösung kann nicht übernommen werden.</div></div></div>{% endif %}
+    <p>{{ im.stock_text }}</p>
+    {% if im.stock_diffs %}<ul class="plain-list hint">{% for d in im.stock_diffs %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}
+    {% if im.positions %}<ul class="vk-facts">
+      {% for r in im.positions %}<li><b>{{ view.place(r.pid).mark }} · {{ r.place }} · {{ r.asset }}:</b> {{ sens(r.before) }} → <b>{{ sens(r.after) }}</b> <span class="hint">({{ sens(r.delta) }}; Wert der Änderung {{ sens(r.value) }})</span></li>{% endfor %}</ul>
+    {% else %}<p class="hint">Keine Bestandsänderung an Konten dieses Falls.</p>{% endif %}
+    {% if im.price_note %}<p class="hint">Bewertung: {{ im.price_note }}. Vorher und nachher mit demselben gespeicherten Kurs; es wurde nichts abgerufen.</p>{% endif %}
+    {% if im.tax %}<ul class="vk-facts">{% for t in im.tax %}<li><b>{{ t.year }}:</b> realisiertes Ergebnis {{ sens(t.gain) }}; Einkünfte {{ sens(t.income) }}</li>{% endfor %}</ul>
+    {% else %}<p class="hint">Keine Änderung an realisiertem Ergebnis oder Einkünften.</p>{% endif %}
+    {% if im.lots %}<p><b>Anschaffungsdaten:</b></p><ul class="plain-list">{% for l in im.lots[:4] %}<li>{{ l[0] }} · {{ l[1] }}: {{ l[2] }} → {{ l[3] }}</li>{% endfor %}</ul>{% endif %}
+    {% for n in im.notes %}<p class="hint">{{ n }}</p>{% endfor %}
+    {% if im.ok and not (view.action and view.action.key == 'hyp' and view.hyp_id == view.action.hyp_id) %}
+    <form method="post" action="/quality/klaerung/{{ case.key }}/uebernehmen" class="row" style="gap:8px;flex-wrap:wrap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="hyp" value="{{ view.hyp_id }}"><input type="hidden" name="version" value="{{ case.version }}">
+      {% for h in case.hyps if h.id == view.hyp_id %}<input type="hidden" name="tokens" value="{{ tokens(h) }}">{% endfor %}
+      <button class="btn sm" type="submit" title="Ausdrückliche Bestätigung; übernimmt nur Verknüpfen/Ausblenden/Neubuchen, atomar, nachgeprüft, rückgängig zu machen">Ausdrücklich übernehmen</button>
+      <span class="hint">Die Übernahme wird danach nachgeprüft; „Gemeinsam rückgängig“ stellt den Stand her.</span></form>
+    {% endif %}
+  </div>
   {% endif %}
 
   <h3 class="vk-h">Konten und Wallets</h3>

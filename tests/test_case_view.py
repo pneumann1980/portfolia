@@ -14,6 +14,7 @@ from app.diagnosis import clarify as K
 from app.diagnosis import stockconfirm as SC
 from app.diagnosis.engine import report_for
 from tests.helpers import tx
+from tests.test_clarify import ASSETS_K as ASSETS_K_
 from tests.test_clarify import cfg as cfg
 from tests.test_clarify import ctx_for, one_case, sand_rows, usdt_double_out
 from tests.test_diagnosis import fingerprint, make_ctx
@@ -234,3 +235,49 @@ def test_case_page_embeds_window_chart_and_get_stays_read_only(cfg):
         assert ctx.db.scalar(run_state) == "cancelled"
 
     _web_case(cfg, sand_rows(), ASSETS_K, check)
+
+
+def test_impact_comes_from_shared_simulation_without_booking(cfg):
+    ctx = ctx_for(cfg, usdt_double_out())
+    case = one_case(ctx)
+    rep = report_for(ctx)
+    hyp = next(h for h in case.hyps if not h.base)
+    assert V.build(ctx, case, rep).impact is None
+    before = fingerprint(ctx.db)
+    im = V.build(ctx, case, rep, hyp_id=hyp.id).impact
+    assert fingerprint(ctx.db) == before
+    assert im is not None and im.ok and im.hyp_id == hyp.id
+    (row,) = im.positions
+    assert (row["place"], row["asset"], row["before"], row["after"]) == ("Bybit", "USDT", "804,83573598",
+                                                                          "902,41786799")
+    assert (row["delta"].startswith("+") and "EUR" in row["value"]) or "nicht bewertbar" in row["value"]
+    assert "Kein Bestandsnachweis" in im.stock_text  # ohne Nachweis keine Aussage über die Richtigkeit
+    # Bewertung nur mit gespeichertem Kurs; fehlt er, ist der Wert unbekannt – nie 0
+    assert "0,00 EUR" not in row["value"]
+
+
+def test_page_simulation_apply_verify_and_undo_roundtrip(cfg):
+    import re
+
+    from app.diagnosis import clarify as K2
+    from tests.test_clarify import balance
+
+    def check(c, ctx, case):
+        hyp = next(h for h in case.hyps if not h.base)
+        page = c.get(f"/quality/klaerung/{case.key}?hyp={hyp.id}")
+        assert page.status_code == 200 and 'id="wirkung"' in page.text and "nichts gebucht" in page.text
+        assert "durchgestrichen" in page.text and "vk-removed" in page.text
+        assert balance(ctx, "Bybit", "USDT") == D("804.83573598")  # die Ansicht hat nichts gebucht
+        form = re.search(r'action="/quality/klaerung/[^"]+/uebernehmen".*?</form>', page.text, re.S).group(0)
+        val = {n: re.search(rf'name="{n}" value="([^"]*)"', form).group(1).replace("&#34;", '"') for n in
+               ("hyp", "version", "tokens", "csrf_token")}
+        c.headers["X-CSRF-Token"] = val["csrf_token"]
+        r = c.post(f"/quality/klaerung/{case.key}/uebernehmen", data=val, follow_redirects=True)
+        assert r.status_code == 200 and "Übernommen und nachgeprüft" in r.text
+        assert balance(ctx, "Bybit", "USDT") == D("902.41786799")
+        run = K2.runs_of(ctx.db, case.key)[0]
+        r = c.post(f"/quality/klaerung/rueckgaengig/{run['token']}", data={"csrf_token": val["csrf_token"]},
+                   follow_redirects=True)
+        assert "zurückgenommen" in r.text and balance(ctx, "Bybit", "USDT") == D("804.83573598")
+
+    _web_case(cfg, usdt_double_out(), ASSETS_K_, check)

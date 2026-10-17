@@ -158,6 +158,31 @@ class NextAction:
     hyp_id: str = ""
 
 
+STOCK_TEXT = {
+    "alle_erfuellt": "Alle hinterlegten Bestandsnachweise werden erfüllt.",
+    "teilweise": "Hinterlegte Bestandsnachweise werden nur teilweise erfüllt.",
+    "widerspruch": "Widerspricht einem hinterlegten Bestandsnachweis.",
+    "unberuehrt": "Hinterlegte Nachweise bleiben unverändert abweichend – die Simulation erklärt die Differenz nicht.",
+    "kein_nachweis": "Kein Bestandsnachweis vorhanden – die Wirkung auf den Bestand lässt sich nicht überprüfen.",
+}
+
+
+@dataclass
+class Impact:
+    """Wirkung einer simulierten Hypothese (aus der gemeinsamen Simulation des Falls, nichts gebucht)."""
+
+    hyp_id: str
+    ok: bool
+    reasons: list[str]
+    positions: list[dict[str, Any]]  # Ort, Asset, vorher, nachher, Änderung, Wert, Kursangabe
+    tax: list[dict[str, str]]  # Jahr: realisiertes Ergebnis / Einkünfte vorher → nachher
+    lots: list[tuple[str, str, str, str]]
+    stock_text: str
+    stock_diffs: list[str]
+    notes: list[str]
+    price_note: str
+
+
 @dataclass
 class CaseView:
     key: str
@@ -173,6 +198,7 @@ class CaseView:
     truncated: int = 0
     derivatives: list[str] = field(default_factory=list)
     revisions: list[dict[str, str]] = field(default_factory=list)
+    impact: Impact | None = None
 
     def place(self, pid: str) -> Place | None:
         return next((p for p in self.places if p.pid == pid), None)
@@ -454,6 +480,7 @@ def build(ctx: Any, case: K.Case, report: Report, *, hyp_id: str = "", sel: str 
     assets = list(case.assets)
     for p in names.places.values():
         p.facts = _facts(report, names, p, [a for (acc, a) in case.positions if acc == p.key] or assets)
+    impact = _impact(report, names, case, hyp) if hyp is not None else None
     places = names.finish()
     questions = _questions(case, moves)
     mode = (f"Simulation: {hyp.label} – nichts davon ist gebucht" if hyp is not None
@@ -463,7 +490,47 @@ def build(ctx: Any, case: K.Case, report: Report, *, hyp_id: str = "", sel: str 
                     quality=_quality(ctx, case, report, moves), truncated=truncated, derivatives=list(case.deriv),
                     revisions=_revisions(ctx, case))
     view.selected = _select(view, sel)
+    view.impact = impact
     return view
+
+
+def _impact(report: Report, names: _Names, case: K.Case, hyp: K.Hyp) -> Impact:
+    """Bestands-, Steuer- und Anschaffungswirkung aus der gemeinsamen Simulation. Bewertung nur mit dem gespeicherten
+    Kurs (vor und nach gleich, keine Abfrage); ohne Kurs bleibt der Wert unbekannt."""
+    idx = report.index
+    base = case.baseline
+    rows: list[dict[str, Any]] = []
+    prices: dict[str, str] = {}
+    for key in sorted(set(base.balances) | set(hyp.balances)):
+        before, after = base.balances.get(key, ZERO), hyp.balances.get(key, ZERO)
+        if before == after:
+            continue
+        acc, aid = key
+        pinfo = idx.price(aid) if idx is not None else None
+        value = ""
+        if pinfo is not None:
+            value = f"{(after - before) * Decimal(str(pinfo.price_eur)):+.2f} EUR"
+            when = _ts(pinfo.ts) if pinfo.ts else "Zeitpunkt unbekannt"
+            prices[aid] = f"{aid}: gespeicherter Kurs ({pinfo.source}, {when}{', veraltet' if pinfo.stale else ''})"
+        rows.append({"place": names.place(acc).name, "pid": names.place(acc).pid, "asset": aid,
+                     "before": _q(before), "after": _q(after), "delta": f"{after - before:+f}".replace(".", ","),
+                     "value": value or "nicht bewertbar (kein Kurs)"})
+    tax = []
+    for y in sorted(set(base.years) | set(hyp.years)):
+        (g0, i0), (g1, i1) = base.years.get(y, (ZERO, ZERO)), hyp.years.get(y, (ZERO, ZERO))
+        if (g0, i0) != (g1, i1):
+            tax.append({"year": str(y), "gain": f"{g0:.2f} → {g1:.2f} EUR", "income": f"{i0:.2f} → {i1:.2f} EUR"})
+    diffs = [f"{k[0]} · {k[1]}: Differenz zum Nachweis " + " | ".join(v) for k, v in sorted(hyp.stock_diffs.items())]
+    notes = []
+    if hyp.resolved:
+        notes.append(f"{len(hyp.resolved)} Befund(e) wären danach erledigt.")
+    if hyp.successors:
+        notes.append("Danach eigenständig zu prüfen (bisher verdeckt): " + "; ".join(hyp.successors[:3]))
+    if hyp.new_findings:
+        notes.append("Neuer Befund: " + "; ".join(hyp.new_findings[:3]))
+    return Impact(hyp_id=hyp.id, ok=hyp.ok, reasons=list(hyp.reasons), positions=rows, tax=tax,
+                  lots=list(hyp.lot_dates), stock_text=STOCK_TEXT.get(hyp.stock, hyp.stock), stock_diffs=diffs,
+                  notes=notes, price_note="; ".join(prices.values()) if prices else "")
 
 
 def _move(ctx: Any, report: Report, names: _Names, tx: Any, r: TxRef, state: str,
