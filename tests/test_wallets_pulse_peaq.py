@@ -609,7 +609,7 @@ def test_peaq_history_window_limit_keeps_the_chain_balance_and_reports_the_gap(c
     real = subscan.handler
     routes = ("v2/scan/transfers", "v2/scan/extrinsics", "v2/scan/account/reward_slash")
 
-    def handler(req: httpx.Request) -> httpx.Response:
+    def handler(req: httpx.Request) -> httpx.Response:  # auch das jüngste Fenster wird abgelehnt
         if req.url.host == "api.pubfi.ai" and any(r in req.url.path for r in routes):
             return httpx.Response(403, json={"error": {"code": "history_window_exceeded",
                                                        "message": "history_window_exceeded"}})

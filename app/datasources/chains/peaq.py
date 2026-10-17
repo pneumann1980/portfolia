@@ -214,7 +214,8 @@ class PeaqConnector(WalletConnector):
         note = (f"{err.message} Bestand laut öffentlichem peaq-RPC: {qty.normalize():f} PEAQ. Die Historie ist über "
                 "diese Route nicht abrufbar – Zugänge per CSV-/Koinly-Import bzw. mit einem Subscan-Schlüssel "
                 "(Anbieter „Subscan direkt“) ergänzen.")
-        return K.FetchResult(complete=False, cursor=cursor, warnings=[note], gaps=[note],
+        return K.FetchResult(complete=False, cursor=cursor, warnings=["Nur Bestand abgerufen – Verlauf nicht abrufbar"],
+                             gaps=[note],
                              balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")],
                              coverage={"mode": "nur Bestand laut Kette", "operations": 0, "provider": "peaq-RPC"})
 

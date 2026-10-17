@@ -1426,6 +1426,24 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.31.2 – DOT/peaq: Rückblick-Grenze der kostenlosen PubFi-Route – jüngsten Verlauf abrufen
+
+Beobachtet (Screenshot, DOT nach 0.31.1): Auch das kleinste Blockfenster am Anfang der Kette wurde mit
+„history_window_exceeded“ abgelehnt; der Sync lief nur noch im Rückfall (Bestand laut RPC 30,668 DOT, 0 Vorgänge), die
+Meldung stand doppelt (Warnung und Lücke).
+
+* **Folgerung:** Die Route begrenzt offenbar den **Rückblick**, nicht nur die Fensterbreite (alte Blöcke werden auch in
+  kleinen Fenstern abgelehnt). Genaues Limit weiterhin nicht dokumentiert.
+* **Neu:** Scheitert das kleinste Fenster, sucht der Abruf den **frühesten abrufbaren Block** (Halbierung, blockgenau, rund
+  25 Anfragen je Netz) und ruft ab dort den Verlauf ab. Der ältere Teil ist eine ausgewiesene Lücke („Verlauf vor Block X
+  nicht abrufbar“), im Abrufstand gemerkt (`from`) und bei jedem Lauf wieder genannt. Nichts davor wird erfunden. Wird auch
+  das jüngste Fenster abgelehnt, bleibt es beim Rückfall (Bestand laut RPC, Lücke).
+* **Meldung:** Rückfall ohne Doppelung (Kurzhinweis als Warnung, Begründung als Lücke).
+* **Grenzen:** Mit Rückblick-Grenze sind ältere Vorgänge über die kostenlose Route nicht erreichbar – sie kommen nur aus
+  dem kuratierten Import, einem CSV-/Koinly-Export oder einem Subscan-Schlüssel. Ein Breitenlimit unter 2.000 Blöcken wird
+  nicht gesondert behandelt (dann Rückfall). Die Weboberfläche peaq.subscan.io ist keine Schnittstelle: ihre Web-API
+  blockiert Programme (HTTP 403), die offizielle API verlangt einen Schlüssel.
+
 ## 0.31.1 – DOT/peaq: Verlaufsfenster der kostenlosen PubFi-Route; Robinhood Chain
 
 Beobachtet (Screenshots): Nach 0.31.0 meldeten DOT und peaq statt „row_limit_exceeded“ nun HTTP 403

@@ -105,6 +105,7 @@ class _Net:
         self.notes: list[str] = []
         self.stopped: str | None = None
         self.requests = 0
+        self.gap_from: int | None = None  # Rückblick-Grenze: frühester abrufbarer Block (davor fehlt der Verlauf)
 
 
 @K.register
@@ -405,6 +406,33 @@ class PolkadotConnector(WalletConnector):
                 net.capped.append(what)
         return min(t_end, x_end, r_end), t_cap or x_cap or r_cap
 
+    def _recent_start(self, http: ChainHttp, net: _Net, addr: str, rejected: int) -> int | None:
+        """Frühester Block, ab dem die Route das kleinste Fenster zulässt (Rückblick-Grenze der kostenlosen Route):
+        Halbierung zwischen dem abgelehnten ``rejected`` und der Spitze, blockgenau (rund 25 Anfragen). ``None``, wenn
+        selbst das jüngste Fenster abgelehnt wird – dann gibt es über diese Route keinen Verlauf."""
+
+        def accepted(lo: int) -> bool:
+            body = {"address": addr, "row": 1, "page": 0, "block_range": f"{lo}-{min(lo + MIN_WINDOW - 1, net.safe)}"}
+            try:
+                self._call(http, "v2/scan/transfers", body, "Überweisungen")
+            except K.ConnectorError as e:
+                if e.kind != "history_window":
+                    raise
+                return False
+            return True
+
+        good = max(net.safe - MIN_WINDOW + 1, rejected + 1)
+        if good <= rejected or not accepted(good):
+            return None
+        bad = rejected
+        while good - bad > 1:  # blockgenau: Vorgänge zwischen Grenze und Fensterrand gingen sonst verloren
+            mid = (bad + good) // 2
+            if accepted(mid):
+                good = mid
+            else:
+                bad = mid
+        return good
+
     def _scan(self, http: ChainHttp, net: _Net, addr: str, width: int | None) -> int | None:
         """Blockbereich des Netzes in Fenstern abrufen. Ohne Fensterlimit ist das ein einziges Fenster (``start`` bis
         Spitze). Meldet der Anbieter ``history_window_exceeded`` (kostenlose PubFi-Route), halbiert sich die Breite bis
@@ -419,8 +447,15 @@ class PolkadotConnector(WalletConnector):
                 end, capped = self._window(http, net, addr, pos, hi)
             except K.ConnectorError as e:
                 span = hi - pos + 1
-                if e.kind != "history_window" or span <= MIN_WINDOW:
+                if e.kind != "history_window":
                     raise
+                if span <= MIN_WINDOW:  # Rückblick- statt Breitengrenze: frühesten abrufbaren Block suchen
+                    first = self._recent_start(http, net, addr, pos)
+                    if first is None:
+                        raise
+                    net.gap_from = first
+                    pos = first
+                    continue
                 width = max(MIN_WINDOW, span // 2)
                 _WINDOW_CAP[wkey] = width
                 note = f"{http.ep.label} begrenzt den Verlauf je Anfrage – Abruf in Blockfenstern"
@@ -452,7 +487,8 @@ class PolkadotConnector(WalletConnector):
             note = (f"{e.message} Bestand laut öffentlichem RPC: {qty.normalize():f} {self.native}"
                     + (f" ({' + '.join(parts)})" if len(parts) > 1 else "") + ". Die Historie ist über diese Route "
                     "nicht abrufbar – Zugänge per CSV-/Koinly-Import oder mit einem Subscan-Schlüssel ergänzen.")
-            return K.FetchResult(complete=False, cursor=cursor, warnings=[note], gaps=[note],
+            return K.FetchResult(complete=False, cursor=cursor, gaps=[note],
+                                 warnings=["Nur Bestand abgerufen – Verlauf nicht abrufbar"],
                                  balances=[K.Balance(self.native, qty, self.chain_label, "laut öffentlichem RPC")],
                                  coverage={"mode": "nur Bestand laut Kette", "operations": 0, "provider": "RPC"})
 
@@ -468,6 +504,7 @@ class PolkadotConnector(WalletConnector):
         try:
             for key, sh, label, http in nets:
                 net = _Net(key, sh, label, int((state.get(key) or {}).get("block") or 0))
+                net.gap_from = int((state.get(key) or {}).get("from") or 0) or None
                 done.append(net)
                 try:
                     net.safe = self._tip(http)
@@ -489,9 +526,14 @@ class PolkadotConnector(WalletConnector):
                                                       "versucht es erneut.", retry_after_s=600)
             res.complete = all(n.through >= n.safe and not n.stopped and not n.capped for n in done)
             res.cursor = {"v": 1, "nets": {n.key: {"block": max(n.through + 1, n.start),
-                                                  **({"win": wins[n.key]} if wins.get(n.key) else {})} for n in done}}
+                                                  **({"win": wins[n.key]} if wins.get(n.key) else {}),
+                                                  **({"from": n.gap_from} if n.gap_from else {})} for n in done}}
             res.resume = not res.complete
             for n in done:
+                if n.gap_from:
+                    res.gaps.append(f"{n.label}: Verlauf vor Block {n.gap_from:,} ist über {nets[0][3].ep.label} nicht "
+                                    "abrufbar (Rückblick-Grenze der kostenlosen Route) – frühere Vorgänge per CSV-/"
+                                    "Koinly-Import oder mit einem Subscan-Schlüssel ergänzen".replace(",", "."))
                 res.warnings += n.notes
                 if n.stopped:
                     res.warnings.append(f"{n.label}: {n.stopped} – Fortsetzung ab Block {n.through + 1:,}"

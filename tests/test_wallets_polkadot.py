@@ -412,13 +412,35 @@ def test_history_window_cap_is_kept_in_the_cursor_across_restarts(client, scan, 
     assert all(hi - lo + 1 <= 250 for lo, hi in seen)
 
 
-def test_history_window_lookback_limit_keeps_the_balance_and_reports_the_gap(client, scan, monkeypatch):
-    """Rückblick-Grenze (auch das kleinste Fenster in alten Blöcken scheitert): kein Fehler, kein erfundener Verlauf –
-    der Bestand laut öffentlichem RPC bleibt als Ist-Bestand, die fehlende Historie ist eine ausgewiesene Lücke."""
+def test_history_window_lookback_limit_fetches_the_recent_part_and_reports_the_gap(client, scan, monkeypatch):
+    """Rückblick-Grenze der kostenlosen Route: der früheste abrufbare Block wird gesucht, ab dort kommt der Verlauf
+    (nichts davor erfunden), der fehlende ältere Teil ist eine ausgewiesene Lücke – kein Fehler."""
     seen: list[tuple[int, int]] = []
     monkeypatch.setattr(PD, "MIN_WINDOW", 50)
     monkeypatch.setattr(PD, "_WINDOW_CAP", {})
-    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(_windowed(scan, seen, min_lo=900)))
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(_windowed(scan, seen, min_lo=105)))
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    res = sync(client, sid)
+    assert res["status"] in ("synced", "partial") and not res.get("error"), res
+    rows = all_rows(client, sid)
+    assert k("rc", "110-1", "tr:3") in rows and k("ah", "520-1", "tr:2") in rows  # innerhalb der Grenze
+    assert k("rc", "100-2", "tr:5") not in rows  # davor: nicht abrufbar, nicht erfunden
+    gaps = json.loads(source(client, sid)["coverage_json"])["gaps"]
+    assert any("Relay Chain" in g and "Verlauf vor Block" in g and "nicht abrufbar" in g for g in gaps), gaps
+    first = min(lo for lo, _hi in seen if lo >= 105)
+    assert first == 105  # Suche blockgenau
+    assert json.loads(source(client, sid)["cursor_json"])["nets"]["polkadot"]["from"] == first
+
+
+def test_history_window_rejecting_even_the_newest_window_keeps_the_balance_and_reports_the_gap(
+        client, scan, monkeypatch):
+    """Auch das jüngste Fenster wird abgelehnt: kein Fehler, nichts gebucht – Bestand laut öffentlichem RPC bleibt als
+    Ist-Bestand, die fehlende Historie ist eine ausgewiesene Lücke."""
+    seen: list[tuple[int, int]] = []
+    monkeypatch.setattr(PD, "MIN_WINDOW", 50)
+    monkeypatch.setattr(PD, "_WINDOW_CAP", {})
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(_windowed(scan, seen, min_lo=10**9)))
     _with_rpc_on(monkeypatch, free=4 * 10**10)
     set_provider_key(client, "pubfi", KEY)
     sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
