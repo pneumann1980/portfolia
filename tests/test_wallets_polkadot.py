@@ -352,3 +352,89 @@ def test_unknown_account_on_both_chains_has_balance_zero_via_rpc(client, scan, m
     sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
     ok, msg = datasource_service(ctx(client)).check(sid)
     assert not ok and "Bestand laut öffentlichem RPC: 0 DOT" in msg and balances(client, sid) == {"DOT": "0"}
+
+
+# ---- Verlaufsfenster der kostenlosen Route („history_window_exceeded“) ---------------------------------------------
+
+def _windowed(scan, seen: list[tuple[int, int]], max_width: int | None = None, min_lo: int = 0):
+    """Wie live (10/2026): ohne Blockbereich bzw. mit zu breitem/zu altem Bereich antwortet die kostenlose PubFi-Route
+    mit HTTP 403 „history_window_exceeded“ – schon bei ``row=1``."""
+    real = scan.handler
+    routes = ("v2/scan/transfers", "v2/scan/extrinsics", "v2/scan/account/reward_slash")
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.host == "api.pubfi.ai" and any(r in req.url.path for r in routes):
+            br = json.loads(req.content or b"{}").get("block_range")
+            deny = httpx.Response(403, json={"error": {"code": "history_window_exceeded",
+                                                       "message": "history_window_exceeded"}})
+            if not br:
+                return deny
+            lo, hi = (int(x) for x in str(br).split("-"))
+            seen.append((lo, hi))
+            if (max_width is not None and hi - lo + 1 > max_width) or lo < min_lo:
+                return deny
+        return real(req)
+
+    return handler
+
+
+def test_history_window_is_halved_until_accepted_and_remembered(client, scan, monkeypatch):
+    seen: list[tuple[int, int]] = []
+    monkeypatch.setattr(PD, "MIN_WINDOW", 50)
+    monkeypatch.setattr(PD, "_WINDOW_CAP", {})
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(_windowed(scan, seen, max_width=300)))
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    res = sync(client, sid)
+    assert res["status"] == "synced", res
+    rows = all_rows(client, sid)
+    assert rows[k("rc", "100-2", "tr:5")].rec.in_qty == D(50) and rows[k("rc", "110-1", "tr:3")].rec.out_qty == D(10)
+    assert rows[k("ah", "520-1", "tr:2")].rec.in_qty == D(1)  # auch das zweite Netz, in Fenstern bis zur Spitze
+    assert PD._WINDOW_CAP == {"pubfi:polkadot": 250, "pubfi:assethub-polkadot": 250}
+    seen.clear()
+    scan.nets["polkadot"]["tip"], scan.nets["assethub-polkadot"]["tip"] = 1100, 2100
+    assert sync(client, sid)["status"] == "synced"  # Folgelauf: Breite aus Abrufstand, keine Fehlversuche mehr
+    assert seen and all(hi - lo + 1 <= 250 for lo, hi in seen)
+
+
+def test_history_window_cap_is_kept_in_the_cursor_across_restarts(client, scan, monkeypatch):
+    seen: list[tuple[int, int]] = []
+    monkeypatch.setattr(PD, "MIN_WINDOW", 50)
+    monkeypatch.setattr(PD, "_WINDOW_CAP", {})
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(_windowed(scan, seen, max_width=300)))
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    assert sync(client, sid)["status"] == "synced"
+    monkeypatch.setattr(PD, "_WINDOW_CAP", {})  # Prozessneustart
+    scan.nets["polkadot"]["tip"] = 1100
+    seen.clear()
+    assert sync(client, sid)["status"] == "synced"
+    assert all(hi - lo + 1 <= 250 for lo, hi in seen)
+
+
+def test_history_window_lookback_limit_keeps_the_balance_and_reports_the_gap(client, scan, monkeypatch):
+    """Rückblick-Grenze (auch das kleinste Fenster in alten Blöcken scheitert): kein Fehler, kein erfundener Verlauf –
+    der Bestand laut öffentlichem RPC bleibt als Ist-Bestand, die fehlende Historie ist eine ausgewiesene Lücke."""
+    seen: list[tuple[int, int]] = []
+    monkeypatch.setattr(PD, "MIN_WINDOW", 50)
+    monkeypatch.setattr(PD, "_WINDOW_CAP", {})
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(_windowed(scan, seen, min_lo=900)))
+    _with_rpc_on(monkeypatch, free=4 * 10**10)
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    res = sync(client, sid)
+    assert not res.get("error"), res
+    assert not all_rows(client, sid)  # nichts gebucht
+    assert balances(client, sid)["DOT"] == "4"
+    text = json.dumps(res, ensure_ascii=False) + client.get("/settings/datasources").text
+    assert "Historie" in text and "Verlauf" in text
+
+
+def test_check_works_when_the_route_rejects_unbounded_history(client, scan, monkeypatch):
+    seen: list[tuple[int, int]] = []
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(_windowed(scan, seen, max_width=300)))
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    ok, msg = datasource_service(ctx(client)).check(sid)
+    assert ok, msg
+    assert seen and all(hi - lo + 1 <= PD.MIN_WINDOW + 1 for lo, hi in seen)

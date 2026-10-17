@@ -201,6 +201,23 @@ class PeaqConnector(WalletConnector):
                              {"api": {"ok": False, "text": err.message}, "balance": {"ok": True, "text": text}},
                              balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")])
 
+    def _history_missing(self, cfg: K.SourceConfig, err: K.ConnectorError,
+                         cursor: dict[str, Any] | None) -> K.FetchResult | None:
+        """Die kostenlose Route lässt auch das kleinste Blockfenster nicht zu (``history_window_exceeded``): Bestand
+        der 0x-Adresse laut öffentlichem RPC als Ist-Bestand, Historie als Lücke. ``None``: nicht anwendbar."""
+        if err.kind != "history_window" or not self.is_evm(cfg):
+            return None
+        state = self._chain_state((cfg.address or "").lower())
+        if state is None:
+            return None
+        qty = state[0]
+        note = (f"{err.message} Bestand laut öffentlichem peaq-RPC: {qty.normalize():f} PEAQ. Die Historie ist über "
+                "diese Route nicht abrufbar – Zugänge per CSV-/Koinly-Import bzw. mit einem Subscan-Schlüssel "
+                "(Anbieter „Subscan direkt“) ergänzen.")
+        return K.FetchResult(complete=False, cursor=cursor, warnings=[note], gaps=[note],
+                             balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")],
+                             coverage={"mode": "nur Bestand laut Kette", "operations": 0, "provider": "peaq-RPC"})
+
     def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
         impl = self._impl(cfg)
         if isinstance(impl, PeaqSubstrateConnector):
@@ -237,7 +254,13 @@ class PeaqConnector(WalletConnector):
                                      balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")],
                                      coverage={"mode": "nur Bestand laut Kette" if gap else "leeres Konto",
                                                "operations": 0, "provider": "peaq-RPC"})
-            res = impl.fetch(sub, secret, cursor)
+            try:
+                res = impl.fetch(sub, secret, cursor)
+            except K.ConnectorError as e:
+                fb = self._history_missing(cfg, e, cursor)
+                if fb is None:
+                    raise
+                return fb
             if sub is not cfg:
                 res.warnings.append(EVM_VIA_PUBFI_NOTE)
                 res.coverage["evm_account"] = sub.address

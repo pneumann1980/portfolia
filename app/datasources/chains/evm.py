@@ -871,6 +871,34 @@ class PolygonConnector(EvmConnector):
     explorer_token = "https://polygonscan.com/token/{}"  # noqa: S105 - Link-Muster
 
 
+@K.register
+class RobinhoodConnector(EvmConnector):
+    """Robinhood Chain (Arbitrum-Orbit-L2, Chain-ID 4663, Gas und nativer Coin ETH) über den Blockscout-Explorer.
+
+    Etherscan V2 liefert die Chain nur im Bezahlplan, Routescan gar nicht – der offizielle Explorer ist Blockscout
+    (Etherscan-kompatible Schnittstelle, ohne Key). Fällt er aus (auch durch eine Bot-Schutzseite des Betreibers),
+    bleibt der ETH-Bestand laut öffentlichem RPC als Ist-Bestand; die Historie fehlt dann als ausgewiesene Lücke.
+    """
+
+    provider = "robinhood"
+    label = "Robinhood Chain (Blockscout)"
+    chain_label = "Robinhood Chain"
+    chain_id = 4663
+    chain_tag = "ROBINHOOD"
+    native = "ETH"
+    rpc_endpoints = ("robinhood_rpc",)
+    confirmations = 600  # sehr kurze Blockzeit (L2): rund eine Minute Puffer bis zur Indexierung
+    endpoints = ("blockscout_robinhood",)
+    explorer_tx = "https://robinhoodchain.blockscout.com/tx/{}"
+    explorer_addr = "https://robinhoodchain.blockscout.com/address/{}"
+    explorer_token = "https://robinhoodchain.blockscout.com/token/{}"  # noqa: S105 - Link-Muster
+    limits = (*EvmConnector.limits,
+              "Aktien-Tokens (Stock Tokens) sind gewöhnliche ERC-20 mit eigenem Contract; Dividenden, Splits und "
+              "Rebasing werden nicht erkannt – Abweichungen zeigt die Bestandsprüfung",
+              "Einzahlungen über die Bridge (Retryable Tickets) erscheinen je nach Explorer nur teilweise – Abgleich "
+              "über die Bestandsprüfung")
+
+
 PULSE_FORK_BLOCK = 17_233_000  # letzter Ethereum-Block der kopierten Historie (on-chain geprüft: Miner ≠ 0x…0369)
 PULSE_FIRST_BLOCK = 17_233_001  # erster PulseChain-Block (11.05.2023 06:23:15 UTC, Miner 0x…0369)
 PULSE_START = datetime(2023, 5, 11, 6, 23, 15, tzinfo=UTC)

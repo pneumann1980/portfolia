@@ -87,7 +87,7 @@ RUN_STATUS_LABEL = {"running": "läuft", "ok": "erfolgreich", "partial": "teilwe
 CHAIN_TICKER = {"bitcoin": "BTC", "ethereum": "ETH", "bsc": "BNB", "polygon": "POL", "avalanche": "AVAX",
                 "solana": "SOL", "xrp": "XRP", "cardano": "ADA", "polkadot": "DOT", "kaspa": "KAS", "tron": "TRX",
                 "litecoin": "LTC", "dogecoin": "DOGE", "arbitrum": "ARB", "optimism": "OP", "base": "BASE",
-                "pulsechain": "PLS", "peaq": "PEAQ", "other_chain": "…"}
+                "pulsechain": "PLS", "peaq": "PEAQ", "robinhood": "ETH", "other_chain": "…"}
 MULTI_ADDRESS = ("bitcoin", "cardano")  # Chains mit mehreren Adressen je Konto (UTXO)
 MAX_EVENTS = 50_000
 KEY_WARN_DAYS = 14

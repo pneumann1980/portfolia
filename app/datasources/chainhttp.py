@@ -136,6 +136,15 @@ ENDPOINTS: dict[str, Endpoint] = {e.id: e for e in (
              terms="ohne Key; Listen je Adresse in Seiten zu 50 (neueste zuerst), Token-Transfers je Richtung – die "
                    "ungefilterte Token-Liste und die Etherscan-kompatiblen Listen hängen bei Spam-lastigen Adressen "
                    "(Stand 10/2026); Limit nicht beziffert – Portfolia fragt höchstens 2×/s"),
+    Endpoint("blockscout_robinhood", "Robinhood Chain Explorer (Blockscout, Etherscan-kompatibel, ohne Key)",
+             "https://robinhoodchain.blockscout.com/api", rps=2.0, docs="https://docs.blockscout.com/devs/apis/rpc",
+             block_param_alias=True,
+             terms="ohne Key; offizieller Blockscout-Explorer robinhoodchain.blockscout.com – Limit nicht beziffert, "
+                   "Portfolia fragt höchstens 2×/s; Etherscan V2 und Routescan liefern diese Chain nur gegen Bezahlung "
+                   "bzw. gar nicht (Stand 10/2026)"),
+    Endpoint("robinhood_rpc", "Robinhood Chain RPC (rpc.mainnet.chain.robinhood.com)",
+             "https://rpc.mainnet.chain.robinhood.com", rps=1.0, docs="https://robinhoodchain.blockscout.com",
+             terms="ohne Key; Bestandsabfrage als Ausweichweg (eine Anfrage je Adresse), keine Historie"),
     Endpoint("pulsechain_rpc", "PulseChain RPC (rpc.pulsechain.com)", "https://rpc.pulsechain.com", rps=1.0,
              docs="https://pulsechain.com",
              terms="ohne Key; kopierter Bestand am Fork-Block (eine Anfrage je Adresse) und Bestandsabfrage als "
@@ -472,6 +481,9 @@ class ChainHttp:
         if "row_limit" in (msg or "").lower() and not blocked:  # Zeilenzahl je Anfrage über dem Limit der Route
             return K.ConnectorError("row_limit", f"{self.ep.label} begrenzt die Zeilenzahl je Anfrage ({what}, "
                                                  f"{detail}).")
+        if "history_window" in (msg or "").lower() and not blocked:  # Blockbereich/Rückblick über dem Fenster der Route
+            return K.ConnectorError("history_window", f"{self.ep.label} begrenzt den abrufbaren Verlauf ({what}, "
+                                                      f"{detail}).")
         if self.ep.key_provider == "pubfi" and self._key and not blocked:
             ref = f" (Anfrage-ID {rid[:36]})" if rid else ""
             if code == 401:

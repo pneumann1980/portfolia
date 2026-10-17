@@ -598,3 +598,33 @@ def test_peaq_evm_with_direct_subscan_key(client, pulse):
     assert rows[f"peaq:{H(2)}:{A}#n:in"].rec.in_sym == "PEAQ"
     assert {c.url.host for c in pulse.calls} == {"peaq.api.subscan.io"}
     assert not any(c.url.params.get("module") == "proxy" for c in pulse.calls)
+
+
+def test_peaq_history_window_limit_keeps_the_chain_balance_and_reports_the_gap(client, subscan, monkeypatch):
+    """Beobachtet (10/2026): die kostenlose PubFi-Route lehnt Verlaufsanfragen mit „history_window_exceeded“ ab. Für
+    eine 0x-Adresse bleibt der Bestand laut öffentlichem EVM-RPC als Ist-Bestand, die Historie ist eine ausgewiesene
+    Lücke – kein Fehler."""
+    from app.datasources.chains import polkadot as PD
+
+    real = subscan.handler
+    routes = ("v2/scan/transfers", "v2/scan/extrinsics", "v2/scan/account/reward_slash")
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.host == "api.pubfi.ai" and any(r in req.url.path for r in routes):
+            return httpx.Response(403, json={"error": {"code": "history_window_exceeded",
+                                                       "message": "history_window_exceeded"}})
+        return real(req)
+
+    monkeypatch.setattr(PD, "MIN_WINDOW", 50)
+    monkeypatch.setattr(PD, "_WINDOW_CAP", {})
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(handler))
+    subscan.nets["peaq"]["search"] = {A: ss58_encode(b"\x55" * 32, 42)}
+    subscan.rpc_balance, subscan.rpc_nonce = 3 * WEI, 0
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "peaq", A, name="peaq EVM")
+    res = sync(client, sid)
+    assert not res.get("error"), res
+    assert not all_rows(client, sid)
+    assert balances(client, sid).get("PEAQ") in ("3", "3.0")
+    text = run_text(client, sid)
+    assert "Historie" in text and "nicht abrufbar" in text

@@ -277,7 +277,7 @@
       <label class="field">Anbieter
         <select name="chain_provider">{% for e in ci.endpoints %}<option value="{{ e.id }}" {% if data.get('chain_provider') == e.id or (not data.get('chain_provider') and loop.first) %}selected{% endif %}>{{ e.label }}{% if loop.first %} (Standard){% endif %}</option>{% endfor %}</select>
         <span class="hint">{% for e in ci.endpoints %}<b>{{ e.label }}:</b> {{ e.terms }}{% if e.key_provider %} – Schlüssel: {% set pk = provider_keys.get(e.key_provider) %}{% if pk and pk.mode %}vorhanden{% elif e.key_required %}<a href="/settings/datasources#anbieter">nötig, unter „Anbieter-Schlüssel“ hinterlegen</a>{% else %}optional{% endif %}{% endif %}.{% if not loop.last %}<br>{% endif %}{% endfor %}</span></label>
-      {% if chain in ('ethereum', 'bsc', 'polygon', 'avalanche', 'pulsechain', 'solana', 'kaspa') %}
+      {% if chain in ('ethereum', 'bsc', 'polygon', 'avalanche', 'pulsechain', 'robinhood', 'solana', 'kaspa') %}
       <input type="hidden" name="tokens_shown" value="1">
       <label class="check" style="grid-column:1/-1"><input type="checkbox" name="tokens" value="1" {% if data.get('tokens') in ('1', 'on') %}checked{% endif %}>
         Tokens mit abrufen ({{ 'ERC-20/BEP-20' if chain in ('ethereum', 'bsc', 'polygon', 'avalanche') else ('PRC-20' if chain == 'pulsechain' else ('SPL-Tokens' if chain == 'solana' else 'KRC-20 über den Kasplex-Indexer')) }}) – Tokens werden über Contract/Mint identifiziert, nie über das Symbol</label>

@@ -33,7 +33,7 @@ FORM_FIELDS = ("kind", "provider", "name", "account", "address", "credential_ref
                "note", "key_expires_on", "wallet_group", "script", "gap", "chain_provider", "tokens", "tokens_shown",
                "catchup", "catchup_shown", "allow_duplicate")
 WALLET_CHAINS = ("bitcoin", "ethereum", "bsc", "polygon", "avalanche", "solana", "xrp", "cardano", "polkadot",
-                 "kaspa", "pulsechain", "peaq")  # mit Anbindung (Reihenfolge der Auswahl)
+                 "kaspa", "pulsechain", "peaq", "robinhood")  # mit Anbindung (Reihenfolge der Auswahl)
 CHECK_LABELS = {"transaction": "Vorgänge", "balances": "Bestände", "assets": "Asset-Stammdaten", "chain": "Chain",
                 "balance": "Bestand", "history": "Historie", "nft": "NFTs", "tokens": "Tokens", "addresses": "Adressen",
                 "krc20": "KRC-20", "native": "Nativer Coin", "xpub": "Kontoschlüssel",

@@ -66,7 +66,8 @@ ERROR_KINDS = {"auth": "Zugangsdaten abgelehnt", "scope": "Berechtigung fehlt", 
                "gone": "Endpunkt nicht mehr unterstützt", "no_data": "Keine Daten beim Anbieter",
                "config": "Einstellung unvollständig", "data": "Unerwartete Antwort des Anbieters",
                "unsupported": "Nicht unterstützt", "cancelled": "Abgebrochen",
-               "row_limit": "Zeilenzahl je Anfrage zu hoch"}
+               "row_limit": "Zeilenzahl je Anfrage zu hoch",
+               "history_window": "Verlaufsfenster des Anbieters überschritten"}
 
 
 class ConnectorError(Exception):

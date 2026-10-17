@@ -67,6 +67,7 @@ PROVIDERS: dict[str, Provider] = {p.id: p for p in (
     Provider("base", "Base", WALLET, _EVM, _EVM_EX, lower=True),
     Provider("avalanche", "Avalanche C-Chain", WALLET, _EVM, _EVM_EX),
     Provider("pulsechain", "PulseChain (PLS)", WALLET, _EVM, _EVM_EX, lower=True),
+    Provider("robinhood", "Robinhood Chain (ETH)", WALLET, _EVM, _EVM_EX, lower=True),
     Provider("solana", "Solana", WALLET, _p(rf"^[{_B58}]{{32,44}}$"), "Base58, 32–44 Zeichen"),
     Provider("cardano", "Cardano (ADA)", WALLET, _p(r"^(addr1[0-9a-z]{50,120}|stake1[0-9a-z]{50,60})$"),
              "stake1… (ganzes Konto) oder addr1…", lower=True),

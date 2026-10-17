@@ -1426,6 +1426,37 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.31.1 – DOT/peaq: Verlaufsfenster der kostenlosen PubFi-Route; Robinhood Chain
+
+Beobachtet (Screenshots): Nach 0.31.0 meldeten DOT und peaq statt „row_limit_exceeded“ nun HTTP 403
+„history_window_exceeded“ – bereits bei `row=1` der Überweisungsliste. Außerdem fehlte Robinhood Chain.
+
+* **Ursache (belegt, soweit prüfbar):** Der Abruf fragte den gesamten Verlauf (`block_range` 0 bis Spitze) in einer
+  Anfrage ab; die kostenlose Route lehnt zu große Bereiche ab. Die genaue Grenze (Breite oder Rückblick) ist in der
+  PubFi-Dokumentation und der OpenAPI-Beschreibung **nicht** angegeben und ohne eigenen Schlüssel nicht prüfbar.
+* **Fix – Blockfenster:** Neue Fehlerart `history_window`. Der Abruf läuft in Fenstern (`_scan`/`_window`): ein Fenster
+  gilt ganz oder gar nicht (Überweisungen, Extrinsics, Rewards), der fortlaufende Stand rückt pro Fenster vor, ein
+  Abbruch (Zeitbudget) verliert keine fertigen Fenster. Meldet die Route das Limit, halbiert sich die Breite bis zum
+  zulässigen Wert (Untergrenze 2.000 Blöcke); sie wird je Prozess **und im Abrufstand** (`win`) gemerkt. Ohne Limit bleibt
+  es ein einziges Fenster (Verhalten wie zuvor).
+* **Rückblick-Grenze:** Scheitert schon das kleinste Fenster, ist das keine Breiten-, sondern eine Rückblick-Grenze. Dann
+  kein Fehler und kein erfundener Verlauf: Bestand laut öffentlichem RPC (DOT: `System.Account`; peaq-0x:
+  `eth_getBalance`) als Ist-Bestand, die fehlende Historie als ausgewiesene Lücke mit Weg zur Ergänzung (CSV-/Koinly-Import
+  bzw. Subscan-Schlüssel).
+* **Verbindungsprüfung:** Ohne Gesamtverlauf prüft sie ein Fenster der letzten Blöcke (2.000 → 500 → 100).
+* **Robinhood Chain** (Chain-ID 4663, ETH, Aktien-Tokens als ERC-20): neuer Connector über die Etherscan-kompatible
+  Schnittstelle des Blockscout-Explorers (ohne Key); Etherscan V2 (nur Bezahlplan) und Routescan (nicht geführt) scheiden
+  aus. Antwortet der Explorer nicht (z. B. Cloudflare-Prüfseite aus Rechenzentren), bleibt der ETH-Bestand laut RPC.
+  Adressprüfung, Token-Kennung `…@ROBINHOOD:0x…`, Auswahl in der Oberfläche.
+* **Recherche DOT-Alternativen:** Statescan (`polkadot-api.statescan.io`, ohne Key) liefert Überweisungen der Relay
+  Chain, aber keine Staking-Rewards; die Asset-Hub-Schnittstelle (hier liegen DOT seit 04.11.2025) war nicht belegbar.
+  Subscan direkt verlangt einen Schlüssel („Unauthenticated access is disabled“). Daher **nicht** umgesetzt.
+* **Tests:** Fensterhalbierung und Merken (Prozess/Abrufstand), Rückblick-Grenze mit Bestand und Lücke (DOT und peaq),
+  Prüfung ohne Gesamtverlauf, Robinhood (Abruf, Bot-Schutzseite → RPC-Bestand).
+* **Grenzen:** Die Fensterlogik ist gegen ein simuliertes Limit getestet, nicht gegen den echten Dienst. Bei sehr
+  kleinem zulässigen Fenster dauert der Erstabruf wegen 2 Anfragen/s lange (Fortsetzung über die Etappen). Robinhood-
+  Blockscout ist von hier nicht erreichbar gewesen (Prüfseite) – der Abruf ist nur gegen Fixtures geprüft; RPC antwortet.
+
 ## 0.31.0 – Chain-Sync dauerhaft (PulseChain, peaq, Polkadot), Bestandsabweichungen erklären, Kontenverwaltung
 
 Beobachtet (Screenshots + realer Export, lokal ausgewertet, nie im Git): DOT „403 row_limit_exceeded“, PulseChain

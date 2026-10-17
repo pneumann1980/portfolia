@@ -117,4 +117,4 @@ def peaq(v: str) -> tuple[str | None, str | None]:
 
 VALIDATORS = {"ethereum": evm, "bsc": evm, "avalanche": evm, "polygon": evm, "solana": solana, "kaspa": kaspa,
               "bitcoin": bitcoin, "xrp": xrpl, "cardano": cardano, "polkadot": polkadot, "pulsechain": evm,
-              "peaq": peaq}
+              "peaq": peaq, "robinhood": evm}

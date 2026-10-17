@@ -64,6 +64,8 @@ _ROW_CAP: dict[str, int] = {}  # Endpunkt → zuletzt zulässige Zeilenzahl (je 
 # System.Account = twox128("System") ‖ twox128("Account") – feste Speicher-Präfix aller Substrate-Chains
 _SYSTEM_ACCOUNT = "26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9"
 MAX_PAGES = 100  # 10.000 Einträge je Liste und Lauf – danach Fortsetzung im nächsten Lauf
+MIN_WINDOW = 2_000  # Blöcke (rund 3,5 h): ein Fensterlimit darunter ist keine Breiten-, sondern eine Rückblick-Grenze
+_WINDOW_CAP: dict[str, int] = {}  # Endpunkt:Netz → zuletzt zulässige Fensterbreite in Blöcken (je Prozess)
 NETS = (("polkadot", "rc", "Relay Chain"), ("assethub-polkadot", "ah", "Asset Hub"))
 ASSET_HUB_TAG = "DOTAH"
 _IDX = re.compile(r"^\d{1,12}-\d{1,6}$")
@@ -280,10 +282,25 @@ class PolkadotConnector(WalletConnector):
             for key, _sh, label, http in nets:
                 tip = self._tip(http)
                 details[f"chain_{key}"] = {"ok": True, "text": f"{label} erreichbar, Block {tip:,}".replace(",", ".")}
-                last = self._call(http, "v2/scan/transfers", {"address": addr, "row": 1, "page": 0},
-                                  "Überweisungen") or {}
-                n = int(last.get("count") or 0) if isinstance(last, dict) else 0
-                details[f"history_{key}"] = {"ok": True, "text": f"{label}: {n} Überweisung(en) laut Indexer"}
+                body = {"address": addr, "row": 1, "page": 0}
+                try:
+                    last = self._call(http, "v2/scan/transfers", body, "Überweisungen") or {}
+                    n = int(last.get("count") or 0) if isinstance(last, dict) else 0
+                    text = f"{label}: {n} Überweisung(en) laut Indexer"
+                except K.ConnectorError as e:
+                    if e.kind != "history_window":
+                        raise
+                    # kein Gesamtverlauf in einer Anfrage (kostenlose Route): ein Fenster der letzten Blöcke genügt
+                    for w in (MIN_WINDOW, MIN_WINDOW // 4, MIN_WINDOW // 20):
+                        try:
+                            self._call(http, "v2/scan/transfers",
+                                       {**body, "block_range": f"{max(tip - w, 0)}-{tip}"}, "Überweisungen")
+                            break
+                        except K.ConnectorError as e2:
+                            if e2.kind != "history_window" or w == MIN_WINDOW // 20:
+                                raise
+                    text = f"{label}: Verlauf nur in Blockfenstern abrufbar (Anbieter begrenzt die Breite)"
+                details[f"history_{key}"] = {"ok": True, "text": text}
             balances = self._balances(nets, addr)
         finally:
             for *_rest, http in nets:
@@ -337,35 +354,109 @@ class PolkadotConnector(WalletConnector):
         return out
 
     # -- Abrufen ------------------------------------------------------------------------------------------
-    def _list(self, http: ChainHttp, route: str, field: str, addr: str, net: _Net, what: str,
-              extra: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], int]:
-        """Alle Einträge im Blockbereich (aufsteigend); (Einträge, vollständig bis Block)."""
-        end = net.safe
+    def _list(self, http: ChainHttp, route: str, field: str, addr: str, net: _Net, what: str, lo: int, hi: int,
+              extra: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], int, bool]:
+        """Alle Einträge im Blockbereich ``lo``–``hi`` (aufsteigend): (Einträge, vollständig bis Block, gekappt)."""
         while True:
             row = self._row(http)
             out: list[dict[str, Any]] = []
             try:
                 for page in range(MAX_PAGES):
                     body = {"address": addr, "row": row, "page": page, "order": "asc",
-                            "block_range": f"{net.start}-{net.safe}", **(extra or {})}
-                    self.report("Abruf", len(out), None,
-                                f"{net.label}: {what} ab Block {net.start:,}".replace(",", "."))
+                            "block_range": f"{lo}-{hi}", **(extra or {})}
+                    self.report("Abruf", len(out), None, f"{net.label}: {what} ab Block {lo:,}".replace(",", "."))
                     data = self._call(http, route, body, what) or {}
                     rows = [r for r in (data.get(field) if isinstance(data, dict) else None) or []
                             if isinstance(r, dict)]
                     out += rows
                     if len(rows) < row:
-                        return out, end
+                        return out, hi, False
             except _RowReduced:
                 net.notes.append(f"{http.ep.label} begrenzt die Zeilen je Anfrage – jetzt {self._row(http)}")
                 continue  # Seitenfolge mit der kleineren Zeilenzahl neu beginnen
             break
         blocks = [int(r.get("block_num") or 0) for r in out]
-        net.capped.append(what)
-        end = max(blocks) - 1 if blocks else net.start - 1
-        return [r for r, b in zip(out, blocks, strict=True) if b <= end], end
+        end = max(blocks) - 1 if blocks else lo - 1
+        return [r for r, b in zip(out, blocks, strict=True) if b <= end], end, True
+
+    def _window(self, http: ChainHttp, net: _Net, addr: str, lo: int, hi: int) -> tuple[int, bool]:
+        """Alle Listen für ``lo``–``hi`` abrufen und im Netz ablegen → (vollständig bis Block, gekappt). Nichts wird
+        abgelegt, wenn eine der Listen scheitert (ein Fenster gilt ganz oder gar nicht)."""
+        t, t_end, t_cap = self._list(http, "v2/scan/transfers", "transfers", addr, net, "Überweisungen", lo, hi,
+                                     {"filter_nft": True})
+        x, x_end, x_cap = self._list(http, "v2/scan/extrinsics", "extrinsics", addr, net, "Extrinsics", lo, hi)
+        note = ""
+        try:
+            r, r_end, r_cap = self._list(http, "v2/scan/account/reward_slash", "list", addr, net, "Rewards/Slashes",
+                                         lo, hi)
+        except K.ConnectorError as e:
+            if not self.rewards_optional or e.kind != "data":
+                raise
+            r, r_end, r_cap = [], x_end, False
+            note = (f"Staking-Rewards nicht abrufbar ({e.message}) – Rewards fehlen ggf.; die Bestandsprüfung zeigt "
+                    "Differenzen")
+        net.transfers += t
+        net.extrinsics += x
+        net.rewards += r
+        if note and note not in net.notes:
+            net.notes.append(note)
+        for cap, what in ((t_cap, "Überweisungen"), (x_cap, "Extrinsics"), (r_cap, "Rewards/Slashes")):
+            if cap and what not in net.capped:
+                net.capped.append(what)
+        return min(t_end, x_end, r_end), t_cap or x_cap or r_cap
+
+    def _scan(self, http: ChainHttp, net: _Net, addr: str, width: int | None) -> int | None:
+        """Blockbereich des Netzes in Fenstern abrufen. Ohne Fensterlimit ist das ein einziges Fenster (``start`` bis
+        Spitze). Meldet der Anbieter ``history_window_exceeded`` (kostenlose PubFi-Route), halbiert sich die Breite bis
+        zum zulässigen Wert; sie wird gemerkt. Scheitert schon das kleinste Fenster, ist es eine Rückblick-Grenze → der
+        Fehler geht weiter. Rückgabe: zuletzt zulässige Breite (``None`` = unbegrenzt)."""
+        wkey = f"{http.ep.id}:{net.key}"
+        width = width or _WINDOW_CAP.get(wkey)
+        pos = net.start
+        while pos <= net.safe:
+            hi = net.safe if not width else min(net.safe, pos + width - 1)
+            try:
+                end, capped = self._window(http, net, addr, pos, hi)
+            except K.ConnectorError as e:
+                span = hi - pos + 1
+                if e.kind != "history_window" or span <= MIN_WINDOW:
+                    raise
+                width = max(MIN_WINDOW, span // 2)
+                _WINDOW_CAP[wkey] = width
+                note = f"{http.ep.label} begrenzt den Verlauf je Anfrage – Abruf in Blockfenstern"
+                if note not in net.notes:
+                    net.notes.append(note)
+                continue
+            net.through = end
+            if capped:
+                break
+            pos = hi + 1
+        return width
 
     def fetch(self, cfg: K.SourceConfig, secret: K.Secret, cursor: dict[str, Any] | None) -> K.FetchResult:
+        """Abruf über den Anbieter. Lässt die kostenlose Route selbst das kleinste Fenster nicht zu (Rückblick-Grenze,
+        ``history_window_exceeded``), bleibt wenigstens der Bestand laut öffentlichem RPC als Ist-Bestand – die
+        Historie fehlt dann als Lücke (kein Fehler, nichts wird erfunden)."""
+        try:
+            return self._fetch_api(cfg, secret, cursor)
+        except K.ConnectorError as e:
+            if e.kind != "history_window" or not self.rpc_nets:
+                raise
+            try:
+                fb = self._rpc_balance(self._addr(cfg))
+            except (K.ConnectorError, ValueError):
+                fb = None
+            if fb is None:
+                raise
+            qty, parts = fb
+            note = (f"{e.message} Bestand laut öffentlichem RPC: {qty.normalize():f} {self.native}"
+                    + (f" ({' + '.join(parts)})" if len(parts) > 1 else "") + ". Die Historie ist über diese Route "
+                    "nicht abrufbar – Zugänge per CSV-/Koinly-Import oder mit einem Subscan-Schlüssel ergänzen.")
+            return K.FetchResult(complete=False, cursor=cursor, warnings=[note], gaps=[note],
+                                 balances=[K.Balance(self.native, qty, self.chain_label, "laut öffentlichem RPC")],
+                                 coverage={"mode": "nur Bestand laut Kette", "operations": 0, "provider": "RPC"})
+
+    def _fetch_api(self, cfg: K.SourceConfig, secret: K.Secret, cursor: dict[str, Any] | None) -> K.FetchResult:
         addr = self._addr(cfg)
         cur = dict(cursor or {})
         state = dict(cur.get("nets") or {})
@@ -373,6 +464,7 @@ class PolkadotConnector(WalletConnector):
         skipped: Counter[str] = Counter()
         nets = self._nets(cfg, secret)
         done: list[_Net] = []
+        wins: dict[str, int | None] = {}
         try:
             for key, sh, label, http in nets:
                 net = _Net(key, sh, label, int((state.get(key) or {}).get("block") or 0))
@@ -382,20 +474,7 @@ class PolkadotConnector(WalletConnector):
                     if net.start > net.safe:
                         net.through = net.start - 1
                         continue
-                    net.transfers, t_end = self._list(http, "v2/scan/transfers", "transfers", addr, net,
-                                                      "Überweisungen", {"filter_nft": True})
-                    net.extrinsics, x_end = self._list(http, "v2/scan/extrinsics", "extrinsics", addr, net,
-                                                       "Extrinsics")
-                    try:
-                        net.rewards, r_end = self._list(http, "v2/scan/account/reward_slash", "list", addr, net,
-                                                        "Rewards/Slashes")
-                    except K.ConnectorError as e:
-                        if not self.rewards_optional or e.kind != "data":
-                            raise
-                        net.rewards, r_end = [], x_end
-                        net.notes.append(f"Staking-Rewards nicht abrufbar ({e.message}) – Rewards fehlen ggf.; die "
-                                         "Bestandsprüfung zeigt Differenzen")
-                    net.through = min(t_end, x_end, r_end)
+                    wins[key] = self._scan(http, net, addr, int((state.get(key) or {}).get("win") or 0) or None)
                 except Stop as e:
                     net.stopped = str(e)
                 net.requests = http.requests
@@ -409,7 +488,8 @@ class PolkadotConnector(WalletConnector):
                 raise K.ConnectorError("unavailable", f"{stopped[0].stopped} ohne Fortschritt – der nächste Lauf "
                                                       "versucht es erneut.", retry_after_s=600)
             res.complete = all(n.through >= n.safe and not n.stopped and not n.capped for n in done)
-            res.cursor = {"v": 1, "nets": {n.key: {"block": max(n.through + 1, n.start)} for n in done}}
+            res.cursor = {"v": 1, "nets": {n.key: {"block": max(n.through + 1, n.start),
+                                                  **({"win": wins[n.key]} if wins.get(n.key) else {})} for n in done}}
             res.resume = not res.complete
             for n in done:
                 res.warnings += n.notes
