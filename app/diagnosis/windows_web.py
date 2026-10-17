@@ -68,7 +68,13 @@ def _rows(ctx: Any, report: Any, only_dev: bool, acc: str, asset: str) -> list[d
     return out
 
 
-def _back(msg: str = "", err: str = "", pos: str = "") -> Response:
+_CASE_URL = re.compile(r"/quality/klaerung/kg-[0-9a-f]{1,40}")
+
+
+def _back(msg: str = "", err: str = "", pos: str = "", back: str = "") -> Response:
+    if _CASE_URL.fullmatch(back):  # Rücksprung in den Klärungsfall (nur diese Pfade)
+        return RedirectResponse(back + "?" + urlencode({k: v for k, v in (("msg", msg), ("err", err)) if v})
+                                + "#fenster", status_code=303)
     q = {k: v for k, v in (("msg", msg), ("err", err), ("p", pos), ("all", "1")) if v}
     return RedirectResponse("/quality/diagnose/windows?" + urlencode(q), status_code=303)
 
@@ -83,8 +89,7 @@ def make_router() -> APIRouter:
         report = report_for(ctx)
         traces = report.traces or {}
         rows = _rows(ctx, report, all != "1", acc, asset)
-        RS._stale(ctx.db)
-        research_runs = RS.runs(ctx.db, 8)
+        research_runs = RS.runs(ctx.db, 8, live=True)
         return render(request, "diagnosis_windows.html", active="quality", rows=rows, n_traces=len(traces),
                       n_dev=sum(1 for t in traces.values() if t.deviating), acc=acc, asset=asset, show_all=all == "1",
                       open_pos=p, accounts=sorted({t.account for t in traces.values()}),
@@ -158,6 +163,7 @@ def make_router() -> APIRouter:
         except ValueError:
             return _back(err="Datenquelle fehlt.")
         pos = str(form.get("pos") or "")
+        back = str(form.get("back") or "")
         kw: dict[str, Any] = {"account": str(form.get("account") or "") or None,
                               "asset": str(form.get("asset") or "") or None,
                               "win_from": str(form.get("win_from") or "") or None,
@@ -166,9 +172,9 @@ def make_router() -> APIRouter:
             kw["resume"] = int(str(form["resume"]))
         res = await run_in_threadpool(RS.start, ctx, sid, **kw)
         if res.get("error"):
-            return _back(err=res["error"], pos=pos)
+            return _back(err=res["error"], pos=pos, back=back)
         return _back(msg="Recherche gestartet – sie liest nur und ändert nichts. Das Ergebnis erscheint unten bei den "
-                         "Kandidaten, sobald der Lauf beendet ist (Seite neu laden).", pos=pos)
+                         "Kandidaten, sobald der Lauf beendet ist (Seite neu laden).", pos=pos, back=back)
 
     @router.post("/quality/diagnose/research/cancel")
     async def research_cancel(request: Request) -> Response:
@@ -178,7 +184,7 @@ def make_router() -> APIRouter:
             sid = int(str(form.get("source") or ""))
         except ValueError:
             return _back(err="Datenquelle fehlt.")
-        return _back(msg=RS.cancel(ctx, sid), pos=str(form.get("pos") or ""))
+        return _back(msg=RS.cancel(ctx, sid), pos=str(form.get("pos") or ""), back=str(form.get("back") or ""))
 
     return router
 

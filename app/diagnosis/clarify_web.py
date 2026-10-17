@@ -19,9 +19,24 @@ from app.diagnosis import case_view as CV
 from app.diagnosis import clarify as K
 from app.diagnosis import derivatives as DV
 from app.diagnosis import stockconfirm as SC
+from app.diagnosis import windows as WN
+from app.diagnosis import windows_web as WW
 from app.diagnosis.engine import report_for
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
+
+
+def _win_rows(ctx, case) -> list[dict]:
+    """Fallrelevante Bestandsfenster je Position: Fenster mit Buchungen des Falls, sonst das jüngste auffällige."""
+    report = report_for(ctx)
+    wanted = set(case.tx_ids)
+    out = []
+    for acc, asset in case.positions[:6]:
+        for row in WW._rows(ctx, report, False, acc, asset):
+            segs = [sg for sg in row["tr"].segments if sg.kind != "ok"]
+            hit = [sg for sg in segs if wanted & set(sg.tx_ids)] or segs[-1:]
+            out.append({"row": row, "segs": hit})
+    return out
 
 
 def _back(target: str) -> Response:
@@ -87,12 +102,14 @@ def make_router() -> APIRouter:
         view = (CV.build(ctx, case, report_for(ctx), hyp_id=hyp[:40], sel=sel[:80], authorization_auto=auto)
                 if case is not None else None)
 
+        win_rows = _win_rows(ctx, case) if case is not None else []
+
         def qs(**kw: str) -> str:
             cur = {"hyp": view.hyp_id if view else "", "sel": sel[:80], **kw}
             return urlencode({k: v for k, v in cur.items() if v})
 
         return render(request, "klaerung_case.html", active="quality", case=case, stored=stored, view=view,
-                      sel=sel[:80], qs=qs,
+                      sel=sel[:80], qs=qs, win_rows=win_rows, kind_badge=WN.KIND_BADGE, source_label=WW.SOURCE_LABEL,
                       runs=K.runs_of(ctx.db, key), status=K.STATUS, evidence=K.EVIDENCE, dim_order=K.DIM_ORDER,
                       dim_label=K.DIM_LABEL, dim_state=K.DIM_STATE, dims_text=K.dims_text, auto=auto,
                       tokens=lambda h: json.dumps({c.key: c.plan.token for c in h.cands}), msg=msg[:300],

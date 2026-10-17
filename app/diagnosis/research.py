@@ -449,21 +449,37 @@ def last_run(db: Any, sid: int) -> Any:
         return None
 
 
-def runs(db: Any, limit: int = 20) -> list[Any]:
-    try:
-        return db.q("SELECT * FROM diag_research ORDER BY id DESC LIMIT ?", (limit,))
-    except Exception:
-        return []
-
-
-def _stale(db: Any) -> None:
-    """Läufe, die nach einem Neustart als „läuft“ stehen geblieben sind, als abgebrochen kennzeichnen."""
+def stale_ids(db: Any) -> list[int]:
+    """Läufe, die als „läuft“ stehen, deren Datenquelle aber nicht mehr arbeitet (z. B. nach einem Neustart). Rein
+    lesend – die Kennzeichnung in der Datenbank übernimmt :func:`reconcile_stale` beim nächsten Schreibvorgang."""
     from app.datasources.service import is_busy
 
-    for r in db.q("SELECT id, source_id FROM diag_research WHERE status='running'"):
-        if not is_busy(int(r["source_id"])):
-            db.x("UPDATE diag_research SET status='cancelled', message=COALESCE(message, '') || ' (Lauf nicht mehr "
-                 "aktiv)', finished_at=? WHERE id=? AND status='running'", (_now(), r["id"]))
+    try:
+        rows = db.q("SELECT id, source_id FROM diag_research WHERE status='running'")
+    except Exception:  # Datenbank vor Migration 21
+        return []
+    return [int(r["id"]) for r in rows if not is_busy(int(r["source_id"]))]
+
+
+def runs(db: Any, limit: int = 20, *, live: bool = False) -> list[Any]:
+    """Letzte Läufe. ``live``: hängengebliebene Läufe nur in der Anzeige als abgebrochen darstellen (ohne Schreiben,
+    für Seitenaufrufe)."""
+    try:
+        rows = db.q("SELECT * FROM diag_research ORDER BY id DESC LIMIT ?", (limit,))
+    except Exception:
+        return []
+    if not live:
+        return rows
+    stale = set(stale_ids(db))
+    return [{**dict(r), "status": "cancelled", "message": f"{r['message'] or ''} (Lauf nicht mehr aktiv)".strip()}
+            if r["id"] in stale else r for r in rows]
+
+
+def reconcile_stale(db: Any) -> None:
+    """Hängengebliebene Läufe als abgebrochen kennzeichnen (nur aus Schreibvorgängen, nie aus einem Seitenaufruf)."""
+    for rid in stale_ids(db):
+        db.x("UPDATE diag_research SET status='cancelled', message=COALESCE(message, '') || ' (Lauf nicht mehr "
+             "aktiv)', finished_at=? WHERE id=? AND status='running'", (_now(), rid))
 
 
 def _now() -> str:
@@ -611,7 +627,7 @@ def start(ctx: Any, sid: int, **kw: Any) -> dict[str, Any]:
         from app.datasources.service import BUSY_TEXT
 
         return {"error": BUSY_TEXT, "busy": True}
-    _stale(ctx.db)
+    reconcile_stale(ctx.db)
 
     def work() -> None:
         try:

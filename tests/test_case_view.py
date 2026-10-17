@@ -206,3 +206,31 @@ def test_page_renders_money_path_with_names_legend_and_text_alternative(cfg):
         assert fingerprint(ctx.db) == before  # GET schreibt nichts
 
     _web_case(cfg, sand_rows(), ASSETS_K, check)
+
+
+def test_case_page_embeds_window_chart_and_get_stays_read_only(cfg):
+    from app.diagnosis import research as RS
+    from tests.test_clarify import ASSETS_K
+
+    def check(c, ctx, case):
+        # ohne Referenz: ausdrücklich „unbekannt“, kein Diagramm
+        t0 = c.get(f"/quality/klaerung/{case.key}").text
+        assert 'id="fenster"' in t0 and "unbekannt</b> (nicht 0)" in t0 and 'data-chart="devwindows"' not in t0
+        res = SC.submit(ctx, case.key, "Bybit", "SAND", "104,638", "2025-06-01", "12:00", "UTC", "api", apply=False)
+        assert res.ok, res.errors
+        # ein hängengebliebener Lauf: Seitenaufrufe zeigen ihn als abgebrochen, schreiben aber nichts
+        ctx.db.x("INSERT INTO diag_research(source_id, status, started_at) "
+                 "VALUES (999, 'running', '2025-01-01T00:00:00')")
+        before = fingerprint(ctx.db)
+        t1 = c.get(f"/quality/klaerung/{case.key}").text
+        assert 'data-chart="devwindows"' in t1 and 'id="kwd-1"' in t1
+        w = c.get("/quality/diagnose/windows?all=1")
+        assert w.status_code == 200 and "Lauf nicht mehr aktiv" in w.text
+        run_state = "SELECT status FROM diag_research WHERE source_id=999"
+        assert ctx.db.scalar(run_state) == "running"  # der Seitenaufruf hat nichts geändert
+        assert fingerprint(ctx.db) == before
+        # erst ein Schreibvorgang bereinigt
+        RS.reconcile_stale(ctx.db)
+        assert ctx.db.scalar(run_state) == "cancelled"
+
+    _web_case(cfg, sand_rows(), ASSETS_K, check)

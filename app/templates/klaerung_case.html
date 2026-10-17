@@ -33,6 +33,8 @@
     {% endif %}
   </section>
 
+  {% if win_rows is defined %}{% include "partials/klaerung_fenster.html" %}{% endif %}
+
   {% if case.question %}
   <section class="card" id="bestandsnachweis"><div class="card-head"><h2>Bestandsnachweis</h2></div>
     <p><b>{{ case.question.text }}</b></p>
