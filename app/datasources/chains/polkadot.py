@@ -106,6 +106,8 @@ class _Net:
         self.stopped: str | None = None
         self.requests = 0
         self.gap_from: int | None = None  # Rückblick-Grenze: frühester abrufbarer Block (davor fehlt der Verlauf)
+        self.probe: tuple[int, int] | None = None  # laufende Grenzsuche: (abgelehnt, abrufbar) – überlebt einen Abbruch
+        self.learned = False  # in diesem Lauf Neues über die Grenzen der Route gelernt (zählt als Fortschritt)
 
 
 @K.register
@@ -406,31 +408,41 @@ class PolkadotConnector(WalletConnector):
                 net.capped.append(what)
         return min(t_end, x_end, r_end), t_cap or x_cap or r_cap
 
+    def _accepted(self, http: ChainHttp, net: _Net, addr: str, lo: int) -> bool:
+        """Lässt die Route das kleinste Fenster ab ``lo`` zu? (eine Anfrage, ``row=1``)"""
+        body = {"address": addr, "row": 1, "page": 0, "block_range": f"{lo}-{min(lo + MIN_WINDOW - 1, net.safe)}"}
+        try:
+            self._call(http, "v2/scan/transfers", body, "Überweisungen")
+        except K.ConnectorError as e:
+            if e.kind != "history_window":
+                raise
+            return False
+        return True
+
     def _recent_start(self, http: ChainHttp, net: _Net, addr: str, rejected: int) -> int | None:
         """Frühester Block, ab dem die Route das kleinste Fenster zulässt (Rückblick-Grenze der kostenlosen Route):
-        Halbierung zwischen dem abgelehnten ``rejected`` und der Spitze, blockgenau (rund 25 Anfragen). ``None``, wenn
-        selbst das jüngste Fenster abgelehnt wird – dann gibt es über diese Route keinen Verlauf."""
-
-        def accepted(lo: int) -> bool:
-            body = {"address": addr, "row": 1, "page": 0, "block_range": f"{lo}-{min(lo + MIN_WINDOW - 1, net.safe)}"}
-            try:
-                self._call(http, "v2/scan/transfers", body, "Überweisungen")
-            except K.ConnectorError as e:
-                if e.kind != "history_window":
-                    raise
-                return False
-            return True
-
-        good = max(net.safe - MIN_WINDOW + 1, rejected + 1)
-        if good <= rejected or not accepted(good):
-            return None
-        bad = rejected
+        Halbierung zwischen dem abgelehnten ``rejected`` und der Spitze, blockgenau (rund 25 Anfragen). Die Grenzen der
+        Suche stehen in ``net.probe`` und bleiben bei einem Abbruch im Abrufstand – der nächste Lauf setzt fort.
+        ``None``, wenn selbst das jüngste Fenster abgelehnt wird – dann gibt es über diese Route keinen Verlauf."""
+        if net.probe is not None:
+            bad, good = net.probe
+            if not self._accepted(http, net, addr, good):  # die Grenze wandert mit der Spitze: neu beginnen
+                net.probe = None
+        if net.probe is None:
+            good = max(net.safe - MIN_WINDOW + 1, rejected + 1)
+            if good <= rejected or not self._accepted(http, net, addr, good):
+                return None
+            bad = rejected
+            net.probe = (bad, good)
+        net.learned = True
         while good - bad > 1:  # blockgenau: Vorgänge zwischen Grenze und Fensterrand gingen sonst verloren
             mid = (bad + good) // 2
-            if accepted(mid):
+            if self._accepted(http, net, addr, mid):
                 good = mid
             else:
                 bad = mid
+            net.probe = (bad, good)
+        net.probe = None
         return good
 
     def _scan(self, http: ChainHttp, net: _Net, addr: str, width: int | None) -> int | None:
@@ -441,6 +453,10 @@ class PolkadotConnector(WalletConnector):
         wkey = f"{http.ep.id}:{net.key}"
         width = width or _WINDOW_CAP.get(wkey)
         pos = net.start
+        if net.probe is not None:  # abgebrochene Grenzsuche fortsetzen
+            first = self._recent_start(http, net, addr, pos)
+            if first is not None:
+                net.gap_from, pos, net.through = first, first, first - 1
         while pos <= net.safe:
             hi = net.safe if not width else min(net.safe, pos + width - 1)
             try:
@@ -449,15 +465,17 @@ class PolkadotConnector(WalletConnector):
                 span = hi - pos + 1
                 if e.kind != "history_window":
                     raise
-                if span <= MIN_WINDOW:  # Rückblick- statt Breitengrenze: frühesten abrufbaren Block suchen
+                if span <= MIN_WINDOW or not self._accepted(http, net, addr, pos):
+                    # schon das kleinste Fenster wird abgelehnt: Rückblick- statt Breitengrenze → frühesten abrufbaren
+                    # Block suchen; alles davor ist als Lücke erklärt, der Abrufstand rückt dorthin vor
                     first = self._recent_start(http, net, addr, pos)
                     if first is None:
                         raise
-                    net.gap_from = first
-                    pos = first
+                    net.gap_from, pos, net.through = first, first, first - 1
                     continue
-                width = max(MIN_WINDOW, span // 2)
+                width = max(MIN_WINDOW, span // 2)  # Breitengrenze: Fenster halbieren
                 _WINDOW_CAP[wkey] = width
+                net.learned = True
                 note = f"{http.ep.label} begrenzt den Verlauf je Anfrage – Abruf in Blockfenstern"
                 if note not in net.notes:
                     net.notes.append(note)
@@ -505,6 +523,8 @@ class PolkadotConnector(WalletConnector):
             for key, sh, label, http in nets:
                 net = _Net(key, sh, label, int((state.get(key) or {}).get("block") or 0))
                 net.gap_from = int((state.get(key) or {}).get("from") or 0) or None
+                pr = (state.get(key) or {}).get("probe")
+                net.probe = (int(pr[0]), int(pr[1])) if isinstance(pr, list) and len(pr) == 2 else None
                 done.append(net)
                 try:
                     net.safe = self._tip(http)
@@ -521,13 +541,15 @@ class PolkadotConnector(WalletConnector):
             res.events = sorted(events, key=lambda e: e.ts)
             res.skipped = dict(skipped)
             stopped = [n for n in done if n.stopped]
-            if any(n.stopped and n.through < n.start for n in done) and not events:
+            if any(n.stopped and n.through < n.start and not n.learned for n in done) and not events:
                 raise K.ConnectorError("unavailable", f"{stopped[0].stopped} ohne Fortschritt – der nächste Lauf "
                                                       "versucht es erneut.", retry_after_s=600)
             res.complete = all(n.through >= n.safe and not n.stopped and not n.capped for n in done)
             res.cursor = {"v": 1, "nets": {n.key: {"block": max(n.through + 1, n.start),
-                                                  **({"win": wins[n.key]} if wins.get(n.key) else {}),
-                                                  **({"from": n.gap_from} if n.gap_from else {})} for n in done}}
+                                                  **({"win": w} if (w := wins.get(n.key) or _WINDOW_CAP.get(
+                                                      f"{nets[0][3].ep.id}:{n.key}")) else {}),
+                                                  **({"from": n.gap_from} if n.gap_from else {}),
+                                                  **({"probe": list(n.probe)} if n.probe else {})} for n in done}}
             res.resume = not res.complete
             for n in done:
                 if n.gap_from:

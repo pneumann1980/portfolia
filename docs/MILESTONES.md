@@ -1426,6 +1426,24 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.31.3 – DOT: Grenzsuche überlebt den Abbruch („Zeitbudget erreicht ohne Fortschritt“)
+
+Beobachtet (Screenshot, DOT nach 0.31.2): „Zeitbudget des Laufs erreicht ohne Fortschritt“ – die Suche nach dem frühesten
+abrufbaren Block brauchte zusammen mit den Fehlversuchen der Fensterhalbierung mehr Anfragen, als in einen Lauf passten,
+und verlor bei jedem Abbruch ihren Stand.
+
+* **Weniger Anfragen:** Wird der Gesamtbereich abgelehnt, prüft der Abruf zuerst das kleinste Fenster am Anfang. Wird auch
+  das abgelehnt, ist es eine Rückblick-Grenze → direkt zur Grenzsuche (spart die rund 14 Halbierungsversuche); nur bei
+  einer Breitengrenze wird halbiert.
+* **Fortschritt statt Fehler:** Gelerntes (Fensterbreite, Grenzsuche) zählt als Fortschritt. Die Suchgrenzen (`probe`), der
+  erste abrufbare Block (`from`) und die Breite (`win`) stehen im Abrufstand, auch nach einem Abbruch. Der nächste Lauf
+  setzt die Suche fort (die Grenze wandert mit der Spitze, daher wird der gemerkte Stand erst bestätigt). Ist die Grenze
+  gefunden, rückt der Abrufstand dorthin vor; das davor ist als Lücke erklärt.
+* **Test:** Anfragebudget so klein, dass die Suche im ersten Lauf abbricht → kein Fehler, `probe` im Abrufstand, spätere Läufe
+  buchen den Verlauf ab der Grenze (blockgenau).
+* **Grenzen:** Gegen den echten Dienst weiter ungeprüft; bei sehr langsamer Antwortzeit (mehrere Sekunden je Anfrage)
+  braucht die Suche mehrere Läufe.
+
 ## 0.31.2 – DOT/peaq: Rückblick-Grenze der kostenlosen PubFi-Route – jüngsten Verlauf abrufen
 
 Beobachtet (Screenshot, DOT nach 0.31.1): Auch das kleinste Blockfenster am Anfang der Kette wurde mit

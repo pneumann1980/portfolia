@@ -460,3 +460,27 @@ def test_check_works_when_the_route_rejects_unbounded_history(client, scan, monk
     ok, msg = datasource_service(ctx(client)).check(sid)
     assert ok, msg
     assert seen and all(hi - lo + 1 <= PD.MIN_WINDOW + 1 for lo, hi in seen)
+
+
+def test_lookback_search_survives_a_budget_stop_and_resumes_in_the_next_run(client, scan, monkeypatch):
+    """Beobachtet (10/2026): „Zeitbudget des Laufs erreicht ohne Fortschritt“ – die Grenzsuche ging bei jedem Abbruch
+    verloren. Jetzt zählt das Gelernte als Fortschritt, die Suchgrenzen stehen im Abrufstand, der nächste Lauf setzt
+    fort und bucht am Ende den Verlauf ab der Grenze."""
+    seen: list[tuple[int, int]] = []
+    monkeypatch.setattr(PD, "MIN_WINDOW", 50)
+    monkeypatch.setattr(PD, "_WINDOW_CAP", {})
+    monkeypatch.setattr(WalletConnector, "transport", httpx.MockTransport(_windowed(scan, seen, min_lo=105)))
+    monkeypatch.setattr(WalletConnector, "max_requests", 24)  # je Netz 12 Anfragen: reicht nicht für die ganze Suche
+    set_provider_key(client, "pubfi", KEY)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT")
+    first = sync(client, sid)
+    assert not first.get("error"), first  # kein „ohne Fortschritt“
+    cur = json.loads(source(client, sid)["cursor_json"])
+    assert cur["nets"]["polkadot"].get("probe"), cur  # abgebrochen mitten in der Suche, Stand gemerkt
+    for _ in range(6):
+        if k("rc", "110-1", "tr:3") in all_rows(client, sid):
+            break
+        assert not sync(client, sid).get("error")
+    rows = all_rows(client, sid)
+    assert k("rc", "110-1", "tr:3") in rows and k("rc", "100-2", "tr:5") not in rows
+    assert json.loads(source(client, sid)["cursor_json"])["nets"]["polkadot"]["from"] == 105
