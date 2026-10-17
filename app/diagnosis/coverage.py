@@ -6,13 +6,17 @@ Frage: *Für welche Monate liegen für ein Konto überhaupt Daten vor – und wo
 * **nur Prüf-Stapel** – Vorgänge liegen eingelesen, aber (noch) nicht gebucht vor;
 * **abgedeckt, ohne Vorgänge** – eine vollständige Lieferung (vollständiger API-Abruf bzw. Datei mit diesem Zeitraum)
   deckt den Monat ab, enthält aber keinen Vorgang (ein echter „ruhiger“ Monat);
+* **innerhalb der Dateispanne, ohne Vorgang** – nur der Zeitraum zwischen erstem und letztem Vorgang einer Datei liegt
+  um den Monat; der Zeitraum, den der Export tatsächlich umfasste, ist unbekannt. Das ist **kein Nachweis**, dass nichts
+  fehlt (eine abgeschnittene oder gefilterte Datei sähe genauso aus);
 * **anderweitig belegt** – diese Quelle schweigt, eine andere Quelle desselben Kontos ist belegt bzw. abgedeckt;
 * **Lücke** – innerhalb des Aktivitätszeitraums weder Buchung noch Lieferung noch Abdeckung: hier fehlen am
   ehesten Daten (z. B. ein fehlender Exportzeitraum bei MEXC, wenn zwei Dateien Januar–März und Juni–August abdecken).
 
-Abdeckung entsteht nur aus belegbaren Lieferungen: Zeitraum je eingelesener Datei (frühester bis spätester Vorgang),
-vollständige API-Abrufe (``coverage_json.history``) und der kuratierte Import bis zu seinem Stichtag (er ist die
-maßgebliche Buchführung; Monate danach deckt er nicht ab). Nichts wird angenommen oder gebucht.
+Abdeckung entsteht nur aus belegbaren Lieferungen: vollständige API-Abrufe (``coverage_json.history``) und der
+kuratierte Import bis zu seinem Stichtag (er ist die maßgebliche Buchführung; Monate danach deckt er nicht ab).
+Die Dateispanne (frühester bis spätester Vorgang) dient nur der Einordnung von Lücken zwischen Dateien und gilt nicht
+als vollständige Lieferung. Nichts wird angenommen oder gebucht.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ STATES = {  # Zustand → (Bezeichnung, Badge)
     "gebucht": ("gebucht", "good"),
     "staged": ("nur Prüf-Stapel", "info"),
     "abgedeckt": ("abgedeckt, ohne Vorgänge", ""),
+    "dateispanne": ("innerhalb der Dateispanne, ohne Vorgang", "info"),
     "anderweitig": ("anderweitig belegt", ""),
     "luecke": ("Lücke", "warn"),
 }
@@ -208,8 +213,9 @@ def build(ctx: Any, frm: str = "", to: str = "", area: str = "", account: str = 
     rows: list[Row] = []
     for k in sorted(keys):
         own = set(booked.get(k, {})) | {m for m, n in staged.get(k, {}).items() if n}
-        covered = {m for a, b, _ in periods.get(k, []) for m in months_between(a, b)}
-        span = sorted(own | covered)
+        covered = {m for a, b, kind in periods.get(k, []) if kind != "Datei" for m in months_between(a, b)}
+        file_span = {m for a, b, kind in periods.get(k, []) if kind == "Datei" for m in months_between(a, b)}
+        span = sorted(own | covered | file_span)
         if not span:
             continue
         row = Row(k[0], k[1], span[0], span[-1], periods=sorted(periods.get(k, [])), datasource_id=ds_of.get(k))
@@ -226,6 +232,8 @@ def build(ctx: Any, frm: str = "", to: str = "", area: str = "", account: str = 
                 cell = Cell("staged", 0, n_st)
             elif m in covered:
                 cell = Cell("abgedeckt")
+            elif m in file_span:
+                cell = Cell("dateispanne")
             elif m in acct_cover[k[0]]:
                 cell = Cell("anderweitig")
             else:

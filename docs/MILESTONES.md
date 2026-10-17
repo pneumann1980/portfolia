@@ -1426,6 +1426,25 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.32.0 – Visuelle Fallklärung mit benannten Konten und Wallets (lokal, nicht veröffentlicht)
+
+Umsetzung des Auftrags „Visuelle Fallklärung“ ohne neue Plattform: Darstellung auf Basis des vorhandenen Falls, der
+gemeinsamen Simulation und der Quellenanhänge – Details in `docs/VISUAL_CASE_CLARIFICATION.md`.
+
+* **Vorarbeit (Fehlerbilder, mit Tests):** Transferpaare nur mit belegter Identität; beide Transfergebühren bleiben
+  erhalten; geänderte Quellenzeile = offener Revisionskonflikt; Datenstand umfasst Nachweise/Zuordnungen/Einstellungen und
+  wird in der Schreibtransaktion geprüft.
+* **Geldweg** (`case_view.py`, `klaerung_weg.html`): benannte Orte als Anker, Verbindungen mit Zustand (gebucht ·
+  Vorschlag · entfällt · offen) als Linienart *und* Text, Details/Begründung, Legende, Tabelle als Textalternative,
+  Datenschutz-Maskierung, Mobil/Dunkelmodus, ohne Skript bedienbar.
+* **Bestandsfenster im Fall:** fallrelevante Fenster (`devwindows`), Recherche-Plan als gemeinsames Partial mit Rücksprung;
+  Seitenaufruf ohne Schreibzugriff (hängende Recherche-Läufe nur in der Anzeige).
+* **Simulation & Wirkung:** Auswahl der Hypothese, Wirkung aus der gemeinsamen Simulation (Bestand, Steuer, Anschaffung,
+  Kursstand), Übernahme/Nachprüfung/Rückgängig über die vorhandene Ausführung.
+* **Abdeckung:** Dateispanne (erster–letzter Vorgang) gilt nicht mehr als vollständige Lieferung.
+* **Nicht Teil:** kein Deployment, kein Push, keine Migration, keine produktiven Abrufe; Automatik und externe KI nicht
+  neu eingeschaltet.
+
 ## 0.31.3 – DOT: Grenzsuche überlebt den Abbruch („Zeitbudget erreicht ohne Fortschritt“)
 
 Beobachtet (Screenshot, DOT nach 0.31.2): „Zeitbudget des Laufs erreicht ohne Fortschritt“ – die Suche nach dem frühesten

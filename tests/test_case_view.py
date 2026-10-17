@@ -281,3 +281,19 @@ def test_page_simulation_apply_verify_and_undo_roundtrip(cfg):
         assert "zurückgenommen" in r.text and balance(ctx, "Bybit", "USDT") == D("804.83573598")
 
     _web_case(cfg, usdt_double_out(), ASSETS_K_, check)
+
+
+def test_derivative_case_shows_dossier_without_inventing_positions_or_losses(cfg):
+    from tests.test_clarify import bybit_deriv_rows
+
+    ctx = ctx_for(cfg, bybit_deriv_rows())
+    cases = K.analyse(ctx)
+    deriv = [c for c in cases if c.deriv]
+    assert deriv, [c.title for c in cases]
+    v = view(ctx, deriv[0])
+    assert v.derivatives == list(deriv[0].deriv)
+    text = " ".join(v.derivatives).lower()
+    assert "offene position" not in text or "keine" in text or "nicht" in text  # keine erfundenen offenen Positionen
+    names = {p.name for p in v.places if not p.unknown}
+    assert names == {"Bybit Derivate"}  # Konto-/Bereichsname bleibt, kein Unterkonto oder Netzwerk erfunden
+    assert all(p.sub == "" and p.network == "" for p in v.places if not p.unknown)

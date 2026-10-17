@@ -25,7 +25,7 @@
     <tbody>{% for r in mx.rows %}<tr>
       <td class="sticky"><b>{{ r.account }}</b><div class="hint">{{ r.source }}</div></td>
       {% for m in mx.months %}{% set c = r.cells.get(m) %}
-      {% if c %}<td class="cov-{{ c.state }}" title="{{ m }} · {{ states[c.state][0] }}{% if c.booked %} · {{ c.booked }} Buchungen{% endif %}{% if c.staged %} · {{ c.staged }} im Prüf-Stapel{% endif %}{% for a, n in c.areas.items() %} · {{ mx.areas[a] }}: {{ n }}{% endfor %}">{% if c.booked %}{{ c.booked }}{% elif c.staged %}({{ c.staged }}){% elif c.state == 'luecke' %}!{% endif %}</td>
+      {% if c %}<td class="cov-{{ c.state }}" title="{{ m }} · {{ states[c.state][0] }}{% if c.booked %} · {{ c.booked }} Buchungen{% endif %}{% if c.staged %} · {{ c.staged }} im Prüf-Stapel{% endif %}{% for a, n in c.areas.items() %} · {{ mx.areas[a] }}: {{ n }}{% endfor %}">{% if c.booked %}{{ c.booked }}{% elif c.staged %}({{ c.staged }}){% elif c.state == 'luecke' %}!{% elif c.state == 'dateispanne' %}~{% endif %}</td>
       {% else %}<td class="cov-out" aria-hidden="true"></td>{% endif %}
       {% endfor %}</tr>
     {% endfor %}</tbody></table></div>

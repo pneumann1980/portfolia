@@ -1,8 +1,9 @@
 """Historische Quellenabdeckung (Financial Integrity, Phase 5) – nur synthetische Dateien.
 
 MEXC-Fall nachgebildet: zwei Exportdateien derselben Börse decken Januar–März und Juni–August ab; April und Mai sind
-eine Lücke (kein Export, keine Buchung). Ein Monat innerhalb eines Dateizeitraums ohne Vorgang ist „abgedeckt, ohne
-Vorgänge“, nicht Lücke. Eine andere Quelle desselben Kontos macht die Lücke zu „anderweitig belegt“.
+eine Lücke (kein Export, keine Buchung). Ein Monat innerhalb eines Dateizeitraums ohne Vorgang ist „innerhalb der
+Dateispanne“ (kein Nachweis einer vollständigen Lieferung), nicht Lücke. Eine andere Quelle desselben Kontos macht
+die Lücke zu „anderweitig belegt“.
 """
 
 # ruff: noqa: F811
@@ -49,9 +50,11 @@ def test_gap_between_two_export_files_is_a_gap_quiet_month_is_covered(client):
     r = row(mx, "MEXC")
     states = {m: cell.state for m, cell in r.cells.items()}
     assert states["2024-01"] == states["2024-03"] == "staged"  # eingelesen, nicht gebucht
-    assert states["2024-02"] == "abgedeckt"  # Datei Jan–Mär deckt Februar ab: echter ruhiger Monat
+    # Februar liegt zwischen erstem und letztem Vorgang der Datei – das ist KEIN Nachweis, dass der Export den Monat
+    # vollständig umfasste (eine abgeschnittene Datei sähe gleich aus), also nicht „abgedeckt“, aber auch keine Lücke
+    assert states["2024-02"] == "dateispanne"
     assert states["2024-04"] == states["2024-05"] == "luecke"
-    assert states["2024-07"] == "abgedeckt"
+    assert states["2024-07"] == "dateispanne"
     assert r.gaps == [("2024-04", "2024-05")]
     assert [(a, b, k) for a, b, k in r.periods] == [("2024-01", "2024-03", "Datei"), ("2024-06", "2024-08", "Datei")]
 
