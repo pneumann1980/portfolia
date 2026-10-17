@@ -152,3 +152,57 @@ def test_view_is_deterministic_and_never_writes(cfg):
     assert before == fingerprint(ctx.db)
     assert [(p.pid, p.mark, p.name) for p in a.places] == [(p.pid, p.mark, p.name) for p in b.places]
     assert [(m.mid, m.state) for m in a.moves] == [(m.mid, m.state) for m in b.moves]
+
+
+# ----------------------------------------------------------------------------------------------------
+# Oberfläche (Seite im Gesamtsystem)
+# ----------------------------------------------------------------------------------------------------
+
+def _web_case(cfg, rows, assets, fn):
+    import os
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from app.importer.zipbuilder import build_zip
+    from app.jobs import tasks
+    from app.main import build_app
+    from tests.test_diagnosis import COLS
+
+    dst = cfg.import_dir / "kuratiert.zip"
+    build_zip(dst, transactions=rows, assets=assets, generated_at="2025-06-30T20:00:00Z",
+              valuation_date="2025-06-30", extra_tx_columns=COLS)
+    old = time.time() - 3600
+    os.utime(dst, (old, old))
+    with TestClient(build_app(cfg, start_scheduler=False)) as c:
+        ctx = c.app.state.ctx
+        assert tasks.import_check(ctx, "test").status == "imported"
+        case = one_case(ctx)
+        fn(c, ctx, case)
+
+
+def test_page_renders_money_path_with_names_legend_and_text_alternative(cfg):
+    from tests.test_clarify import ASSETS_K
+
+    def check(c, ctx, case):
+        before = fingerprint(ctx.db)
+        r = c.get(f"/quality/klaerung/{case.key}")
+        assert r.status_code == 200
+        t = r.text
+        assert 'id="geldweg"' in t and "Aktueller Stand" in t and "Legende" in t
+        assert "Als Tabelle (Textalternative)" in t
+        assert ">Bybit<" in t or "Bybit" in t
+        assert "Herkunft nicht bekannt" in t and "weder eigene Wallet noch externe Auszahlung belegt" in t
+        assert "keine Gebühr geliefert" in t and 'class="sens-real"' in t and 'class="sens-mask"' in t
+        assert "gebucht" in t and "Importabdeckung" in t and "Vollständigkeit unbelegt" in t
+        # Auswahl und Simulation sind Links (ohne Skript), ändern nichts
+        pid = next(p.pid for p in view(ctx, case).places if p.name == "Bybit")
+        s = c.get(f"/quality/klaerung/{case.key}?sel={pid}")
+        assert s.status_code == 200 and "Vollständige Adresse" in s.text or "Interne Kontokennung" in s.text
+        mv = c.get(f"/quality/klaerung/{case.key}?sel=m-K1")
+        assert mv.status_code == 200 and "<details class=\"vk-more\" open>" in mv.text
+        assert c.get(f"/quality/klaerung/{case.key}?hyp=h-unbekannt&sel=%3Cscript%3E").status_code == 200
+        assert "<script>" not in c.get(f"/quality/klaerung/{case.key}?sel=%3Cscript%3E").text
+        assert fingerprint(ctx.db) == before  # GET schreibt nichts
+
+    _web_case(cfg, sand_rows(), ASSETS_K, check)

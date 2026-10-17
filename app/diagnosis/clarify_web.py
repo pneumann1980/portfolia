@@ -15,9 +15,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+from app.diagnosis import case_view as CV
 from app.diagnosis import clarify as K
 from app.diagnosis import derivatives as DV
 from app.diagnosis import stockconfirm as SC
+from app.diagnosis.engine import report_for
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -72,7 +74,8 @@ def make_router() -> APIRouter:
         return _back(_url("/quality/klaerung", res.message, "; ".join(res.errors)))
 
     @router.get("/quality/klaerung/{key}", response_class=HTMLResponse)
-    def case_page(request: Request, key: str, msg: str = "", err: str = "") -> HTMLResponse:
+    def case_page(request: Request, key: str, msg: str = "", err: str = "", hyp: str = "",
+                  sel: str = "") -> HTMLResponse:
         ctx = get_ctx(request)
         case = next(iter(K.analyse(ctx, only=key)), None)
         stored = next((c for c in K.stored_cases(ctx.db) if c["key"] == key), None)
@@ -80,9 +83,18 @@ def make_router() -> APIRouter:
             return render(request, "klaerung_case.html", status_code=404, active="quality", case=None, stored=None,
                           runs=[], msg="", err="Fall nicht gefunden.", status=K.STATUS, evidence=K.EVIDENCE,
                           dim_order=K.DIM_ORDER, dim_label=K.DIM_LABEL, dim_state=K.DIM_STATE, dims_text=K.dims_text)
-        return render(request, "klaerung_case.html", active="quality", case=case, stored=stored,
+        auto = K.auto_allowed(ctx)
+        view = (CV.build(ctx, case, report_for(ctx), hyp_id=hyp[:40], sel=sel[:80], authorization_auto=auto)
+                if case is not None else None)
+
+        def qs(**kw: str) -> str:
+            cur = {"hyp": view.hyp_id if view else "", "sel": sel[:80], **kw}
+            return urlencode({k: v for k, v in cur.items() if v})
+
+        return render(request, "klaerung_case.html", active="quality", case=case, stored=stored, view=view,
+                      sel=sel[:80], qs=qs,
                       runs=K.runs_of(ctx.db, key), status=K.STATUS, evidence=K.EVIDENCE, dim_order=K.DIM_ORDER,
-                      dim_label=K.DIM_LABEL, dim_state=K.DIM_STATE, dims_text=K.dims_text, auto=K.auto_allowed(ctx),
+                      dim_label=K.DIM_LABEL, dim_state=K.DIM_STATE, dims_text=K.dims_text, auto=auto,
                       tokens=lambda h: json.dumps({c.key: c.plan.token for c in h.cands}), msg=msg[:300],
                       err=err[:300])
 

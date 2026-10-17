@@ -21,7 +21,8 @@
   </section>
 
   {% if case %}
-  <section class="card"><div class="card-head"><h2>Entscheidung</h2></div>
+  {% if view %}{% include "partials/klaerung_weg.html" %}{% endif %}
+  <section class="card" id="entscheidung"><div class="card-head"><h2>Entscheidung</h2></div>
     <p><b>{{ case.decision.reason }}</b></p>
     {% if case.decision.missing %}<p><b>Es fehlt:</b></p><ul>{% for m in case.decision.missing %}<li>{{ m }}</li>{% endfor %}</ul>{% endif %}
     {% if case.decision.rules %}<table class="table"><thead><tr><th>Regel</th><th></th><th>Begründung</th></tr></thead><tbody>{% for r in case.decision.rules %}<tr><td>{{ r[0] }}</td><td>{{ '✓' if r[1] else '✗' }}</td><td>{{ r[2] }}</td></tr>{% endfor %}</tbody></table>{% endif %}
@@ -33,7 +34,7 @@
   </section>
 
   {% if case.question %}
-  <section class="card"><div class="card-head"><h2>Bestandsnachweis</h2></div>
+  <section class="card" id="bestandsnachweis"><div class="card-head"><h2>Bestandsnachweis</h2></div>
     <p><b>{{ case.question.text }}</b></p>
     <p class="hint">{{ case.question.why }}</p>
     <ul>{% for e in case.question.expect %}<li>{{ e.qty }} {{ case.question.asset }} – {{ e.label }}</li>{% endfor %}</ul>
@@ -51,13 +52,13 @@
     </form>
   </section>{% endif %}
 
-  <section class="card"><div class="card-head"><h2>Dossier</h2></div>
+  <section class="card" id="belege"><div class="card-head"><h2>Dossier</h2></div>
     <ul>{% for e in case.evidence %}<li>{{ e }}</li>{% endfor %}</ul>
     {% if case.findings %}<p class="hint">Befunde: {% for f in case.findings %}<a href="/quality/diagnose?f={{ f.id }}#{{ f.id }}">{{ f.title[:80] }}</a>{{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
     {% if case.excluded %}<details><summary class="hint">{{ case.excluded|length }} Kandidat(en) ausgeschlossen</summary><ul>{% for lab, why in case.excluded %}<li>{{ lab }} – {{ why }}</li>{% endfor %}</ul></details>{% endif %}
   </section>
 
-  <section class="card"><div class="card-head"><h2>Kandidaten und gemeinsame Simulation</h2></div>
+  <section class="card" id="hypothesen"><div class="card-head"><h2>Kandidaten und gemeinsame Simulation</h2></div>
     {% if case.cands %}<table class="table"><thead><tr><th>Kandidat</th><th>Beleglage</th><th>Art</th></tr></thead><tbody>
     {% for c in case.cands %}<tr><td>{{ c.label }}</td><td>{{ evidence[c.evidence] }}{% if c.notes %}<div class="hint">{{ c.notes|join('; ') }}</div>{% endif %}</td><td>{{ c.action }}</td></tr>{% endfor %}</tbody></table>
     {% else %}<p class="hint">Keine aus Belegen ableitbare Lösung. Eine Bestandsdifferenz allein begründet keine Buchung.</p>{% endif %}

@@ -871,3 +871,52 @@ tr.muted-row td { color: var(--muted, #6b7280); }
 .combo-item.sel { box-shadow: inset 3px 0 0 var(--info-ink); }
 .combo-new { color: var(--info-ink); font-weight: 600; border-top: 1px solid var(--border); }
 .combo-hint { color: var(--ink-2); font-size: .85rem; }
+
+/* Visuelle Fallklärung: Geldweg. Zustand immer auch als Text/Symbol, Linienart zusätzlich zur Farbe. */
+.vk-h { margin: 16px 0 6px; font-size: 1rem; }
+.vk-next { border: 2px solid var(--info-ink); background: var(--info-bg); color: var(--info-ink); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 12px; }
+.vk-next p { margin: 6px 0; color: var(--ink); }
+.vk-modes { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.vk-places { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
+.vk-place { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; background: var(--surface-2); min-width: 0; }
+.vk-place.vk-sel, .vk-move.vk-sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+.vk-facts, .vk-quality { margin-top: 6px; list-style: none; padding-left: 0; overflow-wrap: anywhere; }
+.vk-facts li, .vk-quality li { margin: 6px 0; }
+.vk-quality .badge { white-space: nowrap; }
+.vk-detail-box { margin-top: 8px; padding: 8px; border-top: 1px dashed var(--border); overflow-wrap: anywhere; }
+.vk-chip { display: inline-flex; align-items: flex-start; gap: 6px; max-width: 100%; padding: 4px 8px; border: 1px solid var(--axis); border-radius: 999px; background: var(--surface); color: var(--ink); text-decoration: none; min-height: 32px; }
+a.vk-chip:hover { background: var(--surface-3); text-decoration: none; }
+.vk-chip.vk-sel { border-color: var(--accent); border-width: 2px; }
+.vk-chip.vk-unknown { border-style: dotted; color: var(--ink-2); }
+.vk-mark { flex: 0 0 auto; min-width: 1.4em; height: 1.4em; line-height: 1.4em; text-align: center; border-radius: 50%; background: var(--ink); color: var(--surface); font-weight: 700; font-size: .8rem; }
+.vk-unknown .vk-mark { background: transparent; color: var(--ink); border: 1px dotted var(--ink); }
+.vk-name { overflow-wrap: anywhere; min-width: 0; }
+.vk-name small { color: var(--ink-2); }
+.vk-moves { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.vk-move { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.vk-move.vk-removed { opacity: .75; }
+.vk-move.vk-removed .vk-qty { text-decoration: line-through; }
+.vk-link { min-width: 0; overflow-wrap: anywhere; }
+.vk-arrow { position: relative; height: 0; margin: 8px 0; border-top: 3px solid var(--ink-2); }
+.vk-arrow::after { content: ""; position: absolute; right: 0; top: -7px; border: 5px solid transparent; border-left: 9px solid var(--ink-2); }
+.vk-line-dashed { border-top-style: dashed; }
+.vk-line-dotted { border-top-style: dotted; }
+.vk-line-struck { border-top-style: double; border-top-width: 4px; }
+.vk-proposed .vk-arrow, .vk-created .vk-arrow { border-top-color: var(--info-ink); }
+.vk-proposed .vk-arrow::after, .vk-created .vk-arrow::after { border-left-color: var(--info-ink); }
+.vk-removed .vk-arrow, .vk-removed .vk-arrow::after { border-top-color: var(--crit-mark); }
+.vk-removed .vk-arrow::after { border-left-color: var(--crit-mark); }
+.vk-sym { display: inline-block; min-width: 1.2em; font-weight: 700; }
+.vk-sample { display: inline-block; width: 44px; height: 0; border-top: 3px solid var(--ink-2); vertical-align: middle; }
+.vk-more, .vk-table, .vk-legend { margin-top: 4px; }
+.vk-tech { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 6px 0; }
+.vk-tech dt { color: var(--ink-2); }
+.vk-tech dd { margin: 0; min-width: 0; }
+.vk-full { overflow-wrap: anywhere; word-break: break-all; }
+@media (min-width: 760px) {
+  .vk-places { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vk-move { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr); align-items: center; }
+  .vk-move > .vk-more { grid-column: 1 / -1; }
+  .vk-move > .vk-end:last-of-type { justify-self: end; }
+}
+@media (forced-colors: active) { .vk-arrow, .vk-arrow::after { border-color: CanvasText; } }

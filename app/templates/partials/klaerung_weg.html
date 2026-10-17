@@ -1,0 +1,125 @@
+{# Visueller Geldweg eines Klärungsfalls – nur Darstellung (app/diagnosis/case_view.py). Kein Skript nötig:
+   Auswahl und Simulation sind Links; Namen, Zustände und Beträge stehen immer als Text da (nie nur Farbe). #}
+{% macro sens(v) %}<span class="sens-real">{{ v }}</span><span class="sens-mask" aria-label="Betrag verborgen">•••</span>{% endmacro %}
+{% macro chip(view, pid, sel) %}{% set p = view.place(pid) %}{% if p %}
+  {% if p.unknown %}<span class="vk-chip vk-unknown" title="{{ p.kind_label }}"><span class="vk-mark" aria-hidden="true">?</span><span class="vk-name">{{ p.name }}</span></span>
+  {% else %}<a class="vk-chip{{ ' vk-sel' if sel == p.pid }}" href="?{{ qs(sel=p.pid) }}#geldweg" {% if sel == p.pid %}aria-current="true"{% endif %}><span class="vk-mark" aria-hidden="true">{{ p.mark }}</span><span class="vk-name">{{ p.name }}{% if p.note %} <small>({{ p.note }})</small>{% endif %}</span></a>{% endif %}
+{% endif %}{% endmacro %}
+{% macro leg(l) %}{{ sens(l.qty) }} {{ l.label }}{% endmacro %}
+{% set SYM = {'booked': '✓', 'proposed': '◌', 'removed': '✕', 'created': '+', 'open': '?'} %}
+
+<section class="card vk" id="geldweg" aria-labelledby="vk-h">
+  <div class="card-head"><h2 id="vk-h">Geldweg</h2>
+    <span class="badge {{ 'warn' if view.simulated else 'info' }}">{{ view.mode_text }}</span></div>
+
+  {% if view.action %}
+  <div class="vk-next" role="region" aria-label="Nächster Schritt">
+    <div class="row" style="gap:8px;flex-wrap:wrap"><b>Nächster Schritt: {{ view.action.label }}</b>
+      <span class="badge {{ {'automatisch': 'good', 'bestaetigung': 'info', 'information': 'warn'}[view.action.mode] }}">{{ {'automatisch': 'automatisch möglich', 'bestaetigung': 'braucht Ihre Bestätigung', 'information': 'braucht weitere Information'}[view.action.mode] }}</span></div>
+    <p>{{ view.action.why }}</p>
+    {% if view.action.href %}<a class="btn sm primary" href="{{ view.action.href }}">{{ view.action.label }}</a>{% endif %}
+  </div>
+  {% endif %}
+
+  {% if case.hyps|length > 1 %}
+  <nav class="vk-modes" aria-label="Ansicht">
+    <a class="btn sm {{ 'primary' if not view.simulated else 'ghost' }}" href="?{{ qs(hyp='', sel='') }}#geldweg" {% if not view.simulated %}aria-current="true"{% endif %}>Aktueller Stand</a>
+    {% for h in case.hyps if not h.base %}<a class="btn sm {{ 'primary' if view.hyp_id == h.id else 'ghost' }}" href="?{{ qs(hyp=h.id, sel='') }}#geldweg" {% if view.hyp_id == h.id %}aria-current="true"{% endif %} title="{{ h.label }}">Simulation {{ loop.index }}</a>{% endfor %}
+  </nav>
+  <p class="hint">{% if view.simulated %}Simulation: Es wurde <b>nichts gebucht</b>. Durchgestrichene Verbindungen entfallen, gestrichelte würden neu entstehen.{% else %}Zeigt den Stand der Buchungen. Eine Simulation ändert nichts, bis Sie ausdrücklich übernehmen.{% endif %}</p>
+  {% endif %}
+
+  <h3 class="vk-h">Konten und Wallets</h3>
+  <ul class="vk-places">
+    {% for p in view.places if not p.unknown %}
+    <li class="vk-place{{ ' vk-sel' if sel == p.pid }}" id="{{ p.pid }}">
+      <div class="row" style="gap:8px;align-items:flex-start">{{ chip(view, p.pid, sel) }}</div>
+      <div class="hint">{{ p.kind_label }}{% if p.own %} · eigenes Konto{% endif %}
+        · Netzwerk: {{ p.network or 'nicht bekannt' }}{% if p.network_basis %} ({{ p.network_basis }}){% endif %}
+        · Unterkonto/Umfang: {{ p.sub or 'nicht bekannt' }}{% if p.sub_basis %} ({{ p.sub_basis }}){% endif %}</div>
+      {% if p.addresses %}<div class="hint">Adresse{{ 'n' if p.addresses|length > 1 }}: {% for a in p.addresses_short %}<code>{{ a }}</code>{{ ', ' if not loop.last }}{% endfor %}</div>{% endif %}
+      <ul class="vk-facts plain-list">
+      {% for f in p.facts %}<li><b>{{ f.label }}:</b> {% if f.qty is none %}<b>unbekannt</b>{% else %}{{ sens(f.qty) }} {{ f.asset }}{% endif %}
+        {% if f.at or f.source or f.scope %}<span class="hint"> · {{ [f.at, f.source, f.scope]|select|join(' · ') }}</span>{% endif %}{% if f.note %}<div class="hint">{{ f.note }}</div>{% endif %}</li>{% endfor %}
+      </ul>
+      {% if sel == p.pid and view.selected and view.selected.kind == 'place' %}
+      <div class="vk-detail-box"><b>Details</b>
+        {% if p.addresses %}<div>Vollständige Adresse{{ 'n' if p.addresses|length > 1 }}: {% for a in p.addresses %}<code class="vk-full">{{ a }}</code>{% endfor %}</div>{% endif %}
+        {% if p.aliases %}<div>Zusammengeführt mit: {{ p.aliases|join(', ') }}</div>{% endif %}
+        <div>Interne Kontokennung: <code>{{ p.key }}</code></div>
+        <div>Verbindungen an diesem Ort: {% for m in view.selected.moves %}<a href="?{{ qs(sel=m.mid) }}#geldweg">{{ m.type_label }} {{ m.mid[2:] }}</a>{{ ', ' if not loop.last }}{% else %}keine{% endfor %}</div>
+        <a href="?{{ qs(sel='') }}#geldweg">Auswahl aufheben</a></div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+
+  <h3 class="vk-h">Verbindungen</h3>
+  <details class="vk-legend"><summary class="hint">Legende</summary>
+    <ul class="plain-list">
+      <li><span class="vk-sample vk-line-solid" aria-hidden="true"></span> ✓ <b>gebucht</b> – durchgezogene Linie</li>
+      <li><span class="vk-sample vk-line-dashed" aria-hidden="true"></span> ◌ <b>Vorschlag / neu in Simulation</b> – gestrichelt, nicht gebucht</li>
+      <li><span class="vk-sample vk-line-struck" aria-hidden="true"></span> ✕ <b>entfällt in der Simulation</b> – durchgestrichen</li>
+      <li><span class="vk-sample vk-line-dotted" aria-hidden="true"></span> ? <b>offen / unbekannt</b> – gepunktet; „?“ = Zugehörigkeit nicht bekannt, weder eigene Wallet noch externe Auszahlung belegt</li>
+      <li>Quellen sind <b>Belege</b>, keine zusätzlichen Geldbewegungen. „Keine Gebühr geliefert“ ist nicht „Gebühr 0“.</li>
+    </ul></details>
+  {% if view.truncated %}<p class="hint">Es werden {{ view.moves|selectattr('state', 'in', ['booked', 'removed', 'created'])|list|length }} von {{ view.moves|selectattr('state', 'in', ['booked', 'removed', 'created'])|list|length + view.truncated }} Vorgängen gezeigt – {{ view.truncated }} weitere sind im Journal einsehbar.</p>{% endif %}
+
+  <ol class="vk-moves">
+  {% for m in view.moves %}
+    {% set open = (sel == m.mid) %}
+    <li class="vk-move vk-{{ m.state }}{{ ' vk-sel' if open }}" id="{{ m.mid }}">
+      <div class="vk-end">{{ chip(view, m.src, sel) }}</div>
+      <div class="vk-link">
+        <div class="vk-qty"><b>{{ m.type_label }}</b>
+          {% if m.out and m.inn %}· Abgang {{ leg(m.out) }} · Eingang {{ leg(m.inn) }}{% elif m.out %}· {{ leg(m.out) }}{% elif m.inn %}· {{ leg(m.inn) }}{% endif %}</div>
+        <div class="vk-arrow vk-line-{{ m.line }}" aria-hidden="true"></div>
+        <div class="vk-state"><span class="vk-sym" aria-hidden="true">{{ SYM[m.state] }}</span> {{ m.status_text }}
+          {% if m.ts_out or m.ts_in %}<span class="hint"> · {% if m.ts_out %}Abgang {{ m.ts_out }}{% endif %}{% if m.ts_out and m.ts_in %} · {% endif %}{% if m.ts_in %}Eingang {{ m.ts_in }}{% endif %}</span>{% endif %}</div>
+        {% if m.fee %}<div class="hint">Gebühr: {{ m.fee.text }}</div>{% endif %}
+        {% if m.sources %}<div class="hint">Belege: {% for s in m.sources %}{{ s.label }}{{ ', ' if not loop.last }}{% endfor %}{% if m.sources_more %} und {{ m.sources_more }} weitere{% endif %}</div>{% endif %}
+        {% if m.conflicts %}<div class="alert warn"><span class="icon">!</span><div>{% for c in m.conflicts %}{{ c }}{{ '; ' if not loop.last }}{% endfor %}</div></div>{% endif %}
+        {% if m.alt_of %}<div class="hint">konkurriert mit <a href="?{{ qs(sel=m.alt_of) }}#geldweg">einer weiteren Möglichkeit</a> für denselben Abgang</div>{% endif %}
+      </div>
+      <div class="vk-end">{{ chip(view, m.dst, sel) }}</div>
+      <details class="vk-more" {% if open %}open{% endif %}><summary class="hint">Details und Begründung</summary>
+        {% if m.reason %}<ul>{% for r in m.reason %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+        {% if m.value_text %}<div>Wert laut Buchung: {{ sens(m.value_text) }}</div>{% endif %}
+        {% if m.sources %}<table class="table"><thead><tr><th>Quelle</th><th>Rolle</th><th>Kennung</th><th></th></tr></thead><tbody>{% for s in m.sources %}<tr><td>{{ s.label }}</td><td>{{ s.role }}</td><td><code>{{ s.ext_id or '–' }}</code></td><td>{% if s.batch_url %}<a href="{{ s.batch_url }}">Importlauf</a>{% endif %}</td></tr>{% endfor %}</tbody></table>{% endif %}
+        <dl class="vk-tech">{% for k, v in m.technical.items() if v %}<dt>{{ k }}</dt><dd><code class="vk-full">{{ v }}</code></dd>{% endfor %}</dl>
+        <div class="row" style="gap:10px;flex-wrap:wrap">{% if m.group_url %}<a href="{{ m.group_url }}">Ereignisgruppe</a>{% endif %}{% if m.edit_url %}<a href="{{ m.edit_url }}">Buchung bearbeiten</a>{% endif %}</div>
+      </details>
+    </li>
+  {% else %}
+    <li class="hint">Keine Vorgänge im Fall – es geht um einen Bestand ohne zugeordnete Buchung.</li>
+  {% endfor %}
+  </ol>
+
+  <details class="vk-table"><summary class="hint">Als Tabelle (Textalternative)</summary>
+    <div class="table-wrap"><table class="table"><caption class="sr-only">Verbindungen des Falls</caption>
+      <thead><tr><th>Zustand</th><th>Von</th><th>Nach</th><th>Vorgang</th><th>Abgang</th><th>Eingang</th><th>Gebühr</th><th>Zeit</th></tr></thead><tbody>
+      {% for m in view.moves %}<tr><td>{{ SYM[m.state] }} {{ m.status_text }}</td><td>{{ view.place(m.src).name }}</td><td>{{ view.place(m.dst).name }}</td><td>{{ m.type_label }}</td>
+        <td>{% if m.out %}{{ leg(m.out) }}{% else %}–{% endif %}</td><td>{% if m.inn %}{{ leg(m.inn) }}{% else %}–{% endif %}</td><td>{{ m.fee.text if m.fee else 'nicht angegeben' }}</td><td>{{ m.ts_out or m.ts_in }}</td></tr>{% endfor %}
+      </tbody></table></div></details>
+
+  <h3 class="vk-h">Offene Fragen</h3>
+  {% if view.questions %}<ul>{% for q in view.questions %}<li>{{ q }}</li>{% endfor %}</ul>{% else %}<p class="hint">Keine offenen Fragen.</p>{% endif %}
+
+  {% if view.revisions %}
+  <div class="alert warn" role="status"><span class="icon">!</span><div><b>Quelle hat sich geändert:</b>
+    {% for r in view.revisions %}<div>Buchung {{ r.tx }}: {{ r.diffs or 'Inhalt geändert' }} – <a href="{{ r.url }}">im Importlauf prüfen</a></div>{% endfor %}
+    <div class="hint">Die bestehende Buchung bleibt unverändert, bis Sie die Änderung bestätigen.</div></div></div>
+  {% endif %}
+
+  {% if view.derivatives %}
+  <h3 class="vk-h">Derivate</h3>
+  <ul>{% for d in view.derivatives %}<li>{{ d }}</li>{% endfor %}</ul>
+  <p class="hint">Margin ist gebundene Sicherheit, kein Handelsverlust. Offene Positionen werden nicht aus Margin oder Bestandsdifferenzen erschlossen.</p>
+  {% endif %}
+
+  <h3 class="vk-h">Datenlage (getrennt bewertet)</h3>
+  <ul class="vk-quality plain-list">
+    {% for k, v in view.quality.items() %}<li><b>{{ k }}</b> <span class="badge {{ {'geklärt': 'good', 'keine': 'good', 'ohne Lücke': 'info', 'offen': 'warn', 'unbelegt': 'warn', 'unbekannt': 'warn'}.get(v[1], 'info') }}">{{ v[1] }}</span><div class="hint">{{ v[0] }}</div></li>{% endfor %}
+  </ul>
+  <p class="hint">Ein passender Endbestand schließt Fehler in der Historie nicht aus. Eine erkannte Abdeckung der Datenquelle belegt nicht, dass die gesamte Historie erfasst ist.</p>
+</section>
