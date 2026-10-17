@@ -198,7 +198,7 @@ def test_page_renders_money_path_with_names_legend_and_text_alternative(cfg):
         # Auswahl und Simulation sind Links (ohne Skript), ändern nichts
         pid = next(p.pid for p in view(ctx, case).places if p.name == "Bybit")
         s = c.get(f"/quality/klaerung/{case.key}?sel={pid}")
-        assert s.status_code == 200 and "Vollständige Adresse" in s.text or "Interne Kontokennung" in s.text
+        assert (s.status_code == 200 and "Vollständige Adresse" in s.text) or "Interne Kontokennung" in s.text
         mv = c.get(f"/quality/klaerung/{case.key}?sel=m-K1")
         assert mv.status_code == 200 and "<details class=\"vk-more\" open>" in mv.text
         assert c.get(f"/quality/klaerung/{case.key}?hyp=h-unbekannt&sel=%3Cscript%3E").status_code == 200
