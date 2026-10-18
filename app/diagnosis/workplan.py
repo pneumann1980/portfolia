@@ -248,7 +248,9 @@ def build(ctx: Any, report: Report | None = None, *, granular: bool = False) -> 
     checked = max([x for x in (integ.get("finished_at") or "", *(c["updated_at"] or "" for c in cases)) if x],
                   default="")
     order = {"A": 0, "B": 1, "C": 2}
-    items.sort(key=lambda i: (order[i.tier], -float(i.weight), -i.n, i.title))
+    # Stufe A: konkret ausführbare Punkte (Klärungsfall mit Lösung, Prüfstapel) vor Sammelmeldungen
+    items.sort(key=lambda i: (order[i.tier], 0 if i.tier == "A" and i.kind in ("fall", "pruefstapel") else 1,
+                              -float(i.weight), -i.n, i.title))
     state = "ungeprueft" if run is None and not cases else ("offen" if any(i.tier != "C" for i in items) else "fertig")
     return WorkPlan(items=items, state=state, checked_at=checked, integrity=integ, stale=stale, autopilot=ap or {})
 
