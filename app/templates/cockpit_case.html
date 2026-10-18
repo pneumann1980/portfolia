@@ -2,6 +2,7 @@
 {% block title %}Fallanalyse {{ c.account }} · {{ c.asset }}{% endblock %}
 {% block heading %}Fallanalyse · {{ c.account }} · {{ c.asset }}{% endblock %}
 {% block content %}
+{% set dq_tab = 'belege' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">
 <section class="card">
   <div class="card-head"><h2>Bestand</h2><a class="btn sm ghost" href="/quality/cockpit">Cockpit</a></div>

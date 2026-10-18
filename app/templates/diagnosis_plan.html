@@ -4,6 +4,7 @@
 {% block heading %}Datenqualität · Vorschau{% endblock %}
 {% macro arrow(a, b) %}{% if a == b %}<span class="muted">unverändert</span>{% else %}{{ a }} → <strong>{{ b }}</strong>{% endif %}{% endmacro %}
 {% block content %}
+{% set dq_tab = 'faelle' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">
 
 <section class="card">

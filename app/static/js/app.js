@@ -460,3 +460,39 @@
     pollStatus();
   });
 })();
+
+/* Warte-Balken: Seiten der Datenqualität rechnen teils mehrere Sekunden – dann zeigt ein Balken, dass es weitergeht. */
+(function () {
+  var bar = null;
+  function show(msg) {
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "wait-bar";
+      bar.setAttribute("role", "status");
+      bar.setAttribute("aria-live", "polite");
+      bar.innerHTML = '<div class="progress indeterminate" role="progressbar" aria-label="Wird berechnet"><div></div></div><span></span>';
+      document.body.appendChild(bar);
+    }
+    bar.querySelector("span").textContent = msg || "Wird berechnet …";
+    bar.hidden = false;
+  }
+  function hide() { if (bar) bar.hidden = true; }
+  var SCOPE = /^\/(quality|journal\/pruefung)/;
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest("a[href]");
+    if (!a || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || a.target === "_blank" || a.hasAttribute("download") || a.hasAttribute("hx-get")) return;
+    var h = a.getAttribute("href") || "";
+    if (!SCOPE.test(h)) return;
+    if (h.indexOf("#") > -1 && h.split("#")[0] === location.pathname + location.search) return;  // nur Anker
+    show("Wird berechnet …");
+  });
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (!f.matches || f.hasAttribute("hx-post")) return;
+    var act = f.getAttribute("action") || "";
+    if ((f.method || "").toLowerCase() === "post" && (SCOPE.test(act) || f.hasAttribute("data-wait"))) {
+      show(act.indexOf("/quality/pruefen") === 0 ? "Prüflauf wird gestartet …" : "Wird ausgeführt …");
+    }
+  });
+  window.addEventListener("pageshow", hide);
+})();

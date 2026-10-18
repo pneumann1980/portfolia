@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Fälle{% endblock %}
+{% block heading %}Datenqualität · Fälle{% endblock %}
+{% block content %}
+{% set dq_tab = 'faelle' %}
+<div class="stack dq">
+  {% include "partials/dq_nav.html" %}
+  <section class="card">
+    <div class="card-head"><h2>Alle Fälle</h2>
+      <form method="post" action="/quality/pruefen" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/quality/faelle"><button class="btn sm" type="submit">Alles prüfen</button></form></div>
+    <p class="hint">Eine Liste für alles, was zu entscheiden ist: Klärungsfälle, Diagnose-Befunde und der Prüfstapel. Jede Zeile führt in die passende Prüfansicht; geändert wird erst dort, nach Vorschau und Bestätigung.</p>
+    <form method="get" class="row" style="gap:8px;flex-wrap:wrap" role="search">
+      <label class="field">Stufe<select name="tier" data-autosubmit><option value="">alle</option>{% for k, v in tiers.items() %}<option value="{{ k }}" {{ 'selected' if f_tier == k }}>{{ k }} · {{ v[0] }} ({{ counts[k] }})</option>{% endfor %}</select></label>
+      <label class="field">Art<select name="kind" data-autosubmit><option value="">alle</option>{% for k in kinds %}<option value="{{ k }}" {{ 'selected' if f_kind == k }}>{{ kind_label.get(k, k) }}</option>{% endfor %}</select></label>
+      <label class="field">Suche<input name="q" value="{{ q }}" type="search" placeholder="Konto, Asset …"></label>
+      <button class="btn sm" type="submit">Filtern</button>
+    </form>
+  </section>
+  <section class="card">
+    {% if items %}
+    <ul class="dq-items">
+    {% for i in items %}
+      <li class="dq-item dq-{{ i.tier }}">
+        <div class="dq-item-main">
+          <div class="dq-item-title"><span class="badge {{ {'A': 'crit', 'B': 'warn', 'C': ''}[i.tier] }}">{{ i.tier }}</span> <b>{{ i.title }}</b></div>
+          <div class="dq-rec">{{ i.recommendation }}</div>
+          {% if i.why %}<div class="hint">Warum: {{ i.why }}</div>{% endif %}
+          {% if i.effect %}<div class="hint">Wirkung: {{ i.effect }}</div>{% endif %}
+        </div>
+        {% if i.href %}<a class="btn sm {{ 'primary' if i.tier == 'A' else '' }}" href="{{ i.href }}">{{ i.cta }}</a>{% endif %}
+      </li>
+    {% endfor %}
+    </ul>
+    {% else %}<p class="hint">Keine Fälle für diese Auswahl.{% if plan.state == 'ungeprueft' %} Es wurde noch nichts geprüft – „Alles prüfen“ starten.{% endif %}</p>{% endif %}
+    <p class="hint">{{ why_a }}</p>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,61 @@
+{# Arbeitsplan: was ist zu tun (A), was kann ich tun (B), was ist erledigt bzw. nichts zu tun (C). #}
+{% macro item(i) %}
+<li class="dq-item dq-{{ i.tier }}">
+  <div class="dq-item-main">
+    <div class="dq-item-title"><b>{{ i.title }}</b>{% if i.n > 1 and i.kind != 'gruppe' and i.kind != 'hinweise' %} <span class="hint">({{ i.n }})</span>{% endif %}</div>
+    <div class="dq-rec">{{ i.recommendation }}</div>
+    {% if i.why %}<div class="hint">Warum: {{ i.why }}</div>{% endif %}
+    {% if i.effect %}<div class="hint">Wirkung: {{ i.effect }}</div>{% endif %}
+    {% if i.effort %}<div class="hint">Aufwand: {{ i.effort }}</div>{% endif %}
+  </div>
+  {% if i.href %}<a class="btn sm {{ 'primary' if i.tier == 'A' else '' }}" href="{{ i.href }}">{{ i.cta }}</a>{% endif %}
+</li>
+{% endmacro %}
+<div id="dq-plan" class="stack">
+  {% set c = plan.counts %}
+  <section class="card dq-summary" aria-label="Zusammenfassung">
+    <div class="dq-chips">
+      <span class="badge crit">A · Muss ich tun: {{ c.A }}</span>
+      <span class="badge warn">B · Kann ich tun: {{ c.B }}</span>
+      <span class="badge">C · Nichts zu tun: {{ c.C }}</span>
+    </div>
+    {% if plan.state == 'ungeprueft' %}
+      <p><b>Noch nicht geprüft.</b> Starte „Alles prüfen“: Diagnose, Integritätsprüfung und Klärung laufen lokal in einem Durchgang, ohne Abrufe.</p>
+    {% elif plan.state == 'fertig' %}
+      <div class="alert good" role="status"><span class="icon">✓</span><div><b>Nichts mehr zu tun.</b> Alle offenen Punkte sind erklärt, zurückgestellt oder nur Hinweise.</div></div>
+    {% else %}
+      {% set n = plan.next %}
+      <div class="dq-next" role="region" aria-label="Nächster Schritt">
+        <div class="hint">Nächster Schritt</div>
+        <b>{{ n.title }}</b>
+        <div>{{ n.recommendation }}</div>
+        {% if n.why %}<div class="hint">Warum: {{ n.why }}</div>{% endif %}
+        <a class="btn primary sm" href="{{ n.href }}">{{ n.cta }}</a>
+      </div>
+    {% endif %}
+    {% if plan.stale %}<div class="alert warn"><span class="icon">!</span><div>Die letzte Integritätsprüfung ist älter als die Daten. „Alles prüfen“ aktualisiert sie.</div></div>{% endif %}
+    {% if last and last.finished_at %}
+      <p class="hint">Letzter Prüflauf: {{ last.finished_at|datetime_de }}{% if last.duration_s %} · {{ last.duration_s }} s{% endif %}
+        {% if not last.first %}· seit dem Lauf davor: {{ last.new|length }} neu, {{ last.gone|length }} erledigt{% endif %}
+        {% if last.applied %}· automatisch übernommen: {{ last.applied }}{% endif %}</p>
+      {% if last.new or last.gone %}<details class="vk-table"><summary class="hint">Was hat sich geändert?</summary>
+        <ul class="plain-list">{% for t in last.new %}<li>neu: {{ t }}</li>{% endfor %}{% for t in last.gone %}<li>erledigt: {{ t }}</li>{% endfor %}</ul></details>{% endif %}
+    {% endif %}
+    <details class="vk-table"><summary class="hint">Wie wird eingestuft?</summary><p class="hint">{{ why_a }}</p></details>
+  </section>
+
+  {% for t in ('A', 'B') %}{% set xs = plan.tier(t) %}
+  <section class="card" id="stufe-{{ t }}" aria-labelledby="h-{{ t }}">
+    <div class="card-head"><h2 id="h-{{ t }}">{{ 'A · Muss ich tun' if t == 'A' else 'B · Kann ich tun' }}</h2><span class="badge {{ tiers[t][1] }}">{{ xs|length }}</span></div>
+    <p class="hint">{{ tiers[t][2] }}</p>
+    {% if xs %}<ul class="dq-items">{% for i in xs %}{{ item(i) }}{% endfor %}</ul>{% else %}<p class="hint">Nichts in dieser Stufe.</p>{% endif %}
+  </section>
+  {% endfor %}
+
+  {% set cs = plan.tier('C') %}
+  <section class="card" id="stufe-C">
+    <details><summary><b>C · Nichts zu tun</b> <span class="badge">{{ cs|length }}</span> <span class="hint">{{ tiers['C'][2] }}</span></summary>
+      {% if cs %}<ul class="dq-items" style="margin-top:8px">{% for i in cs %}{{ item(i) }}{% endfor %}</ul>{% else %}<p class="hint">Nichts in dieser Stufe.</p>{% endif %}
+    </details>
+  </section>
+</div>

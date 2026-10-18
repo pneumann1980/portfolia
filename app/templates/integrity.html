@@ -6,6 +6,7 @@
 /quality/integrity?{% if category %}category={{ category }}{% elif f.category %}category={{ f.category }}{% endif %}&amp;{% if severity %}severity={{ severity }}{% elif f.severity %}severity={{ f.severity }}{% endif %}
 {%- endmacro %}
 {% block content %}
+{% set dq_tab = 'belege' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">
 <section class="card">
   <div class="card-head"><h2>Finanzielle Integritätsprüfung</h2>

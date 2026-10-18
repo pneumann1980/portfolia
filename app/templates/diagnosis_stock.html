@@ -2,6 +2,7 @@
 {% block title %}Bestandsklärung{% endblock %}
 {% block heading %}Datenqualität · Bestandsklärung{% endblock %}
 {% block content %}
+{% set dq_tab = 'belege' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">
 <section class="card">
   <div class="card-head"><h2>{{ 'Bestätigte Bestandssicht (alternativ)' if view else 'Bestandsklärung je Position' }}</h2>

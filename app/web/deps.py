@@ -88,6 +88,17 @@ def _estimated_assets(ctx: AppContext) -> set[str]:
         return set()
 
 
+def _dq_check(ctx: AppContext, since: str) -> Any:
+    """Prüflauf der Datenqualität (Fortschritt im Seitenkopf), erst beim Aufruf aus der Vorlage berechnet."""
+    try:
+        from app.diagnosis.dq_web import banner
+
+        return banner(ctx, since)
+    except Exception as e:
+        log.debug("Prüflauf-Status nicht verfügbar: %s", e)
+        return None
+
+
 def render(request: Request, template: str, status_code: int = 200, **kw: Any) -> HTMLResponse:
     ctx = get_ctx(request)
     tpl = request.app.state.templates
@@ -102,6 +113,7 @@ def render(request: Request, template: str, status_code: int = 200, **kw: Any) -
         "is_htmx": request.headers.get("hx-request") == "true",
         "progress_view": progress_view,
         "ticker_hint": lambda aid: _ticker_hint(ctx, aid),
+        "dq_check": lambda: _dq_check(ctx, request.query_params.get("since", "")),
     }
     base.update(kw)
     return tpl.TemplateResponse(request, template, base, status_code=status_code)

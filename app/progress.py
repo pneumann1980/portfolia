@@ -46,6 +46,11 @@ EXTRA_PHASES: list[tuple[str, str, int]] = [
     ("research", "Fehlende Daten recherchieren", 15),
     ("match", "Bestehende Buchungen abgleichen", 10),
     ("propose", "Vorschläge vorbereiten", 10),
+    # Prüflauf der Datenqualität (app.diagnosis.checkrun)
+    ("chk_diag", "Diagnose berechnen", 20),
+    ("chk_integrity", "Integritätsprüfung", 30),
+    ("chk_clarify", "Fälle untersuchen", 40),
+    ("chk_plan", "Arbeitsplan erstellen", 10),
 ]
 PHASE_LABEL = {k: v for k, v, _w in PHASES + EXTRA_PHASES} | {"done": "Fertig"}
 STALE_S = 180  # ohne Lebenszeichen gilt ein „laufender“ Fortschritt als abgebrochen

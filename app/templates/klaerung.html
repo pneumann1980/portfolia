@@ -2,6 +2,7 @@
 {% block title %}Konfliktklärung{% endblock %}
 {% block heading %}Datenqualität · Konfliktklärung{% endblock %}
 {% block content %}
+{% set dq_tab = 'faelle' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">
   <p class="hint"><a href="/quality/diagnose">← Diagnose</a> · <a href="/quality/autopilot">Autopilot</a> · <a href="/quality/diagnose/liste">Entscheidungsliste</a></p>
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
@@ -13,8 +14,8 @@
     <p class="hint">Zusammengehörige Befunde bilden einen Fall. Portfolia sammelt die vorhandenen Belege, bildet nur Lösungen, die sich aus Belegen ableiten lassen, simuliert sie <b>gemeinsam</b> mit der vorhandenen Engine und übernimmt nur, wenn Beleg, Eindeutigkeit und Simulation es tragen{% if auto %} (Automatik ist <b>an</b>){% else %} (Automatik ist <b>aus</b>: Eindeutige Lösungen warten auf deine Bestätigung){% endif %}. Sonst steht hier genau, welche Information fehlt. Ein Bestandsnachweis bucht nie etwas; er wählt nur zwischen belegten Deutungen.</p>
     <form method="post" action="/quality/klaerung/einstellungen" class="row" style="gap:12px;flex-wrap:wrap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label class="row"><input type="checkbox" name="enabled" value="1" {% if enabled %}checked{% endif %}> Klärung nach Importen und Abrufen</label>
-      <label class="row"><input type="checkbox" name="research" value="1" {% if research %}checked{% endif %}> Fehlende Informationen gezielt (lesend) bei der Datenquelle nachladen</label>
+      <label class="check"><input type="checkbox" name="enabled" value="1" {% if enabled %}checked{% endif %}> Klärung nach Importen und Abrufen</label>
+      <label class="check"><input type="checkbox" name="research" value="1" {% if research %}checked{% endif %}> Fehlende Informationen gezielt (lesend) bei der Datenquelle nachladen</label>
       <button class="btn sm ghost" type="submit">Speichern</button>
     </form>
   </section>

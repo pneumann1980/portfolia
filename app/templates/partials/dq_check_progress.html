@@ -1,0 +1,8 @@
+{# Fortschritt des Prüflaufs (htmx-Abfrage alle 2 s; fertig → Seite neu laden). Erwartet: _chk bzw. p, since. #}
+{% from "partials/progress.html" import bar %}
+{% set _p = p if p is defined else _chk %}
+{% set _since = since if since is defined else request.query_params.get('since', '') %}
+<section class="card dq-progress" id="dq-progress" hx-get="/quality/pruefen/progress?since={{ _since|urlencode }}&back={{ request.url.path|urlencode }}" hx-trigger="every 2s" hx-swap="outerHTML" aria-live="polite">
+  {{ bar(_p) }}
+  <p class="hint">Der Prüflauf arbeitet lokal – ohne Abrufe bei Börsen oder Wallets. Du kannst die Seite verlassen; er läuft weiter.</p>
+</section>

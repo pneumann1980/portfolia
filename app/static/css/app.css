@@ -924,3 +924,39 @@ a.vk-chip:hover { background: var(--surface-3); text-decoration: none; }
 .vk-internal-note { margin: 8px 0; padding: 4px 0; border-top: 1px dotted var(--axis); border-bottom: 1px dotted var(--axis); color: var(--ink-2); font-size: .85rem; }
 @media (min-width: 760px) { .vk-move.vk-internal { grid-template-columns: minmax(0, 1fr) minmax(0, 2.6fr); } }
 @media (forced-colors: active) { .vk-arrow, .vk-arrow::after { border-color: CanvasText; } }
+
+/* Checkbox mit Text: das Kästchen bleibt neben der ersten Zeile, langer Text bricht daneben um */
+label.check { display: flex; align-items: flex-start; gap: 8px; }
+label.check > input[type=checkbox] { flex: 0 0 auto; margin-top: 3px; }
+
+/* Datenqualität: Reiter, Arbeitsplan (Stufe A/B/C), Warte-Balken */
+.dq-nav { margin: 0 0 12px; }
+.dq-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.dq-tab { padding: 10px 14px; text-decoration: none; color: var(--ink-2); border-bottom: 3px solid transparent; white-space: nowrap; font-weight: 600; }
+.dq-tab:hover { color: var(--ink); text-decoration: none; }
+.dq-tab.active { color: var(--ink); border-bottom-color: var(--accent); }
+.dq-subs { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0 0; }
+.dq-sub { padding: 4px 10px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); text-decoration: none; font-size: 0.85rem; border: 1px solid var(--border); }
+.dq-sub:hover { background: var(--surface-3); text-decoration: none; }
+.dq-sub.active { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.dq-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.dq-chips .badge { white-space: normal; }
+.dq-next { border: 2px solid var(--info-ink); background: var(--info-bg); color: var(--ink); border-radius: var(--radius-sm); padding: 10px 12px; margin: 8px 0; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; overflow-wrap: anywhere; }
+.dq-items { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.dq-item { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border); border-left: 4px solid var(--axis); border-radius: var(--radius-sm); }
+.dq-item.dq-A { border-left-color: var(--crit-mark); }
+.dq-item.dq-B { border-left-color: var(--warn-mark); }
+.dq-item-main { min-width: 0; overflow-wrap: anywhere; }
+.dq-rec { margin: 2px 0; }
+.dq-item .btn { flex: 0 0 auto; }
+.dq-hub { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dq-tech > summary { cursor: pointer; }
+@media (max-width: 560px) { .dq-item { flex-direction: column; } }
+.dq-progress { margin-bottom: 12px; }
+/* unbestimmter Balken (Berechnung läuft, Dauer unbekannt) */
+.progress.indeterminate > div { width: 35%; animation: indet 1.3s ease-in-out infinite; }
+@keyframes indet { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .progress.indeterminate > div { animation: none; width: 100%; opacity: .5; } }
+#wait-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 200; background: var(--surface); border-bottom: 1px solid var(--border); padding: 6px 12px 8px; box-shadow: var(--shadow); }
+#wait-bar[hidden] { display: none; }
+#wait-bar span { display: block; margin-top: 4px; font-size: .85rem; color: var(--ink-2); }

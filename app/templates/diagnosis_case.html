@@ -7,6 +7,7 @@
                 'verdacht': ('Ungeklärt – Verdacht', 'Das Muster passt, ein entscheidender Beleg fehlt oder eine legitime Erklärung ist möglich.'),
                 'hinweis': ('Ungeklärt – schwacher Hinweis', 'Zur Einordnung; kein ausreichender Beleg für einen Fehler.')} %}
 {% block content %}
+{% set dq_tab = 'faelle' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">
 <section class="card">
   <div class="card-head"><h2>{% if f %}{{ f.title }}{% else %}Vorgang{% endif %}</h2>

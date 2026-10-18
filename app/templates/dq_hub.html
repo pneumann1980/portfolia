@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block heading %}Datenqualität · {{ title }}{% endblock %}
+{% block content %}
+{% set dq_tab = tab %}
+<div class="stack dq">
+  {% include "partials/dq_nav.html" %}
+  <section class="card">
+    <h2>{{ title }}</h2>
+    <p>{{ intro|replace('**', '') }}</p>
+    <ul class="dq-hub">
+    {% for label, href, text in subs %}
+      <li><a class="btn sm" href="{{ href }}">{{ label }}</a> <span class="hint">{{ text }}</span></li>
+    {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

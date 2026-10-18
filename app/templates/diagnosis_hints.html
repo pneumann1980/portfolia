@@ -2,6 +2,7 @@
 {% block title %}Hinweise prüfen{% endblock %}
 {% block heading %}Datenqualität · Hinweise als geprüft markieren{% endblock %}
 {% block content %}
+{% set dq_tab = 'faelle' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">
 <section class="card">
   <div class="card-head"><h2>Vorschau – noch nichts geändert</h2><div class="row"><a class="btn sm" href="/quality/diagnose">Zurück zur Diagnose</a></div></div>
@@ -19,7 +20,7 @@
   <form method="post" action="/quality/diagnose/hints/apply" class="stack" style="gap:8px">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="fp" value="{{ plan.fp }}"><input type="hidden" name="kind" value="{{ kind }}">
     <input type="text" name="note" maxlength="200" placeholder="Notiz (optional), z. B. „Konten sind bewusst stillgelegt“" aria-label="Notiz">
-    <label class="row"><input type="checkbox" name="confirm" value="1" required> Ich habe die Liste gesehen; es ist keine Datenänderung nötig.</label>
+    <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe die Liste gesehen; es ist keine Datenänderung nötig.</label>
     <div class="row"><button class="btn primary" type="submit">{{ plan.items|length }} Hinweise als geprüft markieren</button><a class="btn ghost" href="/quality/diagnose">Abbrechen</a></div>
   </form>
 </section>

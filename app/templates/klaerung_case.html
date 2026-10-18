@@ -2,6 +2,7 @@
 {% block title %}Klärungsfall{% endblock %}
 {% block heading %}Konfliktklärung · Fall{% endblock %}
 {% block content %}
+{% set dq_tab = 'faelle' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">
   <p class="hint"><a href="/quality/klaerung">← Konfliktklärung</a> · <a href="/quality/diagnose">Diagnose</a></p>
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
@@ -48,7 +49,7 @@
         <label>Umfang <select name="scope"><option value="">–</option>{% for s in case.question.scopes %}<option value="{{ s.key }}">{{ s.label }}</option>{% endfor %}</select></label><label>Unterkonto <input name="subaccount"></label></div>
       <details><summary class="hint">Gebundene Mengen (optional)</summary><div class="row" style="gap:8px;flex-wrap:wrap"><label>davon gebunden <input name="qty_locked" inputmode="decimal"></label><label>Margin (nur Angabe) <input name="qty_margin" inputmode="decimal"></label><label>offenes Ergebnis (nur Angabe) <input name="qty_pnl" inputmode="decimal"></label></div></details>
       <label>Notiz <input name="note"></label>
-      <label class="row"><input type="checkbox" name="apply" value="1"> Passt der Bestand zu genau einer belegten Lösung, diese in einem Schritt übernehmen</label>
+      <label class="check"><input type="checkbox" name="apply" value="1"> Passt der Bestand zu genau einer belegten Lösung, diese in einem Schritt übernehmen</label>
       <div class="hint">Ein EUR-Gesamtwert ersetzt keine Assetmenge. Der Nachweis ist keine Buchung; ein fortgeschriebener Bestand gilt nicht als heute bestätigt – der Vergleich erfolgt zum angegebenen Zeitpunkt.</div>
       <div class="row"><button class="btn primary" type="submit">Nachweis speichern</button></div>
     </form>
