@@ -566,6 +566,31 @@ def _transfer(st: _State, w: Tx | None, d: Tx | None, plan: Plan) -> None:
         _hide(st, d, plan, mode="merged", link=op.target)
 
 
+def _roundtrip(st: _State, w: Tx | None, d: Tx | None, plan: Plan) -> None:
+    """Abgang + Rückfluss auf demselben Konto → eine Gebühren-Buchung über die Differenz; beide Originale werden
+    ausgeblendet (Import: Überlagerung, wird mit Rückgängig wiederhergestellt)."""
+    if w is None or d is None or w.type != "withdrawal" or d.type != "deposit" or not w.from_qty or not d.to_qty \
+            or w.from_asset != d.to_asset or w.from_account != d.to_account or d.to_qty >= w.from_qty or w.fee_qty \
+            or d.fee_qty:
+        plan.errors.append("Abgang und Rückfluss passen nicht (mehr) zusammen.")
+        return
+    fee = w.from_qty - d.to_qty
+    value = ""
+    if w.value_eur is not None:
+        value = _s((w.value_eur * fee / w.from_qty).quantize(Decimal("0.00000001")))
+    op = _create(st, {"datetime": _dt(w), "type": "withdrawal", "tag": "fee", "from_account": w.from_account or "",
+                      "from_asset": w.from_asset or "", "from_qty": _s(fee), "to_account": "", "to_asset": "",
+                      "to_qty": "", "fee_asset": "", "fee_qty": "", "fee_eur": "", "value_eur": value,
+                      "orig_price": "", "orig_ccy": "", "related_asset": "",
+                      "note": f"Netzwerkgebühr aus Abgang und Rückfluss auf {w.from_account} (z. B. KRC-20-Mint; "
+                              f"Korrektur aus der Diagnose: {w.tx_id} + {d.tx_id})"},
+                 f"Netzwerkgebühr {qty_exact(fee)} {w.from_asset} auf {w.from_account}", plan,
+                 refs=f"{w.tx_id},{d.tx_id}")
+    if op is not None:
+        _hide(st, w, plan, mode="merged", link=op.target)
+        _hide(st, d, plan, mode="merged", link=op.target)
+
+
 def _dec_param(plan: Plan, name: str, label: str) -> Decimal | None:
     raw = (plan.params.get(name) or [""])[0].strip().replace(" ", "")
     if "," in raw:
@@ -762,6 +787,11 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
         for w_id, d_id in d["pairs"] if sel else []:
             if f"{w_id}|{d_id}" in sel:  # type: ignore[operator]
                 _transfer(st, st.tx(w_id), st.tx(d_id), plan)
+    elif key == "book_fee":
+        sel = _pair_sel(plan, d["pairs"])
+        for w_id, d_id in d["pairs"] if sel else []:
+            if f"{w_id}|{d_id}" in sel:  # type: ignore[operator]
+                _roundtrip(st, st.tx(w_id), st.tx(d_id), plan)
     elif key in ("set_quote", "accept_suggestion", "set_quote_custom"):
         coin = {"set_quote": d.get("coin"), "accept_suggestion": d.get("suggestion")}.get(key) or \
             (plan.params.get("coin") or [""])[0]

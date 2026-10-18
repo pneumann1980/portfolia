@@ -60,7 +60,8 @@ CAUSES = {"rechenfehler": "nachgewiesener Rechenfehler", "nachgewiesen": "nachge
           "hinweis": "Hinweis zur Einordnung"}
 CONFIDENCE = ("eindeutig", "hoch plausibel", "prüfbedürftig", "widersprüchlich")
 STATUSES = {"offen": "", "geprüft": "good", "korrigiert": "info", "verworfen": ""}
-RECON_KINDS = frozenset({"duplicate", "transfer"})  # Befunde des Abgleichs (Konfidenzstufe, Sammelbearbeitung)
+# Befunde des Abgleichs (Konfidenzstufe, Sammelbearbeitung)
+RECON_KINDS = frozenset({"duplicate", "transfer", "roundtrip"})
 INDEPENDENT_NOTE = "Unabhängige Buchung bestätigt"  # „verworfen“: Befund trifft nicht zu (Nutzerentscheidung)
 
 _KIND_CAT = {"duplicate": "dublette", "transfer": "dublette", "asset": "kurs", "holdings": "bestand",

@@ -57,6 +57,7 @@ KIND_ACTION = {
     "history": "Fehlende Historie nachladen oder als Lücke bestätigen",
     "migration": "Möglichen Token-Wechsel prüfen",
     "reconstruction": "Rekonstruierten Vorgang prüfen und freigeben oder verwerfen",
+    "roundtrip": "Abgang und Rückfluss (z. B. KRC-20-Mint) als Netzwerkgebühr zusammenfassen",
     "inactive": "Inaktives Konto mit Restbestand einordnen",
     "document": "Beleg mit der Buchung abgleichen",
 }

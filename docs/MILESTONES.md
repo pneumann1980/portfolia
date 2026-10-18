@@ -1426,6 +1426,18 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.34.0 – KRC-20-Mint im Koinly-Verlauf: Abgang + Rückfluss als Netzwerkgebühr
+
+Auf Frage („Kann es sein, dass die Kaspa-Probleme durch das Minting entstanden sind?“) – Details in
+`docs/KRC20_MINT_ROUNDTRIP.md`.
+
+* **Ursache bestätigt:** Commit (Abgang an Skript-Adresse) und Reveal (Rest zurück) stehen im Koinly-Verlauf als fremder
+  Abgang und neuer Zugang; Bestand stimmt, Einstand/Haltedauer/realisierte Ergebnisse nicht.
+* **Neue Befundart** „Abgang mit Rückfluss auf demselben Konto (Netto-Gebühr)“: belegt (gleicher Hash) · wahrscheinlich
+  (Muster ≥ 3) · Verdacht; Lösung „Als Netzwerkgebühr buchen“ mit Vorschau, Rückgängig, Sammelbearbeitung.
+* **Automatik (opt-in):** Autopilot-Einstellung „Netzwerkgebühren … zusammenfassen“ (Standard aus), nie bei „Verdacht“;
+  Autopilot prüft Befundgruppen getrennt.
+
 ## 0.33.0 – Datenqualität neu strukturiert: Arbeitsplan, Reiter, Prüflauf mit Fortschrittsbalken
 
 Auf Wunsch (Screenshots: „relativ unübersichtlich“) – Details in `docs/DATA_QUALITY_STRUCTURE.md`.

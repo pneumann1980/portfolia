@@ -1040,6 +1040,44 @@ def _reconstruction(facts: Facts, f: Finding) -> Recommendation | None:
     return Recommendation(text=text, conditional=not strong, options=opts, links=links)
 
 
+def _roundtrip(facts: Facts, f: Finding) -> Recommendation | None:
+    """Abgang + Rückfluss auf demselben Konto (z. B. KRC-20-Mint): als Netzwerkgebühr zusammenfassen."""
+    d = f.data
+    closed = facts.closed_pairs(f)
+    choices, defaults = [], []
+    for w_id, d_id in d["pairs"]:
+        w, dep = facts.tx(w_id), facts.tx(d_id)
+        if w is None or dep is None or not facts.hideable(w) or not facts.hideable(dep) \
+                or f"{w_id}|{d_id}" in closed:
+            continue
+        val = f"{w_id}|{d_id}"
+        choices.append((val, f"{_date(w)}: −{_q(w.from_qty)} / +{_q(dep.to_qty)} {w.from_asset} → Gebühr "
+                             f"{_q(w.from_qty - dep.to_qty)}"))  # type: ignore[operator]
+        defaults.append(val)
+    if not choices:
+        return None
+    proven = bool(d.get("proven"))
+    many = len(choices) > 40
+    text = ("Abgang und Rückfluss tragen denselben Hash: eine Onchain-Transaktion mit Wechselgeld. Nur die Differenz "
+            "ist Gebühr." if proven else
+            "Abgang und Rückfluss derselben Größenordnung binnen Minuten auf demselben Konto: wirtschaftlich nur die "
+            "Differenz als Netzwerkgebühr (z. B. KRC-20-Mint: Commit, Reveal).") + \
+        " Der Bestand bleibt gleich; es entsteht weder ein Verkauf noch eine neue Anschaffung."
+    opts = [Option("book_fee", "Als Netzwerkgebühr buchen" if not many else f"Alle {len(choices)} Paare als "
+                                                                              "Netzwerkgebühr buchen",
+                   "Je Paar entsteht eine Gebühren-Buchung (Differenz, Zeit des Abgangs); Abgang und Rückfluss zählen "
+                   "nicht mehr einzeln (Import-Buchungen: Überlagerung, bleiben erhalten). Rückgängig stellt beide "
+                   "wieder her.", recommended=f.status != "verdacht",
+                   params=[] if many else [Param("pairs", "Paare", "multi", default=defaults, choices=choices)],
+                   caution="Ändert Einstand, Anschaffungsdaten und realisierte Ergebnisse der Position – die Vorschau "
+                           "zeigt Steuerwerte je Jahr."),
+            _dismiss("Kein Mint/keine Selbstüberweisung – als geprüft markieren")]
+    return Recommendation(
+        text=text, conditional=f.status == "verdacht", options=opts,
+        checks=[("Explorer: Abgang ist eine Ausgabe an eine eigene Skript-Adresse, der Rückfluss spendet sie zurück",
+                 [])] if not proven else [])
+
+
 _BUILDERS = {
     "same_qty": _same_qty, "hash_pairs": _hash_pairs, "identical": _identical, "import_vs_app": _import_vs_app,
     "transfer": _transfer,
@@ -1047,5 +1085,5 @@ _BUILDERS = {
     "price_fallback": _price_fallback, "stale": _stale, "migration": _migration, "holding": _holding,
     "conversion_twin": _conversion_twin, "rename_trade": _rename_trade,
     "econ_pairs": _econ_pairs, "breakdown": _breakdown, "negative": _negative, "loss": _loss, "inactive": _inactive,
-    "reference": _reference, "reconstruction": _reconstruction,
+    "reference": _reference, "reconstruction": _reconstruction, "roundtrip": _roundtrip,
 }

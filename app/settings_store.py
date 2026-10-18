@@ -51,6 +51,9 @@ DEFAULTS: dict[str, Any] = {
     "autopilot.rules": True,  # Entscheidungsregeln (Hinweise/Verdacht, ohne Datenänderung) anwenden
     "autopilot.fixes": False,  # beweisbare Korrekturen (Ausblenden/Verknüpfen/Transfer aus zwei vorhandenen Buchungen)
     "autopilot.fixes_level": "eindeutig",  # eindeutig | hoch plausibel
+    # Abgang + Rückfluss auf demselben Konto (z. B. KRC-20-Mint) als Netzwerkgebühr zusammenfassen – eigene Freigabe,
+    # unabhängig von ``autopilot.fixes`` (Standard aus; nur mit eingeschaltetem Autopilot)
+    "autopilot.roundtrips": False,
     # Konfliktklärung: untersucht offene Befunde nach Importen/Abrufen/Nachweisen (ändert ohne Freigabe nichts; die
     # automatische Übernahme folgt ``autopilot.enabled`` + ``autopilot.fixes``)
     "clarify.enabled": True,

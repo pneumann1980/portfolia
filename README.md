@@ -1300,6 +1300,11 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > **Automatik**. Alle unten beschriebenen Seiten bleiben als Unterseiten erreichbar. Der Prüflauf arbeitet lokal ohne
 > Abrufe und zeigt einen Fortschrittsbalken. Einzelheiten: [`docs/DATA_QUALITY_STRUCTURE.md`](docs/DATA_QUALITY_STRUCTURE.md).
 
+> **KRC-20-Mint im Koinly-Verlauf (ab 0.34.0):** Abgang (Commit) und Rückfluss (Reveal) auf demselben Konto werden als
+> Befund „Abgang mit Rückfluss auf demselben Konto“ erkannt und mit einem Klick durch eine Netzwerkgebühr ersetzt
+> (Vorschau, Rückgängig). Automatisch nur mit eigener Freigabe im Autopilot (Standard aus), nie bei „Verdacht“.
+> Einzelheiten: [`docs/KRC20_MINT_ROUNDTRIP.md`](docs/KRC20_MINT_ROUNDTRIP.md).
+
 *Datenqualität → Diagnose öffnen* (`/quality/diagnose`) prüft alle Buchungen, Bestände, Zuordnungen und Kurse und
 zeigt priorisierte Befunde. **Die Diagnose selbst ändert nichts:** Sie wird bei jedem Aufruf neu aus den Daten
 berechnet („Erneut prüfen“ lädt nur die Seite neu); gleiche Daten ergeben dieselben Befunde mit denselben

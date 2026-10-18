@@ -138,6 +138,7 @@ class _Index:
         self.dup_txs: set[str] = set()
         self.twin_weak: set[str] = set()
         self.transfer_txs: set[str] = set()  # von _transfers zugeordnete Abgänge/Zugänge
+        self.roundtrip_txs: set[str] = set()  # von audit.mint_roundtrips zugeordnete Abgänge/Rückflüsse
         self.econ: dict[tuple[str, str], list[tuple[str, Tx, Tx, str]]] = defaultdict(list)  # (Status, gilt, Dublette)
         self.unmatched_out: list[Tx] = []  # Abgänge ohne Gegenbuchung (audit.outflows)
 
@@ -313,7 +314,8 @@ def diagnose(snap: Snapshot) -> Report:
 
         idx = _Index(snap)
         for rule in (_dup_same_hash, _dup_same_qty, _dup_credit_twin, _dup_same_id, _dup_identical,
-                     _dup_conversion_twin, _dup_transfer_side, audit.econ_duplicates, _transfers, audit.outflows,
+                     _dup_conversion_twin, _dup_transfer_side, audit.econ_duplicates, audit.mint_roundtrips, _transfers,
+                     audit.outflows,
                      _assets, _history,
                      _estimated, _prices, _price_history, _migrations, _rename_trades):
             findings += rule(idx, stats)
@@ -1079,7 +1081,7 @@ def _dup_transfer_side(idx: _Index, stats: dict[str, int]) -> list[Finding]:
 def _transfers(idx: _Index, stats: dict[str, int]) -> list[Finding]:
     """Nicht verknüpfte Abgänge und Zugänge desselben Assets auf verschiedenen eigenen Konten."""
     def candidate(t: Tx, side: str) -> bool:
-        if t.origin == "plan" or (t.tag or "").lower() not in NEUTRAL_TAGS:
+        if t.origin == "plan" or (t.tag or "").lower() not in NEUTRAL_TAGS or t.tx_id in idx.roundtrip_txs:
             return False
         if side == "out":
             return t.type == "withdrawal" and bool(t.from_asset and t.from_account and t.from_qty

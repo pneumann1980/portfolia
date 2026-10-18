@@ -95,6 +95,7 @@ def make_router() -> APIRouter:
                       kinds=KINDS, status_badge=STATUS_BADGE, on=AP.enabled(ctx),
                       use_rules=bool(ctx.settings.get("autopilot.rules", True)),
                       use_fixes=bool(ctx.settings.get("autopilot.fixes", False)),
+                      use_roundtrips=bool(ctx.settings.get("autopilot.roundtrips", False)),
                       level=str(ctx.settings.get("autopilot.fixes_level", "eindeutig")), msg=msg[:300], err=err[:300])
 
     @router.post("/quality/autopilot/einstellungen")
@@ -103,11 +104,13 @@ def make_router() -> APIRouter:
         f = await request.form()
         on = str(f.get("enabled") or "") == "1"
         fixes = str(f.get("fixes") or "") == "1"
-        if fixes and str(f.get("fixes_confirm") or "") != "1":
+        roundtrips = str(f.get("roundtrips") or "") == "1"
+        if (fixes or roundtrips) and str(f.get("fixes_confirm") or "") != "1":
             return _back(_url("/quality/autopilot", err="Für automatische Korrekturen bitte bestätigen."))
         ctx.settings.set("autopilot.enabled", on)
         ctx.settings.set("autopilot.rules", str(f.get("rules") or "") == "1")
         ctx.settings.set("autopilot.fixes", fixes)
+        ctx.settings.set("autopilot.roundtrips", roundtrips)
         level = str(f.get("fixes_level") or "eindeutig")
         ctx.settings.set("autopilot.fixes_level", level if level in AP.LEVELS else "eindeutig")
         return _back(_url("/quality/autopilot", "Einstellung gespeichert."))

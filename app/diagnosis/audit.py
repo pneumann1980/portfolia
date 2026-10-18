@@ -17,6 +17,10 @@ Regeln
 * **Abgänge ohne Gegenbuchung** (:func:`outflows`): mögliche Gegenbuchungen mit Sicherheitsbewertung (auch Bridge/
   Wrapped über ``related_asset`` bzw. Wert), sonst „ungeklärter Abgang“; Verlust nur bei Beleg (Verlust-Tag,
   dokumentierte Kompromittierung) – nie aus Inaktivität oder Kursverfall.
+* **Abgang mit Rückfluss auf dasselbe Konto** (:func:`mint_roundtrips`): z. B. KRC-20-Mint (Commit an eine
+  Skript-Adresse, Reveal zurück). Koinly bucht beide Seiten als fremden Abgang und neuen Zugang; wirtschaftlich ist
+  nur die Differenz eine Netzwerkgebühr. Gleicher Hash = belegt; sonst nur als wiederkehrendes Muster
+  („wahrscheinlich“), vereinzelt „Verdacht“.
 * **Inaktive Konten** (:func:`inactive_accounts`): letzte Buchung und letzte erfolgreiche Synchronisation getrennt,
   Restbestände, Verbindungszustand – Inaktivität ist nie ein Verlust.
 * **Referenzbestände** (:func:`apply_reference`): Soll-Ist zum Stichtag eines vom Nutzer bestätigten Bestands.
@@ -53,6 +57,9 @@ ALT_MIN_RATIO = Decimal("0.5")
 ALT_MAX_RATIO = Decimal("1.001")
 ALT_SHOW = 3
 ALT_LINK_SCORE = 45  # ab dieser Sicherheit gilt eine Gegenbuchung als Vorschlag (sonst ungeklärter Abgang)
+ROUNDTRIP_WINDOW = timedelta(minutes=10)  # Rückfluss höchstens so lange nach dem Abgang (Commit → Reveal: Sekunden)
+ROUNDTRIP_MIN_RATIO = Decimal("0.9")  # Rückfluss mindestens 90 % des Abgangs (der Rest ist die Netto-Gebühr)
+ROUNDTRIP_PATTERN = 3  # ab so vielen Paaren je Konto und Asset gilt das Muster als wiederkehrend
 INACTIVE_AFTER = timedelta(days=365)
 SYNC_STALE = timedelta(days=7)
 LOSS_MIN_EUR = Decimal("50")  # kleinere Abgänge ohne Gegenbuchung: nur gezählt (Gebühren, Reste)
@@ -1146,10 +1153,149 @@ def _alternatives(idx: _Index, w: Tx, deps: dict[str, list[Tx]], all_deps: list[
     return out[:ALT_SHOW]
 
 
+def _match_roundtrips(evs: list[tuple[datetime, int, str, Tx]], ref: Decimal | None
+                      ) -> tuple[list[tuple[Tx, Tx]], int]:
+    """Chronologische Zuordnung (siehe :func:`mint_roundtrips`). Kommen mehrere Abgänge verschiedener Menge in
+    Frage, entscheidet nur eine deutlich passendste Differenz zur typischen Differenz ``ref`` des Kontos – sonst
+    bleibt der Zugang unzugeordnet (mehrdeutig)."""
+    open_w: list[Tx] = []
+    pairs: list[tuple[Tx, Tx]] = []
+    ambiguous = 0
+    for ts, kind, _id, t in evs:
+        if kind == 0:
+            open_w.append(t)
+            continue
+        open_w = [w for w in open_w if ts - w.ts <= ROUNDTRIP_WINDOW]
+        cands = [w for w in open_w if t.to_qty < w.from_qty and t.to_qty >= w.from_qty * ROUNDTRIP_MIN_RATIO]  # type: ignore[operator]
+        if not cands:
+            continue
+        pick = cands[0]
+        if len({w.from_qty for w in cands}) > 1:
+            if ref is None:
+                ambiguous += 1
+                continue
+            ranked = sorted(cands, key=lambda w: abs(w.from_qty - t.to_qty - ref))  # type: ignore[operator]
+            best = abs(ranked[0].from_qty - t.to_qty - ref)  # type: ignore[operator]
+            second = min((abs(w.from_qty - t.to_qty - ref) for w in ranked if w.from_qty != ranked[0].from_qty),  # type: ignore[operator]
+                         default=None)
+            if best > ref * Decimal("0.05") or (second is not None and second < best * 2 + ref * Decimal("0.01")):
+                ambiguous += 1
+                continue
+            pick = ranked[0]
+        open_w.remove(pick)
+        pairs.append((pick, t))
+    return pairs, ambiguous
+
+
+def mint_roundtrips(idx: _Index, stats: dict[str, int]) -> list[Finding]:
+    """Abgang und Rückfluss (fast) derselben Menge auf demselben Konto und Asset binnen Minuten.
+
+    Chronologische Zuordnung je Konto und Asset: ein Zugang wird dem ältesten offenen Abgang im Zeitfenster
+    zugeordnet – nur, wenn alle in Frage kommenden Abgänge dieselbe Menge haben (austauschbar; sonst mehrdeutig und
+    unberührt). Buchungen mit eigener Gebührenangabe, Dubletten und Planbuchungen bleiben außen vor.
+    """
+    from app.diagnosis.engine import NEUTRAL_TAGS
+
+    taken = set(idx.transfer_txs) | set(idx.dup_txs)
+    events: dict[tuple[str, str], list[tuple[datetime, int, str, Tx]]] = defaultdict(list)
+    for t in idx.txs:
+        if t.origin == "plan" or t.tx_id in taken or (t.tag or "").lower() not in NEUTRAL_TAGS or t.fee_qty:
+            continue
+        if t.type == "withdrawal" and t.from_account and t.from_asset and t.from_qty and t.from_qty > 0 \
+                and not idx.asset(t.from_asset).is_fiat:
+            events[(t.from_account, t.from_asset)].append((t.ts, 0, t.tx_id, t))
+        elif t.type == "deposit" and t.to_account and t.to_asset and t.to_qty and t.to_qty > 0 \
+                and not idx.asset(t.to_asset).is_fiat:
+            events[(t.to_account, t.to_asset)].append((t.ts, 1, t.tx_id, t))
+    out: list[Finding] = []
+    n_pairs = n_ambiguous = 0
+    for (acc, aid), evs in sorted(events.items()):
+        # Buchungen mit identischem Zwilling (gleiche Zeit, Art, Menge) sind ein Dublettenfall, keine Zuordnung
+        sig = defaultdict(int)
+        for ts, kind, _id, t in evs:
+            sig[(ts, kind, t.from_qty if kind == 0 else t.to_qty)] += 1
+        evs = [e for e in evs if sig[(e[0], e[1], e[3].from_qty if e[1] == 0 else e[3].to_qty)] == 1]
+        evs.sort(key=lambda e: e[:3])
+        pairs, _amb = _match_roundtrips(evs, None)
+        ref = sorted(w.from_qty - d.to_qty for w, d in pairs)[len(pairs) // 2] \
+            if len(pairs) >= ROUNDTRIP_PATTERN else None  # type: ignore[operator]
+        pairs, amb = _match_roundtrips(evs, ref) if ref is not None else (pairs, _amb)
+        n_ambiguous += amb
+        if not pairs:
+            continue
+        n_pairs += len(pairs)
+        pattern = len(pairs) >= ROUNDTRIP_PATTERN
+        months: dict[str, list[tuple[Tx, Tx]]] = defaultdict(list)  # je Monat ein Befund: stabil beim Abarbeiten
+        for w, d in pairs:
+            months[w.ts.strftime("%Y-%m")].append((w, d))
+        for month, group in months.items():
+            out.append(_roundtrip_finding(idx, acc, aid, month, group, pattern, len(pairs)))
+        for w, d in pairs:
+            idx.roundtrip_txs.update((w.tx_id, d.tx_id))
+    stats["roundtrips"] = n_pairs
+    stats["roundtrips_ambiguous"] = n_ambiguous
+    return out
+
+
+def _roundtrip_finding(idx: _Index, acc: str, aid: str, month: str, pairs: list[tuple[Tx, Tx]], pattern: bool,
+                       n_total: int) -> Finding:
+    from app.diagnosis.engine import _d, _q, _ts
+
+    fees = [w.from_qty - d.to_qty for w, d in pairs]  # type: ignore[operator]
+    same = [bool(idx.hashes[w.tx_id] & idx.hashes[d.tx_id]) for w, d in pairs]
+    proven = all(same)
+    status = "belegt" if proven else "wahrscheinlich" if pattern else "verdacht"
+    total = sum(fees, ZERO)
+    gross = sum((w.from_qty for w, _d_ in pairs), ZERO)  # type: ignore[misc]
+    value = sum((abs(w.value_eur) for w, _d_ in pairs if w.value_eur is not None), ZERO)
+    n = len(pairs)
+    first, last = pairs[0][0], pairs[-1][0]
+    span = _d(first.ts) if _d(first.ts) == _d(last.ts) else f"{_d(first.ts)}–{_d(last.ts)}"
+    known = [f"{n} Abgang/Abgänge von {acc} ({aid}, zusammen {_q(gross)}) kommen binnen Minuten fast vollständig auf "
+             f"demselben Konto zurück; netto bleiben {_q(total)} {aid} Differenz ({_q(min(fees))}–{_q(max(fees))} je "
+             f"Paar, {span}).",
+             "Bestand und Summe stimmen nach beiden Buchungen; als Abgang ohne Gegenbuchung und neuer Zugang "
+             "verfälschen sie aber Einstand, Anschaffungsdaten und realisierte Ergebnisse."]
+    if proven:
+        known.append("Abgang und Rückfluss tragen denselben Transaktions-Hash: eine Onchain-Transaktion, bei der "
+                     "ein Teil als Wechselgeld zurückkommt – nur die Differenz ist Gebühr.")
+    suspected = ["Selbstüberweisung über eine Zwischen- bzw. Skript-Adresse (z. B. KRC-20-Mint/Inskription: Commit "
+                 "an die Skript-Adresse, Reveal gibt den Rest zurück). Wirtschaftlich ist nur die Differenz eine "
+                 "Netzwerkgebühr – kein Verkauf, keine neue Anschaffung."]
+    evidence = [f"{_ts(w.ts)} −{_q(w.from_qty)} / +{_q(d.to_qty)} nach {int((d.ts - w.ts).total_seconds())} s → "
+                f"Gebühr {_q(w.from_qty - d.to_qty)} {aid} ({'gleicher Hash' if s else 'verschiedene Hashes'}; "
+                f"{w.tx_id} + {d.tx_id})" for (w, d), s in list(zip(pairs, same, strict=True))[:12]]
+    if n > 12:
+        evidence.append(f"… {n - 12} weitere Paare (alle in der Vorschau)")
+    if pattern and not proven:
+        evidence.append(f"Wiederkehrendes Muster: {n_total} Paare auf diesem Konto und Asset")
+    uncertainty = ["Bei verschiedenen Hashes ist die Zusammengehörigkeit aus Menge, Konto und Zeitabstand "
+                   "geschlossen, nicht durch die Kette belegt (Explorer: Commit-Ausgabe an eine Skript-Adresse, "
+                   "Reveal spendet sie zurück).",
+                   "Wäre der Abgang eine Zahlung an Dritte und der Zugang eine unabhängige Gutschrift, wäre die "
+                   "Zusammenfassung falsch; bei einem wiederkehrenden Muster mit fast gleicher Differenz ist das "
+                   "unwahrscheinlich."] if not proven else []
+    f = Finding(
+        kind="roundtrip", status=status, priority=2,
+        title=f"{n} Abgang/Rückfluss-Paar{'e' if n != 1 else ''} auf {acc} · {aid}: netto {_q(total)} {aid} "
+              f"Gebühr ({span})",
+        known=known, suspected=suspected, evidence=evidence, uncertainty=uncertainty,
+        decision="Als Netzwerkgebühr buchen: Abgang und Rückfluss werden durch eine Gebühren-Buchung über die "
+                 "Differenz ersetzt (Bestand bleibt gleich, kein Verkauf, keine neue Anschaffung). Rückgängig "
+                 "stellt beide Originalbuchungen wieder her.",
+        key=f"roundtrip|{acc}|{aid}|{month}", weight=value,
+        data={"type": "roundtrip", "account": acc, "asset": aid, "pairs": [[w.tx_id, d.tx_id] for w, d in pairs],
+              "fee": str(total), "proven": proven, "pattern": pattern})
+    f.pairs = [(idx.ref(w), idx.ref(d), f"Gebühr {_q(w.from_qty - d.to_qty)} {aid}, "
+                f"{int((d.ts - w.ts).total_seconds())} s Abstand") for w, d in pairs[:40]]
+    return idx.attach(f)
+
+
 def outflows(idx: _Index, stats: dict[str, int]) -> list[Finding]:
     from app.diagnosis.engine import NEUTRAL_TAGS, _d, _q, _ts
 
-    taken = set(getattr(idx, "transfer_txs", set())) | set(idx.dup_txs) | set(getattr(idx, "transfer_ambiguous", set()))
+    taken = (set(getattr(idx, "transfer_txs", set())) | set(idx.dup_txs)
+             | set(getattr(idx, "transfer_ambiguous", set())) | idx.roundtrip_txs)
     deps: dict[str, list[Tx]] = defaultdict(list)
     all_deps: list[Tx] = []
     for t in idx.txs:

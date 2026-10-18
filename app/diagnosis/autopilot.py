@@ -6,7 +6,11 @@ Nach einem Import (kuratierte Datei, übernommener CSV-Stapel) läuft ein kurzer
    Der Bericht verändert nichts.
 2. **Entscheidungsregeln** (Einstellung ``autopilot.rules``, Standard an, nur wenn der Autopilot eingeschaltet ist):
    die vom Nutzer angelegten Regeln (:mod:`app.diagnosis.rules`) – nur Hinweise/Verdacht, ohne Datenänderung.
-3. **Beweisbare Korrekturen** (Einstellung ``autopilot.fixes``, Standard **aus**, nur mit eingeschaltetem Autopilot):
+3. **Netzwerkgebühren aus Abgang + Rückfluss** (Einstellung ``autopilot.roundtrips``, Standard **aus**, nur mit
+   eingeschaltetem Autopilot): z. B. KRC-20-Mint (Commit/Reveal) – Abgang und Rückfluss auf demselben Konto werden durch
+   eine Gebühren-Buchung über die Differenz ersetzt (:func:`app.diagnosis.audit.mint_roundtrips`). Nur Befunde ohne
+   Vorbehalt (nicht „Verdacht“), als eigene Gruppe geprüft und ausgeführt, gleiche Sicherungen wie unten.
+4. **Beweisbare Korrekturen** (Einstellung ``autopilot.fixes``, Standard **aus**, nur mit eingeschaltetem Autopilot):
    Abgleichs-Befunde mit eindeutiger Lösung (:func:`app.diagnosis.integrity.confidence_of` =
    „eindeutig“; auf Wunsch auch „hoch plausibel“, Einstellung ``autopilot.fixes_level``), deren Plan bestehende
    Buchungen ausblendet bzw. verknüpft oder zwei vorhandene Transfer-Seiten zu einem Transfer zusammenfasst (keine
@@ -46,10 +50,16 @@ def _safe(plan: A.Plan) -> bool:
     """Plan ohne erfundene Buchung: nur Ausblenden/Verknüpfen – oder ein Transfer, der genau zwei vorhandene Buchungen
     zusammenfasst (beide werden im selben Plan ausgeblendet)."""
     hides = sum(1 for op in plan.ops if op.kind == "hide")
+    creates = sum(1 for op in plan.ops if op.kind == "create")
     for op in plan.ops:
         if op.kind in SAFE_OPS:
             continue
         if op.kind == "create" and op.tx is not None and op.tx.type == "transfer" and hides >= 2:
+            continue
+        # Abgang + Rückfluss auf demselben Konto → Netzwerkgebühr (ersetzt je Paar genau zwei vorhandene Buchungen)
+        if op.kind == "create" and op.tx is not None and op.tx.type == "withdrawal" and not op.tx.to_asset \
+                and (op.tx.tag or "").lower() == "fee" and plan.finding.data.get("type") == "roundtrip" \
+                and hides == 2 * creates:
             continue
         # gekürzte Ausbuchung: ersetzt eine ausgeblendete Ausbuchung gleicher Art durch eine kleinere Menge
         if op.kind == "create" and op.tx is not None and op.tx.type == "withdrawal" and not op.tx.to_asset \
@@ -124,7 +134,7 @@ def _run(ctx: Any, trigger: str, force: bool) -> dict[str, Any]:
             applied = R.apply_rules(ctx)
             summary["rules"] = {"count": applied.count, "token": applied.token, "by_rule": applied.by_rule,
                                 "skipped_changed": applied.skipped_changed}
-        if on and ctx.settings.get("autopilot.fixes", False):
+        if on and (ctx.settings.get("autopilot.fixes", False) or ctx.settings.get("autopilot.roundtrips", False)):
             summary["fixes"] = _fixes(ctx)
     except Exception as e:  # Aktionen scheitern nie in den Bericht hinein
         log.exception("Autopilot: Aktion fehlgeschlagen")
@@ -154,36 +164,60 @@ def _run(ctx: Any, trigger: str, force: bool) -> dict[str, Any]:
 
 
 def _fixes(ctx: Any) -> dict[str, Any]:
-    """Beweisbare Korrekturen (siehe Modul-Doku). Konservativ: bei jedem Zweifel nichts tun und den Grund melden."""
-    out: dict[str, Any] = {"applied": 0, "bulk_id": "", "skipped": []}
+    """Beweisbare Korrekturen (siehe Modul-Doku). Konservativ: bei jedem Zweifel nichts tun und den Grund melden.
+    Die Befundgruppen (Netto-Gebühren aus Abgang und Rückfluss getrennt von Dubletten/Transfers) werden je für sich
+    geprüft: ein Hindernis in einer Gruppe hält die andere nicht auf."""
+    out: dict[str, Any] = {"applied": 0, "bulk_id": "", "bulk_ids": [], "skipped": []}
     report = report_for(ctx)
     open_ids = {f.id for f in TR.open_findings(ctx, report, cases=True)}
     level = LEVELS.get(str(ctx.settings.get("autopilot.fixes_level", "eindeutig")), LEVELS["eindeutig"])
-    cand = [f.id for f, conf, _label in B.candidates(report) if conf in level and f.id in open_ids]
-    if not cand:
-        return out
+    recon_on = bool(ctx.settings.get("autopilot.fixes", False))
+    rt_on = bool(ctx.settings.get("autopilot.roundtrips", False))
+    groups: dict[str, list[str]] = {}
+    for f, conf, _label in B.candidates(report):
+        if f.id not in open_ids:
+            continue
+        if f.kind == "roundtrip":
+            # eigene Freigabe: belegt und wahrscheinlich (ohne Vorbehalt); „Verdacht“ (vereinzelt) nie automatisch
+            if (rt_on and conf in LEVELS["hoch plausibel"]) or (recon_on and conf in level):
+                groups.setdefault("roundtrip", []).append(f.id)
+        elif recon_on and conf in level:
+            groups.setdefault("recon", []).append(f.id)
+    for name in ("recon", "roundtrip"):
+        ids = groups.get(name)
+        if not ids:
+            continue
+        if name != "recon" or out["bulk_ids"]:
+            report = report_for(ctx)  # nach einer Gruppe neu rechnen
+        _fix_group(ctx, report, ids, out)
+    out["skipped"] = out["skipped"][:10]
+    if out["bulk_ids"]:
+        out["bulk_id"] = out["bulk_ids"][0]
+    return out
+
+
+def _fix_group(ctx: Any, report: Any, cand: list[str], out: dict[str, Any]) -> None:
     bp = B.plan(ctx, cand[:MAX_FIXES], include_review=False, report=report, with_effects=False)
     safe = [it.finding.id for it in bp.ready if it.plan is not None and _safe(it.plan)]
     for it in bp.items:
         if it.finding.id not in safe:
             why = it.reason or "Plan enthält neue Buchungen, die nicht aus genau zwei vorhandenen entstehen"
             out["skipped"].append({"title": it.finding.title[:120], "why": why[:160]})
-    out["skipped"] = out["skipped"][:10]
     if not safe:
-        return out
+        return
     final = B.plan(ctx, safe, include_review=False, report=report, with_effects=True)
     ready = [it.finding.id for it in final.ready]
     eff = final.effects
     if len(ready) != len(safe) or eff is None or eff.negative_new or eff.issues_new or eff.new:
         out["note"] = ("Keine automatische Korrektur: gemeinsame Wirkung nicht unbedenklich "
                        "(Ausschluss, negativer Bestand oder neue Befunde) – bitte in der Sammelbearbeitung prüfen.")
-        return out
+        return
     res = B.execute(ctx, ready, final.token)
     if not res.ok:
         out["note"] = "; ".join(res.errors)[:200]
-        return out
-    out.update(applied=len(res.decision_ids), bulk_id=res.bulk_id)
-    return out
+        return
+    out["applied"] += len(res.decision_ids)
+    out["bulk_ids"].append(res.bulk_id)
 
 
 def undo(ctx: Any, token: str) -> A.Result:
@@ -195,8 +229,8 @@ def undo(ctx: Any, token: str) -> A.Result:
         return A.Result(errors=["Dieser Lauf ist bereits zurückgenommen."])
     s = row["s"]
     msgs = []
-    bulk_id = (s.get("fixes") or {}).get("bulk_id")
-    if bulk_id:
+    fx = s.get("fixes") or {}
+    for bulk_id in fx.get("bulk_ids") or ([fx["bulk_id"]] if fx.get("bulk_id") else []):
         res = B.undo(ctx, bulk_id)
         if not res.ok:
             return A.Result(errors=res.errors)
