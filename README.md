@@ -1295,6 +1295,11 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 
 ## Diagnose: Datenqualität und Bestandsabgleich
 
+> **Struktur der Datenqualität (ab 0.33.0):** vier Reiter – **Heute** (Arbeitsplan: *Muss ich tun · Kann ich tun ·
+> Nichts zu tun* mit Empfehlung, Begründung, Wirkung; Knopf *Alles prüfen*), **Fälle** (eine Liste), **Belege**,
+> **Automatik**. Alle unten beschriebenen Seiten bleiben als Unterseiten erreichbar. Der Prüflauf arbeitet lokal ohne
+> Abrufe und zeigt einen Fortschrittsbalken. Einzelheiten: [`docs/DATA_QUALITY_STRUCTURE.md`](docs/DATA_QUALITY_STRUCTURE.md).
+
 *Datenqualität → Diagnose öffnen* (`/quality/diagnose`) prüft alle Buchungen, Bestände, Zuordnungen und Kurse und
 zeigt priorisierte Befunde. **Die Diagnose selbst ändert nichts:** Sie wird bei jedem Aufruf neu aus den Daten
 berechnet („Erneut prüfen“ lädt nur die Seite neu); gleiche Daten ergeben dieselben Befunde mit denselben

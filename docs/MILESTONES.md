@@ -1426,6 +1426,25 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.33.0 – Datenqualität neu strukturiert: Arbeitsplan, Reiter, Prüflauf mit Fortschrittsbalken
+
+Auf Wunsch (Screenshots: „relativ unübersichtlich“) – Details in `docs/DATA_QUALITY_STRUCTURE.md`.
+
+* **Arbeitsplan** (`workplan.py`): alles Offene in Stufe A (muss ich tun) / B (kann ich tun) / C (nichts zu tun) mit
+  Empfehlung, Warum, Wirkung, Aufwand und einem Primärknopf; ein hervorgehobener nächster Schritt; fehlender Nachweis ist
+  höchstens Stufe B; ohne Prüflauf nie „fertig“.
+* **Reiter** Heute · Fälle · Belege · Automatik auf allen Seiten der Datenqualität; alle alten Adressen bleiben als
+  Unterseiten erreichbar; die elf Schaltflächen der Diagnose sind ersetzt. Neue Seiten `/quality/faelle`,
+  `/quality/belege`, `/quality/automatik`.
+* **Prüflauf „Alles prüfen“** (`checkrun.py`): Diagnose, Integritätsprüfung und Klärung in einem lokalen Hintergrundlauf
+  (keine Abrufe) mit Phasenbalken und Bericht „neu/erledigt“. „Jetzt untersuchen“ der Klärung nutzt ihn.
+* **Warte-Balken:** Prüflauf-Fortschritt im Seitenkopf, Arbeitsplan lädt nach (unbestimmter Balken), Klicks/Formulare der
+  Datenqualität zeigen oben einen Balken.
+* **Fall-Seite:** „Technik und Belege“ eingeklappt (Dimensionen, Regelprüfung, Dossier, Kandidaten); Tausch im selben
+  Konto, Sammelbroker, lange Fälle (siehe 0.32.0).
+* **Brücken:** Hash der Gegenbuchung in der Notiz = konkreter Bridge-Beleg → Kandidat „mittel“, nie automatisch.
+* Kleinigkeiten: Checkbox-Text bricht neben dem Kästchen um; Abdeckung unterscheidet „Dateispanne“ von belegter Lieferung.
+
 ## 0.32.0 – Visuelle Fallklärung mit benannten Konten und Wallets (lokal, nicht veröffentlicht)
 
 Umsetzung des Auftrags „Visuelle Fallklärung“ ohne neue Plattform: Darstellung auf Basis des vorhandenen Falls, der
