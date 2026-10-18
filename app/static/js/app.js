@@ -496,3 +496,17 @@
   });
   window.addEventListener("pageshow", hide);
 })();
+
+/* Anker innerhalb eingeklappter Bereiche (details): Bereich beim Ansteuern öffnen */
+(function () {
+  function openTarget() {
+    var id = decodeURIComponent((location.hash || "").slice(1));
+    var el = id ? document.getElementById(id) : null;
+    while (el) {
+      if (el.tagName === "DETAILS") el.open = true;
+      el = el.parentElement;
+    }
+  }
+  window.addEventListener("hashchange", openTarget);
+  document.addEventListener("DOMContentLoaded", openTarget);
+})();

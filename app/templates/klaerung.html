@@ -9,8 +9,8 @@
   {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
   {% if followup %}<div class="alert"><span class="icon">i</span><div>Ein Folgelauf ist vorgemerkt (neue Daten trafen während eines Durchgangs ein).</div></div>{% endif %}
 
-  <section class="card"><div class="card-head"><h2>So arbeitet die Klärung</h2>
-    <form method="post" action="/quality/klaerung/lauf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Jetzt untersuchen</button></form></div>
+  <section class="card" id="einstellungen"><div class="card-head"><h2>So arbeitet die Klärung</h2>
+    <form method="post" action="/quality/pruefen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/quality/klaerung"><button class="btn sm" type="submit" title="Diagnose, Integritätsprüfung und Klärung in einem Durchgang – lokal, mit Fortschrittsbalken">Jetzt untersuchen</button></form></div>
     <p class="hint">Zusammengehörige Befunde bilden einen Fall. Portfolia sammelt die vorhandenen Belege, bildet nur Lösungen, die sich aus Belegen ableiten lassen, simuliert sie <b>gemeinsam</b> mit der vorhandenen Engine und übernimmt nur, wenn Beleg, Eindeutigkeit und Simulation es tragen{% if auto %} (Automatik ist <b>an</b>){% else %} (Automatik ist <b>aus</b>: Eindeutige Lösungen warten auf deine Bestätigung){% endif %}. Sonst steht hier genau, welche Information fehlt. Ein Bestandsnachweis bucht nie etwas; er wählt nur zwischen belegten Deutungen.</p>
     <form method="post" action="/quality/klaerung/einstellungen" class="row" style="gap:12px;flex-wrap:wrap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

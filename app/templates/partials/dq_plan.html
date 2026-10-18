@@ -4,9 +4,8 @@
   <div class="dq-item-main">
     <div class="dq-item-title"><b>{{ i.title }}</b>{% if i.n > 1 and i.kind != 'gruppe' and i.kind != 'hinweise' %} <span class="hint">({{ i.n }})</span>{% endif %}</div>
     <div class="dq-rec">{{ i.recommendation }}</div>
-    {% if i.why %}<div class="hint">Warum: {{ i.why }}</div>{% endif %}
-    {% if i.effect %}<div class="hint">Wirkung: {{ i.effect }}</div>{% endif %}
-    {% if i.effort %}<div class="hint">Aufwand: {{ i.effort }}</div>{% endif %}
+    {% set _meta = [('Warum: ' ~ i.why) if i.why else '', ('Wirkung: ' ~ i.effect) if i.effect else '', ('Aufwand: ' ~ i.effort) if i.effort else '']|select|list %}
+    {% if _meta %}<details class="dq-meta"><summary class="hint">Warum, Wirkung, Aufwand</summary><ul class="plain-list hint">{% for m in _meta %}<li>{{ m }}</li>{% endfor %}</ul></details>{% endif %}
   </div>
   {% if i.href %}<a class="btn sm {{ 'primary' if i.tier == 'A' else '' }}" href="{{ i.href }}">{{ i.cta }}</a>{% endif %}
 </li>

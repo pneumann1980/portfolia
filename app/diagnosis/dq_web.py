@@ -55,6 +55,7 @@ HUB = {
                   "nur beweisbare Fälle und nur, wenn du ihn eingeschaltet hast; alles ist rückgängig zu machen."),
 }
 PENDING_S = 120
+PER_KIND = 3  # Zeilen je Stufe und Befundart in der Übersicht der Fälle
 
 
 def _since(raw: str) -> datetime | None:
@@ -146,15 +147,30 @@ def make_router() -> APIRouter:
         return render(request, "partials/dq_check_progress.html", p=p, since=since, back=_safe_back(back))
 
     @router.get("/quality/faelle", response_class=HTMLResponse)
-    def cases_page(request: Request, tier: str = "", kind: str = "", q: str = "") -> HTMLResponse:
+    def cases_page(request: Request, tier: str = "", kind: str = "", q: str = "", all: str = "") -> HTMLResponse:
         ctx = get_ctx(request)
+        all_ = all
         report = report_for(ctx)
         plan = WP.build(ctx, report, granular=True)
         items = [i for i in plan.items if (not tier or i.tier == tier) and (not kind or i.sub == kind)
                  and (not q or q.casefold() in f"{i.title} {i.recommendation}".casefold())]
         kinds = sorted({i.sub for i in plan.items if i.sub})
-        return render(request, "dq_cases.html", active="quality", plan=plan, items=items, tiers=WP.TIERS, f_tier=tier,
-                      f_kind=kind, q=q, kinds=kinds, kind_label=KINDS, why_a=WP.WHY_A,
+        # Ohne Artfilter nur die ersten Zeilen je Stufe und Art; der Rest hinter „weitere …“ (Übersicht statt Flut)
+        rows: list[dict[str, Any]] = []
+        seen: dict[tuple[str, str], int] = {}
+        more: dict[tuple[str, str], int] = {}
+        for i in items:
+            key = (i.tier, i.sub)
+            seen[key] = seen.get(key, 0) + 1
+            if kind or q or all_ == "1" or not i.sub or seen[key] <= PER_KIND:
+                rows.append({"item": i})
+            else:
+                more[key] = more.get(key, 0) + 1
+        for (t, k), n in more.items():
+            rows.append({"more": n, "tier": t, "kind": k})
+        rows.sort(key=lambda r: ("ABC".index(r["item"].tier if "item" in r else r["tier"]), "more" in r))
+        return render(request, "dq_cases.html", active="quality", plan=plan, rows=rows, tiers=WP.TIERS, f_tier=tier,
+                      f_kind=kind, q=q, kinds=kinds, kind_label=KINDS, why_a=WP.WHY_A, n_shown=len(items),
                       counts={t: sum(1 for i in plan.items if i.tier == t) for t in WP.TIERS})
 
     for tab in ("belege", "automatik"):

@@ -960,3 +960,4 @@ label.check > input[type=checkbox] { flex: 0 0 auto; margin-top: 3px; }
 #wait-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 200; background: var(--surface); border-bottom: 1px solid var(--border); padding: 6px 12px 8px; box-shadow: var(--shadow); }
 #wait-bar[hidden] { display: none; }
 #wait-bar span { display: block; margin-top: 4px; font-size: .85rem; color: var(--ink-2); }
+.diag .btn, .dq .btn, .vk .btn { max-width: 100%; white-space: normal; text-align: left; }

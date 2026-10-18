@@ -15,9 +15,6 @@
   <section class="card">
     <div class="row"><span class="badge {{ status[st][1] }}">{{ status[st][0] }}</span><b>{{ title }}</b></div>
     {% if not case %}<p class="hint">Dieser Fall hat aktuell keine offenen Befunde (zuletzt: {{ stored.updated_at|datetime_de }}).</p>{% endif %}
-    <table class="table" style="margin-top:8px"><thead><tr><th>Dimension</th><th>Zustand</th><th>Stand</th></tr></thead><tbody>
-    {% for k in dim_order %}{% if k in dims %}<tr><td>{{ dim_label[k] }}</td><td><span class="badge {{ dim_state[dims[k][0]][1] }}">{{ dim_state[dims[k][0]][0] }}</span></td><td>{{ dims[k][1] }}</td></tr>{% endif %}{% endfor %}
-    </tbody></table>
     <p class="hint">{{ dims_text(dims) }}</p>
   </section>
 
@@ -25,8 +22,6 @@
   {% if view %}{% include "partials/klaerung_weg.html" %}{% endif %}
   <section class="card" id="entscheidung"><div class="card-head"><h2>Entscheidung</h2></div>
     <p><b>{{ case.decision.reason }}</b></p>
-    {% if case.decision.missing %}<p><b>Es fehlt:</b></p><ul>{% for m in case.decision.missing %}<li>{{ m }}</li>{% endfor %}</ul>{% endif %}
-    {% if case.decision.rules %}<table class="table"><thead><tr><th>Regel</th><th></th><th>Begründung</th></tr></thead><tbody>{% for r in case.decision.rules %}<tr><td>{{ r[0] }}</td><td>{{ '✓' if r[1] else '✗' }}</td><td>{{ r[2] }}</td></tr>{% endfor %}</tbody></table>{% endif %}
     {% if case.decision.kind == 'apply' and case.decision.hyp %}
     <form method="post" action="/quality/klaerung/{{ case.key }}/uebernehmen" class="row">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="hyp" value="{{ case.decision.hyp.id }}"><input type="hidden" name="version" value="{{ case.version }}"><input type="hidden" name="tokens" value="{{ tokens(case.decision.hyp) }}">
@@ -55,13 +50,22 @@
     </form>
   </section>{% endif %}
 
-  <section class="card" id="belege"><div class="card-head"><h2>Dossier</h2></div>
+  <details class="card dq-tech" id="technik"><summary><b>Technik und Belege</b> <span class="hint">Dimensionen, Regelprüfung der Entscheidung, Dossier, Kandidaten und Hypothesen im Einzelnen</span></summary>
+  <div class="stack" style="margin-top:12px">
+    <div id="dimensionen">    <table class="table" style="margin-top:8px"><thead><tr><th>Dimension</th><th>Zustand</th><th>Stand</th></tr></thead><tbody>
+    {% for k in dim_order %}{% if k in dims %}<tr><td>{{ dim_label[k] }}</td><td><span class="badge {{ dim_state[dims[k][0]][1] }}">{{ dim_state[dims[k][0]][0] }}</span></td><td>{{ dims[k][1] }}</td></tr>{% endif %}{% endfor %}
+    </tbody></table>
+</div>
+    {% if case.decision.missing or case.decision.rules %}<div id="regeln">    {% if case.decision.missing %}<p><b>Es fehlt:</b></p><ul>{% for m in case.decision.missing %}<li>{{ m }}</li>{% endfor %}</ul>{% endif %}
+    {% if case.decision.rules %}<table class="table"><thead><tr><th>Regel</th><th></th><th>Begründung</th></tr></thead><tbody>{% for r in case.decision.rules %}<tr><td>{{ r[0] }}</td><td>{{ '✓' if r[1] else '✗' }}</td><td>{{ r[2] }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+</div>{% endif %}
+  <section id="belege"><div class="card-head"><h2>Dossier</h2></div>
     <ul>{% for e in case.evidence %}<li>{{ e }}</li>{% endfor %}</ul>
     {% if case.findings %}<p class="hint">Befunde: {% for f in case.findings %}<a href="/quality/diagnose?f={{ f.id }}#{{ f.id }}">{{ f.title[:80] }}</a>{{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
     {% if case.excluded %}<details><summary class="hint">{{ case.excluded|length }} Kandidat(en) ausgeschlossen</summary><ul>{% for lab, why in case.excluded %}<li>{{ lab }} – {{ why }}</li>{% endfor %}</ul></details>{% endif %}
   </section>
 
-  <section class="card" id="hypothesen"><div class="card-head"><h2>Kandidaten und gemeinsame Simulation</h2></div>
+  <section id="hypothesen"><div class="card-head"><h2>Kandidaten und gemeinsame Simulation</h2></div>
     {% if case.cands %}<table class="table"><thead><tr><th>Kandidat</th><th>Beleglage</th><th>Art</th></tr></thead><tbody>
     {% for c in case.cands %}<tr><td>{{ c.label }}</td><td>{{ evidence[c.evidence] }}{% if c.notes %}<div class="hint">{{ c.notes|join('; ') }}</div>{% endif %}</td><td>{{ c.action }}</td></tr>{% endfor %}</tbody></table>
     {% else %}<p class="hint">Keine aus Belegen ableitbare Lösung. Eine Bestandsdifferenz allein begründet keine Buchung.</p>{% endif %}
@@ -74,6 +78,8 @@
       <form method="post" action="/quality/klaerung/{{ case.key }}/zurueckstellen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit" title="Gilt nur, solange keine neue Evidenz vorliegt">Zurückstellen</button></form>
     </div>
   </section>
+  </div>
+  </details>
   {% else %}
   <form method="post" action="/quality/klaerung/{{ stored.key }}/oeffnen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Wieder öffnen</button></form>
   {% endif %}
