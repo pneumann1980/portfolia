@@ -113,10 +113,12 @@ class RowMatch:
     accounts: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)  # Beine ohne Gegenstück (Anzeige)
     other_asset: dict[str, str] = field(default_factory=dict)  # Symbol → Asset laut Gegenbuchung (Konflikt)
+    note: str = ""  # Erläuterung (z. B. Commit/Reveal: Betrag im Abgang bzw. Zugang der Gegenbuchung enthalten)
 
     def as_dict(self) -> dict[str, Any]:
         return {"state": self.state, "origin": self.origin, "txs": self.txs[:5], "accounts": self.accounts[:3],
-                "missing": self.missing[:3], "other_asset": self.other_asset}
+                "missing": self.missing[:3], "other_asset": self.other_asset, **({"note": self.note} if self.note
+                                                                                    else {})}
 
 
 @dataclass
@@ -139,9 +141,15 @@ class HashIndex:
                 for h in hs:
                     self.by_hash[h].append(b)
         for r in journal_rows:
-            h = normalize_hash(r["tx_hash"])
-            if h:
-                self.by_hash[h].append(Booking(r["tx_id"], "journal", tx_legs(r)))
+            hs = {normalize_hash(r["tx_hash"])} if r["tx_hash"] else set()
+            # Netto-Gebühr aus Abgang + Rückfluss (Diagnose): beide Hashes stehen in der Notiz
+            if (r["source"] if "source" in list(r.keys()) else None) == "diagnose":
+                hs |= hashes_in(r["note"])
+            hs.discard(None)
+            if hs:
+                b = Booking(r["tx_id"], "journal", tx_legs(r))
+                for h in hs:
+                    self.by_hash[h].append(b)
 
     def __len__(self) -> int:
         return len(self.by_hash)
@@ -166,6 +174,8 @@ def reconcile(rows: Iterable[Any], index: HashIndex, resolve: Callable[[str], st
         bookings = index.by_hash[h]
         for origin in ("import", "journal"):
             cands = [b for b in bookings if b.origin == origin]
+            _krc_cover([rc for rc in rcs if rc.idx not in res.rows or res.rows[rc.idx].state != "full"], cands,
+                       origin, resolve, res)
             open_rcs = [rc for rc in rcs if rc.idx not in res.rows or res.rows[rc.idx].state != "full"]
             if not cands or not open_rcs:
                 continue
@@ -176,6 +186,32 @@ def reconcile(rows: Iterable[Any], index: HashIndex, resolve: Callable[[str], st
             if aid in assets:
                 res.learned[sym.upper()] = aid
     return res
+
+
+def is_krc_fee(r: Rec) -> bool:
+    """Zeile einer KRC-20-Inskription (Commit/Reveal), deren KAS-Anteil nur die Gebühr ist."""
+    return r.kind == M.FEE and "commit/reveal" in (r.label or "").lower()
+
+
+def _krc_cover(rcs: list[Any], cands: list[Booking], origin: str, resolve: Callable[[str], str | None],
+               res: Result) -> None:
+    """Commit/Reveal: Der Import bucht Commit als Abgang und Reveal als Zugang der **vollen** Menge (Koinly) bzw.
+    beide zusammen als Netto-Gebühr (Korrektur aus der Diagnose); die Quelle liefert nur die Gebühr. Dieselbe
+    Blockchain-Transaktion mit einem Bein im selben Asset auf der Gegenseite gilt als vorhanden – die Mengen sind
+    verschieden, weil die Gegenseite Brutto bzw. die Summe beider Gebühren führt."""
+    for rc in rcs:
+        if not is_krc_fee(rc.rec):
+            continue
+        sym = rec_legs(rc.rec)
+        if len(sym) != 1 or sym[0][0] != "fee":
+            continue
+        aid = resolve(sym[0][1]) or sym[0][1]
+        hit = [b for b in cands if any(leg[1] == aid for leg in b.legs)]
+        if hit:
+            accs = sorted({leg[3] for b in hit for leg in b.legs if leg[3]})
+            res.rows[rc.idx] = RowMatch("full", origin, list(dict.fromkeys(b.tx_id for b in hit)), accs[:3], [], {},
+                                        "KRC-20 Commit/Reveal: die Menge steckt im Abgang/Zugang bzw. in der "
+                                        "Netto-Gebühr der Gegenbuchung – nur die Gebühr zählt")
 
 
 def _match_hash(rcs: list[Any], cands: list[Booking], origin: str, resolve: Callable[[str], str | None],

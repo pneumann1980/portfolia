@@ -1235,8 +1235,9 @@ class CsvImportService:
         source = self.source_of(self.batch(bid))
         journal = self.db.q(
             "SELECT tx_id, type, tag, from_account, from_asset, from_qty, to_account, to_asset, to_qty, fee_asset, "
-            "fee_qty, tx_hash FROM journal_tx WHERE status IN ('active', 'merged') AND tx_hash IS NOT NULL AND "
-            "tx_hash <> '' AND source <> 'transfer' AND source <> ? AND (batch_id IS NULL OR batch_id <> ?)",
+            "fee_qty, tx_hash, source, note FROM journal_tx WHERE status IN ('active', 'merged') AND "
+            "((tx_hash IS NOT NULL AND tx_hash <> '') OR source = 'diagnose') AND source <> 'transfer' AND "
+            "source <> ? AND (batch_id IS NULL OR batch_id <> ?)",
             (source, bid))
         index = R.HashIndex(base.txs if base is not None else [], journal)
         if not len(index):
@@ -2449,6 +2450,8 @@ def _recon_text(m: R.RowMatch) -> str:
         txt += f" – dort nicht gefunden: {', '.join(m.missing)}"
     for sym, aid in m.other_asset.items():
         txt += f" – Gegenbuchung mit {aid} statt {sym}: Zuordnung prüfen"
+    if m.note:
+        txt += f" – {m.note}"
     return txt
 
 

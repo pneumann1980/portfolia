@@ -575,6 +575,8 @@ def _roundtrip(st: _State, w: Tx | None, d: Tx | None, plan: Plan) -> None:
         plan.errors.append("Abgang und Rückfluss passen nicht (mehr) zusammen.")
         return
     fee = w.from_qty - d.to_qty
+    idx = st.report.index
+    hashes = (idx._hashes(w) | idx._hashes(d)) if idx is not None else set()  # Beleg für den Abgleich mit der Quelle
     value = ""
     if w.value_eur is not None:
         value = _s((w.value_eur * fee / w.from_qty).quantize(Decimal("0.00000001")))
@@ -583,7 +585,8 @@ def _roundtrip(st: _State, w: Tx | None, d: Tx | None, plan: Plan) -> None:
                       "to_qty": "", "fee_asset": "", "fee_qty": "", "fee_eur": "", "value_eur": value,
                       "orig_price": "", "orig_ccy": "", "related_asset": "",
                       "note": f"Netzwerkgebühr aus Abgang und Rückfluss auf {w.from_account} (z. B. KRC-20-Mint; "
-                              f"Korrektur aus der Diagnose: {w.tx_id} + {d.tx_id})"},
+                              f"Korrektur aus der Diagnose: {w.tx_id} + {d.tx_id})" + "".join(
+                                  f" txhash={h}" for h in sorted(hashes))},
                  f"Netzwerkgebühr {qty_exact(fee)} {w.from_asset} auf {w.from_account}", plan,
                  refs=f"{w.tx_id},{d.tx_id}")
     if op is not None:

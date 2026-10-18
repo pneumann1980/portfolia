@@ -1426,6 +1426,11 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.34.1 – KRC-20-Gebührenzeilen der Datenquelle nicht mehr im Prüfstapel
+
+Der Abgleich erkennt Commit/Reveal-Zeilen (nur Gebühr) als vorhanden, wenn der Hash im Import (Abgang/Zugang) oder in der
+Netto-Gebühr der Diagnose vorkommt; die Netto-Gebühr trägt beide Hashes. Siehe `docs/KRC20_MINT_ROUNDTRIP.md`.
+
 ## 0.34.0 – KRC-20-Mint im Koinly-Verlauf: Abgang + Rückfluss als Netzwerkgebühr
 
 Auf Frage („Kann es sein, dass die Kaspa-Probleme durch das Minting entstanden sind?“) – Details in

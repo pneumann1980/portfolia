@@ -246,3 +246,61 @@ def test_pages_render_case_preview_and_autopilot_setting(cfg):
         r = c.get("/quality/autopilot")
         assert r.status_code == 200 and "Netzwerkgebühren aus Abgang" in r.text
         assert fingerprint(ctx.db) == before  # alle Seiten lesen nur
+
+
+# -- Prüfstapel: Zeilen der Datenquelle (nur Gebühr) gegen Koinly-Abgang/-Zugang bzw. Netto-Gebühr --------------------
+
+def _krc_rows(hc: str, hr: str, label: str | None = "KRC-20 (Commit/Reveal)"):
+    from app.csvimport import model as M
+    from tests.test_reconcile import _Row
+
+    return [_Row(0, kind=M.FEE, txhash=hc, fee_sym="KAS", fee_qty=D("0.0001"), label=label),
+            _Row(1, kind=M.FEE, txhash=hr, fee_sym="KAS", fee_qty=D("1"), label=label)]
+
+
+def test_krc_commit_reveal_rows_are_covered_by_koinly_gross_booking():
+    """Koinly: Commit = Abgang 21 KAS, Reveal = Zugang ~20 KAS; Quelle: nur die Gebühr je Transaktion."""
+    from app.csvimport import reconcile as R
+    from tests.test_reconcile import _Tx
+
+    hc, hr = "aa" * 32, "bb" * 32
+    idx = R.HashIndex([_Tx("W1", f"txhash={hc}", type="withdrawal", from_account=ACC, from_asset="KAS",
+                           from_qty=D("21")),
+                       _Tx("D1", f"txhash={hr}", type="deposit", to_account=ACC, to_asset="KAS",
+                           to_qty=D("19.99996835"))], [])
+    res = R.reconcile(_krc_rows(hc, hr), idx, lambda s: s if s == "KAS" else None, ["KAS"])
+    assert [res.rows[i].state for i in (0, 1)] == ["full", "full"]
+    assert res.rows[0].txs == ["W1"] and res.rows[1].txs == ["D1"] and "Commit/Reveal" in res.rows[0].note
+    # ohne die Kennzeichnung der Quelle bleibt es wie bisher (Mengen weichen ab → teilweise)
+    plain = R.reconcile(_krc_rows(hc, hr, label=None), idx, lambda s: s if s == "KAS" else None, ["KAS"])
+    assert [plain.rows[i].state for i in (0, 1)] == ["partial", "partial"]
+    # anderes Asset auf der Gegenseite deckt nichts
+    other = R.HashIndex([_Tx("W2", f"txhash={hc}", type="withdrawal", from_account=ACC, from_asset="ETH",
+                             from_qty=D("21"))], [])
+    assert 0 not in {i for i, m in R.reconcile(_krc_rows(hc, hr), other, lambda s: s, ["KAS", "ETH"]).rows.items()
+                     if m.state == "full"}
+
+
+def test_krc_rows_stay_covered_after_the_net_fee_fix_hides_the_koinly_pair(cfg):
+    """Nach „Als Netzwerkgebühr buchen“ sind Abgang und Zugang ausgeblendet; die Gebühren-Buchung trägt beide Hashes."""
+    from app.csvimport import reconcile as R
+
+    hashes = [("%064x" % (2 * i + 1), "%064x" % (2 * i + 2)) for i in range(4)]
+    rows = [fund()]
+    for i in range(4):
+        rows += mint(i, i * 3, hashes=(f"0x{hashes[i][0]}", f"0x{hashes[i][1]}"))
+    ctx = ctx_for(cfg, rows)
+    rep = report_for(ctx)
+    (f,) = roundtrips(rep)
+    plan = A.build_plan(ctx, rep, f, "book_fee")
+    assert A.apply(ctx, f.id, "book_fee", plan.params, plan.token).ok
+    journal = [dict(r) for r in ctx.db.q(
+        "SELECT tx_id, type, tag, from_account, from_asset, from_qty, to_account, to_asset, to_qty, fee_asset, "
+        "fee_qty, tx_hash, source, note FROM journal_tx WHERE status IN ('active', 'merged') AND "
+        "((tx_hash IS NOT NULL AND tx_hash <> '') OR source = 'diagnose') AND source <> 'transfer'")]
+    assert len(journal) == 4 and all(h in " ".join(j["note"] for j in journal) for pair in hashes for h in pair)
+    idx = R.HashIndex([], journal)
+    hc, hr = hashes[1]
+    res = R.reconcile(_krc_rows(hc, hr), idx, lambda s: s if s == "KAS" else None, ["KAS"])
+    assert [res.rows[i].state for i in (0, 1)] == ["full", "full"]
+    assert res.rows[0].origin == "journal" and res.rows[0].txs == res.rows[1].txs

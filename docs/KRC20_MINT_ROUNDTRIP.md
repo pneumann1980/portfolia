@@ -47,6 +47,15 @@ eingeschaltetem Autopilot, mit Bestätigung). Übernommen werden belegte und wah
 negativer Bestand, keine neuen Befunde, Rückgängig mit dem Durchgang). Die allgemeine Einstellung „Beweisbare Korrekturen“
 berücksichtigt die Befundart nach der gewählten Sicherheitsstufe (Stufe „eindeutig“ nur bei gleichem Hash).
 
+## Prüfstapel: Zeilen der Datenquelle (ab 0.34.1)
+
+Die Datenquelle liefert je Transaktion **nur die Gebühr** („KRC-20 (Commit/Reveal)“, KAS-Anteil = Gebühr); Koinly führt den
+Commit als Abgang und den Reveal als Zugang der vollen Menge. Der Hash-Abgleich verlangte gleiche Mengen und ließ diese Zeilen
+deshalb als „teilweise vorhanden“ offen. Jetzt gilt eine solche Zeile als **vorhanden** (`hash_full`, mit Hinweis), wenn dieselbe
+Blockchain-Transaktion in einer Buchung (Import oder App) mit einem Bein im selben Asset vorkommt – auch nach der Korrektur
+oben: die Netto-Gebühr trägt die Hashes von Abgang und Zugang in der Notiz. Zeilen ohne Gegenbuchung (Hash unbekannt) bleiben
+wie bisher in der Prüfung; die Quelle ohne die Kennzeichnung „Commit/Reveal“ wird nicht gelockert.
+
 ## Grenzen
 
 * Verschiedene Hashes sind kein Kettenbeweis; ein Muster ≥ 3 Paare ist ein Indiz, kein Beleg. Zahlt jemand tatsächlich an
