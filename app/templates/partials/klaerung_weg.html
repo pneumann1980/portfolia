@@ -7,6 +7,31 @@
 {% endif %}{% endmacro %}
 {% macro leg(l) %}{{ sens(l.qty) }} {{ l.label }}{% endmacro %}
 {% set SYM = {'booked': '✓', 'proposed': '◌', 'removed': '✕', 'created': '+', 'open': '?'} %}
+{% macro move_item(m) %}
+    {% set open = (sel == m.mid) %}
+    <li class="vk-move vk-{{ m.state }}{{ ' vk-sel' if open }}{{ ' vk-internal' if m.src == m.dst }}" id="{{ m.mid }}">
+      <div class="vk-end">{{ chip(view, m.src, sel) }}</div>
+      <div class="vk-link">
+        <div class="vk-qty"><b>{{ m.type_label }}</b>
+          {% if m.out and m.inn %}· Abgang {{ leg(m.out) }} · Eingang {{ leg(m.inn) }}{% elif m.out %}· {{ leg(m.out) }}{% elif m.inn %}· {{ leg(m.inn) }}{% endif %}</div>
+        {% if m.src == m.dst %}<div class="vk-internal-note" aria-hidden="true">↻ innerhalb dieses Kontos – es verlässt keinen Ort</div>{% else %}<div class="vk-arrow vk-line-{{ m.line }}" aria-hidden="true"></div>{% endif %}
+        <div class="vk-state"><span class="vk-sym" aria-hidden="true">{{ SYM[m.state] }}</span> {{ m.status_text }}
+          {% if m.ts_out or m.ts_in %}<span class="hint"> · {% if m.ts_out %}Abgang {{ m.ts_out }}{% endif %}{% if m.ts_out and m.ts_in %} · {% endif %}{% if m.ts_in %}Eingang {{ m.ts_in }}{% endif %}</span>{% endif %}</div>
+        {% if m.fee %}<div class="hint">Gebühr: {{ m.fee.text }}</div>{% endif %}
+        {% if m.sources %}<div class="hint">Belege: {% for s in m.sources %}{{ s.label }}{{ ', ' if not loop.last }}{% endfor %}{% if m.sources_more %} und {{ m.sources_more }} weitere{% endif %}</div>{% endif %}
+        {% if m.conflicts %}<div class="alert warn"><span class="icon">!</span><div>{% for c in m.conflicts %}{{ c }}{{ '; ' if not loop.last }}{% endfor %}</div></div>{% endif %}
+        {% if m.alt_of %}<div class="hint">konkurriert mit <a href="?{{ qs(sel=m.alt_of) }}#geldweg">einer weiteren Möglichkeit</a> für denselben Abgang</div>{% endif %}
+      </div>
+      {% if m.src != m.dst %}<div class="vk-end">{{ chip(view, m.dst, sel) }}</div>{% endif %}
+      <details class="vk-more" {% if open %}open{% endif %}><summary class="hint">Details und Begründung</summary>
+        {% if m.reason %}<ul>{% for r in m.reason %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+        {% if m.value_text %}<div>Wert laut Buchung: {{ sens(m.value_text) }}</div>{% endif %}
+        {% if m.sources %}<table class="table"><thead><tr><th>Quelle</th><th>Rolle</th><th>Kennung</th><th></th></tr></thead><tbody>{% for s in m.sources %}<tr><td>{{ s.label }}</td><td>{{ s.role }}</td><td><code>{{ s.ext_id or '–' }}</code></td><td>{% if s.batch_url %}<a href="{{ s.batch_url }}">Importlauf</a>{% endif %}</td></tr>{% endfor %}</tbody></table>{% endif %}
+        <dl class="vk-tech">{% for k, v in m.technical.items() if v %}<dt>{{ k }}</dt><dd><code class="vk-full">{{ v }}</code></dd>{% endfor %}</dl>
+        <div class="row" style="gap:10px;flex-wrap:wrap">{% if m.group_url %}<a href="{{ m.group_url }}">Ereignisgruppe</a>{% endif %}{% if m.edit_url %}<a href="{{ m.edit_url }}">Buchung bearbeiten</a>{% endif %}</div>
+      </details>
+    </li>
+{% endmacro %}
 
 <section class="card vk" id="geldweg" aria-labelledby="vk-h">
   <div class="card-head"><h2 id="vk-h">Geldweg</h2>
@@ -28,7 +53,8 @@
   {% if case.hyps|length > 1 %}
   <nav class="vk-modes" aria-label="Ansicht">
     <a class="btn sm {{ 'primary' if not view.simulated else 'ghost' }}" href="?{{ qs(hyp='', sel='') }}#geldweg" {% if not view.simulated %}aria-current="true"{% endif %}>Aktueller Stand</a>
-    {% for h in case.hyps if not h.base %}<a class="btn sm {{ 'primary' if view.hyp_id == h.id else 'ghost' }}" href="?{{ qs(hyp=h.id, sel='') }}#geldweg" {% if view.hyp_id == h.id %}aria-current="true"{% endif %} title="{{ h.label }}">Simulation {{ loop.index }}</a>{% endfor %}
+    {% for h in case.hyps[1:7] %}<a class="btn sm {{ 'primary' if view.hyp_id == h.id else 'ghost' }}" href="?{{ qs(hyp=h.id, sel='') }}#geldweg" {% if view.hyp_id == h.id %}aria-current="true"{% endif %} title="{{ h.label }}">Simulation {{ loop.index }}</a>{% endfor %}
+    {% if case.hyps|length > 7 %}<details class="vk-more-sims"><summary class="hint">weitere {{ case.hyps|length - 7 }} Simulationen</summary>{% for h in case.hyps[7:] %}<a class="btn sm {{ 'primary' if view.hyp_id == h.id else 'ghost' }}" href="?{{ qs(hyp=h.id, sel='') }}#geldweg" {% if view.hyp_id == h.id %}aria-current="true"{% endif %} title="{{ h.label }}">Simulation {{ loop.index + 6 }}</a> {% endfor %}</details>{% endif %}
   </nav>
   <p class="hint">{% if view.simulated %}Simulation: Es wurde <b>nichts gebucht</b>. Durchgestrichene Verbindungen entfallen, gestrichelte würden neu entstehen.{% else %}Zeigt den Stand der Buchungen. Eine Simulation ändert nichts, bis Sie ausdrücklich übernehmen.{% endif %}</p>
   {% endif %}
@@ -89,38 +115,17 @@
       <li><span class="vk-sample vk-line-dashed" aria-hidden="true"></span> ◌ <b>Vorschlag / neu in Simulation</b> – gestrichelt, nicht gebucht</li>
       <li><span class="vk-sample vk-line-struck" aria-hidden="true"></span> ✕ <b>entfällt in der Simulation</b> – durchgestrichen</li>
       <li><span class="vk-sample vk-line-dotted" aria-hidden="true"></span> ? <b>offen / unbekannt</b> – gepunktet; „?“ = Zugehörigkeit nicht bekannt, weder eigene Wallet noch externe Auszahlung belegt</li>
+      <li>↻ <b>Tausch/Kauf/Verkauf im selben Konto</b> – kein Weg zu einem anderen Ort, nur beide Seiten des Vorgangs</li>
       <li>Quellen sind <b>Belege</b>, keine zusätzlichen Geldbewegungen. „Keine Gebühr geliefert“ ist nicht „Gebühr 0“.</li>
     </ul></details>
   {% if view.truncated %}<p class="hint">Es werden {{ view.moves|selectattr('state', 'in', ['booked', 'removed', 'created'])|list|length }} von {{ view.moves|selectattr('state', 'in', ['booked', 'removed', 'created'])|list|length + view.truncated }} Vorgängen gezeigt – {{ view.truncated }} weitere sind im Journal einsehbar.</p>{% endif %}
 
   <ol class="vk-moves">
-  {% for m in view.moves %}
-    {% set open = (sel == m.mid) %}
-    <li class="vk-move vk-{{ m.state }}{{ ' vk-sel' if open }}" id="{{ m.mid }}">
-      <div class="vk-end">{{ chip(view, m.src, sel) }}</div>
-      <div class="vk-link">
-        <div class="vk-qty"><b>{{ m.type_label }}</b>
-          {% if m.out and m.inn %}· Abgang {{ leg(m.out) }} · Eingang {{ leg(m.inn) }}{% elif m.out %}· {{ leg(m.out) }}{% elif m.inn %}· {{ leg(m.inn) }}{% endif %}</div>
-        <div class="vk-arrow vk-line-{{ m.line }}" aria-hidden="true"></div>
-        <div class="vk-state"><span class="vk-sym" aria-hidden="true">{{ SYM[m.state] }}</span> {{ m.status_text }}
-          {% if m.ts_out or m.ts_in %}<span class="hint"> · {% if m.ts_out %}Abgang {{ m.ts_out }}{% endif %}{% if m.ts_out and m.ts_in %} · {% endif %}{% if m.ts_in %}Eingang {{ m.ts_in }}{% endif %}</span>{% endif %}</div>
-        {% if m.fee %}<div class="hint">Gebühr: {{ m.fee.text }}</div>{% endif %}
-        {% if m.sources %}<div class="hint">Belege: {% for s in m.sources %}{{ s.label }}{{ ', ' if not loop.last }}{% endfor %}{% if m.sources_more %} und {{ m.sources_more }} weitere{% endif %}</div>{% endif %}
-        {% if m.conflicts %}<div class="alert warn"><span class="icon">!</span><div>{% for c in m.conflicts %}{{ c }}{{ '; ' if not loop.last }}{% endfor %}</div></div>{% endif %}
-        {% if m.alt_of %}<div class="hint">konkurriert mit <a href="?{{ qs(sel=m.alt_of) }}#geldweg">einer weiteren Möglichkeit</a> für denselben Abgang</div>{% endif %}
-      </div>
-      <div class="vk-end">{{ chip(view, m.dst, sel) }}</div>
-      <details class="vk-more" {% if open %}open{% endif %}><summary class="hint">Details und Begründung</summary>
-        {% if m.reason %}<ul>{% for r in m.reason %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
-        {% if m.value_text %}<div>Wert laut Buchung: {{ sens(m.value_text) }}</div>{% endif %}
-        {% if m.sources %}<table class="table"><thead><tr><th>Quelle</th><th>Rolle</th><th>Kennung</th><th></th></tr></thead><tbody>{% for s in m.sources %}<tr><td>{{ s.label }}</td><td>{{ s.role }}</td><td><code>{{ s.ext_id or '–' }}</code></td><td>{% if s.batch_url %}<a href="{{ s.batch_url }}">Importlauf</a>{% endif %}</td></tr>{% endfor %}</tbody></table>{% endif %}
-        <dl class="vk-tech">{% for k, v in m.technical.items() if v %}<dt>{{ k }}</dt><dd><code class="vk-full">{{ v }}</code></dd>{% endfor %}</dl>
-        <div class="row" style="gap:10px;flex-wrap:wrap">{% if m.group_url %}<a href="{{ m.group_url }}">Ereignisgruppe</a>{% endif %}{% if m.edit_url %}<a href="{{ m.edit_url }}">Buchung bearbeiten</a>{% endif %}</div>
-      </details>
-    </li>
-  {% else %}
+  {% for m in view.moves[:8] %}{{ move_item(m) }}{% else %}
     <li class="hint">Keine Vorgänge im Fall – es geht um einen Bestand ohne zugeordnete Buchung.</li>
   {% endfor %}
+  {% if view.moves|length > 8 %}<li class="vk-rest"><details {% if view.selected and view.selected.kind == 'move' and view.selected.move in view.moves[8:] %}open{% endif %}><summary><b>{{ view.moves|length - 8 }} weitere Verbindungen anzeigen</b></summary>
+    <ol class="vk-moves" style="margin-top:8px">{% for m in view.moves[8:] %}{{ move_item(m) }}{% endfor %}</ol></details></li>{% endif %}
   </ol>
 
   <details class="vk-table"><summary class="hint">Als Tabelle (Textalternative)</summary>

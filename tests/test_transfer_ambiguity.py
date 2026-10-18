@@ -22,7 +22,8 @@ from tests.test_journal import _client
 HEAD = [c.strip() for c in KOINLY_HEAD.strip().split(",")]
 
 
-def line(date: str, typ: str, *, wallet: str, qty: str, cur: str = "ETH", txhash: str = "") -> list[str]:
+def line(date: str, typ: str, *, wallet: str, qty: str, cur: str = "ETH", txhash: str = "",
+         note: str = "") -> list[str]:
     row = dict.fromkeys(HEAD, "")
     row["Date"], row["Type"], row["Net Value (EUR)"] = date, typ, "3000"
     row["Gain (EUR)"] = row["Fee Value (EUR)"] = "0"
@@ -31,6 +32,7 @@ def line(date: str, typ: str, *, wallet: str, qty: str, cur: str = "ETH", txhash
     else:
         row["Receiving Wallet"], row["Received Amount"], row["Received Currency"] = wallet, qty, cur
     row["TxHash"] = txhash
+    row["Description"] = note
     return [row[c] for c in HEAD]
 
 
@@ -119,6 +121,24 @@ def test_different_verified_hashes_exclude_a_pairing(c):
                          line(T1, "deposit", wallet="Wallet W", qty="1", txhash=H3)))
     w, d = out["rows"]
     assert w.pair_ref is None and d.pair_ref is None and not w.pair_alts
+
+
+def test_bridge_with_concrete_evidence_is_a_candidate_but_never_automatic(c):
+    """Bridges: je Netzwerk ein Hash. Nur ein konkreter Beleg (eine Buchung nennt den Hash der anderen) macht die
+    Verbindung zum Kandidaten; angenommen wird sie nie automatisch („mittel“), ähnlicher Betrag/Zeit/das Wort „Bridge“
+    allein begründen nichts."""
+    cited = f"Bridge nach L2, Ziel {H3}"
+    out = pairs(c, sheet(line(T0, "withdrawal", wallet="Börse U", qty="1", txhash=H1, note=cited),
+                         line(T1, "deposit", wallet="Wallet W", qty="1", txhash=H3)))
+    w, d = out["rows"]
+    assert w.pair_ref == f"b:{d.idx}" and w.pair_conf == "mittel" and d.pair_conf == "mittel"
+    assert "Bridge-Beleg" in (w.pair_why or "") and "nicht automatisch" in (w.pair_why or "")
+    # nur das Wort „Bridge“ (ohne Hash der Gegenbuchung): ausgeschlossen
+    word = "Bridge nach L2"
+    out2 = pairs(c, sheet(line(T0, "withdrawal", wallet="Börse U2", qty="1", txhash=H1, note=word),
+                          line(T1, "deposit", wallet="Wallet W2", qty="1", txhash=H3)), account="Sammelkonto2")
+    w2, d2 = out2["rows"]
+    assert w2.pair_ref is None and d2.pair_ref is None
 
 
 def test_equal_hash_but_unexplained_difference_is_only_a_suggestion(c):

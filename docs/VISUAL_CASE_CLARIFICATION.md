@@ -32,6 +32,11 @@ Datenschutz-CSS (`sens-real`/`sens-mask`), Vollexport (keine neue Tabelle, **kei
 * **Verbindungen**: durchgezogen = gebucht; gestrichelt = Vorschlag bzw. neu in der Simulation (nicht gebucht, mit
   Text); durchgestrichen = entfällt in der Simulation; gepunktet = offen. Der Zustand steht immer auch als Text und
   Symbol (✓ ◌ ✕ + ?), nie nur als Farbe.
+* **Tausch/Kauf/Verkauf im selben Konto** (aus den echten Daten) ist kein Weg „von A nach A“: ein Ort, beide Seiten des
+  Vorgangs, Hinweis „innerhalb dieses Kontos“. Sammelbezeichnungen des kuratierten Imports („Andere Börse“, „… unbekannt“)
+  gelten nicht als belegter Anbieter.
+* Große Fälle: die ersten 8 Verbindungen sind offen, der Rest steht in einem aufklappbaren Block; Simulationen ab Nr. 7
+  sind eingeklappt.
 * **Konkurrierende Zuordnungen** (z. B. ein Abgang, zwei mögliche Zugänge) erscheinen als „mögliche Zuordnung n von m“;
   Portfolia wählt keine aus. Begründungen sind konkret (gleicher/fehlender/abweichender Hash, Mengendifferenz,
   Zeitabstand, Konkurrenz) – keine Prozent-Sicherheit.
@@ -82,10 +87,20 @@ berechnen die Anzeige (hängender Lauf = „abgebrochen“), `research.reconcile
    Nachweis des Exportzeitraums), sondern als eigener Zustand „innerhalb der Dateispanne, ohne Vorgang“; Lücken
    zwischen Dateien bleiben Lücken.
 
+## Prüfung gegen echte Daten (Export vom 17.10.2026, Wegwerf-Kopie, nur lesend)
+
+8 Fälle, 25 Ansichten (aktueller Stand und Simulationen) ohne Fehler; die Datenbank blieb bei Ansicht und Seitenaufruf
+bitgleich. Aufgefallen und behoben: Tausch im selben Konto wurde als Pfeil „A → A“ gezeichnet; „Andere Börse“ erschien als
+Anbieter; sehr lange Fälle (28 Buchungen, 14 Simulationen) waren unübersichtlich. Offen: die Seitenladezeit großer Fälle
+(bis ca. 18 s) kommt aus der bestehenden Fallanalyse (`clarify.analyse` mit vielen Hypothesen), nicht aus der Ansicht
+(Adapter < 0,2 s je Ansicht).
+
 ## Grenzen
 
-* Brücken-/Cross-Chain-Transfers ohne konkrete Zusatzbelege bleiben offen; es gibt keine Brücken-Evidenzmodellierung
-  (nur der Ausschluss bei abweichenden verifizierten Hashes).
+* **Brücken:** Verschiedene verifizierte Hashes schließen eine Paarung aus – außer eine der beiden Buchungen nennt in der
+  Notiz den Hash der Gegenbuchung (konkreter Bridge-Beleg). Dann entsteht ein Kandidat („mittel“, „Bridge-Beleg“), der
+  nie automatisch angenommen wird. Das Wort „Bridge“, Betrag oder Zeit allein begründen nichts; Asset-Wechsel
+  (Wrapped/Migration) werden weiterhin nicht gleichgesetzt.
 * Anbieter, Netzwerk und Unterkonto werden nicht geschlussfolgert (eine Wallet-Anwendung legt das Netzwerk nicht
   fest); stehen sie nicht in Datenquelle oder Nachweis, bleiben sie „nicht bekannt“.
 * Die Auswahl eines Orts/einer Verbindung lädt die Seite neu (Link, ohne Skript); bewusst kein clientseitiger Graph.

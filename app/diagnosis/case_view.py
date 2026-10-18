@@ -229,6 +229,14 @@ def _q(v: Any) -> str:
     return qty_exact(v)
 
 
+_GENERIC_BROKER = ("andere", "unbekannt", "unknown", "sonstige", "other")
+
+
+def _generic_broker(name: str) -> bool:
+    """Sammelbezeichnungen des kuratierten Imports (z. B. „Andere Börse“) sind kein belegter Anbieter."""
+    return any(w in name.casefold() for w in _GENERIC_BROKER)
+
+
 class _Names:
     """Orte (Konten/Wallets) mit belegten Eigenschaften (Datenquellen, Portfolio, Nachweise, Zusammenführungen)."""
 
@@ -266,7 +274,7 @@ class _Names:
             if s0.kind == "wallet":
                 network, network_basis = s0.provider_label, "laut Datenquelle (Chain)"
             addrs = [a for s in srcs for a in s.addresses]
-        elif info is not None and info.broker:
+        elif info is not None and info.broker and not _generic_broker(info.broker):
             provider = info.broker
         sub_refs = sorted({(r.subaccount or "", r.scope or "") for r in self.refs if r.account == account
                            and (r.subaccount or r.scope)})

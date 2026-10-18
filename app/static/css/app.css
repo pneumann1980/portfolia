@@ -921,4 +921,6 @@ a.vk-chip:hover { background: var(--surface-3); text-decoration: none; }
   .vk-move > .vk-more { grid-column: 1 / -1; }
   .vk-move > .vk-end:last-of-type { justify-self: end; }
 }
+.vk-internal-note { margin: 8px 0; padding: 4px 0; border-top: 1px dotted var(--axis); border-bottom: 1px dotted var(--axis); color: var(--ink-2); font-size: .85rem; }
+@media (min-width: 760px) { .vk-move.vk-internal { grid-template-columns: minmax(0, 1fr) minmax(0, 2.6fr); } }
 @media (forced-colors: active) { .vk-arrow, .vk-arrow::after { border-color: CanvasText; } }

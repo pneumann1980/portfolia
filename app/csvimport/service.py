@@ -1889,6 +1889,7 @@ class CsvImportService:
             ts: datetime
             txhash: str | None
             rc: RowCtx | None
+            note: str = ""
 
         def eligible(rc: RowCtx, typ: str) -> bool:
             row = rc.row
@@ -1910,18 +1911,18 @@ class CsvImportService:
             if eligible(rc, "withdrawal"):
                 assert rc.row is not None
                 outs.append(Side(f"b:{rc.idx}", rc.row["from_account"], rc.row["from_asset"],
-                                 Decimal(rc.row["from_qty"]), rc.ts, rc.rec.txhash, rc))
+                                 Decimal(rc.row["from_qty"]), rc.ts, rc.rec.txhash, rc, rc.rec.note or ""))
             elif eligible(rc, "deposit"):
                 assert rc.row is not None
                 ins.append(Side(f"b:{rc.idx}", rc.row["to_account"], rc.row["to_asset"], Decimal(rc.row["to_qty"]),
-                                rc.ts, rc.rec.txhash, rc))
+                                rc.ts, rc.rec.txhash, rc, rc.rec.note or ""))
             rc.pair_ok = prev[1] if prev[0] else None
             rc.prev_ref = prev[0]
         if not outs and not ins:
             return
         for jr in self.db.q(
                 "SELECT tx_id, type, from_account, from_asset, from_qty, to_account, to_asset, to_qty, ts_utc, "
-                "tx_hash FROM journal_tx WHERE status='active' AND (batch_id IS NULL OR batch_id<>?) AND type IN "
+                "tx_hash, note FROM journal_tx WHERE status='active' AND (batch_id IS NULL OR batch_id<>?) AND type IN "
                 "('deposit','withdrawal') AND (tag IS NULL OR tag='')", (bid,)):
             ts = parse_iso(jr["ts_utc"])
             if ts is None:
@@ -1929,10 +1930,10 @@ class CsvImportService:
             h = normalize_hash(jr["tx_hash"])
             if jr["type"] == "withdrawal" and jr["from_asset"] and not V.is_fiat(jr["from_asset"]):
                 outs.append(Side(f"j:{jr['tx_id']}", jr["from_account"], jr["from_asset"], Decimal(jr["from_qty"]), ts,
-                                 h, None))
+                                 h, None, jr["note"] or ""))
             elif jr["type"] == "deposit" and jr["to_asset"] and not V.is_fiat(jr["to_asset"]):
                 ins.append(Side(f"j:{jr['tx_id']}", jr["to_account"], jr["to_asset"], Decimal(jr["to_qty"]), ts, h,
-                                None))
+                                None, jr["note"] or ""))
         ins_by: dict[str, list[Side]] = defaultdict(list)
         for i in ins:
             ins_by[i.asset].append(i)
@@ -1950,13 +1951,18 @@ class CsvImportService:
                 if i.account == o.account or (o.rc is None and i.rc is None):
                     continue
                 ho, hi = chain_hash(o.txhash), chain_hash(i.txhash)
+                bridge = False
                 if ho and hi and ho != hi:
-                    continue  # dieselbe Onchain-Bewegung hat einen Hash: zwei verschiedene sind ein Ausschlussgrund
+                    # dieselbe Onchain-Bewegung hat einen Hash: zwei verschiedene sind ein Ausschlussgrund – außer
+                    # ein konkreter Bridge-Beleg nennt den Hash der Gegenbuchung (Bridges: Hashes je Netzwerk)
+                    if not bridge_evidence(o.note, i.note, ho, hi):
+                        continue
+                    bridge = True
                 hash_eq = bool(ho and ho == hi)
                 ratio = i.qty / o.qty if o.qty else Decimal(0)
                 if not hash_eq and not (TRANSFER_MIN_RATIO <= ratio <= Decimal("1.001")):
                     continue
-                edges.append(_Edge(o, i, hash_eq, ratio, abs((i.ts - o.ts).total_seconds())))
+                edges.append(_Edge(o, i, hash_eq, ratio, abs((i.ts - o.ts).total_seconds()), bridge=bridge))
         # Kandidatensuche und Freigabe trennen: „hoch“ (später automatisch übernommen) nur mit Identitätsbeleg
         # (gleicher Hash, Menge ohne ungeklärte Differenz) und ohne konkurrierende Ansprüche auf eine der beiden
         # Buchungen. Menge und Zeit allein ergeben nur einen Vorschlag („mittel“); bei mehreren Möglichkeiten offen.
@@ -1987,6 +1993,10 @@ class CsvImportService:
             n_o, n_i = len(by_o[o.ref]), len(by_i[i.ref])
             if e.unique:
                 why = "gleiche Blockchain-Transaktion"
+            elif e.bridge:
+                why = ("Bridge-Beleg: eine der beiden Buchungen nennt den Hash der Gegenbuchung (Hashes je Netzwerk "
+                       f"verschieden); Menge {e.ratio * 100:.1f} % des Abgangs – Vorschlag, wird nicht automatisch "
+                       "zugeordnet")
             elif e.hash_eq:
                 rest = (f"Menge nur {e.ratio * 100:.1f} % des Abgangs (Differenz ungeklärt)"
                         if e.ratio < Decimal("0.98") else "mehrere Möglichkeiten")
@@ -2482,6 +2492,12 @@ def chain_hash(h: str | None) -> str | None:
     return v if v and _CHAIN_HASH.match(v) else None
 
 
+def bridge_evidence(note_o: str, note_i: str, ho: str, hi: str) -> bool:
+    """Konkreter Bridge-Beleg: Notiz einer der beiden Buchungen nennt den (verifizierten) Hash der anderen. Ähnlicher
+    Betrag, Zeit oder das Wort „Bridge“ allein sind kein Beleg."""
+    return hi in R.hashes_in(note_o) or ho in R.hashes_in(note_i)
+
+
 @dataclass
 class _Edge:
     """Mögliche Paarung Abgang ↔ Zugang (Kandidat; die Freigabe entscheidet ``conf``)."""
@@ -2493,6 +2509,7 @@ class _Edge:
     dt: float
     unique: bool = False
     conf: str = "mittel"
+    bridge: bool = False
 
 
 def _recipient_fee(w: Any, dpt: Any) -> tuple[str | None, str, str] | None:

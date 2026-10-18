@@ -297,3 +297,20 @@ def test_derivative_case_shows_dossier_without_inventing_positions_or_losses(cfg
     names = {p.name for p in v.places if not p.unknown}
     assert names == {"Bybit Derivate"}  # Konto-/Bereichsname bleibt, kein Unterkonto oder Netzwerk erfunden
     assert all(p.sub == "" and p.network == "" for p in v.places if not p.unknown)
+
+
+def test_swap_in_one_account_is_internal_and_generic_broker_is_not_a_provider(cfg):
+    """Aus den echten Daten: Tausch im selben Konto ist kein Weg „von A nach A“; Sammelbroker („Andere Börse“) ist
+    kein belegter Anbieter."""
+    import dataclasses
+
+    rows = [*usdt_double_out(), tx("T9", "2025-03-02T10:00:00Z", "trade", frm=("Bybit", "USDT", "10"),
+                                   to=("Bybit", "SAND", "30"), value=9)]
+    ctx = ctx_for(cfg, rows)
+    case = one_case(ctx)
+    v = view(ctx, dataclasses.replace(case, tx_ids=[*case.tx_ids, "T9"]))
+    swap = next(m for m in v.moves if m.tx_ids == ["T9"])
+    assert swap.src == swap.dst and swap.out and swap.inn and v.place(swap.src).name == "Bybit"
+    assert not any(q.startswith("Tausch") for q in v.questions)  # kein „Gegenkonto unbekannt“ bei einem Tausch
+    assert V._generic_broker("Andere Börse") and V._generic_broker("Broker unbekannt")
+    assert not V._generic_broker("Coinlist")

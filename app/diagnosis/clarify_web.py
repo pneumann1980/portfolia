@@ -26,9 +26,8 @@ from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
 
-def _win_rows(ctx, case) -> list[dict]:
+def _win_rows(ctx, case, report) -> list[dict]:
     """Fallrelevante Bestandsfenster je Position: Fenster mit Buchungen des Falls, sonst das jüngste auffällige."""
-    report = report_for(ctx)
     wanted = set(case.tx_ids)
     out = []
     for acc, asset in case.positions[:6]:
@@ -99,10 +98,11 @@ def make_router() -> APIRouter:
                           runs=[], msg="", err="Fall nicht gefunden.", status=K.STATUS, evidence=K.EVIDENCE,
                           dim_order=K.DIM_ORDER, dim_label=K.DIM_LABEL, dim_state=K.DIM_STATE, dims_text=K.dims_text)
         auto = K.auto_allowed(ctx)
-        view = (CV.build(ctx, case, report_for(ctx), hyp_id=hyp[:40], sel=sel[:80], authorization_auto=auto)
+        report = report_for(ctx) if case is not None else None
+        view = (CV.build(ctx, case, report, hyp_id=hyp[:40], sel=sel[:80], authorization_auto=auto)
                 if case is not None else None)
 
-        win_rows = _win_rows(ctx, case) if case is not None else []
+        win_rows = _win_rows(ctx, case, report) if case is not None else []
 
         def qs(**kw: str) -> str:
             cur = {"hyp": view.hyp_id if view else "", "sel": sel[:80], **kw}
