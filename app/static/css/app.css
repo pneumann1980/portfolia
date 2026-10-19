@@ -454,6 +454,8 @@ details.box summary { cursor: pointer; font-weight: 580; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 0.88rem; }
 .kv dt { color: var(--ink-2); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
+/* schmale Bildschirme: Bezeichnung über dem Wert statt daneben – lange Bezeichnungen drücken den Wert sonst aus dem Rahmen */
+@media (max-width: 640px) { .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; } .kv dt { margin-top: 8px; overflow-wrap: anywhere; } .kv dt:first-child { margin-top: 0; } }
 .empty-state { text-align: center; padding: 48px 16px; }
 .empty-state h1 { margin-bottom: 8px; }
 .demo-banner { background: var(--warn-bg); color: var(--warn-ink); text-align: center; padding: 6px 12px; font-size: 0.85rem; font-weight: 600; }

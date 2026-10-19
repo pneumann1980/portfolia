@@ -314,3 +314,22 @@ def test_swap_in_one_account_is_internal_and_generic_broker_is_not_a_provider(cf
     assert not any(q.startswith("Tausch") for q in v.questions)  # kein „Gegenkonto unbekannt“ bei einem Tausch
     assert V._generic_broker("Andere Börse") and V._generic_broker("Broker unbekannt")
     assert not V._generic_broker("Coinlist")
+
+
+def test_case_page_tables_stack_on_mobile_instead_of_overflowing(cfg):
+    """Dimensionen, Kandidaten, Hypothesen und Quellen sind Kartentabellen (mobil gestapelt, Text bricht um); keine
+    Tabelle der Fallseite steht ohne Rahmen (``table-wrap``) im Dokument."""
+    import re
+
+    from tests.test_clarify import ASSETS_K
+
+    def check(c, ctx, case):
+        t = c.get(f"/quality/klaerung/{case.key}").text
+        tables = re.findall(r"<table[^>]*>", t)
+        assert tables and all("cards" in x for x in tables), tables
+        for m in re.finditer(r"<table[^>]*>", t):
+            before = t[max(0, m.start() - 160):m.start()]
+            assert "table-wrap" in before, before[-120:]
+        assert 'data-label="Zustand"' in t and 'class="wide" data-label="Stand"' in t
+
+    _web_case(cfg, eth_rows(), ASSETS_K, check)

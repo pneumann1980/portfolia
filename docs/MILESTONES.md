@@ -1426,6 +1426,16 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.34.4 – Mobil: Fallseite und Definitionslisten laufen nicht mehr über den Rahmen
+
+Ursache: Tabellen der Fallseite („Technik und Belege“: Dimensionen, Regeln, Kandidaten, Hypothesen, Quellen) standen ohne
+Rahmen in der Karte; ihr Mindestmaß (bis 430 px) überragte die Karte und wurde abgeschnitten. Sie sind jetzt Kartentabellen
+(mobil gestapelt, Text bricht um, Aktionen unten); auch die Tabelle des Geldwegs. Zusätzlich stapeln Definitionslisten
+(`dl.kv`) unter 640 px Bezeichnung über Wert (Diagnose-Legende, Dateiformate im CSV-Import).
+Prüfung: Browser-Lauf über 70–90 Seiten (Echtdaten-Kopie, Fälle, Diagnose, Prüfstapel, Einstellungen) bei 390 und 360 px:
+kein abgeschnittenes bzw. überstehendes Element mehr; bewusst seitlich scrollende Tabellenrahmen (`table-wrap`: Positionen,
+Steuer, Journal …) bleiben. Regressionstest: jede Tabelle der Fallseite ist gerahmt und eine Kartentabelle.
+
 ## 0.34.3 – Prüfstapel schrumpft: Prüflauf und „Neu abgleichen“ bewerten offene Stapel neu
 
 Ursache für „erneute Prüfung verkleinert den Prüfstapel nicht“: der Prüflauf der Datenqualität rechnete nur Diagnose,

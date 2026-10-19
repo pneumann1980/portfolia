@@ -26,7 +26,7 @@
       <details class="vk-more" {% if open %}open{% endif %}><summary class="hint">Details und Begründung</summary>
         {% if m.reason %}<ul>{% for r in m.reason %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
         {% if m.value_text %}<div>Wert laut Buchung: {{ sens(m.value_text) }}</div>{% endif %}
-        {% if m.sources %}<table class="table"><thead><tr><th>Quelle</th><th>Rolle</th><th>Kennung</th><th></th></tr></thead><tbody>{% for s in m.sources %}<tr><td>{{ s.label }}</td><td>{{ s.role }}</td><td><code>{{ s.ext_id or '–' }}</code></td><td>{% if s.batch_url %}<a href="{{ s.batch_url }}">Importlauf</a>{% endif %}</td></tr>{% endfor %}</tbody></table>{% endif %}
+        {% if m.sources %}<div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Quelle</th><th>Rolle</th><th>Kennung</th><th></th></tr></thead><tbody>{% for s in m.sources %}<tr><td><b>{{ s.label }}</b></td><td data-label="Rolle">{{ s.role }}</td><td class="wide" data-label="Kennung"><code>{{ s.ext_id or '–' }}</code></td><td class="wide">{% if s.batch_url %}<a href="{{ s.batch_url }}">Importlauf</a>{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
         <dl class="vk-tech">{% for k, v in m.technical.items() if v %}<dt>{{ k }}</dt><dd><code class="vk-full">{{ v }}</code></dd>{% endfor %}</dl>
         <div class="row" style="gap:10px;flex-wrap:wrap">{% if m.group_url %}<a href="{{ m.group_url }}">Ereignisgruppe</a>{% endif %}{% if m.edit_url %}<a href="{{ m.edit_url }}">Buchung bearbeiten</a>{% endif %}</div>
       </details>
@@ -129,10 +129,10 @@
   </ol>
 
   <details class="vk-table"><summary class="hint">Als Tabelle (Textalternative)</summary>
-    <div class="table-wrap"><table class="table"><caption class="sr-only">Verbindungen des Falls</caption>
+    <div class="table-wrap cards-wrap"><table class="table cards"><caption class="sr-only">Verbindungen des Falls</caption>
       <thead><tr><th>Zustand</th><th>Von</th><th>Nach</th><th>Vorgang</th><th>Abgang</th><th>Eingang</th><th>Gebühr</th><th>Zeit</th></tr></thead><tbody>
-      {% for m in view.moves %}<tr><td>{{ SYM[m.state] }} {{ m.status_text }}</td><td>{{ view.place(m.src).name }}</td><td>{{ view.place(m.dst).name }}</td><td>{{ m.type_label }}</td>
-        <td>{% if m.out %}{{ leg(m.out) }}{% else %}–{% endif %}</td><td>{% if m.inn %}{{ leg(m.inn) }}{% else %}–{% endif %}</td><td>{{ m.fee.text if m.fee else 'nicht angegeben' }}</td><td>{{ m.ts_out or m.ts_in }}</td></tr>{% endfor %}
+      {% for m in view.moves %}<tr><td class="wide"><b>{{ SYM[m.state] }} {{ m.status_text }}</b></td><td data-label="Von">{{ view.place(m.src).name }}</td><td data-label="Nach">{{ view.place(m.dst).name }}</td><td data-label="Vorgang">{{ m.type_label }}</td>
+        <td data-label="Abgang">{% if m.out %}{{ leg(m.out) }}{% else %}–{% endif %}</td><td data-label="Eingang">{% if m.inn %}{{ leg(m.inn) }}{% else %}–{% endif %}</td><td data-label="Gebühr">{{ m.fee.text if m.fee else 'nicht angegeben' }}</td><td data-label="Zeit">{{ m.ts_out or m.ts_in }}</td></tr>{% endfor %}
       </tbody></table></div></details>
 
   <h3 class="vk-h">Offene Fragen</h3>
