@@ -13,6 +13,7 @@
   <div class="card-head"><h2>Prüfwarteschlange{% if source_name %} · {{ source_name }}{% endif %}</h2>
     <span class="badge {{ 'warn' if q.counts.offen else 'good' }}">{{ q.counts.offen + q.counts.sicher }} offen</span></div>
   <p class="hint">Alle offenen Vorgänge aus Datenquellen und Dateien an einer Stelle – gezählt je wirtschaftlichem Vorgang (eine Order mit Gebührenzeile ist ein Vorgang). Gebucht wird nur nach Vorschau und ausdrücklicher Bestätigung; jede Entscheidung ist im Verlauf des Prüf-Stapels rückgängig zu machen.</p>
+  <form method="post" action="/journal/pruefung/abgleichen" class="inline" style="margin:6px 0"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit" title="Gleicht alle offenen Stapel lokal erneut mit dem Import und den Buchungen ab – ohne Abruf, ohne Buchung">Neu abgleichen</button></form>
   <div class="review-stats">
     {% for t, (label, _s) in tabs.items() %}<a href="?{{ qs({'tab': t}) }}" class="{{ 'active' if q.tab == t }}"><b>{{ q.counts[t] }}</b><span>{{ label }}</span></a>{% endfor %}
   </div>

@@ -382,6 +382,15 @@ def make_router() -> APIRouter:
         """Zentrale Prüfwarteschlange: alle offenen Vorgänge aller Datenquellen und Dateien (nur lesend)."""
         return _queue_page(request, tab, offset, msg=msg)
 
+    @router.post("/journal/pruefung/abgleichen")
+    async def review_queue_recheck(request: Request) -> Response:
+        """Alle offenen Stapel lokal neu mit Import und App-Buchungen abgleichen (ohne Abruf; bucht nichts)."""
+        ctx = get_ctx(request)
+        out = await run_in_threadpool(csv_service(ctx).reevaluate_open)
+        info = (f"Neu abgeglichen: {out['batches']} Stapel, offene Vorgänge {out['before']} → {out['after']}"
+                + (f" ({out['failed']} Stapel nicht auswertbar)" if out["failed"] else "") + ".")
+        return _back(request, "/journal/pruefung?" + urlencode({"msg": "uploaded", "info": info}))
+
     @router.post("/journal/pruefung/auswahl")
     async def review_queue_select(request: Request) -> Response:
         """Auswahl sicherer Vorschläge speichern (je Stapel, wie auf der Stapelseite) – ändert keine Buchung."""

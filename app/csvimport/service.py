@@ -1194,6 +1194,30 @@ class CsvImportService:
         self.evaluate(bid)
         return True
 
+    def reevaluate_open(self, progress: Any = None) -> dict[str, int]:
+        """Alle offenen Stapel (Vorschau/teilweise) lokal neu bewerten – Abgleich mit Import und App-Buchungen über den
+        Hash, Dubletten, Transfers – ohne Abruf bei Quellen. Bereits vorhandene Vorgänge gelten danach als „bereits
+        berücksichtigt“ und verlassen die Prüfung. Bucht nichts; Entscheidungen des Nutzers bleiben erhalten."""
+        from app.csvimport import review as RV
+
+        ids = [int(r["id"]) for r in self.db.q("SELECT id FROM csv_batch WHERE status IN ('preview', 'partial') "
+                                                "ORDER BY id")]
+        before = RV.active_summary(self.db).open
+        failed = 0
+        for bid in ids:
+            try:
+                self.evaluate(bid)
+                self.refresh_status(bid)
+            except Exception:  # ein Stapel darf die übrigen nicht aufhalten
+                log.exception("Stapel %s: Neubewertung fehlgeschlagen", bid)
+                failed += 1
+            if progress is not None:
+                try:
+                    progress.advance(100 // max(1, len(ids)))
+                except Exception as e:  # Anzeige darf den Lauf nie stören
+                    log.debug("Fortschritt: %s", e)
+        return {"batches": len(ids), "failed": failed, "before": before, "after": RV.active_summary(self.db).open}
+
     def _alive(self, pf: Portfolio | None) -> set[str]:
         """Buchungen, auf die eine Verknüpfung zeigen darf: erfasste Buchungen, Import, App-Buchungen (aktiv bzw. in
         einem Transfer zusammengeführt)."""

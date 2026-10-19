@@ -47,6 +47,7 @@ EXTRA_PHASES: list[tuple[str, str, int]] = [
     ("match", "Bestehende Buchungen abgleichen", 10),
     ("propose", "Vorschläge vorbereiten", 10),
     # Prüflauf der Datenqualität (app.diagnosis.checkrun)
+    ("chk_stapel", "Prüfstapel neu abgleichen", 15),
     ("chk_diag", "Diagnose berechnen", 20),
     ("chk_integrity", "Integritätsprüfung", 30),
     ("chk_clarify", "Fälle untersuchen", 40),

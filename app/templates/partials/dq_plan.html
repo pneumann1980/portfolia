@@ -36,7 +36,8 @@
     {% if last and last.finished_at %}
       <p class="hint">Letzter Prüflauf: {{ last.finished_at|datetime_de }}{% if last.duration_s %} · {{ last.duration_s }} s{% endif %}
         {% if not last.first %}· seit dem Lauf davor: {{ last.new|length }} neu, {{ last.gone|length }} erledigt{% endif %}
-        {% if last.applied %}· automatisch übernommen: {{ last.applied }}{% endif %}</p>
+        {% if last.applied %}· automatisch übernommen: {{ last.applied }}{% endif %}
+        {% if last.stapel and last.stapel.batches %}· Prüfstapel neu abgeglichen: {{ last.stapel.before }} → {{ last.stapel.after }} offene Vorgänge{% if last.stapel.failed %} ({{ last.stapel.failed }} Stapel nicht auswertbar){% endif %}{% endif %}</p>
       {% if last.new or last.gone %}<details class="vk-table"><summary class="hint">Was hat sich geändert?</summary>
         <ul class="plain-list">{% for t in last.new %}<li>neu: {{ t }}</li>{% endfor %}{% for t in last.gone %}<li>erledigt: {{ t }}</li>{% endfor %}</ul></details>{% endif %}
     {% endif %}

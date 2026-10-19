@@ -335,3 +335,35 @@ def test_reconcile_two_identical_events_only_one_booked():
     res = R.reconcile(rows, idx, lambda s: s if s == "ETH" else None, ["ETH"])
     full = [i for i, r in res.rows.items() if r.state == "full"]
     assert len(full) < 2  # höchstens einer gilt als vorhanden – der zweite wird nicht still verworfen
+
+
+def test_reevaluate_open_batches_shrinks_a_stale_queue(client, evm, config):
+    """Der Prüflauf gleicht offene Stapel erneut ab: veraltet bewertete Zeilen (vorhanden, aber als neu geführt)
+    verlassen die Prüfung, ohne dass jemand einen Stapel öffnen muss; Buchungen ändern sich nicht."""
+    from app.csvimport import review as RV
+
+    import_curated(client, config)
+    sid = wallet(client)
+    bid = int(sync(client, sid)["batch_id"])
+    db = ctx(client).db
+    clean = RV.active_summary(db).open
+    db.x("UPDATE csv_row SET status='new', decision=NULL WHERE batch_id=? AND status='known'", (bid,))
+    assert RV.active_summary(db).open > clean  # veralteter Stand: vorhandene Vorgänge stehen wieder in der Prüfung
+    held = ctx(client).ledger().holdings_by_account(MM)
+    out = csv_service(ctx(client)).reevaluate_open()
+    assert out["batches"] >= 1 and out["failed"] == 0 and out["after"] == clean and out["before"] > out["after"]
+    assert ctx(client).ledger().holdings_by_account(MM) == held  # nichts gebucht
+
+
+def test_queue_recheck_button_reevaluates_without_booking(client, evm, config):
+    from app.csvimport import review as RV
+
+    import_curated(client, config)
+    bid = int(sync(client, wallet(client))["batch_id"])
+    db = ctx(client).db
+    clean = RV.active_summary(db).open
+    db.x("UPDATE csv_row SET status='new', decision=NULL WHERE batch_id=? AND status='known'", (bid,))
+    assert "Neu abgleichen" in client.get("/journal/pruefung").text
+    r = post(client, "/journal/pruefung/abgleichen")
+    assert r.status_code == 303 and "Neu+abgeglichen" in r.headers["location"]
+    assert RV.active_summary(db).open == clean

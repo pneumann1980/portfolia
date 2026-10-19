@@ -4,8 +4,9 @@ Bisher gab es drei getrennte Knöpfe (Integritätsprüfung starten, Fälle unter
 Prüflauf führt sie nacheinander aus und endet mit einem **Bericht**: was hat sich seit dem letzten Lauf geändert
 (neu / erledigt), wie viele Punkte stehen in Stufe A/B/C. Er arbeitet lokal – **keine Abrufe bei Börsen, Wallets
 oder Anbietern** (dafür gibt es weiterhin ausdrücklich „Aktuelle Bestände abfragen“ bzw. die Recherche im Fall).
-Die Klärung übernimmt nur, was die vorhandenen Einstellungen (Autopilot/Klärung) ohnehin erlauben; der Prüflauf
-schaltet nichts ein.
+Der erste Schritt gleicht die offenen Stapel des Prüfstapels erneut lokal mit dem Import und den App-Buchungen ab
+(Hash, Dubletten, Transfers): bereits vorhandene Vorgänge verlassen so die Prüfung. Die Klärung übernimmt nur, was
+die vorhandenen Einstellungen (Autopilot/Klärung) ohnehin erlauben; der Prüflauf schaltet nichts ein.
 
 Der Fortschritt nutzt die gemeinsame Anzeige (:mod:`app.progress`): Phasenbalken mit Prozent, auch wenn ein einzelner
 Schritt keine Zählung liefert (ein Taktgeber lässt den Balken dann langsam, aber nie bis zum Ende vorrücken).
@@ -19,6 +20,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from app.csvimport.service import csv_service
 from app.diagnosis import clarify as K
 from app.diagnosis import integrity as I
 from app.diagnosis import workplan as WP
@@ -30,7 +32,7 @@ log = logging.getLogger(__name__)
 JOB = "data_check"
 LABEL = "Prüflauf"
 STATE_KEY = "dq_check_last"
-PHASES = ["chk_diag", "chk_integrity", "chk_clarify", "chk_plan"]
+PHASES = ["chk_stapel", "chk_diag", "chk_integrity", "chk_clarify", "chk_plan"]
 _LOCK = threading.Lock()
 
 
@@ -86,6 +88,8 @@ def _run(ctx: Any, prog: Any | None, clarify: bool) -> dict[str, Any]:
     if prog is None:
         prog = job_progress(ctx, JOB, LABEL, unit="Schritte", phases=PHASES)
     try:
+        out["stapel"] = _step(prog, "chk_stapel", "Importierte Vorgänge erneut mit den Buchungen abgleichen",
+                              lambda: csv_service(ctx).reevaluate_open())
         report = _step(prog, "chk_diag", "Buchungen, Bestände und Befunde berechnen", lambda: report_for(ctx))
         integ = _step(prog, "chk_integrity", "Bestände, FIFO, Dubletten, Kurse, Steuerdaten", lambda: I.run(ctx, None))
         out["integrity_open"] = integ.counts()["open"] if integ.ok else None

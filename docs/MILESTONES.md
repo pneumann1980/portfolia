@@ -1426,6 +1426,13 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.34.3 – Prüfstapel schrumpft: Prüflauf und „Neu abgleichen“ bewerten offene Stapel neu
+
+Ursache für „erneute Prüfung verkleinert den Prüfstapel nicht“: der Prüflauf der Datenqualität rechnete nur Diagnose,
+Integrität und Klärung; die Zeilen des Prüfstapels wurden erst beim **Öffnen eines Stapels** neu bewertet. Jetzt gleicht der
+Prüflauf als erster Schritt alle offenen Stapel lokal neu ab (Hash, Dubletten, Transfers; ohne Abruf, ohne Buchung) und
+meldet „offene Vorgänge vorher → nachher“; dasselbe als Knopf „Neu abgleichen“ in der Prüfansicht.
+
 ## 0.34.2 – Hash-Abgleich: Kontointerne Vorgänge und Zwillinge, Stapel werden neu bewertet
 
 Auf Hinweis („gleiche Transaktion mit Hash im Import sollte automatisch verknüpft werden“): Umbuchungen an die eigene Adresse
