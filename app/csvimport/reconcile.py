@@ -188,19 +188,26 @@ def reconcile(rows: Iterable[Any], index: HashIndex, resolve: Callable[[str], st
     return res
 
 
-def is_krc_fee(r: Rec) -> bool:
-    """Zeile einer KRC-20-Inskription (Commit/Reveal), deren KAS-Anteil nur die Gebühr ist."""
-    return r.kind == M.FEE and "commit/reveal" in (r.label or "").lower()
+def is_internal_fee(r: Rec) -> bool:
+    """Zeile, die die Quelle ausdrücklich als „nur Gebühr“ eines kontointernen Vorgangs liefert: KRC-20-Inskription
+    (Commit/Reveal) bzw. Umbuchung an die eigene Adresse. Gebühren sonstiger Vorgänge (fehlgeschlagen, Vertragsaufruf)
+    zählen nicht dazu."""
+    if r.kind != M.FEE:
+        return False
+    note = (r.note or "").lower()
+    return "commit/reveal" in (r.label or "").lower() or ("nur gebühr" in note and (
+        "commit/reveal" in note or "umbuchung an die eigene adresse" in note))
 
 
 def _krc_cover(rcs: list[Any], cands: list[Booking], origin: str, resolve: Callable[[str], str | None],
                res: Result) -> None:
-    """Commit/Reveal: Der Import bucht Commit als Abgang und Reveal als Zugang der **vollen** Menge (Koinly) bzw.
-    beide zusammen als Netto-Gebühr (Korrektur aus der Diagnose); die Quelle liefert nur die Gebühr. Dieselbe
+    """Kontointerne Vorgänge (Commit/Reveal, Umbuchung an die eigene Adresse): Der Import bucht sie als Abgang und
+    Zugang der **vollen** Menge (Koinly) bzw. beide zusammen als Netto-Gebühr (Korrektur aus der Diagnose); die Quelle
+    liefert nur die Gebühr. Dieselbe
     Blockchain-Transaktion mit einem Bein im selben Asset auf der Gegenseite gilt als vorhanden – die Mengen sind
     verschieden, weil die Gegenseite Brutto bzw. die Summe beider Gebühren führt."""
     for rc in rcs:
-        if not is_krc_fee(rc.rec):
+        if not is_internal_fee(rc.rec):
             continue
         sym = rec_legs(rc.rec)
         if len(sym) != 1 or sym[0][0] != "fee":
@@ -210,18 +217,20 @@ def _krc_cover(rcs: list[Any], cands: list[Booking], origin: str, resolve: Calla
         if hit:
             accs = sorted({leg[3] for b in hit for leg in b.legs if leg[3]})
             res.rows[rc.idx] = RowMatch("full", origin, list(dict.fromkeys(b.tx_id for b in hit)), accs[:3], [], {},
-                                        "KRC-20 Commit/Reveal: die Menge steckt im Abgang/Zugang bzw. in der "
-                                        "Netto-Gebühr der Gegenbuchung – nur die Gebühr zählt")
+                                        "Kontointerner Vorgang (z. B. KRC-20 Commit/Reveal): die Menge steckt "
+                                        "im Abgang/Zugang bzw. in der Netto-Gebühr der Gegenbuchung – nur die "
+                                        "Gebühr zählt")
 
 
 def _match_hash(rcs: list[Any], cands: list[Booking], origin: str, resolve: Callable[[str], str | None],
                 res: Result, votes: dict[str, Counter[str]]) -> None:
-    other: dict[tuple[str, str, str], list[Any]] = {}  # (Seite, Asset, Konto) → [Menge, tx_ids]
+    other: dict[tuple[str, str, str], list[Any]] = {}  # (Seite, Asset, Konto) → [Menge, tx_ids, Einzelmengen]
     for b in cands:
         for side, asset, qty, acc in b.legs:
-            slot = other.setdefault((side, asset, acc), [Decimal(0), []])
+            slot = other.setdefault((side, asset, acc), [Decimal(0), [], []])
             slot[0] += qty
             slot[1].append(b.tx_id)
+            slot[2].append(qty)
     mine: dict[tuple[str, str], list[Any]] = {}  # (Seite, Symbol) → [Menge, Zeilen]
     for rc in rcs:
         for side, sym, qty in rec_legs(rc.rec):
@@ -238,8 +247,10 @@ def _match_hash(rcs: list[Any], cands: list[Booking], origin: str, resolve: Call
 
         def pool_for(q: Decimal, taken: set[tuple[str, str, str]], s: str = side,
                      a: str | None = aid) -> list[tuple[str, str, str]]:
+            # Summe aller Buchungen des Hashs – oder eine einzelne: identische Zwillinge (derselbe Vorgang zweimal im
+            # Import, z. B. Koinly) würden sonst die Menge verdoppeln und einen vorhandenen Vorgang verdecken
             return [k for k, v in other.items() if k not in taken and k[0] == s and (a is None or k[1] == a)
-                    and qty_eq(q, v[0])]
+                    and (qty_eq(q, v[0]) or (len(v[2]) > 1 and len(set(v[2])) == 1 and qty_eq(q, v[2][0])))]
 
         want = qty
         pool = pool_for(want, used)

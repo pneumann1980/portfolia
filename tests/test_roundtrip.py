@@ -304,3 +304,32 @@ def test_krc_rows_stay_covered_after_the_net_fee_fix_hides_the_koinly_pair(cfg):
     res = R.reconcile(_krc_rows(hc, hr), idx, lambda s: s if s == "KAS" else None, ["KAS"])
     assert [res.rows[i].state for i in (0, 1)] == ["full", "full"]
     assert res.rows[0].origin == "journal" and res.rows[0].txs == res.rows[1].txs
+
+
+def test_reconcile_twins_and_internal_fee_rows():
+    """Identische Zwillinge im Import verdoppeln die Menge nicht mehr; „Umbuchung an die eigene Adresse“ (nur Gebühr)
+    gilt wie Commit/Reveal; Gebühren fehlgeschlagener Vorgänge und mehrteiliger Vorgänge bleiben unberührt."""
+    from app.csvimport import model as M
+    from app.csvimport import reconcile as R
+    from tests.test_reconcile import _Row, _Tx
+
+    h = "cc" * 32
+    twins = R.HashIndex([_Tx(f"T{i}", f"txhash={h}", type="deposit", to_account=ACC, to_asset="KAS", to_qty=D("19.5"))
+                         for i in (1, 2)], [])
+    row = [_Row(0, kind=M.DEPOSIT, txhash=h, in_sym="KAS", in_qty=D("19.5"))]
+    res = R.reconcile(row, twins, lambda s: s, ["KAS"])
+    assert res.rows[0].state == "full" and res.rows[0].txs == ["T1", "T2"]
+    # zwei verschiedene Mengen im selben Hash: weiter nur exakte Summe bzw. Einzelmenge
+    mixed = R.HashIndex([_Tx("M1", f"txhash={h}", type="deposit", to_account=ACC, to_asset="KAS", to_qty=D("19.5")),
+                         _Tx("M2", f"txhash={h}", type="deposit", to_account=ACC, to_asset="KAS", to_qty=D("3"))], [])
+    assert R.reconcile(row, mixed, lambda s: s, ["KAS"]).rows[0].state == "partial"
+    gross = R.HashIndex([_Tx("W", f"txhash={h}", type="withdrawal", from_account=ACC, from_asset="KAS",
+                             from_qty=D("50")),
+                         _Tx("D", f"txhash={h}", type="deposit", to_account=ACC, to_asset="KAS", to_qty=D("49.99"))],
+                        [])
+    consolidate = _Row(0, kind=M.FEE, txhash=h, fee_sym="KAS", fee_qty=D("0.01"),
+                       note="Umbuchung an die eigene Adresse (z. B. UTXO-Zusammenfassung) – nur Gebühr")
+    failed = _Row(0, kind=M.FEE, txhash=h, fee_sym="KAS", fee_qty=D("0.01"),
+                  note="fehlgeschlagene Transaktion – nur Netzwerkgebühr")
+    assert R.reconcile([consolidate], gross, lambda s: s, ["KAS"]).rows[0].state == "full"
+    assert R.reconcile([failed], gross, lambda s: s, ["KAS"]).rows[0].state == "partial"

@@ -99,7 +99,7 @@ STATUS_BADGE = {"new": "good", "known": "", "duplicate": "warn", "before": "", "
                 "unclear": "warn", "committed": "info", "merged": "info", "linked": "info", "revision": "warn"}
 DONE = ("known", "ignored", "committed", "merged", "linked")  # Zeilen ohne offene Entscheidung
 CLOSED = ("committed", "merged", "linked")  # abgeschlossen: gebucht bzw. mit vorhandener Buchung verknüpft
-EVAL_VERSION = 7  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
+EVAL_VERSION = 8  # erhöhen, wenn sich die Auswertung ändert – offene Stapel werden beim Öffnen neu bewertet
 RELEVANT = ("new", "invalid", "unclear", "duplicate")  # zu übernehmen bzw. zu entscheiden
 BATCH_STATUS = {"mapping": "Zuordnung nötig", "preview": "Vorschau", "partial": "teilweise übernommen",
                 "committed": "übernommen", "done": "abgeschlossen", "reverted": "rückgängig gemacht"}

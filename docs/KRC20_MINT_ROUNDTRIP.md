@@ -56,6 +56,22 @@ Blockchain-Transaktion in einer Buchung (Import oder App) mit einem Bein im selb
 oben: die Netto-Gebühr trägt die Hashes von Abgang und Zugang in der Notiz. Zeilen ohne Gegenbuchung (Hash unbekannt) bleiben
 wie bisher in der Prüfung; die Quelle ohne die Kennzeichnung „Commit/Reveal“ wird nicht gelockert.
 
+### Automatische Verknüpfung über den Hash (ab 0.34.2)
+
+Grundsatz: Steht dieselbe Blockchain-Transaktion (Hash) im kuratierten Import oder in der App und liefert die Quelle sie
+erneut, ist sie **vorhanden** – ohne Zustimmung, ohne Buchung (Zustand „bereits berücksichtigt“). Dafür müssen die Beine
+passen; zwei Fälle verhinderten das bei Kaspa:
+
+* **Kontointerne Vorgänge** (Commit/Reveal, „Umbuchung an die eigene Adresse“): die Quelle liefert nur die Gebühr, der Import
+  die volle Menge → jetzt vorhanden (siehe oben).
+* **Identische Zwillinge im Import** (derselbe Vorgang zweimal, z. B. 14 Hashes im Beispiel): die Mengen beider Buchungen wurden
+  addiert und passten nicht mehr → jetzt gilt auch die Menge einer einzelnen Buchung.
+
+Nicht gelockert: Gebühren fehlgeschlagener oder mehrteiliger Vorgänge, abweichende Mengen ohne bekannte Ursache, andere
+Assets, Hashes ohne Gegenbuchung. Im Export vom 17.10.2026 trägt jede der 4.760 Kaspa-Buchungen einen Hash; nachgestellte
+Quellenzeilen (Gebühr bzw. gleiche Menge) wurden zu 100 % als vorhanden erkannt. Offene Stapel werden beim Öffnen neu
+bewertet (`EVAL_VERSION` 8), damit alte Zeilen nicht nach überholten Regeln stehen bleiben.
+
 ## Grenzen
 
 * Verschiedene Hashes sind kein Kettenbeweis; ein Muster ≥ 3 Paare ist ein Indiz, kein Beleg. Zahlt jemand tatsächlich an

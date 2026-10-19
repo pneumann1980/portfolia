@@ -1426,6 +1426,13 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.34.2 – Hash-Abgleich: Kontointerne Vorgänge und Zwillinge, Stapel werden neu bewertet
+
+Auf Hinweis („gleiche Transaktion mit Hash im Import sollte automatisch verknüpft werden“): Umbuchungen an die eigene Adresse
+zählen wie Commit/Reveal; identische Zwillinge im Import verdoppeln die Menge nicht mehr; `EVAL_VERSION` 8 bewertet offene
+Stapel beim Öffnen neu. Prüfung am Export: 4.760/4.760 Kaspa-Buchungen mit Hash, nachgestellte Quellenzeilen zu 100 %
+erkannt.
+
 ## 0.34.1 – KRC-20-Gebührenzeilen der Datenquelle nicht mehr im Prüfstapel
 
 Der Abgleich erkennt Commit/Reveal-Zeilen (nur Gebühr) als vorhanden, wenn der Hash im Import (Abgang/Zugang) oder in der
