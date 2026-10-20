@@ -1426,6 +1426,24 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.35.0 – Quellenübernahme: die API wird für ein Konto maßgeblich (Pilot Bitpanda)
+
+Auf Frage („Wenn die API-Anbindung Vorrang hat, müssten sich Konflikte zum Koinly-Import doch einfach beheben lassen?“) –
+Details in `docs/SOURCE_TAKEOVER.md`. Statt vieler Einzelkonflikte **eine Entscheidung je Konto** mit Beweis am Bestand.
+
+* **Vollabruf (nur lesend):** alle Vorgänge ab Beginn der Historie plus beobachteter Bestand; kein Abrufstand, kein
+  Prüf-Stapel, keine Buchung (`ds_takeover`, Migration 29).
+* **Beweis:** Abruf vollständig (Seitenende `has_next_page=false`, keine Lücke, aktuelle Auswertung, ≤ 24 h) · alle
+  Vorgänge buchbar und zugeordnet · die Vorgänge der API ergeben den **beobachteten Bestand je Asset exakt**
+  (berechnet aus denselben Zeilen, die der Import bucht). Ohne Beweis ist die Übernahme gesperrt.
+* **Vorschau:** ausgeblendete Buchungen, bleibende Buchungen (Transfers mit anderen Konten, manuelle Buchungen, Korrekturen),
+  Bestand jetzt/nachher/beobachtet, Import-Buchungen **ohne** Gegenstück in der API und umgekehrt (Warnsignale).
+* **Übernehmen:** Import-Buchungen des Kontos ausblenden (Korrektur der Diagnose), API-Vorgänge in einem eigenen Stapel buchen;
+  EUR-Werte, Gebührenwerte und Einordnungen des Imports bleiben erhalten, **wo die API sie nicht liefert**. **Nachprüfung:**
+  weicht der Bestand danach ab, wird alles zurückgenommen. **Rückgängig** für die Übernahme als Ganzes.
+* **Grenzen:** nur Mengen bewiesen, nicht Werte; realisierte Ergebnisse je Jahr nicht vorab simuliert; Binance und Wallets
+  ausgeschlossen (Abruf belegt keine Vollständigkeit); ein exakter Bestand schließt sich aufhebende Fehler nicht aus.
+
 ## 0.34.4 – Mobil: Fallseite und Definitionslisten laufen nicht mehr über den Rahmen
 
 Ursache: Tabellen der Fallseite („Technik und Belege“: Dimensionen, Regeln, Kandidaten, Hypothesen, Quellen) standen ohne

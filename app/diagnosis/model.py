@@ -27,6 +27,7 @@ KINDS: dict[str, str] = {
     "document": "Beleg ergänzt Buchung",
     "reconstruction": "Rekonstruktionskandidat (fehlender Vorgang)",
     "roundtrip": "Abgang mit Rückfluss auf demselben Konto (Netto-Gebühr)",
+    "takeover": "Quellenübernahme (API maßgeblich)",
 }
 KIND_ORDER = {k: i for i, k in enumerate(KINDS)}
 

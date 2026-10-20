@@ -1305,6 +1305,12 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > (Vorschau, Rückgängig). Automatisch nur mit eigener Freigabe im Autopilot (Standard aus), nie bei „Verdacht“.
 > Einzelheiten: [`docs/KRC20_MINT_ROUNDTRIP.md`](docs/KRC20_MINT_ROUNDTRIP.md).
 
+> **Quellenübernahme (ab 0.35.0, Pilot Bitpanda):** Ergeben die Vorgänge der API den beobachteten Bestand je Asset exakt
+> und ist die Seitenfolge lückenlos, kann die API für ein Konto maßgeblich werden (*Einstellungen → Datenquellen →
+> Quellenübernahme*): Vorschau mit Beweis, Import-Buchungen des Kontos werden ausgeblendet, API-Vorgänge gebucht, EUR-Werte
+> und Einordnungen des Imports bleiben, wo die API sie nicht liefert; bei abweichendem Bestand wird alles zurückgenommen;
+> rückgängig als Ganzes. Einzelheiten: [`docs/SOURCE_TAKEOVER.md`](docs/SOURCE_TAKEOVER.md).
+
 *Datenqualität → Diagnose öffnen* (`/quality/diagnose`) prüft alle Buchungen, Bestände, Zuordnungen und Kurse und
 zeigt priorisierte Befunde. **Die Diagnose selbst ändert nichts:** Sie wird bei jedem Aufruf neu aus den Daten
 berechnet („Erneut prüfen“ lädt nur die Seite neu); gleiche Daten ergeben dieselben Befunde mit denselben

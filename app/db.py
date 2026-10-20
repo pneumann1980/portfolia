@@ -861,6 +861,28 @@ CREATE TABLE IF NOT EXISTS account_meta (
   updated_at   TEXT NOT NULL
 );
 """),
+    (29, """
+-- Quellenübernahme (API maßgeblich) je Konto: gestaffelter Vollabruf der Datenquelle (nur lesend), Beweis, Spender
+-- (EUR-Werte/Einordnungen aus dem kuratierten Import) und das Protokoll der Übernahme (Korrektur der Diagnose +
+-- Stapelaktion), damit sie als Ganzes zurückgenommen werden kann. Vorübergehender Zustand – nicht Teil des Exports.
+CREATE TABLE IF NOT EXISTS ds_takeover (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id     INTEGER NOT NULL,
+  status        TEXT NOT NULL,       -- fetching | staged | running | applied | undone | failed | discarded
+  message       TEXT,
+  events_json   TEXT,                -- normalisierte Vorgänge des Vollabrufs (wie im Prüf-Stapel)
+  meta_json     TEXT,                -- Abdeckung, beobachtete Bestände, Lücken des Abrufs
+  donors_json   TEXT,                -- Spender je Zeile der Quelle (Kennung → EUR-Wert/Einordnung)
+  result_json   TEXT,                -- Ergebnis der Übernahme (Zähler, Nachprüfung)
+  decision_id   INTEGER,             -- Korrektur der Diagnose (ausgeblendete Buchungen)
+  action_id     INTEGER,             -- Stapelaktion (gebuchte Vorgänge der Quelle)
+  batch_id      INTEGER,
+  created_at    TEXT NOT NULL,
+  applied_at    TEXT,
+  undone_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_ds_takeover_source ON ds_takeover(source_id, id);
+"""),
 ]
 
 

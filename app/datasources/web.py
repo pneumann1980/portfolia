@@ -9,6 +9,7 @@ Hintergrundjob ``datasources_sync`` (alle 5 Minuten): fällige, aktive Quellen m
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 from urllib.parse import urlencode
@@ -438,6 +439,68 @@ def make_router() -> APIRouter:
         key = "error" if (res.get("error") or res.get("unsupported")) else "msg"
         text = res.get("error") or res.get("unsupported") or res.get("message") or "Keine neuen Vorgänge."
         return _back(request, _detail_url(sid, **{key: text}) + "#status")
+
+    # -- Quellenübernahme (API maßgeblich), Pilot Bitpanda -----------------------------------------------------
+    def _takeover_ds(request: Request, sid: int) -> Any:
+        ds = datasource_service(get_ctx(request)).get(sid)
+        if ds is None:
+            raise HTTPException(404)
+        return ds
+
+    @router.get("/settings/datasources/{sid}/uebernahme", response_class=HTMLResponse)
+    async def takeover_page(request: Request, sid: int, msg: str = "", error: str = "") -> Response:
+        from app.datasources import takeover as TK
+
+        ds = _takeover_ds(request, sid)
+        ctx = get_ctx(request)
+        row = TK.view(ctx.db, sid)
+        a = None
+        if row is not None and row["status"] == "staged" and TK.supported(ds.provider):
+            a = await run_in_threadpool(TK.assess, ctx, sid)
+        result = json.loads(row["result_json"] or "{}") if row is not None else {}
+        return render(request, "datasource_takeover.html", active="settings", ds=ds, t=row, a=a, result=result,
+                      supported=TK.supported(ds.provider), msg=msg, error=error)
+
+    @router.post("/settings/datasources/{sid}/uebernahme/abruf")
+    async def takeover_fetch(request: Request, sid: int) -> Response:
+        from app.datasources import takeover as TK
+
+        _takeover_ds(request, sid)
+        res = await run_in_threadpool(TK.start_fetch, get_ctx(request), sid)
+        key, text = ("error", " ".join(res["errors"])) if res.get("errors") else ("msg", "Vollabruf gestartet.")
+        return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode({key: text}))
+
+    @router.post("/settings/datasources/{sid}/uebernahme/uebernehmen")
+    async def takeover_apply(request: Request, sid: int) -> Response:
+        from app.datasources import takeover as TK
+
+        _takeover_ds(request, sid)
+        f = await request.form()
+        if str(f.get("confirm") or "") != "1":
+            return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode(
+                {"error": "Bitte die Vorschau bestätigen."}))
+        res = await run_in_threadpool(TK.start_apply, get_ctx(request), sid, str(f.get("token") or ""))
+        key, text = ("error", " ".join(res["errors"])) if res.get("errors") else ("msg", "Übernahme gestartet.")
+        return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode({key: text}))
+
+    @router.post("/settings/datasources/{sid}/uebernahme/zurueck")
+    async def takeover_undo(request: Request, sid: int) -> Response:
+        from app.datasources import takeover as TK
+
+        _takeover_ds(request, sid)
+        res = await run_in_threadpool(TK.undo, get_ctx(request), sid)
+        key, text = ("error", " ".join(res["errors"])) if res["errors"] else (
+            "msg", "Übernahme zurückgenommen – die ausgeblendeten Buchungen zählen wieder." + (
+                " " + " ".join(res.get("notes") or []) if res.get("notes") else ""))
+        return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode({key: text}))
+
+    @router.post("/settings/datasources/{sid}/uebernahme/verwerfen")
+    async def takeover_discard(request: Request, sid: int) -> Response:
+        from app.datasources import takeover as TK
+
+        _takeover_ds(request, sid)
+        await run_in_threadpool(TK.discard, get_ctx(request), sid)
+        return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode({"msg": "Abruf verworfen."}))
 
     @router.post("/settings/datasources/{sid}/check")
     async def check(request: Request, sid: int) -> Response:

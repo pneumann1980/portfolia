@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Quellenübernahme {{ ds.name }}{% endblock %}
+{% block heading %}Quellenübernahme: {{ ds.name }}{% endblock %}
+{% macro mark(ok) %}<span class="badge {{ 'good' if ok else 'crit' }}">{{ '✓ erfüllt' if ok else '✗ nicht erfüllt' }}</span>{% endmacro %}
+{% block content %}
+<div class="stack" id="takeover"{% if t and t.status in ('fetching', 'running') %} hx-get="/settings/datasources/{{ ds.id }}/uebernahme" hx-trigger="every 3s" hx-select="#takeover" hx-swap="outerHTML"{% endif %}>
+  <p class="hint"><a href="/settings/datasources/{{ ds.id }}">← {{ ds.name }}</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>API maßgeblich für das Konto „{{ ds.account }}“</h2></div>
+    <p>Die API von {{ ds.provider_label }} liefert die Historie seitenweise bis zum Ende und den aktuellen Bestand. Wenn die Vorgänge der API den Bestand <b>exakt</b> ergeben, ersetzt Portfolia die Buchungen des kuratierten Imports (z. B. Koinly) für dieses Konto durch die der API – <b>eine Entscheidung statt vieler Einzelkonflikte</b>.</p>
+    <ul class="hint">
+      <li>Es wird nichts gelöscht: Import-Buchungen werden ausgeblendet, die Übernahme ist als Ganzes rückgängig zu machen.</li>
+      <li>EUR-Werte und Einordnungen des ersetzten Imports bleiben erhalten, <b>wo die API sie nicht liefert</b>.</li>
+      <li>Stimmt der Bestand nach dem Buchen nicht exakt, wird alles automatisch zurückgenommen.</li>
+      <li>Grenzen: Der Beweis betrifft <b>Mengen</b>, nicht Werte. Realisierte Ergebnisse je Jahr werden vorab nicht simuliert – nach der Übernahme unter „Steuern“ prüfen. Manuelle Buchungen, Transfers mit anderen Konten und Korrekturen bleiben bestehen.</li>
+    </ul>
+  </section>
+
+  {% if not supported %}
+  <div class="alert warn"><span class="icon">!</span><div>Für {{ ds.provider_label }} ist keine Quellenübernahme vorgesehen: Der Abruf belegt dort nicht, dass die API-Historie vollständig ist (Pilot: Bitpanda).</div></div>
+  {% else %}
+
+  {% if not t or t.status in ('discarded', 'undone', 'failed') %}
+  <section class="card">
+    <div class="card-head"><h2>1 · Vollabruf</h2></div>
+    {% if t and t.message %}<p class="hint">Letzter Stand: {{ t.message }}</p>{% endif %}
+    <p>Ruft alle Vorgänge und den aktuellen Bestand <b>nur lesend</b> ab (kein Abrufstand, keine Buchung, kein Prüf-Stapel). Bei langer Historie dauert das einige Minuten.</p>
+    <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/abruf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit"{% if ds.needs_key and not ds.key_mode %} disabled{% endif %}>Vollabruf starten</button></form>
+  </section>
+
+  {% elif t.status in ('fetching', 'running') %}
+  <section class="card">
+    <div class="card-head"><h2>{{ 'Vollabruf läuft' if t.status == 'fetching' else 'Übernahme läuft' }}</h2></div>
+    <div class="alert info" role="status"><span class="icon">…</span><div>{{ t.message or 'Bitte warten …' }}</div></div>
+    <p class="hint">Die Seite aktualisiert sich selbst. Der Vorgang läuft im Hintergrund weiter, auch wenn Sie die Seite verlassen.</p>
+  </section>
+
+  {% elif t.status == 'applied' %}
+  <section class="card">
+    <div class="card-head"><h2>Übernommen</h2> <span class="badge good">aktiv</span></div>
+    <p>{{ t.message }}</p>
+    <dl class="kv">
+      <div><dt>Ersetzte Buchungen (ausgeblendet)</dt><dd>{{ result.hidden }}</dd></div>
+      <div><dt>Gebuchte API-Vorgänge</dt><dd>{{ result.booked }}</dd></div>
+      <div><dt>Durch bleibende Transfers gedeckt</dt><dd>{{ result.covered }}</dd></div>
+      <div><dt>Bleibende Buchungen des Kontos</dt><dd>{{ result.kept }}</dd></div>
+      <div><dt>Werte/Einordnungen aus dem Import übernommen</dt><dd>{{ result.donors }}</dd></div>
+      <div><dt>Übernommen am</dt><dd>{{ t.applied_at|datetime_de }}</dd></div>
+    </dl>
+    <p class="hint">Künftige Abrufe laufen wie gewohnt inkrementell; die API-Vorgänge sind bekannt und werden nicht doppelt gebucht.</p>
+    <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zurueck" data-confirm="Übernahme zurücknehmen? Die gebuchten API-Vorgänge werden zurückgenommen, die ausgeblendeten Buchungen zählen wieder."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Übernahme zurücknehmen</button></form>
+  </section>
+
+  {% elif t.status == 'staged' %}
+  <section class="card">
+    <div class="card-head"><h2>1 · Vollabruf</h2></div>
+    <p>Abgerufen {{ t.created_at|datetime_de }}{% if a %}: {{ a.events }} Vorgänge ({{ a.lines }} Zeilen){% if a.first %}, {{ a.first|date_de }} bis {{ a.last|date_de }}{% endif %}{% endif %}.</p>
+    {% if t.message and result.detail is defined %}<div class="alert warn"><span class="icon">!</span><div><b>Letzter Übernahmeversuch:</b> {{ t.message }}{% if result.detail %}<ul>{% for d in result.detail[:12] %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}</div></div>{% endif %}
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/abruf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Erneut abrufen</button></form>
+      <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/verwerfen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Verwerfen</button></form>
+    </div>
+  </section>
+
+  {% if a %}
+  <section class="card" id="beweis">
+    <div class="card-head"><h2>2 · Beweis</h2> {% if a.ok %}<span class="badge good">erbracht</span>{% else %}<span class="badge crit">nicht erbracht</span>{% endif %}</div>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Prüfung</th><th>Ergebnis</th><th>Beleg</th></tr></thead><tbody>
+    {% for c in a.checks %}<tr><td class="wide"><b>{{ c.label }}</b>{% if not c.blocking %} <span class="hint">(Hinweis)</span>{% endif %}</td><td data-label="Ergebnis">{% if c.ok %}<span class="badge good">✓ erfüllt</span>{% elif c.blocking %}<span class="badge crit">✗ nicht erfüllt</span>{% else %}<span class="badge warn">! Hinweis</span>{% endif %}</td><td class="wide" data-label="Beleg">{{ c.detail }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% if a.skipped %}<p class="hint">Von der Quelle bewusst ohne Buchung: {% for k, n in a.skipped.items() %}{{ n }}× {{ k }}{{ '; ' if not loop.last }}{% endfor %}.</p>{% endif %}
+  </section>
+
+  <section class="card" id="bestand">
+    <div class="card-head"><h2>3 · Bestand</h2></div>
+    <p class="hint">„Jetzt“ = aktueller Bestand der Buchungen des Kontos; „nach Übernahme“ = Vorgänge der API plus bleibende Buchungen; „beobachtet“ = Bestand laut API.</p>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th class="num">Jetzt</th><th class="num">Nach Übernahme</th><th class="num">Beobachtet</th><th>Stand</th></tr></thead><tbody>
+    {% for b in a.balances %}<tr><td><b>{{ b.name }}</b></td><td class="num" data-label="Jetzt">{{ b.now|qty_exact }}{% if not b.was_ok %} <span class="badge warn">weicht ab</span>{% endif %}</td><td class="num" data-label="Nach Übernahme">{{ b.after|qty_exact }}</td><td class="num" data-label="Beobachtet">{{ b.observed|qty_exact }}</td><td data-label="Stand">{% if b.ok %}<span class="badge good">exakt</span>{% else %}<span class="badge crit">Abweichung {{ (b.after - b.observed)|qty_exact }}</span>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+
+  <section class="card" id="wirkung">
+    <div class="card-head"><h2>4 · Wirkung</h2></div>
+    <dl class="kv">
+      <div><dt>Buchungen, die ausgeblendet werden</dt><dd>{{ a.hide|length }}</dd></div>
+      <div><dt>… davon mit Gegenstück in der API</dt><dd>{{ a.matched }}</dd></div>
+      <div><dt>… ohne Gegenstück in der API</dt><dd>{{ a.unmatched_old|length }}</dd></div>
+      <div><dt>API-Vorgänge ohne Gegenstück im Import</dt><dd>{{ a.unmatched_new|length }}</dd></div>
+      <div><dt>Bleibende Buchungen des Kontos</dt><dd>{{ a.kept|length }}</dd></div>
+      <div><dt>Bereits aus der API gebucht (bleiben)</dt><dd>{{ a.own }}</dd></div>
+      <div><dt>Durch bleibende Transfers gedeckt</dt><dd>{{ a.covered }}</dd></div>
+      <div><dt>EUR-Werte/Einordnungen aus dem Import</dt><dd>{{ a.donors|length }} Zeilen</dd></div>
+    </dl>
+    {% if a.unmatched_old %}
+    <details><summary><b>Import-Buchungen ohne Gegenstück in der API</b> <span class="hint">({{ a.unmatched_old|length }}) – Warnsignale: Fehler im Import, Dublette oder Lücke der API</span></summary>
+      <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Datum</th><th>Art</th><th class="num">Menge</th></tr></thead><tbody>
+      {% for x in a.unmatched_old[:40] %}<tr><td>{{ x.ts|date_de }}</td><td data-label="Art">{{ x.type }}{% if x.tag %} · {{ x.tag }}{% endif %}</td><td class="num" data-label="Menge">{{ (x.to_qty or x.from_qty)|qty_exact }} {{ x.to_asset or x.from_asset }}</td></tr>{% endfor %}
+      </tbody></table></div>
+      {% if a.unmatched_old|length > 40 %}<p class="hint">… und {{ a.unmatched_old|length - 40 }} weitere.</p>{% endif %}
+    </details>{% endif %}
+    {% if a.unmatched_new %}
+    <details><summary><b>API-Vorgänge ohne Gegenstück im Import</b> <span class="hint">({{ a.unmatched_new|length }}) – im Import fehlend oder anders erfasst</span></summary>
+      <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Datum</th><th>Art</th><th>Wirkung</th></tr></thead><tbody>
+      {% for ln in a.unmatched_new[:40] %}<tr><td>{{ ln.rec.ts|date_de }}</td><td data-label="Art">{{ ln.rec.label or ln.rec.kind }}</td><td class="wide" data-label="Wirkung">{% for k, v in ln.legs.items() %}{{ v|qty_exact }} {{ k }}{{ ', ' if not loop.last }}{% endfor %}</td></tr>{% endfor %}
+      </tbody></table></div>
+      {% if a.unmatched_new|length > 40 %}<p class="hint">… und {{ a.unmatched_new|length - 40 }} weitere.</p>{% endif %}
+    </details>{% endif %}
+    {% if a.kept %}
+    <details><summary><b>Bleibende Buchungen des Kontos</b> <span class="hint">({{ a.kept|length }})</span></summary>
+      <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Datum</th><th>Art</th><th>Grund</th></tr></thead><tbody>
+      {% for x, why in a.kept[:40] %}<tr><td>{{ x.ts|date_de }}</td><td data-label="Art">{{ x.type }} · {{ (x.to_qty or x.from_qty)|qty_exact }} {{ x.to_asset or x.from_asset }}</td><td class="wide" data-label="Grund">{{ why }}</td></tr>{% endfor %}
+      </tbody></table></div>
+    </details>{% endif %}
+  </section>
+
+  <section class="card" id="uebernehmen">
+    <div class="card-head"><h2>5 · Übernehmen</h2></div>
+    {% if a.ok %}
+    <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/uebernehmen" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="token" value="{{ a.token }}">
+      <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe Beweis, Bestand und Wirkung geprüft. {{ a.hide|length }} Buchungen werden ausgeblendet, die Vorgänge der API gebucht; weicht der Bestand danach ab, wird alles zurückgenommen.</label>
+      <div><button class="btn primary" type="submit">API maßgeblich machen</button></div>
+    </form>
+    {% else %}
+    <div class="alert warn"><span class="icon">!</span><div>Der Beweis ist nicht erbracht – die Übernahme ist gesperrt:<ul>{% for c in a.blockers %}<li><b>{{ c.label }}</b>: {{ c.detail }}</li>{% endfor %}</ul></div></div>
+    {% endif %}
+  </section>
+  {% else %}
+  <div class="alert warn"><span class="icon">!</span><div>Der abgelegte Abruf lässt sich nicht auswerten – bitte erneut abrufen.</div></div>
+  {% endif %}
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

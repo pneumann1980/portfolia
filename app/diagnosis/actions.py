@@ -1691,6 +1691,11 @@ def undo(ctx: Any, decision_id: int) -> Result:
         row = ctx.db.q1("SELECT * FROM diag_decision WHERE id=?", (decision_id,))
         if row is None or row["action"] != "fix" or row["status"] != "active":
             return Result(errors=["Diese Korrektur ist nicht (mehr) aktiv."])
+        if row["kind"] == "takeover" and ctx.db.q1("SELECT 1 FROM ds_takeover WHERE decision_id=? AND "
+                                                    "status='applied'", (decision_id,)) is not None:
+            return Result(errors=["Diese Korrektur gehört zu einer Quellenübernahme (die ausgeblendeten Buchungen "
+                                  "werden durch die API-Buchungen ersetzt) – bitte dort zurücknehmen: Einstellungen → "
+                                  "Datenquellen → Quellenübernahme."])
         recs = json.loads(row["ops_json"] or "[]")
         later = _dependents(ctx.db, decision_id, recs)
         if later:

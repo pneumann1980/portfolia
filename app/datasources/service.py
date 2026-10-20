@@ -1604,6 +1604,9 @@ class DataSourceService:
                     more = bool(res.resume and not res.complete and res.cursor is not None)
                     res_meta["complete"] = bool(res.complete and not res.gaps)
                     res_meta["cursor"] = res.cursor if more else None
+                    # Belege des (letzten) Abrufs für die Quellenübernahme: Abdeckung, beobachtete Bestände, Lücken
+                    res_meta.update(coverage=dict(res.coverage), balances=res.balances,
+                                    balances_complete=res.balances_complete, skipped=dict(res.skipped))
                     if not more or ev.is_set() or _time.monotonic() - started > seconds:
                         break
                     cur = res.cursor
@@ -2354,7 +2357,7 @@ class DataSourceService:
                     "gaps": [sanitize_error(g, secret.values()) for g in res.gaps[:20]], "repair": repair}
         # Belege zur Vollständigkeit der Historie: nur aus einem vollständigen Abruf ab Beginn, sonst der letzte Stand
         if res.complete and res.coverage.get("mode") == "vollständig":
-            coverage["history"] = self._history(sid, recs, stamp)
+            coverage["history"] = self._history(sid, recs, stamp, res.coverage)
         elif isinstance(prev_cov, dict) and prev_cov.get("history"):
             coverage["history"] = prev_cov["history"]
         if conn.wallet:
@@ -2380,9 +2383,12 @@ class DataSourceService:
         return {"status": status, "batch_id": bid, "message": msg, "committed": committed, "linked": linked,
                 **counts}
 
-    def _history(self, sid: int, recs: list[Any], stamp: str) -> dict[str, Any]:
+    def _history(self, sid: int, recs: list[Any], stamp: str, cov: dict[str, Any] | None = None) -> dict[str, Any]:
         """Kennzahlen eines vollständigen Abrufs der Historie: Zeitraum, Vorgänge je Monat, Vorgänge ohne Zeitpunkt
-        und übernommene bzw. verknüpfte Vorgänge dieser Quelle, die der Abruf nicht (mehr) liefert."""
+        und übernommene bzw. verknüpfte Vorgänge dieser Quelle, die der Abruf nicht (mehr) liefert. Dazu die Belege
+        dieses Abrufs für die Quellenübernahme (:mod:`app.datasources.takeover`): Auswertungsversion, Ende der
+        Pagination und der Abgleich der Vorgänge mit dem von der Quelle gemeldeten Bestand."""
+        cov = cov or {}
         first_ts: dict[str, datetime] = {}
         no_ts: set[str] = set()
         for r in recs:
@@ -2404,7 +2410,8 @@ class DataSourceService:
         return {"at": stamp, "events": len(delivered | set(first_ts)), "first": iso(times[0]) if times else None,
                 "last": iso(times[-1]) if times else None, "months": dict(sorted(months.items())),
                 "no_ts": len(no_ts), "missing": len(missing), "missing_examples": missing[:10],
-                "missing_committed": len(set(missing) & committed), "missing_linked": len(set(missing) & linked)}
+                "missing_committed": len(set(missing) & committed), "missing_linked": len(set(missing) & linked),
+                "parser": cov.get("parser"), "pagination": cov.get("pagination"), "balances": cov.get("balances")}
 
     @staticmethod
     def _auto_eligible(rows: list[Any]) -> set[int]:

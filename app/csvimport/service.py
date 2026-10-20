@@ -1022,6 +1022,11 @@ class CsvImportService:
         for rc in open_rows:
             if rc.row is not None and not rc.errors:
                 self._value(rc, valuer, first_pass=True)
+        donors = self._takeover_donors(batch)
+        if donors:  # Quellenübernahme: EUR-Werte/Einordnung aus dem ersetzten Import, wo die Quelle sie nicht liefert
+            for rc in open_rows:
+                if rc.row is not None and not rc.errors:
+                    self._donate(rc, donors.get(rc.rec.ext_id or ""))
         for rc in open_rows:
             if rc.row is not None and not rc.errors:
                 self._value(rc, valuer, first_pass=False)
@@ -1147,6 +1152,33 @@ class CsvImportService:
         for rc in rows:
             counts[rc.status] += 1
         return dict(counts)
+
+    def _takeover_donors(self, batch: Any) -> dict[str, dict[str, Any]]:
+        """Spender der laufenden bzw. erfolgten Quellenübernahme dieser Datenquelle (Kennung der Zeile → Angaben des
+        ersetzten Imports); leer für alle übrigen Stapel."""
+        sid = batch["datasource_id"] if batch["kind"] == "sync" else None
+        if not sid:
+            return {}
+        r = self.db.q1("SELECT donors_json FROM ds_takeover WHERE source_id=? AND status IN ('running', 'applied') "
+                       "ORDER BY id DESC LIMIT 1", (int(sid),))
+        try:
+            return json.loads(r["donors_json"] or "{}") if r is not None else {}
+        except ValueError:
+            return {}
+
+    @staticmethod
+    def _donate(rc: RowCtx, d: Mapping[str, Any] | None) -> None:
+        """Angaben des ersetzten Imports übernehmen, **nur wo die Quelle sie nicht selbst liefert**: EUR-Wert und
+        Gebührenwert (nach der Fiat-Seite, vor Kursabfragen), Einordnung nur bei gleicher Buchungsart."""
+        row = rc.row
+        if not d or row is None:
+            return
+        if d.get("value_eur") and not row["value_eur"] and rc.value_src is None:
+            row["value_eur"], rc.value_src = str(d["value_eur"]), "Koinly (übernommen)"
+        if d.get("fee_eur") and row["fee_asset"] and row["fee_qty"] and not row["fee_eur"]:
+            row["fee_eur"], rc.fee_src = str(d["fee_eur"]), "Koinly (übernommen)"
+        if d.get("tag") and not row["tag"] and d.get("type") == row["type"]:
+            row["tag"] = str(d["tag"])
 
     def _carry_decisions(self, bid: int, source: str, rows: list[RowCtx]) -> None:
         """„Nicht übernehmen“ aus einem abgeschlossenen früheren Stapel derselben Quelle gilt für dieselbe, unveränderte
