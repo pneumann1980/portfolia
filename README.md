@@ -1311,6 +1311,11 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > und Einordnungen des Imports bleiben, wo die API sie nicht liefert; bei abweichendem Bestand wird alles zurückgenommen;
 > rückgängig als Ganzes. Einzelheiten: [`docs/SOURCE_TAKEOVER.md`](docs/SOURCE_TAKEOVER.md).
 
+> **DKB-Dokumente (ab 0.36.0):** An einem DKB-Konto (*Einstellungen → Datenquellen*) richtet *DKB-Abruf einrichten* ein
+> Abrufprogramm ein (eigene Python-Umgebung im Datenordner, kein zweiter Container). Per Knopfdruck werden – nach Freigabe in
+> der DKB-App – alle Postbox-Dokumente in Ordner nach Kategorie und Konto geladen und die Depot-Abrechnungen als Vorschläge in
+> den Prüfstapel gelegt. Unraid: Pfad „Bankunterlagen“ zuordnen. Einzelheiten: [`docs/DKB_DOCUMENTS.md`](docs/DKB_DOCUMENTS.md).
+
 *Datenqualität → Diagnose öffnen* (`/quality/diagnose`) prüft alle Buchungen, Bestände, Zuordnungen und Kurse und
 zeigt priorisierte Befunde. **Die Diagnose selbst ändert nichts:** Sie wird bei jedem Aufruf neu aus den Daten
 berechnet („Erneut prüfen“ lädt nur die Seite neu); gleiche Daten ergeben dieselben Befunde mit denselben

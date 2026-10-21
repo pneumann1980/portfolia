@@ -258,6 +258,11 @@ class DataSource:
         return PROVIDERS.get(self.row["provider"])
 
     @property
+    def is_dkb(self) -> bool:
+        """DKB-Konto (Anbieter DKB oder Konto, dessen Name mit „DKB“ beginnt): Abruf der Bankunterlagen möglich."""
+        return self.provider == "dkb" or guess_provider(self.account or "") == "dkb"
+
+    @property
     def provider_label(self) -> str:
         p = self.provider_obj
         return p.label if p else self.row["provider"]

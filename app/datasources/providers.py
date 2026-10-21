@@ -53,6 +53,7 @@ PROVIDERS: dict[str, Provider] = {p.id: p for p in (
     Provider("bitstamp", "Bitstamp", EXCHANGE),
     Provider("coinex", "CoinEx", EXCHANGE),
     Provider("bison", "BISON", EXCHANGE),
+    Provider("dkb", "DKB", EXCHANGE),
     Provider("pionex", "Pionex", EXCHANGE),
     Provider("other_exchange", "Andere Börse", EXCHANGE),
     # Chains (öffentliche Adressen)

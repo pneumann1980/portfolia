@@ -1426,6 +1426,25 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.36.0 – DKB: Postbox per Knopfdruck abrufen, in Ordner ablegen, Depot-Abrechnungen auswerten
+
+Details in `docs/DKB_DOCUMENTS.md`.
+
+* **„DKB-Abruf einrichten“** erscheint an jedem DKB-Konto (Anbieter DKB oder Kontoname beginnt mit „DKB“, auch bestehende):
+  installiert auf Knopfdruck das Abrufprogramm in eine eigene Python-Umgebung unter `/data/plugins/dkb` – **kein zweiter
+  Container**. Das Programm (`contrib/portfolia-dkb-fetch`, **GPL-3.0**, nutzt dkb-robo 0.31.2) ist nicht Teil des
+  MIT-Codes oder des Images, spricht mit Portfolia nur über JSON-Zeilen und Dateien.
+* **Abruf per Knopfdruck:** Anmeldung, Freigabe in der DKB-App, alle Postbox-Dokumente nach
+  `<Bankunterlagen>/<Datenquelle>/<Kategorie>/<Konto>/<Datum>_<Name>.pdf`; Index mit Prüfsumme (nie doppelt, nie überschrieben),
+  Abbruch, Fortschritt. Passwort nur im Arbeitsspeicher, ein Anmeldeversuch je Klick, nichts als gelesen markiert.
+* **Auswertung nur der Depot-Abrechnungen** (Wertpapier- und Ertragsabrechnung) über den vorhandenen Dokumentimport →
+  Vorschläge im Prüfstapel; Kontoauszüge, Karten, Steuer u. a. werden nur abgelegt. Gebucht wird nichts ohne Prüfung.
+* **Unraid:** neue Pfad-Zuordnung „Bankunterlagen“ (`/documents`, `DOCUMENTS_DIR`); die Seite zeigt, ob der Ordner
+  beschreibbar und eine eigene Freigabe ist.
+* **Grenzen:** gegen die echte DKB nicht getestet (Mock des Fetchers, echte Installation mit dkb-robo geprüft); die
+  Textauswertung der DKB-Abrechnungen ist nicht an Originaldokumenten verifiziert – unbekannte Layouts landen als „ungeklärt“
+  im Prüfstapel.
+
 ## 0.35.0 – Quellenübernahme: die API wird für ein Konto maßgeblich (Pilot Bitpanda)
 
 Auf Frage („Wenn die API-Anbindung Vorrang hat, müssten sich Konflikte zum Koinly-Import doch einfach beheben lassen?“) –

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "portfolia-dkb-fetch"
+version = "0.1.0"
+description = "Ruft die Postbox der DKB (nur lesend) ab und legt die Dokumente in Ordner – Hilfsprogramm für Portfolia"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+dependencies = ["dkb-robo>=0.31.2,<0.32"]
+classifiers = [
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+  "Natural Language :: German",
+]
+
+[tool.setuptools.packages.find]
+include = ["portfolia_dkb_fetch*"]

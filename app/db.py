@@ -883,6 +883,53 @@ CREATE TABLE IF NOT EXISTS ds_takeover (
 );
 CREATE INDEX IF NOT EXISTS ix_ds_takeover_source ON ds_takeover(source_id, id);
 """),
+    (30, """
+-- Bankunterlagen (DKB-Abruf): Einstellungen je Datenquelle, Läufe und Index der abgerufenen Dokumente. Die Dateien
+-- liegen im Dokumentenordner (Kategorie/Konto/Datei); der Index verhindert doppelte Abrufe und
+-- hält fest, was ausgewertet ist.
+-- Kein Passwort in der Datenbank – es wird je Lauf eingegeben und nur im Arbeitsspeicher gehalten.
+CREATE TABLE IF NOT EXISTS bank_source (
+  source_id    INTEGER PRIMARY KEY,
+  username     TEXT,
+  folder       TEXT,             -- Unterordner unterhalb des Dokumentenordners
+  mfa_device   INTEGER NOT NULL DEFAULT 0,
+  evaluate     INTEGER NOT NULL DEFAULT 1,   -- Depot-Abrechnungen nach dem Abruf automatisch auswerten
+  updated_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS bank_run (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id    INTEGER NOT NULL,
+  status       TEXT NOT NULL,    -- running | awaiting_2fa | fetching | evaluating | ok | partial | error | cancelled
+  message      TEXT,
+  total        INTEGER NOT NULL DEFAULT 0,
+  done         INTEGER NOT NULL DEFAULT 0,
+  summary_json TEXT,
+  started_at   TEXT NOT NULL,
+  finished_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_bank_run_source ON bank_run(source_id, id);
+CREATE TABLE IF NOT EXISTS bank_doc (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id    INTEGER NOT NULL,
+  doc_id       TEXT NOT NULL,    -- Kennung der Bank
+  category     TEXT,
+  doctype      TEXT,
+  account      TEXT,
+  doc_date     TEXT,
+  subject      TEXT,
+  rel_path     TEXT NOT NULL,    -- relativ zum Ordner der Datenquelle
+  sha256       TEXT,
+  size         INTEGER,
+  checksum_ok  INTEGER,
+  status       TEXT NOT NULL DEFAULT 'downloaded',   -- downloaded | evaluated | archived | error
+  note         TEXT,
+  run_id       INTEGER,
+  stack_id     TEXT,             -- Dokumentimport (Auswertung der Depot-Abrechnung)
+  fetched_at   TEXT NOT NULL,
+  UNIQUE(source_id, doc_id)
+);
+CREATE INDEX IF NOT EXISTS ix_bank_doc_status ON bank_doc(source_id, status);
+"""),
 ]
 
 

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}DKB-Dokumente {{ ds.name }}{% endblock %}
+{% block heading %}DKB-Dokumente: {{ ds.name }}{% endblock %}
+{% block content %}
+<div class="stack" id="dkb"{% if busy %} hx-get="/settings/datasources/{{ ds.id }}/dkb" hx-trigger="every 3s" hx-select="#dkb" hx-swap="outerHTML"{% endif %}>
+  <p class="hint"><a href="/settings/datasources/{{ ds.id }}">← {{ ds.name }}</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>Postbox der DKB abrufen</h2></div>
+    <p>Lädt <b>alle Dokumente</b> der Postbox (Kontoauszüge, Kreditkartenabrechnungen, Wertpapierdokumente …) in Ordner nach <b>Kategorie und Konto</b>. <b>Depot-Abrechnungen</b> (Kauf, Verkauf, Erträge) werden zusätzlich ausgewertet und als Vorschläge in den <a href="/journal/pruefung">Prüfstapel</a> gelegt – <b>gebucht wird erst nach Ihrer Prüfung</b>.</p>
+    <ul class="hint">
+      <li>Der Abruf läuft per Knopfdruck. Die Anmeldung muss in der <b>DKB-App freigegeben</b> werden (Zweiter Faktor).</li>
+      <li>Das <b>Passwort wird nicht gespeichert</b> – nur für diesen Abruf im Arbeitsspeicher gehalten. Pro Klick gibt es genau einen Anmeldeversuch.</li>
+      <li>Nur lesend: Dokumente werden nicht als gelesen markiert; es wird nichts an die Bank gesendet außer Anmeldung, Liste und Download.</li>
+      <li>Kontoumsätze werden <b>nicht gebucht</b>; Kontoauszüge und Karten-PDFs werden nur abgelegt.</li>
+    </ul>
+  </section>
+
+  <section class="card" id="einrichtung">
+    <div class="card-head"><h2>1 · Einrichtung</h2> {% if plug.installed %}<span class="badge good">eingerichtet</span>{% else %}<span class="badge warn">nicht eingerichtet</span>{% endif %}</div>
+    {% if inst.running %}<div class="alert info" role="status"><span class="icon">…</span><div>{{ inst.message }}</div></div>
+    {% elif inst.message %}<div class="alert {{ 'good' if inst.ok else 'crit' }}" role="status"><span class="icon">{{ '✓' if inst.ok else '!' }}</span><div>{{ inst.message }}</div></div>{% endif %}
+    {% if plug.installed %}
+    <dl class="kv">
+      <div><dt>Abrufprogramm</dt><dd>portfolia-dkb-fetch {{ plug.version }}</dd></div>
+      <div><dt>Bibliothek</dt><dd>{% for k, v in plug.libs.items() %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}</dd></div>
+      <div><dt>Eingerichtet am</dt><dd>{{ plug.installed_at|datetime_de if plug.installed_at else '–' }}</dd></div>
+      <div><dt>Python</dt><dd>{{ plug.python or '–' }}</dd></div>
+    </dl>
+    {% else %}
+    <p>Das Abrufprogramm ist ein eigenes Programm (<b>GPL-3.0</b>, nutzt <a href="https://github.com/grindsa/dkb-robo">dkb-robo</a>). Es wird erst jetzt – in einer eigenen Python-Umgebung unter <span class="mono">/data/plugins/dkb</span> – nachinstalliert und ist nicht Teil von Portfolia. Dafür braucht der Container einmalig Internetzugang (PyPI, GitHub); das dauert etwa ein bis zwei Minuten.</p>
+    {% endif %}
+    <p class="hint">Quelle: <span class="mono wrap-any">{{ plug.spec }}</span></p>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/setup"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn {{ '' if plug.installed else 'primary' }}" type="submit"{% if busy %} disabled{% endif %}>{{ 'Aktualisieren' if plug.installed else 'DKB-Abruf einrichten' }}</button></form>
+      {% if plug.installed %}<form method="post" action="/settings/datasources/{{ ds.id }}/dkb/remove" data-confirm="Abrufprogramm entfernen? Bereits abgelegte Dokumente bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit"{% if busy %} disabled{% endif %}>Entfernen</button></form>{% endif %}
+    </div>
+  </section>
+
+  <section class="card" id="ordner">
+    <div class="card-head"><h2>2 · Ablageordner</h2> {% if folder.writable %}<span class="badge good">beschreibbar</span>{% else %}<span class="badge crit">nicht beschreibbar</span>{% endif %}</div>
+    <p>Ablage: <span class="mono wrap-any">{{ folder.path }}</span><br><span class="hint">Struktur: Kategorie / Konto bzw. Depot / Datum_Name.pdf</span></p>
+    {% if not folder.writable %}<div class="alert crit"><span class="icon">!</span><div>Der Ordner ist nicht beschreibbar. In Unraid unter „Bankunterlagen“ eine Freigabe für den Container zuordnen (Schreibzugriff) und den Container neu starten.</div></div>
+    {% elif not folder.mounted %}<div class="alert warn"><span class="icon">!</span><div>Der Ordner liegt im Container{% if folder.in_data %} im appdata-Ordner{% endif %}, nicht auf einer eigenen Freigabe. Für eine eigene Unraid-Freigabe in der Container-Vorlage den Pfad „Bankunterlagen“ (<span class="mono">/documents</span>) zuordnen.</div></div>{% endif %}
+    <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/settings" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Unterordner <input style="width:100%;max-width:28rem" name="folder" value="{{ set.folder }}" placeholder="{{ ds.name }}" maxlength="80" autocomplete="off"></label>
+      <label>Benutzername (Anmeldename der DKB; wird gemerkt, das Passwort nie) <input style="width:100%;max-width:28rem" name="username" value="{{ set.username }}" maxlength="80" autocomplete="username"></label>
+      <label>Gerät für die Freigabe (0 = Standard, sonst Nummer in der Liste der DKB-App) <input name="mfa_device" type="number" min="0" max="9" value="{{ set.mfa_device }}" style="max-width:6rem"></label>
+      <label class="check"><input type="checkbox" name="evaluate" value="1"{% if set.evaluate %} checked{% endif %}> Depot-Abrechnungen nach dem Abruf automatisch auswerten (Vorschläge im Prüfstapel)</label>
+      <div><button class="btn" type="submit">Speichern</button></div>
+    </form>
+  </section>
+
+  <section class="card" id="abruf">
+    <div class="card-head"><h2>3 · Abrufen und auswerten</h2></div>
+    {% if run and run.active %}
+    <div class="alert info" role="status"><span class="icon">…</span><div><b>{{ run.label }}</b> – {{ run.message }}</div></div>
+    {% if run.total %}<progress max="{{ run.total }}" value="{{ run.done }}" style="width:100%"></progress> <span class="hint">{{ run.done }} / {{ run.total }}</span>{% endif %}
+    <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Abbrechen</button></form>
+    {% else %}
+    {% if run %}<div class="alert {{ 'good' if run.status == 'ok' else 'warn' if run.status in ('partial', 'cancelled') else 'crit' }}" role="status"><span class="icon">{{ '✓' if run.status == 'ok' else '!' }}</span><div><b>Letzter Abruf ({{ run.started_at|datetime_de }}): {{ run.label }}</b> – {{ run.message }}
+      {% if run.summary.evaluated %}<br>Auswertung: {{ run.summary.evaluated.evaluated or 0 }} Dokumente, {{ run.summary.evaluated.transactions or 0 }} Vorgänge im <a href="/journal/pruefung">Prüfstapel</a>{% if run.summary.evaluated.failed %}, {{ run.summary.evaluated.failed }} nicht lesbar{% endif %}.{% endif %}
+      {% if run.summary.errors %}<ul>{% for e in run.summary.errors[:6] %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}</div></div>{% endif %}
+    <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/run" class="stack" style="gap:8px" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mfa_device" value="{{ set.mfa_device }}">
+      <label>Benutzername <input style="width:100%;max-width:28rem" name="username" value="{{ set.username }}" required maxlength="80" autocomplete="username"></label>
+      <label>Passwort <input style="width:100%;max-width:28rem" name="password" type="password" required autocomplete="current-password"></label>
+      <div><button class="btn primary" type="submit"{% if not plug.installed or not folder.writable or busy %} disabled{% endif %}>Abrufen und auswerten</button>
+      {% if not plug.installed %}<span class="hint"> Zuerst oben „DKB-Abruf einrichten“.</span>{% endif %}</div>
+      <p class="hint">Danach die Anfrage in der DKB-App bestätigen (Wartezeit etwa 50 Sekunden). Das Passwort wird nicht gespeichert.</p>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="card" id="dokumente">
+    <div class="card-head"><h2>Abgelegte Dokumente</h2> <span class="badge">{{ docs.total }}</span></div>
+    {% if docs.total %}
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Kategorie</th><th class="num">Dokumente</th><th>Stand</th></tr></thead><tbody>
+    {% for cat, c in docs.categories.items() %}<tr><td><b>{{ cat }}</b></td><td class="num" data-label="Dokumente">{{ c.values()|sum }}</td><td data-label="Stand">{% if c.evaluated %}{{ c.evaluated }} ausgewertet{% endif %}{% if c.downloaded %}{{ ', ' if c.evaluated }}{{ c.downloaded }} auszuwerten{% endif %}{% if c.archived %}{{ ', ' if c.evaluated or c.downloaded }}{{ c.archived }} nur abgelegt{% endif %}{% if c.error %}{{ ', ' }}<span class="badge crit">{{ c.error }} Fehler</span>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% if docs.pending %}<form method="post" action="/settings/datasources/{{ ds.id }}/dkb/evaluate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit"{% if busy %} disabled{% endif %}>{{ docs.pending }} Depot-Abrechnung(en) jetzt auswerten</button></form>{% endif %}
+    <details><summary>Zuletzt abgelegt</summary>
+      <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Datum</th><th>Dokument</th><th>Konto</th><th>Stand</th></tr></thead><tbody>
+      {% for d in docs.recent %}<tr><td>{{ d.doc_date }}</td><td class="wide" data-label="Dokument">{{ d.subject or d.rel_path }}<div class="hint wrap-any">{{ d.rel_path }}</div></td><td data-label="Konto">{{ d.account or '–' }}</td><td data-label="Stand">{{ {'downloaded': 'auszuwerten', 'evaluated': 'ausgewertet', 'archived': 'abgelegt', 'error': 'Fehler'}.get(d.status, d.status) }}{% if d.note %}<div class="hint">{{ d.note }}</div>{% endif %}{% if d.checksum_ok == 0 %}<div><span class="badge warn">Prüfsumme weicht ab</span></div>{% endif %}</td></tr>{% endfor %}
+      </tbody></table></div>
+    </details>
+    {% else %}<p class="hint">Noch nichts abgerufen.</p>{% endif %}
+  </section>
+
+  {% if runs|length > 1 %}
+  <details class="card"><summary><b>Frühere Läufe</b></summary>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Beginn</th><th>Ergebnis</th><th>Meldung</th></tr></thead><tbody>
+    {% for r in runs %}<tr><td>{{ r.started_at|datetime_de }}</td><td data-label="Ergebnis">{{ status_label.get(r.status, r.status) }}</td><td class="wide" data-label="Meldung">{{ r.message }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </details>
+  {% endif %}
+</div>
+{% endblock %}

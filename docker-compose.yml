@@ -23,8 +23,10 @@ services:
       AUTH_PASSWORD_HASH: "${AUTH_PASSWORD_HASH:-}"
       DEMO_MODE: "${DEMO_MODE:-false}"
       EXPORT_DIR: /exports
+      DOCUMENTS_DIR: /documents
     volumes:
       - ./data:/data
       - ./import:/import:ro
       - ./exports:/exports
+      - ./documents:/documents  # Bankunterlagen (DKB-Abruf)
     restart: unless-stopped

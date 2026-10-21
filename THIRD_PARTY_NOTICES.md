@@ -140,3 +140,10 @@ API-Key) kommen von der Bitpanda Public API und der Binance Spot-API (api.binanc
 Die Bitcoin-Ableitung (BIP32, nur öffentlich), Bech32/Bech32m, Base58, Keccak-256 und RIPEMD-160 sind eigene
 Implementierungen nach den jeweiligen öffentlichen Spezifikationen (BIP32/44/49/84/86/173/350, FIPS 202/Keccak,
 RIPEMD-160); die Testvektoren stammen aus diesen Spezifikationen.
+
+## Optional zur Laufzeit nachinstalliert (nicht im Image)
+
+| Komponente | Lizenz | Hinweis |
+|---|---|---|
+| `portfolia-dkb-fetch` (`contrib/portfolia-dkb-fetch`, Quelltext in diesem Repository, eigener Lizenztext) | GPL-3.0-or-later | Abrufprogramm für die DKB-Postbox; wird nur auf Knopfdruck des Nutzers in eine eigene Python-Umgebung unter `<DATA_DIR>/plugins/dkb` installiert und als getrennter Prozess gestartet (Austausch über JSON-Zeilen und Dateien). Weder im Docker-Image noch Teil des MIT-lizenzierten Portfolia-Codes (`app/`). |
+| [dkb-robo](https://github.com/grindsa/dkb-robo) 0.31.2 (und deren Abhängigkeiten) | GPL-3.0 | Wird mit dem Abrufprogramm nachinstalliert; Lizenztext im Paket. |

@@ -6,10 +6,14 @@ PUID="${PUID:-99}"
 PGID="${PGID:-100}"
 DATA_DIR="${DATA_DIR:-/data}"
 EXPORT_DIR="${EXPORT_DIR:-}"
+DOCUMENTS_DIR="${DOCUMENTS_DIR:-}"
 
 mkdir -p "$DATA_DIR"
 if [ -n "$EXPORT_DIR" ]; then
   mkdir -p "$EXPORT_DIR"
+fi
+if [ -n "$DOCUMENTS_DIR" ]; then
+  mkdir -p "$DOCUMENTS_DIR"
 fi
 
 # Besitzrechte nur anpassen, wo nötig (z. B. nach PUID-Wechsel oder Dateien aus `docker exec` als root)
@@ -49,6 +53,9 @@ if [ "$(id -u)" = "0" ]; then
   fix_owner "$DATA_DIR"
   if [ -n "$EXPORT_DIR" ]; then
     fix_owner "$EXPORT_DIR"
+  fi
+  if [ -n "$DOCUMENTS_DIR" ]; then
+    fix_owner "$DOCUMENTS_DIR"
   fi
   exec setpriv --reuid="$PUID" --regid="$PGID" --clear-groups --inh-caps=-all --bounding-set=-all -- "$@"
 fi
