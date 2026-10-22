@@ -54,7 +54,7 @@ STATUS_LABEL = {"running": "Anmeldung", "awaiting_2fa": "Freigabe in der DKB-App
                 "cancelled": "abgebrochen"}
 KIND_TEXT = {
     "dependency": "Das Abrufprogramm ist unvollständig installiert – bitte „DKB-Abruf einrichten“ erneut ausführen.",
-    "login": "Anmeldung abgelehnt (Benutzername/Passwort oder Freigabe). Es wurde nur ein Versuch unternommen.",
+    "login": "Anmeldung abgelehnt. Es wurde nur ein Versuch unternommen.",
     "2fa_timeout": "Keine Freigabe in der DKB-App innerhalb der Wartezeit. Bitte erneut starten und die Anfrage in "
                    "der App bestätigen.",
     "2fa_canceled": "Die Freigabe wurde in der DKB-App abgebrochen.",
@@ -78,6 +78,29 @@ _RUNNING: dict[int, Handle] = {}
 
 def _now() -> str:
     return iso(datetime.now(UTC)) or ""
+
+
+_STATUS = re.compile(r"\bRC:?\s*(\d{3})\b")
+_STATUS_HINT = {
+    400: "Die DKB hat die Anfrage nicht akzeptiert (Format) – vermutlich hat sich die Schnittstelle geändert.",
+    401: "Benutzername oder Passwort wurden abgelehnt. Gemeint ist der Anmeldename des Online-Bankings (nicht die "
+         "IBAN).",
+    403: "Die DKB verweigert den Zugriff – Zugang gesperrt oder automatisierter Zugriff blockiert.",
+    429: "Zu viele Anmeldeversuche – bitte eine Weile warten.",
+}
+
+
+def explain(kind: str, detail: str) -> str:
+    """Meldung für die Anzeige: Erklärung der Fehlerart, Hinweis zum HTTP-Status und technische Meldung der Bibliothek
+    (ohne Zugangsdaten) – damit ein abgelehnter Login nicht ohne Ursache bleibt."""
+    text = KIND_TEXT.get(kind, KIND_TEXT["other"])
+    m = _STATUS.search(detail)
+    status = int(m.group(1)) if m else None
+    if kind == "login" and "1st factor" in detail:
+        text += " Die Ablehnung kam beim ersten Schritt (Benutzername/Passwort), vor der Freigabe in der App."
+    if status:
+        text += f" HTTP-Status {status}: " + _STATUS_HINT.get(status, "Antwort der DKB nicht erwartet.")
+    return text + (f" Technische Meldung: {detail[:240]}" if detail else "")
 
 
 def safe_name(text: str, fallback: str) -> str:
@@ -415,8 +438,10 @@ def _fetch(ctx: Any, sid: int, rid: int, username: str, password: str, mfa: int,
     if error is not None:
         kind = str(error.get("kind") or "other")
         detail = sanitize_error(str(error.get("message") or ""), (password, username))
-        text = KIND_TEXT.get(kind, KIND_TEXT["other"])
-        return "error", text + (f" ({detail[:200]})" if detail and kind in ("changed", "other") else "")
+        lines = [sanitize_error(x, (password, username)) for x in list(tail)[-8:]]
+        summary["diagnose"] = {"kind": kind, "detail": detail, "stderr": [x for x in lines if x],
+                               "fetcher": str(error.get("fetcher") or "")}
+        return "error", explain(kind, detail)
     if rc not in (0,) and not handle.cancel.is_set():
         last = sanitize_error(" | ".join(list(tail)[-3:]), (password, username))
         return "error", KIND_TEXT["other"] + (f" ({last[:200]})" if last else "")

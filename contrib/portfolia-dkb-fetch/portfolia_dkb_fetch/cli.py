@@ -135,7 +135,7 @@ def run(out_dir: Path, creds: dict[str, Any], known: set[str], emit: Emitter, st
         return 0
     except Exception as e:
         msg = _clean(str(e) or type(e).__name__, password, user)
-        emit("error", kind=classify(msg), message=msg[:300])
+        emit("error", kind=classify(msg), message=f"{type(e).__name__}: {msg}"[:300], fetcher=__version__)
         return 2
 
 

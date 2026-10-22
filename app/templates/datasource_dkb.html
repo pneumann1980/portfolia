@@ -63,10 +63,11 @@
     {% else %}
     {% if run %}<div class="alert {{ 'good' if run.status == 'ok' else 'warn' if run.status in ('partial', 'cancelled') else 'crit' }}" role="status"><span class="icon">{{ '✓' if run.status == 'ok' else '!' }}</span><div><b>Letzter Abruf ({{ run.started_at|datetime_de }}): {{ run.label }}</b> – {{ run.message }}
       {% if run.summary.evaluated %}<br>Auswertung: {{ run.summary.evaluated.evaluated or 0 }} Dokumente, {{ run.summary.evaluated.transactions or 0 }} Vorgänge im <a href="/journal/pruefung">Prüfstapel</a>{% if run.summary.evaluated.failed %}, {{ run.summary.evaluated.failed }} nicht lesbar{% endif %}.{% endif %}
-      {% if run.summary.errors %}<ul>{% for e in run.summary.errors[:6] %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}</div></div>{% endif %}
+      {% if run.summary.errors %}<ul>{% for e in run.summary.errors[:6] %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+      {% if run.summary.diagnose %}<details><summary class="hint">Technische Einzelheiten</summary><div class="small wrap-any">Art: {{ run.summary.diagnose.kind }}{% if run.summary.diagnose.fetcher %} · Abrufprogramm {{ run.summary.diagnose.fetcher }}{% endif %}<br>Meldung: {{ run.summary.diagnose.detail }}{% if run.summary.diagnose.stderr %}<br>Ausgabe der Bibliothek:<ul>{% for x in run.summary.diagnose.stderr %}<li class="mono">{{ x }}</li>{% endfor %}</ul>{% endif %}</div></details>{% endif %}</div></div>{% endif %}
     <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/run" class="stack" style="gap:8px" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mfa_device" value="{{ set.mfa_device }}">
-      <label>Benutzername <input style="width:100%;max-width:28rem" name="username" value="{{ set.username }}" required maxlength="80" autocomplete="username"></label>
+      <label>Benutzername (Anmeldename im DKB-Online-Banking, nicht die IBAN) <input style="width:100%;max-width:28rem" name="username" value="{{ set.username }}" required maxlength="80" autocomplete="username"></label>
       <label>Passwort <input style="width:100%;max-width:28rem" name="password" type="password" required autocomplete="current-password"></label>
       <div><button class="btn primary" type="submit"{% if not plug.installed or not folder.writable or busy %} disabled{% endif %}>Abrufen und auswerten</button>
       {% if not plug.installed %}<span class="hint"> Zuerst oben „DKB-Abruf einrichten“.</span>{% endif %}</div>

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "portfolia-dkb-fetch"
-version = "0.1.0"
+version = "0.1.1"
 description = "Ruft die Postbox der DKB (nur lesend) ab und legt die Dokumente in Ordner – Hilfsprogramm für Portfolia"
 readme = "README.md"
 requires-python = ">=3.10"

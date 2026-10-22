@@ -423,3 +423,29 @@ def test_folder_state_reports_missing_mount(config: Config, master, scenario, tm
         assert "nicht auf einer eigenen Freigabe" in page
     finally:
         c.__exit__(None, None, None)
+
+
+def test_explain_names_status_and_technical_message() -> None:
+    first = D.explain("login", "DKBRoboError: Login failed: 1st factor authentication failed. RC: 401")
+    assert "vor der Freigabe" in first and "HTTP-Status 401" in first and "Anmeldename" in first
+    assert "Technische Meldung: DKBRoboError: Login failed" in first
+    assert "blockiert" in D.explain("login", "Login failed: 1st factor authentication failed. RC: 403")
+    assert "Zu viele" in D.explain("login", "Login failed: 1st factor authentication failed. RC: 429")
+    assert "HTTP-Status" not in D.explain("network", "ConnectionError: timed out")
+    assert D.explain("other", "").endswith(D.KIND_TEXT["other"])
+
+
+def test_error_run_keeps_diagnosis_for_the_page(config: Config, master, scenario) -> None:
+    scenario["error"] = "login"
+    commit(scenario)
+    c, sid = setup_app(config)
+    try:
+        D.start(ctx(c), sid, "kunde1", PASSWORD)
+        wait(sid)
+        run = D.view_run(ctx(c).db, sid)
+        assert run["status"] == "error" and run["summary"]["diagnose"]["kind"] == "login"
+        assert "Fehlertext" in run["message"] and PASSWORD not in run["message"] + json.dumps(run["summary"])
+        page = c.get(f"/settings/datasources/{sid}/dkb").text
+        assert "Technische Einzelheiten" in page and "Fehlertext" in page and PASSWORD not in page
+    finally:
+        c.__exit__(None, None, None)

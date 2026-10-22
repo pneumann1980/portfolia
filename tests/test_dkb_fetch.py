@@ -204,6 +204,7 @@ def test_errors_are_classified_and_secrets_masked(tmp_path, bank, message, kind)
     rc, ev, raw = run(tmp_path)
     err = ev[-1]
     assert rc == 2 and err["event"] == "error" and err["kind"] == kind and PASSWORD not in raw
+    assert err["message"].startswith("RuntimeError: ") and err["fetcher"] == cli.__version__
     assert not (tmp_path / "out" / "Kontoauszüge").exists()
 
 
