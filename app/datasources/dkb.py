@@ -82,24 +82,34 @@ def _now() -> str:
 
 _STATUS = re.compile(r"\bRC:?\s*(\d{3})\b")
 _STATUS_HINT = {
-    400: "Die DKB hat die Anfrage nicht akzeptiert (Format) – vermutlich hat sich die Schnittstelle geändert.",
     401: "Benutzername oder Passwort wurden abgelehnt. Gemeint ist der Anmeldename des Online-Bankings (nicht die "
          "IBAN).",
-    403: "Die DKB verweigert den Zugriff – Zugang gesperrt oder automatisierter Zugriff blockiert.",
-    429: "Zu viele Anmeldeversuche – bitte eine Weile warten.",
 }
+
+
+BLOCK_TEXT = ("Die DKB-Anmeldeseite hat die automatisierte Anfrage abgewiesen (Bot-Schutz/Captcha). Das ist kein "
+              "Fehler bei Benutzername oder Passwort. Bekanntes Problem der Bibliothek dkb-robo seit November 2025 "
+              "(Issue #92 im dkb-robo-Repository): Die Anmeldung der DKB verlangt ein Captcha, das ohne Browser nicht lösbar ist; "
+              "eine stabile Lösung gibt es bisher nicht. Alternative: Dokumente selbst aus der Postbox laden und im "
+              "Ablageordner ablegen.")
 
 
 def explain(kind: str, detail: str) -> str:
     """Meldung für die Anzeige: Erklärung der Fehlerart, Hinweis zum HTTP-Status und technische Meldung der Bibliothek
-    (ohne Zugangsdaten) – damit ein abgelehnter Login nicht ohne Ursache bleibt."""
-    text = KIND_TEXT.get(kind, KIND_TEXT["other"])
+    (ohne Zugangsdaten) – damit eine abgewiesene Anmeldung nicht ohne Ursache bleibt."""
     m = _STATUS.search(detail)
     status = int(m.group(1)) if m else None
-    if kind == "login" and "1st factor" in detail:
-        text += " Die Ablehnung kam beim ersten Schritt (Benutzername/Passwort), vor der Freigabe in der App."
-    if status:
-        text += f" HTTP-Status {status}: " + _STATUS_HINT.get(status, "Antwort der DKB nicht erwartet.")
+    first = "1st factor" in detail
+    if (first and status in (400, 403, 429, 500, 502, 503, 504)) or kind == "blocked":
+        text = BLOCK_TEXT
+        if status:
+            text += f" (HTTP-Status {status})"
+    else:
+        text = KIND_TEXT.get(kind, KIND_TEXT["other"])
+        if kind == "login" and first:
+            text += " Die Ablehnung kam beim ersten Schritt (Benutzername/Passwort), vor der Freigabe in der App."
+        if status:
+            text += f" HTTP-Status {status}: " + _STATUS_HINT.get(status, "Antwort der DKB nicht erwartet.")
     return text + (f" Technische Meldung: {detail[:240]}" if detail else "")
 
 

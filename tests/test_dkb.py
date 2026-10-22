@@ -426,11 +426,15 @@ def test_folder_state_reports_missing_mount(config: Config, master, scenario, tm
 
 
 def test_explain_names_status_and_technical_message() -> None:
-    first = D.explain("login", "DKBRoboError: Login failed: 1st factor authentication failed. RC: 401")
-    assert "vor der Freigabe" in first and "HTTP-Status 401" in first and "Anmeldename" in first
-    assert "Technische Meldung: DKBRoboError: Login failed" in first
-    assert "blockiert" in D.explain("login", "Login failed: 1st factor authentication failed. RC: 403")
-    assert "Zu viele" in D.explain("login", "Login failed: 1st factor authentication failed. RC: 429")
+    wrong = D.explain("login", "DKBRoboError: Login failed: 1st factor authentication failed. RC: 401")
+    assert "vor der Freigabe" in wrong and "HTTP-Status 401" in wrong and "Anmeldename" in wrong
+    assert "Technische Meldung: DKBRoboError: Login failed" in wrong and "Bot-Schutz" not in wrong
+    # 503/400/502 beim ersten Schritt: Bot-Schutz der DKB (dkb-robo Issue #92), nicht Benutzername/Passwort
+    for rc in (400, 502, 503):
+        blocked = D.explain("login", f"Login failed: 1st factor authentication failed. RC: {rc}")
+        assert "Bot-Schutz" in blocked and "kein Fehler bei Benutzername" in blocked and f"HTTP-Status {rc}" in blocked
+        assert "Anmeldename" not in blocked
+    assert "Bot-Schutz" in D.explain("blocked", "")
     assert "HTTP-Status" not in D.explain("network", "ConnectionError: timed out")
     assert D.explain("other", "").endswith(D.KIND_TEXT["other"])
 

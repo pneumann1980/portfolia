@@ -61,6 +61,16 @@ Aufruf: `python -m portfolia_dkb_fetch --out DIR --known DATEI` (stdin: eine JSO
   Auswertung legt der Dokumentimport (wie bei Beleg-Uploads) eine Kopie im Datenordner ab, solange
   „Originale behalten“ aktiv ist.
 
+## Bekanntes Problem: Anmeldung durch Bot-Schutz blockiert (Stand 22.10.2026)
+
+Die DKB schützt die Anmeldung seit November 2025 mit einem Captcha (Friendly Captcha) und einer Bot-Erkennung (Myra). Die
+Bibliothek dkb-robo 0.31.2 (neueste Version) kann das nicht lösen: Die Anmeldung scheitert beim ersten Schritt mit
+`1st factor authentication failed` und HTTP 400/502/503 – **noch bevor** die Freigabe in der App angefragt wird und unabhängig
+von Benutzername und Passwort (siehe dkb-robo, Issue #92: Fix nur in einem Entwicklungszweig, braucht zusätzlich einen
+Browser für das Captcha-Token, noch nicht stabil). Portfolia zeigt das als „Bot-Schutz/Captcha“ an. **Der automatische Abruf
+funktioniert deshalb derzeit nicht;** ein Umgehen des Captchas per Browser-Automatisierung ist bewusst nicht vorgesehen
+(Sicherheitsmaßnahme der Bank, schwergewichtig, brüchig, Bedingungen).
+
 ## Grenzen
 
 * **Gegen die echte DKB nicht getestet.** Geprüft sind: Installation mit echtem dkb-robo 0.31.2 (venv + pip), der Fetcher mit
