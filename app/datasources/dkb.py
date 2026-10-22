@@ -89,7 +89,8 @@ _STATUS_HINT = {
 
 BLOCK_TEXT = ("Die DKB-Anmeldeseite hat die automatisierte Anfrage abgewiesen (Bot-Schutz/Captcha). Das ist kein "
               "Fehler bei Benutzername oder Passwort. Bekanntes Problem der Bibliothek dkb-robo seit November 2025 "
-              "(Issue #92 im dkb-robo-Repository): Die Anmeldung der DKB verlangt ein Captcha, das ohne Browser nicht lösbar ist; "
+              "(Issue #92 im dkb-robo-Repository): Die Anmeldung der DKB verlangt ein Captcha, das ohne Browser nicht "
+              "lösbar ist; "
               "eine stabile Lösung gibt es bisher nicht. Alternative: Dokumente selbst aus der Postbox laden und im "
               "Ablageordner ablegen.")
 
