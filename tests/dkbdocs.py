@@ -31,10 +31,12 @@ def abrechnung(side: str = "Kauf", order: str = "123456/78.00", day: str = "06.0
                fees: tuple[tuple[str, str], ...] = (("Provision", "10,00"), ("Fremde Auslagen", "6,43"),
                                                     ("Eigene Spesen", "20,00")),
                taxes: tuple[tuple[str, str, str, str], ...] = (), refund: tuple[tuple[str, str, str, str], ...] = (),
-               close: str | None = "05.08.2024 15:30:00", total: str | None = None, glue: bool = True) -> list[str]:
+               close: str | None = "05.08.2024 15:30:00", total: str | None = None, glue: bool = True,
+               gain: str | None = None, tail: tuple[str, ...] = ()) -> list[str]:
     """Kauf-/Verkaufsabrechnung wie bei der DKB: Vorzeichen als Suffix, Summen konsistent berechnet. ``taxes`` und
     ``refund`` sind (Bezeichnung, Satz, Grundlage, Betrag); ``total`` überschreibt den Ausmachenden Betrag
-    (Negativtest)."""
+    (Negativtest). ``gain`` (``"654,39"``, Verlust mit ``-``) schreibt das Veräußerungsergebnis auch ohne Steuern,
+    ``tail`` (siehe ``steuer_tail``) hängt Töpfe und Anschaffungsgeschäfte hinter „Nachrichtlich“."""
     n = lambda t: Decimal(t.replace(".", "").replace(",", "."))  # noqa: E731
     kw, fee_sum = n(kurswert), sum((n(a) for _l, a in fees), Decimal(0))
     tax_sum = sum((n(a) for _l, _r, _b, a in taxes), Decimal(0))
@@ -51,9 +53,12 @@ def abrechnung(side: str = "Kauf", order: str = "123456/78.00", day: str = "06.0
         lines.append(f"Devisenkurs (EUR/{price.split()[-1]}) {fx} vom {day}")
     lines.append(f"Kurswert  {de(kw)}{sign} EUR")
     lines += [f"{label}  {amount}- EUR" for label, amount in fees]
+    if taxes or gain:
+        g = gain or "9.230,50"
+        lines += ["Ermittlung steuerrelevante Erträge",
+                  f"Veräußerungsverlust  {g[1:]}- EUR" if g.startswith("-") else f"Veräußerungsgewinn  {g} EUR"]
     if taxes:
-        lines += ["Ermittlung steuerrelevante Erträge", "Veräußerungsgewinn  9.230,50 EUR",
-                  "Bemessungsgrundlage für die Kapitalertragsteuer  9.230,50 EUR",
+        lines += ["Bemessungsgrundlage für die Kapitalertragsteuer  9.230,50 EUR",
                   "Berechnungsgrundlage für die Kapitalertragsteuer  8.765,71 EUR", "Steuerberechnung"]
         lines += [f"{label} {rate} % auf {base} EUR  {amount}- EUR" for label, rate, base, amount in taxes]
     cash = kw + fee_sum if buy else kw - fee_sum - tax_sum
@@ -67,8 +72,36 @@ def abrechnung(side: str = "Kauf", order: str = "123456/78.00", day: str = "06.0
         lines += [f"{label} {rate} % auf {base} EUR  {amount}  EUR" for label, rate, base, amount in refund]
         lines.append(f"Ausmachender Betrag  {de(sum((n(a) for *_x, a in refund), Decimal(0)))}  EUR")
     lines += ["Nachrichtlich die Übersicht Ihrer Verrechnungs- und Steuertopfsalden zum Zeitpunkt der Erstellung.",
-              "Kapitalertragsteuer 25,00 % auf 1,00 EUR  0,25- EUR", *NOISE, *FOOT]
+              "Kapitalertragsteuer 25,00 % auf 1,00 EUR  0,25- EUR", *tail, *NOISE, *FOOT]
     return lines
+
+
+def topf_zeilen(year: str = "2025", before: tuple[str, ...] = ("0,00", "0,00", "2.000,00", "0,00", "0,00"),
+                after: tuple[str, ...] | None = None) -> list[str]:
+    """Übersicht der Verlustverrechnungstöpfe (Aktien, Sonstige, Sparer-Pauschbetrag, anrechenbare Quellensteuer,
+    Berechnungsgrundlage); ``after=None`` lässt die Zeile „Nachher“ weg."""
+    lines = [f"Verlustverrechnungstöpfe {year}  Berechnungsgrundlage", "der gezahlten Steuern",
+             "Euro  Aktien  Sonstige  Sparer-  anrechenbare  Aktien und Sonstige", "Pauschbetrag  Quellensteuer",
+             "Vorher  " + "  ".join(before)]
+    if after is not None:
+        lines.append("Nachher  " + "  ".join(after))
+    return lines
+
+
+def steuer_tail(year: str = "2025", before: tuple[str, ...] = ("0,00", "0,00", "2.000,00", "0,00", "0,00"),
+                after: tuple[str, ...] = ("0,00", "0,00", "2.000,00", "0,00", "0,00"),
+                lots: tuple[tuple[str, str, str, str, str, str], ...] = (), total: str | None = None
+                ) -> tuple[str, ...]:
+    """Seite 2 einer Verkaufsabrechnung: Töpfe und „Berücksichtigte Anschaffungsgeschäfte“. ``lots`` =
+    (Auftragsnr., Datum, Stück, AS-Kosten, Erlös, Ergebnis); Vorzeichen als Suffix im Ergebnis."""
+    lines = topf_zeilen(year, before, after)
+    if lots:
+        lines += ["Berücksichtigte Anschaffungsgeschäfte (alle ermittelten Beträge in EUR)",
+                  "Geschäft  Auftragsnr. Ausführ.-tag Whr./St. Nennwert/Stück  AS-Kosten  Erlös  ant. Ergebnis"]
+        lines += [f"Kauf  {no}  {d} Stück  {q}  {c}-  {p}  {r} (D)" for no, d, q, c, p, r in lots]
+        lines.append("Summe aller Erträge nach Differenzmethode und/oder Ersatzbemessungsgrundlage  "
+                     + (total or lots[0][5]))
+    return tuple(lines)
 
 
 def ausfuehrungsanzeige() -> list[str]:
@@ -91,7 +124,7 @@ def streichung() -> list[str]:
             *FOOT]
 
 
-def ertrag(titel: str = "Dividendengutschrift", unter: str = "", abr: str = "57764418230",
+def ertrag(titel: str = "Dividendengutschrift", unter: str = "", abr: str = "97764418230",
            day: str = "18.03.2025") -> list[str]:
     kopf = [*HEAD, f"Datum  {day}", *ADDR, titel, *([unter] if unter else [])]
     return [*kopf, "Nominale  Wertpapierbezeichnung  ISIN  (WKN)", "Stück 20  BEISPIEL HOLDING INC.  US02079K3059  "
@@ -99,20 +132,20 @@ def ertrag(titel: str = "Dividendengutschrift", unter: str = "", abr: str = "577
             "Ausmachender Betrag  2,73+ EUR", "Seite 2", f"Abrechnungsnr.  {abr}", *NOISE, *FOOT]
 
 
-def kapital(untertitel: list[str], beleg: str = "61432975", day: str = "17.02.2025",
+def kapital(untertitel: list[str], beleg: str = "01432975", day: str = "17.02.2025",
             wkn: str = "A3CQRG", isin: str = "US67421J1088") -> list[str]:
     return [*HEAD[:3], f"Belegnummer  {beleg}", "Frau  Datum  " + day,
-            "Erika Mustermann  Kapitalmaßnahme  KSPLR00190012000",
+            "Erika Mustermann  Kapitalmaßnahme  KSPLR40190012000",
             "Beispielweg 1", "12345 Beispielstadt", *untertitel, "Nominale  Wertpapierbezeichnung  ISIN  (WKN)",
             f"Stück 100  BEISPIEL GROUP AB  {isin}  ({wkn})", "Sehr geehrte Frau Mustermann,", *FOOT]
 
 
-def ertragsabrechnung(sub: str = "dividende", abr: str = "57764418230", day: str = "18.03.2025",
+def ertragsabrechnung(sub: str = "dividende", abr: str = "97764418230", day: str = "18.03.2025",
                       pay: str = "17.03.2025", value_day: str | None = None, qty: str = "20", per: str = "0,20",
                       ccy: str = "USD", fx: str = "1,0970", gross_f: str = "4,00", gross: str = "3,65",
                       qst: tuple[str, str] | None = ("15", "0,55"), kest: tuple[str, str, str] | None = None,
                       soli: tuple[str, str, str] | None = None, verrechnet: bool = False,
-                      rueckforderbar: bool = False,
+                      rueckforderbar: bool = False, pots: list[str] | None = None,
                       total: str | None = None, isin: str = "US02079K3059", wkn: str = "A14Y6F",
                       name: str = "BEISPIEL HOLDING INC.", direction: str = "Gunsten") -> list[str]:
     """Ertragsabrechnung wie bei der DKB (Alle Beträge EUR, Vorzeichen als Suffix). ``qst`` = (Satz, Betrag EUR),
@@ -155,7 +188,7 @@ def ertragsabrechnung(sub: str = "dividende", abr: str = "57764418230", day: str
               "Seite 2", f"Abrechnungsnr.  {abr}",
               "Nachrichtlich die Übersicht Ihrer Verrechnungs- und Steuertopfsalden zum Zeitpunkt der Erstellung.",
               "Kapitalertragsteuer 25,00 % auf 1,00 EUR  0,25- EUR",
-              "Vorher  0,00  0,00  0,00  0,00  10.418,56", *NOISE, *FOOT]
+              *(pots or ["Vorher  0,00  0,00  0,00  0,00  10.418,56"]), *NOISE, *FOOT]
     return lines
 
 
@@ -163,12 +196,12 @@ def _ca(title: list[str], beleg: str, day: str, body: list[str], head: str | Non
     """Kapitalmaßnahme: Kopf mit Belegnummer, Titel unter dem Adressblock, Wertpapierkopf, Anrede, Text."""
     head = head or "Stück 100  BEISPIEL GROUP AB  US67421J1088  (A3CQRG)"
     return [*HEAD[:3], f"Belegnummer  {beleg}", f"Frau  Datum  {day}",
-            "Erika Mustermann  Kapitalmaßnahme  KSPLR00190012000", "Beispielweg 1", "12345 Beispielstadt", *title,
+            "Erika Mustermann  Kapitalmaßnahme  KSPLR40190012000", "Beispielweg 1", "12345 Beispielstadt", *title,
             "Nominale  Wertpapierbezeichnung  ISIN  (WKN)", head, "NAMN-AKT.(SPON.ADS)/1 O.N.",
             "Sehr geehrte Frau Mustermann,", *body, "Mit freundlichen Grüßen", *FOOT]
 
 
-def ca_reverse_split(stage: int = 2, beleg: str = "61433126", valuta: str = "18.02.2025", ratio: str = "20 : 1",
+def ca_reverse_split(stage: int = 2, beleg: str = "01433126", valuta: str = "18.02.2025", ratio: str = "20 : 1",
                      out_qty: str = "100", in_qty: str = "5", new_isin: str = "US67421J2078",
                      new_wkn: str = "A41264") -> list[str]:
     if stage == 1:
@@ -185,7 +218,7 @@ def ca_reverse_split(stage: int = 2, beleg: str = "61433126", valuta: str = "18.
     return _ca(["Zusammenlegung von Titeln (Reverse Split)"], beleg, "19.02.2025", body)
 
 
-def ca_gratis(beleg: str = "61454139", title: str = "Gratisausgabe - Neubuchung nach Storno", tax: bool = True,
+def ca_gratis(beleg: str = "01454139", title: str = "Gratisausgabe - Neubuchung nach Storno", tax: bool = True,
               total: str | None = None) -> list[str]:
     body = ["Ihrem Depot wurden mit Valuta 10.10.2025 Wertpapiere zu folgenden Bedingungen gutgeschrieben:",
             "Ex-Tag:  03.10.2025", "Verhältnis:  10 : 1", "Einbuchung",
@@ -195,7 +228,7 @@ def ca_gratis(beleg: str = "61454139", title: str = "Gratisausgabe - Neubuchung 
         body += ["Seite 2 von 2", f"Belegnummer  {beleg}", "Ermittlung steuerrelevanter Erträge",
                  "steuerrelevanter Bewertungskurs 2,477 EUR", "Unbarer Ertrag aus Kapitalmaßnahmen  4,95 EUR",
                  "Berechnungsgrundlage für die Kapitalertragsteuer  4,95 EUR",
-                 "Steuerberechnung (Geschäftsvorfallnummer 40000000736)",
+                 "Steuerberechnung (Geschäftsvorfallnummer 80000000736)",
                  "Kapitalertragsteuer 25,00 % auf 4,95 EUR  1,24- EUR",
                  "Solidaritätszuschlag 5,50% auf 1,24 EUR  0,06- EUR",
                  f"Ausmachender Betrag  {total or '1,30'}- EUR",
@@ -205,7 +238,7 @@ def ca_gratis(beleg: str = "61454139", title: str = "Gratisausgabe - Neubuchung 
     return _ca([title], beleg, "27.10.2025", body, "Stück 20  BEISPIEL CORP.  US36467W1099  (A0HGDX)")
 
 
-def ca_storno(beleg: str = "61452937") -> list[str]:
+def ca_storno(beleg: str = "01452937") -> list[str]:
     body = [f"wir haben den Vorgang mit der Belegnummer {beleg} und Valuta 10.10.2025 storniert. Es ergibt sich "
             "folgende Buchung:", "Ausbuchung", "Stück 2-  BEISPIEL CORP.  US36467W1172  (A4AQAG)", "WTS 30.10.26",
             "Aufgrund einer geänderten steuerlichen Bewertung sind ein Storno und eine Neubuchung notwendig."]
@@ -214,35 +247,35 @@ def ca_storno(beleg: str = "61452937") -> list[str]:
 
 
 def ca_entgelt(total: str = "1,91", per: str = "0,02 USD", fx: str = "1,0455") -> list[str]:
-    body = ["für den obigen Depotbestand aus Buchung vom 17.02.2025 mit Belegnummer 61432975 hat die Lagerstelle ein "
+    body = ["für den obigen Depotbestand aus Buchung vom 17.02.2025 mit Belegnummer 01432975 hat die Lagerstelle ein "
             "Entgelt von", f"{per} pro Stück belastet.", f"Devisenkurs (USD/EUR) {fx} vom 24.02.2025.",
             f"Ausmachender Betrag  {total}- EUR",
             "Den Gegenwert buchen wir mit Valuta 25.02.2025 zu Lasten des Kontos 12345678"]
-    return _ca(["Entgeltbelastung in Folge einer Kapitalmaßnahme"], "40014500", "25.02.2025", body)
+    return _ca(["Entgeltbelastung in Folge einer Kapitalmaßnahme"], "80014500", "25.02.2025", body)
 
 
 def ca_wertlos(loss: str = "121,55", cost: str = "121,55") -> list[str]:
     body = ["folgenden Depotbestand haben wir mit Valuta 30.10.2025 ersatzlos ausgebucht:", "Ausbuchung",
             "Stück 100-  BEISPIEL ASA  NO0010890304  (A2QBSN)", "Die zuständige Depotbank hat die Aktien als wertlos "
             "eingestuft.", "Ermittlung steuerrelevanter Erträge auf Folgeseite.", "Seite 2 von 2",
-            "Belegnummer  61454421", "Veräußerung infolge von Kapitalmaßnahme - Kurswert  0,00 EUR",
+            "Belegnummer  01454421", "Veräußerung infolge von Kapitalmaßnahme - Kurswert  0,00 EUR",
             "steuerrelevanter Bewertungskurs liegt nicht vor", "Ermittlung steuerrelevanter Erträge",
             f"Bemessungsgrundlage für die Kapitalertragsteuer  {loss}- EUR",
             "Berechnungsgrundlage für die Kapitalertragsteuer  0,00 EUR",
             "Berücksichtigte Anschaffungsgeschäfte (alle Beträge in EUR)",
-            f"Kauf  2561702500  15.12.2022 Stück  100,0000  {cost}  0,00  {cost}- (D)"]
-    return _ca(["Wertlose Titel - Ausbuchungsanzeige"], "61454421", "31.10.2025", body,
+            f"Kauf  6561702500  15.12.2022 Stück  100,0000  {cost}  0,00  {cost}- (D)"]
+    return _ca(["Wertlose Titel - Ausbuchungsanzeige"], "01454421", "31.10.2025", body,
                "Stück 100  BEISPIEL ASA  NO0010890304  (A2QBSN)")
 
 
 def ca_umbenennung() -> list[str]:
     body = ["bitte beachten Sie die neue Emittentenbezeichnung:", "Bezeichnung alt:  ALT BATTERY INC.",
             "Bezeichnung neu:  NEU ENERGY INC."]
-    return _ca(["Änderung der Emittentenbezeichnung"], "51818538", "04.03.2025", body,
+    return _ca(["Änderung der Emittentenbezeichnung"], "91818538", "04.03.2025", body,
                "Stück 200  ALT BATTERY INC.  US35834F1049  (A3E3UN)")
 
 
-def ca_info(title: str = "Antrag auf Chapter VII", beleg: str = "51805815") -> list[str]:
+def ca_info(title: str = "Antrag auf Chapter VII", beleg: str = "91805815") -> list[str]:
     body = ["die Gesellschaft hat einen Antrag gemäß Chapter VII des US Bankruptcy Code gestellt.",
             "Das bedeutet, dass eine vollständige Liquidation der Gesellschaft angestrebt wird."]
     return _ca([title], beleg, "22.01.2025", body, "Stück 4  BEISPIEL MOTORS INC.  US13803R3003  (A40XUX)")
@@ -255,7 +288,7 @@ def ersatzlose_voll(loss: str = "238,95", cost: str = "238,95") -> list[str]:
             "Ermittlung steuerrelevante Erträge", f"Veräußerungsverlust  {loss}- EUR",
             "Nachrichtlich die Übersicht Ihrer Verrechnungs- und Steuertopfsalden zum Zeitpunkt der Erstellung.",
             "Vorher  0,00  0,00  2.000,00  0,00  0,00", "Seite 2 von 2",
-            f"Kauf  5780911800  30.11.2020 Stück  50,0000  {cost}  nicht relevant  0,00  {cost}- (D)", *FOOT]
+            f"Kauf  9780911800  30.11.2020 Stück  50,0000  {cost}  nicht relevant  0,00  {cost}- (D)", *FOOT]
 
 
 def depotuebertrag() -> list[str]:
@@ -363,7 +396,7 @@ def kosteninfo_jahr() -> list[str]:
 
 
 def hauptversammlung() -> list[str]:
-    return [*HEAD[:3], "Belegnummer  10110420", "Frau  Datum  14.02.2025", "Erika Mustermann", "Beispielweg 1",
+    return [*HEAD[:3], "Belegnummer  50110420", "Frau  Datum  14.02.2025", "Erika Mustermann", "Beispielweg 1",
             "12345 Beispielstadt", "Terminsache: Eingang bis spätestens 25.02.2025, 10:00 Uhr",
             "Einladung zur außerordentl. Hauptversammlung", "Nominale  Wertpapierbezeichnung  ISIN  (WKN)",
             "Stück 100  BEISPIEL GROUP AB  US67421J1088  (A3CQRG)"]
@@ -389,32 +422,32 @@ GOLDEN: dict[str, tuple[list[str], tuple[str, str, str, str, str]]] = {
     "ausfuehrung": (ausfuehrungsanzeige(), ("ausfuehrungsanzeige", "", "buy", "", "1234567800")),
     "bestaetigung": (auftragsbestaetigung(), ("auftragsbestaetigung", "", "buy", "", "2652534400")),
     "streichung": (streichung(), ("streichung", "", "sell", "", "5270627500")),
-    "dividende": (ertrag(), ("ertrag", "dividende", "", "2025-03-18", "57764418230")),
-    "rueckzahlung": (ertrag("Gutschrift", "Kapitalrückzahlung", "57858717490", "19.03.2025"),
-                     ("ertrag", "kapitalrueckzahlung", "", "2025-03-19", "57858717490")),
-    "liquidation_ertrag": (ertrag("Gutschrift", "Liquidationszahlung", "79363215100", "20.10.2025"),
-                           ("ertrag", "liquidation", "", "2025-10-20", "79363215100")),
+    "dividende": (ertrag(), ("ertrag", "dividende", "", "2025-03-18", "97764418230")),
+    "rueckzahlung": (ertrag("Gutschrift", "Kapitalrückzahlung", "97858717490", "19.03.2025"),
+                     ("ertrag", "kapitalrueckzahlung", "", "2025-03-19", "97858717490")),
+    "liquidation_ertrag": (ertrag("Gutschrift", "Liquidationszahlung", "19363215100", "20.10.2025"),
+                           ("ertrag", "liquidation", "", "2025-10-20", "19363215100")),
     "reverse_split": (kapital(["Zusammenlegung von Titeln (Reverse Split)"]),
-                      ("kapitalmassnahme", "reverse_split", "", "2025-02-17", "61432975")),
-    "storno": (kapital(["Storno", "Gratisausgabe"], "61452937", "27.10.2025"),
-               ("kapitalmassnahme", "storno", "", "2025-10-27", "61452937")),
-    "neubuchung": (kapital(["Gratisausgabe - Neubuchung nach Storno"], "61454139", "27.10.2025"),
-                   ("kapitalmassnahme", "neubuchung", "", "2025-10-27", "61454139")),
-    "gratis": (kapital(["Gratisausgabe"], "51877627", "30.09.2025"),
-               ("kapitalmassnahme", "gratis", "", "2025-09-30", "51877627")),
-    "entgelt": (kapital(["Entgeltbelastung in Folge einer Kapitalmaßnahme"], "40014500", "25.02.2025"),
-                ("kapitalmassnahme", "entgelt", "", "2025-02-25", "40014500")),
-    "umbenennung": (kapital(["Änderung der Emittentenbezeichnung"], "51818538", "04.03.2025"),
-                    ("kapitalmassnahme", "umbenennung", "", "2025-03-04", "51818538")),
-    "wertlos": (kapital(["Wertlose Titel - Ausbuchungsanzeige"], "61454421", "31.10.2025"),
-                ("kapitalmassnahme", "wertlos", "", "2025-10-31", "61454421")),
+                      ("kapitalmassnahme", "reverse_split", "", "2025-02-17", "01432975")),
+    "storno": (kapital(["Storno", "Gratisausgabe"], "01452937", "27.10.2025"),
+               ("kapitalmassnahme", "storno", "", "2025-10-27", "01452937")),
+    "neubuchung": (kapital(["Gratisausgabe - Neubuchung nach Storno"], "01454139", "27.10.2025"),
+                   ("kapitalmassnahme", "neubuchung", "", "2025-10-27", "01454139")),
+    "gratis": (kapital(["Gratisausgabe"], "91877627", "30.09.2025"),
+               ("kapitalmassnahme", "gratis", "", "2025-09-30", "91877627")),
+    "entgelt": (kapital(["Entgeltbelastung in Folge einer Kapitalmaßnahme"], "80014500", "25.02.2025"),
+                ("kapitalmassnahme", "entgelt", "", "2025-02-25", "80014500")),
+    "umbenennung": (kapital(["Änderung der Emittentenbezeichnung"], "91818538", "04.03.2025"),
+                    ("kapitalmassnahme", "umbenennung", "", "2025-03-04", "91818538")),
+    "wertlos": (kapital(["Wertlose Titel - Ausbuchungsanzeige"], "01454421", "31.10.2025"),
+                ("kapitalmassnahme", "wertlos", "", "2025-10-31", "01454421")),
     "ausbuchung": (depotuebertrag(), ("depotuebertrag", "ersatzlose_ausbuchung", "", "2025-01-07", "7925957500")),
     "depotauszug": (depotauszug(), ("depotauszug", "", "", "2024-07-01", "2345-20240701")),
     "kosten_neu": (kosteninfo_neu(), ("kosteninfo_order", "", "buy", "2024-10-08", "LX4QJM-150225")),
     "kosten_verkauf": (kosteninfo_neu("Verkauf"), ("kosteninfo_order", "", "sell", "2024-10-08", "LX4QJM-150225")),
     "kosten_legacy": (kosteninfo_legacy(), ("kosteninfo_order", "", "", "2021-11-17", "A2QA4J-090045")),
     "kosten_jahr": (kosteninfo_jahr(), ("kosteninfo_jahr", "", "", "", "")),
-    "hauptversammlung": (hauptversammlung(), ("hauptversammlung", "", "", "2025-02-14", "10110420")),
+    "hauptversammlung": (hauptversammlung(), ("hauptversammlung", "", "", "2025-02-14", "50110420")),
     "verlustschwelle": (verlustschwelle(), ("verlustschwelle", "", "", "2024-10-08", "")),
 }
 

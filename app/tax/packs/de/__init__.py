@@ -265,6 +265,30 @@ class GermanyPack(RulePack):
                     "capital": {kk: vv for kk, vv in k.items() if kk not in ("rows_sales", "rows_income", "rows_vp")}}
         return res
 
+    def capital_for_accounts(self, inp: TaxInput, year: int, options: dict[str, Any],
+                             accounts: set[str]) -> dict[str, Any]:
+        """Kapitalerträge und Abgeltungsteuer-Schätzung **nur** für die genannten Konten, inländischer Steuerabzug
+        eingeschlossen (``include_domestic``). Grundlage des Vergleichs mit Bankabrechnungen; verändert nichts."""
+        o = {**self.defaults(), **(options or {}), "include_domestic": True}
+        led = inp.ledger
+        sub_led = dataclasses.replace(
+            led, disposals=[d for d in led.disposals if d.account in accounts],
+            income=[e for e in led.income if e.account in accounts],
+            taxes=[t for t in led.taxes if t.account in accounts],
+            lot_snapshots={d: [lot for lot in lots if lot.account in accounts]
+                           for d, lots in led.lot_snapshots.items()})
+        sub = dataclasses.replace(inp, ledger=sub_led)
+        P = self.p(year)
+        res = TaxResult(pack_id=self.id, pack_name=self.name, pack_version=self.version,
+                        params_version=self.params.version, year=year, params={}, options=o)
+        k = self._capital(sub, year, o, P, res, _Vp(self, sub))
+        pot = self._pot(KINDS, k, o, P)
+        pb_total = _d(P["capital"]["sparer_pauschbetrag_joint" if o.get("joint") else "sparer_pauschbetrag_single"])
+        return {"capital": k, "pot": pot, "pauschbetrag": {"single": _d(P["capital"]["sparer_pauschbetrag_single"]),
+                                                          "joint": _d(P["capital"]["sparer_pauschbetrag_joint"]),
+                                                          "total": pb_total},
+                "issues": [i.text for i in res.issues]}
+
     # Kryptowerte § 23 ---------------------------------------------------------------------------------
     def _crypto_treatment(self, d: Disposal, o: dict[str, Any]) -> bool:
         if d.kind in ("gift", "withdrawal", "derivative"):  # Derivate: Einordnung gesondert (nicht still mitgerechnet)

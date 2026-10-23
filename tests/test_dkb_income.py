@@ -35,7 +35,7 @@ SOLI = ("5,5", "0,36", "0,01")
 NOK = {"ccy": "NOK", "fx": "11,5448", "gross_f": "275,50", "gross": "23,86", "per": "2,755", "qty": "100",
        "isin": "NO0010890304", "wkn": "A2QBSN", "qst": ("25", "5,97"), "kest": ("25", "23,86", "5,97"),
        "soli": ("5,5", "5,97", "0,32"), "rueckforderbar": True, "pay": "19.03.2025", "value_day": "21.03.2025",
-       "day": "19.03.2025", "abr": "57858717480"}
+       "day": "19.03.2025", "abr": "97858717480"}
 
 
 def doc_of(lines: list[str]) -> DocumentResult:
@@ -51,9 +51,9 @@ def parse(lines: list[str]) -> I.Income:
 
 def test_dividend_usd_withholding_only_is_proven() -> None:
     t = parse(X.ertragsabrechnung(gross_f="4,00", gross="3,71", fx="1,0768", qst=("15", "0,56"), day="18.06.2024",
-                                  pay="17.06.2024", abr="67060867760"))
+                                  pay="17.06.2024", abr="07060867760"))
     assert t.ok, t.problems
-    assert (t.sub, t.qty, t.isin, t.wkn, t.abr_no) == ("dividende", D(20), "US02079K3059", "A14Y6F", "67060867760")
+    assert (t.sub, t.qty, t.isin, t.wkn, t.abr_no) == ("dividende", D(20), "US02079K3059", "A14Y6F", "07060867760")
     assert (t.gross, t.gross_foreign, t.gross_ccy, t.fx) == (D("3.71"), D("4.00"), "USD", D("1.0768"))
     assert t.withheld == D("0.56") and t.tax_burden == 0 and t.total == D("3.15")
     assert t.pay_date == date(2024, 6, 17) and t.value_date == date(2024, 6, 18) and t.direction == "Gunsten"
@@ -80,11 +80,11 @@ def test_dividend_nok_quellensteuer_and_kapest_both_booked() -> None:
 @pytest.mark.parametrize(("sub", "kw", "total"), [
     ("rueckzahlung", {"qst": None, "gross": "17,89", "gross_f": "206,50", "per": "2,06499", "ccy": "NOK",
                       "fx": "11,5448", "kest": ("25", "17,89", "4,47"), "soli": ("5,5", "4,47", "0,24"), "qty": "100",
-                      "isin": "NO0010890304", "wkn": "A2QBSN", "abr": "57858717490", "day": "19.03.2025",
+                      "isin": "NO0010890304", "wkn": "A2QBSN", "abr": "97858717490", "day": "19.03.2025",
                       "pay": "19.03.2025"}, "13.18"),
     ("liquidation", {"qst": None, "gross": "1,16", "gross_f": "13,70", "per": "0,137", "ccy": "NOK", "fx": "11,7639",
                      "kest": ("25", "1,16", "0,29"), "soli": ("5,5", "0,29", "0,01"), "qty": "100",
-                     "isin": "NO0010890304", "wkn": "A2QBSN", "abr": "79363215100", "day": "20.10.2025",
+                     "isin": "NO0010890304", "wkn": "A2QBSN", "abr": "19363215100", "day": "20.10.2025",
                      "pay": "17.10.2025", "value_day": "21.10.2025"}, "0.86"),
 ])
 def test_capital_repayment_and_liquidation_are_income_with_hint(sub: str, kw: dict, total: str) -> None:
@@ -126,7 +126,7 @@ def test_doctx_fields_and_bridge_rows_dividend_plus_withholding_plus_tax() -> No
     t = an.txs[0]
     assert t.kind == "dividend" and not t.warnings
     assert t.dec("gross") == D("3.65") and t.value("ccy") == "EUR" and t.dec("withholding_tax") == D("0.55")
-    assert t.dec("tax") == D("0.37") and t.dec("net") == D("2.73") and t.value("ext_id") == "57764418230"
+    assert t.dec("tax") == D("0.37") and t.dec("net") == D("2.73") and t.value("ext_id") == "97764418230"
     assert t.value("date") == "2025-03-17" and t.value("value_date") == "2025-03-18"
     assert "Rechenprobe" in (t.value("proof") or "") or "=" in (t.value("proof") or "")
     recs = to_recs(Enriched(t, "WKN:A14Y6F", [], None, []), sha="a" * 64, doc={"filename": "x.pdf"}, account="DKB",
@@ -144,7 +144,7 @@ def test_capital_repayment_note_and_review_hint() -> None:
     an = analyze(doc_of(X.ertragsabrechnung("rueckzahlung", **{k: v for k, v in NOK.items() if k != "rueckforderbar"}
                                             | {"qst": None, "gross": "17,89", "gross_f": "206,50", "per": "2,06499",
                                                "kest": ("25", "17,89", "4,47"), "soli": ("5,5", "4,47", "0,24"),
-                                               "abr": "57858717490"})))
+                                               "abr": "97858717490"})))
     t = an.txs[0]
     assert t.kind == "dividend"
     recs = to_recs(Enriched(t, "WKN:A2QBSN", [], None, []), sha="a" * 64, doc={"filename": "x.pdf"}, account="DKB",
@@ -275,7 +275,7 @@ def test_same_asset_quantity_and_date_but_different_numbers_are_separate_events(
     a = X.pdf_of(X.ertragsabrechnung(**NOK))
     kw = {k: v for k, v in NOK.items() if k != "rueckforderbar"} | {
         "qst": None, "gross": "17,89", "gross_f": "206,50", "per": "2,06499", "kest": ("25", "17,89", "4,47"),
-        "soli": ("5,5", "4,47", "0,24"), "abr": "57858717490"}
+        "soli": ("5,5", "4,47", "0,24"), "abr": "97858717490"}
     b = X.pdf_of(X.ertragsabrechnung("rueckzahlung", **kw))
     buy1 = X.pdf_of(X.abrechnung("Kauf", order="111111/11.00"))
     buy2 = X.pdf_of(X.abrechnung("Kauf", order="222222/22.00"))
@@ -283,6 +283,6 @@ def test_same_asset_quantity_and_date_but_different_numbers_are_separate_events(
     assert len(run["summary"]["income"]["new"]) == 2 and len(run["summary"]["trades"]["new"]) == 2
     recs = [json.loads(r["rec_json"]) for r in rows(c, "SELECT r.rec_json FROM csv_row r")]
     keys = {r["event_key"] for r in recs}
-    assert keys == {"doc:dkb:57858717480", "doc:dkb:57858717490", "doc:dkb:1111111100", "doc:dkb:2222222200"}
+    assert keys == {"doc:dkb:97858717480", "doc:dkb:97858717490", "doc:dkb:1111111100", "doc:dkb:2222222200"}
     deposits = sorted(r["row"]["to_qty"] for r in recs if r["row"].get("tag") == "dividend")
     assert deposits == ["17.89", "23.86"]

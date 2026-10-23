@@ -44,7 +44,7 @@ def parse(lines: list[str]) -> K.Capital:
 
 
 def test_reverse_split_stage_one_is_information_only() -> None:
-    c = parse(X.ca_reverse_split(stage=1, beleg="61432975", valuta="17.02.2025"))
+    c = parse(X.ca_reverse_split(stage=1, beleg="01432975", valuta="17.02.2025"))
     assert c.kind == "info" and "Sperrumbuchung" in c.info
 
 
@@ -66,7 +66,7 @@ def test_reverse_split_fraction_and_wrong_ratio() -> None:
 
 
 def test_bonus_issue_without_tax_page_is_booked_without_value_but_flagged() -> None:
-    c = parse(X.ca_gratis(beleg="61452937", title="Gratisausgabe", tax=False))
+    c = parse(X.ca_gratis(beleg="01452937", title="Gratisausgabe", tax=False))
     assert c.kind == "corporate_action" and any("Bewertungskurs" in h for h in c.hints)
 
 
@@ -81,15 +81,15 @@ def test_rebooking_after_storno_has_valuation_and_tax_proven() -> None:
 
 def test_storno_is_information_and_names_the_cancelled_receipt() -> None:
     c = parse(X.ca_storno())
-    assert c.kind == "info" and c.storno_of == "61452937"
+    assert c.kind == "info" and c.storno_of == "01452937"
     cl = classify(X.ca_storno())
-    assert cl is not None and cl.sub == "storno" and cl.ref == "61452937"
+    assert cl is not None and cl.sub == "storno" and cl.ref == "01452937"
 
 
 def test_fee_proof_uses_quantity_rate_and_fx() -> None:
     c = parse(X.ca_entgelt())
     assert c.kind == "fee" and not c.problems, c.problems
-    assert c.valuta == date(2025, 2, 25) and c.ref == "61432975"
+    assert c.valuta == date(2025, 2, 25) and c.ref == "01432975"
     assert parse(X.ca_entgelt(total="2,50")).kind == "unknown"
 
 
@@ -182,10 +182,10 @@ def run_zip(c, sid, entries: dict[str, bytes]) -> dict:
 
 def all_docs() -> dict[str, bytes]:
     return {
-        "stufe1.pdf": X.pdf_of(X.ca_reverse_split(stage=1, beleg="61432975", valuta="17.02.2025")),
+        "stufe1.pdf": X.pdf_of(X.ca_reverse_split(stage=1, beleg="01432975", valuta="17.02.2025")),
         "stufe2.pdf": X.pdf_of(X.ca_reverse_split()),
         "entgelt.pdf": X.pdf_of(X.ca_entgelt()),
-        "einbuchung_a.pdf": X.pdf_of(X.ca_gratis(beleg="61452937", title="Gratisausgabe", tax=False)),
+        "einbuchung_a.pdf": X.pdf_of(X.ca_gratis(beleg="01452937", title="Gratisausgabe", tax=False)),
         "storno.pdf": X.pdf_of(X.ca_storno()),
         "neubuchung.pdf": X.pdf_of(X.ca_gratis()),
         "wertlos.pdf": X.pdf_of(X.ca_wertlos()),
@@ -233,7 +233,7 @@ def test_run_books_nothing_and_sorts_documents_into_booking_information_and_uncl
 
 def test_storno_after_the_rebooking_was_already_evaluated_leaves_a_note(app) -> None:
     c, sid = app
-    run_zip(c, sid, {"a.pdf": X.pdf_of(X.ca_gratis(beleg="61452937", title="Gratisausgabe", tax=False))})
+    run_zip(c, sid, {"a.pdf": X.pdf_of(X.ca_gratis(beleg="01452937", title="Gratisausgabe", tax=False))})
     run = run_zip(c, sid, {"s.pdf": X.pdf_of(X.ca_storno())})
     assert any("storniert, war aber schon ausgewertet" in n for n in run["summary"]["notes"])
     assert rows(c, "SELECT COUNT(*) AS n FROM journal_tx")[0]["n"] == 0  # nie still zurückgenommen

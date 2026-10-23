@@ -16,6 +16,7 @@ from starlette.datastructures import UploadFile
 
 from app.datasources import dkb as D
 from app.datasources import dkb_run as R
+from app.datasources import dkb_taxcompare as T
 from app.datasources import dkb_zip as Z
 from app.datasources import plugins as P
 from app.datasources.service import datasource_service
@@ -244,6 +245,43 @@ def make_router() -> APIRouter:
             return render(request, "datasource_dkb_zip_amend.html", status_code=409, active="settings", ds=ds,
                           errors=res.errors, status_badge=STATUS_BADGE, **data)
         return _back(request, zip_url(sid, rid, msg=f"{len(picks)} Buchungen ergänzt. {res.message}"))
+
+    @router.get("/settings/datasources/{sid}/dkb/steuer", response_class=HTMLResponse)
+    async def tax_page(request: Request, sid: int, year: int = 0, msg: str = "", error: str = "") -> Response:
+        ds = ds_of(request, sid)
+        ctx = get_ctx(request)
+        ys = await run_in_threadpool(T.years, ctx, sid)
+        sel = year if year in ys else (ys[0] if ys else 0)
+        data = (await run_in_threadpool(T.build, ctx, sid, ds, sel, dict(request.query_params))
+                if sel else {"year": 0, "thresholds": T.THRESHOLDS, "sales": [], "income": [], "docs": 0})
+        pending = await run_in_threadpool(T.pending, ctx, sid)
+        return render(request, "datasource_dkb_tax.html", active="settings", ds=ds, years=ys, d=data, pending=pending,
+                      msg=msg, error=error, levels=T.LEVEL_LABEL)
+
+    @router.post("/settings/datasources/{sid}/dkb/steuer/einlesen")
+    async def tax_read(request: Request, sid: int) -> Response:
+        ds = ds_of(request, sid)
+        res = await run_in_threadpool(T.read_missing, get_ctx(request), sid, ds.name)
+        text = (f"{res['read']} Belege mit Steuerangaben gelesen, {res['without']} ohne verwertbare Angaben"
+                + (f", {res['failed']} nicht lesbar" if res["failed"] else "")
+                + (f" – {res['left']} weitere folgen (erneut einlesen)." if res["left"] else "."))
+        return _back(request, f"/settings/datasources/{sid}/dkb/steuer?" + urlencode({"msg": text}))
+
+    @router.post("/settings/datasources/{sid}/dkb/steuer/vorbelegen")
+    async def tax_prefill(request: Request, sid: int) -> Response:
+        ds = ds_of(request, sid)
+        f = await request.form()
+        try:
+            year = int(str(f.get("year") or "0"))
+        except ValueError:
+            raise HTTPException(400) from None
+        keys = [str(k) for k in f.getlist("key")]
+        if not f.get("confirm") or not keys:
+            return _back(request, f"/settings/datasources/{sid}/dkb/steuer?" + urlencode(
+                {"year": year, "error": "Bitte die Übernahme bestätigen und mindestens einen Wert auswählen."}))
+        ok, text = await run_in_threadpool(T.apply_proposal, get_ctx(request), sid, ds, year, keys)
+        return _back(request, f"/settings/datasources/{sid}/dkb/steuer?" + urlencode(
+            {"year": year, "error" if not ok else "msg": text}))
 
     @router.get("/settings/datasources/{sid}/dkb/zip/{rid}/report.csv")
     async def zip_report(request: Request, sid: int, rid: int) -> Response:

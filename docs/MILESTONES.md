@@ -1426,6 +1426,17 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.42.0 – DKB-Steuervergleich (Phase 7)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Steuervergleich DKB ↔ Portfolia“.
+
+* **Steuerangaben** (`dkb_tax.py`) aus Verkaufs-/Ertragsabrechnungen: Ergebnis, Anschaffungsgeschäfte, Steuern netto, Verlusttöpfe Vorher/Nachher; Speicherung in `bank_doc.meta`.
+* **Vergleich** (`dkb_taxcompare.py`, Seite *Steuervergleich*) je Verkauf, Ertrag und Jahr mit Schwellen 0,05/1/10 €, Ursachen und Lot-Auswahl; Portfolia-Seite über
+  `GermanyPack.capital_for_accounts` (nur das DKB-Konto, `include_domestic`).
+* **Vorbelegung** von Verlustvortrag und Zusammenveranlagung nur mit Bestätigung, serverseitig berechnet.
+* **Keine Änderung** an Buchungen oder Steuereinstellungen durch die Anzeige.
+* **Grenzen:** laufende (DKB) vs. Jahresend-Rechnung (Portfolia), Kapitalmaßnahmen-Steuern und Teilfreistellung nicht verglichen, kein Ersatz für die Steuerbescheinigung.
+
 ## 0.41.0 – DKB-Depotauszüge, Kosteninformationen, Order-Belege, Belege-Download (Phasen 5 und 6)
 
 Details in `docs/DKB_DOCUMENTS.md`, Abschnitte „Depotauszüge“ und „Kosteninformationen und Order-Belege“.

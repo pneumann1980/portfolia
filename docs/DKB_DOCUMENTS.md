@@ -245,6 +245,30 @@ vorhanden – dort fragt der Prüf-Stapel nach der Zuordnung.
   (UTF-8 mit BOM, `;`, Dezimalkomma; Buchung, Beleg, Rolle, Gebührenquelle *belegt/geschätzt*, Datei, SHA-256, Status `ok`/`original_fehlt`). Grenzen: 2.000 Dateien / 500 MB je
   Download; die PDFs enthalten Namen und Kontodaten – der Download läuft nur über die geschützte Oberfläche.
 
+## Steuervergleich DKB ↔ Portfolia (Phase 7)
+
+*Einstellungen → Datenquellen → DKB → Steuervergleich* (`/settings/datasources/<id>/dkb/steuer`). **Reine Abweichungsanzeige:** Es wird keine Buchung und keine Steuereinstellung
+verändert (einzige Ausnahme: die ausdrücklich bestätigte Vorbelegung, siehe unten). Die Seite ersetzt weder Steuerberatung noch die Jahressteuerbescheinigung der Bank – die DKB-Seite
+stammt **ausschließlich aus den Verkaufs- und Ertragsabrechnungen**.
+
+* **Einlesen:** Knopf *Steuerangaben einlesen* liest die abgelegten Originale lokal (höchstens 300 je Klick) und trägt die Steuerangaben in `bank_doc.meta["tax"]` ein (`dkb_tax.py`):
+  Veräußerungsgewinn/-verlust, „Berücksichtigte Anschaffungsgeschäfte“ (Auftragsnr., Datum, Stück, Kosten, Erlös, Ergebnis), KapESt/Soli/KiSt **netto nach Erstattung**, bei Erträgen
+  Brutto und Quellensteuer, dazu die Zeilen *Vorher/Nachher* der Verlustverrechnungstöpfe. Belege mit gescheiterter Rechenprobe liefern keine Steuerangaben.
+* **Portfolia-Seite:** `GermanyPack.capital_for_accounts` rechnet die Kapitalerträge des Jahres **nur für das Konto dieser Datenquelle** mit `include_domestic = True`; Ihre Steueroptionen bleiben
+  unverändert. Die Zuordnung Beleg ↔ Buchung folgt der vorhandenen Beleg-Verknüpfung (`tx_document`).
+* **Je Verkauf:** Veräußerungsgewinn DKB ↔ realisierter Gewinn der Buchung (Erlös abzüglich Gebühr − Einstand inkl. Gebühren), einbehaltene Steuer ↔ Steuerbuchungen des Wertpapiers am
+  Verkaufstag, **Lot-Auswahl** (Kaufdatum und Menge der DKB-Tabelle gegen die Lot-Teile von Portfolia). Wahrscheinliche Ursachen: Einstand fehlt, Gebühr aus Kosteninformation geschätzt,
+  Sparplan-Schätzung, Kapitalmaßnahme seit der Anschaffung, andere Lot-Auswahl.
+* **Je Ertrag:** Brutto, Quellensteuer, KapESt + Soli gegen die Ertragsbuchung und die Steuerzeilen (±7 Tage, jede Zeile höchstens einmal). Eine fehlende Steuerzeile in Portfolia fällt als
+  Differenz auf.
+* **Je Jahr:** Summen (Gewinne, Erträge, Quellensteuer, einbehaltene Steuer) und **Topf-Endstände** (Aktien, Sonstige, Sparer-Pauschbetrag) der letzten Abrechnung gegen die Portfolia-Rechnung.
+* **Schwellen:** unter 0,05 € *Rundung*, ab 1,00 € *Hinweis*, ab 10,00 € *Warnung* (Hinweis/Warnung auf der Seite einstellbar).
+* **Vorbelegung (nur mit Bestätigung):** Aus *Vorher* der ersten Abrechnung des Jahres werden Verlustvortrag Aktien/Sonstige (je Jahr) und – wenn der Sparer-Pauschbetrag genau 1.000 € bzw. 2.000 €
+  beträgt – die Zusammenveranlagung (gilt für alle Jahre) vorgeschlagen. Übernommen werden nur ausgewählte Werte, **serverseitig neu berechnet**; zurücknehmbar unter *Steuer → Optionen*.
+* **Grenzen:** Die DKB rechnet **laufend je Transaktion** (Verlusttöpfe, sofortige Erstattung), Portfolia **am Jahresende** – die Steuer je Verkauf ist deshalb nur über die Topfstände wirklich
+  vergleichbar. Kapitalmaßnahmen mit eigener Steuerbehandlung, Teilfreistellung (Fonds) und Einstände vor dem Archiv führen zu erwartbaren Abweichungen. Ohne alle Abrechnungen des Jahres im Archiv sind
+  Summen und Topfstände unvollständig (die Seite weist darauf hin). Steuern aus Kapitalmaßnahmen werden nicht verglichen.
+
 ## Grenzen
 
 * **Gegen die echte DKB nicht getestet.** Geprüft sind: Installation mit echtem dkb-robo 0.31.2 (venv + pip), der Fetcher mit

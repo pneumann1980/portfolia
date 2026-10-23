@@ -162,7 +162,7 @@ def test_path_is_built_from_content_ascii_only() -> None:
     c = classify(X.kapital(["Zusammenlegung von Titeln (Reverse Split)"]))
     assert c is not None
     rel = Z.relative_path(c)
-    assert rel == "Wertpapierdokumente/Depot-2345/2025-02-17_kapitalmassnahme_61432975.pdf"
+    assert rel == "Wertpapierdokumente/Depot-2345/2025-02-17_kapitalmassnahme_01432975.pdf"
     assert rel.isascii() and ".." not in rel
     unknown = classify(X.kosteninfo_jahr())
     assert unknown is not None
@@ -276,8 +276,8 @@ def test_zip_upload_end_to_end_and_idempotent(config: Config, master, caplog) ->
             "Wertpapierdokumente/Depot-2345/2024-07-01_depotauszug_2345-20240701.pdf",
             "Wertpapierdokumente/Depot-2345/2024-08-06_abrechnung_kauf_1234567800.pdf",
             "Wertpapierdokumente/Depot-2345/2024-10-14_abrechnung_verkauf_6543210900.pdf",
-            "Wertpapierdokumente/Depot-2345/2025-02-17_kapitalmassnahme_61432975.pdf",
-            "Wertpapierdokumente/Depot-2345/2025-03-18_ertrag_57764418230.pdf"])
+            "Wertpapierdokumente/Depot-2345/2025-02-17_kapitalmassnahme_01432975.pdf",
+            "Wertpapierdokumente/Depot-2345/2025-03-18_ertrag_97764418230.pdf"])
         docs = rows(c, "SELECT * FROM bank_doc ORDER BY id")
         assert len(docs) == before + 6
         # alle sechs Beispieldokumente sind ausgewertet (Phase 2–6)
