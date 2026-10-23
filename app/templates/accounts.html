@@ -20,6 +20,7 @@
 {% from "partials/ds_import.html" import import_form with context %}
 {% from "partials/account_tools.html" import account_tools with context %}
 {% block content %}
+<div class="stack">
 {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
 {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 {% if dups %}
@@ -256,4 +257,5 @@
 {% if not items and not others %}
 <section class="card"><p class="hint">Noch kein Konto. Lege oben ein Konto, ein Wallet (öffentliche Adresse) oder eine Börse an – für Bitpanda holt Portfolia die Vorgänge nach Eingabe eines API-Keys (nur Leserechte) selbst; für andere Anbieter per <a href="/journal/csv">CSV-Import</a>.</p></section>
 {% endif %}
+</div>
 {% endblock %}

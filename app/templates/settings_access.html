@@ -2,6 +2,7 @@
 {% block title %}Zugänge{% endblock %}
 {% block heading %}Zugänge{% endblock %}
 {% block content %}
+<div class="stack">
 <nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a class="active" href="/settings/zugaenge">Zugänge</a></nav>
 {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
 {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
@@ -46,4 +47,5 @@
   </div>
   </details>
 </section>
+</div>
 {% endblock %}
