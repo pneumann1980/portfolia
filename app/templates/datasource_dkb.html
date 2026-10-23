@@ -7,6 +7,7 @@
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 
+  {% if fetcher %}
   <section class="card">
     <div class="card-head"><h2>Postbox der DKB abrufen</h2></div>
     <p>Lädt <b>alle Dokumente</b> der Postbox (Kontoauszüge, Kreditkartenabrechnungen, Wertpapierdokumente …) in Ordner nach <b>Kategorie und Konto</b>. <b>Depot-Abrechnungen</b> (Kauf, Verkauf, Erträge) werden zusätzlich ausgewertet und als Vorschläge in den <a href="/journal/pruefung">Prüfstapel</a> gelegt – <b>gebucht wird erst nach Ihrer Prüfung</b>.</p>
@@ -17,45 +18,15 @@
       <li>Kontoumsätze werden <b>nicht gebucht</b>; Kontoauszüge und Karten-PDFs werden nur abgelegt.</li>
     </ul>
   </section>
-
-  <section class="card" id="einrichtung">
-    <div class="card-head"><h2>1 · Einrichtung</h2> {% if plug.installed %}<span class="badge good">eingerichtet</span>{% else %}<span class="badge warn">nicht eingerichtet</span>{% endif %}</div>
-    {% if inst.running %}<div class="alert info" role="status"><span class="icon">…</span><div>{{ inst.message }}</div></div>
-    {% elif inst.message %}<div class="alert {{ 'good' if inst.ok else 'crit' }}" role="status"><span class="icon">{{ '✓' if inst.ok else '!' }}</span><div>{{ inst.message }}</div></div>{% endif %}
-    {% if plug.installed %}
-    <dl class="kv">
-      <div><dt>Abrufprogramm</dt><dd>portfolia-dkb-fetch {{ plug.version }}</dd></div>
-      <div><dt>Bibliothek</dt><dd>{% for k, v in plug.libs.items() %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}</dd></div>
-      <div><dt>Eingerichtet am</dt><dd>{{ plug.installed_at|datetime_de if plug.installed_at else '–' }}</dd></div>
-      <div><dt>Python</dt><dd>{{ plug.python or '–' }}</dd></div>
-    </dl>
-    {% else %}
-    <p>Das Abrufprogramm ist ein eigenes Programm (<b>GPL-3.0</b>, nutzt <a href="https://github.com/grindsa/dkb-robo">dkb-robo</a>). Es wird erst jetzt – in einer eigenen Python-Umgebung unter <span class="mono">/data/plugins/dkb</span> – nachinstalliert und ist nicht Teil von Portfolia. Dafür braucht der Container einmalig Internetzugang (PyPI, GitHub); das dauert etwa ein bis zwei Minuten.</p>
-    {% endif %}
-    <p class="hint">Quelle: <span class="mono wrap-any">{{ plug.spec }}</span></p>
-    <div class="row" style="gap:8px;flex-wrap:wrap">
-      <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/setup"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn {{ '' if plug.installed else 'primary' }}" type="submit"{% if busy %} disabled{% endif %}>{{ 'Aktualisieren' if plug.installed else 'DKB-Abruf einrichten' }}</button></form>
-      {% if plug.installed %}<form method="post" action="/settings/datasources/{{ ds.id }}/dkb/remove" data-confirm="Abrufprogramm entfernen? Bereits abgelegte Dokumente bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit"{% if busy %} disabled{% endif %}>Entfernen</button></form>{% endif %}
-    </div>
+  {% else %}
+  <section class="card">
+    <div class="card-head"><h2>DKB-Wertpapierdokumente</h2></div>
+    <p>Die <b>Wertpapierdokumente</b> der DKB-Postbox (Abrechnungen, Erträge, Kapitalmaßnahmen, Depotauszüge, Kosteninformationen …) kommen per <b>ZIP-Import</b> in Portfolia: Sie laden das Archiv aus dem Online-Banking herunter und hier hoch. Portfolia erkennt jedes Dokument am <b>Inhalt</b>, legt es im Ablageordner ab, prüft die Rechnung und ordnet es vorhandenen Buchungen zu. Bank-Zugangsdaten braucht Portfolia dafür nie.</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><a class="btn" href="/settings/datasources/{{ ds.id }}/dkb/steuer">Steuervergleich</a><a class="btn" href="#dokumente">Abgelegte Dokumente</a></div>
   </section>
-
-  <section class="card" id="ordner">
-    <div class="card-head"><h2>2 · Ablageordner</h2> {% if folder.writable %}<span class="badge good">beschreibbar</span>{% else %}<span class="badge crit">nicht beschreibbar</span>{% endif %}</div>
-    <p>Ablage: <span class="mono wrap-any">{{ folder.path }}</span><br><span class="hint">Struktur: Kategorie / Konto bzw. Depot / Datum_Name.pdf</span></p>
-    {% if not folder.writable %}<div class="alert crit"><span class="icon">!</span><div>Der Ordner ist nicht beschreibbar. In Unraid unter „Bankunterlagen“ eine Freigabe für den Container zuordnen (Schreibzugriff) und den Container neu starten.</div></div>
-    {% elif not folder.mounted %}<div class="alert warn"><span class="icon">!</span><div>Der Ordner liegt im Container{% if folder.in_data %} im appdata-Ordner{% endif %}, nicht auf einer eigenen Freigabe. Für eine eigene Unraid-Freigabe in der Container-Vorlage den Pfad „Bankunterlagen“ (<span class="mono">/documents</span>) zuordnen.</div></div>{% endif %}
-    <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/settings" class="stack" style="gap:8px">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label>Unterordner <input style="width:100%;max-width:28rem" name="folder" value="{{ set.folder }}" placeholder="{{ ds.name }}" maxlength="80" autocomplete="off"></label>
-      <label>Benutzername (Anmeldename der DKB; wird gemerkt, das Passwort nie) <input style="width:100%;max-width:28rem" name="username" value="{{ set.username }}" maxlength="80" autocomplete="username"></label>
-      <label>Gerät für die Freigabe (0 = Standard, sonst Nummer in der Liste der DKB-App) <input name="mfa_device" type="number" min="0" max="9" value="{{ set.mfa_device }}" style="max-width:6rem"></label>
-      <label class="check"><input type="checkbox" name="evaluate" value="1"{% if set.evaluate %} checked{% endif %}> Depot-Abrechnungen nach dem Abruf automatisch auswerten (Vorschläge im Prüfstapel)</label>
-      <div><button class="btn" type="submit">Speichern</button></div>
-    </form>
-  </section>
-
+  {% endif %}
   <section class="card" id="zip">
-    <div class="card-head"><h2>ZIP-Import: Wertpapierdokumente</h2></div>
+    <div class="card-head"><h2>ZIP-Import: Wertpapierdokumente</h2> <span class="badge good">Hauptweg</span></div>
     <p>Wertpapierdokumente aus der DKB-Postbox (Abrechnungen, Erträge, Kapitalmaßnahmen, Depotauszüge, Kosteninformationen …) als <b>ZIP</b> hochladen. Portfolia entpackt das Archiv selbst, erkennt jedes Dokument am <b>Inhalt</b> und legt es im Ablageordner ab. Der Lauf geht im Hintergrund weiter – die Seite darf verlassen werden. Kauf-/Verkaufsabrechnungen werden zusätzlich ausgewertet und <b>vorhandenen Buchungen zugeordnet</b>; <b>gebucht oder geändert wird nichts ohne Ihre Bestätigung</b>.</p>
     <ul class="hint">
       <li>Bereits vorhandene Dokumente (gleicher Inhalt) werden übersprungen; ein erneutes Hochladen ist ungefährlich.</li>
@@ -81,7 +52,45 @@
     </tbody></table></div>
     {% endif %}
   </section>
-
+  <section class="card" id="ordner">
+    <div class="card-head"><h2>{{ '2 · ' if fetcher }}Ablageordner</h2> {% if folder.writable %}<span class="badge good">beschreibbar</span>{% else %}<span class="badge crit">nicht beschreibbar</span>{% endif %}</div>
+    <p>Ablage: <span class="mono wrap-any">{{ folder.path }}</span><br><span class="hint">Struktur: Kategorie / Konto bzw. Depot / Datum_Name.pdf</span></p>
+    {% if not folder.writable %}<div class="alert crit"><span class="icon">!</span><div>Der Ordner ist nicht beschreibbar. In Unraid unter „Bankunterlagen“ eine Freigabe für den Container zuordnen (Schreibzugriff) und den Container neu starten.</div></div>
+    {% elif not folder.mounted %}<div class="alert warn"><span class="icon">!</span><div>Der Ordner liegt im Container{% if folder.in_data %} im appdata-Ordner{% endif %}, nicht auf einer eigenen Freigabe. Für eine eigene Unraid-Freigabe in der Container-Vorlage den Pfad „Bankunterlagen“ (<span class="mono">/documents</span>) zuordnen.</div></div>{% endif %}
+    <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/settings" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Unterordner <input style="width:100%;max-width:28rem" name="folder" value="{{ set.folder }}" placeholder="{{ ds.name }}" maxlength="80" autocomplete="off"></label>
+      {% if fetcher %}
+      <label>Benutzername (Anmeldename der DKB; wird gemerkt, das Passwort nie) <input style="width:100%;max-width:28rem" name="username" value="{{ set.username }}" maxlength="80" autocomplete="username"></label>
+      <label>Gerät für die Freigabe (0 = Standard, sonst Nummer in der Liste der DKB-App) <input name="mfa_device" type="number" min="0" max="9" value="{{ set.mfa_device }}" style="max-width:6rem"></label>
+      {% endif %}
+      <label class="check"><input type="checkbox" name="evaluate" value="1"{% if set.evaluate %} checked{% endif %}> Depot-Abrechnungen nach dem {{ 'Abruf' if fetcher else 'Import' }} automatisch auswerten (Vorschläge im Prüfstapel)</label>
+      <div><button class="btn" type="submit">Speichern</button></div>
+    </form>
+  </section>
+  {% if fetcher %}
+  <section class="card" id="einrichtung">
+    <div class="card-head"><h2>1 · Einrichtung</h2> {% if plug.installed %}<span class="badge good">eingerichtet</span>{% else %}<span class="badge warn">nicht eingerichtet</span>{% endif %}</div>
+    {% if inst.running %}<div class="alert info" role="status"><span class="icon">…</span><div>{{ inst.message }}</div></div>
+    {% elif inst.message %}<div class="alert {{ 'good' if inst.ok else 'crit' }}" role="status"><span class="icon">{{ '✓' if inst.ok else '!' }}</span><div>{{ inst.message }}</div></div>{% endif %}
+    {% if plug.installed %}
+    <dl class="kv">
+      <div><dt>Abrufprogramm</dt><dd>portfolia-dkb-fetch {{ plug.version }}</dd></div>
+      <div><dt>Bibliothek</dt><dd>{% for k, v in plug.libs.items() %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}</dd></div>
+      <div><dt>Eingerichtet am</dt><dd>{{ plug.installed_at|datetime_de if plug.installed_at else '–' }}</dd></div>
+      <div><dt>Python</dt><dd>{{ plug.python or '–' }}</dd></div>
+    </dl>
+    {% else %}
+    <p>Das Abrufprogramm ist ein eigenes Programm (<b>GPL-3.0</b>, nutzt <a href="https://github.com/grindsa/dkb-robo">dkb-robo</a>). Es wird erst jetzt – in einer eigenen Python-Umgebung unter <span class="mono">/data/plugins/dkb</span> – nachinstalliert und ist nicht Teil von Portfolia. Dafür braucht der Container einmalig Internetzugang (PyPI, GitHub); das dauert etwa ein bis zwei Minuten.</p>
+    {% endif %}
+    <p class="hint">Quelle: <span class="mono wrap-any">{{ plug.spec }}</span></p>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/setup"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn {{ '' if plug.installed else 'primary' }}" type="submit"{% if busy %} disabled{% endif %}>{{ 'Aktualisieren' if plug.installed else 'DKB-Abruf einrichten' }}</button></form>
+      {% if plug.installed %}<form method="post" action="/settings/datasources/{{ ds.id }}/dkb/remove" data-confirm="Abrufprogramm entfernen? Bereits abgelegte Dokumente bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit"{% if busy %} disabled{% endif %}>Entfernen</button></form>{% endif %}
+    </div>
+  </section>
+  {% endif %}
+  {% if fetcher %}
   <section class="card" id="abruf">
     <div class="card-head"><h2>3 · Abrufen und auswerten</h2></div>
     {% if run and run.active and not run.is_zip %}
@@ -103,7 +112,7 @@
     </form>
     {% endif %}
   </section>
-
+  {% endif %}
   <section class="card" id="dokumente">
     <div class="card-head"><h2>Abgelegte Dokumente</h2> <span class="badge">{{ docs.total }}</span></div>
     {% if docs.total %}

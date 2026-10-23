@@ -1,4 +1,13 @@
-# DKB-Dokumente: Abruf per Knopfdruck (ab 0.36.0)
+# DKB-Dokumente: ZIP-Import (Hauptweg) und Postbox-Abruf (ausgeblendet)
+
+> **Stand ab 0.43.0:** Hauptweg ist der **ZIP-Import** der Wertpapierdokumente (siehe unten). Der Postbox-Abruf per Knopfdruck
+> (`portfolia-dkb-fetch` 0.1.0 mit `dkb-robo` 0.31.2, unten beschrieben) ist **im Code unverändert vorhanden**, aber in der Oberfläche
+> ausgeblendet. Mit der Umgebungsvariable **`DKB_FETCHER=1`** erscheinen Einrichtung und Abruf wieder auf der Seite
+> *DKB-Dokumente*; ohne sie antworten `/dkb/setup`, `/dkb/remove`, `/dkb/run` und `/dkb/cancel` mit 404. Ablageordner, ZIP-Import,
+> abgelegte Dokumente und Steuervergleich sind unabhängig davon immer sichtbar. Die Abschnitte „Ziel“ bis „Bekanntes Problem“
+> beschreiben nur den ausgeblendeten Abruf.
+
+# Postbox-Abruf per Knopfdruck (ab 0.36.0, nur mit `DKB_FETCHER=1`)
 
 ## Ziel
 

@@ -7,6 +7,7 @@ läuft echt (venv + pip) mit einem lokal erzeugten Wheel – ohne Netzwerk. Die 
 from __future__ import annotations
 
 import base64
+import dataclasses
 import json
 import logging
 import os
@@ -365,20 +366,21 @@ def test_evaluate_pending_without_login_and_interrupted_run_display(config: Conf
 
 def test_button_appears_for_new_and_existing_dkb_accounts_and_page_flow(config: Config, master, scenario) -> None:
     commit(scenario)
+    config = dataclasses.replace(config, dkb_fetcher=True)  # Postbox-Abruf ist nur mit DKB_FETCHER=1 sichtbar
     c, sid = setup_app(config)
     try:
         form = c.get(f"/settings/datasources/{sid}").text
-        assert "DKB-Abruf einrichten" in form and f"/settings/datasources/{sid}/dkb" in form
+        assert "ZIP-Import (Wertpapierdokumente)" in form and f"/settings/datasources/{sid}/dkb" in form
         # bestehendes Konto mit anderem Anbieter („Andere Börse“), Name beginnt mit DKB
         r = post(c, "/settings/datasources", kind="exchange", provider="other_exchange", name="DKB Depot",
                  account="DKB Wertpapierdepot", sync_interval_min="0")
         sid2 = int(r.headers["location"].split("/settings/datasources/")[1].split("?")[0].split("#")[0])
-        assert "DKB-Abruf einrichten" in c.get(f"/settings/datasources/{sid2}").text
+        assert "ZIP-Import (Wertpapierdokumente)" in c.get(f"/settings/datasources/{sid2}").text
         # kein Knopf bei fremdem Konto
         r = post(c, "/settings/datasources", kind="exchange", provider="bitpanda", name="BP", account="Bitpanda",
                  sync_interval_min="0")
         sid3 = int(r.headers["location"].split("/settings/datasources/")[1].split("?")[0].split("#")[0])
-        assert "DKB-Abruf einrichten" not in c.get(f"/settings/datasources/{sid3}").text
+        assert "ZIP-Import (Wertpapierdokumente)" not in c.get(f"/settings/datasources/{sid3}").text
         page = c.get(f"/settings/datasources/{sid}/dkb")
         assert page.status_code == 200 and "Passwort wird nicht gespeichert" in page.text
         assert "Struktur: Kategorie / Konto bzw. Depot" in page.text and "Unterordner" in page.text
@@ -408,6 +410,26 @@ def test_button_appears_for_new_and_existing_dkb_accounts_and_page_flow(config: 
 
         W.P.start_install = lambda cfg, pid: called.append(pid) or True  # type: ignore[assignment]
         assert post(c, f"/settings/datasources/{sid}/dkb/setup").status_code == 303 and called == ["dkb"]
+    finally:
+        c.__exit__(None, None, None)
+
+
+def test_fetcher_ui_is_hidden_by_default_and_zip_is_primary(config: Config, master, scenario) -> None:
+    commit(scenario)
+    c, sid = setup_app(config)
+    try:
+        page = c.get(f"/settings/datasources/{sid}/dkb").text
+        assert "ZIP-Import: Wertpapierdokumente" in page and "Hauptweg" in page
+        for gone in ("Passwort", "Abrufprogramm", "DKB-Abruf einrichten", "Abrufen und auswerten", "Benutzername"):
+            assert gone not in page, gone
+        assert "Ablageordner" in page and "Unterordner" in page
+        for route in ("setup", "remove", "run", "cancel"):
+            assert post(c, f"/settings/datasources/{sid}/dkb/{route}").status_code == 404, route
+        # Einstellungen bleiben speicherbar und überschreiben Benutzername/Gerät nicht
+        D.save_settings(ctx(c).db, sid, username="meinname", folder="", mfa_device=2, evaluate=True)
+        assert post(c, f"/settings/datasources/{sid}/dkb/settings", folder="Bank DKB", evaluate="1").status_code == 303
+        assert D.settings(ctx(c).db, sid) == {"username": "meinname", "folder": "Bank DKB", "mfa_device": 2,
+                                               "evaluate": True}
     finally:
         c.__exit__(None, None, None)
 
@@ -442,7 +464,7 @@ def test_explain_names_status_and_technical_message() -> None:
 def test_error_run_keeps_diagnosis_for_the_page(config: Config, master, scenario) -> None:
     scenario["error"] = "login"
     commit(scenario)
-    c, sid = setup_app(config)
+    c, sid = setup_app(dataclasses.replace(config, dkb_fetcher=True))
     try:
         D.start(ctx(c), sid, "kunde1", PASSWORD)
         wait(sid)

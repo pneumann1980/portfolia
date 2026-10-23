@@ -1426,6 +1426,12 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.43.0 – DKB: ZIP-Import als Hauptweg, Postbox-Abruf ausgeblendet
+
+* **Postbox-Abruf** (`portfolia-dkb-fetch`/`dkb-robo`) bleibt im Code, die Oberfläche erscheint nur mit `DKB_FETCHER=1`; ohne Flag 404 auf `/dkb/setup|remove|run|cancel`.
+* **Seite DKB-Dokumente:** ZIP-Import zuerst („Hauptweg“), Ablageordner ohne Zugangsfelder, Steuervergleich verlinkt; gespeicherter Benutzername/Gerät bleiben beim Speichern erhalten.
+* Konto-Detail: Knopf „ZIP-Import (Wertpapierdokumente)“ statt „DKB-Abruf einrichten“.
+
 ## 0.42.0 – DKB-Steuervergleich (Phase 7)
 
 Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Steuervergleich DKB ↔ Portfolia“.

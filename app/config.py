@@ -85,6 +85,7 @@ class Config:
     secrets: Secrets = field(default_factory=Secrets)
     export_path: Path | None = None  # EXPORT_DIR; Standard: <DATA_DIR>/exports
     documents_path: Path | None = None  # DOCUMENTS_DIR; Standard: <DATA_DIR>/bank-documents (Bankunterlagen, DKB-Abruf)
+    dkb_fetcher: bool = False  # DKB_FETCHER=1 blendet den Postbox-Abruf (portfolia-dkb-fetch) in der Oberfläche ein
     fx_frankfurter_url: str = "https://api.frankfurter.dev/v1"
     fx_frankfurter_fallback_url: str = "https://api.frankfurter.app"
     ecb_hist_url: str = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.zip"
@@ -174,6 +175,7 @@ class Config:
             fx_frankfurter_url=_env("FX_FRANKFURTER_URL", cls.fx_frankfurter_url) or cls.fx_frankfurter_url,
             export_path=Path(v) if (v := _env("EXPORT_DIR")) else None,
             documents_path=Path(v) if (v := _env("DOCUMENTS_DIR")) else None,
+            dkb_fetcher=_env_bool("DKB_FETCHER"),
         )
 
     def ensure_dirs(self) -> None:

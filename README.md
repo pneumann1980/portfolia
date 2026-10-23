@@ -1322,6 +1322,8 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > Restzeit und einen Bericht. **Ab 0.38.0** werden Kauf-/Verkaufsabrechnungen mit Rechenprobe ausgewertet, vorhandenen Buchungen
 > zugeordnet (Gebühr, Kurswert, Uhrzeit per Sammelaktion ergänzbar, rückgängig machbar) und als Beleg verlinkt. **Ab 0.39.0** folgen Ertragsabrechnungen (Dividende, Kapitalrückzahlung, Liquidation) mit Quellensteuer-/KapESt-Regeln
 > und Rechenprobe. **Ab 0.40.0** folgen Kapitalmaßnahmen und Ausbuchungen (Zusammenlegung, Gratisausgabe, Entgelt, wertlos/ersatzlos, Storno). **Ab 0.41.0** folgen Depotauszüge (Referenzbestände, Depotentgelt), Kosteninformationen und Order-Belege (Beleg-Verknüpfung, geschätzte Gebühr nur nach Bestätigung) und der Belege-Download je Jahr als ZIP. **Ab 0.42.0** zeigt der *Steuervergleich* Abweichungen zwischen den einbehaltenen Steuern der DKB-Abrechnungen und Ihren Buchungen (je Verkauf, Ertrag und Jahr; ändert nichts, Vorbelegung der Steueroptionen nur mit Bestätigung).
+>
+> **Ab 0.43.0** ist der ZIP-Import der Hauptweg; der Postbox-Abruf (`portfolia-dkb-fetch`) ist ausgeblendet und nur mit der Umgebungsvariable `DKB_FETCHER=1` sichtbar.
 
 *Datenqualität → Diagnose öffnen* (`/quality/diagnose`) prüft alle Buchungen, Bestände, Zuordnungen und Kurse und
 zeigt priorisierte Befunde. **Die Diagnose selbst ändert nichts:** Sie wird bei jedem Aufruf neu aus den Daten

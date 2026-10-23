@@ -43,6 +43,15 @@ def make_router() -> APIRouter:
             raise HTTPException(404)
         return ds
 
+    def fetcher_on(request: Request) -> bool:
+        """Postbox-Abruf (portfolia-dkb-fetch): im Code vorhanden, in der Oberfläche nur mit ``DKB_FETCHER=1``."""
+        return bool(get_ctx(request).config.dkb_fetcher)
+
+    def need_fetcher(request: Request, sid: int) -> None:
+        ds_of(request, sid)
+        if not fetcher_on(request):
+            raise HTTPException(404)
+
     @router.get("/settings/datasources/{sid}/dkb", response_class=HTMLResponse)
     async def page(request: Request, sid: int, msg: str = "", error: str = "") -> Response:
         ds = ds_of(request, sid)
@@ -58,18 +67,18 @@ def make_router() -> APIRouter:
         data = await run_in_threadpool(collect)
         busy = bool(data["inst"].get("running")) or bool(data["run"] and data["run"]["active"]) or data["plug"]["busy"]
         return render(request, "datasource_dkb.html", active="settings", ds=ds, msg=msg, error=error, busy=busy,
-                      status_label=D.STATUS_LABEL, **data)
+                      status_label=D.STATUS_LABEL, fetcher=fetcher_on(request), **data)
 
     @router.post("/settings/datasources/{sid}/dkb/setup")
     async def setup(request: Request, sid: int) -> Response:
-        ds_of(request, sid)
+        need_fetcher(request, sid)
         ok = await run_in_threadpool(P.start_install, get_ctx(request).config, D.PLUGIN)
         return _back(request, _url(sid, **({"msg": "Einrichtung gestartet – Fortschritt unten."} if ok else
                                            {"error": "Es läuft bereits eine Einrichtung."})))
 
     @router.post("/settings/datasources/{sid}/dkb/remove")
     async def remove(request: Request, sid: int) -> Response:
-        ds_of(request, sid)
+        need_fetcher(request, sid)
         if D.active(sid):
             return _back(request, _url(sid, error="Während eines Abrufs nicht möglich."))
         ok = await run_in_threadpool(P.remove, get_ctx(request).config, D.PLUGIN)
@@ -80,12 +89,14 @@ def make_router() -> APIRouter:
     async def save(request: Request, sid: int) -> Response:
         ds_of(request, sid)
         f = await request.form()
+        cur = D.settings(get_ctx(request).db, sid)  # ohne Abruf-Oberfläche fehlen Benutzername/Gerät im Formular
         try:
-            mfa = int(str(f.get("mfa_device") or 0))
+            mfa = int(str(f.get("mfa_device") if "mfa_device" in f else cur["mfa_device"]))
         except ValueError:
             mfa = -1
         errors = await run_in_threadpool(
-            D.save_settings, get_ctx(request).db, sid, username=str(f.get("username") or ""),
+            D.save_settings, get_ctx(request).db, sid,
+            username=str(f.get("username") if "username" in f else cur["username"]),
             folder=str(f.get("folder") or ""), mfa_device=mfa, evaluate=str(f.get("evaluate") or "") == "1")
         if errors:
             return _back(request, _url(sid, error=" ".join(errors)))
@@ -93,7 +104,7 @@ def make_router() -> APIRouter:
 
     @router.post("/settings/datasources/{sid}/dkb/run")
     async def run(request: Request, sid: int) -> Response:
-        ds_of(request, sid)
+        need_fetcher(request, sid)
         f = await request.form()
         try:
             mfa = int(str(f.get("mfa_device") or 0))
@@ -115,7 +126,7 @@ def make_router() -> APIRouter:
 
     @router.post("/settings/datasources/{sid}/dkb/cancel")
     async def cancel(request: Request, sid: int) -> Response:
-        ds_of(request, sid)
+        need_fetcher(request, sid)
         ok = D.cancel(sid)
         text = {"msg": "Abbruch angefordert."} if ok else {"error": "Es läuft kein Abruf."}
         return _back(request, _url(sid, **text))
