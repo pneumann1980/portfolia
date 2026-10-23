@@ -197,8 +197,12 @@ def asset_context(ctx: Any, asset_id: str) -> dict[str, Any]:
     news = ctx.db.q(
         """SELECT n.* FROM news_item n JOIN news_asset na ON na.item_id=n.id
            WHERE na.asset_id=? AND n.hidden_reason IS NULL ORDER BY n.published_at DESC LIMIT 12""", (asset_id,))
+    from app.documentimport import txdocs
+
+    tx_docs = txdocs.for_page(ctx.db, [t.tx_id for t in txs[:60]])
     return {
-        "a": a, "pos": pos, "pi": pi, "lots": lots, "by_account": dict(by_account), "balances": balances,
+        "tx_docs": tx_docs, "a": a, "pos": pos, "pi": pi, "lots": lots, "by_account": dict(by_account),
+        "balances": balances,
         "realized": realized, "income": float(income), "fees": fees, "txs": txs[:60], "tx_total": len(txs),
         "info": info or {}, "info_at": info_at, "series": series, "meta": meta, "perf": perf, "news": news,
         "colors": asset_colors(asset_id, a.segment), "account_scope": ctx.settings.get("ledger.scope", "global"),

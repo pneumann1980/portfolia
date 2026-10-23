@@ -48,9 +48,10 @@ PLUGIN = "dkb"
 EVAL_TYPES = frozenset({"dwpOrderStatement", "dwpRevenueStatement"})  # Wertpapier- und Ertragsabrechnung
 RUN_TIMEOUT = 1800  # Sekunden je Lauf
 EVAL_TIMEOUT = 1200
-ACTIVE = ("running", "awaiting_2fa", "fetching", "evaluating")
+ACTIVE = ("running", "awaiting_2fa", "fetching", "evaluating", "unpacking", "classifying")
 STATUS_LABEL = {"running": "Anmeldung", "awaiting_2fa": "Freigabe in der DKB-App nötig", "fetching": "Abruf",
-                "evaluating": "Auswertung", "ok": "erfolgreich", "partial": "teilweise", "error": "Fehler",
+                "evaluating": "Auswertung", "unpacking": "ZIP wird gelesen", "classifying": "Dokumente werden erkannt",
+                "ok": "erfolgreich", "partial": "teilweise", "error": "Fehler",
                 "cancelled": "abgebrochen"}
 KIND_TEXT = {
     "dependency": "Das Abrufprogramm ist unvollständig installiert – bitte „DKB-Abruf einrichten“ erneut ausführen.",
@@ -196,6 +197,7 @@ def view_run(db: Any, sid: int) -> dict[str, Any] | None:
         return None
     d = dict(r)
     d["summary"] = json.loads(r["summary_json"] or "{}")
+    d["is_zip"] = d["summary"].get("kind") == "zip"
     if d["status"] in ACTIVE and sid not in _RUNNING:
         d["status"], d["message"] = "error", "Unterbrochen (Neustart der App) – bitte erneut starten."
     d["label"] = STATUS_LABEL.get(d["status"], d["status"])
@@ -487,18 +489,30 @@ def _record(db: Any, sid: int, rid: int, root: Path, ev: dict[str, Any], summary
 
 # -- Auswertung der Depot-Abrechnungen -----------------------------------------------------------------------------
 
-def evaluate_pending(ctx: Any, sid: int, account: str, root: Path, cancel: threading.Event | None = None
+def evaluate_pending(ctx: Any, sid: int, account: str, root: Path, cancel: threading.Event | None = None, *,
+                     status: str = "downloaded", doctypes: tuple[str, ...] | None = None,
+                     run_ids: tuple[int, ...] | None = None, on_step: Any = None, busy_wait_s: int = 0
                      ) -> dict[str, Any]:
-    """Noch nicht ausgewertete Depot-Abrechnungen durch den Dokumentimport schicken (→
-    Prüf-Stapel). Gebucht wird nichts."""
+    """Noch nicht ausgewertete Dokumente (``bank_doc.status``) durch den Dokumentimport schicken (→ Zuordnung zu
+    vorhandenen Buchungen bzw. Prüf-Stapel). Gebucht wird nichts. ``doctypes``/``run_ids`` begrenzen die Auswahl,
+    ``on_step(erledigt, gesamt)`` meldet den Fortschritt, ``busy_wait_s`` wartet auf einen laufenden Dokumentimport
+    (statt den Block zu verwerfen)."""
     from app.documentimport.service import MAX_FILES, document_service
 
     db = ctx.db
     cancel = cancel or threading.Event()
-    rows = db.q("SELECT * FROM bank_doc WHERE source_id=? AND status='downloaded' ORDER BY doc_date, id", (sid,))
+    sql, params = "SELECT * FROM bank_doc WHERE source_id=? AND status=?", [sid, status]
+    if doctypes:
+        sql += f" AND doctype IN ({','.join('?' * len(doctypes))})"
+        params += list(doctypes)
+    if run_ids:
+        sql += f" AND run_id IN ({','.join('?' * len(run_ids))})"
+        params += list(run_ids)
+    rows = db.q(sql + " ORDER BY doc_date, id", params)
     out: dict[str, Any] = {"documents": len(rows), "evaluated": 0, "known": 0, "failed": 0, "transactions": 0,
                            "batches": []}
     svc = document_service(ctx)
+    done = 0
     for i in range(0, len(rows), MAX_FILES):
         if cancel.is_set():
             out["error"] = "Auswertung abgebrochen."
@@ -514,9 +528,16 @@ def evaluate_pending(ctx: Any, sid: int, account: str, root: Path, cancel: threa
             files.append((p.name, p.read_bytes()))
         if not files:
             continue
-        acc = svc.accept(files, account=account)
+        waited = 0.0
+        while True:
+            acc = svc.accept(files, account=account)
+            started = svc.start(acc.stack_id) if acc.stack_id is not None else {}
+            if started.get("error") and waited < busy_wait_s and not cancel.is_set():
+                time.sleep(2.0)  # Dokumentimport anderweitig beschäftigt: der Block wurde verworfen, erneut versuchen
+                waited += 2.0
+                continue
+            break
         if acc.stack_id is not None:
-            started = svc.start(acc.stack_id)
             if started.get("error"):
                 out["error"] = str(started["error"])
                 break
@@ -546,4 +567,7 @@ def evaluate_pending(ctx: Any, sid: int, account: str, root: Path, cancel: threa
                 db.x("UPDATE bank_doc SET status='error', note=?, stack_id=? WHERE id=?",
                      (str(d["error"] or "nicht lesbar")[:200], acc.stack_id, r["id"]))
                 out["failed"] += 1
+        done += len(part)
+        if on_step is not None:
+            on_step(done, len(rows))
     return out

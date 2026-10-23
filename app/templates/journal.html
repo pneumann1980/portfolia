@@ -42,6 +42,7 @@
     <label class="field">Jahr<select name="year" data-autosubmit><option value="">alle</option>{% for y in years %}<option {% if params.year == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></label>
     <label class="field">Suche<input type="search" name="q" value="{{ params.q }}" placeholder="ID oder Notiz"></label>
     <div class="row" style="gap:6px"><button class="btn sm" type="submit">Filtern</button>{% if has_filter %}<a class="btn sm ghost" href="/journal">Zurücksetzen</a>{% endif %}</div>
+    {% if params.year %}<div class="row" style="gap:6px"><a class="btn sm" href="/journal/documents/export?year={{ params.year }}" title="Alle mit Buchungen verknüpften Belege dieses Jahres als ZIP mit Manifest (z. B. für die Steuererklärung)">Belege {{ params.year }} herunterladen</a></div>{% endif %}
   </form>
   {% if rows %}
   <div class="table-wrap cards-wrap"><table class="compact cards journal">
@@ -50,7 +51,7 @@
     {% for r in rows %}{% set t = r.t %}
       {% set cmp = compare.get(t.tx_id) %}{% set lks = links.get(t.tx_id) %}<tr class="{{ 'is-new' if saved_tx and t.tx_id == saved_tx }}{{ ' has-compare' if cmp or lks }}">
         <td class="nowrap" data-label="Datum">{{ t.date|date_de if t.date_only else t.ts|datetime_de }}<div class="hint mono">{{ t.tx_id }}</div></td>
-        <td data-label="Vorgang">{{ r.label }}{% if t.related_asset %}<div class="hint">zu {{ names.get(t.related_asset, t.related_asset) }}</div>{% endif %}{% if t.note and r.kind != 'plan_est' %}<div class="hint wrap-any">{{ t.note }}</div>{% endif %}</td>
+        <td data-label="Vorgang">{{ r.label }}{% if t.related_asset %}<div class="hint">zu {{ names.get(t.related_asset, t.related_asset) }}</div>{% endif %}{% if t.note and r.kind != 'plan_est' %}<div class="hint wrap-any">{{ t.note }}</div>{% endif %}{% for dc in tx_docs.get(t.tx_id, []) %}<div class="hint"><a class="badge info" href="/journal/documents/{{ dc.id }}" title="{{ dc.filename }}">{{ dc.label }}</a>{% if dc.date %} {{ dc.date|date_de }}{% endif %}{% if dc.stored %} · <a href="/journal/documents/{{ dc.id }}/original" rel="nofollow">PDF</a>{% else %} · <span class="muted">Originaldatei nicht gespeichert</span>{% endif %}</div>{% endfor %}</td>
         <td data-label="Abgang">{{ leg(t.from_account, t.from_asset, t.from_qty, '−') }}</td>
         <td data-label="Zugang">{{ leg(t.to_account, t.to_asset, t.to_qty, '+') }}</td>
         <td class="num" data-label="Gebühr">{% if t.fee_qty %}<span class="nowrap">{{ t.fee_qty|qty }} {{ sym(t.fee_asset) }}</span>{% if t.fee_eur and t.fee_asset != 'EUR' %}<div class="hint">{{ t.fee_eur|eur }}</div>{% endif %}{% elif t.fee_eur %}{{ t.fee_eur|eur }}{% else %}–{% endif %}</td>

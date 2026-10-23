@@ -10,10 +10,14 @@ from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
 
 from app.datasources import dkb as D
+from app.datasources import dkb_run as R
+from app.datasources import dkb_taxcompare as T
+from app.datasources import dkb_zip as Z
 from app.datasources import plugins as P
 from app.datasources.service import datasource_service
 from app.web.app import register_router
@@ -49,7 +53,7 @@ def make_router() -> APIRouter:
             run = D.view_run(ctx.db, sid)
             return {"plug": plug, "inst": P.last(D.PLUGIN), "set": D.settings(ctx.db, sid),
                     "folder": D.folder_state(ctx, sid, ds.name), "run": run, "runs": D.runs(ctx.db, sid),
-                    "docs": D.documents(ctx.db, sid)}
+                    "docs": D.documents(ctx.db, sid), "zips": R.runs(ctx.db, sid, 5)}
 
         data = await run_in_threadpool(collect)
         busy = bool(data["inst"].get("running")) or bool(data["run"] and data["run"]["active"]) or data["plug"]["busy"]
@@ -115,6 +119,178 @@ def make_router() -> APIRouter:
         ok = D.cancel(sid)
         text = {"msg": "Abbruch angefordert."} if ok else {"error": "Es läuft kein Abruf."}
         return _back(request, _url(sid, **text))
+
+    def zip_url(sid: int, rid: int, **params: str) -> str:
+        return f"/settings/datasources/{sid}/dkb/zip/{rid}" + ("?" + urlencode(params) if params else "")
+
+    @router.post("/settings/datasources/{sid}/dkb/zip")
+    async def zip_upload(request: Request, sid: int) -> Response:
+        """ZIP annehmen (XHR mit Fortschritt oder klassisches Formular); Antwort JSON bzw. Weiterleitung."""
+        ds_of(request, sid)
+        ctx = get_ctx(request)
+        xhr = request.headers.get("x-requested-with") == "XMLHttpRequest"
+
+        def fail(text: str) -> Response:
+            if xhr:
+                return JSONResponse({"error": text}, status_code=400)
+            return _back(request, _url(sid, error=text))
+
+        form = await request.form(max_files=2, max_fields=6)
+        f = form.get("file")
+        if not isinstance(f, UploadFile) or not f.filename:
+            return fail("Bitte eine ZIP-Datei auswählen.")
+        try:
+            path = await run_in_threadpool(R.save_upload, ctx, f.file)
+        except Z.ZipRejected as e:
+            return fail(str(e))
+        finally:
+            await f.close()
+        res = await run_in_threadpool(R.start, ctx, sid, path, Z.display_name(f.filename))
+        if res.get("errors"):
+            return fail(" ".join(res["errors"]))
+        target = zip_url(sid, res["run_id"])
+        return JSONResponse({"redirect": target}) if xhr else _back(request, target)
+
+    @router.get("/settings/datasources/{sid}/dkb/zip/{rid}", response_class=HTMLResponse)
+    async def zip_page(request: Request, sid: int, rid: int, msg: str = "", error: str = "") -> Response:
+        ds = ds_of(request, sid)
+        run = await run_in_threadpool(R.view, get_ctx(request), sid, rid)
+        if run is None:
+            raise HTTPException(404)
+        return render(request, "datasource_dkb_zip.html", active="settings", ds=ds, run=run, msg=msg, error=error,
+                      kinds=R.KINDS)
+
+    @router.post("/settings/datasources/{sid}/dkb/zip/{rid}/cancel")
+    async def zip_cancel(request: Request, sid: int, rid: int) -> Response:
+        ds_of(request, sid)
+        ok = D.cancel(sid)
+        return _back(request, zip_url(sid, rid, **({"msg": "Abbruch angefordert."} if ok else
+                                                   {"error": "Es läuft kein Vorgang."})))
+
+    @router.post("/settings/datasources/{sid}/dkb/zip/{rid}/resume")
+    async def zip_resume(request: Request, sid: int, rid: int) -> Response:
+        ds_of(request, sid)
+        res = await run_in_threadpool(R.resume, get_ctx(request), sid, rid)
+        if res.get("errors"):
+            return _back(request, zip_url(sid, rid, error=" ".join(res["errors"])))
+        return _back(request, zip_url(sid, res["run_id"]))
+
+    @router.post("/settings/datasources/{sid}/dkb/zip/{rid}/discard")
+    async def zip_discard(request: Request, sid: int, rid: int) -> Response:
+        ds_of(request, sid)
+        ok = await run_in_threadpool(R.discard, get_ctx(request), sid, rid)
+        return _back(request, zip_url(sid, rid, **({"msg": "Zwischendatei gelöscht."} if ok else
+                                                   {"error": "Nichts zu löschen."})))
+
+    def _quelle(f: Any) -> str:
+        return "kosten" if str(f.get("quelle") or "") == "kosten" else "abrechnung"
+
+    def _matched_docs(run: dict[str, Any], quelle: str) -> list[tuple[int, int]]:
+        """Belege mit Buchung: Abrechnungen (belegte Werte) bzw. Kosteninformationen (geschätzte Gebühr)."""
+        part = (run["summary"].get("costs") if quelle == "kosten" else run["summary"].get("trades")) or {}
+        return [(int(x["doc"]), int(x.get("n") or 1)) for x in part.get("matched", []) if x.get("doc")]
+
+    def _amend_picks(run: dict[str, Any], f: Any) -> list[tuple[int, int]]:
+        matched = set(_matched_docs(run, _quelle(f)))
+        wanted = {int(v) for v in f.getlist("d") if str(v).isdigit()}
+        return sorted(p for p in matched if p[0] in wanted)
+
+    def _amend_ctx(request: Request, sid: int, rid: int, f: Any, preview: bool) -> dict[str, Any]:
+        from app.documentimport import amend as AM
+
+        ctx = get_ctx(request)
+        run = R.view(ctx, sid, rid)
+        if run is None:
+            raise HTTPException(404)
+        quelle = _quelle(f)
+        matched = _matched_docs(run, quelle)
+        items = AM.bulk_candidates(ctx, matched)
+        safe = {it.doc_id for it in items if not it.needs_confirm and not it.skipped}
+        sel = {int(v) for v in f.getlist("d") if str(v).isdigit()} if "d" in f or preview else set(safe)
+        picks = sorted(p for p in matched if p[0] in sel and p[0] in safe)
+        plan = eff = None
+        if preview and picks:
+            plan, eff = AM.bulk_preview(ctx, picks)
+        return {"run": run, "items": items, "safe": safe, "selected": {p[0] for p in picks}, "plan": plan,
+                "effects": eff, "picks": picks, "unmatched_total": len(matched) - len(items), "quelle": quelle}
+
+    @router.get("/settings/datasources/{sid}/dkb/zip/{rid}/ergaenzen", response_class=HTMLResponse)
+    async def zip_amend(request: Request, sid: int, rid: int) -> Response:
+        ds = ds_of(request, sid)
+        q = request.query_params
+        data = await run_in_threadpool(_amend_ctx, request, sid, rid, q, "v" in q)
+        from app.diagnosis.model import STATUS_BADGE
+
+        return render(request, "datasource_dkb_zip_amend.html", active="settings", ds=ds, errors=[],
+                      status_badge=STATUS_BADGE, **data)
+
+    @router.post("/settings/datasources/{sid}/dkb/zip/{rid}/ergaenzen")
+    async def zip_amend_apply(request: Request, sid: int, rid: int) -> Response:
+        from app.documentimport import amend as AM
+
+        ds = ds_of(request, sid)
+        ctx = get_ctx(request)
+        f = await request.form(max_fields=600)
+        run = await run_in_threadpool(R.view, ctx, sid, rid)
+        if run is None:
+            raise HTTPException(404)
+        picks = _amend_picks(run, f)
+        if not picks:
+            return _back(request, zip_url(sid, rid, error="Keine Belege ausgewählt."))
+        res = await run_in_threadpool(AM.bulk_apply, ctx, picks, str(f.get("token") or ""))
+        if not res.ok:
+            data = await run_in_threadpool(_amend_ctx, request, sid, rid, f, True)
+            from app.diagnosis.model import STATUS_BADGE
+
+            return render(request, "datasource_dkb_zip_amend.html", status_code=409, active="settings", ds=ds,
+                          errors=res.errors, status_badge=STATUS_BADGE, **data)
+        return _back(request, zip_url(sid, rid, msg=f"{len(picks)} Buchungen ergänzt. {res.message}"))
+
+    @router.get("/settings/datasources/{sid}/dkb/steuer", response_class=HTMLResponse)
+    async def tax_page(request: Request, sid: int, year: int = 0, msg: str = "", error: str = "") -> Response:
+        ds = ds_of(request, sid)
+        ctx = get_ctx(request)
+        ys = await run_in_threadpool(T.years, ctx, sid)
+        sel = year if year in ys else (ys[0] if ys else 0)
+        data = (await run_in_threadpool(T.build, ctx, sid, ds, sel, dict(request.query_params))
+                if sel else {"year": 0, "thresholds": T.THRESHOLDS, "sales": [], "income": [], "docs": 0})
+        pending = await run_in_threadpool(T.pending, ctx, sid)
+        return render(request, "datasource_dkb_tax.html", active="settings", ds=ds, years=ys, d=data, pending=pending,
+                      msg=msg, error=error, levels=T.LEVEL_LABEL)
+
+    @router.post("/settings/datasources/{sid}/dkb/steuer/einlesen")
+    async def tax_read(request: Request, sid: int) -> Response:
+        ds = ds_of(request, sid)
+        res = await run_in_threadpool(T.read_missing, get_ctx(request), sid, ds.name)
+        text = (f"{res['read']} Belege mit Steuerangaben gelesen, {res['without']} ohne verwertbare Angaben"
+                + (f", {res['failed']} nicht lesbar" if res["failed"] else "")
+                + (f" – {res['left']} weitere folgen (erneut einlesen)." if res["left"] else "."))
+        return _back(request, f"/settings/datasources/{sid}/dkb/steuer?" + urlencode({"msg": text}))
+
+    @router.post("/settings/datasources/{sid}/dkb/steuer/vorbelegen")
+    async def tax_prefill(request: Request, sid: int) -> Response:
+        ds = ds_of(request, sid)
+        f = await request.form()
+        try:
+            year = int(str(f.get("year") or "0"))
+        except ValueError:
+            raise HTTPException(400) from None
+        keys = [str(k) for k in f.getlist("key")]
+        if not f.get("confirm") or not keys:
+            return _back(request, f"/settings/datasources/{sid}/dkb/steuer?" + urlencode(
+                {"year": year, "error": "Bitte die Übernahme bestätigen und mindestens einen Wert auswählen."}))
+        ok, text = await run_in_threadpool(T.apply_proposal, get_ctx(request), sid, ds, year, keys)
+        return _back(request, f"/settings/datasources/{sid}/dkb/steuer?" + urlencode(
+            {"year": year, "error" if not ok else "msg": text}))
+
+    @router.get("/settings/datasources/{sid}/dkb/zip/{rid}/report.csv")
+    async def zip_report(request: Request, sid: int, rid: int) -> Response:
+        ds_of(request, sid)
+        run = await run_in_threadpool(R.view, get_ctx(request), sid, rid)
+        if run is None:
+            raise HTTPException(404)
+        return Response(R.report_csv(run["summary"]), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="dkb-zip-bericht-{rid}.csv"'})
 
     return router
 

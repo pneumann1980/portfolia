@@ -1426,6 +1426,84 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.42.0 – DKB-Steuervergleich (Phase 7)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Steuervergleich DKB ↔ Portfolia“.
+
+* **Steuerangaben** (`dkb_tax.py`) aus Verkaufs-/Ertragsabrechnungen: Ergebnis, Anschaffungsgeschäfte, Steuern netto, Verlusttöpfe Vorher/Nachher; Speicherung in `bank_doc.meta`.
+* **Vergleich** (`dkb_taxcompare.py`, Seite *Steuervergleich*) je Verkauf, Ertrag und Jahr mit Schwellen 0,05/1/10 €, Ursachen und Lot-Auswahl; Portfolia-Seite über
+  `GermanyPack.capital_for_accounts` (nur das DKB-Konto, `include_domestic`).
+* **Vorbelegung** von Verlustvortrag und Zusammenveranlagung nur mit Bestätigung, serverseitig berechnet.
+* **Keine Änderung** an Buchungen oder Steuereinstellungen durch die Anzeige.
+* **Grenzen:** laufende (DKB) vs. Jahresend-Rechnung (Portfolia), Kapitalmaßnahmen-Steuern und Teilfreistellung nicht verglichen, kein Ersatz für die Steuerbescheinigung.
+
+## 0.41.0 – DKB-Depotauszüge, Kosteninformationen, Order-Belege, Belege-Download (Phasen 5 und 6)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitte „Depotauszüge“ und „Kosteninformationen und Order-Belege“.
+
+* **Depotauszug** (`dkb_depot.py`): Positionen mit Rechenprobe (n Posten, Σ Kurswerte, ISIN-Prüfziffer) → Referenzbestände + Vergleich mit dem Bestand zum Stichtag;
+  Depotentgelt (brutto, Valuta, USt-Probe) als Gebührenvorschlag bzw. Verknüpfung.
+* **Kosteninformation** (`dkb_costinfo.py`): nie eine Buchung; Zuordnung Z0–Z6 zu vorhandenen Trades; Gebühr nur „geschätzt“, nur nach Bestätigung, nie gegen eine Abrechnung.
+* **Order-Belege** (Ausführung/Bestätigung/Streichung) je Auftragsnummer, spätere Verknüpfung beim Buchen der Abrechnung.
+* **Belege-Download** je Jahr als ZIP mit `manifest.csv` (`yearpack.py`).
+* **Grenzen:** siehe Abschnitt „Grenzen“ der DKB-Dokumentation (kein Neu-Zuordnen später gebuchter Trades für Kosteninformationen; Vergleich nur so genau wie der Bestand).
+
+## 0.40.0 – DKB-Kapitalmaßnahmen und Ausbuchungen (Phase 4)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Kapitalmaßnahmen und Ausbuchungen“.
+
+* **Profil** (`dkb_capital.py`): Reverse Split/Split (Stufe 1 = Information, Stufe 2 = Buchung mit Verhältnis-Probe), Gratisausgabe mit Bewertungskurs und
+  Steuer, Entgelt der Lagerstelle, wertlose und ersatzlose Ausbuchung (Verlust gegen die Anschaffungsgeschäfte geprüft), Storno, Namensänderung,
+  Ankündigungen. Unbekannte Arten bleiben „ungeklärt“.
+* **Storno-Regel:** Die aufgehobene Einbuchung wird nicht ausgewertet; genau ein Zugang bleibt. Bereits ausgewertete → Hinweis, nie stilles Zurücknehmen.
+* **Zuordnung** zu vorhandenen Maßnahmen/Ausbuchungen/Entgelten mit Hinweis bei abweichender Menge; keine zweite Maßnahme.
+* **Dokumentindex** `bank_doc.meta` (Migration 32). Klassifikation: Titel vor Fließtext (Chapter VII war als Liquidation erkannt).
+* **Grenzen:** Fonds-/Anleihe-Maßnahmen, Umtausch/Fusion/Spin-off, Bezugsrechte nicht belegt (→ ungeklärt); Namensänderung wird nur angezeigt.
+
+## 0.39.0 – DKB-Erträge: Rechenprobe, Quellensteuer-Regeln, Zuordnung (Phase 3)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Ertragsabrechnungen“.
+
+* **Ertragsprofil** (`dkb_income.py`): Dividende, Kapitalrückzahlung, Liquidationszahlung. Gebucht werden EUR-Brutto, die *einbehaltene*
+  Quellensteuer und KapESt/Soli/KiSt; „anrechenbare“, „rückforderbare“ und „verrechnete“ Beträge sind Information. Rechenprobe wie bei
+  den Abrechnungen; an allen fünf Beispielbelegen bestanden.
+* **Zuordnung** zu bereits erfassten Dividenden (Konto, Asset, ± 3 Tage, Betrag); sonst Vorschlag im Prüf-Stapel.
+* **Fehlerbehebung:** Belege mit gleicher ISIN, Menge und gleichem Tag, aber verschiedener Abrechnungs-/Auftragsnummer wurden im Stapel zu
+  einem Vorgang verschmolzen (Dividende + Kapitalrückzahlung am 19.03.). Die Kennung des Belegs entscheidet jetzt.
+* **Bericht/Oberfläche:** eigener Abschnitt „Erträge“ auf der ZIP-Ergebnisseite; am DKB-Konto ein zweiter Knopf „ZIP-Import“.
+* **Grenzen:** Kapitalrückzahlung/Liquidation werden als Ertrag erfasst (E3, mit Prüfhinweis); Fonds, Zinsen, Steuererstattungen auf Erträge
+  nicht belegt; Kapitalmaßnahmen, Depotauszug, Kosteninformationen folgen.
+
+## 0.38.0 – DKB-Abrechnungen: Rechenprobe, Zuordnung zu vorhandenen Buchungen, Ergänzen, Beleg-Link (Phase 2)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Kauf- und Verkaufsabrechnungen“.
+
+* **DKB-Profil mit Rechenprobe** (`dkb_trade.py`): Kostensumme über alle Zeilen, Steuern (nur echte Steuerzeilen), mehrere
+  *Ausmachender Betrag* je Block, Menge × Kurs ÷ Devisenkurs. Nicht bestanden → „ungeklärt“, nie buchbar. An allen Beispiel-
+  Abrechnungen bestanden.
+* **Zuordnung statt Neuanlage:** Eine Abrechnung gehört zu einer vorhandenen Buchung (Konto, Asset, Menge, ± 3 Tage) → verknüpft,
+  keine zweite Buchung. An deinem Export: 5 von 9 Beispiel-Abrechnungen zugeordnet.
+* **Ergänzen als Sammelaktion** mit Vorher/Nachher und Wirkungsvorschau; eine Entscheidung, als Ganzes rückgängig. Die bisherige Sperre
+  für von Hand geänderte Buchungen ist einer Warnung mit ausdrücklicher Bestätigung gewichen (nur einzeln); Sparplan-Schätzungen
+  bleiben gesperrt.
+* **Beleg-Link** (Migration 31, `tx_document`): Beleg ↔ Buchung n:m, Anzeige in Buchungsliste und Positionsansicht.
+* **Grenzen:** Erträge, Kapitalmaßnahmen, Depotauszug und Kosteninformationen noch nicht ausgewertet; Sparplan-Abrechnungen finden in
+  geschätzten Sparplan-Buchungen keine Gegenstücke (Menge unterschiedlich) und kommen als eigene Vorschläge.
+
+## 0.37.0 – DKB-Wertpapierdokumente per ZIP: erkennen und ablegen (Phase 1)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „ZIP-Import der Wertpapierdokumente“. Grundlage ist die Analyse
+`ANALYSE_DKB_Wertpapierdokumente_Import.md` (Phasen 1–7); diese Stufe bucht nichts.
+
+* **ZIP-Upload auf der DKB-Datenquelle** (≤ 100 MB): sicheres Entpacken im Speicher (kein Zip-Slip, Bomben-/Eintrags-/Größengrenzen,
+  verschlüsselt und verschachtelt abgelehnt), Ablage unter aus dem Inhalt gebautem Pfad, nie überschreiben, Dubletten per SHA-256.
+* **Dedizierte DKB-Erkennung** (`app/documentimport/dkb.py`): 13 Dokumentarten samt Unterarten und Kennungen aus dem Inhalt; Dateiname
+  nur Gegenprobe. An allen 47 Beispiel-PDFs der Analyse geprüft (Golden-Tests mit anonymisierten Nachbauten).
+* **Hintergrundlauf** (`dkb_run.py`) mit Fortschrittsbalken, **geschätzter Restzeit** (`app/progress.py`: arbeitsgewichtet, geglättet,
+  gemessene Startwerte), Abbrechen, Fortsetzen, Ergebnisseite und CSV-Bericht; Seite darf verlassen werden.
+* **Grenzen:** Es wird nichts gebucht oder vorgeschlagen (folgt in Phase 2 ff.); Erkennung beruht auf 47 Beispielen – unbekannte
+  Titel werden gezählt, nicht geraten; ein Depot je Datenquelle vorgesehen (mehrere werden gemeldet).
+
 ## 0.36.0 – DKB: Postbox per Knopfdruck abrufen, in Ordner ablegen, Depot-Abrechnungen auswerten
 
 Details in `docs/DKB_DOCUMENTS.md`.

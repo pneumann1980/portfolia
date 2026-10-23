@@ -7,8 +7,9 @@ Ergänzung vorgeschlagen:
 * EUR-Gegenwert (fehlt, ist geschätzt oder weicht ab), Handelsgebühr (fehlt bzw. weicht ab), Uhrzeit (Buchung nur mit
   Datum, gleicher Tag), Transaktions-Hash (fehlt), Belegverweis in der Notiz.
 * **Nie:** Menge, Asset, Konto oder Vorgangsart – Abweichungen dort sind Widersprüche zur manuellen Klärung.
-* **Manuell korrigierte Buchungen** (manuelle App-Buchung bzw. bearbeitete Import-Buchung) werden nicht überschrieben;
-  dann bleibt nur „Beleg verknüpfen“.
+* **Von Hand erfasste bzw. bearbeitete Buchungen** (manuelle App-Buchung, bearbeitete Import-Buchung) sind **nicht
+  gesperrt**: Die Vorschau warnt („von Hand geändert, Feld X steht jetzt auf Y“), übernommen wird erst nach
+  ausdrücklicher Bestätigung je Buchung – nie in einer Sammelaktion. Gesperrt bleibt nur die Sparplan-Schätzung.
 
 Ausgeführt wird über die Korrektur-Engine der Diagnose (Operation ``amend``): Vorschau mit Wirkung auf Bestände,
 Einstand, realisierte Ergebnisse und Steuer; Übernehmen nur mit unverändertem Datenstand; „Rückgängig“ stellt den
@@ -50,6 +51,10 @@ class Proposal:
     changes: list[Change] = field(default_factory=list)
     blocked: str = ""
     contradictions: list[str] = field(default_factory=list)
+    warning: str = ""  # von Hand erfasst/bearbeitet: Änderung nur nach ausdrücklicher Bestätigung
+    needs_confirm: bool = False
+    fee_key: str = ""  # Kosteninformation: Feld der geschätzten Gebühr (fee_buy/fee_sell) – sonst Beleggebühr „fee“
+    estimate: bool = False  # Gebühr nur geschätzt (Kosteninformation), nie belegt
 
 
 def _dec(v: Any) -> Decimal | None:
@@ -102,10 +107,17 @@ def propose(ctx: Any, doc_id: int, n: int) -> Proposal:
     meta = ctx.db.q1("SELECT * FROM journal_tx WHERE tx_id=?", (t.tx_id,)) if t.origin == "journal" else None
     ov = ctx.db.q1("SELECT action FROM tx_override WHERE tx_id=?", (t.tx_id,)) if t.origin == "import" else None
     if (meta is not None and meta["source"] == "manual") or (ov is not None and ov["action"] == "edit"):
-        p.blocked = (f"{t.tx_id} wurde manuell erfasst bzw. bearbeitet – Portfolia überschreibt manuelle Korrekturen "
-                     "nicht. Beleg nur verknüpfen oder die Buchung selbst bearbeiten.")
+        p.needs_confirm = True
+        what = "von Hand erfasst" if meta is not None and meta["source"] == "manual" else "von Hand bearbeitet"
+        now = [f"Wert {t.value_eur} €" if t.value_eur is not None else "Wert –",
+               f"Gebühr {t.fee_qty} {t.fee_asset}" if t.fee_qty is not None else "Gebühr –"]
+        p.warning = (f"{t.tx_id} wurde {what} (jetzt: {', '.join(now)}). Die Änderung überschreibt diese Angaben – "
+                     "nur nach ausdrücklicher Bestätigung; Menge, Asset, Konto und Vorgangsart bleiben unverändert, "
+                     "„Rückgängig“ stellt den Zustand wieder her.")
     if t.origin == "plan":
         p.blocked = "Sparplan-Schätzung – bitte den Sparplan bzw. die tatsächliche Ausführung erfassen."
+    if (json.loads(doc["result_json"] or "{}").get("doc_type")) == "kosteninformation":
+        return _propose_costinfo(ctx, doc, f, t, p)
 
     def good(name: str) -> dict[str, Any] | None:
         x = f.get(name)
@@ -139,6 +151,40 @@ def propose(ctx: Any, doc_id: int, n: int) -> Proposal:
     return p
 
 
+def _propose_costinfo(ctx: Any, doc: Any, f: dict[str, dict[str, Any]], t: Tx, p: Proposal) -> Proposal:
+    """Gebührenschätzung aus der Kosteninformation (Entscheidung F10): nur die Gebühr, **nie** Kurswert oder Uhrzeit
+    (Kurs und Zeit der Ordereingabe sind nicht die der Ausführung). Vorrang hat die Abrechnung (R1/Z6): Ist die Buchung
+    durch eine Abrechnung belegt, bleibt es bei der Verknüpfung. Immer nur nach Bestätigung, als „geschätzt“
+    gekennzeichnet."""
+    p.estimate = True
+    if p.blocked:
+        return p
+    if t.type not in ("buy", "sell"):
+        p.blocked = "Eine Gebührenschätzung gibt es nur für Käufe und Verkäufe."
+        return p
+    if ctx.db.q1("SELECT 1 FROM tx_document WHERE tx_id=? AND role='abrechnung'", (t.tx_id,)) is not None:
+        p.blocked = ("Die Gebühr dieser Buchung ist durch eine Abrechnung belegt – die Kosteninformation bleibt "
+                     "Order-Beleg (Vorrang der Abrechnung).")
+        return p
+    p.fee_key = "fee_buy" if t.type == "buy" else "fee_sell"
+    x = f.get(p.fee_key)
+    if not x or x.get("value") in (None, ""):
+        p.blocked = "Die Kosteninformation nennt keine Dienstleistungskosten für diese Richtung."
+        return p
+    if t.fee_qty is not None and t.fee_asset not in (None, "EUR"):
+        p.blocked = f"Die Buchung hat eine Gebühr in {t.fee_asset} – bitte von Hand prüfen."
+        return p
+    new = Decimal(x["value"]).quantize(CENT)
+    if t.fee_qty is None or abs(t.fee_qty - new) >= CENT:
+        old = f"{t.fee_qty} EUR" if t.fee_qty is not None else "–"
+        day = (f.get("date") or {}).get("value") or ""
+        shown = f"{day[8:10]}.{day[5:7]}.{day[:4]}" if day else "?"
+        p.changes.append(Change("fee", "Gebühr (geschätzt)", old, f"{new} EUR",
+                                f"aus Kosteninformation vom {shown}, geschätzt: Dienstleistungs- + "
+                                "Fremdwährungskosten, ohne Produktkosten"))
+    return p
+
+
 def _apply_changes(ctx: Any, p: Proposal, doc: Any, selected: set[str]) -> A.Op | None:
     """Operation „amend“ mit neuem Zustand der Buchung und Ausgangszustand (für Prüfsumme und Rückgängig)."""
     from app.documentimport.profiles import parse_time
@@ -160,19 +206,26 @@ def _apply_changes(ctx: Any, p: Proposal, doc: Any, selected: set[str]) -> A.Op 
         tm = parse_time(f["time"]["value"])
         tz = (f.get("tz") or {}).get("value")
         new_ts, _do, _why = P.combine(t.date, tm, tz)
-    fee_ccy = (f.get("fee_ccy") or {}).get("value") or "EUR"
+    fee_ccy = "EUR" if p.estimate else (f.get("fee_ccy") or {}).get("value") or "EUR"
+    fee_src = f.get(p.fee_key) if p.estimate else f.get("fee")
     vals: dict[str, Any] = {}
     for c in chosen:
         if c.field == "value_eur":
             vals["value_eur"] = Decimal(f["value_eur"]["value"]).quantize(CENT)
-        elif c.field == "fee":
-            vals["fee_asset"], vals["fee_qty"] = fee_ccy, Decimal(f["fee"]["value"])
-            fe = (f.get("fee_eur") or {}).get("value")
-            vals["fee_eur"] = Decimal(fe).quantize(CENT) if fe else (Decimal(f["fee"]["value"]) if fee_ccy == "EUR"
-                                                                     else None)
+        elif c.field == "fee" and fee_src:
+            vals["fee_asset"], vals["fee_qty"] = fee_ccy, Decimal(fee_src["value"]).quantize(CENT) if p.estimate \
+                else Decimal(fee_src["value"])
+            fe = None if p.estimate else (f.get("fee_eur") or {}).get("value")
+            vals["fee_eur"] = Decimal(fe).quantize(CENT) if fe else (vals["fee_qty"] if fee_ccy == "EUR" else None)
         elif c.field == "txhash":
             vals["tx_hash"] = f["txhash"]["value"]
-    note = ((t.note or "") + (" · " if t.note else "") + f"ergänzt aus {ref}")[:500]
+    if p.estimate:
+        day = (f.get("date") or {}).get("value") or ""
+        shown = f"{day[8:10]}.{day[5:7]}.{day[:4]}" if day else "?"
+        note = ((t.note or "") + (" · " if t.note else "") +
+                f"Gebühr aus Kosteninformation vom {shown}, geschätzt ({ref})")[:500]
+    else:
+        note = ((t.note or "") + (" · " if t.note else "") + f"ergänzt aus {ref}")[:500]
     labels = ", ".join(c.label for c in chosen)
     if t.origin == "import":
         row = tx_row(t)
@@ -227,7 +280,8 @@ def finding(doc: Any, p: Proposal) -> Finding:
                    data={"type": "document", "doc": doc["id"], "n": p.n, "tx": t.tx_id if t else None})
 
 
-def plan(ctx: Any, doc_id: int, n: int, selected: set[str]) -> tuple[A.Plan, Finding, Proposal]:
+def plan(ctx: Any, doc_id: int, n: int, selected: set[str], *, confirm: bool = True
+         ) -> tuple[A.Plan, Finding, Proposal]:
     from app.documentimport.service import document_service
 
     doc = document_service(ctx).get(doc_id)
@@ -237,6 +291,10 @@ def plan(ctx: Any, doc_id: int, n: int, selected: set[str]) -> tuple[A.Plan, Fin
     pl = A.Plan(f, opt, {"fields": sorted(selected)}, version=A.data_version(ctx.db))
     if p.blocked:
         pl.errors.append(p.blocked)
+        return pl, f, p
+    if p.needs_confirm and not confirm:
+        pl.errors.append("Diese Buchung wurde von Hand erfasst bzw. bearbeitet – bitte die Änderung ausdrücklich "
+                         "bestätigen.")
         return pl, f, p
     try:
         op = _apply_changes(ctx, p, doc, selected)
@@ -259,8 +317,115 @@ def preview(ctx: Any, doc_id: int, n: int, selected: set[str]) -> tuple[A.Plan, 
     return pl, eff, p
 
 
-def apply(ctx: Any, doc_id: int, n: int, selected: set[str], token: str) -> A.Result:
-    pl, f, _p = plan(ctx, doc_id, n, selected)
+def apply(ctx: Any, doc_id: int, n: int, selected: set[str], token: str, *, confirm: bool = False) -> A.Result:
+    pl, f, p = plan(ctx, doc_id, n, selected, confirm=confirm)
     if pl.errors:
         return A.Result(errors=pl.errors)
-    return A.apply_plan(ctx, f, pl, token, lambda: plan(ctx, doc_id, n, selected)[0])
+    res = A.apply_plan(ctx, f, pl, token, lambda: plan(ctx, doc_id, n, selected, confirm=confirm)[0])
+    if res.ok and p.target is not None:
+        from app.documentimport import txdocs
+
+        txdocs.link_document(ctx.db, p.target.tx_id, doc_id,
+                             txdocs.role_of_document(ctx.db, doc_id, "abrechnung"), "amend")
+    return res
+
+
+# -- Sammelaktion ------------------------------------------------------------------------------------------------
+
+@dataclass
+class BulkItem:
+    doc_id: int
+    n: int
+    filename: str
+    target: Tx
+    changes: list[Change]
+    warning: str = ""
+    needs_confirm: bool = False
+    skipped: str = ""
+
+
+def bulk_candidates(ctx: Any, items: list[tuple[int, int]]) -> list[BulkItem]:
+    """Belege mit zugeordneter Buchung und Ergänzungsvorschlag (nicht gesperrt, keine Widersprüche in der Menge)."""
+    out: list[BulkItem] = []
+    seen: set[str] = set()
+    for doc_id, n in items:
+        p = propose(ctx, doc_id, n)
+        doc = ctx.db.q1("SELECT filename FROM document WHERE id=?", (doc_id,))
+        if p.target is None or p.blocked or not p.changes:
+            continue
+        it = BulkItem(doc_id, n, doc["filename"] if doc else str(doc_id), p.target, p.changes, p.warning,
+                      p.needs_confirm)
+        if p.contradictions:
+            it.skipped = "; ".join(p.contradictions)
+        elif p.target.tx_id in seen:
+            it.skipped = "Dieselbe Buchung wird bereits von einem anderen Beleg dieser Sammelaktion geändert."
+        seen.add(p.target.tx_id)
+        out.append(it)
+    return out
+
+
+def bulk_plan(ctx: Any, picks: list[tuple[int, int]]) -> tuple[A.Plan, Finding, list[tuple[str, int]]]:
+    """Ein Plan für mehrere Belege (eine Entscheidung, als Ganzes rückgängig zu machen). Es werden nur Ergänzungen
+    ohne Warnung aufgenommen – von Hand erfasste bzw. bearbeitete Buchungen gehen nur einzeln mit Bestätigung.
+    Dritter Rückgabewert: (Buchung, Beleg) für die Belegverknüpfung."""
+    f = Finding(kind="document", status="belegt", priority=2, title=f"{len(picks)} Belege ergänzen Buchungen",
+                known=[], key="docs|" + ",".join(f"{d}.{n}" for d, n in sorted(picks)),
+                data={"type": "documents", "docs": [d for d, _n in picks]})
+    opt = Option("amend", "Buchungen aus Belegen ergänzen", "Belegte Gebühren, Werte und Uhrzeiten übernehmen")
+    pl = A.Plan(f, opt, {"docs": [f"{d}.{n}" for d, n in sorted(picks)]}, version=A.data_version(ctx.db))
+    targets: set[str] = set()
+    links: list[tuple[str, int]] = []
+    for doc_id, n in picks:
+        doc = document_row(ctx, doc_id)
+        p = propose(ctx, doc_id, n)
+        if doc is None or p.target is None or p.blocked or not p.changes:
+            pl.errors.append(f"Beleg {doc_id}: keine ergänzbare Buchung.")
+            continue
+        if p.needs_confirm:
+            pl.errors.append(f"Beleg {doc_id}: {p.target.tx_id} wurde von Hand erfasst bzw. bearbeitet – nur einzeln "
+                             "mit Bestätigung änderbar.")
+            continue
+        if p.contradictions:
+            pl.errors.append(f"Beleg {doc_id}: " + "; ".join(p.contradictions))
+            continue
+        if p.target.tx_id in targets:
+            pl.errors.append(f"Beleg {doc_id}: {p.target.tx_id} wird bereits von einem anderen Beleg geändert.")
+            continue
+        targets.add(p.target.tx_id)
+        try:
+            op = _apply_changes(ctx, p, doc, {c.field for c in p.changes})
+        except ValueError as e:
+            pl.errors.append(f"Beleg {doc_id}: {e}")
+            continue
+        if op is not None:
+            pl.ops.append(op)
+            links.append((p.target.tx_id, doc_id))
+    return pl, f, links
+
+
+def document_row(ctx: Any, doc_id: int) -> Any:
+    from app.documentimport.service import document_service
+
+    return document_service(ctx).get(doc_id)
+
+
+def bulk_preview(ctx: Any, picks: list[tuple[int, int]]) -> tuple[A.Plan, Any]:
+    from app.diagnosis.engine import report_for
+
+    pl, _f, _links = bulk_plan(ctx, picks)
+    eff = A.preview(ctx, report_for(ctx), pl) if pl.ops and not pl.errors else None
+    return pl, eff
+
+
+def bulk_apply(ctx: Any, picks: list[tuple[int, int]], token: str) -> A.Result:
+    pl, f, links = bulk_plan(ctx, picks)
+    if pl.errors:
+        return A.Result(errors=pl.errors)
+    res = A.apply_plan(ctx, f, pl, token, lambda: bulk_plan(ctx, picks)[0])
+    if res.ok:
+        from app.documentimport import txdocs
+
+        for tx_id, doc_id in links:
+            txdocs.link_document(ctx.db, tx_id, doc_id, txdocs.role_of_document(ctx.db, doc_id, "abrechnung"),
+                                 "amend")
+    return res

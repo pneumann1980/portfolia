@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Steuervergleich {{ ds.name }}{% endblock %}
+{% block heading %}Steuervergleich DKB ↔ Portfolia: {{ ds.name }}{% endblock %}
+{% macro lv(level, diff) %}<span class="badge {{ 'good' if level in ('gleich', 'rundung', 'klein') else 'crit' if level == 'warn' else 'warn' if level == 'info' else '' }}">{{ levels[level] }}</span>{% if diff is not none and level not in ('gleich', 'offen') %} <span class="mono">{{ diff|eur(sign=True) }}</span>{% endif %}{% endmacro %}
+{% block content %}
+<div class="stack diag">
+  <p class="hint"><a href="/settings/datasources/{{ ds.id }}/dkb">← DKB-Datenquelle</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">i</span><div>{{ msg }}</div></div>{% endif %}
+  {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>Was verglichen wird</h2></div>
+    <p>Die <b>Abrechnungen der DKB</b> (Verkäufe und Erträge, ohne Jahressteuerbescheinigung) werden mit dem verglichen, was Portfolia aus Ihren Buchungen für das Konto <b>{{ d.account or ds.account or ds.name }}</b> rechnet – das Konto wird dafür im Steuer-Regelwerk als „Inland mit Steuerabzug“ <b>nur hier</b> mitgerechnet, ohne Ihre Steuereinstellungen zu ändern. <b>Diese Seite ändert keine Buchung</b> und ersetzt weder Steuerberatung noch Steuerbescheinigung.</p>
+    <ul class="hint">
+      <li>Die DKB rechnet <b>laufend je Transaktion</b> mit Verlusttöpfen und erstattet sofort; Portfolia rechnet <b>am Jahresende</b>. Einzelne Steuerbeträge sind deshalb nur über die Topfstände wirklich vergleichbar.</li>
+      <li>Erwartbare Abweichungen: Einstand vor dem Archiv, geschätzte Gebühren, Kapitalmaßnahmen mit eigener Steuer, Teilfreistellung, Rundung (die DKB rundet je Zeile auf Cent).</li>
+      <li>Schwellen: unter {{ d.thresholds.round|eur }} Rundung, ab {{ d.thresholds.info|eur }} Hinweis, ab {{ d.thresholds.warn|eur }} Warnung.</li>
+    </ul>
+    {% if pending %}
+    <div class="alert info" role="status"><span class="icon">i</span><div>{{ pending }} Verkaufs-/Ertragsabrechnungen sind noch nicht auf Steuerangaben gelesen.
+      <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/steuer/einlesen" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit">Steuerangaben einlesen</button></form>
+      <span class="hint">liest die abgelegten Originale lokal; höchstens 300 je Klick.</span></div></div>
+    {% endif %}
+    {% if years %}
+    <form method="get" class="inline-form" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+      <label class="field">Jahr<select name="year">{% for y in years %}<option value="{{ y }}"{% if y == d.year %} selected{% endif %}>{{ y }}</option>{% endfor %}</select></label>
+      <label class="field">Hinweis ab (€)<input name="hinweis" inputmode="decimal" value="{{ d.thresholds.info|string|replace('.', ',') }}" size="6"></label>
+      <label class="field">Warnung ab (€)<input name="warnung" inputmode="decimal" value="{{ d.thresholds.warn|string|replace('.', ',') }}" size="6"></label>
+      <button class="btn" type="submit">Anzeigen</button>
+    </form>
+    {% else %}
+    <p class="hint">Noch keine Verkaufs- oder Ertragsabrechnungen im Archiv dieser Datenquelle. Zuerst ein ZIP mit den Wertpapierdokumenten hochladen.</p>
+    {% endif %}
+  </section>
+
+  {% if d.error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ d.error }}</div></div>
+  {% elif d.year and not d.sales and not d.income %}
+  <section class="card"><p>Für {{ d.year }} gibt es {{ d.docs }} Abrechnungen, aber keine mit lesbaren Steuerangaben{% if d.unread %} ({{ d.unread }} noch nicht eingelesen){% endif %}{% if d.unusable %}; {{ d.unusable }} bestanden die Rechenprobe nicht und bleiben außen vor{% endif %}.</p></section>
+  {% elif d.year %}
+
+  {% if d.unread or d.unusable %}<div class="alert warn" role="status"><span class="icon">!</span><div>{% if d.unread %}{{ d.unread }} Abrechnungen dieses Jahres sind noch nicht eingelesen. {% endif %}{% if d.unusable %}{{ d.unusable }} Abrechnungen ohne bestandene Rechenprobe sind nicht enthalten. {% endif %}Die Summen sind dann unvollständig.</div></div>{% endif %}
+
+  {% set s = d.summary %}
+  <section class="card">
+    <div class="card-head"><h2>Jahr {{ d.year }}</h2></div>
+    <div class="table-wrap cards-wrap"><table class="table cards">
+      <thead><tr><th>Größe</th><th class="num">DKB</th><th class="num">Portfolia</th><th>Abweichung</th></tr></thead>
+      <tbody>{% for ln in s.lines %}<tr><td>{{ ln.label }}{% if ln.hint %}<div class="hint">{{ ln.hint }}</div>{% endif %}</td><td class="num" data-label="DKB">{{ ln.dkb|eur }}</td><td class="num" data-label="Portfolia">{{ ln.pf|eur }}</td><td data-label="Abweichung">{{ lv(ln.level, ln.diff) }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if s.pots %}
+    <h3>Topf-Endstände (letzte Abrechnung vom {{ s.pots_from|date_de }})</h3>
+    <div class="table-wrap cards-wrap"><table class="table cards">
+      <thead><tr><th>Topf</th><th class="num">DKB</th><th class="num">Portfolia</th><th>Abweichung</th></tr></thead>
+      <tbody>{% for p in s.pots %}<tr><td>{{ p.label }}</td><td class="num" data-label="DKB">{{ p.dkb|eur }}</td><td class="num" data-label="Portfolia">{{ p.pf|eur }}</td><td data-label="Abweichung">{{ lv(p.level, p.diff) }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="hint">Portfolia-Topf: Verlustvortrag der Einstellungen plus Ergebnis des Jahres; Sparer-Pauschbetrag nach Abzug bereits genutzter Freistellungsaufträge. Ohne alle Abrechnungen des Jahres im Archiv sind die DKB-Stände nicht vollständig.</p>
+    {% endif %}
+    {% for i in s.issues %}<div class="hint">Hinweis Regelwerk: {{ i }}</div>{% endfor %}
+  </section>
+
+  {% set pr = d.proposal %}
+  {% if pr and (pr['items'] or pr.note) %}
+  <section class="card">
+    <div class="card-head"><h2>Vorschlag zur Vorbelegung der Steueroptionen</h2></div>
+    <p>Aus den Topfständen „Vorher“ der ersten Abrechnung des Jahres{% if pr.from_doc %} ({{ pr.from_doc|date_de }}){% endif %}. Nur sinnvoll, wenn das Archiv <b>alle</b> Abrechnungen des Jahres enthält. Es wird nichts ohne Ihre Bestätigung geändert.</p>
+    {% if pr.note %}<p class="hint">{{ pr.note }}</p>{% endif %}
+    {% if pr['items'] %}
+    <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/steuer/vorbelegen" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ d.year }}">
+      <div class="table-wrap cards-wrap"><table class="table cards">
+        <thead><tr><th><span class="sr-only">Auswahl</span></th><th>Option</th><th class="num">bisher</th><th class="num">laut DKB</th><th>Gültigkeit</th></tr></thead>
+        <tbody>{% for it in pr['items'] %}<tr>
+          <td data-label="Auswahl"><input type="checkbox" name="key" value="{{ it.key }}" checked aria-label="{{ it.label }} übernehmen"></td>
+          <td data-label="Option">{{ it.label }}</td>
+          <td class="num" data-label="bisher">{% if it.current is string %}{{ it.current }}{% else %}{{ it.current|eur }}{% endif %}</td>
+          <td class="num" data-label="laut DKB">{% if it.value is sameas true %}ja{% elif it.value is sameas false %}nein{% else %}{{ it.value|eur }}{% endif %}</td>
+          <td data-label="Gültigkeit">{{ it.scope }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      <label><input type="checkbox" name="confirm" value="1"> Ich bestätige die Übernahme in die Steueroptionen (zurücknehmbar unter <a href="/tax?year={{ d.year }}#options">Steuer → Optionen</a>).</label>
+      <div><button class="btn primary" type="submit">Ausgewählte Werte übernehmen</button></div>
+    </form>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>Verkäufe</h2> <span class="badge">{{ d.sales|length }}</span></div>
+    {% if d.sales %}
+    <div class="table-wrap cards-wrap"><table class="table cards">
+      <thead><tr><th>Datum</th><th>Wertpapier</th><th class="num">Gewinn DKB</th><th class="num">Gewinn Portfolia</th><th>Abweichung</th><th class="num">Steuer DKB</th><th class="num">Steuer Portfolia</th><th>Ursache / Lot-Auswahl</th></tr></thead>
+      <tbody>{% for r in d.sales %}<tr>
+        <td data-label="Datum"><a href="/journal/documents/{{ r.doc_id }}">{{ r.date|date_de }}</a>{% if r.tx %}<div class="hint mono">{{ r.tx }}</div>{% endif %}</td>
+        <td data-label="Wertpapier" class="wrap-any">{{ r.name }}</td>
+        <td class="num" data-label="Gewinn DKB">{{ r.dkb_gain|eur if r.dkb_gain is not none else '–' }}</td>
+        <td class="num" data-label="Gewinn Portfolia">{{ r.pf_gain|eur if r.pf_gain is not none else '–' }}</td>
+        <td data-label="Abweichung">{{ lv(r.gain_level, r.gain_diff) }}</td>
+        <td class="num" data-label="Steuer DKB">{{ r.dkb_tax|eur }}</td>
+        <td class="num" data-label="Steuer Portfolia">{{ r.pf_tax|eur if r.pf_tax is not none else '–' }}<div>{{ lv(r.tax_level, r.tax_diff) }}</div></td>
+        <td data-label="Ursache" class="wrap-any">{% if r.note %}<span class="badge warn">{{ r.note }}</span>{% endif %}{% for c in r.causes %}<div>{{ c }}</div>{% endfor %}{% if r.lots %}<div class="hint">Lots: {{ r.lots }}</div>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="hint">Steuer: DKB netto nach Erstattung (Steuerliche Ausgleichrechnung); Portfolia: zugeordnete Steuerbuchungen des Wertpapiers am Verkaufstag. Bei Verlustverrechnung weicht die Steuer je Verkauf zwangsläufig ab – maßgeblich sind die Topfstände.</p>
+    {% else %}<p class="hint">Keine Verkaufsabrechnungen mit Steuerangaben.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Erträge</h2> <span class="badge">{{ d.income|length }}</span></div>
+    {% if d.income %}
+    <div class="table-wrap cards-wrap"><table class="table cards">
+      <thead><tr><th>Datum</th><th>Wertpapier</th><th class="num">Brutto DKB / Portfolia</th><th class="num">Quellensteuer DKB / Portfolia</th><th class="num">KapESt + Soli DKB / Portfolia</th><th>Abweichung</th></tr></thead>
+      <tbody>{% for r in d.income %}<tr>
+        <td data-label="Datum"><a href="/journal/documents/{{ r.doc_id }}">{{ r.date|date_de }}</a>{% if r.tx %}<div class="hint mono">{{ r.tx }}</div>{% endif %}</td>
+        <td data-label="Wertpapier" class="wrap-any">{{ r.name }}</td>
+        <td class="num" data-label="Brutto">{{ r.dkb_gross|eur if r.dkb_gross is not none else '–' }} / {{ r.pf_gross|eur if r.pf_gross is not none else '–' }}</td>
+        <td class="num" data-label="Quellensteuer">{{ r.dkb_qst|eur }} / {{ r.pf_qst|eur if r.pf_qst is not none else '–' }}</td>
+        <td class="num" data-label="KapESt + Soli">{{ r.dkb_tax|eur }} / {{ r.pf_tax|eur if r.pf_tax is not none else '–' }}</td>
+        <td data-label="Abweichung" class="wrap-any">{% if r.note %}<span class="badge warn">{{ r.note }}</span>{% else %}{% if r.gross_level not in ('gleich', 'rundung') %}<div>Brutto: {{ lv(r.gross_level, r.gross_diff) }}</div>{% endif %}{% if r.qst_level not in ('gleich', 'rundung') %}<div>Quellensteuer: {{ lv(r.qst_level, r.qst_diff) }}{% if r.pf_qst == 0 and r.dkb_qst > 0 %} <span class="hint">fehlende Steuerzeile?</span>{% endif %}</div>{% endif %}{% if r.tax_level not in ('gleich', 'rundung') %}<div>KapESt/Soli: {{ lv(r.tax_level, r.tax_diff) }}{% if r.pf_tax == 0 and r.dkb_tax > 0 %} <span class="hint">fehlende Steuerzeile?</span>{% endif %}</div>{% endif %}{% if r.worst in ('gleich', 'rundung') %}<span class="badge good">stimmt</span>{% endif %}{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    {% else %}<p class="hint">Keine Ertragsabrechnungen mit Steuerangaben.</p>{% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

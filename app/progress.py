@@ -52,10 +52,18 @@ EXTRA_PHASES: list[tuple[str, str, int]] = [
     ("chk_integrity", "Integritätsprüfung", 30),
     ("chk_clarify", "Fälle untersuchen", 40),
     ("chk_plan", "Arbeitsplan erstellen", 10),
+    # ZIP-Import der DKB-Wertpapierdokumente (app.datasources.dkb_run)
+    ("zip_unpack", "ZIP entpacken und ablegen", 15),
+    ("zip_eval", "Dokumente erkennen und auswerten", 70),
+    ("zip_match", "Buchungen zuordnen", 10),
+    ("zip_report", "Bericht erstellen", 5),
 ]
 PHASE_LABEL = {k: v for k, v, _w in PHASES + EXTRA_PHASES} | {"done": "Fertig"}
 STALE_S = 180  # ohne Lebenszeichen gilt ein „laufender“ Fortschritt als abgebrochen
 _WRITE_EVERY_S = 0.8
+ETA_HALF_LIFE_S = 20.0  # Glättung der Geschwindigkeit (exponentiell)
+ETA_MIN_ITEMS = 3  # Restzeit erst nach so vielen verarbeiteten Einheiten …
+ETA_MIN_SECONDS = 10.0  # … oder so vielen Sekunden Laufzeit
 log = logging.getLogger(__name__)
 
 
@@ -64,7 +72,7 @@ class Progress:
 
     def __init__(self, sink: Callable[[dict[str, Any]], None], label: str, *, source: str | None = None,
                  unit: str = "Datensätze", phases: list[str] | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic, eta: bool = False) -> None:
         self.sink = sink
         self.label = label
         self.source = source
@@ -76,6 +84,19 @@ class Progress:
         total_w = sum(w for _k, _l, w in self.phases) or 1
         self._weights = {k: w / total_w * 100 for k, _l, w in self.phases}
         self.clock = clock
+        self._eta_on = eta
+        self._t0 = clock()
+        self._expect: dict[str, float] = {}  # geplante Arbeit je Phase (Einheiten, z. B. Bytes oder Dateien)
+        self._hint: dict[str, float] = {}  # Startschätzung der Geschwindigkeit (Einheiten je Sekunde)
+        self._rate: dict[str, float] = {}  # geglättete Geschwindigkeit je Phase
+        self._avg: dict[str, float] = {}  # Durchschnitt über die abgeschlossene Phase
+        self._work = 0.0  # erledigte Arbeit der laufenden Phase
+        self._work_total: float | None = None
+        self._sample_t = self._t0
+        self._sample_w = 0.0
+        self._phase_t = self._t0
+        self._items_before = 0  # in abgeschlossenen Phasen verarbeitete Einheiten
+        self._eta_prev: tuple[float, float] | None = None  # (zuletzt gezeigt, Zeitpunkt)
         self.phase_key: str | None = None
         self.done = 0
         self.total: int | None = None
@@ -89,7 +110,17 @@ class Progress:
         self._emit(force=True)
 
     # -- Fortschreiben ------------------------------------------------------------------------------------
-    def phase(self, key: str, total: int | None = None, text: str = "", unit: str | None = None) -> Progress:
+    def expect(self, key: str, work: float, rate: float | None = None) -> Progress:
+        """Für die Restzeit: geplante Arbeit einer (auch noch nicht begonnenen) Phase in beliebigen Einheiten
+        (z. B. Bytes) und Startschätzung der Geschwindigkeit in Einheiten je Sekunde."""
+        with self._lock:
+            self._expect[key] = max(float(work), 0.0)
+            if rate:
+                self._hint[key] = float(rate)
+        return self
+
+    def phase(self, key: str, total: int | None = None, text: str = "", unit: str | None = None,
+              work_total: float | None = None) -> Progress:
         """In Phase ``key`` wechseln (unbekannte Phasen werden ignoriert, Rückschritte nicht angezeigt)."""
         with self._lock:
             if key not in self._weights:
@@ -97,32 +128,71 @@ class Progress:
             keys = [k for k, _l, _w in self.phases]
             if self.phase_key is not None and keys.index(key) < keys.index(self.phase_key):
                 return self  # nie rückwärts
+            now = self.clock()
+            if self.phase_key in self._weights and self.phase_key != key:
+                self._close_phase(now)
             self.phase_key = key
             self.done, self.total, self.text = 0, total, text
             if unit:
                 self.unit = unit
+            self._work, self._sample_w, self._sample_t, self._phase_t = 0.0, 0.0, now, now
+            self._work_total = work_total if work_total is not None else self._expect.get(key, total)
             self._recompute()
         self._emit(force=True)
         return self
 
-    def update(self, done: int, total: int | None = None, text: str | None = None) -> None:
+    def _close_phase(self, now: float) -> None:
+        key = self.phase_key or ""
+        span = now - self._phase_t
+        if self._work > 0 and span > 0:
+            self._avg[key] = self._work / span
+        self._items_before += self.done
+
+    def update(self, done: int, total: int | None = None, text: str | None = None, work: float | None = None) -> None:
+        """``work``: erledigte Arbeit in den Einheiten von :meth:`expect` (Standard: ``done``) – für die Restzeit."""
         with self._lock:
             self.done = max(0, int(done))
             if total is not None:
                 self.total = max(int(total), self.done)
+                if self.phase_key not in self._expect and work is None:
+                    self._work_total = self.total
             if text is not None:
                 self.text = text[:200]
+            self._work = float(work) if work is not None else float(self.done)
+            self._sample()
             self._recompute()
         self._emit()
 
-    def advance(self, n: int = 1, text: str | None = None) -> None:
-        self.update(self.done + n, None, text)
+    def advance(self, n: int = 1, text: str | None = None, work: float | None = None) -> None:
+        self.update(self.done + n, None, text, None if work is None else self._work + work)
+
+    def touch(self) -> None:
+        """Lebenszeichen ohne Fortschritt (lange Einzelschritte): schreibt den Zustand neu."""
+        self._emit(force=True)
+
+    def _sample(self) -> None:
+        now = self.clock()
+        dt = now - self._sample_t
+        if dt < 0.25:
+            return
+        inst = max(self._work - self._sample_w, 0.0) / dt
+        key = self.phase_key or ""
+        prev = self._rate.get(key)
+        a = 1.0 - 0.5 ** (dt / ETA_HALF_LIFE_S)
+        self._rate[key] = inst if prev is None else prev + a * (inst - prev)
+        self._sample_t, self._sample_w = now, self._work
 
     def finish(self, ok: bool = True, result: str = "", **extra: Any) -> None:
         with self._lock:
             self.finished = True
+            now = self.clock()
+            if self.phase_key in self._weights:
+                self._close_phase(now)
             self.extra.update(extra)
             self.extra.update(ok=ok, result=result[:500], finished_at=iso(datetime.now(UTC)))
+            if self._eta_on:
+                self.extra["duration_s"] = round(max(now - self._t0, 0.0))
+                self.extra["duration_text"] = f"{'Fertig' if ok else 'Beendet'} in {fmt_clock(now - self._t0)} Min."
             if ok:
                 self.pct = 100.0
             self.phase_key = "done" if ok else self.phase_key
@@ -151,11 +221,54 @@ class Progress:
         steps = [{"key": k, "label": lbl, "state": "done" if i < cur else ("active" if i == cur else "open")}
                  for i, (k, lbl, _w) in enumerate(self.phases)]
         label = PHASE_LABEL.get(self.phase_key or "", "Start")
-        return {"v": 2, "running": not self.finished, "label": self.label, "source": self.source,
+        eta = self._eta_payload()
+        return {**eta, "v": 2, "running": not self.finished, "label": self.label, "source": self.source,
                 "phase": self.phase_key, "phase_label": label, "phase_no": max(cur, 0) + 1 if cur >= 0 else 0,
                 "phase_count": len(keys), "pct": round(self.pct, 1), "done": self.done, "total": self.total,
                 "unit": self.unit, "text": self.text, "stage": label, "steps": steps, "started_at": self.started_at,
                 "updated_at": iso(datetime.now(UTC)), **self.extra}
+
+    def measured_rates(self) -> dict[str, float]:
+        """Gemessene Durchschnittsgeschwindigkeit je abgeschlossener Phase (Einheiten je Sekunde) – als Startschätzung
+        für den nächsten Lauf."""
+        return {k: round(v, 4) for k, v in self._avg.items() if v > 0}
+
+    def _eta_payload(self) -> dict[str, Any]:
+        if not self._eta_on:
+            return {}
+        now = self.clock()
+        elapsed = max(now - self._t0, 0.0)
+        out: dict[str, Any] = {"elapsed_s": int(elapsed), "elapsed_text": fmt_clock(elapsed)}
+        if self.finished:
+            return {**out, "eta_s": None, "eta_text": ""}
+        rem = self._remaining(now, elapsed)
+        if rem is None:
+            return {**out, "eta_s": None, "eta_text": "Restzeit wird berechnet …"}
+        if self._eta_prev is not None:  # nicht sprunghaft: höchstens Faktor 2 gegenüber dem fortgeschriebenen Wert
+            expected = max(self._eta_prev[0] - (now - self._eta_prev[1]), 1.0)
+            rem = min(max(rem, expected / 2), expected * 2)
+        rem = max(rem, 1.0)
+        self._eta_prev = (rem, now)
+        return {**out, "eta_s": round(rem), "eta_text": "noch " + fmt_eta(rem)}
+
+    def _remaining(self, now: float, elapsed: float) -> float | None:
+        key = self.phase_key
+        if key is None or key == "done" or key not in self._weights:
+            return None
+        if self._items_before + self.done < ETA_MIN_ITEMS and elapsed < ETA_MIN_SECONDS:
+            return None
+        total = self._work_total
+        rate = self._rate.get(key) or (self._work / max(now - self._phase_t, 1e-9) if self._work > 0 else 0.0) \
+            or self._hint.get(key, 0.0)
+        if not total or rate <= 0:
+            return None
+        rem = max(total - self._work, 0.0) / rate
+        keys = [k for k, _l, _w in self.phases]
+        for k in keys[keys.index(key) + 1:]:  # noch nicht begonnene Phasen: geplante Arbeit ÷ Startschätzung
+            w, r = self._expect.get(k), self._hint.get(k) or self._rate.get(k)
+            if w and r:
+                rem += w / r
+        return rem
 
     def _emit(self, force: bool = False) -> None:
         now = self.clock()
@@ -166,6 +279,29 @@ class Progress:
             self.sink(self.payload())
         except Exception as e:  # Anzeige darf den Vorgang nie stören
             log.debug("Fortschritt nicht gespeichert: %s", e)
+
+
+def fmt_clock(seconds: float) -> str:
+    """Dauer als ``m:ss`` (ab einer Stunde ``h:mm:ss``)."""
+    n = int(max(seconds, 0))
+    h, rest = divmod(n, 3600)
+    m, sec = divmod(rest, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+def fmt_eta(seconds: float) -> str:
+    """Restzeit für die Anzeige: unter 45 s „unter 1 Min.“, bis 5 Min. auf halbe Minuten, bis 1 Std. auf Minuten,
+    darüber Stunden und Minuten. Nie 0 und nie negativ."""
+    s = max(float(seconds), 1.0)
+    if s < 45:
+        return "unter 1 Min."
+    if s < 300:
+        half = max(round(s / 30) / 2, 1.0)
+        return "ca. " + (f"{int(half)}" if half == int(half) else f"{half:.1f}".replace(".", ",")) + " Min."
+    if s < 3600:
+        return f"ca. {round(s / 60)} Min."
+    h, m = divmod(round(s / 60), 60)
+    return f"ca. {h} Std." + (f" {m} Min." if m else "")
 
 
 # -- Speicherorte ---------------------------------------------------------------------------------------

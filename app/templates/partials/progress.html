@@ -7,6 +7,7 @@
   </div>
   <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ p.pct_int }}"><div style="width:{{ [p.pct_int, 2]|max }}%"></div></div>
   {% if p.source or p.count %}<div class="hint wrap-any">{% if p.source %}{{ p.source }}{% if p.count %} – {% endif %}{% endif %}{% if p.count %}{{ p.count }}{% if p.total %} verarbeitet{% endif %}{% endif %}</div>{% endif %}
+  {% if p.eta_text or p.duration_text %}<div class="hint">{{ p.duration_text or p.eta_text }}{% if p.elapsed_text and not p.duration_text %} · bisher {{ p.elapsed_text }} Min.{% endif %}</div>{% endif %}
   {% if p.text and not compact %}<div class="hint wrap-any">{{ p.text }}</div>{% endif %}
   {% if p.steps and not compact %}
   <ol class="pg-steps" aria-label="Phasen">{% for s in p.steps %}<li class="{{ s.state }}">{{ s.label }}</li>{% endfor %}</ol>

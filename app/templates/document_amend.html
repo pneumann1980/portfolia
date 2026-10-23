@@ -10,6 +10,7 @@
   <div class="alert"><span class="icon">i</span><div><strong>Vorschau – noch nichts geändert.</strong> Ergänzt werden nur Felder, die der Beleg belegt bzw. eindeutig rekonstruiert; Menge, Asset, Konto und Vorgangsart werden nie geändert. Die Auswirkungen sind auf einer Kopie berechnet; erst „Übernehmen“ ändert die Buchung, rückgängig unter Datenqualität → Entscheidungen und Korrekturen.</div></div>
   <p>Beleg: <a href="/journal/documents/{{ d.id }}">{{ d.filename }}</a>{% if prop.target %} · Buchung <b>{{ prop.target.tx_id }}</b> ({{ prop.target.ts|datetime_de }}){% endif %}</p>
   {% if prop.blocked %}<div class="alert warn"><span class="icon">!</span><div>{{ prop.blocked }}</div></div>{% endif %}
+  {% if prop.warning %}<div class="alert warn" role="alert"><span class="icon">!</span><div><b>Von Hand geändert.</b> {{ prop.warning }}</div></div>{% endif %}
   {% for c in prop.contradictions %}<div class="alert warn"><span class="icon">!</span><div>{{ c }}</div></div>{% endfor %}
 </section>
 
@@ -45,6 +46,7 @@
   <form method="post" action="/journal/documents/{{ d.id }}/amend" class="row">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="n" value="{{ n }}"><input type="hidden" name="token" value="{{ plan.token }}">
     {% for f in selected|sort %}<input type="hidden" name="f" value="{{ f }}">{% endfor %}
+    {% if prop.needs_confirm %}<label class="check"><input type="checkbox" name="confirm" value="1" required> Trotzdem ändern (die von Hand eingetragenen Angaben werden ersetzt)</label>{% endif %}
     <button class="btn primary" type="submit">Übernehmen</button>
     <a class="btn ghost" href="/journal/documents/{{ d.id }}#tx{{ n }}">Abbrechen</a>
   </form>

@@ -329,7 +329,8 @@ class DocumentService:
             for i, (sha, tx) in enumerate(merged):
                 if ev.is_set():
                     raise Cancelled("Abgebrochen.")
-                enriched.append((sha, E.enrich(ectx, tx, budget, public=public, transport=transport)))
+                enriched.append((sha, E.enrich(ectx, tx, budget, public=public, transport=transport,
+                                               account=str(opts.get("account") or ""))))
                 prog.update(i + 1, len(merged))
             prog.phase("match", len(enriched), "Bestehende Buchungen abgleichen")
             batch_ids = self._stage(sid, enriched, meta, opts.get("account") or "")
@@ -401,6 +402,8 @@ class DocumentService:
             src = f"doc:{e.tx.provider or e.tx.doc_type}"
             recs = to_recs(e, sha=sha, doc=doc, account=acc, n0=n)
             n += len(recs)
+            if not recs:  # DKB-Abrechnung einer vorhandenen Buchung zugeordnet: nichts zu buchen
+                continue
             groups.setdefault(src, []).extend(recs)
             docs_of.setdefault(src, set()).update({sha, *e.tx.sources})
         out: list[int] = []
@@ -469,6 +472,10 @@ class DocumentService:
             p = provenance(e, {})
             p["n"] = e.tx.n
             p["event_key"] = event_key(e, sha)[0]
+            p["linked"] = e.linked is not None
+            p["link_note"] = e.link_note
+            p["link_state"] = e.link_state
+            p["link_extra"] = list(e.link_extra)
             for s in [sha, *e.tx.sources]:
                 by_sha.setdefault(s, []).append(p)
         for doc_id, (res, an) in results.items():

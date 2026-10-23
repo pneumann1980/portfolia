@@ -213,6 +213,22 @@ def make_router() -> APIRouter:
     def index(request: Request, msg: str = "", err: str = "") -> HTMLResponse:
         return _index(request, [err] if err else None, msg)
 
+    @router.get("/journal/documents/export")
+    def year_export(request: Request, year: int = 0) -> Response:
+        """Alle Belege eines Jahres als ZIP mit manifest.csv (Steuererklärung, Steuerberater)."""
+        from fastapi.responses import StreamingResponse
+
+        from app.documentimport import yearpack
+
+        if not 1990 <= year <= 2200:
+            return _back(request, _url("/journal", err="Bitte ein Jahr wählen."))
+        pack = yearpack.build(get_ctx(request), year)
+        if not pack.ok:
+            return _back(request, _url("/journal", err=pack.message))
+        return StreamingResponse(pack.chunks(), media_type="application/zip", headers={
+            "Content-Disposition": f'attachment; filename="belege-{year}.zip"', "Content-Length": str(pack.size),
+            "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
     @router.post("/journal/documents/upload")
     async def upload(request: Request) -> Response:
         """Mehrere Dateien (XHR mit Fortschritt oder klassisches Formular). Antwort: JSON (XHR) bzw. Weiterleitung."""
@@ -410,7 +426,8 @@ def make_router() -> APIRouter:
         except ValueError:
             n = 1
         sel = {str(x) for x in form.getlist("f")}
-        res = await run_in_threadpool(AM.apply, ctx, doc_id, n, sel, str(form.get("token") or ""))
+        res = await run_in_threadpool(AM.apply, ctx, doc_id, n, sel, str(form.get("token") or ""),
+                                      confirm=str(form.get("confirm") or "") == "1")
         if not res.ok:
             return await run_in_threadpool(_amend_page, request, doc_id, n, sorted(sel), True, res.errors, 409)
         return _back(request, _url(f"/journal/documents/{doc_id}", msg=res.message + " Rückgängig unter "
