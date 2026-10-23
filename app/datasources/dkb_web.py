@@ -181,9 +181,16 @@ def make_router() -> APIRouter:
         return _back(request, zip_url(sid, rid, **({"msg": "Zwischendatei gelöscht."} if ok else
                                                    {"error": "Nichts zu löschen."})))
 
+    def _quelle(f: Any) -> str:
+        return "kosten" if str(f.get("quelle") or "") == "kosten" else "abrechnung"
+
+    def _matched_docs(run: dict[str, Any], quelle: str) -> list[tuple[int, int]]:
+        """Belege mit Buchung: Abrechnungen (belegte Werte) bzw. Kosteninformationen (geschätzte Gebühr)."""
+        part = (run["summary"].get("costs") if quelle == "kosten" else run["summary"].get("trades")) or {}
+        return [(int(x["doc"]), int(x.get("n") or 1)) for x in part.get("matched", []) if x.get("doc")]
+
     def _amend_picks(run: dict[str, Any], f: Any) -> list[tuple[int, int]]:
-        matched = {(int(x["doc"]), int(x.get("n") or 1))
-                   for x in (run["summary"].get("trades") or {}).get("matched", []) if x.get("doc")}
+        matched = set(_matched_docs(run, _quelle(f)))
         wanted = {int(v) for v in f.getlist("d") if str(v).isdigit()}
         return sorted(p for p in matched if p[0] in wanted)
 
@@ -194,8 +201,8 @@ def make_router() -> APIRouter:
         run = R.view(ctx, sid, rid)
         if run is None:
             raise HTTPException(404)
-        matched = [(int(x["doc"]), int(x.get("n") or 1))
-                   for x in (run["summary"].get("trades") or {}).get("matched", []) if x.get("doc")]
+        quelle = _quelle(f)
+        matched = _matched_docs(run, quelle)
         items = AM.bulk_candidates(ctx, matched)
         safe = {it.doc_id for it in items if not it.needs_confirm and not it.skipped}
         sel = {int(v) for v in f.getlist("d") if str(v).isdigit()} if "d" in f or preview else set(safe)
@@ -204,7 +211,7 @@ def make_router() -> APIRouter:
         if preview and picks:
             plan, eff = AM.bulk_preview(ctx, picks)
         return {"run": run, "items": items, "safe": safe, "selected": {p[0] for p in picks}, "plan": plan,
-                "effects": eff, "picks": picks, "unmatched_total": len(matched) - len(items)}
+                "effects": eff, "picks": picks, "unmatched_total": len(matched) - len(items), "quelle": quelle}
 
     @router.get("/settings/datasources/{sid}/dkb/zip/{rid}/ergaenzen", response_class=HTMLResponse)
     async def zip_amend(request: Request, sid: int, rid: int) -> Response:

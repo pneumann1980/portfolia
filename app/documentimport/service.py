@@ -473,6 +473,9 @@ class DocumentService:
             p["n"] = e.tx.n
             p["event_key"] = event_key(e, sha)[0]
             p["linked"] = e.linked is not None
+            p["link_note"] = e.link_note
+            p["link_state"] = e.link_state
+            p["link_extra"] = list(e.link_extra)
             for s in [sha, *e.tx.sources]:
                 by_sha.setdefault(s, []).append(p)
         for doc_id, (res, an) in results.items():

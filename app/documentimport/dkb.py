@@ -71,6 +71,7 @@ _DATE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})\b")
 _DATE_LABEL = re.compile(r"(?:^|\s)Datum\s+(\d{2}\.\d{2}\.\d{4})\b")
 _ORDER = re.compile(r"Auftrags?(?:nummer|-Nr\.?)\s*:?\s*([\d/. ]*\d)")
 _BELEG = re.compile(r"Belegnummer\s*:?\s*(\d{4,})")
+_BELEG_ALL = _BELEG
 _ABR = re.compile(r"Abrechnungsnr\.?\s*:?\s*(\d{4,})")
 _ISIN = re.compile(r"\b([A-Z]{2}[A-Z0-9]{9}\d)\b")
 _WKN_PAREN = re.compile(r"\(([A-Z0-9]{6})\)")
@@ -102,6 +103,7 @@ class Classified:
     order_no: str = ""  # nur Ziffern
     belegnr: str = ""
     abrechnungsnr: str = ""
+    ref: str = ""  # Bezug auf eine andere Belegnummer (Storno: die stornierte; Entgelt: die Maßnahme)
     isin: str = ""
     wkn: str = ""
     notes: tuple[str, ...] = field(default_factory=tuple)
@@ -255,7 +257,8 @@ def classify(lines: Sequence[str], filename: str = "") -> Classified | None:
                                                                                   text)):
                 kind = "kapitalmassnahme"
                 sub_text = title_text
-                sub = next((k for k, rx in _CA_SUB if rx.search(title_text) or rx.search(text[:1500])), "")
+                sub = next((k for k, rx in _CA_SUB if rx.search(title_text)), "") or \
+                    next((k for k, rx in _CA_SUB if rx.search(text[:1500])), "")
                 if not sub:
                     notes.append("Unterart der Kapitalmaßnahme nicht erkannt")
     if not kind:
@@ -295,6 +298,8 @@ def classify(lines: Sequence[str], filename: str = "") -> Classified | None:
     if kind in ("abrechnung_kauf", "abrechnung_verkauf", "depotuebertrag", "ausfuehrungsanzeige", "streichung",
                 "auftragsbestaetigung") and not order:
         notes.append("Auftragsnummer nicht lesbar")
+    refs = [r for r in _BELEG_ALL.findall(text) if r != belegnr]
+    ref = belegnr if sub == "storno" else (refs[0] if kind == "kapitalmassnahme" and refs else "")
     return Classified(kind=kind, sub=sub, sub_text=sub_text, side=side, depot=depot, doc_date=doc_date,
-                      doc_time=doc_time, order_no=order, belegnr=belegnr, abrechnungsnr=abr, isin=isin, wkn=wkn,
-                      notes=tuple(notes))
+                      doc_time=doc_time, order_no=order, belegnr=belegnr, abrechnungsnr=abr, ref=ref, isin=isin,
+                      wkn=wkn, notes=tuple(notes))

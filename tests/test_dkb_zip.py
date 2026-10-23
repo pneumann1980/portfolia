@@ -280,14 +280,14 @@ def test_zip_upload_end_to_end_and_idempotent(config: Config, master, caplog) ->
             "Wertpapierdokumente/Depot-2345/2025-03-18_ertrag_57764418230.pdf"])
         docs = rows(c, "SELECT * FROM bank_doc ORDER BY id")
         assert len(docs) == before + 6
-        # nur Abrechnungen und Erträge sind ausgewertet (Phase 2/3)
-        assert sorted(d["status"] for d in docs) == ["classified"] * 3 + ["evaluated"] * 3
+        # alle sechs Beispieldokumente sind ausgewertet (Phase 2–6)
+        assert sorted(d["status"] for d in docs) == ["evaluated"] * 6, [(d["doctype"], d["status"]) for d in docs]
         assert all(d["category"] == "Wertpapierdokumente" and d["sha256"] and d["size"] for d in docs)
         tr = s["trades"]  # Asset der Beispiel-Abrechnungen ist unbekannt → Vorschläge im Prüf-Stapel, nichts zugeordnet
         assert (len(tr["matched"]), len(tr["new"]), len(tr["unclear"])) == (0, 2, 0)
         inc = s["income"]  # der Ertrag der Beispieldatei ist unvollständig (kein Brutto) → ungeklärt, nie gebucht
         assert (len(inc["matched"]), len(inc["new"]), len(inc["unclear"])) == (0, 0, 1)
-        assert rows(c, "SELECT COUNT(*) AS n FROM document")[0]["n"] == 3
+        assert rows(c, "SELECT COUNT(*) AS n FROM document")[0]["n"] == 6  # je ausgewertetem Beleg das Original
         assert rows(c, "SELECT COUNT(*) AS n FROM journal_tx")[0]["n"] == 0  # nichts gebucht
         # Zwischendatei nach erfolgreichem Lauf gelöscht
         assert not list((Path(ctx(c).config.data_dir) / "tmp").glob("dkbzip-*.zip"))
@@ -475,7 +475,7 @@ def test_dkb_page_has_upload_and_lists_runs(config: Config, master) -> None:
         wait(sid, 60)
         page = c.get(f"/settings/datasources/{sid}/dkb")
         assert "Letzte ZIP-Läufe" in page.text and "Wertpapierdokumente.zip" in page.text
-        assert "1 erkannt (noch nicht ausgewertet)" in page.text
+        assert "1 ausgewertet" in page.text
         assert os.path.exists("app/static/js/dkb_zip.js")
     finally:
         c.__exit__(None, None, None)

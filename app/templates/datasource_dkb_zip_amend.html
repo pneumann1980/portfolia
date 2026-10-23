@@ -1,13 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Buchungen ergänzen {{ ds.name }}{% endblock %}
-{% block heading %}Abrechnungen ergänzen Buchungen: {{ ds.name }}{% endblock %}
+{% block heading %}{{ 'Kosteninformationen schätzen Gebühren' if quelle == 'kosten' else 'Abrechnungen ergänzen Buchungen' }}: {{ ds.name }}{% endblock %}
 {% block content %}
 <div class="stack diag">
   <p class="hint"><a href="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}">← ZIP-Import</a></p>
   {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
   <section class="card">
     <div class="card-head"><h2>Vorhandene Buchungen mit belegten Werten ergänzen</h2></div>
+    {% if quelle == 'kosten' %}
+    <p>Die <b>Kosteninformation</b> entsteht bei jeder Ordereingabe und ist <b>keine Abrechnung</b>: Sie nennt Dienstleistungs- und Fremdwährungskosten als <b>Schätzung</b> (Produktkosten sind der Spread und zählen nicht). Vorgeschlagen wird deshalb nur die <b>Gebühr</b>, gekennzeichnet als „geschätzt“ (Notiz: „Gebühr aus Kosteninformation vom …, geschätzt“) – <b>nicht</b> Kurswert oder Uhrzeit. Gibt es für die Buchung eine Abrechnung, hat sie Vorrang und es wird nichts vorgeschlagen. Menge, Asset, Konto und Vorgangsart bleiben unverändert; alles ist eine einzige Entscheidung und lässt sich unter <a href="/quality/diagnose#decisions">Datenqualität → Entscheidungen und Korrekturen</a> als Ganzes rückgängig machen. Eine spätere Abrechnung ersetzt die Schätzung.</p>
+    {% else %}
     <p>Die Abrechnungen der DKB sind die verbindliche Quelle für Gebühren (Summe aus Provision, Spesen, Auslagen, Börsenentgelt), den Kurswert und die Uhrzeit. Diese Seite ergänzt <b>vorhandene</b> Buchungen (z. B. aus dem kuratierten Import) um genau diese Angaben. <b>Menge, Asset, Konto und Vorgangsart werden nie geändert.</b> Alles ist eine einzige Entscheidung und lässt sich unter <a href="/quality/diagnose#decisions">Datenqualität → Entscheidungen und Korrekturen</a> als Ganzes rückgängig machen.</p>
+    {% endif %}
     {% if not items %}<p class="hint">Keine Ergänzungen nötig – die zugeordneten Buchungen enthalten die belegten Werte bereits.</p>{% endif %}
   </section>
 
@@ -15,7 +19,7 @@
   <section class="card">
     <h2>Vorschläge ({{ items|length }})</h2>
     <form method="get" action="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/ergaenzen" class="stack" style="gap:8px">
-      <input type="hidden" name="v" value="1">
+      <input type="hidden" name="v" value="1"><input type="hidden" name="quelle" value="{{ quelle }}">
       <div class="table-wrap cards-wrap"><table class="cards">
         <thead><tr><th><span class="sr-only">Auswahl</span></th><th>Beleg</th><th>Buchung</th><th>Änderung</th><th>Hinweis</th></tr></thead>
         <tbody>{% for it in items %}<tr>
@@ -43,7 +47,7 @@
     <h2>Übernehmen</h2>
     <p class="hint">Haben sich die Daten seit dieser Vorschau geändert, wird nichts übernommen.</p>
     <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/ergaenzen" class="row">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="token" value="{{ plan.token }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="token" value="{{ plan.token }}"><input type="hidden" name="quelle" value="{{ quelle }}">
       {% for d in selected|sort %}<input type="hidden" name="d" value="{{ d }}">{% endfor %}
       <button class="btn primary" type="submit">{{ plan.ops|length }} Buchungen ergänzen</button>
       <a class="btn ghost" href="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}">Abbrechen</a>

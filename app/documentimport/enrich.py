@@ -189,6 +189,19 @@ class Context:
         return self
 
 
+def _asset_by_isin(c: Context, isin: str | None, wkn: str | None) -> str | None:
+    """Asset zu ISIN/WKN, nur wenn eindeutig (zweites Asset einer Kapitalmaßnahme)."""
+    if isin:
+        hits = [aid for aid, a in c.assets.items() if (a.isin or "").upper() == isin or aid.upper() == isin]
+        if len(hits) == 1:
+            return hits[0]
+    if wkn:
+        hits = [aid for aid, a in c.assets.items() if (a.wkn or "").upper() == wkn]
+        if len(hits) == 1:
+            return hits[0]
+    return None
+
+
 def _asset_candidates(c: Context, tx: DocTx) -> tuple[str | None, list[str], str]:
     """Portfolio-Asset zum Beleg: ISIN/WKN exakt, sonst Symbol/Alias eindeutig. (Asset, Kandidaten, Grund)."""
     isin, wkn, sym = tx.value("isin"), tx.value("wkn"), (tx.value("symbol") or "").upper()
@@ -395,18 +408,27 @@ class Enriched:
     existing: Any | None  # vorhandene Buchung bei technischer Identität bzw. DKB-Zuordnung
     steps: list[Step]
     linked: Any | None = None  # DKB: Abrechnung einer vorhandenen Buchung zugeordnet → keine neue Buchung
+    asset2: str | None = None  # zweites Asset einer Kapitalmaßnahme (neue ISIN beim Reverse Split)
+    link_note: str = ""  # Abweichung zwischen Beleg und zugeordneter Buchung (z. B. Menge)
+    link_state: str = ""  # Zuordnung der Kosteninformation: matched | none | qty | dir | ambiguous | asset
+    link_extra: tuple[str, ...] = ()  # weitere Buchungen derselben Order (Teilausführungen)
 
 
 DKB_WINDOW = timedelta(days=3)  # Regel Z1: Ausführung bis zu drei Kalendertage neben dem Handelstag erfasst
 QTY_EPS = Decimal("1e-8")
 
 
-def _stage2_dkb(c: Context, tx: DocTx, asset_id: str | None, account: str, steps: list[Step]) -> Any | None:
+def _stage2_dkb(c: Context, tx: DocTx, asset_id: str | None, account: str, steps: list[Step],
+                notes: list[str] | None = None) -> Any | None:
     """DKB-Abrechnung → vorhandene Buchung (Regeln Z0–Z5 der Analyse): Konto der Datenquelle, Kauf/Verkauf des Assets
     (ISIN/WKN), Datum im Fenster von ±3 Tagen, gleiche Menge. Genau ein Treffer = Zuordnung; mehrere oder keine →
     keine Zuordnung (der Vorgang bleibt im Prüf-Stapel). Verändert wird hier nichts."""
     if tx.provider == "dkb" and tx.kind == "dividend":
         return _stage2_dkb_income(c, tx, asset_id, account, steps)
+    if tx.provider == "dkb" and tx.kind in ("corporate_action", "fee", "writeoff"):
+        return _stage2_dkb_event(c, tx, asset_id, account, steps, notes)
+    if tx.provider == "dkb" and tx.kind == "estimate":
+        return _stage2_dkb_costinfo(c, tx, asset_id, account, steps, notes)
     d, q = parse_date(tx.value("date")), tx.dec("quantity")
     if tx.provider != "dkb" or tx.kind not in ("buy", "sell") or d is None or q is None:
         return None
@@ -453,6 +475,162 @@ def _stage2_dkb(c: Context, tx: DocTx, asset_id: str | None, account: str, steps
                       f"vorhandene Buchung {t.tx_id} ({t.date}) – Beleg ergänzt sie, es entsteht keine neue Buchung",
                       True))
     return t
+
+
+def _stage2_dkb_event(c: Context, tx: DocTx, asset_id: str | None, account: str, steps: list[Step],
+                      notes: list[str] | None = None) -> Any | None:
+    """DKB-Kapitalmaßnahme/Entgelt/Ausbuchung → bereits erfasste Buchung: Konto der Datenquelle, Vorgangsart und Asset,
+    Datum im Fenster von ±3 Tagen. Reverse Split/Split: Tag und altes Asset; Gratisausgabe: Zugang des neuen Assets
+    (Tag ``spinoff``/``bonus``); Ausbuchung: Abgang ``lost`` mit gleicher Menge; Entgelt: Gebühr mit gleichem Betrag.
+    Weicht die Menge ab, bleibt es dieselbe Maßnahme: Zuordnung mit Hinweis (keine zweite Buchung). Genau ein
+    bester Treffer, sonst keine Zuordnung."""
+    d = parse_date(tx.value("date"))
+    if d is None:
+        return None
+    account_fee = tx.kind == "fee" and tx.doc_type == "depotauszug"  # Depotentgelt: Konto-Ebene, ohne Wertpapier
+    if asset_id is None and not account_fee:
+        steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", tx.value("isin") or "–",
+                          "Asset unbekannt – keine Zuordnung zu einer vorhandenen Buchung", False))
+        return None
+    pf = c.ctx.portfolio()
+    if pf is None:
+        return None
+    ca_tag, q = tx.value("ca_tag"), tx.dec("quantity")
+    lo, hi = d - DKB_WINDOW, d + DKB_WINDOW
+    cands: list[tuple[Any, str]] = []
+    for t in pf.txs:
+        if t.origin == "plan" or not lo <= t.date <= hi:
+            continue
+        if tx.kind == "corporate_action" and ca_tag in ("reverse_split", "split"):
+            ok = t.type == "corporate_action" and t.tag == ca_tag and t.from_asset == asset_id and \
+                (not account or t.from_account == account)
+            qty_ok = ok and q is not None and t.from_qty == q and t.to_qty == tx.dec("quantity_new")
+        elif tx.kind == "corporate_action":
+            ok = t.type == "corporate_action" and t.to_asset == asset_id and (not account or t.to_account == account)
+            qty_ok = ok and q is not None and t.to_qty == q
+        elif tx.kind == "writeoff":
+            ok = t.type == "withdrawal" and t.tag == "lost" and t.from_asset == asset_id and \
+                (not account or t.from_account == account)
+            qty_ok = ok and q is not None and t.from_qty is not None and abs(t.from_qty - q) <= QTY_EPS
+        else:  # fee
+            gross = tx.dec("gross")
+            ok = t.type == "withdrawal" and t.tag == "fee" and (
+                not t.related_asset if account_fee else t.related_asset == asset_id) and \
+                (not account or t.from_account == account)
+            qty_ok = ok and gross is not None and t.value_eur is not None and \
+                abs(t.value_eur - gross) <= Decimal("0.01")
+        if ok:
+            cands.append((t, "" if qty_ok else "Menge/Betrag weicht ab"))
+    what = f"{tx.kind} {ca_tag or ''} {q} {asset_id} um {d}".replace("  ", " ")
+    if not cands:
+        steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what,
+                          "keine vorhandene Buchung dieser Art im Zeitfenster – neuer Vorgang", False))
+        return None
+    cands.sort(key=lambda x: (bool(x[1]), abs((x[0].date - d).days)))
+    if len(cands) > 1 and (bool(cands[0][1]), abs((cands[0][0].date - d).days)) == \
+            (bool(cands[1][1]), abs((cands[1][0].date - d).days)):
+        steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what,
+                          f"{len(cands)} gleichwertige Kandidaten ({', '.join(x[0].tx_id for x in cands[:3])}) – "
+                          "keine automatische Zuordnung", False))
+        return None
+    t, note = cands[0]
+    if note and notes is not None:
+        notes.append(note)
+    steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what,
+                      f"vorhandene Buchung {t.tx_id} ({t.date}){' – ' + note if note else ''} – Beleg ergänzt sie, es "
+                      "entsteht keine neue Buchung", True))
+    return t
+
+
+def _stage2_dkb_costinfo(c: Context, tx: DocTx, asset_id: str | None, account: str, steps: list[Step],
+                         notes: list[str] | None = None) -> Any | None:
+    """DKB-Kosteninformation → vorhandene Buchung (Regeln Z0–Z6 der Analyse): Konto der Datenquelle (Z0), Kauf/Verkauf
+    des Assets (Z1/Z2) am Tag der Ordereingabe bis +3 Kalendertage, Menge gleich (±1e-8) oder Summe mehrerer Buchungen
+    desselben Tages/Assets/Richtung = Teilausführungen (Z3), Richtung der Buchung bzw. Übereinstimmung mit „Kauf von/
+    Verkauf von“ (Z4/R3), genau ein bester Kandidat (Z5). Es entsteht nie eine Buchung; Zustände landen im Bericht:
+    ``matched``, ``none`` (Buchung ohne Treffer), ``qty`` (Menge weicht ab), ``dir`` (Richtungskonflikt),
+    ``ambiguous`` (mehrere gleichwertige Kandidaten), ``asset`` (Asset unbekannt)."""
+    def state(name: str, note: str = "") -> None:
+        if notes is not None:
+            notes.append(f"state={name}")
+            if note:
+                notes.append(note)
+
+    d, q, side = parse_date(tx.value("date")), tx.dec("quantity"), tx.value("side")
+    if d is None:
+        return None
+    what = f"Kosteninformation {side or 'Order'} {q} {asset_id} am {d}".replace("  ", " ")
+    if asset_id is None:
+        state("asset")
+        steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", tx.value("isin") or "–",
+                          "Asset unbekannt – keine Zuordnung zu einer vorhandenen Buchung", False))
+        return None
+    pf = c.ctx.portfolio()
+    if pf is None:
+        return None
+    hi = d + DKB_WINDOW
+    cands = []
+    for t in pf.txs:
+        if t.origin == "plan" or t.type not in ("buy", "sell") or not d <= t.date <= hi:
+            continue
+        a, acc = (t.to_asset, t.to_account) if t.type == "buy" else (t.from_asset, t.from_account)
+        if a == asset_id and (not account or acc == account):
+            cands.append(t)
+
+    def qty_of(t: Any) -> Decimal | None:
+        return t.to_qty if t.type == "buy" else t.from_qty
+
+    same_dir = [t for t in cands if not side or t.type == side]
+    if not same_dir:
+        if cands:
+            state("dir", f"Richtungskonflikt: Beleg {'Kauf' if side == 'buy' else 'Verkauf'}, Buchung "
+                  f"{cands[0].tx_id} ist {'Kauf' if cands[0].type == 'buy' else 'Verkauf'}")
+            steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what,
+                              "Richtung des Belegs widerspricht der Buchung – nicht zugeordnet", False))
+        else:
+            state("none")
+            steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what,
+                              "keine Buchung dieses Assets im Zeitfenster – Buchung ohne Treffer", False))
+        return None
+    if q is None:
+        if len(same_dir) == 1:
+            state("matched")
+            return same_dir[0]
+        state("ambiguous")
+        return None
+    exact = [t for t in same_dir if qty_of(t) is not None and abs(qty_of(t) - q) <= QTY_EPS]
+    if not exact:  # Teilausführungen: Summe je Tag und Richtung
+        groups: dict[tuple[Any, str], list[Any]] = {}
+        for t in same_dir:
+            groups.setdefault((t.date, t.type), []).append(t)
+        for parts in groups.values():
+            if len(parts) > 1 and abs(sum((qty_of(t) or Decimal(0) for t in parts), Decimal(0)) - q) <= QTY_EPS:
+                if notes is not None:
+                    notes.append("also=" + ",".join(t.tx_id for t in parts[1:]))
+                state("matched", f"Teilausführungen ({len(parts)} Buchungen)")
+                steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what,
+                                  f"{len(parts)} Buchungen desselben Tages ergeben die Menge – Beleg ergänzt sie",
+                                  True))
+                return parts[0]
+        have = ", ".join(f"{qty_of(t)}" for t in same_dir[:3])
+        state("qty", f"Menge weicht ab: Beleg {q}, Buchung(en) {have}")
+        steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what,
+                          "Menge weicht von den Buchungen ab – nicht zugeordnet (Bericht „Menge weicht ab“)", False))
+        return None
+    if len(exact) > 1:
+        amount = tx.dec("value_eur")
+        key = (lambda t: (abs((t.value_eur or Decimal(0)) - (amount or Decimal(0))), (t.date - d).days)) if amount \
+            else (lambda t: ((t.date - d).days,))
+        exact.sort(key=key)
+        if key(exact[0]) == key(exact[1]):
+            state("ambiguous")
+            steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what,
+                              f"{len(exact)} gleichwertige Kandidaten – keine automatische Zuordnung", False))
+            return None
+    state("matched")
+    steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what,
+                      f"vorhandene Buchung {exact[0].tx_id} ({exact[0].date}) – Beleg als Order-Beleg verknüpft", True))
+    return exact[0]
 
 
 def _stage2_dkb_income(c: Context, tx: DocTx, asset_id: str | None, account: str, steps: list[Step]) -> Any | None:
@@ -519,13 +697,18 @@ def enrich(c: Context, tx: DocTx, budget: Budget, *, public: bool = False, trans
             cands = [f"coingecko:{x.get('id')}" for x in cat]
     tx.identity = tx_keys(tx)
     existing = _stage2(c, tx, steps)
-    linked = _stage2_dkb(c, tx, asset_id, account, steps) if existing is None else None
+    notes: list[str] = []
+    linked = _stage2_dkb(c, tx, asset_id, account, steps, notes) if existing is None else None
     _stage3(c, tx, steps)
     _stage4_local(c, tx, asset_id, steps)
     if public:
         _stage4_public(c, tx, budget, steps, transport=transport)
     tx.resolve()
-    return Enriched(tx, asset_id, cands, existing or linked, steps, linked)
+    asset2 = _asset_by_isin(c, tx.value("isin_new"), tx.value("wkn_new")) if tx.value("isin_new") else None
+    state = next((n[6:] for n in notes if n.startswith("state=")), "")
+    extra = next((n[5:].split(",") for n in notes if n.startswith("also=")), [])
+    note = next((n for n in notes if not n.startswith(("state=", "also="))), "")
+    return Enriched(tx, asset_id, cands, existing or linked, steps, linked, asset2, note, state, tuple(extra))
 
 
 def ts_of(tx: DocTx) -> tuple[datetime | None, bool, str]:

@@ -44,6 +44,11 @@ FIELD_LABEL = {
     "tax_ccy": "Steuerwährung", "withholding_tax_ccy": "Quellensteuer-Währung", "tz": "Zeitzone",
     "tax_refund": "Steuererstattung", "fee_detail": "Kostenzeilen", "proof": "Rechenprobe",
     "fx_pair": "Devisenpaar", "income_kind": "Ertragsart", "income_detail": "Angaben zum Ertrag",
+    "isin_new": "ISIN (neu)", "wkn_new": "WKN (neu)", "asset_new": "Bezeichnung (neu)", "quantity_new": "Menge (neu)",
+    "ratio": "Verhältnis", "ca_kind": "Art der Maßnahme", "ca_tag": "Buchungsart", "ca_detail": "Angaben zur Maßnahme",
+    "belegnr": "Belegnummer", "info": "Hinweis", "valuation_price": "Bewertungskurs", "loss": "Verlust laut Beleg",
+    "side": "Richtung", "fee_buy": "Gebühr Kauf (geschätzt)", "fee_sell": "Gebühr Verkauf (geschätzt)",
+    "order_no": "Auftragsnummer",
 }
 _SYN: list[tuple[str, tuple[str, ...]]] = [
     # Reihenfolge: spezifisch vor allgemein
@@ -101,9 +106,13 @@ PROVIDER_LABEL = {"bitpanda": "Bitpanda", "binance": "Binance", "coinbase": "Coi
                   "flatex": "flatex", "etherscan": "Etherscan", "kaspa": "Kaspa Explorer"}
 DOC_LABEL = {"securities_trade": "Wertpapierabrechnung", "dividend": "Dividenden-/Ertragsgutschrift",
              "crypto_trade": "Krypto-Abrechnung", "wallet_tx": "Wallet-Transaktion",
-             "statement": "Konto-/Transaktionsübersicht", "unknown": "unbekanntes Dokument"}
+             "statement": "Konto-/Transaktionsübersicht", "unknown": "unbekanntes Dokument",
+             "corporate_action": "Kapitalmaßnahme/Ausbuchung", "depotauszug": "Depotauszug",
+             "kosteninformation": "Kosteninformation", "order": "Order-Beleg"}
 KIND_LABEL = {"buy": "Kauf", "sell": "Verkauf", "dividend": "Dividende/Ertrag", "deposit": "Eingang",
-              "withdrawal": "Ausgang", "trade": "Tausch", "unknown": "unbestimmt"}
+              "withdrawal": "Ausgang", "trade": "Tausch", "unknown": "unbestimmt",
+              "corporate_action": "Kapitalmaßnahme", "fee": "Entgelt", "writeoff": "Ausbuchung", "info": "Hinweis",
+              "holdings": "Bestandsnachweis", "estimate": "Kosteninformation"}
 _ACTION = [("sell", ("verkauf", "verkauft", "sell", "sold")), ("buy", ("kauf", "gekauft", "buy", "bought", "purchase")),
            ("dividend", ("dividende", "dividendengutschrift", "ertragsgutschrift", "ausschüttung", "dividend",
                          "distribution")),
@@ -707,6 +716,24 @@ def analyze(doc: DocumentResult) -> Analysis:
     dkb_tx = dkb_income_doctx(doc, texts)
     if dkb_tx is not None:
         return Analysis("dividend", "dkb", conv, [dkb_tx])
+    from app.documentimport.dkb_capital import dkb_capital_doctx
+
+    dkb_tx = dkb_capital_doctx(doc, texts)
+    if dkb_tx is not None:
+        return Analysis("corporate_action", "dkb", conv, [dkb_tx])
+    from app.documentimport.dkb_depot import dkb_depot_doctxs
+
+    dkb_txs = dkb_depot_doctxs(doc, texts)
+    if dkb_txs is not None:
+        return Analysis("depotauszug", "dkb", conv, dkb_txs)
+    from app.documentimport.dkb_costinfo import dkb_costinfo_doctx, order_doctx
+
+    dkb_tx = dkb_costinfo_doctx(doc, texts)
+    if dkb_tx is not None:
+        return Analysis("kosteninformation", "dkb", conv, [dkb_tx])
+    dkb_tx = order_doctx(doc, texts)
+    if dkb_tx is not None:
+        return Analysis("order", "dkb", conv, [dkb_tx])
     an = Analysis(detect_type(full), detect_provider(full), conv)
     if conv.decimal is None:
         an.warnings.append(f"Zahlenformat nicht eindeutig ({conv.evidence}) – mehrdeutige Zahlen bleiben ungelöst.")
@@ -751,6 +778,12 @@ def required_fields(kind: str, doc_type: str) -> set[str]:
         return {"date", "quantity", "gross"}
     if kind == "dividend":
         return {"date", "gross"}
+    if kind in ("corporate_action", "writeoff", "holdings"):
+        return {"date", "quantity"}
+    if kind == "fee":
+        return {"date", "gross"}
+    if kind in ("info", "estimate"):
+        return set()
     if kind in ("deposit", "withdrawal"):
         return {"date", "quantity"}
     if kind == "trade":

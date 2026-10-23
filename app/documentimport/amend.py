@@ -53,6 +53,8 @@ class Proposal:
     contradictions: list[str] = field(default_factory=list)
     warning: str = ""  # von Hand erfasst/bearbeitet: Änderung nur nach ausdrücklicher Bestätigung
     needs_confirm: bool = False
+    fee_key: str = ""  # Kosteninformation: Feld der geschätzten Gebühr (fee_buy/fee_sell) – sonst Beleggebühr „fee“
+    estimate: bool = False  # Gebühr nur geschätzt (Kosteninformation), nie belegt
 
 
 def _dec(v: Any) -> Decimal | None:
@@ -114,6 +116,8 @@ def propose(ctx: Any, doc_id: int, n: int) -> Proposal:
                      "„Rückgängig“ stellt den Zustand wieder her.")
     if t.origin == "plan":
         p.blocked = "Sparplan-Schätzung – bitte den Sparplan bzw. die tatsächliche Ausführung erfassen."
+    if (json.loads(doc["result_json"] or "{}").get("doc_type")) == "kosteninformation":
+        return _propose_costinfo(ctx, doc, f, t, p)
 
     def good(name: str) -> dict[str, Any] | None:
         x = f.get(name)
@@ -147,6 +151,40 @@ def propose(ctx: Any, doc_id: int, n: int) -> Proposal:
     return p
 
 
+def _propose_costinfo(ctx: Any, doc: Any, f: dict[str, dict[str, Any]], t: Tx, p: Proposal) -> Proposal:
+    """Gebührenschätzung aus der Kosteninformation (Entscheidung F10): nur die Gebühr, **nie** Kurswert oder Uhrzeit
+    (Kurs und Zeit der Ordereingabe sind nicht die der Ausführung). Vorrang hat die Abrechnung (R1/Z6): Ist die Buchung
+    durch eine Abrechnung belegt, bleibt es bei der Verknüpfung. Immer nur nach Bestätigung, als „geschätzt“
+    gekennzeichnet."""
+    p.estimate = True
+    if p.blocked:
+        return p
+    if t.type not in ("buy", "sell"):
+        p.blocked = "Eine Gebührenschätzung gibt es nur für Käufe und Verkäufe."
+        return p
+    if ctx.db.q1("SELECT 1 FROM tx_document WHERE tx_id=? AND role='abrechnung'", (t.tx_id,)) is not None:
+        p.blocked = ("Die Gebühr dieser Buchung ist durch eine Abrechnung belegt – die Kosteninformation bleibt "
+                     "Order-Beleg (Vorrang der Abrechnung).")
+        return p
+    p.fee_key = "fee_buy" if t.type == "buy" else "fee_sell"
+    x = f.get(p.fee_key)
+    if not x or x.get("value") in (None, ""):
+        p.blocked = "Die Kosteninformation nennt keine Dienstleistungskosten für diese Richtung."
+        return p
+    if t.fee_qty is not None and t.fee_asset not in (None, "EUR"):
+        p.blocked = f"Die Buchung hat eine Gebühr in {t.fee_asset} – bitte von Hand prüfen."
+        return p
+    new = Decimal(x["value"]).quantize(CENT)
+    if t.fee_qty is None or abs(t.fee_qty - new) >= CENT:
+        old = f"{t.fee_qty} EUR" if t.fee_qty is not None else "–"
+        day = (f.get("date") or {}).get("value") or ""
+        shown = f"{day[8:10]}.{day[5:7]}.{day[:4]}" if day else "?"
+        p.changes.append(Change("fee", "Gebühr (geschätzt)", old, f"{new} EUR",
+                                f"aus Kosteninformation vom {shown}, geschätzt: Dienstleistungs- + "
+                                "Fremdwährungskosten, ohne Produktkosten"))
+    return p
+
+
 def _apply_changes(ctx: Any, p: Proposal, doc: Any, selected: set[str]) -> A.Op | None:
     """Operation „amend“ mit neuem Zustand der Buchung und Ausgangszustand (für Prüfsumme und Rückgängig)."""
     from app.documentimport.profiles import parse_time
@@ -168,19 +206,26 @@ def _apply_changes(ctx: Any, p: Proposal, doc: Any, selected: set[str]) -> A.Op 
         tm = parse_time(f["time"]["value"])
         tz = (f.get("tz") or {}).get("value")
         new_ts, _do, _why = P.combine(t.date, tm, tz)
-    fee_ccy = (f.get("fee_ccy") or {}).get("value") or "EUR"
+    fee_ccy = "EUR" if p.estimate else (f.get("fee_ccy") or {}).get("value") or "EUR"
+    fee_src = f.get(p.fee_key) if p.estimate else f.get("fee")
     vals: dict[str, Any] = {}
     for c in chosen:
         if c.field == "value_eur":
             vals["value_eur"] = Decimal(f["value_eur"]["value"]).quantize(CENT)
-        elif c.field == "fee":
-            vals["fee_asset"], vals["fee_qty"] = fee_ccy, Decimal(f["fee"]["value"])
-            fe = (f.get("fee_eur") or {}).get("value")
-            vals["fee_eur"] = Decimal(fe).quantize(CENT) if fe else (Decimal(f["fee"]["value"]) if fee_ccy == "EUR"
-                                                                     else None)
+        elif c.field == "fee" and fee_src:
+            vals["fee_asset"], vals["fee_qty"] = fee_ccy, Decimal(fee_src["value"]).quantize(CENT) if p.estimate \
+                else Decimal(fee_src["value"])
+            fe = None if p.estimate else (f.get("fee_eur") or {}).get("value")
+            vals["fee_eur"] = Decimal(fe).quantize(CENT) if fe else (vals["fee_qty"] if fee_ccy == "EUR" else None)
         elif c.field == "txhash":
             vals["tx_hash"] = f["txhash"]["value"]
-    note = ((t.note or "") + (" · " if t.note else "") + f"ergänzt aus {ref}")[:500]
+    if p.estimate:
+        day = (f.get("date") or {}).get("value") or ""
+        shown = f"{day[8:10]}.{day[5:7]}.{day[:4]}" if day else "?"
+        note = ((t.note or "") + (" · " if t.note else "") +
+                f"Gebühr aus Kosteninformation vom {shown}, geschätzt ({ref})")[:500]
+    else:
+        note = ((t.note or "") + (" · " if t.note else "") + f"ergänzt aus {ref}")[:500]
     labels = ", ".join(c.label for c in chosen)
     if t.origin == "import":
         row = tx_row(t)
@@ -280,7 +325,8 @@ def apply(ctx: Any, doc_id: int, n: int, selected: set[str], token: str, *, conf
     if res.ok and p.target is not None:
         from app.documentimport import txdocs
 
-        txdocs.link_document(ctx.db, p.target.tx_id, doc_id, "abrechnung", "amend")
+        txdocs.link_document(ctx.db, p.target.tx_id, doc_id,
+                             txdocs.role_of_document(ctx.db, doc_id, "abrechnung"), "amend")
     return res
 
 
@@ -380,5 +426,6 @@ def bulk_apply(ctx: Any, picks: list[tuple[int, int]], token: str) -> A.Result:
         from app.documentimport import txdocs
 
         for tx_id, doc_id in links:
-            txdocs.link_document(ctx.db, tx_id, doc_id, "abrechnung", "amend")
+            txdocs.link_document(ctx.db, tx_id, doc_id, txdocs.role_of_document(ctx.db, doc_id, "abrechnung"),
+                                 "amend")
     return res

@@ -85,6 +85,35 @@ def backfill(db: Any) -> int:
         if d is not None:
             n += link_document(db, r["tx_id"], int(d["id"]), role_of_document(db, int(d["id"]), "abrechnung"),
                                "backfill")
+    return n + _order_siblings(db)
+
+
+def _order_siblings(db: Any) -> int:
+    """Order-Belege (Ausführungsanzeige, Auftragsbestätigung, Streichung) hängen an der Buchung ihrer Abrechnung:
+    gleiche Auftragsnummer (``bank_doc.meta``). Gilt auch für Buchungen, die erst später aus dem Prüf-Stapel
+    übernommen wurden."""
+    if not db.scalar("SELECT 1 FROM bank_doc WHERE doctype IN ('ausfuehrungsanzeige', 'auftragsbestaetigung', "
+                     "'streichung') LIMIT 1"):
+        return 0
+
+    def order_no(meta: str | None) -> str:
+        try:
+            return str(json.loads(meta or "{}").get("order_no") or "")
+        except ValueError:
+            return ""
+
+    orders: dict[str, list[tuple[int, str]]] = {}
+    for r in db.q("SELECT b.doctype, b.meta, d.id AS doc FROM bank_doc b JOIN document d ON d.sha256=b.sha256 WHERE "
+                  "b.doctype IN ('ausfuehrungsanzeige', 'auftragsbestaetigung', 'streichung')"):
+        if (no := order_no(r["meta"])):
+            orders.setdefault(no, []).append((int(r["doc"]), r["doctype"]))
+    n = 0
+    for r in db.q("SELECT t.tx_id, b.meta FROM tx_document t JOIN document d ON d.id=t.document_id "
+                  "JOIN bank_doc b ON b.sha256=d.sha256 WHERE t.role='abrechnung' AND "
+                  "b.doctype IN ('abrechnung_kauf', 'abrechnung_verkauf')"):
+        for doc, kind in orders.get(order_no(r["meta"]), []):
+            n += link_document(db, r["tx_id"], doc, "ausfuehrung" if kind == "ausfuehrungsanzeige" else "order",
+                               "backfill")
     return n
 
 

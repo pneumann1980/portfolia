@@ -1426,6 +1426,29 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.41.0 – DKB-Depotauszüge, Kosteninformationen, Order-Belege, Belege-Download (Phasen 5 und 6)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitte „Depotauszüge“ und „Kosteninformationen und Order-Belege“.
+
+* **Depotauszug** (`dkb_depot.py`): Positionen mit Rechenprobe (n Posten, Σ Kurswerte, ISIN-Prüfziffer) → Referenzbestände + Vergleich mit dem Bestand zum Stichtag;
+  Depotentgelt (brutto, Valuta, USt-Probe) als Gebührenvorschlag bzw. Verknüpfung.
+* **Kosteninformation** (`dkb_costinfo.py`): nie eine Buchung; Zuordnung Z0–Z6 zu vorhandenen Trades; Gebühr nur „geschätzt“, nur nach Bestätigung, nie gegen eine Abrechnung.
+* **Order-Belege** (Ausführung/Bestätigung/Streichung) je Auftragsnummer, spätere Verknüpfung beim Buchen der Abrechnung.
+* **Belege-Download** je Jahr als ZIP mit `manifest.csv` (`yearpack.py`).
+* **Grenzen:** siehe Abschnitt „Grenzen“ der DKB-Dokumentation (kein Neu-Zuordnen später gebuchter Trades für Kosteninformationen; Vergleich nur so genau wie der Bestand).
+
+## 0.40.0 – DKB-Kapitalmaßnahmen und Ausbuchungen (Phase 4)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Kapitalmaßnahmen und Ausbuchungen“.
+
+* **Profil** (`dkb_capital.py`): Reverse Split/Split (Stufe 1 = Information, Stufe 2 = Buchung mit Verhältnis-Probe), Gratisausgabe mit Bewertungskurs und
+  Steuer, Entgelt der Lagerstelle, wertlose und ersatzlose Ausbuchung (Verlust gegen die Anschaffungsgeschäfte geprüft), Storno, Namensänderung,
+  Ankündigungen. Unbekannte Arten bleiben „ungeklärt“.
+* **Storno-Regel:** Die aufgehobene Einbuchung wird nicht ausgewertet; genau ein Zugang bleibt. Bereits ausgewertete → Hinweis, nie stilles Zurücknehmen.
+* **Zuordnung** zu vorhandenen Maßnahmen/Ausbuchungen/Entgelten mit Hinweis bei abweichender Menge; keine zweite Maßnahme.
+* **Dokumentindex** `bank_doc.meta` (Migration 32). Klassifikation: Titel vor Fließtext (Chapter VII war als Liquidation erkannt).
+* **Grenzen:** Fonds-/Anleihe-Maßnahmen, Umtausch/Fusion/Spin-off, Bezugsrechte nicht belegt (→ ungeklärt); Namensänderung wird nur angezeigt.
+
 ## 0.39.0 – DKB-Erträge: Rechenprobe, Quellensteuer-Regeln, Zuordnung (Phase 3)
 
 Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Ertragsabrechnungen“.

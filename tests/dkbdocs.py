@@ -159,6 +159,105 @@ def ertragsabrechnung(sub: str = "dividende", abr: str = "57764418230", day: str
     return lines
 
 
+def _ca(title: list[str], beleg: str, day: str, body: list[str], head: str | None = None) -> list[str]:
+    """Kapitalmaßnahme: Kopf mit Belegnummer, Titel unter dem Adressblock, Wertpapierkopf, Anrede, Text."""
+    head = head or "Stück 100  BEISPIEL GROUP AB  US67421J1088  (A3CQRG)"
+    return [*HEAD[:3], f"Belegnummer  {beleg}", f"Frau  Datum  {day}",
+            "Erika Mustermann  Kapitalmaßnahme  KSPLR00190012000", "Beispielweg 1", "12345 Beispielstadt", *title,
+            "Nominale  Wertpapierbezeichnung  ISIN  (WKN)", head, "NAMN-AKT.(SPON.ADS)/1 O.N.",
+            "Sehr geehrte Frau Mustermann,", *body, "Mit freundlichen Grüßen", *FOOT]
+
+
+def ca_reverse_split(stage: int = 2, beleg: str = "61433126", valuta: str = "18.02.2025", ratio: str = "20 : 1",
+                     out_qty: str = "100", in_qty: str = "5", new_isin: str = "US67421J2078",
+                     new_wkn: str = "A41264") -> list[str]:
+    if stage == 1:
+        body = [f"Ihren Depotbestand haben wir mit Valuta {valuta} zu folgenden Bedingungen umgebucht:",
+                "Verhältnis:  1 : 1", "Ausbuchung", f"Stück {out_qty}-  BEISPIEL GROUP AB  US67421J1088  (A3CQRG)",
+                "Einbuchung", f"Stück {out_qty}  BEISPIEL GROUP AB  US67421J1088  (A3CQRG)", "Wertpapierrechnung USA",
+                "Sperre w/ bevorstehender KM"]
+    else:
+        body = [f"Ihren Depotbestand haben wir mit Valuta {valuta} zu folgenden Bedingungen umgebucht:",
+                f"Ex-Tag:  {valuta}", f"Verhältnis:  {ratio}", "Ausbuchung",
+                f"Stück {out_qty}-  BEISPIEL GROUP AB  US67421J1088  (A3CQRG)", "Einbuchung",
+                f"Stück {in_qty}  BEISPIEL GROUP AB  {new_isin}  ({new_wkn})", "NAMN-AKTIER (ADR)/20",
+                "Wertpapierrechnung USA", "Ab sofort können Sie über die neuen Titel verfügen."]
+    return _ca(["Zusammenlegung von Titeln (Reverse Split)"], beleg, "19.02.2025", body)
+
+
+def ca_gratis(beleg: str = "61454139", title: str = "Gratisausgabe - Neubuchung nach Storno", tax: bool = True,
+              total: str | None = None) -> list[str]:
+    body = ["Ihrem Depot wurden mit Valuta 10.10.2025 Wertpapiere zu folgenden Bedingungen gutgeschrieben:",
+            "Ex-Tag:  03.10.2025", "Verhältnis:  10 : 1", "Einbuchung",
+            "Stück 2  BEISPIEL CORP.  US36467W1172  (A4AQAG)", "WTS 30.10.26", "Wertpapierrechnung USA",
+            "Die Gesellschaft hat Bonustitel ausgegeben."]
+    if tax:
+        body += ["Seite 2 von 2", f"Belegnummer  {beleg}", "Ermittlung steuerrelevanter Erträge",
+                 "steuerrelevanter Bewertungskurs 2,477 EUR", "Unbarer Ertrag aus Kapitalmaßnahmen  4,95 EUR",
+                 "Berechnungsgrundlage für die Kapitalertragsteuer  4,95 EUR",
+                 "Steuerberechnung (Geschäftsvorfallnummer 40000000736)",
+                 "Kapitalertragsteuer 25,00 % auf 4,95 EUR  1,24- EUR",
+                 "Solidaritätszuschlag 5,50% auf 1,24 EUR  0,06- EUR",
+                 f"Ausmachender Betrag  {total or '1,30'}- EUR",
+                 "Den ausmachenden Betrag buchen wir mit Valuta 10.10.2025 zu Lasten des Kontos 12345678",
+                 "Nachrichtlich die Übersicht Ihrer Verrechnungs- und Steuertopfsalden zum Zeitpunkt der Erstellung.",
+                 "Unbarer Ertrag aus  0,00  0,00  0,00  0,00  4,95"]
+    return _ca([title], beleg, "27.10.2025", body, "Stück 20  BEISPIEL CORP.  US36467W1099  (A0HGDX)")
+
+
+def ca_storno(beleg: str = "61452937") -> list[str]:
+    body = [f"wir haben den Vorgang mit der Belegnummer {beleg} und Valuta 10.10.2025 storniert. Es ergibt sich "
+            "folgende Buchung:", "Ausbuchung", "Stück 2-  BEISPIEL CORP.  US36467W1172  (A4AQAG)", "WTS 30.10.26",
+            "Aufgrund einer geänderten steuerlichen Bewertung sind ein Storno und eine Neubuchung notwendig."]
+    return _ca(["Storno", "Gratisausgabe"], beleg, "27.10.2025", body,
+               "Stück 20  BEISPIEL CORP.  US36467W1099  (A0HGDX)")
+
+
+def ca_entgelt(total: str = "1,91", per: str = "0,02 USD", fx: str = "1,0455") -> list[str]:
+    body = ["für den obigen Depotbestand aus Buchung vom 17.02.2025 mit Belegnummer 61432975 hat die Lagerstelle ein "
+            "Entgelt von", f"{per} pro Stück belastet.", f"Devisenkurs (USD/EUR) {fx} vom 24.02.2025.",
+            f"Ausmachender Betrag  {total}- EUR",
+            "Den Gegenwert buchen wir mit Valuta 25.02.2025 zu Lasten des Kontos 12345678"]
+    return _ca(["Entgeltbelastung in Folge einer Kapitalmaßnahme"], "40014500", "25.02.2025", body)
+
+
+def ca_wertlos(loss: str = "121,55", cost: str = "121,55") -> list[str]:
+    body = ["folgenden Depotbestand haben wir mit Valuta 30.10.2025 ersatzlos ausgebucht:", "Ausbuchung",
+            "Stück 100-  BEISPIEL ASA  NO0010890304  (A2QBSN)", "Die zuständige Depotbank hat die Aktien als wertlos "
+            "eingestuft.", "Ermittlung steuerrelevanter Erträge auf Folgeseite.", "Seite 2 von 2",
+            "Belegnummer  61454421", "Veräußerung infolge von Kapitalmaßnahme - Kurswert  0,00 EUR",
+            "steuerrelevanter Bewertungskurs liegt nicht vor", "Ermittlung steuerrelevanter Erträge",
+            f"Bemessungsgrundlage für die Kapitalertragsteuer  {loss}- EUR",
+            "Berechnungsgrundlage für die Kapitalertragsteuer  0,00 EUR",
+            "Berücksichtigte Anschaffungsgeschäfte (alle Beträge in EUR)",
+            f"Kauf  2561702500  15.12.2022 Stück  100,0000  {cost}  0,00  {cost}- (D)"]
+    return _ca(["Wertlose Titel - Ausbuchungsanzeige"], "61454421", "31.10.2025", body,
+               "Stück 100  BEISPIEL ASA  NO0010890304  (A2QBSN)")
+
+
+def ca_umbenennung() -> list[str]:
+    body = ["bitte beachten Sie die neue Emittentenbezeichnung:", "Bezeichnung alt:  ALT BATTERY INC.",
+            "Bezeichnung neu:  NEU ENERGY INC."]
+    return _ca(["Änderung der Emittentenbezeichnung"], "51818538", "04.03.2025", body,
+               "Stück 200  ALT BATTERY INC.  US35834F1049  (A3E3UN)")
+
+
+def ca_info(title: str = "Antrag auf Chapter VII", beleg: str = "51805815") -> list[str]:
+    body = ["die Gesellschaft hat einen Antrag gemäß Chapter VII des US Bankruptcy Code gestellt.",
+            "Das bedeutet, dass eine vollständige Liquidation der Gesellschaft angestrebt wird."]
+    return _ca([title], beleg, "22.01.2025", body, "Stück 4  BEISPIEL MOTORS INC.  US13803R3003  (A40XUX)")
+
+
+def ersatzlose_voll(loss: str = "238,95", cost: str = "238,95") -> list[str]:
+    return [*_kopf(["Auftragsnummer  792595/75.00", "Datum  07.01.2025"]), "Ersatzlose Ausbuchung",
+            "Nominale  Wertpapierbezeichnung  ISIN  (WKN)", "Stück 50  BEISPIEL S.A.  FR0013018041  (A2JQ3R)",
+            "Schlusstag  07.01.2025  Auftrags-Nr.  792595/75.00", "Valuta  07.01.2025",
+            "Ermittlung steuerrelevante Erträge", f"Veräußerungsverlust  {loss}- EUR",
+            "Nachrichtlich die Übersicht Ihrer Verrechnungs- und Steuertopfsalden zum Zeitpunkt der Erstellung.",
+            "Vorher  0,00  0,00  2.000,00  0,00  0,00", "Seite 2 von 2",
+            f"Kauf  5780911800  30.11.2020 Stück  50,0000  {cost}  nicht relevant  0,00  {cost}- (D)", *FOOT]
+
+
 def depotuebertrag() -> list[str]:
     return [*_kopf(["Auftragsnummer  792595/75.00", "Datum  07.01.2025"]), "Ersatzlose Ausbuchung",
             "Nominale  Wertpapierbezeichnung  ISIN  (WKN)", "Stück 50  BEISPIEL S.A.  FR0013018041  (A2JQ3R)",
@@ -172,12 +271,81 @@ def depotauszug() -> list[str]:
             "Stück  50  BEISPIEL S.A.  0,0001 EUR  0,01", "FR0013018041 (A2JQ3R)  24.12.2024", *FOOT]
 
 
+def depotauszug_voll(stichtag: str = "30.06.2024", total: str | None = None, count: int | None = None,
+                     gross: str = "0,50", net: str = "0,42", vat: str = "0,08", with_fee: bool = True) -> list[str]:
+    """Depotauszug wie bei der DKB (Kopfseite + Positionsseiten): Stück/Name/Kurs/Kurswert, Zeile
+    ``ISIN (WKN)  Kursdatum``, ``ohne Bewertung``, Summenzeile und Depotentgelt. Werte erfunden, rechnerisch stimmig."""
+    lines = ["Datum  01.07.2024", f"Depotnummer  {DEPOT}", "Kundendepot",
+             f"Aufstellung über Kundenfinanzinstrumente per {stichtag}", "Sehr geehrte Frau Mustermann,",
+             "Mit freundlichen Grüßen", *FOOT, "Seite 1 von 3", "Datum  01.07.2024", f"Depotnummer  {DEPOT}",
+             f"Aufstellung über Kundenfinanzinstrumente per {stichtag}",
+             "Nominale  Wertpapierinformationen  Kurs in Währung pro Stück / %  Kurswert in EUR",
+             "Devisenkurs  Depotentgelt", "Kursdatum", "Handelsplatz", "Aktienwerte",
+             "Stück  20  BEISPIEL HOLDING INC.  169,88 EUR  3.397,60", "REG. SHS CL. A DL-,001",
+             "US02079K3059 (A14Y6F)  28.06.2024", "Tradegate Freiverk.",
+             "Stück  200  BEISPIEL AVIATION INC.  3,335 USD  623,07", "REG. SHARES CL.A DL -,0001  1,0705",
+             "10  US03945R1023 (A3C3BQ)  28.06.2024", "Wertpapierrechnung USA  New York (NYSE)", "Seite 2 von 3",
+             "Stück  50  BEISPIEL S.A.  ohne Bewertung", "ACTIONS PORT. EO -,001", "FR0013018041 (A2JQ3R)",
+             f"{count or 3} Posten  Summe Kurswerte  {total or '4.020,67'}"]
+    if with_fee:
+        lines += ["Die Depotentgelte für den Zeitraum vom 01.04.2024 bis 30.06.2024 betragen",
+                  f"netto {net} Euro + 19% USt {vat} Euro = brutto {gross} Euro.",
+                  "Die Belastung erfolgt mit Valuta 30.07.2024 auf dem Konto 12345678 (IBAN DE00 0000 0000 0000 0000),"]
+    return lines
+
+
 def kosteninfo_neu(side: str = "Kauf") -> list[str]:
     return ["Ex-Ante Kosteninformation", "Ergebnisdarstellung",
             "Wertpapierbezeichnung BEISPIEL TURBO 97Y  08.10.2024, 15:02:25 Uhr", "ISIN/WKN  DE000LX4QJM1/LX4QJM",
             "Ausführungsplatz  Best-Execution  Erika Mustermann",
             f"Menge (Kurs)  {side} von 1.000,00 Stück (zu 0,57 €)  Kundennummer:  11112222",
             f"Anlagebetrag  570,00 €  Depotnummer:  {DEPOT}", "1 Aufstellung der Kostenpositionen"]
+
+
+def kosteninfo_voll(side: str = "Kauf", day: str = "05.08.2024", at: str = "15:02:25", isin: str = "US88023B1035",
+                    wkn: str = "A40EDP", qty: str = "10,00", price: str = "32,82", amount: str = "328,20",
+                    dl_in: str = "36,81", dl_out: str = "10,00", fx_in: str = "1,39", plan: bool = False) -> list[str]:
+    """Ex-Ante-Kosteninformation (neues Layout): Käufe mit drei Kostenspalten, Verkäufe nur mit Ausstiegsspalte."""
+    unit = "50,00 € (zu 50,00 €)" if plan else f"{qty} Stück (zu {price} €)"
+    head = ["Ex-Ante Kosteninformation", "Ergebnisdarstellung",
+            f"Wertpapierbezeichnung BEISPIEL AI INC.  {day}, {at} Uhr", f"ISIN/WKN  {isin}/{wkn}",
+            f"Menge (Kurs)  {side} von {unit}  Kundennummer:  11112222",
+            f"Anlagebetrag  {amount} €  Depotnummer:  {DEPOT}"]
+    if side == "Kauf":
+        body = ["1 Aufstellung der Kostenpositionen", "Einstiegskosten  Laufende Kosten  Ausstiegskosten",
+                "(einmalig)  (pro Jahr)  (einmalig)",
+                f"Dienstleistungskosten  {dl_in} €  2,19 %  0,00 €  0,00 %  {dl_out} €  2,19 %",
+                "davon Zuwendungen an die DKB  0,00 €  0,00 %  0,00 €  0,00 %  0,00 €  0,00 %",
+                "Produktkosten  5,41 €  0,95 %  20,29 €  3,56 %  14,59 €  2,56 %",
+                f"Fremdwährungskosten  {fx_in} €  0,00 %  0,00 €  0,00 %  0,00 €  0,00 %",
+                "2 Gesamtkosten für eine Haltedauer von 3 Jahren", "Absolut über Haltedauer  Relativ pro Jahr",
+                "Dienstleistungskosten  25,00 €  1,46 %", "Produktkosten  80,87 €  4,73 %",
+                "Gesamtkosten  105,87 €  6,19 % p. a."]
+    else:
+        body = ["Aufstellung der Kostenpositionen", "Ausstiegskosten", "(einmalig)",
+                f"Dienstleistungskosten  {dl_out} €  0,99 %", "davon Zuwendungen an die DKB  0,00 €  0,00 %",
+                "Produktkosten  5,78 €  0,43 %", "Fremdwährungskosten  0,00 €  0,00 %",
+                "Gesamtkosten  18,93 €  1,42 %"]
+    return [*head, *body, "DKB AG | 3457 | 02.2023  1 von 1"]
+
+
+def kosteninfo_legacy_voll(day: str = "17.11.2021", at: str = "09:00:45", qty: str = "100,00", amount: str = "2.054,50",
+                           dl_in: str = "10,00", dl_out: str = "10,00", price: str | None = None) -> list[str]:
+    """Legacy-Layout (ohne Richtung, Kosten in Blöcken Einstieg/Laufend/Ausstieg)."""
+    lines = [f"Frau  Depotnummer: {DEPOT}", "Erika Mustermann  Kundennummer: 11112222", "Beispielweg 1",
+             f"Datum/Zeit: {day} {at}", "12345 Beispielstadt", "Ex-Ante-Kostensimulation - Ergebnisdarstellung",
+             "Stück  Wertpapierbezeichnung  ISIN  WKN",
+             f"Stück {qty}  BEISPIEL TECH INC. REGISTERED  US69608A1088  A2QA4J",
+             f"Ausführungsplatz  Best-Execution  Anlagebetrag  {amount} EUR"]
+    if price:
+        lines.insert(-1, f"Ausführungsplatz  Best-Execution  Kurs  {price} EUR")
+    return [*lines, "(1) Aufstellung der Kostenpositionen  (2) Zusammenfassung der Kosten für eine Haltedauer",
+            "Anlagebetrag (=Kurswert) angegeben.  Dienstleistungskosten*  20,00 €  0,10 %",
+            "Einstiegskosten (einmalig)  - davon Margen  0,00 €  0,00 %", "Produktkosten  0,00 €  0,00 %",
+            f"Dienstleistungskosten*  {dl_in} €  0,49 %", "Fremdwährungskosten  0,00 €  0,00 %",
+            "Laufende Kosten**  pro Jahr  pro Jahr  Wertentwicklung", "Dienstleistungskosten*  0,00 €  0,00 %",
+            "Ausstiegskosten (einmalig)", f"Dienstleistungskosten*  {dl_out} €  0,49 %",
+            "Produktkosten  0,00 €  0,00 %", "Fremdwährungskosten  0,00 €  0,00 %", "Seite 1 von 2"]
 
 
 def kosteninfo_legacy() -> list[str]:

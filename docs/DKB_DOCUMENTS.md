@@ -181,6 +181,70 @@ Dividende wird nicht verändert. Mehrere gleichwertige Treffer, anderes Konto od
 **Stand an Ihrem Export:** Der kuratierte Import enthält für das DKB-Depot keine Dividenden; alle fünf Beispiel-Ertragsabrechnungen erscheinen
 deshalb als Vorschläge (12 Zeilen). Da sie vor dem Stichtag des Imports liegen, sind sie „vor Stichtag“ und nur auf ausdrücklichen Wunsch zu übernehmen.
 
+## Kapitalmaßnahmen und Ausbuchungen (Phase 4)
+
+`dkb_capital.py` liest Kapitalmaßnahmen (Belegnummer, Maßnahmenart als Überschrift) und die ersatzlose Ausbuchung (Dateiname „Depot_bertrag“).
+Gebucht wird **nur**, was der Beleg eindeutig als Bestandsänderung ausweist und die Rechenprobe besteht. Alles andere ist Information oder „ungeklärt“.
+
+| Beleg | Ergebnis | Buchung / Prüfung |
+|---|---|---|
+| Reverse Split / Split, **Stufe 2** (Ausbuchung ≠ Einbuchung) | buchen | `corporate_action`, Tag `reverse_split`/`split`, alt → neu, **Datum = Valuta/Ex-Tag**, Einstand bleibt. Probe: Ausbuchung × b / a = Einbuchung (Bruchteil < 1 Stück erlaubt, Hinweis „separat reguliert“) |
+| Reverse Split, **Stufe 1** (1 : 1, gleiche ISIN und Menge, „Sperre“) | Information | keine Buchung (sonst doppelter Bestand) |
+| Gratisausgabe mit Einbuchung / „Neubuchung nach Storno“ | buchen | `corporate_action`, Tag `spinoff` (wie der vorhandene GME-Optionsschein-Eintrag), Zugang des neuen Wertpapiers, `value_eur` = unbarer Ertrag (Einstand = Bewertungskurs × Menge), dazu **eine** `tax`-Zeile (KapESt + Soli). Probe: Menge × Bewertungskurs = unbarer Ertrag, Satz × Basis, Σ Steuern = Ausmachender Betrag |
+| Entgeltbelastung | buchen | `withdrawal`, Tag `fee`, EUR, Bezug auf das Wertpapier. Probe: Stück × Entgelt ÷ Devisenkurs = Ausmachender Betrag |
+| Wertlose / ersatzlose Ausbuchung | buchen | `withdrawal`, Tag `lost`, Menge, **Erlös 0 €** (Entscheidung E4, wie die vorhandenen Ausbuchungen); Verlust und Käufe stehen in der Notiz. Probe: Σ Menge und Σ Anschaffungskosten der „berücksichtigten Anschaffungsgeschäfte“ = Ausbuchung / Verlust |
+| Storno | Information | hebt die frühere Einbuchung mit der im Text genannten Belegnummer auf (siehe unten) |
+| Namensänderung, Ankündigungen (Gratisausgabe, Liquidationszahlung), Chapter VII, Ablauf der Optionsfrist | Information | keine Buchung; Namensänderung zeigt alt → neu im Bericht |
+| andere Arten (Umtausch, Fusion, Spin-off, Bezugsrechte …) | ungeklärt | nie geraten |
+
+**Storno-Regel:** Der Stornobeleg trägt dieselbe Belegnummer wie die Einbuchung, die er aufhebt. Ist die Einbuchung noch nicht ausgewertet, wird sie nicht
+ausgewertet (Status *Information*, „storniert durch Beleg …“); übrig bleibt genau **ein** Zugang aus der Neubuchung. War die Einbuchung bereits ausgewertet
+(früherer Lauf), steht ein Hinweis im Bericht – eine übernommene Buchung wird nie still zurückgenommen. Die Kennung der Stornobelege lautet `<Belegnr>-storno`,
+damit sie im Stapel nicht mit der Einbuchung verschmelzen.
+
+**Zuordnung zu vorhandenen Buchungen:** Konto der Datenquelle, Asset, Art (Tag `reverse_split`/`split`, Zugang des neuen Assets bei Gratisausgabe, `lost` mit gleicher
+Menge, `fee` mit gleichem Betrag) und Datum ± 3 Tage; genau ein bester Treffer. Weicht die Menge ab (z. B. 50 → 5 statt 100 → 5), ist es dieselbe Maßnahme:
+Beleg verknüpft, Abweichung als Hinweis im Bericht, **keine zweite Maßnahme** vorgeschlagen. Steuerzeilen bleiben Vorschläge.
+
+**Neu im Dokumentindex:** `bank_doc.meta` (Migration 32, JSON): Unterart, Belegnummer, Bezug, Auftragsnummer, ISIN … aus dem Inhalt – Grundlage für Storno und die
+späteren Zuordnungen von Order-Belegen und Kosteninformationen.
+
+**Stand an Ihrem Export:** 15 Kapitalmaßnahmen-Belege: 1 Gratis-Neubuchung dem vorhandenen Optionsschein-Zugang zugeordnet (Steuer 1,30 € bleibt Vorschlag),
+5 Vorschläge (Canoo-Zusammenlegung 86 → 4,3, Oatly-Zusammenlegung 100 → 5, Entgelt 1,91 €, Navya- und Aker-Ausbuchung), 8 nur Information. Alle liegen vor dem Stichtag des
+Imports („vor Stichtag“, nur auf ausdrücklichen Wunsch zu übernehmen). Die alten Wertpapiere der Zusammenlegungen sind in Ihrem Bestand teils nicht als Asset
+vorhanden – dort fragt der Prüf-Stapel nach der Zuordnung.
+
+## Depotauszüge (Phase 5)
+
+`dkb_depot.py` liest die „Aufstellung über Kundenfinanzinstrumente per …“ (Quartals-/Stichtagsdepotauszug).
+
+* **Bestandsnachweis:** je Position (ISIN, Menge, Kurswert, ggf. „ohne Bewertung“) ein Beleg-Vorgang `holdings`. Er erzeugt **nie** eine Buchung. Der Lauf legt daraus
+  **Referenzbestände** an (`reference_balance`, Quelle *Kontoauszug/Depotauszug*, idempotent je Konto/Asset/Stichtag/Menge) und vergleicht sie mit dem Bestand der Buchungen
+  **zum Stichtag**: *stimmt*, *weicht ab* (Differenz), *unbekannt* (kein Asset zur ISIN) und *nur in Portfolia* (im Auszug nicht enthalten). Die Referenzbestände
+  nutzt die Diagnose als Prüfwert; geschätzte Sparplan-Buchungen zählen im Bestand mit (Hinweis im Bericht).
+* **Depotentgelt:** `netto + 19 % USt = brutto` für den Zeitraum; gebucht wird der **Bruttobetrag** als `withdrawal`/`fee` auf Konto-Ebene (kein Wertpapierbezug) mit der
+  **Valuta der Belastung** als Datum, Netto/USt in der Notiz. Kennung `Depotentgelt:<Depot>:<Quartalsende>`. Eine vorhandene Gebührenbuchung (Datum ± 3 Tage, gleicher
+  Betrag) wird nur verknüpft (Rolle *Depotauszug*), nicht doppelt vorgeschlagen.
+* **Rechenprobe** (sonst „ungeklärt“, **keine** Referenzbestände, keine Buchung): Anzahl der Positionen = „n Posten“; Σ Kurswerte = „Summe Kurswerte“ (± 0,01 €); ISIN-Prüfziffer;
+  netto + USt = brutto, USt ≈ 19 % von netto.
+
+## Kosteninformationen und Order-Belege (Phase 6)
+
+`dkb_costinfo.py` liest Kosteninformationen (Layout *neu* ab 2023 und *Legacy*) sowie Ausführungsanzeige, Auftragsbestätigung und Streichungsbestätigung.
+
+* **Kosteninformation = Order-Spur.** Sie belegt nicht, dass die Order ausgeführt wurde, und nennt den Kurs zur Eingabe. Es entsteht **nie** eine Buchung: Der Beleg wird einer
+  **vorhandenen** Buchung zugeordnet und mit der Rolle *Kosteninformation* verknüpft. Zuordnung (Z0–Z6): Konto, Asset, Richtung, Menge (Teilausführungen werden summiert) und
+  Zeitfenster; Ergebnis je Beleg: *zugeordnet*, *ohne Treffer*, *Menge weicht ab*, *Richtungskonflikt*, *mehrdeutig*, *Asset unbekannt*. Sparplan-Einrichtungen sind nur Information.
+* **Gebühr aus der Kosteninformation** (Dienstleistungskosten + Fremdwährungskosten der Ein-/Ausstiegsspalte; Produktkosten = Spread, keine Gebühr) ist **geschätzt**. Sie wird nur über
+  *Ergänzen → Quelle „Kosteninformation“* nach Vorschau und Bestätigung eingetragen, ist rückgängig machbar, trägt die Notiz „Gebühr aus Kosteninformation vom …, geschätzt“ und wird
+  **nie** angeboten, wenn eine Abrechnung die Gebühr belegt (Abrechnung hat immer Vorrang). Rechenprobe: Menge × Kurs ≈ Anlagebetrag (1 %), sonst „ungeklärt“.
+* **Order-Belege** je Auftragsnummer: Bericht *ausgeführt / vorgemerkt / gestrichen*; sie hängen an die Buchung der Abrechnung derselben Auftragsnummer – auch, wenn diese erst später
+  gebucht wird (`txdocs.backfill`).
+* **Belege-Download pro Jahr** (`Journal → Dokumente`, Jahresfilter gesetzt, Knopf *Belege des Jahres als ZIP*; `GET /journal/documents/export?year=`): ZIP mit den Originalen der Buchungen
+  des Jahres in Ordnern `01_Abrechnungen … 06_Sonstige` (+ `ohne_buchung/`), Dateinamen aus Datum/Art/ISIN/Kennung (nie aus dem Originalnamen), dazu `manifest.csv`
+  (UTF-8 mit BOM, `;`, Dezimalkomma; Buchung, Beleg, Rolle, Gebührenquelle *belegt/geschätzt*, Datei, SHA-256, Status `ok`/`original_fehlt`). Grenzen: 2.000 Dateien / 500 MB je
+  Download; die PDFs enthalten Namen und Kontodaten – der Download läuft nur über die geschützte Oberfläche.
+
 ## Grenzen
 
 * **Gegen die echte DKB nicht getestet.** Geprüft sind: Installation mit echtem dkb-robo 0.31.2 (venv + pip), der Fetcher mit
@@ -193,5 +257,6 @@ deshalb als Vorschläge (12 Zeilen). Da sie vor dem Stichtag des Imports liegen,
   „Schnittstelle geändert“; bereits abgelegte Dokumente bleiben unberührt, ein Update des Fetchers (*Aktualisieren*) behebt es.
 * **Bedingungen der Bank:** Das Verfahren nutzt die internen Schnittstellen des Online-Bankings (keine offizielle Freigabe).
   Ob das zu den Bedingungen der DKB passt, prüfen Sie selbst.
-* **Depotauszüge, Kapitalmaßnahmen, Kosteninformationen** werden abgelegt und erkannt, aber noch nicht ausgewertet. Bei Erträgen sind
-  Fonds-/ETF-Ausschüttungen, Vorabpauschale, Zinsen und Erstattungen von Steuern nicht belegt (→ „ungeklärt“).
+* **Erträge:** Fonds-/ETF-Ausschüttungen, Vorabpauschale, Zinsen und Erstattungen von Steuern sind nicht belegt (→ „ungeklärt“).
+* **Kosteninformationen** zu Trades, die erst später gebucht werden, bleiben „ohne Treffer“ (kein erneutes Zuordnen); eine Legacy-Kosteninformation, deren Rechenprobe scheitert, bleibt „ungeklärt“.
+* **Depotauszug-Vergleich:** Er ist nur so genau wie die Buchungen zum Stichtag (geschätzte Sparplan-Einträge zählen mit).

@@ -93,6 +93,12 @@ def missing(e: Enriched) -> list[str]:
     if tx.kind in ("buy", "sell", "dividend", "deposit", "withdrawal") and not (
             e.asset_id or tx.value("isin") or tx.value("symbol") or tx.kind == "dividend"):
         need = need | {"symbol"}
+    if tx.kind in ("corporate_action", "fee", "writeoff") and tx.doc_type != "depotauszug" and not (
+            e.asset_id or tx.value("isin")):
+        need = need | {"isin"}  # (Depotentgelt ist eine Gebühr der Kontoebene ohne Wertpapier)
+    if tx.kind == "corporate_action" and tx.value("ca_tag") in ("reverse_split", "split") and not (
+            e.asset2 or tx.value("isin_new")):
+        need = need | {"isin_new"}
     if tx.kind == "dividend" and not (tx.value("isin") or tx.value("asset") or e.asset_id):
         need = need | {"isin"}
     if tx.kind in ("buy", "sell", "dividend") and not (tx.value("ccy") or tx.value("price_ccy")):
@@ -119,6 +125,8 @@ def review_reasons(e: Enriched) -> list[str]:
 def to_recs(e: Enriched, *, sha: str, doc: dict[str, Any], account: str, n0: int) -> list[Rec]:
     """Rec-Zeilen eines Belegvorgangs (ein Ereignis, ggf. mehrere Zeilen: Dividende + Steuern)."""
     tx = e.tx
+    if tx.kind in ("info", "holdings", "estimate"):
+        return []  # Information, Bestandsnachweis, Order-Spur (Kosteninformation): nie eine Buchung
     ek, aliases = event_key(e, sha)
     ts, date_only, ts_why = ts_of(tx)
     raw = provenance(e, doc)
@@ -167,6 +175,20 @@ def to_recs(e: Enriched, *, sha: str, doc: dict[str, Any], account: str, n0: int
                                                                                              else amt),
                            "value_eur": _s(eur) if eur is not None else "", "related_asset": sym},
                           f"{FIELD_LABEL.get(name)} zur Dividende"))
+    elif tx.kind == "corporate_action":
+        tag = tx.value("ca_tag") or "spinoff"
+        if tag in ("reverse_split", "split"):
+            sym2 = e.asset2 or tx.value("isin_new") or ""
+            row = {"type": "corporate_action", "tag": tag, "from_account": account, "from_asset": sym,
+                   "from_qty": _s(q), "to_account": account, "to_asset": sym2, "to_qty": _s(tx.dec("quantity_new"))}
+        else:  # Gratisausgabe: Zugang des neuen Wertpapiers, Einstand = steuerrelevanter Bewertungskurs × Menge
+            row = {"type": "corporate_action", "tag": tag, "to_account": account, "to_asset": sym, "to_qty": _s(q)}
+    elif tx.kind == "fee":
+        row = {"type": "withdrawal", "tag": "fee", "from_account": account, "from_asset": "EUR", "from_qty": _s(gross)}
+        if sym:
+            row["related_asset"] = sym
+    elif tx.kind == "writeoff":
+        row = {"type": "withdrawal", "tag": "lost", "from_account": account, "from_asset": sym, "from_qty": _s(q)}
     elif tx.kind == "deposit":
         row = {"type": "deposit", "to_account": account, "to_asset": sym, "to_qty": _s(q)}
     elif tx.kind == "withdrawal":
@@ -183,7 +205,14 @@ def to_recs(e: Enriched, *, sha: str, doc: dict[str, Any], account: str, n0: int
         for name in ("income_kind", "income_detail"):
             if tx.value(name) and (name == "income_detail" or tx.value(name) != "Dividende"):
                 note += f" · {tx.value(name)}"
-    if tx.kind in ("buy", "sell"):  # Steuern/Erstattung zum Geschäft (Verkauf mit KapESt/Soli, Verlustverrechnung)
+    if tx.kind in ("corporate_action", "fee", "writeoff"):  # Art, Verhältnis, Bewertung, Verlust laut Beleg
+        bits = [tx.value("ca_kind"), f"Verhältnis {tx.value('ratio')}" if tx.value("ratio") else "",
+                f"Bewertungskurs {tx.value('valuation_price')} €" if tx.value("valuation_price") else "",
+                f"Verlust laut Beleg {tx.value('loss')} €" if tx.value("loss") else "", tx.value("ca_detail")]
+        note += "".join(f" · {b}" for b in bits if b)
+        if e.link_note:
+            note += f" · {e.link_note}"
+    if tx.kind in ("buy", "sell", "corporate_action"):  # Steuern/Erstattung zum Geschäft
         for name, tag, typ in (("tax", "tax", "withdrawal"), ("tax_refund", "refund", "deposit")):
             amt = tx.dec(name)
             if amt is None or tx.status(name) not in GOOD:

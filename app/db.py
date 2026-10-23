@@ -947,6 +947,12 @@ CREATE TABLE IF NOT EXISTS tx_document (
 );
 CREATE INDEX IF NOT EXISTS ix_tx_document_doc ON tx_document(document_id);
 """),
+    (32, """
+-- DKB-Dokumentindex: strukturierte Kennungen aus dem Inhalt (Unterart, Bezug auf andere Belege, Auftragsnummer,
+-- Seite, Menge/Kurs der Kosteninformation …) als JSON – ohne Personendaten und Beträge, die nicht für die Zuordnung
+-- gebraucht werden.
+ALTER TABLE bank_doc ADD COLUMN meta TEXT;
+"""),
 ]
 
 
