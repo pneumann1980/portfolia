@@ -1242,7 +1242,7 @@ def test_status_tab_reports_counts_budget_errors(client):
     iid = add_item(ctx, "Meldung", "https://pub.example.com/s", hours=0.2)
     store_content(ctx, iid)
     put_analysis(ctx, iid)
-    now = iso(datetime.now(UTC))  # „heute“ beginnt um Mitternacht lokal – Zeitstempel frisch setzen (tageszeitunabhängig)
+    now = iso(datetime.now(UTC))  # „heute“ beginnt lokal um Mitternacht – Zeitstempel frisch setzen
     ctx.db.x("UPDATE news_item SET fetched_at=?", (now,))
     ctx.db.x("UPDATE news_content SET fetched_at=?", (now,))
     ctx.db.x("UPDATE news_analysis SET analyzed_at=?", (now,))
