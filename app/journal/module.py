@@ -159,6 +159,9 @@ def make_router() -> APIRouter:
         from app.csvimport.batch import links_for
 
         links = links_for(ctx.db, [r["t"].tx_id for r in rows])
+        from app.documentimport import txdocs
+
+        tx_docs = txdocs.for_page(ctx.db, [r["t"].tx_id for r in rows])
         from app.csvimport.review import active_summary
 
         review_open = active_summary(ctx.db).open
@@ -176,7 +179,7 @@ def make_router() -> APIRouter:
             jmeta=svc.meta([r["t"].tx_id for r in rows if r["kind"] in ("journal", "csv", "sync")]),
             saved=SAVED.get(saved), saved_tx=tx, warnings=warnings, own_assets=svc.assets(),
             deleted=[*svc.deleted_imports(), *svc.deleted()], has_import=ctx.active_import_id() is not None,
-            ov=svc.override_states(), compare=compare, tag_label=forms.TAG_LABEL, links=links,
+            ov=svc.override_states(), compare=compare, tag_label=forms.TAG_LABEL, links=links, tx_docs=tx_docs,
             review_open=review_open,
         )
 

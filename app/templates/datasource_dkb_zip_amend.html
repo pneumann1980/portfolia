@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Buchungen ergänzen {{ ds.name }}{% endblock %}
+{% block heading %}Abrechnungen ergänzen Buchungen: {{ ds.name }}{% endblock %}
+{% block content %}
+<div class="stack diag">
+  <p class="hint"><a href="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}">← ZIP-Import</a></p>
+  {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+  <section class="card">
+    <div class="card-head"><h2>Vorhandene Buchungen mit belegten Werten ergänzen</h2></div>
+    <p>Die Abrechnungen der DKB sind die verbindliche Quelle für Gebühren (Summe aus Provision, Spesen, Auslagen, Börsenentgelt), den Kurswert und die Uhrzeit. Diese Seite ergänzt <b>vorhandene</b> Buchungen (z. B. aus dem kuratierten Import) um genau diese Angaben. <b>Menge, Asset, Konto und Vorgangsart werden nie geändert.</b> Alles ist eine einzige Entscheidung und lässt sich unter <a href="/quality/diagnose#decisions">Datenqualität → Entscheidungen und Korrekturen</a> als Ganzes rückgängig machen.</p>
+    {% if not items %}<p class="hint">Keine Ergänzungen nötig – die zugeordneten Buchungen enthalten die belegten Werte bereits.</p>{% endif %}
+  </section>
+
+  {% if items %}
+  <section class="card">
+    <h2>Vorschläge ({{ items|length }})</h2>
+    <form method="get" action="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/ergaenzen" class="stack" style="gap:8px">
+      <input type="hidden" name="v" value="1">
+      <div class="table-wrap cards-wrap"><table class="cards">
+        <thead><tr><th><span class="sr-only">Auswahl</span></th><th>Beleg</th><th>Buchung</th><th>Änderung</th><th>Hinweis</th></tr></thead>
+        <tbody>{% for it in items %}<tr>
+          <td data-label="Auswahl">{% if it.doc_id in safe %}<input type="checkbox" name="d" value="{{ it.doc_id }}" {% if it.doc_id in selected or (not plan and not 'v' in request.query_params) %}checked{% endif %} aria-label="Beleg {{ it.doc_id }} übernehmen">{% endif %}</td>
+          <td data-label="Beleg" class="wrap-any"><a href="/journal/documents/{{ it.doc_id }}">{{ it.filename }}</a></td>
+          <td data-label="Buchung" class="mono">{{ it.target.tx_id }}<div class="hint">{{ it.target.date|date_de }}</div></td>
+          <td data-label="Änderung">{% for c in it.changes %}<div><b>{{ c.label }}:</b> {{ c.old }} → <b>{{ c.new }}</b></div>{% endfor %}</td>
+          <td data-label="Hinweis" class="wrap-any">{% if it.needs_confirm %}<span class="badge warn">von Hand geändert</span> {{ it.warning }} <a href="/journal/documents/{{ it.doc_id }}/amend">einzeln prüfen</a>{% elif it.skipped %}<span class="badge warn">übersprungen</span> {{ it.skipped }}{% else %}<span class="muted">–</span>{% endif %}</td>
+        </tr>{% endfor %}</tbody>
+      </table></div>
+      <div><button class="btn" type="submit">Vorschau berechnen</button></div>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if plan %}
+  <section class="card">
+    <h2>Was geändert wird ({{ plan.ops|length }})</h2>
+    {% for w in plan.warnings %}<div class="alert warn"><span class="icon">!</span><div>{{ w }}</div></div>{% endfor %}
+    <ol class="op-list">{% for op in plan.ops %}<li class="op"><div class="row"><span class="badge warn">ergänzen</span><span>{{ op.label }}</span></div></li>{% endfor %}</ol>
+  </section>
+  {% if effects %}{% include "partials/diag_effects.html" with context %}{% endif %}
+  {% if not plan.errors and plan.ops %}
+  <section class="card">
+    <h2>Übernehmen</h2>
+    <p class="hint">Haben sich die Daten seit dieser Vorschau geändert, wird nichts übernommen.</p>
+    <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/ergaenzen" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="token" value="{{ plan.token }}">
+      {% for d in selected|sort %}<input type="hidden" name="d" value="{{ d }}">{% endfor %}
+      <button class="btn primary" type="submit">{{ plan.ops|length }} Buchungen ergänzen</button>
+      <a class="btn ghost" href="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}">Abbrechen</a>
+    </form>
+  </section>
+  {% else %}{% for e in plan.errors %}<div class="alert crit"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}{% endif %}
+  {% endif %}
+</div>
+{% endblock %}

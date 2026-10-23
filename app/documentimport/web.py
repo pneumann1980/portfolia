@@ -410,7 +410,8 @@ def make_router() -> APIRouter:
         except ValueError:
             n = 1
         sel = {str(x) for x in form.getlist("f")}
-        res = await run_in_threadpool(AM.apply, ctx, doc_id, n, sel, str(form.get("token") or ""))
+        res = await run_in_threadpool(AM.apply, ctx, doc_id, n, sel, str(form.get("token") or ""),
+                                      confirm=str(form.get("confirm") or "") == "1")
         if not res.ok:
             return await run_in_threadpool(_amend_page, request, doc_id, n, sorted(sel), True, res.errors, 409)
         return _back(request, _url(f"/journal/documents/{doc_id}", msg=res.message + " Rückgängig unter "

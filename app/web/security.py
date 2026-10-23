@@ -151,8 +151,14 @@ def _app_path(scope: Scope) -> str:
     return path
 
 
+_DKB_ZIP_PATH = re.compile(r"^/settings/datasources/\d+/dkb/zip$")  # ZIP der DKB-Wertpapierdokumente (≤ 100 MiB)
+
+
 def body_limit(scope: Scope) -> int:
-    return UPLOAD_LIMITS.get(_app_path(scope), MAX_BODY)
+    path = _app_path(scope)
+    if _DKB_ZIP_PATH.match(path):
+        return 101 * 1024 * 1024
+    return UPLOAD_LIMITS.get(path, MAX_BODY)
 
 
 class CsrfMiddleware:

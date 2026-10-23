@@ -130,8 +130,9 @@ def to_recs(e: Enriched, *, sha: str, doc: dict[str, Any], account: str, n0: int
             "txhash": h, "raw": raw, "label": label, "date_only": bool(date_only and ts is not None),
             "ts_missing": ts is None, "account": account}
     if gaps or tx.kind in ("unknown", "trade"):
-        why = ("fehlt: " + ", ".join(FIELD_LABEL.get(g, g) for g in gaps)) if gaps else \
-            "Vorgangsart nicht eindeutig abbildbar"
+        proof = [w for w in tx.warnings if w.startswith("Rechenprobe")]
+        why = ("fehlt: " + ", ".join(FIELD_LABEL.get(g, g) for g in gaps)) if gaps and not proof else \
+            "; ".join(proof) if proof else "Vorgangsart nicht eindeutig abbildbar"
         return [Rec(kind=REVIEW, ext_id=f"{ek}#0", event_line=0, note=f"Unvollständiger Beleg – {why}"[:300],
                     review=why, **base)]
     reasons = review_reasons(e)
@@ -175,10 +176,24 @@ def to_recs(e: Enriched, *, sha: str, doc: dict[str, Any], account: str, n0: int
             row |= {"fee_asset": sym, "fee_qty": _s(nf)}
     if fee and tx.kind in ("buy", "sell") and tx.status("fee") in GOOD:
         row |= {"fee_asset": fee_ccy, "fee_qty": _s(fee), "fee_eur": _s(fee_eur) if fee_eur is not None else ""}
+        detail = tx.value("fee_detail")
+        if detail:
+            note += f" · Kosten: {detail}"
+    if tx.kind in ("buy", "sell"):  # Steuern/Erstattung zum Geschäft (Verkauf mit KapESt/Soli, Verlustverrechnung)
+        for name, tag, typ in (("tax", "tax", "withdrawal"), ("tax_refund", "refund", "deposit")):
+            amt = tx.dec(name)
+            if amt is None or tx.status(name) not in GOOD:
+                continue
+            leg = ({"type": typ, "tag": tag, "from_account": account, "from_asset": "EUR", "from_qty": _s(amt)}
+                   if typ == "withdrawal" else
+                   {"type": typ, "tag": tag, "to_account": account, "to_asset": "EUR", "to_qty": _s(amt)})
+            lines.append(({**leg, "value_eur": _s(amt), "related_asset": sym},
+                          "Steuererstattung zum Geschäft" if tag == "refund" else "Steuern zum Geschäft"))
     if (v_eur is not None and tx.kind != "dividend") or (tx.kind == "dividend" and v_eur is not None):
         row["value_eur"] = _s(v_eur)
-    if ccy != "EUR" and tx.kind in ("buy", "sell") and tx.dec("price") is not None:
-        row |= {"orig_price": _s(tx.dec("price")), "orig_ccy": ccy}
+    price_ccy = tx.value("price_ccy") or ccy  # Abrechnung in EUR, Kurs in Fremdwährung (DKB: Kurswert EUR, Kurs USD)
+    if price_ccy != "EUR" and tx.kind in ("buy", "sell") and tx.dec("price") is not None:
+        row |= {"orig_price": _s(tx.dec("price")), "orig_ccy": price_ccy}
     row["note"] = note
     out = [Rec(kind=DIRECT, row=row, ext_id=f"{ek}#0", event_line=0, review="; ".join(reasons)[:500] or None,
                note=note, **base)]
@@ -188,4 +203,6 @@ def to_recs(e: Enriched, *, sha: str, doc: dict[str, Any], account: str, n0: int
         b["line"] = n0 + i
         out.append(Rec(kind=DIRECT, row=extra, ext_id=f"{ek}#{i}", event_line=i, review=out[0].review,
                        note=extra["note"], **b))
+    if getattr(e, "linked", None) is not None:
+        return out[1:]  # Geschäft gehört zu einer vorhandenen Buchung (Ergänzen) – nur Steuerzeilen bleiben Vorschläge
     return out

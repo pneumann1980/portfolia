@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% from "partials/progress.html" import bar %}
+{% block title %}ZIP-Import {{ ds.name }}{% endblock %}
+{% block heading %}ZIP-Import: {{ ds.name }}{% endblock %}
+{% block content %}
+{% set rp = run.report %}
+<div class="stack" id="zip"{% if run.active %} hx-get="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}" hx-trigger="every 2s" hx-select="#zip" hx-swap="outerHTML"{% endif %}>
+  <p class="hint"><a href="/settings/datasources/{{ ds.id }}/dkb#zip">← DKB-Dokumente</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>{{ run.summary.filename or 'Archiv' }}</h2>
+      <span class="badge {{ 'good' if run.status == 'ok' else 'info' if run.active else 'crit' if run.status == 'error' else 'warn' }}">{{ run.label }}</span></div>
+    {% if run.active %}
+      {% if run.progress %}{{ bar(run.progress) }}{% else %}<p>{{ run.message }}</p>{% endif %}
+      <p class="hint">Der Lauf geht im Hintergrund weiter – diese Seite darf verlassen werden. Der Fortschritt steht auch in der globalen Anzeige.
+        Zwischenstand: {{ rp.stored }} abgelegt{% if rp.unrecognized %}, {{ rp.unrecognized|length }} nicht erkannt{% endif %}{% if rp.duplicate_known or rp.duplicate_in_zip %}, {{ rp.duplicate_known|length + rp.duplicate_in_zip|length }} Dubletten{% endif %}.</p>
+      <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Abbrechen</button></form>
+    {% else %}
+      <div class="alert {{ 'good' if run.status == 'ok' else 'warn' if run.status in ('partial', 'cancelled') else 'crit' }}" role="status"><span class="icon">{{ '✓' if run.status == 'ok' else '!' }}</span><div>{{ run.message }}{% if rp.duration %} <span class="hint">· {{ rp.duration }}</span>{% endif %}</div></div>
+      {% if run.resumable %}
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/resume"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit">Fortsetzen</button></form>
+        <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/discard" data-confirm="Zwischendatei löschen? Der Lauf kann dann nicht fortgesetzt werden (das ZIP müsste erneut hochgeladen werden)."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Verwerfen</button></form>
+      </div>
+      <p class="hint">„Fortsetzen“ liest dieselbe Zwischendatei erneut; bereits abgelegte Dokumente werden übersprungen.</p>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Was ist drin?</h2> <span class="badge">{{ rp.stored }} abgelegt</span></div>
+    {% if rp.groups %}
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Dokumentart</th><th class="num">Anzahl</th></tr></thead><tbody>
+    {% for g in rp.groups %}
+      <tr><td><b>{{ g.label }}</b></td><td class="num" data-label="Anzahl"><b>{{ g.total }}</b></td></tr>
+      {% for r in g.rows %}<tr><td>&nbsp;&nbsp;{{ r.label }}</td><td class="num" data-label="Anzahl">{{ r.count }}</td></tr>{% endfor %}
+    {% endfor %}
+    </tbody></table></div>
+    {% if rp.subs %}
+    <details><summary>Unterarten (Erträge, Kapitalmaßnahmen)</summary>
+      <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Art</th><th>Unterart</th><th class="num">Anzahl</th></tr></thead><tbody>
+      {% for r in rp.subs %}<tr><td>{{ r.kind }}</td><td data-label="Unterart">{{ r.label }}</td><td class="num" data-label="Anzahl">{{ r.count }}</td></tr>{% endfor %}
+      </tbody></table></div>
+    </details>
+    {% endif %}
+    {% else %}<p class="hint">Noch nichts abgelegt.</p>{% endif %}
+    {% if rp.depots %}<p class="hint">Depots: {% for d in rp.depots %}{{ d.depot }} ({{ d.count }}){{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+    {% for n in rp.notes %}<div class="alert warn"><span class="icon">!</span><div>{{ n }}</div></div>{% endfor %}
+    <p class="hint">Es wurde nichts gebucht. Kauf-/Verkaufsabrechnungen sind unten ausgewertet; Erträge, Kapitalmaßnahmen, Depotauszüge und Kosteninformationen folgen in den nächsten Ausbaustufen.</p>
+  </section>
+
+  {% set tr = rp.trades %}
+  {% if tr and (tr.matched or tr.new or tr.unclear or tr.failed) %}
+  <section class="card" id="abrechnungen">
+    <div class="card-head"><h2>Abrechnungen (Kauf/Verkauf)</h2></div>
+    <p>Jede Abrechnung wurde ausgewertet und mit der <b>Rechenprobe</b> geprüft (Kurswert + Gebühren ± Steuern = Ausmachender Betrag, Menge × Kurs ≈ Kurswert). Gehört sie zu einer <b>vorhandenen Buchung</b>, wird sie nur verknüpft; es entsteht keine zweite Buchung.</p>
+    <ul>
+      <li><b>{{ tr.matched|length }}</b> vorhandenen Buchungen zugeordnet{% if tr.matched %} – <a href="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/ergaenzen">Gebühr, Kurswert und Uhrzeit ergänzen …</a>{% endif %}</li>
+      <li><b>{{ tr.new|length }}</b> ohne vorhandene Buchung – Vorschlag im <a href="/journal/pruefung">Prüfstapel</a> (vor dem Stichtag des kuratierten Imports nur auf ausdrücklichen Wunsch zu übernehmen)</li>
+      <li><b>{{ tr.unclear|length }}</b> ungeklärt (Rechenprobe oder Pflichtangaben) – nicht buchbar{% if tr.failed %}, <b>{{ tr.failed|length }}</b> nicht auswertbar{% endif %}</li>
+    </ul>
+  </section>
+  {% macro tradelist(title, items, tone, with_reason=False) %}
+  {% if items %}
+  <details class="card"{% if tone == 'crit' %} open{% endif %}><summary><b>{{ title }}</b> <span class="badge {{ tone }}">{{ items|length }}</span></summary>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Beleg</th><th>{{ 'Grund' if with_reason else 'Buchung' }}</th></tr></thead><tbody>
+    {% for it in items[:200] %}<tr><td class="wrap-any">{% if it.doc %}<a href="/journal/documents/{{ it.doc }}">{{ it.name }}</a>{% else %}{{ it.name }}{% endif %}</td><td data-label="{{ 'Grund' if with_reason else 'Buchung' }}" class="wrap-any">{% if with_reason %}{{ it.reason }}{% else %}<span class="mono">{{ it.tx or '' }}</span>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </details>
+  {% endif %}
+  {% endmacro %}
+  {{ tradelist('Ungeklärt (nicht buchbar)', tr.unclear, 'crit', True) }}
+  {{ tradelist('Nicht auswertbar', tr.failed, 'crit', True) }}
+  {{ tradelist('Vorhandenen Buchungen zugeordnet', tr.matched, 'good') }}
+  {% endif %}
+
+  {% macro filelist(title, items, tone) %}
+  {% if items %}
+  <details class="card"{% if tone == 'warn' and items|length < 15 %} open{% endif %}><summary><b>{{ title }}</b> <span class="badge {{ tone }}">{{ items|length }}</span></summary>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Datei</th><th>Grund</th></tr></thead><tbody>
+    {% for it in items[:200] %}<tr><td class="wrap-any">{{ it.name }}</td><td data-label="Grund">{{ it.reason }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% if items|length > 200 %}<p class="hint">… und {{ items|length - 200 }} weitere (siehe CSV-Bericht).</p>{% endif %}
+  </details>
+  {% endif %}
+  {% endmacro %}
+  {{ filelist('Nicht erkannt (nicht abgelegt)', rp.unrecognized, 'warn') }}
+  {{ filelist('Nicht lesbar', rp.unreadable, 'crit') }}
+  {{ filelist('Bereits vorhanden (nicht erneut abgelegt)', rp.duplicate_known, '') }}
+  {{ filelist('Doppelt im Archiv', rp.duplicate_in_zip, '') }}
+  {{ filelist('Übersprungen', rp.skipped, '') }}
+
+  {% if not run.active %}
+  <p><a class="btn ghost" href="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/report.csv">Bericht als CSV</a></p>
+  {% endif %}
+</div>
+{% endblock %}

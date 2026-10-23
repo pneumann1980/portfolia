@@ -71,16 +71,89 @@ Browser für das Captcha-Token, noch nicht stabil). Portfolia zeigt das als „B
 funktioniert deshalb derzeit nicht;** ein Umgehen des Captchas per Browser-Automatisierung ist bewusst nicht vorgesehen
 (Sicherheitsmaßnahme der Bank, schwergewichtig, brüchig, Bedingungen).
 
+## ZIP-Import der Wertpapierdokumente (Phase 1: erkennen und ablegen)
+
+Solange der automatische Abruf blockiert ist (siehe oben), lädt man die Wertpapierdokumente selbst aus der Postbox (ein ZIP mit
+den PDFs genügt, Ordnerstruktur und Dateinamen sind beliebig) und gibt sie auf der Seite der DKB-Datenquelle unter
+**ZIP-Import: Wertpapierdokumente** ein. Alles läuft in der Oberfläche; es gibt keinen Kommandozeilenweg.
+
+1. **Hochladen** (höchstens 100 MB je ZIP; bei mehr Dokumenten in mehrere ZIPs aufteilen). Das Archiv wird sofort geprüft
+   (Signatur statt Dateiendung, Größe, Eintragszahl, Kompressionsverhältnis, Verschlüsselung).
+2. **Entpacken:** Portfolia liest jedes PDF im Speicher und legt es **nie unter dem Pfad aus dem Archiv** ab (kein Zip-Slip).
+   Der Zielpfad entsteht aus dem Inhalt: `<Ablageordner>/<Datenquelle>/Wertpapierdokumente/Depot-<letzte 4 Ziffern>/
+   <JJJJ-MM-TT>_<Dokumentart>_<Kennung>.pdf`. Vorhandene Dateien werden nie überschrieben (gleicher Inhalt = übersprungen,
+   anderer Inhalt = Zusatz `_2`). Das ZIP selbst wird nicht aufbewahrt – nur als Zwischendatei (Rechte 0600) bis zum Ende des Laufs;
+   bei Abbruch oder Fehler bleibt sie für „Fortsetzen“ liegen (Verwerfen löscht sie, ungenutzte Dateien verfallen nach 7 Tagen).
+3. **Erkennen:** Die Dokumentart kommt aus dem **Inhalt** (nicht aus dem Dateinamen; ein widersprechender Name wird vermerkt):
+   Abrechnung Kauf/Verkauf (auch Festpreisgeschäft), Ertragsabrechnung (Dividende, Kapitalrückzahlung, Liquidationszahlung),
+   Kapitalmaßnahmen (Reverse Split, Storno, Gratisausgabe, Neubuchung nach Storno, Namensänderung, Entgeltbelastung, wertlose Titel
+   u. a.), ersatzlose Ausbuchung, Depotauszug, Ausführungsanzeige, Auftragsbestätigung, Streichungsbestätigung,
+   Kosteninformation (zur Order, Jahresübersicht), Hauptversammlung, Verlustschwellenreport. Dazu die Kennungen (Auftragsnummer nur
+   Ziffern, Belegnummer, Abrechnungsnummer, Depot, Datum, ISIN/WKN). Was keine Regel eindeutig trifft (z. B. Kontoauszug), wird
+   **gezählt, aufgelistet und nicht abgelegt** – nichts wird geraten.
+4. **Fortschritt:** Balken mit Phase, Zähler („Dokument 12 von 47“), **geschätzter Restzeit** („noch ca. 2 Min.“; erst nach drei
+   Dokumenten oder 10 s, gerundet, nie 0 und nie negativ, höchstens ein Sprung um den Faktor 2) und bisheriger Dauer. Der Lauf
+   geht im Hintergrund weiter; die Seite darf verlassen werden (die globale Anzeige zeigt ihn). **Abbrechen** wirkt zwischen zwei
+   Dokumenten, **Fortsetzen** liest den Rest derselben Zwischendatei, bereits abgelegte Dokumente werden übersprungen. Nach einem
+   Neustart der App erscheint der Lauf als „Unterbrochen“ mit „Fortsetzen“. Die gemessenen Geschwindigkeiten dienen beim nächsten
+   Lauf als Startschätzung.
+5. **Bericht:** Seite mit Zählern je Dokumentart und Unterart, Depots, Dubletten (bereits vorhanden / doppelt im Archiv),
+   übersprungenen, nicht erkannten und nicht lesbaren Dateien; zusätzlich als CSV (ohne Dateiinhalte).
+
+Erkennung und Ablage verwenden das gleiche lokale Textlesen wie der Dokumentimport (isolierter Kindprozess, kein Netzwerk,
+ohne OCR); in Protokollen stehen keine Dateiinhalte. Ausgewertet werden derzeit **Kauf- und Verkaufsabrechnungen** (nächster
+Abschnitt); alle anderen Dokumentarten stehen mit dem Stand „erkannt (noch nicht ausgewertet)“ im Index – die Auswertung
+(Erträge, Kapitalmaßnahmen, Depotauszug, Kosteninformationen) folgt in den nächsten Stufen.
+
+## Kauf- und Verkaufsabrechnungen (Phase 2)
+
+**Dedizierte Auswertung mit Rechenprobe** (`app/documentimport/dkb_trade.py`, vor den generischen Regeln des Dokumentimports): Alle
+Beträge der Abrechnung stehen in EUR (auch bei US-Titeln; nur Kurs und Devisenkurs nennen die Fremdwährung), Vorzeichen als Suffix.
+
+* **Kosten:** Summe über *alle* Zeilen zwischen *Kurswert* und *Ausmachender Betrag* (Provision, Eigene Spesen, Fremde Auslagen,
+  Transaktionsentgelt Börse; unbekannte Beschriftungen werden als Gebühr geführt, nie verworfen). Die Einzelwerte stehen in der Notiz
+  der Buchung. *Finanztransaktionssteuer* und *Stückzinsen* sind keine Gebühr → „ungeklärt“.
+* **Steuern** (Verkauf): nur Zeilen *Kapitalertragsteuer/Solidaritätszuschlag/Kirchensteuer … % auf …* sind Beträge; „Bemessungs-/
+  Berechnungsgrundlage für die Kapitalertragsteuer“ und die Verlusttöpfe sind es nicht. Mehrere *Ausmachender Betrag* (Verlust­
+  verrechnung, Seite 2 mit positiven Steuerzeilen = Erstattung) werden je Block geprüft. Steuern und Erstattung sind eigene
+  Vorschläge (`withdrawal`/`tax`, `deposit`/`refund`) mit dem Wertpapier als Bezug.
+* **Rechenprobe** (Toleranz 0,01 €): Σ Zeilen eines Blocks = Ausmachender Betrag; Menge × Kurs ÷ Devisenkurs ≈ Kurswert (mit der
+  Rundung des gedruckten Kurses); Richtung aus Titel, Vorzeichen und „zu Lasten/Gunsten“. **Nicht bestanden → „ungeklärt“**, mit
+  Grund im Bericht, nie buchbar. An allen Beispiel-Abrechnungen (Kauf USD mit drei Kostenarten, Zertifikate, Sparplan-Bruchteil,
+  Verkauf mit KapESt/Soli, Verlustverkauf mit Erstattung, Festpreisgeschäft, wertloser Verkauf) bestanden.
+* **Zeitpunkt:** *Schlusstag/-Zeit* als deutsche Ortszeit; ohne Schlusstag (Festpreisgeschäft) das Belegdatum ohne Uhrzeit.
+
+**Zuordnung zu vorhandenen Buchungen** (Regeln Z0–Z5 der Analyse): Konto der DKB-Datenquelle, Kauf bzw. Verkauf des Assets (ISIN/WKN),
+Datum ± 3 Tage, gleiche Menge. Genau ein Treffer → die Abrechnung ist **verknüpft, es entsteht keine zweite Buchung** (nur ihre
+Steuerzeilen bleiben Vorschläge im Prüf-Stapel). Mehrere gleichwertige Kandidaten, andere Menge, anderes Konto oder unbekanntes Asset →
+keine automatische Zuordnung; der Vorgang kommt als Vorschlag in den Prüf-Stapel (vor dem Stichtag des kuratierten Imports nur auf
+ausdrücklichen Wunsch zu übernehmen). Sparplan-**Schätzungen** werden nie zugeordnet oder geändert.
+
+**Ergänzen (Sammelaktion):** Auf der Ergebnisseite listet *Gebühr, Kurswert und Uhrzeit ergänzen …* je zugeordneter Buchung die
+Änderungen mit Vorher/Nachher (Beispiel: Kauf 580,00 € → Kurswert 570,00 € und Gebühr 12,50 € statt „Wert inkl. Gebühren“). Vorschau mit
+Wirkung auf Bestände, Einstand und Steuer, dann *Übernehmen* als **eine** Entscheidung, als Ganzes rückgängig unter *Datenqualität →
+Entscheidungen und Korrekturen* (stellt den Ausgangszustand exakt her). **Nie** geändert: Menge, Asset, Konto, Vorgangsart.
+Die Abrechnung hat Vorrang vor allen anderen Quellen.
+
+**Von Hand erfasste oder bearbeitete Buchungen sind nicht gesperrt:** Die Vorschau warnt („von Hand geändert, jetzt: Wert …, Gebühr …“),
+übernommen wird erst nach ausdrücklichem *Trotzdem ändern* je Buchung auf der Einzelseite des Belegs – nie in der Sammelaktion.
+Gesperrt bleibt nur die Sparplan-Schätzung.
+
+**Beleg-Link (`tx_document`):** Beleg ↔ Buchung (n:m, Rolle, Quelle `auto`/`amend`/`backfill`/`manual`). Geschrieben bei der Zuordnung, beim
+Ergänzen und per Rückfüllung (übernommene Beleg-Zeilen, Notizen mit „SHA …“). Angezeigt in der Buchungsliste und der Positionsansicht
+(*Abrechnung* → Beleg, *PDF* → Original; ist das Original nicht gespeichert: „Originaldatei nicht gespeichert“). Die Verknüpfung ist
+Metadaten in der Datenbank (Teil der Sicherung, nicht des Gesamtexports – die Belege selbst sind es auch nicht).
+
 ## Grenzen
 
 * **Gegen die echte DKB nicht getestet.** Geprüft sind: Installation mit echtem dkb-robo 0.31.2 (venv + pip), der Fetcher mit
   Attrappen der Bibliothek, der gesamte Ablauf in Portfolia mit einem Ersatz-Fetcher. Ob Postbox-Liste und Download mit dem
   aktuellen DKB-Login funktionieren, zeigt erst ein echter Lauf.
-* **Auswertung der Abrechnungen:** Es gilt der allgemeine Dokumentimport (Schlüsselwörter, Tabellen, Plausibilitätsprüfung
-  Stück × Kurs ± Kosten). Er ist nicht an Originaldokumenten der DKB verifiziert; Dokumente mit unbekanntem Layout, Stornos und
-  Korrekturabrechnungen sind besonders zu prüfen. Was nicht eindeutig lesbar ist, bleibt „ungeklärt“ im Prüfstapel.
+* **Auswertung der Abrechnungen:** Das DKB-Profil beruht auf den Beispielen der Analyse (Layout ab 2024); Abrechnungen vor 2024,
+  Teilausführungen, Stornoabrechnungen, Fonds/ETF, Anleihen (Stückzinsen), Finanztransaktionssteuer und Kirchensteuer sind nicht belegt –
+  sie bestehen die Rechenprobe oder bleiben „ungeklärt“, werden aber nie geraten. Was nicht eindeutig lesbar ist, bleibt „ungeklärt“.
 * **Zweiter Faktor:** nur Freigabe in der DKB-App (kein chipTAN). Die DKB kann ihre Schnittstelle ändern – dann meldet Portfolia
   „Schnittstelle geändert“; bereits abgelegte Dokumente bleiben unberührt, ein Update des Fetchers (*Aktualisieren*) behebt es.
 * **Bedingungen der Bank:** Das Verfahren nutzt die internen Schnittstellen des Online-Bankings (keine offizielle Freigabe).
   Ob das zu den Bedingungen der DKB passt, prüfen Sie selbst.
-* **Depotauszüge** werden abgelegt, aber noch nicht als Bestandsnachweis ausgewertet (möglicher Ausbau).
+* **Depotauszüge, Erträge, Kapitalmaßnahmen, Kosteninformationen** werden abgelegt und erkannt, aber noch nicht ausgewertet.

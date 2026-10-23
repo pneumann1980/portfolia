@@ -930,6 +930,23 @@ CREATE TABLE IF NOT EXISTS bank_doc (
 );
 CREATE INDEX IF NOT EXISTS ix_bank_doc_status ON bank_doc(source_id, status);
 """),
+    (31, """
+-- Beleg ↔ Buchung (n:m): Eine Buchung hat bis zu mehrere Belege (Abrechnung, Ausführungsanzeige, Auftragsbestätigung,
+-- Kosteninformation), ein Beleg gehört zu mehreren Buchungen (Verkauf mit Steuerzeilen, Kapitalmaßnahme, Depotauszug).
+-- ``tx_id`` ist die stabile Buchungs-ID (Import-ID bzw. journal_tx.tx_id); ``ref`` die normalisierte Auftragsnummer
+-- zum Wiederauflösen, falls sich Import-IDs ändern. Nur Metadaten – der Beleg selbst liegt in ``document``.
+CREATE TABLE IF NOT EXISTS tx_document (
+  tx_id       TEXT NOT NULL,
+  document_id INTEGER NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+  role        TEXT NOT NULL,        -- abrechnung | ausfuehrung | order | kosteninformation | kapitalmassnahme |
+                                    -- depotauszug | ertrag | beleg
+  source      TEXT NOT NULL,        -- auto | amend | manual | backfill
+  ref         TEXT,
+  created_at  TEXT NOT NULL,
+  PRIMARY KEY (tx_id, document_id)
+);
+CREATE INDEX IF NOT EXISTS ix_tx_document_doc ON tx_document(document_id);
+"""),
 ]
 
 

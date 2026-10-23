@@ -1426,6 +1426,36 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.38.0 – DKB-Abrechnungen: Rechenprobe, Zuordnung zu vorhandenen Buchungen, Ergänzen, Beleg-Link (Phase 2)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Kauf- und Verkaufsabrechnungen“.
+
+* **DKB-Profil mit Rechenprobe** (`dkb_trade.py`): Kostensumme über alle Zeilen, Steuern (nur echte Steuerzeilen), mehrere
+  *Ausmachender Betrag* je Block, Menge × Kurs ÷ Devisenkurs. Nicht bestanden → „ungeklärt“, nie buchbar. An allen Beispiel-
+  Abrechnungen bestanden.
+* **Zuordnung statt Neuanlage:** Eine Abrechnung gehört zu einer vorhandenen Buchung (Konto, Asset, Menge, ± 3 Tage) → verknüpft,
+  keine zweite Buchung. An deinem Export: 5 von 9 Beispiel-Abrechnungen zugeordnet.
+* **Ergänzen als Sammelaktion** mit Vorher/Nachher und Wirkungsvorschau; eine Entscheidung, als Ganzes rückgängig. Die bisherige Sperre
+  für von Hand geänderte Buchungen ist einer Warnung mit ausdrücklicher Bestätigung gewichen (nur einzeln); Sparplan-Schätzungen
+  bleiben gesperrt.
+* **Beleg-Link** (Migration 31, `tx_document`): Beleg ↔ Buchung n:m, Anzeige in Buchungsliste und Positionsansicht.
+* **Grenzen:** Erträge, Kapitalmaßnahmen, Depotauszug und Kosteninformationen noch nicht ausgewertet; Sparplan-Abrechnungen finden in
+  geschätzten Sparplan-Buchungen keine Gegenstücke (Menge unterschiedlich) und kommen als eigene Vorschläge.
+
+## 0.37.0 – DKB-Wertpapierdokumente per ZIP: erkennen und ablegen (Phase 1)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „ZIP-Import der Wertpapierdokumente“. Grundlage ist die Analyse
+`ANALYSE_DKB_Wertpapierdokumente_Import.md` (Phasen 1–7); diese Stufe bucht nichts.
+
+* **ZIP-Upload auf der DKB-Datenquelle** (≤ 100 MB): sicheres Entpacken im Speicher (kein Zip-Slip, Bomben-/Eintrags-/Größengrenzen,
+  verschlüsselt und verschachtelt abgelehnt), Ablage unter aus dem Inhalt gebautem Pfad, nie überschreiben, Dubletten per SHA-256.
+* **Dedizierte DKB-Erkennung** (`app/documentimport/dkb.py`): 13 Dokumentarten samt Unterarten und Kennungen aus dem Inhalt; Dateiname
+  nur Gegenprobe. An allen 47 Beispiel-PDFs der Analyse geprüft (Golden-Tests mit anonymisierten Nachbauten).
+* **Hintergrundlauf** (`dkb_run.py`) mit Fortschrittsbalken, **geschätzter Restzeit** (`app/progress.py`: arbeitsgewichtet, geglättet,
+  gemessene Startwerte), Abbrechen, Fortsetzen, Ergebnisseite und CSV-Bericht; Seite darf verlassen werden.
+* **Grenzen:** Es wird nichts gebucht oder vorgeschlagen (folgt in Phase 2 ff.); Erkennung beruht auf 47 Beispielen – unbekannte
+  Titel werden gezählt, nicht geraten; ein Depot je Datenquelle vorgesehen (mehrere werden gemeldet).
+
 ## 0.36.0 – DKB: Postbox per Knopfdruck abrufen, in Ordner ablegen, Depot-Abrechnungen auswerten
 
 Details in `docs/DKB_DOCUMENTS.md`.

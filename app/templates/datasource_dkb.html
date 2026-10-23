@@ -54,14 +54,42 @@
     </form>
   </section>
 
+  <section class="card" id="zip">
+    <div class="card-head"><h2>ZIP-Import: Wertpapierdokumente</h2></div>
+    <p>Wertpapierdokumente aus der DKB-Postbox (Abrechnungen, Erträge, Kapitalmaßnahmen, Depotauszüge, Kosteninformationen …) als <b>ZIP</b> hochladen. Portfolia entpackt das Archiv selbst, erkennt jedes Dokument am <b>Inhalt</b> und legt es im Ablageordner ab. Der Lauf geht im Hintergrund weiter – die Seite darf verlassen werden. Kauf-/Verkaufsabrechnungen werden zusätzlich ausgewertet und <b>vorhandenen Buchungen zugeordnet</b>; <b>gebucht oder geändert wird nichts ohne Ihre Bestätigung</b>.</p>
+    <ul class="hint">
+      <li>Bereits vorhandene Dokumente (gleicher Inhalt) werden übersprungen; ein erneutes Hochladen ist ungefährlich.</li>
+      <li>Nicht erkannte Dateien (z. B. Kontoauszüge) werden gezählt und aufgelistet, aber <b>nicht</b> abgelegt.</li>
+      <li>Das ZIP selbst wird nicht gespeichert; höchstens 100&nbsp;MB je Upload.</li>
+    </ul>
+    {% if busy %}<div class="alert info" role="status"><span class="icon">i</span><div>Für diese Datenquelle läuft gerade ein Vorgang{% if run and run.is_zip %} – <a href="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}">Fortschritt ansehen</a>{% endif %}.</div></div>{% endif %}
+    <form id="dkb-zip-form" method="post" action="/settings/datasources/{{ ds.id }}/dkb/zip" enctype="multipart/form-data" class="stack" style="gap:8px" data-max="{{ 100 * 1024 * 1024 }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="field">ZIP-Datei<input type="file" name="file" id="dkb-zip-file" accept=".zip,application/zip,application/x-zip-compressed" required></label>
+      <div class="hint" id="dkb-zip-info" aria-live="polite"></div>
+      <div class="upload-progress" id="dkb-zip-progress" hidden>
+        <div class="hint" id="dkb-zip-progress-text">Hochladen …</div>
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div style="width:0%"></div></div>
+      </div>
+      <div class="row"><button class="btn primary" type="submit" id="dkb-zip-submit"{% if busy or not folder.writable %} disabled{% endif %}>Hochladen und verarbeiten</button>
+        <button class="btn ghost" type="button" id="dkb-zip-abort" hidden>Hochladen abbrechen</button></div>
+    </form>
+    {% if zips %}
+    <h3>Letzte ZIP-Läufe</h3>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Beginn</th><th>Datei</th><th>Ergebnis</th></tr></thead><tbody>
+    {% for z in zips %}<tr><td><a href="/settings/datasources/{{ ds.id }}/dkb/zip/{{ z.id }}">{{ z.started_at|datetime_de }}</a></td><td data-label="Datei" class="wrap-any">{{ z.summary.filename }}</td><td class="wide" data-label="Ergebnis"><span class="badge {{ 'good' if z.status == 'ok' else 'crit' if z.status == 'error' else 'warn' }}">{{ z.label }}</span> {{ z.message }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% endif %}
+  </section>
+
   <section class="card" id="abruf">
     <div class="card-head"><h2>3 · Abrufen und auswerten</h2></div>
-    {% if run and run.active %}
+    {% if run and run.active and not run.is_zip %}
     <div class="alert info" role="status"><span class="icon">…</span><div><b>{{ run.label }}</b> – {{ run.message }}</div></div>
     {% if run.total %}<progress max="{{ run.total }}" value="{{ run.done }}" style="width:100%"></progress> <span class="hint">{{ run.done }} / {{ run.total }}</span>{% endif %}
     <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Abbrechen</button></form>
     {% else %}
-    {% if run %}<div class="alert {{ 'good' if run.status == 'ok' else 'warn' if run.status in ('partial', 'cancelled') else 'crit' }}" role="status"><span class="icon">{{ '✓' if run.status == 'ok' else '!' }}</span><div><b>Letzter Abruf ({{ run.started_at|datetime_de }}): {{ run.label }}</b> – {{ run.message }}
+    {% if run and not run.active and not run.is_zip %}<div class="alert {{ 'good' if run.status == 'ok' else 'warn' if run.status in ('partial', 'cancelled') else 'crit' }}" role="status"><span class="icon">{{ '✓' if run.status == 'ok' else '!' }}</span><div><b>Letzter Abruf ({{ run.started_at|datetime_de }}): {{ run.label }}</b> – {{ run.message }}
       {% if run.summary.evaluated %}<br>Auswertung: {{ run.summary.evaluated.evaluated or 0 }} Dokumente, {{ run.summary.evaluated.transactions or 0 }} Vorgänge im <a href="/journal/pruefung">Prüfstapel</a>{% if run.summary.evaluated.failed %}, {{ run.summary.evaluated.failed }} nicht lesbar{% endif %}.{% endif %}
       {% if run.summary.errors %}<ul>{% for e in run.summary.errors[:6] %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
       {% if run.summary.diagnose %}<details><summary class="hint">Technische Einzelheiten</summary><div class="small wrap-any">Art: {{ run.summary.diagnose.kind }}{% if run.summary.diagnose.fetcher %} · Abrufprogramm {{ run.summary.diagnose.fetcher }}{% endif %}<br>Meldung: {{ run.summary.diagnose.detail }}{% if run.summary.diagnose.stderr %}<br>Ausgabe der Bibliothek:<ul>{% for x in run.summary.diagnose.stderr %}<li class="mono">{{ x }}</li>{% endfor %}</ul>{% endif %}</div></details>{% endif %}</div></div>{% endif %}
@@ -80,12 +108,12 @@
     <div class="card-head"><h2>Abgelegte Dokumente</h2> <span class="badge">{{ docs.total }}</span></div>
     {% if docs.total %}
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Kategorie</th><th class="num">Dokumente</th><th>Stand</th></tr></thead><tbody>
-    {% for cat, c in docs.categories.items() %}<tr><td><b>{{ cat }}</b></td><td class="num" data-label="Dokumente">{{ c.values()|sum }}</td><td data-label="Stand">{% if c.evaluated %}{{ c.evaluated }} ausgewertet{% endif %}{% if c.downloaded %}{{ ', ' if c.evaluated }}{{ c.downloaded }} auszuwerten{% endif %}{% if c.archived %}{{ ', ' if c.evaluated or c.downloaded }}{{ c.archived }} nur abgelegt{% endif %}{% if c.error %}{{ ', ' }}<span class="badge crit">{{ c.error }} Fehler</span>{% endif %}</td></tr>{% endfor %}
+    {% for cat, c in docs.categories.items() %}<tr><td><b>{{ cat }}</b></td><td class="num" data-label="Dokumente">{{ c.values()|sum }}</td><td data-label="Stand">{% if c.evaluated %}{{ c.evaluated }} ausgewertet{% endif %}{% if c.downloaded %}{{ ', ' if c.evaluated }}{{ c.downloaded }} auszuwerten{% endif %}{% if c.classified %}{{ ', ' if c.evaluated or c.downloaded }}{{ c.classified }} erkannt (noch nicht ausgewertet){% endif %}{% if c.archived %}{{ ', ' if c.evaluated or c.downloaded or c.classified }}{{ c.archived }} nur abgelegt{% endif %}{% if c.error %}{{ ', ' }}<span class="badge crit">{{ c.error }} Fehler</span>{% endif %}</td></tr>{% endfor %}
     </tbody></table></div>
     {% if docs.pending %}<form method="post" action="/settings/datasources/{{ ds.id }}/dkb/evaluate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit"{% if busy %} disabled{% endif %}>{{ docs.pending }} Depot-Abrechnung(en) jetzt auswerten</button></form>{% endif %}
     <details><summary>Zuletzt abgelegt</summary>
       <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Datum</th><th>Dokument</th><th>Konto</th><th>Stand</th></tr></thead><tbody>
-      {% for d in docs.recent %}<tr><td>{{ d.doc_date }}</td><td class="wide" data-label="Dokument">{{ d.subject or d.rel_path }}<div class="hint wrap-any">{{ d.rel_path }}</div></td><td data-label="Konto">{{ d.account or '–' }}</td><td data-label="Stand">{{ {'downloaded': 'auszuwerten', 'evaluated': 'ausgewertet', 'archived': 'abgelegt', 'error': 'Fehler'}.get(d.status, d.status) }}{% if d.note %}<div class="hint">{{ d.note }}</div>{% endif %}{% if d.checksum_ok == 0 %}<div><span class="badge warn">Prüfsumme weicht ab</span></div>{% endif %}</td></tr>{% endfor %}
+      {% for d in docs.recent %}<tr><td>{{ d.doc_date }}</td><td class="wide" data-label="Dokument">{{ d.subject or d.rel_path }}<div class="hint wrap-any">{{ d.rel_path }}</div></td><td data-label="Konto">{{ d.account or '–' }}</td><td data-label="Stand">{{ {'downloaded': 'auszuwerten', 'classified': 'erkannt', 'evaluated': 'ausgewertet', 'archived': 'abgelegt', 'error': 'Fehler'}.get(d.status, d.status) }}{% if d.note %}<div class="hint">{{ d.note }}</div>{% endif %}{% if d.checksum_ok == 0 %}<div><span class="badge warn">Prüfsumme weicht ab</span></div>{% endif %}</td></tr>{% endfor %}
       </tbody></table></div>
     </details>
     {% else %}<p class="hint">Noch nichts abgerufen.</p>{% endif %}
@@ -100,3 +128,4 @@
   {% endif %}
 </div>
 {% endblock %}
+{% block scripts %}<script src="/static/js/dkb_zip.js?v={{ version }}"></script>{% endblock %}

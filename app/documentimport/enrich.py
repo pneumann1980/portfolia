@@ -34,7 +34,7 @@ from app.documentimport.evidence import FieldEvidence
 from app.documentimport.profiles import CENT, DocTx, _money, parse_date, parse_time
 
 log = logging.getLogger(__name__)
-NATIVE_PROVIDERS = {"bitpanda", "binance", "coinbase", "kraken"}
+NATIVE_PROVIDERS = {"bitpanda", "binance", "coinbase", "kraken", "dkb"}
 MAX_PUBLIC_REQUESTS = 6  # je Upload-Stapel
 PUBLIC_DEADLINE_S = 25.0
 MAX_TX_PER_DOC_LOOKUP = 20
@@ -388,11 +388,69 @@ class Enriched:
     tx: DocTx
     asset_id: str | None
     asset_candidates: list[str]
-    existing: Any | None  # vorhandene Buchung bei technischer Identität
+    existing: Any | None  # vorhandene Buchung bei technischer Identität bzw. DKB-Zuordnung
     steps: list[Step]
+    linked: Any | None = None  # DKB: Abrechnung einer vorhandenen Buchung zugeordnet → keine neue Buchung
 
 
-def enrich(c: Context, tx: DocTx, budget: Budget, *, public: bool = False, transport: Any = None) -> Enriched:
+DKB_WINDOW = timedelta(days=3)  # Regel Z1: Ausführung bis zu drei Kalendertage neben dem Handelstag erfasst
+QTY_EPS = Decimal("1e-8")
+
+
+def _stage2_dkb(c: Context, tx: DocTx, asset_id: str | None, account: str, steps: list[Step]) -> Any | None:
+    """DKB-Abrechnung → vorhandene Buchung (Regeln Z0–Z5 der Analyse): Konto der Datenquelle, Kauf/Verkauf des Assets
+    (ISIN/WKN), Datum im Fenster von ±3 Tagen, gleiche Menge. Genau ein Treffer = Zuordnung; mehrere oder keine →
+    keine Zuordnung (der Vorgang bleibt im Prüf-Stapel). Verändert wird hier nichts."""
+    d, q = parse_date(tx.value("date")), tx.dec("quantity")
+    if tx.provider != "dkb" or tx.kind not in ("buy", "sell") or d is None or q is None:
+        return None
+    if asset_id is None:
+        steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", tx.value("isin") or "–",
+                          "Asset unbekannt – keine Zuordnung zu einer vorhandenen Buchung", False))
+        return None
+    pf = c.ctx.portfolio()
+    if pf is None:
+        return None
+    lo, hi = d - DKB_WINDOW, d + DKB_WINDOW
+    cands = []
+    for t in pf.txs:
+        if t.origin == "plan" or t.type != tx.kind:
+            continue
+        asset, qty, acc = (t.to_asset, t.to_qty, t.to_account) if tx.kind == "buy" else \
+            (t.from_asset, t.from_qty, t.from_account)
+        if asset != asset_id or qty is None or abs(qty - q) > QTY_EPS:
+            continue
+        if account and acc != account:
+            continue
+        td = t.date
+        if lo <= td <= hi:
+            cands.append(t)
+    if not cands:
+        steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", f"{tx.kind} {q} {asset_id} um {d}",
+                          "keine vorhandene Buchung mit gleicher Menge im Zeitfenster – neuer Vorgang", False))
+        return None
+    if len(cands) > 1:
+        gross = tx.dec("gross")
+        near = sorted(cands, key=lambda t: (abs((t.value_eur or Decimal(0)) - (gross or Decimal(0))),
+                                            abs((t.date - d).days)))
+        best, second = near[0], near[1]
+        same = abs((best.value_eur or 0) - (gross or 0)) == abs((second.value_eur or 0) - (gross or 0)) and \
+            abs((best.date - d).days) == abs((second.date - d).days)
+        if same:
+            steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", f"{tx.kind} {q} {asset_id} um {d}",
+                              f"{len(cands)} gleichwertige Kandidaten ({', '.join(t.tx_id for t in cands[:3])}) – "
+                              "keine automatische Zuordnung", False))
+            return None
+        cands = [best]
+    t = cands[0]
+    steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", f"{tx.kind} {q} {asset_id} um {d}",
+                      f"vorhandene Buchung {t.tx_id} ({t.date}) – Beleg ergänzt sie, es entsteht keine neue Buchung",
+                      True))
+    return t
+
+
+def enrich(c: Context, tx: DocTx, budget: Budget, *, public: bool = False, transport: Any = None,
+           account: str = "") -> Enriched:
     steps: list[Step] = []
     asset_id, cands, why = _asset_candidates(c, tx)
     steps.append(Step(2, "Asset", "Portfolia-Assets", tx.value("isin") or tx.value("symbol") or "–", why,
@@ -406,12 +464,13 @@ def enrich(c: Context, tx: DocTx, budget: Budget, *, public: bool = False, trans
             cands = [f"coingecko:{x.get('id')}" for x in cat]
     tx.identity = tx_keys(tx)
     existing = _stage2(c, tx, steps)
+    linked = _stage2_dkb(c, tx, asset_id, account, steps) if existing is None else None
     _stage3(c, tx, steps)
     _stage4_local(c, tx, asset_id, steps)
     if public:
         _stage4_public(c, tx, budget, steps, transport=transport)
     tx.resolve()
-    return Enriched(tx, asset_id, cands, existing, steps)
+    return Enriched(tx, asset_id, cands, existing or linked, steps, linked)
 
 
 def ts_of(tx: DocTx) -> tuple[datetime | None, bool, str]:
