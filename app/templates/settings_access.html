@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Zugänge{% endblock %}
+{% block heading %}Zugänge{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a class="active" href="/settings/zugaenge">Zugänge</a></nav>
+{% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+{% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
+<section class="card">
+  <div class="card-head"><h2>Master-Key und gespeicherte Schlüssel</h2><a class="btn" href="/accounts">Zu den Konten</a></div>
+  <p class="hint">Zugangsdaten für Wallet-Explorer und Börsen-APIs gelten für alle Konten. Portfolia liest nur – öffentliche Adressen und API-Keys mit Leserechten, <b>nie</b> Seed-Phrase oder privaten Schlüssel. Die einzelne Anbindung eines Kontos steht auf der <a href="/accounts">Konten-Seite</a>.</p>
+  <div class="facts" style="margin-top:8px">
+    <div class="fact"><div class="k">Master-Key für API-Keys</div><div class="v">{% if keys.vault.available %}<span class="badge good">vorhanden</span> <span class="hint">ID {{ keys.vault.key_id }} · {{ keys.vault.source }}</span>{% else %}<span class="badge warn">fehlt</span><div class="hint">API-Keys können erst nach Einrichtung gespeichert werden.{% if keys.vault.note %} {{ keys.vault.note }}{% endif %}</div>{% endif %}</div></div>
+    <div class="fact"><div class="k">Gespeicherte API-Keys</div><div class="v">{{ keys.total }}{% if keys.stale %} <span class="badge warn">{{ keys.stale }} mit früherem Master-Key</span>{% endif %}</div></div>
+  </div>
+  {% if keys.vault.error %}<div class="alert crit" style="margin-top:8px"><span class="icon">!</span><div>{{ keys.vault.error }}</div></div>{% endif %}
+  {% if not keys.vault.available %}{% include "partials/master_key_guide.html" %}{% elif keys.vault.note %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div>{{ keys.vault.note }}</div></div>{% endif %}
+  {% if keys.stale and keys.vault.available %}
+  <form method="post" action="/settings/datasources/keys/rotate" class="row" style="margin-top:8px" data-confirm="Alle gespeicherten API-Keys mit dem aktuellen Master-Key neu verschlüsseln? Der frühere Key muss dafür noch als PORTFOLIA_MASTER_KEY_OLD_FILE bereitstehen.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Mit aktuellem Master-Key neu verschlüsseln</button></form>{% endif %}
+</section>
+
+{% set key_missing = provider_keys|selectattr('required')|selectattr('users')|rejectattr('mode')|list %}
+<section class="card" id="anbieter">
+  <details {% if key_missing %}open{% endif %}><summary><h2 style="display:inline">Anbieter-Schlüssel</h2>
+    <span class="hint">{% for k in provider_keys %}{{ k.label.split(' ')[0] }}: {{ 'gespeichert' if k.mode == 'app' else ('Umgebungsvariable' if k.mode == 'env' else ('fehlt' if k.required and k.users else ('nicht hinterlegt' if k.required else 'optional'))) }}{% if not loop.last %} · {% endif %}{% endfor %}</span>
+    {% if key_missing %}<span class="badge warn">nötig für {{ key_missing|map(attribute='users')|map('join', ', ')|join(', ') }}</span>{% endif %}</summary>
+  <p class="hint" style="margin-top:8px">Manche Explorer verlangen einen API-Key. Er gilt für alle Konten des Anbieters, wird verschlüsselt
+    gespeichert und nie wieder angezeigt. <b>Datenschutz:</b> Jeder Anbieter sieht die abgefragten öffentlichen Adressen
+    und die IP-Adresse deines Servers und kann sie einander zuordnen.</p>
+  <div class="stack" style="gap:10px;margin-top:8px">
+  {% for k in provider_keys %}
+  <div class="box">
+    <div class="row" style="justify-content:space-between"><b>{{ k.label }}</b>
+      {% if k.mode == 'app' %}<span class="badge good">gespeichert <span class="mono">{{ k.hint }}</span></span>{% elif k.mode == 'env' %}<span class="badge good">Umgebungsvariable</span>{% else %}<span class="badge {{ 'warn' if k.users and k.required else '' }}">{{ ('fehlt' if k.users else 'nicht hinterlegt') if k.required else 'optional' }}</span>{% endif %}</div>
+    <div class="hint">{{ k.terms }}{% if k.users %} · genutzt von: {{ k.users|join(', ') }}{% endif %}{% if k.calls_today %} · heute {{ k.calls_today }} Anfragen{% endif %}</div>
+    {% if keys.vault.available %}
+    <form method="post" action="/settings/datasources/provider-keys/{{ k.id }}" class="row" style="margin-top:6px" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="text" name="api_key" minlength="16" maxlength="1024" required class="mono secret-input" style="flex:1;min-width:12em" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="{{ 'neuen Schlüssel einfügen' if k.mode == 'app' else 'API-Key einfügen' }}" aria-label="API-Key {{ k.label }}">
+      <button class="btn sm" type="submit">{{ 'Ersetzen' if k.mode == 'app' else 'Speichern' }}</button></form>
+    {% endif %}
+    {% if k.mode == 'app' %}<form method="post" action="/settings/datasources/provider-keys/{{ k.id }}/delete" class="inline" data-confirm="API-Key für {{ k.label }} entfernen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost sm" type="submit">Entfernen</button></form>{% endif %}
+    <div class="hint">Alternativ als Umgebungsvariable <span class="mono">{{ k.env }}</span> (bzw. <span class="mono">{{ k.env }}_FILE</span>).</div>
+  </div>
+  {% endfor %}
+  </div>
+  </details>
+</section>
+{% endblock %}

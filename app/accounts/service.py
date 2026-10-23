@@ -174,6 +174,31 @@ def update(ctx: Any, name: str, broker: str, depot_group: str, note: str) -> str
     return None
 
 
+def set_depot_group(ctx: Any, name: str, group: str) -> str | None:
+    """Depotgruppe eines Kontos setzen; Broker und Notiz bleiben unverändert. Die Depotgruppe bestimmt auch die
+    Gruppierung bei Positionen und Performance."""
+    pf = ctx.portfolio()
+    meta = meta_rows(ctx.db).get(name)
+    info = pf.accounts.get(name) if pf is not None else None
+    broker = (meta["broker"] if meta and meta["broker"] else (info.broker if info else "")) or ""
+    note = (meta["note"] if meta and meta["note"] else "") or ""
+    return update(ctx, name, broker, group, note)
+
+
+def rename_depot_group(ctx: Any, old: str, new: str) -> int:
+    """Depotgruppe über alle Konten umbenennen (bzw. mit einer bestehenden zusammenführen); Rückgabe: Anzahl Konten."""
+    new_v = _field(new, FIELD_MAX)
+    cur = ctx.db.x("UPDATE account_meta SET depot_group=?, updated_at=? WHERE depot_group=?",
+                   (new_v, iso(utcnow()), old))
+    if cur.rowcount:
+        ctx.invalidate_overlay()
+    return int(cur.rowcount or 0)
+
+
+def group_names(db: Any) -> list[str]:
+    return sorted({r["depot_group"] for r in meta_rows(db).values() if r["depot_group"]}, key=str.lower)
+
+
 def start_rename(ctx: Any, old: str, new: str) -> tuple[str, str | None]:
     """Neuen Namen anlegen (mit den Stammdaten des alten Kontos); die Zusammenführung bestätigt der Nutzer in der
     Vorschau. Rückgabe: (neuer Name, Fehlertext)."""

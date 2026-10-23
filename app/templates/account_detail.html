@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "partials/account_tools.html" import account_tools with context %}
+{% block title %}Konto {{ a.name }}{% endblock %}
+{% block heading %}Konto: {{ a.name }}{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/accounts">← Konten</a></p>
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  <datalist id="acc-brokers">{% for b in brokers %}<option value="{{ b }}">{% endfor %}</datalist>
+  <datalist id="dl-group-names">{% for g in group_names %}<option value="{{ g }}">{% endfor %}</datalist>
+
+  <section class="card">
+    <div class="card-head"><h2>Übersicht</h2></div>
+    <div class="facts">
+      <div class="fact"><div class="k">Buchungen</div><div class="v">{{ a.n_txs }}{% if a.first %}<div class="hint">{{ a.first|date_de }} – {{ a.last|date_de }}</div>{% endif %}</div></div>
+      <div class="fact"><div class="k">Positionen</div><div class="v">{{ a.positions }}</div></div>
+      <div class="fact"><div class="k">Broker</div><div class="v">{{ a.broker or '–' }}</div></div>
+      <div class="fact"><div class="k">Depotgruppe</div><div class="v">{{ a.depot_group or '–' }}</div></div>
+    </div>
+    {% if a.note %}<p class="hint">{{ a.note }}</p>{% endif %}
+    {% if a.merged_from %}<p class="hint">enthält zusammengeführt: {{ a.merged_from|join(', ') }}</p>{% endif %}
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+      {% if a.n_txs %}<a class="btn" href="/journal?account={{ a.name|urlencode }}">Buchungen ansehen</a>{% endif %}
+      <a class="btn" href="/belege?konto={{ a.name|urlencode }}">Belege</a>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Anbindungen</h2> <span class="badge">{{ sources|length }}</span></div>
+    {% if not sources %}<p class="hint">Dieses Konto hat keine Anbindung (manuell bzw. per Datei-Import). Auf der <a href="/accounts#konten">Konten-Seite</a> lässt es sich als Anbindung führen.</p>{% endif %}
+    {% for ds in sources %}
+    <div class="box" style="margin:8px 0">
+      <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div style="min-width:0"><b class="wrap-any">{{ ds.name }}</b> <span class="hint">{{ ds.provider_label }}</span>
+          <div class="hint">{{ status_label.get(ds.status, ds.status) }}{% if ds.last_success_at %} · zuletzt erfolgreich {{ ds.last_success_at|datetime_de }}{% endif %}{% if not ds.enabled %} · deaktiviert{% endif %}</div></div>
+        <div class="row" style="gap:6px;flex-wrap:wrap;align-items:flex-start">
+          <a class="btn sm" href="/settings/datasources/{{ ds.id }}">Einstellungen</a>
+          {% if is_dkb(ds) %}<a class="btn sm primary" href="/settings/datasources/{{ ds.id }}/dkb#zip">ZIP-Import</a><a class="btn sm" href="/settings/datasources/{{ ds.id }}/dkb/steuer">Steuervergleich</a>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="card" id="belege">
+    <div class="card-head"><h2>Belege</h2> <a class="btn sm" href="/belege?konto={{ a.name|urlencode }}">Alle Belege</a></div>
+    {% if doc_years %}
+    <p class="hint">Abgelegte Bankdokumente dieses Kontos je Jahr:</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap">{% for y, n in doc_years %}<a class="btn sm ghost" href="/belege?konto={{ a.name|urlencode }}{{ '&jahr=' ~ y if y }}">{{ y or 'ohne Datum' }} · {{ n }}</a>{% endfor %}</div>
+    {% else %}<p class="hint">Noch keine abgelegten Bankdokumente. Bei einem DKB-Depot kommen sie per ZIP-Import.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Konto verwalten</h2></div>
+    {{ account_tools(a.name) }}
+  </section>
+</div>
+{% endblock %}

@@ -36,7 +36,7 @@
 </details>{% endmacro %}
 {% from "partials/ds_import.html" import import_form, mode_fields with context %}
 {% block content %}
-<nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a class="active" href="/settings/datasources">Datenquellen</a></nav>
+<nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a href="/settings/zugaenge">Zugänge</a></nav>
 {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
 {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 {% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
@@ -216,7 +216,7 @@
 {% set chain = data.get('provider') if kind == 'wallet' else '' %}{% set ci = chain_info.get(chain) %}
 <section class="card">
   <div class="card-head"><h2>{{ 'Einstellungen' if ds else ('Börse anlegen' if kind == 'exchange' else 'Wallet-Konto anlegen') }}</h2>
-    <a class="btn ghost" href="/settings/datasources">Zurück</a></div>
+    <a class="btn ghost" href="/accounts">Zurück</a></div>
   {% if not ds %}
   <div class="seg" role="group" aria-label="Art" style="margin-bottom:12px">
     <a href="/settings/datasources/new?kind=wallet" class="{{ 'active' if kind == 'wallet' }}">Wallet</a>

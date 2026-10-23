@@ -70,7 +70,7 @@ def test_existing_accounts_without_source_are_listed_as_file_import(client):
     assert a["provider"] == "mexc" and a["n"] == 2 and str(a["last"]) == "2024-03-02"
     assert a["origins"] == {"manuell erfasst": 2}
     page = c.get("/settings/datasources").text
-    assert "Konten ohne Datenquelle" in page and MEXC in page and "manuell · Datei-Import" in page
+    assert "Weitere Konten ohne Anbindung" in page and MEXC in page and "manuell · Datei-Import" in page
     assert "Nur neue Transaktionen" in page and "Gesamte Historie" in page and "02.03.2024" in page
 
 

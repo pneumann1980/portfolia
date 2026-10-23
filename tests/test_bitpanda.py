@@ -881,14 +881,14 @@ def test_historical_then_incremental_sync(client, api):
     # zweiter Lauf: Zeitfilter (from) mit Überlappung – nichts Neues seit dem letzten Abruf
     n_calls = len(api.ops_requests())
     r = sync(c, sid)
-    assert "/settings/datasources" in r.headers["location"]
+    assert "/accounts" in r.headers["location"]
     assert api.ops_requests()[n_calls].url.params.get("from")
     assert datasource_service(ctx(c)).runs(sid)[0]["message"].startswith("0 Vorgänge")
     # vollständig neu: alles bekannt oder wartet bereits → kein neuer Stapel, keine Dubletten
     events = sorted(open_events(c, sid))
     post(c, f"/settings/datasources/{sid}/reset")
     r = sync(c, sid)
-    assert "/settings/datasources" in r.headers["location"]
+    assert "/accounts" in r.headers["location"]
     assert len(journal(c, "source='sync:bitpanda'")) == len(txs)
     assert csv_service(ctx(c)).batch(bid) is not None
     assert "wartet bereits auf Prüfung 7" in datasource_service(ctx(c)).runs(sid)[0]["message"]  # 6 ungeklärt + 1
@@ -1074,7 +1074,7 @@ def test_ignore_decision_persists_across_runs(client, api):
     # vollständig neu abrufen: ignorierte erscheinen nicht erneut zur Prüfung, übernommene sind bekannt
     post(c, f"/settings/datasources/{sid}/reset")
     r = sync(c, sid)
-    assert "/settings/datasources" in r.headers["location"], r.headers["location"]
+    assert "/accounts" in r.headers["location"], r.headers["location"]
     assert datasource_service(ctx(c)).open_counts(sid) == {}
     post(c, f"/journal/csv/{bid}/ignore", release=op_key(11))  # Entscheidung aufheben
     assert not ctx(c).db.scalar("SELECT COUNT(*) FROM event_decision WHERE event_key=?", (op_key(11),))

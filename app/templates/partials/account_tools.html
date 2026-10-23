@@ -1,0 +1,34 @@
+{# Konto verwalten: Stammdaten, Umbenennen, Zusammenführen, Entfernen, Löschen, Verweise (Buchungen, Belege, Details) #}
+{% macro account_tools(name, remove=true) %}{% set r = acc_rows.get(name) %}
+<details class="ds-more acct-tools"><summary class="btn ghost sm" aria-label="Konto {{ name }} verwalten">Konto verwalten …</summary>
+  <div class="ds-more-body">
+    {% if r %}<div class="hint">
+      {% if r.n_txs %}{{ r.n_txs }} Buchung{{ '' if r.n_txs == 1 else 'en' }}{% if r.first %} · {{ r.first|date_de }} – {{ r.last|date_de }}{% endif %}{% if r.positions %} · {{ r.positions }} Position{{ '' if r.positions == 1 else 'en' }}{% endif %}{% else %}noch keine Buchungen{% endif %}
+      {% if r.broker %} · Broker {{ r.broker }}{% endif %}{% if r.depot_group %} · Depotgruppe {{ r.depot_group }}{% endif %}
+      {% if r.merged_from %}<br>enthält zusammengeführt: {{ r.merged_from|join(', ') }}{% endif %}{% if r.note %}<br>{{ r.note }}{% endif %}</div>{% endif %}
+    <div class="row" style="gap:6px;flex-wrap:wrap">
+      <a class="btn sm" href="/accounts/detail?account={{ name|urlencode }}">Konto-Details</a>
+      {% if r and r.n_txs %}<a class="btn sm ghost" href="/journal?account={{ name|urlencode }}">Buchungen</a>{% endif %}
+      <a class="btn sm ghost" href="/belege?konto={{ name|urlencode }}">Belege</a>
+      <a class="btn sm ghost" href="/accounts/merge?alias={{ name|urlencode }}#manuell" title="Dasselbe Konto unter anderem Namen? Zuordnung ohne Buchung, rückgängig">Zusammenführen …</a>
+      {% if remove and r and r.n_txs %}<form method="post" action="/accounts/remove/preview" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ name }}"><button class="btn sm ghost" type="submit" title="Buchungen des Kontos ausblenden (Vorschau, rückgängig)">Entfernen …</button></form>{% endif %}
+      {% if r and r.deletable %}<form method="post" action="/accounts/delete" class="inline" data-confirm="Leeres Konto „{{ name }}“ löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ name }}"><button class="btn sm ghost" type="submit">Löschen</button></form>{% endif %}
+    </div>
+    <form method="post" action="/accounts/meta" class="stack" style="gap:8px;margin-top:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ name }}">
+      <div class="grid-2">
+        <label class="field">Broker<input name="broker" maxlength="120" value="{{ r.broker if r else '' }}" list="acc-brokers" autocomplete="off"></label>
+        <label class="field">Depotgruppe<input name="depot_group" maxlength="120" value="{{ r.depot_group if r else '' }}" list="dl-group-names" autocomplete="off"></label>
+      </div>
+      <label class="field">Notiz<input name="note" maxlength="300" value="{{ r.note if r else '' }}" autocomplete="off"></label>
+      <div><button class="btn sm primary" type="submit">Stammdaten speichern</button> <span class="hint">Überlagert die Angaben des Imports. Die Depotgruppe bestimmt auch die Gruppierung bei Positionen und Performance.</span></div>
+    </form>
+    <form method="post" action="/accounts/rename" class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ name }}">
+      <label class="field">Umbenennen in<input name="new_name" required maxlength="80" autocomplete="off"></label>
+      <div style="align-self:end"><button class="btn sm" type="submit">Vorschau …</button></div>
+    </form>
+    <p class="hint">Umbenennen legt den neuen Namen als Konto an und führt das alte darauf zusammen – mit Vorschau, ohne Änderung an Buchungen, jederzeit rückgängig. Eine Datenquelle des alten Kontos gilt danach für den neuen Namen.</p>
+  </div>
+</details>
+{% endmacro %}

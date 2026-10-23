@@ -3,7 +3,7 @@
 {% block heading %}Konten zusammenführen{% endblock %}
 {% block content %}
 <div class="stack">
-  <p class="hint"><a href="/accounts">← Konten</a> · <a href="/settings/datasources">Datenquellen</a> · <a href="/assets/merge">Assets zusammenführen</a> · <a href="/quality/diagnose">Diagnose</a></p>
+  <p class="hint"><a href="/accounts">← Konten</a> · <a href="/assets/merge">Assets zusammenführen</a> · <a href="/quality/diagnose">Diagnose</a></p>
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
   <section class="card">
@@ -12,7 +12,7 @@
   </section>
 
   <section class="card" id="hinweis">
-    <p class="hint">Passende Datenquellen für Konten ohne Datenquelle schlägt Portfolia direkt unter <a href="/settings/datasources#konten">Datenquellen → Konten ohne Datenquelle</a> vor (mit Beleg, z. B. gleiche Adresse). Hier reicht es, die beiden Konten selbst zu wählen.</p>
+    <p class="hint">Passende Datenquellen für Konten ohne Datenquelle schlägt Portfolia direkt unter <a href="/accounts#konten">Konten → Weitere Konten ohne Anbindung</a> vor (mit Beleg, z. B. gleiche Adresse). Hier reicht es, die beiden Konten selbst zu wählen.</p>
   </section>
 
   <section class="card" id="manuell">
@@ -31,7 +31,7 @@
 
   <section class="card" id="entfernen">
     <div class="card-head"><h2>Konto entfernen</h2></div>
-    <p class="hint">Ein Konto, das es nicht (mehr) geben soll – z. B. ein Test- oder Doppelkonto: Seine Buchungen werden <b>ausgeblendet</b> (nichts wird gelöscht, jederzeit rückgängig; Transfers zu anderen Konten sind ausgeschlossen). Eine Wallet bzw. Börse selbst entfernst du unter <a href="/settings/datasources">Datenquellen</a> („Entfernen“ – Zugangsdaten werden gelöscht, Buchungen bleiben).</p>
+    <p class="hint">Ein Konto, das es nicht (mehr) geben soll – z. B. ein Test- oder Doppelkonto: Seine Buchungen werden <b>ausgeblendet</b> (nichts wird gelöscht, jederzeit rückgängig; Transfers zu anderen Konten sind ausgeschlossen). Eine Wallet bzw. Börse selbst entfernst du auf der <a href="/accounts">Konten-Seite</a> („Entfernen“ – Zugangsdaten werden gelöscht, Buchungen bleiben).</p>
     <form method="post" action="/accounts/remove/preview" class="row" style="gap:8px;flex-wrap:wrap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label class="field">Konto

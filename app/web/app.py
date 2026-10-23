@@ -25,6 +25,7 @@ NAV = [
     ("positions", "/positions", "Positionen", "list"),
     ("watchlist", "/watchlist", "Watchlist", "eye"),
     ("journal", "/journal", "Buchungen", "book"),
+    ("accounts", "/accounts", "Konten", "list"),
     ("plans", "/plans", "Sparpläne", "repeat"),
     ("performance", "/performance", "Performance", "chart"),
     ("tax", "/tax", "Steuern", "tax"),

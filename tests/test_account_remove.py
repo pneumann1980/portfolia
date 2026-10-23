@@ -126,7 +126,7 @@ def test_web_flow(cfg):
         assert page.status_code == 200 and 'id="entfernen"' in page.text and "Konto entfernen" in page.text
         token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
         ds = c.get("/settings/datasources")
-        assert "Konto entfernen …" in ds.text
+        assert "Entfernen …" in ds.text
         prev = c.post("/accounts/remove/preview", data={"csrf_token": token, "account": DROP})
         assert prev.status_code == 200 and "Bestände, die im Portfolio fehlen werden" in prev.text
         fp = re.search(r'name="fp" value="([^"]+)"', prev.text).group(1)

@@ -363,7 +363,8 @@ class DataSource:
 
     @property
     def group(self) -> str:
-        return (self._get("wallet_group") or "").strip()
+        """Gruppe des Kontos: die Depotgruppe (gilt auch für Positionen/Performance), sonst die ältere Wallet-Gruppe."""
+        return (self._get("meta_group") or self._get("wallet_group") or "").strip()
 
     @property
     def addresses(self) -> list[str]:
@@ -525,7 +526,8 @@ def next_run(enabled: bool, supported: bool, interval_min: int, last_run: dateti
 
 
 class DataSourceService:
-    _SELECT = ("SELECT d.*, s.hint AS key_hint, s.key_id AS key_key_id, s.updated_at AS key_updated_at "
+    _SELECT = ("SELECT d.*, s.hint AS key_hint, s.key_id AS key_key_id, s.updated_at AS key_updated_at, "
+               "(SELECT m.depot_group FROM account_meta m WHERE m.account = d.account) AS meta_group "
                "FROM data_source d LEFT JOIN data_source_secret s ON s.source_id = d.id")
 
     def __init__(self, ctx: Any) -> None:
@@ -1835,11 +1837,16 @@ class DataSourceService:
 
     # -- Gruppen -------------------------------------------------------------------------------------------
     def groups(self) -> list[str]:
-        return sorted({d.group for d in self.list() if d.is_wallet and d.group}, key=str.lower)
+        from app.accounts import service as AS
+
+        return sorted({d.group for d in self.list() if d.is_wallet and d.group} | set(AS.group_names(self.db)),
+                      key=str.lower)
 
     def rename_group(self, old: str, new: str) -> list[str]:
         """Gruppe umbenennen bzw. mit einer bestehenden zusammenführen – nur die Zuordnung, Konten bleiben
-        unverändert (eigene Chain, Adressen, Vorgänge, Synchronisierung)."""
+        unverändert (eigene Chain, Adressen, Vorgänge, Synchronisierung). Gilt für Wallet-Gruppen und Depotgruppen."""
+        from app.accounts import service as AS
+
         old = re.sub(r"\s+", " ", old or "").strip()
         new = re.sub(r"\s+", " ", new or "").strip()
         if not old:
@@ -1848,19 +1855,28 @@ class DataSourceService:
             return ["Gruppenname ungültig (höchstens 40 Zeichen)."]
         cur = self.db.x("UPDATE data_source SET wallet_group=?, updated_at=? WHERE kind='wallet' AND wallet_group=?",
                         (new or None, iso(_now()), old))
-        if not cur.rowcount:
+        n = int(cur.rowcount or 0) + AS.rename_depot_group(self.ctx, old, new)
+        if not n:
             return ["Gruppe nicht gefunden."]
-        log.info("Wallet-Gruppe umbenannt: %s → %s (%d Konten)", old, new or "–", cur.rowcount)
+        log.info("Gruppe umbenannt: %s → %s (%d Zuordnungen)", old, new or "–", n)
         return []
 
     def set_group(self, sid: int, group: str) -> list[str]:
+        """Gruppe eines Kontos setzen: wird als Depotgruppe des Kontos gespeichert (eine Gruppe für Konten, Positionen
+        und Performance); eine ältere Wallet-Gruppe der Quelle wird dabei abgelöst."""
+        from app.accounts import service as AS
+
         ds = self.get(sid)
-        if ds is None or not ds.is_wallet:
-            return ["Wallet-Konto nicht gefunden."]
+        if ds is None:
+            return ["Konto nicht gefunden."]
         g = re.sub(r"\s+", " ", group or "").strip()
         if g and not _GROUP_RE.match(g):
             return ["Gruppenname ungültig (höchstens 40 Zeichen)."]
-        self.db.x("UPDATE data_source SET wallet_group=?, updated_at=? WHERE id=?", (g or None, iso(_now()), sid))
+        err = AS.set_depot_group(self.ctx, ds.account, g)
+        if err:
+            return [err]
+        if ds.is_wallet:
+            self.db.x("UPDATE data_source SET wallet_group=NULL, updated_at=? WHERE id=?", (iso(_now()), sid))
         return []
 
     def _set_progress(self, sid: int, data: dict[str, Any], force: bool = False) -> None:

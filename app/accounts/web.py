@@ -21,11 +21,16 @@ def _back(request: Request, target: str) -> Response:
     return Response(status_code=303, headers={"Location": target})
 
 
-def _page(request: Request, msg: str = "", err: str = "", status_code: int = 200) -> HTMLResponse:
+def _page(request: Request, msg: str = "", err: str = "", q: str = "", sort: str = "name", desc: str = "",
+          status_code: int = 200) -> HTMLResponse:
+    from app.datasources.web import overview_context
+
     ctx = get_ctx(request)
-    return render(request, "accounts.html", status_code=status_code, active="accounts", msg=msg, err=err,
-                  rows=S.rows(ctx), brokers=sorted({r.broker for r in S.rows(ctx) if r.broker}, key=str.casefold),
-                  groups=sorted({r.depot_group for r in S.rows(ctx) if r.depot_group}, key=str.casefold))
+    data = overview_context(ctx, q, sort, bool(desc))
+    rows = list(data["acc_rows"].values())
+    return render(request, "accounts.html", status_code=status_code, active="accounts", msg=msg, error=err,
+                  rows=rows, brokers=sorted({r.broker for r in rows if r.broker}, key=str.casefold),
+                  depot_groups=sorted({r.depot_group for r in rows if r.depot_group}, key=str.casefold), **data)
 
 
 def _s(f: Any, key: str, limit: int = 160) -> str:
@@ -36,8 +41,30 @@ def make_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/accounts", response_class=HTMLResponse)
-    def overview(request: Request, msg: str = "", err: str = "") -> HTMLResponse:
-        return _page(request, msg[:200], err[:300])
+    def overview(request: Request, msg: str = "", err: str = "", error: str = "", q: str = "", sort: str = "name",
+                 desc: str = "") -> HTMLResponse:
+        return _page(request, msg[:300], (err or error)[:600], q, sort, desc)
+
+    @router.get("/accounts/detail", response_class=HTMLResponse)
+    def detail(request: Request, account: str = "", msg: str = "", err: str = "") -> HTMLResponse:
+        """Ein Konto im Überblick: Anbindungen, Belege, Buchungen und Verwaltung."""
+        from app.assetchange import account_merge as AM
+        from app.datasources import dkb as D
+        from app.datasources.service import STATUS_LABEL
+
+        ctx = get_ctx(request)
+        rows = {r.name: r for r in S.rows(ctx)}
+        row = rows.get(account)
+        if row is None:
+            return _back(request, "/accounts?" + urlencode({"err": f"Konto „{account[:80]}“ nicht gefunden."}))
+        sources = AM.source_accounts(ctx).get(account, [])
+        docs = ctx.db.q("SELECT substr(b.doc_date,1,4) AS y, COUNT(*) AS n FROM bank_doc b JOIN data_source s "
+                        "ON s.id=b.source_id WHERE s.account=? AND b.status != 'error' GROUP BY y ORDER BY y DESC",
+                        (account,))
+        return render(request, "account_detail.html", active="accounts", a=row, acc_rows=rows, sources=sources,
+                      is_dkb=D.is_dkb, status_label=STATUS_LABEL, doc_years=[(d["y"] or "", d["n"]) for d in docs],
+                      msg=msg[:300], err=err[:600], brokers=sorted({r.broker for r in rows.values() if r.broker}),
+                      group_names=sorted({r.depot_group for r in rows.values() if r.depot_group}))
 
     @router.post("/accounts/new")
     async def new(request: Request) -> Response:

@@ -299,8 +299,8 @@ def test_sanitize_error_removes_secrets():
 def test_crud_exchange_and_wallet(client):
     c = client
     page = c.get("/settings/datasources")
-    assert page.status_code == 200 and "Noch keine Datenquelle" in page.text
-    assert "/settings/datasources" in c.get("/settings").text
+    assert page.status_code == 200 and "Noch kein Konto" in page.text
+    assert "/accounts" in c.get("/settings").text
     assert "Kraken" in c.get("/settings/datasources/new?kind=exchange").text
     assert "Ethereum" in c.get("/settings/datasources/new?kind=wallet").text
 
@@ -456,7 +456,7 @@ def test_sync_is_idempotent_and_records_provenance(client, fake):
     fake.use_cursor = False
     n_batches = len(batches(c))
     r = sync(c, sid)
-    assert r.status_code == 303 and "/settings/datasources" in r.headers["location"]
+    assert r.status_code == 303 and "/accounts" in r.headers["location"]
     assert "bekannt+4" in r.headers["location"]
     assert fake.cursors[-1] == {"n": 3}  # Abrufstand wird weitergegeben
     assert len(batches(c)) == n_batches and len(journal(c, "source='sync:kraken'")) == 4
@@ -583,7 +583,7 @@ def test_auto_commit_per_event_without_blocking(client, fake):
     # neue eindeutige Vorgänge → sofort übernommen, kein Prüf-Stapel
     fake.events.append(buy("kraken:T2", "2024-06-03T10:00:00", "100", "0.002"))
     r = sync(c, sid)
-    assert "/settings/datasources" in r.headers["location"] and "%C3%BCbernommen+1" in r.headers["location"]
+    assert "/accounts" in r.headers["location"] and "%C3%BCbernommen+1" in r.headers["location"]
     assert [t["external_id"] for t in journal(c, "source='sync:kraken'")] == ["kraken:T1#0", "kraken:T2#0"]
 
     # bereits per CSV vorhanden → bekannt; die übrigen neuen Vorgänge werden trotzdem übernommen

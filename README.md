@@ -1324,6 +1324,8 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > und Rechenprobe. **Ab 0.40.0** folgen Kapitalmaßnahmen und Ausbuchungen (Zusammenlegung, Gratisausgabe, Entgelt, wertlos/ersatzlos, Storno). **Ab 0.41.0** folgen Depotauszüge (Referenzbestände, Depotentgelt), Kosteninformationen und Order-Belege (Beleg-Verknüpfung, geschätzte Gebühr nur nach Bestätigung) und der Belege-Download je Jahr als ZIP. **Ab 0.42.0** zeigt der *Steuervergleich* Abweichungen zwischen den einbehaltenen Steuern der DKB-Abrechnungen und Ihren Buchungen (je Verkauf, Ertrag und Jahr; ändert nichts, Vorbelegung der Steueroptionen nur mit Bestätigung).
 >
 > **Ab 0.43.0** ist der ZIP-Import der Hauptweg; der Postbox-Abruf (`portfolia-dkb-fetch`) ist ausgeblendet und nur mit der Umgebungsvariable `DKB_FETCHER=1` sichtbar.
+>
+> **Ab 0.44.0/0.45.0:** *Belege* (`/belege`: Bankdokumente ansehen, einzeln/pro Jahr/als ZIP herunterladen) und die **Konten-Seite** als Zentrale für Konten und ihre Anbindungen (früher *Datenquellen*; Details in [`docs/KONTEN.md`](docs/KONTEN.md)). Master-Key und Anbieter-Schlüssel stehen unter *Einstellungen → Zugänge*.
 
 *Datenqualität → Diagnose öffnen* (`/quality/diagnose`) prüft alle Buchungen, Bestände, Zuordnungen und Kurse und
 zeigt priorisierte Befunde. **Die Diagnose selbst ändert nichts:** Sie wird bei jedem Aufruf neu aus den Daten

@@ -195,7 +195,10 @@ def test_search_sort_and_groups(client, chains):
     assert source(client, a)["provider"] == "ethereum" and source(client, b)["provider"] == "bsc"
     # bestehendes Konto einer Gruppe zuordnen; Kontoname unabhängig
     post(client, f"/settings/datasources/{c}/group", group="Ledger Nano")
-    assert source(client, c)["wallet_group"] == "Ledger Nano" and source(client, c)["name"] == "Mitte BTC"
+    # die Gruppe gilt als Depotgruppe des Kontos (eine Gruppe für Konten, Positionen und Performance)
+    grp = ctx(client).db.q1("SELECT depot_group FROM account_meta WHERE account=?", (source(client, c)["account"],))
+    assert grp["depot_group"] == "Ledger Nano" and source(client, c)["wallet_group"] is None
+    assert source(client, c)["name"] == "Mitte BTC"
     page = client.get("/settings/datasources").text
     assert "Ledger Nano" in page and "Gruppe aktualisieren" in page and "Alle aktualisieren" in page
     assert "chain-ethereum" in page and "chain-bsc" in page and "data-copy" in page

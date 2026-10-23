@@ -450,8 +450,9 @@ def test_wallet_pages_offer_sync_only_for_supported_chains(client, evm):
 
 def test_provider_key_is_encrypted_never_echoed_or_exported(client, evm):
     sid = eth_wallet(client)
-    page = client.get("/settings/datasources").text + client.get(f"/settings/datasources/{sid}").text
-    assert ETHERSCAN_KEY not in page and "••••GHIJ" in page
+    page = (client.get("/accounts").text + client.get("/settings/zugaenge").text
+            + client.get(f"/settings/datasources/{sid}").text)
+    assert ETHERSCAN_KEY not in page and "••••GHIJ" in page  # Hinweis (letzte Zeichen) steht bei den Zugängen
     blob = ctx(client).db.q1("SELECT ciphertext FROM provider_secret WHERE provider='etherscan'")["ciphertext"]
     assert ETHERSCAN_KEY.encode() not in bytes(blob)
     from app.fullexport import collect

@@ -22,7 +22,7 @@
 
 <section class="card">
   <div class="card-head"><h2>{{ b.filename }}</h2>
-    <div class="row">{% if b.kind == 'sync' and ds_exists %}<a class="btn sm ghost" href="/settings/datasources#ds-{{ b.datasource_id }}">← Börsen &amp; Wallets</a>{% elif b.kind != 'sync' %}<a class="btn sm ghost" href="/journal/csv">← Alle Importe</a>{% endif %}<span class="badge {{ 'good' if b.status in ('committed', 'done') else 'warn' if b.status in ('preview', 'partial') else '' }}">{{ batch_status.get(b.status, b.status) }}</span>
+    <div class="row">{% if b.kind == 'sync' and ds_exists %}<a class="btn sm ghost" href="/accounts#ds-{{ b.datasource_id }}">← Konten</a>{% elif b.kind != 'sync' %}<a class="btn sm ghost" href="/journal/csv">← Alle Importe</a>{% endif %}<span class="badge {{ 'good' if b.status in ('committed', 'done') else 'warn' if b.status in ('preview', 'partial') else '' }}">{{ batch_status.get(b.status, b.status) }}</span>
       <a class="btn sm ghost" href="/journal/csv/{{ b.id }}/file" download>{{ 'Rohdaten' if b.kind == 'sync' else 'Originaldatei' }}</a></div></div>
   <dl class="kv">
     {% if b.kind == 'sync' %}<dt>Datenquelle</dt><dd>{{ source_label(b.source) }}{% if ds_exists %} · <a href="/settings/datasources/{{ b.datasource_id }}">Einstellungen</a>{% else %} <span class="hint">(Datenquelle entfernt)</span>{% endif %}</dd>

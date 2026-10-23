@@ -1426,6 +1426,14 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.45.0 – Konten-Hub: Datenquellen und Konten zusammengeführt
+
+Details in `docs/KONTEN.md`.
+
+* **Eine Seite `/accounts`** statt Datenquellen + Konten: Karten der Wallets, Börsen/Depots und weiteren Konten, „Konto verwalten …“ an jeder Karte (Stammdaten, Umbenennen, Zusammenführen, Entfernen, Löschen), Konto anlegen, **Konto-Details** `/accounts/detail`.
+* **Eine Depotgruppe** für Konten, Positionen und Performance (ältere Wallet-Gruppen werden weiter angezeigt, Umbenennen wirkt auf beide, keine automatische Migration).
+* **Zugänge** `/settings/zugaenge`: Master-Key und Anbieter-Schlüssel; `/settings/datasources` leitet auf `/accounts` weiter, Rücksprünge aller Aktionen führen auf die Konten-Seite. „Konten“ in der Hauptnavigation.
+
 ## 0.44.0 – Belege ansehen und herunterladen
 
 * **Seite `/belege`** (`dkb_archive.py`, `archive_web.py`): Archiv der Bankdokumente auf Basis von `bank_doc` mit Filtern (Konto, Jahr, Art, Verknüpfung, Suche), Seitenweise-Anzeige, *Ansehen*, *Herunterladen* und ZIP der gesamten Auswahl mit `manifest.csv`.

@@ -58,7 +58,12 @@ def _back(request: Request, target: str) -> Response:
 
 
 def _list_url(sid: int | None = None, **params: str) -> str:
-    return "/settings/datasources" + ("?" + urlencode(params) if params else "") + (f"#ds-{sid}" if sid else "")
+    """Übersicht der Konten (Datenquellen sind Anbindungen eines Kontos und stehen auf der Konten-Seite)."""
+    return "/accounts" + ("?" + urlencode(params) if params else "") + (f"#ds-{sid}" if sid else "")
+
+
+def _access_url(**params: str) -> str:
+    return "/settings/zugaenge" + ("?" + urlencode(params) if params else "")
 
 
 def _detail_url(sid: int, **params: str) -> str:
@@ -152,47 +157,62 @@ async def _import_file(request: Request, ctx: Any, sid: int, f: Any) -> Response
     return _back(request, f"/journal/pruefung?source={sid}&" + urlencode({"msg": "uploaded", "info": text}))
 
 
+def overview_context(ctx: Any, q: str = "", sort: str = "name", desc: bool = False) -> dict[str, Any]:
+    """Alle Daten der Konten-Übersicht (Wallets, Börsen/Depots, Konten ohne Anbindung)."""
+    svc = datasource_service(ctx)
+    items = svc.list()
+    pending = {ds.id: svc.pending_batches(ds.id) for ds in items}
+    opens = {ds.id: svc.open_counts(ds.id) for ds in items}
+    all_wallets = [ds for ds in items if ds.is_wallet]
+    values = OV.account_values(ctx, all_wallets)
+    overlap = OV.overlaps(all_wallets)
+    holdings = {ds.id: svc.holdings(ds) for ds in all_wallets}
+    sort = sort if sort in OV.SORTS else "name"
+    q = q.strip()[:80]
+    wallets = sorted((ds for ds in all_wallets if OV.matches(ds, q)), key=OV.sort_key(sort, values), reverse=desc)
+    groups: dict[str, list[Any]] = {}
+    for ds in sorted(wallets, key=lambda d: d.group.lower() or "~"):  # stabil: Sortierung innerhalb der Gruppe
+        groups.setdefault(ds.group or "", []).append(ds)
+    sums = {g: OV.group_summary([d for d in all_wallets if (d.group or "") == g], values, overlap) for g in groups}
+    total = OV.group_summary(all_wallets, values, overlap)
+    states = {ds.id: OV.sync_state(ds) for ds in all_wallets}
+    notes = {ds.id: OV.data_notes(ds, values.get(int(ds.id)), opens.get(ds.id) or {}, holdings.get(ds.id),
+                                  overlap.get(int(ds.id))) for ds in all_wallets}
+    bookings = svc.account_bookings()
+    exchanges = [ds for ds in items if not ds.is_wallet]
+    from app.accounts import service as AS
+
+    acc_rows = {r.name: r for r in AS.rows(ctx)}
+    linked = {ds.account.casefold() for ds in items}
+    unl = {u["account"]: u for u in svc.unlinked_accounts()}
+    others = [r for r in acc_rows.values() if r.name.casefold() not in linked]
+    return {"items": items, "pending": pending, "opens": opens, "unlinked": unl, "others": others,
+            "acc_rows": acc_rows, "dups": svc.duplicates(),
+            "last_import": {ds.id: svc.last_import(int(ds.id)) for ds in exchanges},
+            "last_book": {ds.id: (bookings.get(ds.account) or {}).get("last") for ds in exchanges},
+            "bookings": bookings, "status_label": STATUS_LABEL, "keys": svc.key_stats(), "exchanges": exchanges,
+            "groups": groups, "holdings": holdings, "provider_keys": svc.provider_keys(), "values": values,
+            "overlap": overlap, "sums": sums, "total": total, "states": states, "state_label": OV.STATE_LABEL,
+            "state_badge": OV.STATE_BADGE, "notes": notes, "q": q, "sort": sort, "desc": bool(desc),
+            "sorts": OV.SORTS, "n_wallets": len(all_wallets), "group_names": svc.groups(),
+            "batch": svc.batch_progress(), "age_text": OV.age_text}
+
+
 def make_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/settings/datasources", response_class=HTMLResponse)
-    def index(request: Request, msg: str = "", error: str = "", q: str = "", sort: str = "name",
-              desc: str = "") -> HTMLResponse:
-        ctx = get_ctx(request)
-        svc = datasource_service(ctx)
-        items = svc.list()
-        pending = {ds.id: svc.pending_batches(ds.id) for ds in items}
-        opens = {ds.id: svc.open_counts(ds.id) for ds in items}
-        all_wallets = [ds for ds in items if ds.is_wallet]
-        values = OV.account_values(ctx, all_wallets)
-        overlap = OV.overlaps(all_wallets)
-        holdings = {ds.id: svc.holdings(ds) for ds in all_wallets}
-        sort = sort if sort in OV.SORTS else "name"
-        q = q.strip()[:80]
-        wallets = sorted((ds for ds in all_wallets if OV.matches(ds, q)), key=OV.sort_key(sort, values),
-                         reverse=bool(desc))
-        groups: dict[str, list[Any]] = {}
-        for ds in sorted(wallets, key=lambda d: d.group.lower() or "~"):  # stabil: Sortierung innerhalb der Gruppe
-            groups.setdefault(ds.group or "", []).append(ds)
-        sums = {g: OV.group_summary([d for d in all_wallets if (d.group or "") == g], values, overlap) for g in groups}
-        total = OV.group_summary(all_wallets, values, overlap)
-        states = {ds.id: OV.sync_state(ds) for ds in all_wallets}
-        notes = {ds.id: OV.data_notes(ds, values.get(int(ds.id)), opens.get(ds.id) or {}, holdings.get(ds.id),
-                                      overlap.get(int(ds.id))) for ds in all_wallets}
-        bookings = svc.account_bookings()
-        exchanges = [ds for ds in items if not ds.is_wallet]
-        dups = svc.duplicates()
-        return render(request, "datasources.html", active="settings", items=items, pending=pending, opens=opens,
-                      unlinked=svc.unlinked_accounts(), dups=dups,
-                      last_import={ds.id: svc.last_import(int(ds.id)) for ds in exchanges},
-                      last_book={ds.id: (bookings.get(ds.account) or {}).get("last") for ds in exchanges},
-                      bookings=bookings,
-                      msg=msg, error=error, status_label=STATUS_LABEL, keys=svc.key_stats(),
-                      exchanges=exchanges, groups=groups, holdings=holdings,
-                      provider_keys=svc.provider_keys(), values=values, overlap=overlap, sums=sums, total=total,
-                      states=states, state_label=OV.STATE_LABEL, state_badge=OV.STATE_BADGE, notes=notes, q=q,
-                      sort=sort, desc=bool(desc), sorts=OV.SORTS, n_wallets=len(all_wallets),
-                      group_names=svc.groups(), batch=svc.batch_progress(), age_text=OV.age_text)
+    def index(request: Request) -> Response:
+        """Alte Adresse der Übersicht: Datenquellen stehen jetzt auf der Konten-Seite (Parameter bleiben erhalten)."""
+        q = request.url.query
+        return Response(status_code=303, headers={"Location": "/accounts" + ("?" + q if q else "")})
+
+    @router.get("/settings/zugaenge", response_class=HTMLResponse)
+    def access(request: Request, msg: str = "", error: str = "") -> HTMLResponse:
+        """Zugänge: Master-Key, gespeicherte API-Keys und Anbieter-Schlüssel (gelten für alle Konten)."""
+        svc = datasource_service(get_ctx(request))
+        return render(request, "settings_access.html", active="settings", keys=svc.key_stats(),
+                      provider_keys=svc.provider_keys(), msg=msg, error=error)
 
     @router.post("/settings/datasources/sync-many")
     async def sync_many(request: Request) -> Response:
@@ -393,9 +413,9 @@ def make_router() -> APIRouter:
         svc = datasource_service(get_ctx(request))
         res = await run_in_threadpool(svc.rotate_keys)
         if res["errors"]:
-            return _back(request, _list_url(error=f"{res['rotated']} neu verschlüsselt; " + "; ".join(res["errors"])))
-        return _back(request, _list_url(msg=f"{res['rotated']} Schlüssel mit dem aktuellen Master-Key neu "
-                                            "verschlüsselt."))
+            return _back(request, _access_url(error=f"{res['rotated']} neu verschlüsselt; " + "; ".join(res["errors"])))
+        return _back(request, _access_url(msg=f"{res['rotated']} Schlüssel mit dem aktuellen Master-Key neu "
+                                              "verschlüsselt."))
 
     @router.post("/settings/datasources/{sid}/toggle")
     async def toggle(request: Request, sid: int) -> Response:
@@ -573,7 +593,7 @@ def make_router() -> APIRouter:
         errors = await run_in_threadpool(svc.set_provider_key, provider, value)
         del value
         back = str(f.get("back") or "")
-        target = _detail_url(int(back)) if back.isdigit() else _list_url()
+        target = _detail_url(int(back)) if back.isdigit() else _access_url()
         if errors:
             sep = "&" if "?" in target else "?"
             return _back(request, target + sep + urlencode({"error": " ".join(errors)}) + "#anbieter")
@@ -587,7 +607,7 @@ def make_router() -> APIRouter:
             raise HTTPException(404)
         svc = datasource_service(get_ctx(request))
         await run_in_threadpool(svc.remove_provider_key, provider)
-        return _back(request, _list_url(msg=f"API-Key für {PROVIDER_KEYS[provider].label} entfernt.") + "#anbieter")
+        return _back(request, _access_url(msg=f"API-Key für {PROVIDER_KEYS[provider].label} entfernt.") + "#anbieter")
 
     return router
 

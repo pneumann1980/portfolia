@@ -182,6 +182,6 @@ def test_datasource_batch_returns_to_datasource_overview_when_done(client, confi
     loc = post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{first.idx}").headers["location"]
     assert loc.startswith(f"/journal/csv/{bid}") and loc.endswith("#zeilen")
     loc = post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{last.idx}").headers["location"]
-    assert loc.startswith("/settings/datasources?msg=") and loc.endswith(f"#ds-{sid}")
+    assert loc.startswith("/accounts?msg=") and loc.endswith(f"#ds-{sid}")
     page = c.get(loc)
     assert page.status_code == 200 and "Prüfung abgeschlossen" in page.text

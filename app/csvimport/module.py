@@ -550,7 +550,7 @@ def make_router() -> APIRouter:
                     "SELECT 1 FROM data_source WHERE id=?", (b["datasource_id"],)):
                 text = (f"Prüfung abgeschlossen: {source_label(b['source'])} – alle Vorgänge sind geklärt "
                         f"(Stapel {bid}; im Verlauf des Stapels jederzeit rückgängig zu machen).")
-                return _back(request, "/settings/datasources?" + urlencode({"msg": text}) + f"#ds-{b['datasource_id']}")
+                return _back(request, "/accounts?" + urlencode({"msg": text}) + f"#ds-{b['datasource_id']}")
             if b["kind"] != "sync":
                 return _back(request, "/journal/csv")
         return _back(request, _redir(bid, f, msg) + "#zeilen")
