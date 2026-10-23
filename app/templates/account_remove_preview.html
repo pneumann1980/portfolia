@@ -14,7 +14,7 @@
     {% if p.sources %}
     <h3>Datenquellen dieses Kontos</h3>
     <ul class="plain-list">{% for sid, name, prov in p.sources %}<li>{{ name }} <span class="hint">({{ prov }})</span>
-      <form method="post" action="/settings/datasources/{{ sid }}/delete" class="inline" data-confirm="„{{ name }}“ entfernen? Zugangsdaten werden gelöscht, übernommene Buchungen bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Datenquelle entfernen</button></form></li>{% endfor %}</ul>
+      <a class="btn sm ghost" href="/settings/datasources/{{ sid }}/entfernen">Datenquelle entfernen …</a></li>{% endfor %}</ul>
     {% endif %}
     {% if p.ok %}
     <h3>Bestände, die im Portfolio fehlen werden</h3>

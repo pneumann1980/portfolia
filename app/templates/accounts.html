@@ -162,7 +162,7 @@
             <input type="text" name="group" maxlength="40" value="{{ ds.group }}" list="dl-group-names" placeholder="ohne Gruppe" aria-label="Gruppe von {{ ds.name }}" style="flex:1;min-width:8em"><button class="btn sm" type="submit">Gruppe speichern</button></form>
           <div class="row">
             <form method="post" action="/settings/datasources/{{ ds.id }}/toggle" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost sm" type="submit">{{ 'Deaktivieren' if ds.enabled else 'Aktivieren' }}</button></form>
-            <form method="post" action="/settings/datasources/{{ ds.id }}/delete" class="inline" data-confirm="„{{ ds.name }}“ entfernen? Übernommene Buchungen bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost sm" type="submit">Entfernen</button></form>
+            <a class="btn ghost sm" href="/settings/datasources/{{ ds.id }}/entfernen">Entfernen …</a>
           </div>
         </div></details>
       {{ account_tools(ds.account) }}
@@ -218,7 +218,7 @@
     {% endif %}
     <a class="btn" href="/settings/datasources/{{ ds.id }}">{{ 'Zugang & Einstellungen' if ds.supported and ds.needs_key else 'Bearbeiten' }}</a>
     <form method="post" action="/settings/datasources/{{ ds.id }}/toggle" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">{{ 'Deaktivieren' if ds.enabled else 'Aktivieren' }}</button></form>
-    <form method="post" action="/settings/datasources/{{ ds.id }}/delete" class="inline" data-confirm="„{{ ds.name }}“ entfernen? Zugangsdaten werden gelöscht, übernommene Buchungen bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Entfernen</button></form>
+    <a class="btn ghost" href="/settings/datasources/{{ ds.id }}/entfernen">Entfernen …</a>
   </div>
   <div style="margin-top:8px">{{ account_tools(ds.account) }}</div>
 </section>

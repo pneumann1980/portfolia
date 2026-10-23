@@ -1426,6 +1426,10 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.45.2 – Anbindung entfernen nur mit Bestätigung
+
+* „Entfernen“ einer Anbindung führt auf eine Bestätigungsseite (`/settings/datasources/<id>/entfernen`: was entfernt wird, was bleibt) mit Pflicht-Häkchen; `POST …/delete` ohne `confirm=1` wird abgelehnt. Gilt auch für „Datenquelle entfernen“ in der Konto-Entfernen-Vorschau.
+
 ## 0.45.1 – Konten-Hub: Abstände
 
 * Konten- und Zugänge-Seite: Karten standen auf dem Handy ohne Abstand untereinander (Inhalt jetzt in `.stack`); zusätzliche Abstände für Gruppen, Kartenreihen und „Konto verwalten“.

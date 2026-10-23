@@ -427,12 +427,30 @@ def make_router() -> APIRouter:
         text = f"„{ds.name}“ " + ("deaktiviert." if ds.enabled else "aktiviert.")
         return _back(request, _list_url(sid, msg=text))
 
+    @router.get("/settings/datasources/{sid}/entfernen", response_class=HTMLResponse)
+    def remove_confirm(request: Request, sid: int, error: str = "") -> Response:
+        """Bestätigungsseite zum Entfernen einer Anbindung (nichts wird verändert)."""
+        ctx = get_ctx(request)
+        svc = datasource_service(ctx)
+        ds = svc.get(sid)
+        if ds is None:
+            raise HTTPException(404)
+        book = svc.account_bookings().get(ds.account) or {}
+        pend = svc.pending_batches(sid)
+        return render(request, "datasource_remove.html", active="accounts", ds=ds, n_bookings=int(book.get("n") or 0),
+                      first=book.get("first"), last=book.get("last"), n_preview=len(pend), error=error[:300],
+                      has_key=bool(ds.needs_key and ds.key_mode), runs=len(svc.runs(sid, 50)))
+
     @router.post("/settings/datasources/{sid}/delete")
     async def delete(request: Request, sid: int) -> Response:
         svc = datasource_service(get_ctx(request))
         ds = svc.get(sid)
         if ds is None:
             raise HTTPException(404)
+        f = await request.form()
+        if str(f.get("confirm") or "") != "1":
+            return _back(request, f"/settings/datasources/{sid}/entfernen?" + urlencode(
+                {"error": "Bitte das Entfernen mit dem Häkchen bestätigen."}))
         await run_in_threadpool(svc.delete, sid)
         return _back(request, _list_url(msg=f"„{ds.name}“ entfernt – Zugangsdaten gelöscht, übernommene Buchungen "
                                             "bleiben erhalten."))

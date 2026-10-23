@@ -93,3 +93,24 @@ def test_access_page_holds_keys_and_hub_has_no_key_forms(client):
     hub = client.get("/accounts").text
     assert "Anbieter-Schlüssel" not in hub and "/settings/zugaenge" in hub
     assert "/settings/zugaenge" in client.get("/settings").text
+
+
+def test_removing_a_connection_needs_a_confirmation_page_and_a_checkmark(client):
+    _seed(client)
+    sid = _wallet(client)
+    hub = client.get("/accounts").text
+    assert f"/settings/datasources/{sid}/entfernen" in hub
+    assert f'action="/settings/datasources/{sid}/delete"' not in hub  # kein direkt wirkender Knopf mehr
+    page = client.get(f"/settings/datasources/{sid}/entfernen")
+    assert page.status_code == 200 and "Wird entfernt" in page.text and "Bleibt erhalten" in page.text
+    assert 'name="confirm" value="1" required' in page.text and "Wallet SOL" in page.text
+    ctx = client.app.state.ctx
+    # ohne Häkchen passiert nichts
+    r = post(client, f"/settings/datasources/{sid}/delete")
+    assert r.status_code == 303 and f"/settings/datasources/{sid}/entfernen" in r.headers["location"]
+    assert ctx.db.q1("SELECT id FROM data_source WHERE id=?", (sid,)) is not None
+    # mit Häkchen wird entfernt; das Konto und seine Buchungen bleiben
+    r = post(client, f"/settings/datasources/{sid}/delete", confirm="1")
+    assert r.status_code == 303 and "msg=" in r.headers["location"]
+    assert ctx.db.q1("SELECT id FROM data_source WHERE id=?", (sid,)) is None
+    assert client.get(f"/settings/datasources/{sid}/entfernen").status_code == 404

@@ -429,7 +429,7 @@ def test_delete_source_removes_key_and_recreate_does_not_duplicate(client, api):
     post(c, f"/journal/csv/{bid}/commit")
     n = len(journal(c, "source='sync:bitpanda' AND status='active'"))
     blob = bytes(ctx(c).db.q1("SELECT ciphertext FROM data_source_secret")["ciphertext"])
-    post(c, f"/settings/datasources/{sid}/delete")
+    post(c, f"/settings/datasources/{sid}/delete", confirm="1")
     assert ctx(c).db.scalar("SELECT COUNT(*) FROM data_source_secret") == 0
     assert blob not in db_bytes(c) and API_KEY.encode() not in db_bytes(c)
     sid2 = create_bitpanda(c, name="Bitpanda neu")

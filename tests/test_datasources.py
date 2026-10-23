@@ -346,7 +346,7 @@ def test_crud_exchange_and_wallet(client):
     assert source(c, w)["enabled"] == 1
 
     # entfernen
-    r = post(c, f"/settings/datasources/{w}/delete")
+    r = post(c, f"/settings/datasources/{w}/delete", confirm="1")
     assert r.status_code == 303 and "entfernt" in c.get(r.headers["location"]).text
     assert source(c, w) == {} and "Ledger ETH" not in c.get("/settings/datasources").text
     assert c.get(f"/settings/datasources/{w}").status_code == 404
@@ -700,7 +700,7 @@ def test_delete_keeps_bookings_and_reset_cursor_refetches(client, fake):
     create_unknown_assets(c, pending)
 
     # Entfernen: Konfiguration und Laufhistorie weg, offener Prüf-Stapel verworfen, übernommene Buchungen bleiben
-    post(c, f"/settings/datasources/{sid}/delete")
+    post(c, f"/settings/datasources/{sid}/delete", confirm="1")
     assert source(c, sid) == {} and not svc.runs(sid) and csv_service(c.app.state.ctx).batch(pending) is None
     assert csv_service(c.app.state.ctx).batch(bid) is not None
     assert "Datenquelle entfernt" in c.get(f"/journal/csv/{bid}").text

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Anbindung entfernen{% endblock %}
+{% block heading %}Anbindung entfernen: {{ ds.name }}{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/accounts#ds-{{ ds.id }}">← Konten</a></p>
+  {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
+  <section class="card">
+    <div class="card-head"><h2>{{ ds.name }}</h2> <span class="badge">{{ ds.provider_label }}</span></div>
+    <p class="hint">Konto in Portfolia: <b>{{ ds.account }}</b>{% if n_bookings %} · {{ n_bookings }} Buchung{{ '' if n_bookings == 1 else 'en' }}{% if first %} ({{ first|date_de }} – {{ last|date_de }}){% endif %}{% endif %}</p>
+    <div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div>
+      <b>Wird entfernt:</b>
+      <ul class="small" style="margin:6px 0 0 16px">
+        <li>die Anbindung (Adresse bzw. Verbindung, Einstellungen, Abrufstand){% if ds.is_wallet %} – Wallet-Adressen müssen Sie bei einer erneuten Anlage wieder eintragen{% endif %}</li>
+        {% if has_key %}<li><b>der gespeicherte API-Key</b> (sicher gelöscht – er lässt sich nicht wiederherstellen, Sie müssten ihn bei der Börse neu erzeugen)</li>{% endif %}
+        <li>der Verlauf der Abrufe ({{ runs }} Läufe){% if n_preview %} und {{ n_preview }} offene{{ 'r' if n_preview == 1 else '' }} Prüf-Stapel ohne Übernahmen{% endif %}</li>
+      </ul></div></div>
+    <div class="alert good" style="margin-top:10px"><span class="icon">✓</span><div>
+      <b>Bleibt erhalten:</b>
+      <ul class="small" style="margin:6px 0 0 16px">
+        <li>das Konto „{{ ds.account }}“ mit allen Buchungen, Beständen und Belegen</li>
+        <li>bereits importierte Dokumente im Ablageordner</li>
+        <li>eine später neu angelegte Anbindung erkennt die übernommenen Vorgänge wieder (keine Doppelbuchung)</li>
+      </ul></div></div>
+    <form method="post" action="/settings/datasources/{{ ds.id }}/delete" class="stack" style="gap:8px;margin-top:12px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe gelesen, was entfernt wird, und möchte die Anbindung „{{ ds.name }}“ entfernen.</label>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn primary" type="submit">Anbindung entfernen</button><a class="btn" href="/accounts#ds-{{ ds.id }}">Abbrechen</a></div>
+    </form>
+  </section>
+</div>
+{% endblock %}
