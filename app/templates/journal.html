@@ -42,7 +42,7 @@
     <label class="field">Jahr<select name="year" data-autosubmit><option value="">alle</option>{% for y in years %}<option {% if params.year == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></label>
     <label class="field">Suche<input type="search" name="q" value="{{ params.q }}" placeholder="ID oder Notiz"></label>
     <div class="row" style="gap:6px"><button class="btn sm" type="submit">Filtern</button>{% if has_filter %}<a class="btn sm ghost" href="/journal">Zurücksetzen</a>{% endif %}</div>
-    {% if params.year %}<div class="row" style="gap:6px"><a class="btn sm" href="/journal/documents/export?year={{ params.year }}" title="Alle mit Buchungen verknüpften Belege dieses Jahres als ZIP mit Manifest (z. B. für die Steuererklärung)">Belege {{ params.year }} herunterladen</a></div>{% endif %}
+    {% if params.year %}<div class="row" style="gap:6px"><a class="btn sm" href="/journal/documents/export?year={{ params.year }}" title="Alle mit Buchungen verknüpften Belege dieses Jahres als ZIP mit Manifest (z. B. für die Steuererklärung)">Belege {{ params.year }} herunterladen</a><a class="btn sm ghost" href="/belege?jahr={{ params.year }}" title="Alle abgelegten Bankdokumente dieses Jahres ansehen und herunterladen – auch ohne Buchung">Beleg-Archiv</a></div>{% endif %}
   </form>
   {% if rows %}
   <div class="table-wrap cards-wrap"><table class="compact cards journal">

@@ -22,7 +22,7 @@
   <section class="card">
     <div class="card-head"><h2>DKB-Wertpapierdokumente</h2></div>
     <p>Die <b>Wertpapierdokumente</b> der DKB-Postbox (Abrechnungen, Erträge, Kapitalmaßnahmen, Depotauszüge, Kosteninformationen …) kommen per <b>ZIP-Import</b> in Portfolia: Sie laden das Archiv aus dem Online-Banking herunter und hier hoch. Portfolia erkennt jedes Dokument am <b>Inhalt</b>, legt es im Ablageordner ab, prüft die Rechnung und ordnet es vorhandenen Buchungen zu. Bank-Zugangsdaten braucht Portfolia dafür nie.</p>
-    <div class="row" style="gap:8px;flex-wrap:wrap"><a class="btn" href="/settings/datasources/{{ ds.id }}/dkb/steuer">Steuervergleich</a><a class="btn" href="#dokumente">Abgelegte Dokumente</a></div>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><a class="btn" href="/settings/datasources/{{ ds.id }}/dkb/steuer">Steuervergleich</a><a class="btn" href="/belege?konto={{ ds.account|urlencode }}">Belege (PDF) ansehen/herunterladen</a><a class="btn" href="#dokumente">Abgelegte Dokumente</a></div>
   </section>
   {% endif %}
   <section class="card" id="zip">
@@ -119,6 +119,7 @@
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Kategorie</th><th class="num">Dokumente</th><th>Stand</th></tr></thead><tbody>
     {% for cat, c in docs.categories.items() %}<tr><td><b>{{ cat }}</b></td><td class="num" data-label="Dokumente">{{ c.values()|sum }}</td><td data-label="Stand">{% if c.evaluated %}{{ c.evaluated }} ausgewertet{% endif %}{% if c.downloaded %}{{ ', ' if c.evaluated }}{{ c.downloaded }} auszuwerten{% endif %}{% if c.classified %}{{ ', ' if c.evaluated or c.downloaded }}{{ c.classified }} erkannt (noch nicht ausgewertet){% endif %}{% if c.archived %}{{ ', ' if c.evaluated or c.downloaded or c.classified }}{{ c.archived }} nur abgelegt{% endif %}{% if c.error %}{{ ', ' }}<span class="badge crit">{{ c.error }} Fehler</span>{% endif %}</td></tr>{% endfor %}
     </tbody></table></div>
+    <p><a class="btn primary" href="/belege?konto={{ ds.account|urlencode }}">Belege ansehen und herunterladen</a> <span class="hint">einzeln, pro Jahr oder alle als ZIP</span></p>
     <p class="hint"><a href="/settings/datasources/{{ ds.id }}/dkb/steuer">Steuervergleich DKB ↔ Portfolia</a> – zeigt Abweichungen zwischen den einbehaltenen Steuern der Abrechnungen und Ihren Buchungen (ändert nichts).</p>
     {% if docs.pending %}<form method="post" action="/settings/datasources/{{ ds.id }}/dkb/evaluate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit"{% if busy %} disabled{% endif %}>{{ docs.pending }} Depot-Abrechnung(en) jetzt auswerten</button></form>{% endif %}
     <details><summary>Zuletzt abgelegt</summary>

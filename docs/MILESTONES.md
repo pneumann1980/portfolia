@@ -1426,6 +1426,12 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.44.0 – Belege ansehen und herunterladen
+
+* **Seite `/belege`** (`dkb_archive.py`, `archive_web.py`): Archiv der Bankdokumente auf Basis von `bank_doc` mit Filtern (Konto, Jahr, Art, Verknüpfung, Suche), Seitenweise-Anzeige, *Ansehen*, *Herunterladen* und ZIP der gesamten Auswahl mit `manifest.csv`.
+* Auch Belege ohne Buchung und reine Ablageordner-Dateien sind sichtbar; Pfade nur aus dem Index (404 bei `..`/fehlender Datei); Download-Namen nie aus dem Originalnamen.
+* Links: DKB-Seite, Konto-Detail der Datenquelle, Buchungsliste (Jahresfilter).
+
 ## 0.43.0 – DKB: ZIP-Import als Hauptweg, Postbox-Abruf ausgeblendet
 
 * **Postbox-Abruf** (`portfolia-dkb-fetch`/`dkb-robo`) bleibt im Code, die Oberfläche erscheint nur mit `DKB_FETCHER=1`; ohne Flag 404 auf `/dkb/setup|remove|run|cancel`.

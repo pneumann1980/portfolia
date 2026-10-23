@@ -278,6 +278,16 @@ stammt **ausschließlich aus den Verkaufs- und Ertragsabrechnungen**.
   vergleichbar. Kapitalmaßnahmen mit eigener Steuerbehandlung, Teilfreistellung (Fonds) und Einstände vor dem Archiv führen zu erwartbaren Abweichungen. Ohne alle Abrechnungen des Jahres im Archiv sind
   Summen und Topfstände unvollständig (die Seite weist darauf hin). Steuern aus Kapitalmaßnahmen werden nicht verglichen.
 
+## Belege ansehen und herunterladen (ab 0.44.0)
+
+Seite **Belege** (`/belege`, Links auf der DKB-Seite, am Konto und in der Buchungsliste): Archiv aller abgelegten Bankdokumente aus dem Dokumentindex (`bank_doc`) – **auch Belege ohne Buchung** und Dateien, die nur im Ablageordner liegen.
+
+* **Auswahl:** Konto, Jahr, Art (Abrechnung Kauf/Verkauf, Ertrag, Kapitalmaßnahme, Depotauszug, Kosteninformation, Order-Belege …), Verknüpfung mit einer Buchung und Suchtext (Titel, ISIN, Auftrags-/Belegnummer); 50 je Seite.
+* **Ansehen/Herunterladen:** je Beleg *Ansehen* (PDF im Browser) und *Herunterladen*. Der Dateiname entsteht aus Datum, Art, ISIN und Kennung, nie aus dem Originalnamen. Gelesen wird nur der Pfad aus dem Index unterhalb des Ablageordners; ein manipulierter Pfad (`..`) oder eine fehlende Datei ergibt 404. Dateien, die kein PDF sind, werden nur als Download ausgeliefert.
+* **ZIP:** *Auswahl als ZIP herunterladen* packt alle Belege der aktuellen Auswahl (nicht nur die sichtbare Seite) nach `belege/<Jahr>/<Ordner>/…` (`01_Abrechnungen`, `02_Ertraege`, `03_Kapitalmassnahmen`, `04_Depotauszuege`, `05_Orderbelege`, `06_Sonstige`) mit `manifest.csv` (UTF-8 mit BOM, `;`): Datei, Datum, Art, Wertpapier, ISIN, Konto, Buchungen, Kennung, Originalname, SHA-256, Status `ok`/`original_fehlt`. Grenzen: 2.000 Dateien / 500 MB.
+* **Jahres-ZIP der Buchungen** (Buchungsliste mit Jahresfilter) bleibt bestehen; er enthält nur Belege, die mit einer Buchung verknüpft sind.
+* **Datenschutz:** Die PDFs enthalten Name, Anschrift und Kontonummern. Zugriff nur über die geschützte Oberfläche, `Cache-Control: no-store`; protokolliert werden Zähler, keine Dateinamen oder Inhalte.
+
 ## Grenzen
 
 * **Gegen die echte DKB nicht getestet.** Geprüft sind: Installation mit echtem dkb-robo 0.31.2 (venv + pip), der Fetcher mit

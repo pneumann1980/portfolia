@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Belege{% endblock %}
+{% block heading %}Belege{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/accounts">Konten</a> · <a href="/journal">Buchungen</a> · <a href="/journal/documents">Beleg-Upload</a></p>
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>Archiv der Bankdokumente <span class="badge">{{ d.total }}</span></h2></div>
+    <p class="hint">Alle abgelegten Dokumente Ihrer Bank-Datenquellen (z. B. DKB-Wertpapierdokumente) – auch Belege, die zu keiner Buchung gehören. Die PDFs enthalten persönliche Daten (Name, Anschrift, Kontonummern); der Zugriff läuft nur über diese geschützte Oberfläche.</p>
+    <form method="get" action="/belege" class="stack" style="gap:8px" role="search">
+      <div class="grid-2">
+        <label class="field">Konto<select name="konto"><option value="">alle</option>{% for a in d.accounts %}<option value="{{ a }}"{% if sel.account == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+        <label class="field">Jahr<select name="jahr"><option value="">alle</option>{% for y in d.years %}<option value="{{ y }}"{% if sel.year == y %} selected{% endif %}>{{ y }}</option>{% endfor %}</select></label>
+        <label class="field">Art<select name="art"><option value="">alle</option>{% for k, label, n in d.kinds %}<option value="{{ k }}"{% if sel.kind == k %} selected{% endif %}>{{ label }} ({{ n }})</option>{% endfor %}</select></label>
+        <label class="field">Verknüpfung<select name="verknuepft"><option value="">alle</option><option value="ja"{% if sel.linked == 'ja' %} selected{% endif %}>mit Buchung</option><option value="nein"{% if sel.linked == 'nein' %} selected{% endif %}>ohne Buchung</option></select></label>
+      </div>
+      <label class="field">Suchen (Titel, ISIN, Auftrags- oder Belegnummer)<input type="search" name="q" value="{{ sel.q }}" maxlength="80" autocomplete="off"></label>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn primary" type="submit">Anzeigen</button>
+        {% if query %}<a class="btn ghost" href="/belege">Zurücksetzen</a>{% endif %}
+        {% if d.total %}<a class="btn" href="/belege/export{{ '?' ~ query if query }}" title="Alle {{ d.total }} Belege dieser Auswahl als ZIP mit manifest.csv">Auswahl als ZIP herunterladen ({{ d.total }})</a>{% endif %}
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    {% if not d.rows %}<p class="hint">Keine Belege in dieser Auswahl. Dokumente kommen per ZIP-Import der Datenquelle (DKB: <i>Konto → ZIP-Import</i>).</p>
+    {% else %}
+    <div class="table-wrap cards-wrap"><table class="table cards">
+      <thead><tr><th>Datum</th><th>Art</th><th>Wertpapier</th><th>Konto</th><th>Buchung</th><th>Datei</th></tr></thead>
+      <tbody>{% for r in d.rows %}<tr>
+        <td data-label="Datum">{{ r.doc_date|date_de if r.doc_date else '–' }}</td>
+        <td data-label="Art" class="wrap-any">{{ r.label }}{% if r.ident %}<div class="hint mono">{{ r.ident }}</div>{% endif %}</td>
+        <td data-label="Wertpapier" class="wrap-any">{% if r.asset %}{{ r.asset }}<div class="hint mono">{{ r.isin }}</div>{% elif r.isin %}<span class="mono">{{ r.isin }}</span>{% else %}–{% endif %}</td>
+        <td data-label="Konto" class="wrap-any">{{ r.konto }}</td>
+        <td data-label="Buchung">{% if r.n_tx %}<span class="badge good">{{ r.n_tx }} Buchung{{ '' if r.n_tx == 1 else 'en' }}</span>{% if r.document_id %}<div><a class="small" href="/journal/documents/{{ r.document_id }}">Beleg-Details</a></div>{% endif %}{% else %}<span class="badge">ohne Buchung</span>{% endif %}</td>
+        <td data-label="Datei"><div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn sm" href="/belege/{{ r.id }}/datei" target="_blank" rel="noopener">Ansehen</a><a class="btn sm ghost" href="/belege/{{ r.id }}/datei?dl=1" download="{{ r.name }}">Herunterladen</a></div></td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    {% if d.pages > 1 %}
+    <nav class="row" style="gap:8px;margin-top:10px;align-items:center" aria-label="Seiten">
+      {% if d.page > 1 %}<a class="btn sm" href="/belege?{{ query ~ '&' if query }}seite={{ d.page - 1 }}">← zurück</a>{% endif %}
+      <span class="hint">Seite {{ d.page }} von {{ d.pages }}</span>
+      {% if d.page < d.pages %}<a class="btn sm" href="/belege?{{ query ~ '&' if query }}seite={{ d.page + 1 }}">weiter →</a>{% endif %}
+    </nav>
+    {% endif %}
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
