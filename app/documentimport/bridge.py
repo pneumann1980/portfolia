@@ -179,6 +179,10 @@ def to_recs(e: Enriched, *, sha: str, doc: dict[str, Any], account: str, n0: int
         detail = tx.value("fee_detail")
         if detail:
             note += f" · Kosten: {detail}"
+    if tx.kind == "dividend":  # Ertragsart und Angaben des Belegs (Kapitalrückzahlung, Ex-Tag, Devisenkurs …)
+        for name in ("income_kind", "income_detail"):
+            if tx.value(name) and (name == "income_detail" or tx.value(name) != "Dividende"):
+                note += f" · {tx.value(name)}"
     if tx.kind in ("buy", "sell"):  # Steuern/Erstattung zum Geschäft (Verkauf mit KapESt/Soli, Verlustverrechnung)
         for name, tag, typ in (("tax", "tax", "withdrawal"), ("tax_refund", "refund", "deposit")):
             amt = tx.dec(name)

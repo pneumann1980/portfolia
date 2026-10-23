@@ -48,7 +48,9 @@ JOB = "dkb_zip:{sid}"
 SETTING_RATES = "dkb_zip.eta_rates"
 # Startschätzung (Bytes je Sekunde); nach dem ersten Lauf ersetzen gemessene Werte (Einstellung ``dkb_zip.eta_rates``)
 DEFAULT_RATES = {"zip_unpack": 20e6, "zip_eval": 300e3, "zip_match": 3.0}
-TRADE_KINDS = ("abrechnung_kauf", "abrechnung_verkauf")  # Phase 2: werden ausgewertet; weitere Arten folgen
+TRADE_KINDS = ("abrechnung_kauf", "abrechnung_verkauf")  # Phase 2
+INCOME_KINDS = ("ertrag",)  # Phase 3; weitere Arten (Kapitalmaßnahmen, Depotauszug) folgen
+EVAL_KINDS = (*TRADE_KINDS, *INCOME_KINDS)  # werden durch den Dokumentimport ausgewertet
 KEEP_TMP_DAYS = 7
 SUB_LABEL = {"storno": "Storno", "entgelt": "Entgeltbelastung", "reverse_split": "Zusammenlegung (Reverse Split)",
              "split": "Aktiensplit", "gratis": "Gratisausgabe", "neubuchung": "Neubuchung nach Storno",
@@ -173,7 +175,7 @@ def report(s: dict[str, Any]) -> dict[str, Any]:
             "duplicate_known": s.get("duplicate_known") or [], "duplicate_in_zip": s.get("duplicate_in_zip") or [],
             "skipped": s.get("skipped") or [], "unrecognized": s.get("unrecognized") or [],
             "unreadable": s.get("unreadable") or [], "notes": s.get("notes") or [], "members": s.get("members", 0),
-            "trades": s.get("trades") or {},
+            "trades": s.get("trades") or {}, "income": s.get("income") or {},
             "duration": s.get("duration_text") or ""}
 
 
@@ -279,25 +281,27 @@ def _add(d: dict[str, int], key: str) -> None:
 
 def _match(ctx: Any, sid: int, rid: int, account: str, root: Path, s: dict[str, Any], prog: Progress,
            handle: D.Handle, run_ids: tuple[int, ...]) -> None:
-    """Kauf-/Verkaufsabrechnungen dieses Laufs durch den Dokumentimport schicken und das Ergebnis erfassen."""
+    """Abrechnungen und Ertragsabrechnungen dieses Laufs durch den Dokumentimport schicken und das Ergebnis erfassen."""
     n = ctx.db.scalar(f"SELECT COUNT(*) FROM bank_doc WHERE source_id=? AND status='classified' AND doctype IN "
-                      f"({','.join('?' * len(TRADE_KINDS))}) AND run_id IN ({','.join('?' * len(run_ids))})",
-                      (sid, *TRADE_KINDS, *run_ids), default=0)
+                      f"({','.join('?' * len(EVAL_KINDS))}) AND run_id IN ({','.join('?' * len(run_ids))})",
+                      (sid, *EVAL_KINDS, *run_ids), default=0)
     if n:
         prog.phase("zip_match", total=n, text="Abrechnungen zuordnen")
         D._upd(ctx.db, rid, status="classifying", message=f"{n} Abrechnungen werden zugeordnet …", total=n, done=0)
-        ev = D.evaluate_pending(ctx, sid, account, root, handle.cancel, status="classified", doctypes=TRADE_KINDS,
+        ev = D.evaluate_pending(ctx, sid, account, root, handle.cancel, status="classified", doctypes=EVAL_KINDS,
                                 run_ids=run_ids, busy_wait_s=180,
                                 on_step=lambda d, t: (prog.update(d, t, text=f"Abrechnung {d} von {t}", work=d),
                                                       D._upd(ctx.db, rid, done=d)))
         if ev.get("error"):
             s["notes"].append(str(ev["error"]))
-    s["trades"] = trades(ctx, sid, run_ids)
+    s["trades"] = results(ctx, sid, run_ids, TRADE_KINDS, "abrechnung", ("buy", "sell"))
+    s["income"] = results(ctx, sid, run_ids, INCOME_KINDS, "ertrag", ("dividend",))
 
 
-def trades(ctx: Any, sid: int, run_ids: tuple[int, ...]) -> dict[str, list[dict[str, Any]]]:
-    """Ergebnis der Auswertung je Abrechnung: ``matched`` (vorhandener Buchung zugeordnet, Beleg verknüpft), ``new``
-    (Vorschlag im Prüf-Stapel) und ``unclear`` (Rechenprobe/Pflichtangaben – nicht buchbar)."""
+def results(ctx: Any, sid: int, run_ids: tuple[int, ...], doctypes: tuple[str, ...], role: str,
+            booking_kinds: tuple[str, ...]) -> dict[str, list[dict[str, Any]]]:
+    """Ergebnis der Auswertung je Beleg: ``matched`` (vorhandener Buchung zugeordnet, Beleg verknüpft), ``new``
+    (Vorschlag im Prüf-Stapel), ``unclear`` (Rechenprobe/Pflichtangaben – nicht buchbar) und ``failed``."""
     from app.documentimport import txdocs
 
     out: dict[str, list[dict[str, Any]]] = {"matched": [], "new": [], "unclear": [], "failed": []}
@@ -305,9 +309,9 @@ def trades(ctx: Any, sid: int, run_ids: tuple[int, ...]) -> dict[str, list[dict[
     rows = ctx.db.q(
         f"SELECT b.subject, b.doc_date, b.status, b.note, d.id AS doc, d.batch_id, d.result_json FROM bank_doc b "
         f"LEFT JOIN document d ON d.sha256=b.sha256 WHERE b.source_id=? "
-        f"AND b.doctype IN ({','.join('?' * len(TRADE_KINDS))}) AND b.run_id IN ({marks}) "
+        f"AND b.doctype IN ({','.join('?' * len(doctypes))}) AND b.run_id IN ({marks}) "
         "AND b.status IN ('evaluated', 'error') ORDER BY b.doc_date, b.id",
-        (sid, *TRADE_KINDS, *run_ids))
+        (sid, *doctypes, *run_ids))
     for r in rows:
         item = {"doc": r["doc"], "name": r["subject"], "date": r["doc_date"]}
         if r["status"] == "error" or not r["result_json"]:
@@ -319,9 +323,9 @@ def trades(ctx: Any, sid: int, run_ids: tuple[int, ...]) -> dict[str, list[dict[
             txs = []
         for t in txs:
             if t.get("linked") and t.get("existing"):
-                txdocs.link_document(ctx.db, t["existing"], int(r["doc"]), "abrechnung", "auto")
+                txdocs.link_document(ctx.db, t["existing"], int(r["doc"]), role, "auto")
                 out["matched"].append({**item, "n": t.get("n", 1), "tx": t["existing"]})
-            elif t.get("kind") in ("buy", "sell"):
+            elif t.get("kind") in booking_kinds:
                 out["new"].append({**item, "n": t.get("n", 1), "batch": r["batch_id"]})
             else:
                 why = "; ".join(w for w in (t.get("warnings") or []) if str(w).startswith("Rechenprobe")) or \
@@ -457,14 +461,16 @@ def _work(ctx: Any, sid: int, rid: int, path: Path, account: str, name: str, s: 
             s["resumable"] = True
         else:
             status = "partial" if s["unreadable"] else "ok"
-            tr = s.get("trades") or {}
+            tr, inc = s.get("trades") or {}, s.get("income") or {}
             message = (f"{s['stored']} Dokumente abgelegt, {len(s['unrecognized'])} nicht erkannt, "
                        f"{len(s['duplicate_known']) + len(s['duplicate_in_zip'])} Dubletten, "
                        f"{len(s['skipped'])} übersprungen" + (f", {len(s['unreadable'])} nicht lesbar" if
                                                              s["unreadable"] else "") + "."
                        + (f" Abrechnungen: {len(tr.get('matched', []))} vorhandenen Buchungen zugeordnet, "
                           f"{len(tr.get('new', []))} neu im Prüf-Stapel, {len(tr.get('unclear', []))} ungeklärt."
-                          if tr else ""))
+                          if tr else "")
+                       + (f" Erträge: {len(inc.get('matched', []))} zugeordnet, {len(inc.get('new', []))} neu im "
+                          f"Prüf-Stapel, {len(inc.get('unclear', []))} ungeklärt." if any(inc.values()) else ""))
             s["resumable"] = False
             with contextlib.suppress(OSError):
                 path.unlink(missing_ok=True)

@@ -144,6 +144,43 @@ Ergänzen und per Rückfüllung (übernommene Beleg-Zeilen, Notizen mit „SHA �
 (*Abrechnung* → Beleg, *PDF* → Original; ist das Original nicht gespeichert: „Originaldatei nicht gespeichert“). Die Verknüpfung ist
 Metadaten in der Datenbank (Teil der Sicherung, nicht des Gesamtexports – die Belege selbst sind es auch nicht).
 
+## Ertragsabrechnungen (Phase 3)
+
+Dividendengutschrift, *Gutschrift – Kapitalrückzahlung* und *Gutschrift – Liquidationszahlung* gehen beim ZIP-Import durch dasselbe
+Verfahren wie die Abrechnungen (`dkb_income.py`, Rechenprobe, Prüf-Stapel, nichts ohne Bestätigung gebucht).
+
+| Beleg | Buchung (Konto = Depot der Datenquelle) |
+|---|---|
+| Brutto in EUR (`Dividendengutschrift … 3,71+ EUR` bzw. `Kurswert … EUR`) | `deposit`, Tag `dividend`, EUR, `related_asset` = Asset, `value_eur` |
+| `Einbehaltene Quellensteuer <p> % auf …` | `withdrawal`, Tag `withholding_tax` – **nur** die einbehaltene |
+| `Kapitalertragsteuer`, `Solidaritätszuschlag`, `Kirchensteuer` (`<p> % auf <Basis> EUR`) | **eine** `withdrawal`, Tag `tax` (Summe, Einzelwerte im Beleg) |
+
+Keine Abzüge sind `Anrechenbare Quellensteuer`, `… % rückforderbare Quellensteuer`, `Verrechnete anrechenbare ausländische Quellensteuer`
+(auch bei Zeilenumbruch), `Kapitalertragsteuerpflichtige Dividende`, `Berechnungsgrundlage …` und `Eingebuchte sonstige negative Kapitalerträge`.
+Seite 2 (Verrechnungs- und Steuertöpfe) wird nicht gelesen.
+
+**Rechenprobe** (≤ 0,01 €, sonst „ungeklärt“, keine Buchung): EUR-Brutto + Σ Abzüge = Ausmachender Betrag · Brutto in Fremdwährung ÷
+Devisenkurs ≈ EUR-Brutto · Stück × Betrag je Stück ≈ Brutto in Fremdwährung · Quellensteuer ≈ Satz × Brutto (Fremdwährung) ÷ Devisenkurs ·
+KapESt/Soli ≈ Satz × Basis laut Beleg (Toleranz 0,02 €, weil die Bank abschneidet: Soli 5,5 % × 0,36 = 0,0198 → gedruckt 0,01) · Richtung
+(Gutschrift, „zu Gunsten“) · Pflichtangaben und ISIN-Prüfziffer. Positive Abzugszeilen (Erstattung) und mehrere Ausmachende Beträge sind
+bei Erträgen nicht belegt und bleiben „ungeklärt“.
+
+**Datum:** Zahlbarkeitstag (die Wertstellung steht als Valuta daneben; liegen beide in verschiedenen Jahren, weist der Prüf-Stapel auf das
+Steuerjahr hin). **Kennung:** Abrechnungsnummer (`doc:dkb:<Nr>`); zwei Belege mit gleichem Titel, Asset, Menge und Tag, aber
+verschiedener Nummer (Dividende und Kapitalrückzahlung am 19.03.) bleiben zwei Vorgänge.
+
+**Entscheidung E3 (Kapitalrückzahlung/Liquidationszahlung):** Die Bank besteuert beides wie einen Ertrag (KapESt auf den vollen Betrag). Portfolia
+erfasst es als `dividend`, schreibt die Ertragsart in die Notiz und markiert den Vorschlag mit einem Prüfhinweis. Ob steuerlich eine
+Kapitalrückzahlung (mindert die Anschaffungskosten) vorliegt, entscheiden Sie bzw. Ihre Beratung.
+
+**Zuordnung:** Eine Ertragsabrechnung gehört zu einer **bereits erfassten Dividende**, wenn Konto, Asset, Datum (± 3 Tage um Zahlbarkeitstag/
+Wertstellung) und Betrag (Brutto, ersatzweise netto; ± 0,01 €) passen und es genau einen besten Treffer gibt. Dann wird nur der Beleg
+verknüpft (`tx_document`, Rolle *Ertragsabrechnung*) und keine zweite Dividende vorgeschlagen; Steuerzeilen bleiben Vorschläge. Die vorhandene
+Dividende wird nicht verändert. Mehrere gleichwertige Treffer, anderes Konto oder anderer Betrag → keine Zuordnung (neuer Vorschlag).
+
+**Stand an Ihrem Export:** Der kuratierte Import enthält für das DKB-Depot keine Dividenden; alle fünf Beispiel-Ertragsabrechnungen erscheinen
+deshalb als Vorschläge (12 Zeilen). Da sie vor dem Stichtag des Imports liegen, sind sie „vor Stichtag“ und nur auf ausdrücklichen Wunsch zu übernehmen.
+
 ## Grenzen
 
 * **Gegen die echte DKB nicht getestet.** Geprüft sind: Installation mit echtem dkb-robo 0.31.2 (venv + pip), der Fetcher mit
@@ -156,4 +193,5 @@ Metadaten in der Datenbank (Teil der Sicherung, nicht des Gesamtexports – die 
   „Schnittstelle geändert“; bereits abgelegte Dokumente bleiben unberührt, ein Update des Fetchers (*Aktualisieren*) behebt es.
 * **Bedingungen der Bank:** Das Verfahren nutzt die internen Schnittstellen des Online-Bankings (keine offizielle Freigabe).
   Ob das zu den Bedingungen der DKB passt, prüfen Sie selbst.
-* **Depotauszüge, Erträge, Kapitalmaßnahmen, Kosteninformationen** werden abgelegt und erkannt, aber noch nicht ausgewertet.
+* **Depotauszüge, Kapitalmaßnahmen, Kosteninformationen** werden abgelegt und erkannt, aber noch nicht ausgewertet. Bei Erträgen sind
+  Fonds-/ETF-Ausschüttungen, Vorabpauschale, Zinsen und Erstattungen von Steuern nicht belegt (→ „ungeklärt“).

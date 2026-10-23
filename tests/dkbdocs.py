@@ -107,6 +107,58 @@ def kapital(untertitel: list[str], beleg: str = "61432975", day: str = "17.02.20
             f"Stück 100  BEISPIEL GROUP AB  {isin}  ({wkn})", "Sehr geehrte Frau Mustermann,", *FOOT]
 
 
+def ertragsabrechnung(sub: str = "dividende", abr: str = "57764418230", day: str = "18.03.2025",
+                      pay: str = "17.03.2025", value_day: str | None = None, qty: str = "20", per: str = "0,20",
+                      ccy: str = "USD", fx: str = "1,0970", gross_f: str = "4,00", gross: str = "3,65",
+                      qst: tuple[str, str] | None = ("15", "0,55"), kest: tuple[str, str, str] | None = None,
+                      soli: tuple[str, str, str] | None = None, verrechnet: bool = False,
+                      rueckforderbar: bool = False,
+                      total: str | None = None, isin: str = "US02079K3059", wkn: str = "A14Y6F",
+                      name: str = "BEISPIEL HOLDING INC.", direction: str = "Gunsten") -> list[str]:
+    """Ertragsabrechnung wie bei der DKB (Alle Beträge EUR, Vorzeichen als Suffix). ``qst`` = (Satz, Betrag EUR),
+    ``kest``/``soli`` = (Satz, Basis, Betrag). Informationszeilen (anrechenbar, rückforderbar, verrechnet) stehen im
+    Beleg, gehen aber nie in die Summe ein. ``total`` überschreibt den Ausmachenden Betrag (Negativtest)."""
+    n = lambda t: Decimal(t.replace(".", "").replace(",", "."))  # noqa: E731
+    cash = n(gross) - (n(qst[1]) if qst else 0) - (n(kest[2]) if kest else 0) - (n(soli[2]) if soli else 0)
+    div = sub == "dividende"
+    titel = ["Dividendengutschrift"] if div else ["Gutschrift", "Kapitalrückzahlung" if sub == "rueckzahlung"
+                                                  else "Liquidationszahlung"]
+    lines = [*_kopf([f"Abrechnungsnr.  {abr}", f"Datum  {day}"]), *titel,
+             "Nominale  Wertpapierbezeichnung  ISIN  (WKN)", f"Stück {qty}  {name}  {isin}  ({wkn})",
+             "REG. SHS CL. A DL-,001",
+             f"Zahlbarkeitstag  {pay}  {'Dividende' if div else 'Auszahlung'} pro Stück  {per}  {ccy}",
+             "Bestandsstichtag  07.03.2025  Herkunftsland  Beispielland",
+             "Ex-Tag  10.03.2025" + ("  Art der Dividende  Quartalsdividende" if div else ""),
+             f"Devisenkurs  EUR / {ccy} {fx}", f"Devisenkursdatum  {day}",
+             f"{'Dividendengutschrift' if div else 'Kurswert'}  {gross_f}  {ccy}  {gross}+ EUR",
+             f"Umrechnung in EUR  {gross}  EUR"]
+    if qst:
+        lines += [f"Einbehaltene Quellensteuer {qst[0]} % auf {gross_f} {ccy}  {qst[1]}- EUR",
+                  f"Anrechenbare Quellensteuer {qst[0]} % auf {gross} EUR  {qst[1]}  EUR"]
+    if div:
+        lines.append(f"Kapitalertragsteuerpflichtige Dividende  {gross}  EUR")
+    if verrechnet:
+        lines += ["Verrechnete anrechenbare ausländische Quellensteuer", "(Verhältnis 100/25) auf 0,55 EUR  2,20 - EUR"]
+    if kest:
+        lines.append(f"Berechnungsgrundlage für die Kapitalertragsteuer  {kest[1]}  EUR")
+        lines.append(f"Kapitalertragsteuer {kest[0]} % auf {kest[1]} EUR  {kest[2]}- EUR")
+    else:
+        lines.append("Berechnungsgrundlage für die Kapitalertragsteuer  0,00  EUR")
+    if soli:
+        lines.append(f"Solidaritätszuschlag {soli[0]} % auf {soli[1]} EUR  {soli[2]}- EUR")
+    lines.append(f"Ausmachender Betrag  {total or de(cash)}+ EUR")
+    if rueckforderbar:
+        lines.append("10 % rückforderbare Quellensteuer  27,55  NOK")
+    lines += ["Lagerstelle Clearstream Banking Lux (849133 / 64003)",
+              f"98  Den Betrag buchen wir mit Wertstellung {value_day or day} zu {direction} des Kontos 12345678 "
+              "(IBAN DE00 0000 0000 0000 0000 00), BLZ 12030000 (BIC BYLADEM1001).", "Keine Steuerbescheinigung.",
+              "Seite 2", f"Abrechnungsnr.  {abr}",
+              "Nachrichtlich die Übersicht Ihrer Verrechnungs- und Steuertopfsalden zum Zeitpunkt der Erstellung.",
+              "Kapitalertragsteuer 25,00 % auf 1,00 EUR  0,25- EUR",
+              "Vorher  0,00  0,00  0,00  0,00  10.418,56", *NOISE, *FOOT]
+    return lines
+
+
 def depotuebertrag() -> list[str]:
     return [*_kopf(["Auftragsnummer  792595/75.00", "Datum  07.01.2025"]), "Ersatzlose Ausbuchung",
             "Nominale  Wertpapierbezeichnung  ISIN  (WKN)", "Stück 50  BEISPIEL S.A.  FR0013018041  (A2JQ3R)",

@@ -1426,6 +1426,20 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.39.0 – DKB-Erträge: Rechenprobe, Quellensteuer-Regeln, Zuordnung (Phase 3)
+
+Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Ertragsabrechnungen“.
+
+* **Ertragsprofil** (`dkb_income.py`): Dividende, Kapitalrückzahlung, Liquidationszahlung. Gebucht werden EUR-Brutto, die *einbehaltene*
+  Quellensteuer und KapESt/Soli/KiSt; „anrechenbare“, „rückforderbare“ und „verrechnete“ Beträge sind Information. Rechenprobe wie bei
+  den Abrechnungen; an allen fünf Beispielbelegen bestanden.
+* **Zuordnung** zu bereits erfassten Dividenden (Konto, Asset, ± 3 Tage, Betrag); sonst Vorschlag im Prüf-Stapel.
+* **Fehlerbehebung:** Belege mit gleicher ISIN, Menge und gleichem Tag, aber verschiedener Abrechnungs-/Auftragsnummer wurden im Stapel zu
+  einem Vorgang verschmolzen (Dividende + Kapitalrückzahlung am 19.03.). Die Kennung des Belegs entscheidet jetzt.
+* **Bericht/Oberfläche:** eigener Abschnitt „Erträge“ auf der ZIP-Ergebnisseite; am DKB-Konto ein zweiter Knopf „ZIP-Import“.
+* **Grenzen:** Kapitalrückzahlung/Liquidation werden als Ertrag erfasst (E3, mit Prüfhinweis); Fonds, Zinsen, Steuererstattungen auf Erträge
+  nicht belegt; Kapitalmaßnahmen, Depotauszug, Kosteninformationen folgen.
+
 ## 0.38.0 – DKB-Abrechnungen: Rechenprobe, Zuordnung zu vorhandenen Buchungen, Ergänzen, Beleg-Link (Phase 2)
 
 Details in `docs/DKB_DOCUMENTS.md`, Abschnitt „Kauf- und Verkaufsabrechnungen“.

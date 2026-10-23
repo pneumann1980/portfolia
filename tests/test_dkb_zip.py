@@ -280,12 +280,14 @@ def test_zip_upload_end_to_end_and_idempotent(config: Config, master, caplog) ->
             "Wertpapierdokumente/Depot-2345/2025-03-18_ertrag_57764418230.pdf"])
         docs = rows(c, "SELECT * FROM bank_doc ORDER BY id")
         assert len(docs) == before + 6
-        # nur die Abrechnungen sind ausgewertet
-        assert sorted(d["status"] for d in docs) == ["classified"] * 4 + ["evaluated"] * 2
+        # nur Abrechnungen und Erträge sind ausgewertet (Phase 2/3)
+        assert sorted(d["status"] for d in docs) == ["classified"] * 3 + ["evaluated"] * 3
         assert all(d["category"] == "Wertpapierdokumente" and d["sha256"] and d["size"] for d in docs)
         tr = s["trades"]  # Asset der Beispiel-Abrechnungen ist unbekannt → Vorschläge im Prüf-Stapel, nichts zugeordnet
         assert (len(tr["matched"]), len(tr["new"]), len(tr["unclear"])) == (0, 2, 0)
-        assert rows(c, "SELECT COUNT(*) AS n FROM document")[0]["n"] == 2
+        inc = s["income"]  # der Ertrag der Beispieldatei ist unvollständig (kein Brutto) → ungeklärt, nie gebucht
+        assert (len(inc["matched"]), len(inc["new"]), len(inc["unclear"])) == (0, 0, 1)
+        assert rows(c, "SELECT COUNT(*) AS n FROM document")[0]["n"] == 3
         assert rows(c, "SELECT COUNT(*) AS n FROM journal_tx")[0]["n"] == 0  # nichts gebucht
         # Zwischendatei nach erfolgreichem Lauf gelöscht
         assert not list((Path(ctx(c).config.data_dir) / "tmp").glob("dkbzip-*.zip"))

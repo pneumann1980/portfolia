@@ -98,6 +98,10 @@ def merge_batch(items: list[tuple[str, DocTx]]) -> list[tuple[str, DocTx]]:
         q, d = tx.value("quantity"), tx.value("date")
         if keys:
             gk = "k:" + keys[0]
+        elif tx.provider == "dkb" and tx.value("ext_id"):
+            # DKB: Auftrags-/Abrechnungsnummer ist die Identität (zwei Belege gleichen Titels, Datums und gleicher
+            # Menge mit verschiedener Nummer – z. B. Dividende und Kapitalrückzahlung – sind zwei Vorgänge)
+            gk = f"k:dkb:{tx.value('ext_id')}"
         elif asset and q and d and tx.kind != "unknown":
             gk = f"f:{tx.kind}|{asset}|{Decimal(q).normalize()}|{d}"
         else:
@@ -401,6 +405,8 @@ def _stage2_dkb(c: Context, tx: DocTx, asset_id: str | None, account: str, steps
     """DKB-Abrechnung → vorhandene Buchung (Regeln Z0–Z5 der Analyse): Konto der Datenquelle, Kauf/Verkauf des Assets
     (ISIN/WKN), Datum im Fenster von ±3 Tagen, gleiche Menge. Genau ein Treffer = Zuordnung; mehrere oder keine →
     keine Zuordnung (der Vorgang bleibt im Prüf-Stapel). Verändert wird hier nichts."""
+    if tx.provider == "dkb" and tx.kind == "dividend":
+        return _stage2_dkb_income(c, tx, asset_id, account, steps)
     d, q = parse_date(tx.value("date")), tx.dec("quantity")
     if tx.provider != "dkb" or tx.kind not in ("buy", "sell") or d is None or q is None:
         return None
@@ -446,6 +452,55 @@ def _stage2_dkb(c: Context, tx: DocTx, asset_id: str | None, account: str, steps
     steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", f"{tx.kind} {q} {asset_id} um {d}",
                       f"vorhandene Buchung {t.tx_id} ({t.date}) – Beleg ergänzt sie, es entsteht keine neue Buchung",
                       True))
+    return t
+
+
+def _stage2_dkb_income(c: Context, tx: DocTx, asset_id: str | None, account: str, steps: list[Step]) -> Any | None:
+    """DKB-Ertragsabrechnung → bereits erfasste Dividende: Konto der Datenquelle, Dividende desselben Assets, Datum im
+    Fenster von ±3 Tagen um Zahlbarkeitstag/Wertstellung, Betrag gleich dem Brutto (oder dem Ausmachenden Betrag, wenn
+    netto erfasst wurde; ±0,01 €). Genau ein bester Treffer = Zuordnung, sonst keine. Verändert wird hier nichts."""
+    d, gross, net = parse_date(tx.value("date")), tx.dec("gross"), tx.dec("net")
+    if d is None or gross is None:
+        return None
+    if asset_id is None:
+        steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", tx.value("isin") or "–",
+                          "Asset unbekannt – keine Zuordnung zu einer vorhandenen Dividende", False))
+        return None
+    pf = c.ctx.portfolio()
+    if pf is None:
+        return None
+    days = [x for x in (d, parse_date(tx.value("value_date"))) if x is not None]
+    lo, hi = min(days) - DKB_WINDOW, max(days) + DKB_WINDOW
+    tol = Decimal("0.01")
+    cands: list[tuple[Any, Decimal, str]] = []
+    for t in pf.txs:
+        if t.origin == "plan" or t.type != "deposit" or t.tag != "dividend" or t.related_asset != asset_id:
+            continue
+        if (account and t.to_account != account) or not lo <= t.date <= hi:
+            continue
+        amount = t.value_eur if t.value_eur is not None else (t.to_qty if t.to_asset == "EUR" else None)
+        if amount is None:
+            continue
+        for ref, what in ((gross, "Brutto"), (net, "netto")):
+            if ref is not None and abs(amount - ref) <= tol:
+                cands.append((t, abs(amount - ref), what))
+                break
+    what_text = f"Dividende {gross} EUR {asset_id} um {d}"
+    if not cands:
+        steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what_text,
+                          "keine vorhandene Dividende mit gleichem Betrag im Zeitfenster – neuer Vorgang", False))
+        return None
+    cands.sort(key=lambda x: (x[1], abs((x[0].date - d).days)))
+    if len(cands) > 1 and (cands[0][1], abs((cands[0][0].date - d).days)) == \
+            (cands[1][1], abs((cands[1][0].date - d).days)):
+        steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what_text,
+                          f"{len(cands)} gleichwertige Kandidaten ({', '.join(x[0].tx_id for x in cands[:3])}) – "
+                          "keine automatische Zuordnung", False))
+        return None
+    t, _diff, what = cands[0]
+    steps.append(Step(2, "Zuordnung", "Portfolia-Buchungen", what_text,
+                      f"vorhandene Dividende {t.tx_id} ({t.date}, {what}) – Beleg ergänzt sie, es entsteht keine neue "
+                      "Dividende", True))
     return t
 
 

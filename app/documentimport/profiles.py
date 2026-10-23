@@ -43,7 +43,7 @@ FIELD_LABEL = {
     "fee_eur": "Gebühr in EUR", "price_ccy": "Kurswährung", "net_ccy": "Währung Gesamtbetrag",
     "tax_ccy": "Steuerwährung", "withholding_tax_ccy": "Quellensteuer-Währung", "tz": "Zeitzone",
     "tax_refund": "Steuererstattung", "fee_detail": "Kostenzeilen", "proof": "Rechenprobe",
-    "fx_pair": "Devisenpaar",
+    "fx_pair": "Devisenpaar", "income_kind": "Ertragsart", "income_detail": "Angaben zum Ertrag",
 }
 _SYN: list[tuple[str, tuple[str, ...]]] = [
     # Reihenfolge: spezifisch vor allgemein
@@ -702,6 +702,11 @@ def analyze(doc: DocumentResult) -> Analysis:
     dkb_tx = dkb_trade_doctx(doc, texts)
     if dkb_tx is not None:
         return Analysis("securities_trade", "dkb", conv, [dkb_tx])
+    from app.documentimport.dkb_income import dkb_income_doctx
+
+    dkb_tx = dkb_income_doctx(doc, texts)
+    if dkb_tx is not None:
+        return Analysis("dividend", "dkb", conv, [dkb_tx])
     an = Analysis(detect_type(full), detect_provider(full), conv)
     if conv.decimal is None:
         an.warnings.append(f"Zahlenformat nicht eindeutig ({conv.evidence}) – mehrdeutige Zahlen bleiben ungelöst.")

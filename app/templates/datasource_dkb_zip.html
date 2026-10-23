@@ -48,9 +48,18 @@
     {% else %}<p class="hint">Noch nichts abgelegt.</p>{% endif %}
     {% if rp.depots %}<p class="hint">Depots: {% for d in rp.depots %}{{ d.depot }} ({{ d.count }}){{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
     {% for n in rp.notes %}<div class="alert warn"><span class="icon">!</span><div>{{ n }}</div></div>{% endfor %}
-    <p class="hint">Es wurde nichts gebucht. Kauf-/Verkaufsabrechnungen sind unten ausgewertet; Erträge, Kapitalmaßnahmen, Depotauszüge und Kosteninformationen folgen in den nächsten Ausbaustufen.</p>
+    <p class="hint">Es wurde nichts gebucht. Kauf-/Verkaufsabrechnungen und Ertragsabrechnungen sind unten ausgewertet; Kapitalmaßnahmen, Depotauszüge und Kosteninformationen folgen in den nächsten Ausbaustufen.</p>
   </section>
 
+  {% macro tradelist(title, items, tone, with_reason=False) %}
+  {% if items %}
+  <details class="card"{% if tone == 'crit' %} open{% endif %}><summary><b>{{ title }}</b> <span class="badge {{ tone }}">{{ items|length }}</span></summary>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Beleg</th><th>{{ 'Grund' if with_reason else 'Buchung' }}</th></tr></thead><tbody>
+    {% for it in items[:200] %}<tr><td class="wrap-any">{% if it.doc %}<a href="/journal/documents/{{ it.doc }}">{{ it.name }}</a>{% else %}{{ it.name }}{% endif %}</td><td data-label="{{ 'Grund' if with_reason else 'Buchung' }}" class="wrap-any">{% if with_reason %}{{ it.reason }}{% else %}<span class="mono">{{ it.tx or '' }}</span>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </details>
+  {% endif %}
+  {% endmacro %}
   {% set tr = rp.trades %}
   {% if tr and (tr.matched or tr.new or tr.unclear or tr.failed) %}
   <section class="card" id="abrechnungen">
@@ -62,18 +71,26 @@
       <li><b>{{ tr.unclear|length }}</b> ungeklärt (Rechenprobe oder Pflichtangaben) – nicht buchbar{% if tr.failed %}, <b>{{ tr.failed|length }}</b> nicht auswertbar{% endif %}</li>
     </ul>
   </section>
-  {% macro tradelist(title, items, tone, with_reason=False) %}
-  {% if items %}
-  <details class="card"{% if tone == 'crit' %} open{% endif %}><summary><b>{{ title }}</b> <span class="badge {{ tone }}">{{ items|length }}</span></summary>
-    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Beleg</th><th>{{ 'Grund' if with_reason else 'Buchung' }}</th></tr></thead><tbody>
-    {% for it in items[:200] %}<tr><td class="wrap-any">{% if it.doc %}<a href="/journal/documents/{{ it.doc }}">{{ it.name }}</a>{% else %}{{ it.name }}{% endif %}</td><td data-label="{{ 'Grund' if with_reason else 'Buchung' }}" class="wrap-any">{% if with_reason %}{{ it.reason }}{% else %}<span class="mono">{{ it.tx or '' }}</span>{% endif %}</td></tr>{% endfor %}
-    </tbody></table></div>
-  </details>
-  {% endif %}
-  {% endmacro %}
   {{ tradelist('Ungeklärt (nicht buchbar)', tr.unclear, 'crit', True) }}
   {{ tradelist('Nicht auswertbar', tr.failed, 'crit', True) }}
   {{ tradelist('Vorhandenen Buchungen zugeordnet', tr.matched, 'good') }}
+  {% endif %}
+
+  {% set inc = rp.income %}
+  {% if inc and (inc.matched or inc.new or inc.unclear or inc.failed) %}
+  <section class="card" id="ertraege">
+    <div class="card-head"><h2>Erträge (Dividenden, Kapitalrückzahlungen, Liquidationszahlungen)</h2></div>
+    <p>Jede Ertragsabrechnung wurde mit der <b>Rechenprobe</b> geprüft (EUR-Brutto − einbehaltene Quellensteuer − Kapitalertragsteuer − Solidaritätszuschlag = Ausmachender Betrag). Gebucht wird der Bruttobetrag als Dividende, dazu <b>nur die tatsächlich einbehaltene</b> Quellensteuer und die Steuern des Belegs als eigene Zeilen; „anrechenbare“ und „rückforderbare“ Beträge sind Information und werden nicht abgezogen.</p>
+    <ul>
+      <li><b>{{ inc.matched|length }}</b> bereits erfassten Dividenden zugeordnet (nur verknüpft; Steuerzeilen bleiben Vorschlag)</li>
+      <li><b>{{ inc.new|length }}</b> ohne vorhandene Buchung – Vorschlag im <a href="/journal/pruefung">Prüfstapel</a> (vor dem Stichtag des kuratierten Imports nur auf ausdrücklichen Wunsch zu übernehmen)</li>
+      <li><b>{{ inc.unclear|length }}</b> ungeklärt (Rechenprobe oder Pflichtangaben) – nicht buchbar{% if inc.failed %}, <b>{{ inc.failed|length }}</b> nicht auswertbar{% endif %}</li>
+    </ul>
+    <p class="hint">Kapitalrückzahlungen und Liquidationszahlungen behandelt die Bank steuerlich wie Erträge (Kapitalertragsteuer auf den vollen Betrag). Portfolia erfasst sie deshalb als Ertrag und kennzeichnet sie im Prüfstapel; die steuerliche Einordnung bleibt Ihre Entscheidung.</p>
+  </section>
+  {{ tradelist('Ungeklärt (nicht buchbar)', inc.unclear, 'crit', True) }}
+  {{ tradelist('Nicht auswertbar', inc.failed, 'crit', True) }}
+  {{ tradelist('Vorhandenen Dividenden zugeordnet', inc.matched, 'good') }}
   {% endif %}
 
   {% macro filelist(title, items, tone) %}
