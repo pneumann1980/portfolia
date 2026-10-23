@@ -82,6 +82,14 @@ class NewsService:
         stats = CycleStats()
         if self.ctx.portfolio() is None:
             return {"skipped": "kein Import"}
+        if not self.db.get_state("news.market_sources_v1"):  # einmalig: marktweite Quellen für den Tagesbericht
+            try:
+                added = self.cfg.ensure_market_sources()
+                if added:
+                    log.info("Marktweite Quellen in sources.yaml ergänzt: %s", ", ".join(added))
+                self.db.set_state("news.market_sources_v1", True)
+            except Exception as e:  # Ergänzung darf den Abruf nie verhindern
+                log.warning("Marktweite Quellen konnten nicht ergänzt werden: %s", e)
         matcher, pfac = self.matcher()
         settings = self.cfg.settings
         index = self._title_index()

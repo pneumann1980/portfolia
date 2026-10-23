@@ -1,6 +1,6 @@
 <div class="list">
 {% for n in news %}
-  <a class="list-item" href="{{ n.url }}" target="_blank" rel="noopener noreferrer">
+  <a class="list-item" href="{{ '/news/' ~ n.id if n.kind != 'video' else n.url }}"{% if n.kind == 'video' %} target="_blank" rel="noopener noreferrer"{% endif %}>
     <span class="grow">
       <span class="title">{% if n.kind == 'video' %}▶ {% endif %}{{ n.title }}</span>
       <span class="meta">{{ n.source_name or n.channel_name or '' }} · {{ n.published_at|rel_time_iso }}</span>

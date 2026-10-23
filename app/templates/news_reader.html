@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ n.title }}{% endblock %}
+{% block heading %}News{% endblock %}
+{% block content %}
+{% set cs = content.status if content else 'none' %}
+{% set origin = (content.final_url if content and content.final_url else n.url) %}
+<article class="stack reader">
+  <p class="row" style="gap:10px;flex-wrap:wrap"><a href="{{ back }}">← Zurück zur Übersicht</a>
+    <span id="rb-{{ n.id }}">{% include "partials/news_read_button.html" %}</span></p>
+
+  <section class="card">
+    <h2 class="reader-title">{{ n.title }}</h2>
+    <div class="meta meta-row reader-meta">
+      <span>{{ n.source_name }}</span>
+      <span>· veröffentlicht {{ n.published_at|datetime_de }}</span>
+      {% if content and content.author %}<span>· {{ content.author }}</span>{% endif %}
+      {% for aid, name in assets[:6] %}<a class="badge info" href="/news?tab=articles&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
+      {% if cs == 'success' %}<span class="badge good" title="Volltext wurde lokal geladen">Volltext</span>
+      {% elif cs == 'partial' %}<span class="badge warn">Teiltext</span>
+      {% elif cs == 'blocked' %}<span class="badge warn">gesperrt</span>{% endif %}
+    </div>
+    {% if n.image_url %}<img class="reader-img" src="/img/news/{{ n.id }}" alt="" loading="lazy">{% endif %}
+
+    {% if cs == 'blocked' %}
+      <div class="alert warn" role="status"><span class="icon">!</span><div>Der Verlag zeigt den vollständigen Text nur nach Anmeldung/Zustimmung ({{ {'paywall': 'Bezahlschranke', 'consent': 'Zustimmungsabfrage', 'http_denied': 'Zugriff verweigert'}.get(content.reason, 'Sperre') }}). Portfolia umgeht das nicht – bitte den Originalartikel öffnen.</div></div>
+    {% elif cs == 'partial' %}
+      <div class="alert info" role="status"><span class="icon">i</span><div>Nur ein Teil des Artikels war abrufbar{% if content.reason == 'paywall' %} (Rest hinter einer Bezahlschranke){% endif %}.</div></div>
+    {% elif cs in ('failed', 'pending', 'none') %}
+      <div class="alert info" role="status"><span class="icon">i</span><div>
+        {% if cs == 'pending' %}Der Artikeltext wird später erneut geladen.{% elif cs == 'failed' %}Der Artikeltext konnte nicht geladen werden{% if content and content.reason %} ({{ {'timeout': 'Zeitüberschreitung', 'network': 'Netzwerkfehler', 'gone': 'nicht mehr vorhanden', 'no_content': 'kein Text erkannt', 'blocked': 'Adresse nicht zulässig', 'gnews_unresolved': 'Google-News-Link nicht auflösbar', 'content_type': 'kein Text', 'too_large': 'zu groß', 'rate_limited': 'Server bremst', 'http_error': 'Serverfehler', 'dns': 'Adresse nicht auflösbar'}.get(content.reason, content.reason) }}){% endif %}.{% else %}Der Artikeltext wurde noch nicht geladen.{% endif %}
+        Angezeigt wird der Anreißer aus dem Feed.</div></div>
+    {% endif %}
+
+    <div class="reader-body">
+      {% if paragraphs %}
+        {% for p in paragraphs %}{% if p.startswith('## ') %}<h3>{{ p[3:] }}</h3>{% else %}<p>{{ p }}</p>{% endif %}{% endfor %}
+      {% elif content and content.excerpt %}<p>{{ content.excerpt }}</p>
+      {% elif n.summary %}<p>{{ n.summary }}</p>{% endif %}
+    </div>
+    <p class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+      <a class="btn" href="{{ origin }}" target="_blank" rel="noopener noreferrer">Originalartikel öffnen ↗</a>
+      {% if cs in ('failed', 'blocked', 'partial', 'none') %}<button class="btn ghost" hx-post="/news/{{ n.id }}/refetch" title="Artikeltext erneut laden">Erneut laden</button>{% endif %}
+    </p>
+    <p class="hint">Quelle: {{ n.source_name }} – © beim jeweiligen Verlag. Der Text wurde zur privaten Lektüre lokal zwischengespeichert, nicht verändert und nicht weitergegeben.</p>
+  </section>
+
+  {% if analysis %}
+  <section class="card ai-box" aria-label="KI-Analyse">
+    <div class="card-head"><h2>KI-Zusammenfassung <span class="badge info">KI</span></h2>
+      <span class="hint">{{ analysis.provider }} · {{ analysis.model }} · {{ analysis.analyzed_at|datetime_de }} · Basis: {{ {'fulltext': 'Volltext', 'excerpt': 'Teiltext', 'teaser': 'nur Anreißer'}.get(analysis.basis, analysis.basis) }}</span></div>
+    <p>{{ analysis.zusammenfassung }}</p>
+    <div class="meta meta-row" style="margin:6px 0">
+      <span class="badge">{{ analysis.kategorie }}</span>
+      <span class="badge {{ {'positiv': 'good', 'negativ': 'crit', 'gemischt': 'warn'}.get(analysis.stimmung, '') }}">Stimmung: {{ analysis.stimmung }}</span>
+      <span class="badge" title="Marktrelevanz des Ereignisses">Bedeutung {{ (analysis.bedeutung * 100)|round|int }} %</span>
+      <span class="badge" title="Sicherheit der Analyse auf Basis des gelieferten Textes">Konfidenz {{ (analysis.konfidenz * 100)|round|int }} %</span>
+    </div>
+    {% if analysis.fakten %}
+    <h3 class="reader-sub">Fakten laut Artikel</h3>
+    <ul class="reader-list">{% for f in analysis.fakten %}<li>{{ f }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if analysis.zitierte_einschaetzungen %}
+    <h3 class="reader-sub">Zitierte Einschätzungen Dritter</h3>
+    <ul class="reader-list">{% for v in analysis.zitierte_einschaetzungen %}<li><b>{{ v.quelle }}:</b> {{ v.aussage }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if analysis.betroffene %}
+    <h3 class="reader-sub">Betroffene Werte</h3>
+    <p class="meta meta-row">{% for b in analysis.betroffene %}<span class="badge {{ {'positiv': 'good', 'negativ': 'crit'}.get(b.richtung, '') }}">{{ b.name }} · {{ b.richtung }}</span>{% endfor %}</p>
+    {% endif %}
+    {% if analysis.einordnung %}
+    <div class="ai-opinion">
+      <h3 class="reader-sub">KI-Einordnung <span class="badge warn">Einschätzung, keine Tatsache</span></h3>
+      <p>{{ analysis.einordnung }}</p>
+    </div>
+    {% endif %}
+    {% if analysis.unsicherheiten %}
+    <h3 class="reader-sub">Unsicherheiten</h3>
+    <ul class="reader-list">{% for u in analysis.unsicherheiten %}<li>{{ u }}</li>{% endfor %}</ul>
+    {% endif %}
+    <p class="hint">Automatisch aus dem öffentlichen Artikeltext erstellt – es wurden keine Bestände, Beträge oder Konten übermittelt. Keine Anlageberatung.</p>
+  </section>
+  {% elif ai.enabled() %}
+  <section class="card"><p class="hint">Die KI-Analyse dieser Meldung steht noch aus (nach dem Laden des Artikeltextes, Bearbeitung in Stapeln).</p></section>
+  {% endif %}
+
+  {% if event %}
+  <section class="card">
+    <div class="card-head"><h2>Weitere Berichte zum Ereignis</h2>
+      <a class="small" href="/news/event/{{ event.id }}?back={{ urlq('/news/' ~ n.id) }}">Ereignis ansehen ({{ event.n_items }} Berichte)</a></div>
+    <p class="hint">{{ event.title }}</p>
+    <div class="list">
+      {% for m in others %}
+      <div class="list-item">
+        <a class="grow" href="/news/{{ m.id }}"><span class="title">{{ m.title }}</span><span class="meta meta-row"> {{ m.source_name }} · {{ m.published_at|rel_time_iso }}</span></a>
+      </div>
+      {% else %}<p class="hint">Keine weiteren Berichte.</p>{% endfor %}
+    </div>
+    <button class="btn sm ghost" hx-post="/news/{{ n.id }}/event/split" hx-confirm="Diese Meldung gehört nicht zu diesem Ereignis? Sie wird herausgelöst und nie wieder automatisch mit diesen Berichten gruppiert.">Gehört nicht dazu – aus Ereignis lösen</button>
+  </section>
+  {% endif %}
+</article>
+{% endblock %}

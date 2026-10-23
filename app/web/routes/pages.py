@@ -406,6 +406,7 @@ def settings_page(request: Request, saved: str = "", err: str = "") -> HTMLRespo
     next_runs = ctx.scheduler.next_runs() if ctx.scheduler else {}
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,
                   detected_cash=(led.cash_tracked if led else {}), secrets=ctx.config.secrets.status(),
+                  gemini_models=_gemini_models(ctx),
                   config=ctx.config, saved=saved, err=err[:400], backups=backups, exports=exports, archive=archive,
                   export_job=job, ds_summary=ds_summary, pp=price_plan, next_runs=next_runs,
                   restore=restore_status(ctx))
@@ -418,3 +419,10 @@ def fmt_ts(ts: str | None) -> str:
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+def _gemini_models(ctx: Any) -> list[str]:
+    from app.news.ai import GEMINI_MODELS
+
+    cur = str(ctx.settings.get("llm.gemini_model") or "")
+    return list(GEMINI_MODELS) if cur in GEMINI_MODELS or not cur else [cur, *GEMINI_MODELS]

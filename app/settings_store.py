@@ -68,6 +68,28 @@ DEFAULTS: dict[str, Any] = {
     "llm.daily_token_budget": 60000,
     "llm.model": "claude-opus-5",
     "llm.digest": True,
+    # KI-Anbieter: claude | gemini. Gemini nutzt nur kostenlos verfügbare Flash-/Flash-Lite-Modelle; die lokalen
+    # Grenzen (je Minute/Tag) sind bewusst konservativ und ersetzen keine Prüfung des eigenen Google-Kontingents.
+    "llm.provider": "claude",
+    "llm.gemini_model": "gemini-3.5-flash-lite",
+    "llm.gemini_rpm": 5,
+    "llm.gemini_tpm": 100000,
+    "llm.gemini_rpd": 100,
+    "llm.gemini_daily_token_budget": 200000,
+    # News-Intelligence: Artikelinhalt, Analyse, Ereignisse, Tagesbericht
+    "news.enrich": True,  # Volltext nachladen (Hintergrundjob, getrennt vom Feed-Import)
+    "news.enrich_per_run": 20,
+    "news.enrich_days": 3,
+    "news.content_mode": "full",  # full = bereinigter Volltext | excerpt = nur Auszug (~1500 Zeichen)
+    "news.analysis": True,  # strukturierte Einzelanalyse (nur mit aktivierter KI)
+    "news.analysis_per_run": 12,
+    "news.group": True,  # Ereignisgruppierung (lokal; KI nur für Grenzfälle)
+    "news.group_hours": 72,
+    "news.group_llm": True,
+    "news.report": True,  # täglicher Finanzmarktbericht (nur mit aktivierter KI)
+    "news.report_hour": 7,
+    "news.report_minute": 30,
+    "news.report_hours": 24,
     # Steuer
     "tax.rulepack": "auto",
     "tax.account_withholding": {},  # {konto: domestic|foreign}

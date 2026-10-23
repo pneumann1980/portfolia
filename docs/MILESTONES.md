@@ -1426,6 +1426,29 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.46.0 – News-Intelligence: Leseansicht, Gemini, Analyse, Ereignisse, Tagesbericht
+
+Details, Grenzen und Datenschutz in `docs/NEWS_INTELLIGENCE.md`.
+
+* **Artikeltext (Stufe B)** als eigener Hintergrundjob `news_enrich` (Tabelle `news_content`, Migration 33): SSRF-sicherer
+  Abruf mit Anpinnen der geprüften IP (DNS-Rebinding), Weiterleitungs-/Größen-/Zeitgrenzen, Extraktion mit `lxml`
+  (JSON-LD, `<article>`, Absatzdichte), Status `success/partial/blocked/failed/pending`, Retry-Backoff, Host-Ruhezeiten,
+  Google-News-Link-Auflösung (best effort). Bezahl-/Zustimmungsschranken werden **nicht** umgangen. Marktweite Meldungen
+  werden mit angereichert; neue marktweite Quellen (tagesschau Wirtschaft, Fed, EZB) werden einmalig ergänzt.
+* **Leseansicht** `/news/<id>`: Artikel, KI-Zusammenfassung und KI-Einordnung getrennt, weitere Berichte zum Ereignis,
+  Original-Link separat, automatischer Lesestatus, Fallbacks bei fehlendem Text.
+* **Google Gemini** neben Claude (REST, Schlüssel im Header, nur Flash-/Flash-Lite-Modelle mit Free-Tier, lokale
+  RPM/TPM/RPD-/Token-Grenzen, kontrollierte Pause bei `RESOURCE_EXHAUSTED`, kein Modell-/Anbieterwechsel, Nutzung aus
+  `usageMetadata`). `GEMINI_API_KEY` auch in Unraid-Template und Compose.
+* **Einzelanalyse** (`news_analysis`): Fakten / zitierte Einschätzungen / KI-Einordnung / Unsicherheiten getrennt,
+  strenge Validierung inkl. Zahlenbeleg, Hash-Idempotenz, Prompt-Injection-Schutz.
+* **Ereignisgruppierung** lokal (Titel-Jaccard, Hash, Ereignistitel, Zahlenkonflikt-Sperre), KI nur für Grenzfälle,
+  manuelle Korrektur („aus Ereignis lösen“, dauerhaft).
+* **Täglicher Finanzmarktbericht** (Deutsch, Quellen, Historie, Versionen, Nachholen nach Neustart, Fehler überschreiben nie).
+* **Überwachung** *News → Status*; CI-Smoke-Test für Bericht und Status.
+* **Grenzen:** nicht gegen echte Gemini-/Google-News-/Verlagsantworten getestet; Free-Tier-Zahlen sind eigene Annahmen
+  (Google veröffentlicht sie nur in AI Studio); Extraktion heuristisch, kein Headless-Browser.
+
 ## 0.45.2 – Anbindung entfernen nur mit Bestätigung
 
 * „Entfernen“ einer Anbindung führt auf eine Bestätigungsseite (`/settings/datasources/<id>/entfernen`: was entfernt wird, was bleibt) mit Pflicht-Häkchen; `POST …/delete` ohne `confirm=1` wird abgelehnt. Gilt auch für „Datenquelle entfernen“ in der Konto-Entfernen-Vorschau.

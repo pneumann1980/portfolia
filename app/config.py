@@ -48,11 +48,12 @@ class Secrets:
     finnhub_api_key: str | None = None
     youtube_api_key: str | None = None
     anthropic_api_key: str | None = None
+    gemini_api_key: str | None = None
     cryptopanic_api_key: str | None = None
 
     def values(self) -> list[str]:
         return [v for v in (self.coingecko_api_key, self.finnhub_api_key, self.youtube_api_key,
-                            self.anthropic_api_key, self.cryptopanic_api_key) if v]
+                            self.anthropic_api_key, self.gemini_api_key, self.cryptopanic_api_key) if v]
 
     def status(self) -> dict[str, bool]:
         """Nur 'gesetzt' / 'nicht gesetzt' – niemals den Wert."""
@@ -61,6 +62,7 @@ class Secrets:
             "FINNHUB_API_KEY": bool(self.finnhub_api_key),
             "YOUTUBE_API_KEY": bool(self.youtube_api_key),
             "ANTHROPIC_API_KEY": bool(self.anthropic_api_key),
+            "GEMINI_API_KEY": bool(self.gemini_api_key),
             "CRYPTOPANIC_API_KEY": bool(self.cryptopanic_api_key),
         }
 
@@ -170,6 +172,7 @@ class Config:
                 finnhub_api_key=_env("FINNHUB_API_KEY"),
                 youtube_api_key=_env("YOUTUBE_API_KEY"),
                 anthropic_api_key=_env("ANTHROPIC_API_KEY"),
+                gemini_api_key=_env("GEMINI_API_KEY"),
                 cryptopanic_api_key=_env("CRYPTOPANIC_API_KEY"),
             ),
             fx_frankfurter_url=_env("FX_FRANKFURTER_URL", cls.fx_frankfurter_url) or cls.fx_frankfurter_url,

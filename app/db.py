@@ -953,6 +953,110 @@ CREATE INDEX IF NOT EXISTS ix_tx_document_doc ON tx_document(document_id);
 -- gebraucht werden.
 ALTER TABLE bank_doc ADD COLUMN meta TEXT;
 """),
+    (33, """
+-- News-Intelligence: Artikelinhalt (Stufe B), strukturierte KI-Analyse, Ereignisgruppen, KI-Nutzung, Tagesberichte.
+-- Alle Tabellen hängen per ON DELETE CASCADE an news_item: die Aufbewahrungsfrist (retention_days) löscht mit.
+CREATE TABLE IF NOT EXISTS news_content (
+  item_id       INTEGER PRIMARY KEY REFERENCES news_item(id) ON DELETE CASCADE,
+  status        TEXT NOT NULL,          -- pending | success | partial | blocked | failed
+  reason        TEXT,                   -- Kurzgrund bei partial/blocked/failed (kein Rohtext der Gegenstelle)
+  final_url     TEXT,
+  canonical_url TEXT,
+  http_status   INTEGER,
+  title         TEXT,
+  author        TEXT,
+  published_at  TEXT,
+  lang          TEXT,
+  image_url     TEXT,
+  content       TEXT,                   -- bereinigter Text, Absätze durch Leerzeile getrennt (kein HTML)
+  excerpt       TEXT,
+  word_count    INTEGER,
+  quality       REAL,
+  content_hash  TEXT,
+  priority      REAL,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  next_attempt  TEXT,
+  fetched_at    TEXT,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_news_content_status ON news_content(status, next_attempt);
+
+CREATE TABLE IF NOT EXISTS news_analysis (
+  item_id        INTEGER PRIMARY KEY REFERENCES news_item(id) ON DELETE CASCADE,
+  input_hash     TEXT NOT NULL,         -- Hash aus Titel, Inhalt/Teaser, Prompt- und Schemaversion
+  provider       TEXT NOT NULL,
+  model          TEXT NOT NULL,
+  prompt_version INTEGER NOT NULL,
+  basis          TEXT NOT NULL,         -- fulltext | excerpt | teaser
+  category       TEXT,
+  scope          TEXT,                  -- asset | sector | market | macro | other
+  sentiment      TEXT,                  -- positiv | neutral | negativ | gemischt | unklar
+  importance     REAL,
+  confidence     REAL,
+  summary        TEXT,
+  result_json    TEXT NOT NULL,
+  input_tokens   INTEGER,
+  output_tokens  INTEGER,
+  analyzed_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_news_analysis_time ON news_analysis(analyzed_at);
+
+CREATE TABLE IF NOT EXISTS news_event (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  title      TEXT NOT NULL,
+  category   TEXT,
+  first_seen TEXT NOT NULL,
+  last_seen  TEXT NOT NULL,
+  n_items    INTEGER NOT NULL DEFAULT 0,
+  n_sources  INTEGER NOT NULL DEFAULT 0,
+  main_item  INTEGER,
+  locked     INTEGER NOT NULL DEFAULT 0   -- 1 = manuell bestätigt/korrigiert: keine automatische Neuzuordnung
+);
+CREATE INDEX IF NOT EXISTS ix_news_event_seen ON news_event(last_seen);
+
+CREATE TABLE IF NOT EXISTS news_event_item (
+  item_id  INTEGER PRIMARY KEY REFERENCES news_item(id) ON DELETE CASCADE,
+  event_id INTEGER NOT NULL REFERENCES news_event(id) ON DELETE CASCADE,
+  score    REAL NOT NULL,
+  method   TEXT NOT NULL,               -- title | entities | llm | manual
+  added_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_news_event_item_ev ON news_event_item(event_id);
+
+-- Abgelehnte Zusammenführungen (manuelle Korrektur): dieses Paar wird nie wieder automatisch gruppiert.
+CREATE TABLE IF NOT EXISTS news_event_split (
+  item_id  INTEGER NOT NULL,
+  other_id INTEGER NOT NULL,
+  PRIMARY KEY (item_id, other_id)
+) WITHOUT ROWID;
+
+-- KI-Nutzung je Tag und Anbieter (Anfragen, tatsächliche Tokens laut Antwort, Fehler, Kontingenttreffer).
+-- Tag: Gemini nach Pacific Time (Tageskontingent setzt um Mitternacht Pacific zurück), Claude nach lokaler Zeit.
+CREATE TABLE IF NOT EXISTS ai_usage (
+  day           TEXT NOT NULL,
+  provider      TEXT NOT NULL,
+  requests      INTEGER NOT NULL DEFAULT 0,
+  input_tokens  INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  errors        INTEGER NOT NULL DEFAULT 0,
+  quota_hits    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, provider)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS news_report (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  day          TEXT NOT NULL,           -- Berichtstag (lokal, Europe/Berlin)
+  version      INTEGER NOT NULL,        -- 1 = automatisch erzeugt, höher = manuell neu erzeugt
+  provider     TEXT NOT NULL,
+  model        TEXT NOT NULL,
+  period_from  TEXT NOT NULL,           -- betrachteter Nachrichtenzeitraum (UTC)
+  period_to    TEXT NOT NULL,
+  content_json TEXT NOT NULL,
+  n_items      INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL,
+  UNIQUE (day, version)
+);
+"""),
 ]
 
 

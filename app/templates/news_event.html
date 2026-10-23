@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Ereignis{% endblock %}
+{% block heading %}Ereignis{% endblock %}
+{% block content %}
+<div class="stack">
+  <p><a href="{{ back }}">← Zurück</a></p>
+  <section class="card">
+    <h2 class="reader-title">{{ ev.title }}</h2>
+    <div class="meta meta-row"><span>{{ ev.n_items }} Berichte</span><span>· {{ ev.n_sources }} Quellen</span>
+      <span>· erste Meldung {{ ev.first_seen|datetime_de }}</span><span>· letzte {{ ev.last_seen|datetime_de }}</span>
+      {% if ev.category %}<span class="badge">{{ ev.category }}</span>{% endif %}
+      {% if ev.locked %}<span class="badge warn" title="Manuell korrigiert: wird nicht mehr automatisch erweitert">fest</span>{% endif %}</div>
+    <p class="hint">Gruppiert nach Titelähnlichkeit und Inhalt (nie nur wegen desselben Werts). Falsche Zuordnungen lassen sich in der Meldung lösen.</p>
+    <div class="list">
+      {% for m in members %}
+      <div class="list-item">
+        <a class="grow" href="/news/{{ m.id }}"><span class="title">{{ m.title }}</span>
+          <span class="meta meta-row"> {{ m.source_name }} · {{ m.published_at|datetime_de }} · {{ {'hash': 'gleicher Text', 'title': 'Titel', 'entities': 'Ereignistitel', 'llm': 'KI-Abgleich', 'manual': 'manuell'}.get(m.method, m.method) }} ({{ (m.score * 100)|round|int }} %)</span>
+          {% if m.asummary %}<span class="summary small">{{ m.asummary }}</span>{% endif %}</a>
+        <a class="small" href="{{ m.url }}" target="_blank" rel="noopener noreferrer">Original ↗</a>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% set c = report.content %}
+{% macro srcs(refs, qs) -%}
+  {%- for r in refs %}{% set s = qs.get(r|string) %}{% if s %}<a class="badge" href="/news/{{ s.id }}" title="{{ s.titel }} – {{ s.quelle }}">[{{ loop.index }}] {{ s.quelle }}</a> {% endif %}{% endfor -%}
+{%- endmacro %}
+<div class="stack">
+  <div class="meta meta-row">
+    <span class="badge info">KI-Bericht</span>
+    <span>Bericht vom <b>{{ report.day|date_de }}</b>{% if report.version > 1 %} (Version {{ report.version }}){% endif %}</span>
+    <span>· erstellt {{ report.created_at|datetime_de }}</span>
+    <span>· {{ report.provider }} / {{ report.model }}</span>
+    <span>· {{ report.n_items }} analysierte Meldungen der letzten 24 h</span>
+  </div>
+  <p class="hint">Von einer KI aus gespeicherten Artikelanalysen erstellt – nicht aus Ihren Beständen. Keine Anlageberatung. Einordnungen sind Einschätzungen, keine Tatsachen.</p>
+
+  <section class="card"><div class="card-head"><h2>Marktüberblick</h2></div><p>{{ c.ueberblick }}</p></section>
+
+  <section class="card"><div class="card-head"><h2>Wichtigste Ereignisse</h2></div>
+    <div class="list">{% for e in c.ereignisse %}{% set s = c.quellen.get(e.ref|string) %}
+      <div class="list-item" style="display:block">
+        <div class="title"><a href="/news/{{ e.ref }}">{{ e.titel }}</a>
+          <span class="badge {{ {'hoch': 'crit', 'mittel': 'warn'}.get(e.bedeutung, '') }}">Bedeutung {{ e.bedeutung }}</span></div>
+        <p style="margin:4px 0">{{ e.kernaussage }}</p>
+        {% if e.einordnung %}<p class="small ai-opinion"><b>Einordnung (KI):</b> {{ e.einordnung }}</p>{% endif %}
+        {% if s %}<div class="meta meta-row"><span>Quelle: {{ s.quelle }}{% if s.berichte > 1 %} und {{ s.berichte - 1 }} weitere{% endif %}</span>
+          <span>· Ereignis seit {{ s.ereigniszeit|datetime_de }}</span><span>· Artikel {{ s.artikelzeit|datetime_de }}</span>
+          <a href="/news/{{ s.id }}">im Reader</a><a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">Original ↗</a></div>{% endif %}
+      </div>{% endfor %}</div>
+  </section>
+
+  {% if c.krypto %}<section class="card"><div class="card-head"><h2>Krypto</h2></div><p>{{ c.krypto }}</p></section>{% endif %}
+
+  {% if c.portfolio %}<section class="card"><div class="card-head"><h2>Bedeutung für Ihr Portfolio</h2><span class="hint">qualitativ – die KI kennt keine Bestände</span></div>
+    <div class="list">{% for p in c.portfolio %}
+      <div class="list-item" style="display:block"><div class="title">{{ p.asset }}
+        <span class="badge {{ {'positiv': 'good', 'negativ': 'crit'}.get(p.richtung, '') }}">{{ p.richtung }}</span></div>
+        <p style="margin:4px 0">{{ p.aussage }}</p><div class="meta meta-row">{{ srcs(p.refs, c.quellen) }}</div></div>{% endfor %}</div>
+  </section>{% endif %}
+
+  {% if c.ausblick %}<section class="card"><div class="card-head"><h2>Ausblick</h2><span class="hint">nur, was Quellen ausdrücklich nennen</span></div>
+    <ul class="reader-list">{% for o in c.ausblick %}<li>{{ o.punkt }} <span class="meta meta-row">{{ srcs([o.ref], c.quellen) }}</span></li>{% endfor %}</ul></section>{% endif %}
+
+  {% if c.unsicherheiten %}<section class="card"><div class="card-head"><h2>Unsicherheiten</h2></div>
+    <ul class="reader-list">{% for u in c.unsicherheiten %}<li>{{ u }}</li>{% endfor %}</ul></section>{% endif %}
+
+  <section class="card"><div class="card-head"><h2>Quellen</h2></div>
+    <ol class="reader-list">{% for k, s in c.quellen.items() %}
+      <li><a href="/news/{{ s.id }}">{{ s.titel }}</a> – {{ s.quelle }}{% if s.berichte > 1 %} (+{{ s.berichte - 1 }}){% endif %}
+        <span class="meta meta-row"> Artikel {{ s.artikelzeit|datetime_de }} · <a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">Original ↗</a></span></li>{% endfor %}</ol>
+  </section>
+</div>

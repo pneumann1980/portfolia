@@ -124,6 +124,9 @@ jobs:
           curl -fsS http://127.0.0.1:8080/quality/abdeckung | grep -q "<title>Quellenabdeckung"
           curl -fsS http://127.0.0.1:8080/quality/anschaffung | grep -q "<title>Anschaffungsdaten"
           curl -fsS http://127.0.0.1:8080/quality/cockpit | grep -q "<title>Vollständigkeit"
+          # News-Intelligence: Tagesbericht und Pipeline-Status laufen auch ohne KI-Schlüssel
+          curl -fsS "http://127.0.0.1:8080/news?tab=report" | grep -q "Täglicher Finanzmarktbericht"
+          curl -fsS "http://127.0.0.1:8080/news?tab=status" | grep -q "Pipeline heute"
           # Beleg hochladen (wie die Oberfläche: XHR mit CSRF-Kopfzeile) → Stapel läuft durch, nichts wird gebucht
           curl -fsS -c ci-cookies.txt -o /dev/null http://127.0.0.1:8080/journal/documents
           token=$(awk '$6 == "portfolia_csrf" {print $7}' ci-cookies.txt)

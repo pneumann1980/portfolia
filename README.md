@@ -159,7 +159,8 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 | `COINGECKO_PLAN` | `demo` | `demo` oder `pro` |
 | `FINNHUB_API_KEY` | – | optional: Unternehmensnews |
 | `YOUTUBE_API_KEY` | – | optional: Handle-Auflösung per API, Discovery |
-| `ANTHROPIC_API_KEY` | – | optional: KI-Zusammenfassungen (standardmäßig aus) |
+| `ANTHROPIC_API_KEY` | – | optional: KI-Analyse und Tagesbericht über Anthropic Claude (standardmäßig aus) |
+| `GEMINI_API_KEY` | – | optional: dasselbe über Google Gemini (nur Flash-/Flash-Lite, lokale Free-Tier-Grenzen; siehe [News-Intelligence](docs/NEWS_INTELLIGENCE.md)) |
 | `CRYPTOPANIC_API_KEY` | – | optional: Krypto-News-Aggregator |
 | `AUTH_MODE` | `none` | `none` oder `basic` |
 | `AUTH_USER`, `AUTH_PASSWORD_HASH` | – | Basic-Auth; Hash erzeugen: `docker exec -it portfolia python -m app hash-password` |
@@ -1855,8 +1856,18 @@ Speichern aus der Oberfläche erhalten).
   Gewichtung nach Quelle (Primär 1,0 · Agenturen/Portale 0,8 · Krypto-Portale 0,7 · YouTube 0,6 ·
   entdeckt 0,4) und Positionsgröße, Aktualität (Halbwertszeit 48 h). Dubletten über URL und Titelähnlichkeit;
   Aufbewahrung 90 Tage; Abruf alle 30 Minuten.
-* **Optional KI** (Anthropic Claude, standardmäßig **aus**): Kurz-Zusammenfassungen und Tagesdigest mit hartem
-  Tages-Token-Budget. Gesendet werden ausschließlich Asset-Namen und Artikeltexte.
+* **Leseansicht:** Ein Klick auf einen Artikel öffnet die **interne Leseansicht** (`/news/<id>`): bereinigter
+  Artikeltext (im Hintergrund nachgeladen, ohne Umgehung von Bezahl- oder Zustimmungsschranken), KI-Zusammenfassung
+  und KI-Einordnung klar getrennt vom Artikel, weitere Berichte zum selben Ereignis, Original-Link separat.
+* **Ereignisse und Tagesbericht:** Berichte zum selben Ereignis werden lokal gruppiert (nie nur wegen desselben
+  Werts); ein täglicher **Finanzmarktbericht** (Deutsch, mit Quellen, Historie, manueller Neuerzeugung) entsteht aus
+  den gespeicherten Analysen.
+* **Optional KI** (Anthropic Claude **oder** Google Gemini, standardmäßig **aus**): strukturierte Einzelanalyse
+  (Fakten ≠ zitierte Einschätzungen ≠ KI-Einordnung ≠ Unsicheres), Grenzfälle der Gruppierung, Tagesbericht – mit
+  Tages-Token-Budget; bei Gemini zusätzlich lokale Minuten-/Tagesgrenzen und kontrollierte Pause bei erschöpftem
+  Kontingent. Gesendet werden ausschließlich öffentliche Artikeltexte, Titel, Quellen und Asset-Namen – nie
+  Stückzahlen, Werte, Gewichte, Konten oder Adressen. Details, Grenzen und Datenschutz:
+  [docs/NEWS_INTELLIGENCE.md](docs/NEWS_INTELLIGENCE.md).
 
 ---
 

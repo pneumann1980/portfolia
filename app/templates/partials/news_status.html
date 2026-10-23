@@ -1,0 +1,43 @@
+{% set ai_s = st.ai %}
+<section class="card">
+  <div class="card-head"><h2>Pipeline heute</h2>
+    <div class="row"><button class="btn sm" hx-post="/news/pipeline/run" hx-target="#pipe-msg">Anreicherung &amp; Analyse jetzt starten</button><span id="pipe-msg"></span></div></div>
+  <dl class="kv">
+    <dt>Importiert (Artikel)</dt><dd>{{ st.imported }}</dd>
+    <dt>Text geladen</dt><dd>{{ st.content.success }} vollständig · {{ st.content.partial }} Teiltext · {{ st.content.blocked }} gesperrt · {{ st.content.failed }} fehlgeschlagen · {{ st.content.pending }} Wiederholung geplant</dd>
+    {% if st.content_reasons %}<dt>Häufige Gründe</dt><dd>{% for r, k in st.content_reasons %}{{ r }} ({{ k }}){{ ', ' if not loop.last }}{% endfor %}</dd>{% endif %}
+    <dt>Analysiert</dt><dd>{{ st.analyzed }}{% if st.analysis_failed %} · {{ st.analysis_failed }} verworfen{% endif %}</dd>
+    <dt>Ereignisse (24 h)</dt><dd>{{ st.events }} ({{ st.events_multi }} mit mehreren Quellen)</dd>
+    <dt>Letzter Tagesbericht</dt><dd>{% if st.last_report %}<a href="/news?tab=report&report_id={{ st.last_report.id }}">{{ st.last_report.day|date_de }}</a> · erstellt {{ st.last_report.created_at|datetime_de }}{% else %}–{% endif %}</dd>
+  </dl>
+</section>
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>KI-Anbieter</h2><span class="hint">{{ 'aktiv' if ai_s.enabled else 'inaktiv' }}</span></div>
+  <dl class="kv">
+    <dt>Anbieter / Modell</dt><dd>{{ ai_s.provider|capitalize }} · <span class="mono">{{ ai_s.model }}</span></dd>
+    <dt>Schlüssel</dt><dd>{{ 'gesetzt' if ai_s.key else 'nicht gesetzt' }}</dd>
+    <dt>Heute ({{ ai_s.day }}{{ ' Pacific' if ai_s.provider == 'gemini' }})</dt><dd>{{ ai_s.usage.requests }} Anfragen · {{ ai_s.usage.input_tokens|num(0) }} Tokens ein · {{ ai_s.usage.output_tokens|num(0) }} aus · {{ ai_s.usage.errors }} Fehler · {{ ai_s.usage.quota_hits }} Kontingenttreffer</dd>
+    {% if ai_s.provider == 'gemini' %}
+    <dt>Lokale Grenzen</dt><dd>{{ ai_s.limits.rpm }}/min · {{ ai_s.limits.tpm|num(0) }} Tokens/min · {{ ai_s.limits.rpd }} Anfragen/Tag · {{ ai_s.limits.tpd|num(0) }} Tokens/Tag</dd>
+    <dt>Restbudget</dt><dd>{% if ai_s.enabled %}{{ ai_s.requests_left }} Anfragen · {{ ai_s.tokens_left|num(0) }} Tokens{% else %}–{% endif %}</dd>
+    {% else %}
+    <dt>Restbudget</dt><dd>{% if ai_s.enabled %}{{ ai_s.tokens_left|num(0) }} Tokens{% else %}–{% endif %}</dd>
+    {% endif %}
+    {% if ai_s.paused_until %}<dt>Pausiert bis</dt><dd><span class="badge warn">{{ ai_s.paused_until|datetime_de }}</span></dd>{% endif %}
+  </dl>
+  {% if ai_s.provider == 'gemini' %}<p class="hint">Die lokalen Zähler halten die Last unter Ihren eingestellten Grenzen. Sie garantieren <b>nicht</b>, dass Google die Nutzung als kostenlos wertet: Kontingent und Abrechnung gelten je Google-Projekt; im kostenlosen Kontingent dürfen Eingaben zur Produktverbesserung verwendet werden (daher nur öffentliche Texte).</p>{% endif %}
+</section>
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Jobs</h2></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Job</th><th>Letzter Lauf</th><th>Status</th><th>Ergebnis</th></tr></thead>
+    <tbody>{% for j, js in st.jobs.items() %}<tr>
+      <td class="mono">{{ j }}</td><td>{{ js.last_end|datetime_de if js.last_end else '–' }}</td>
+      <td>{% if js.running %}<span class="badge info">läuft</span>{% elif js.last_ok %}<span class="badge good">ok</span>{% else %}<span class="badge crit">Fehler</span>{% endif %}</td>
+      <td class="small mono">{{ st.results.get(j, '')|tojson if st.results.get(j) else '–' }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% if st.errors %}
+<section class="card" style="margin-top:16px"><div class="card-head"><h2>Letzte Fehler</h2></div>
+  <ul class="reader-list">{% for e in st.errors %}<li><b>{{ e.job }}</b>{% if e.at %} ({{ e.at|datetime_de }}){% endif %}: {{ e.text }}</li>{% endfor %}</ul></section>
+{% endif %}

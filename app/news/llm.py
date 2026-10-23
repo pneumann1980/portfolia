@@ -63,7 +63,9 @@ class LlmService:
 
     # -- Voraussetzungen --------------------------------------------------------------------------
     def enabled(self) -> bool:
-        return bool(self.ctx.config.secrets.anthropic_api_key) and bool(self.ctx.settings.get("llm.enabled", False))
+        """Claude aktiv (Schlüssel gesetzt, KI eingeschaltet, Anbieter nicht auf Gemini umgestellt)."""
+        return (bool(self.ctx.config.secrets.anthropic_api_key) and bool(self.ctx.settings.get("llm.enabled", False))
+                and self.ctx.settings.get("llm.provider", "claude") != "gemini")
 
     def usage_today(self) -> tuple[int, int, int]:
         row = self.db.q1("SELECT input_tokens, output_tokens, calls FROM llm_usage WHERE day=?",
@@ -80,6 +82,13 @@ class LlmService:
                ON CONFLICT(day) DO UPDATE SET input_tokens=input_tokens+excluded.input_tokens,
                    output_tokens=output_tokens+excluded.output_tokens, calls=calls+1""",
             (today_local().isoformat(), inp, out),
+        )
+        self.db.x(  # einheitliche Nutzungsübersicht für alle Anbieter (Überwachung)
+            """INSERT INTO ai_usage(day, provider, requests, input_tokens, output_tokens) VALUES (?,?,1,?,?)
+               ON CONFLICT(day, provider) DO UPDATE SET requests=requests+1,
+                   input_tokens=input_tokens+excluded.input_tokens,
+                   output_tokens=output_tokens+excluded.output_tokens""",
+            (today_local().isoformat(), "claude", inp, out),
         )
 
     @property

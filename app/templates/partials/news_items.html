@@ -7,7 +7,8 @@
     <img class="thumb" src="/img/news/{{ n.id }}" alt="" loading="lazy">
   {% endif %}
   <div class="body">
-    <a class="title" href="{{ n.url }}" target="_blank" rel="noopener noreferrer" hx-post="/news/{{ n.id }}/read" hx-swap="none" hx-trigger="click">{{ n.title }}</a>
+    {% if n.kind == 'video' %}<a class="title" href="{{ n.url }}" target="_blank" rel="noopener noreferrer" hx-post="/news/{{ n.id }}/read" hx-swap="none" hx-trigger="click">{{ n.title }}</a>
+    {% else %}<a class="title" href="/news/{{ n.id }}?back={{ urlq(back_url) }}">{{ n.title }}</a>{% endif %}
     <div class="meta">
       <span>{{ n.channel_name if n.kind == 'video' and n.channel_name else n.source_name }}</span>
       <span>· {{ n.published_at|rel_time_iso }}</span>
@@ -19,6 +20,8 @@
       {% endif %}
       {% for aid, name in x.assets[:4] %}<a class="badge info" href="/news?tab={{ 'videos' if n.kind == 'video' else 'articles' }}&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
       {% if n.dup_count %}<span class="badge" title="Weitere Quellen berichten ebenfalls">+{{ n.dup_count }}</span>{% endif %}
+      {% if x.event %}<a class="badge info" href="/news/event/{{ x.event.event_id }}" title="Mehrere Berichte zum selben Ereignis">Ereignis · {{ x.event.n_items }} Berichte</a>{% endif %}
+      {% if x.cstatus == 'success' %}<span class="badge good" title="Volltext lokal verfügbar">Volltext</span>{% elif x.cstatus == 'blocked' %}<span class="badge" title="Verlag sperrt den Text (Bezahl-/Zustimmungsschranke)">gesperrt</span>{% endif %}
       {% if n.hidden_reason %}<span class="badge warn">ausgeblendet: {{ n.hidden_reason }}</span>{% endif %}
       <span class="badge" title="Relevanz inkl. Aktualität">{{ x.score|num(2) }}</span>
     </div>

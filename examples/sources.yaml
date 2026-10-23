@@ -167,6 +167,36 @@ sources:
     language: en
     active: true
 
+  # ---- Marktweit (ohne Positionsbezug; speist den täglichen Marktbericht) -------------------------------
+  # require_match: false → Meldungen bleiben auch dann erhalten, wenn sie keiner Position zugeordnet werden.
+  - id: tagesschau_wirtschaft
+    name: tagesschau Wirtschaft
+    type: rss
+    url: "https://www.tagesschau.de/wirtschaft/index~rss2.xml"
+    weight: 0.8
+    language: de
+    require_match: false
+    active: true
+    note: marktweit
+  - id: fed_press
+    name: Federal Reserve (Pressemitteilungen)
+    type: rss
+    url: "https://www.federalreserve.gov/feeds/press_all.xml"
+    weight: 1.0
+    language: en
+    require_match: false
+    active: true
+    note: marktweit, Primärquelle
+  - id: ecb_press
+    name: EZB (Pressemitteilungen)
+    type: rss
+    url: "https://www.ecb.europa.eu/rss/press.html"
+    weight: 1.0
+    language: en
+    require_match: false
+    active: true
+    note: marktweit, Primärquelle
+
   # ---- Krypto (en) --------------------------------------------------------------------------------------
   - id: coindesk
     name: CoinDesk

@@ -9,7 +9,7 @@ import socket
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlencode, urljoin, urlsplit
 
 import httpx
 from apscheduler.triggers.cron import CronTrigger
@@ -19,9 +19,15 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 
 from app.context import AppContext
 from app.jobs.scheduler import Scheduler, extra_jobs, startup_job
+from app.news.ai import AiGateway
+from app.news.analysis import AnalysisService
+from app.news.enrich import EnrichService
+from app.news.events import EventService
 from app.news.llm import LlmService
 from app.news.relevance import recency_factor
+from app.news.report import ReportService
 from app.news.service import NewsService
+from app.news.status import pipeline_status
 from app.util.timeutil import iso, parse_iso
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
@@ -30,6 +36,7 @@ log = logging.getLogger(__name__)
 PAGE_SIZE = 30
 MAX_IMG_BYTES = 2 * 1024 * 1024
 _services: dict[int, NewsService] = {}
+_enrichers: dict[int, EnrichService] = {}
 
 
 def news_service(ctx: AppContext) -> NewsService:
@@ -40,6 +47,14 @@ def news_service(ctx: AppContext) -> NewsService:
     return svc
 
 
+def enrich_service(ctx: AppContext) -> EnrichService:
+    svc = _enrichers.get(id(ctx))
+    if svc is None:
+        svc = EnrichService(ctx)
+        _enrichers[id(ctx)] = svc
+    return svc
+
+
 # ----------------------------------------------------------------------------------------------------
 # Jobs
 # ----------------------------------------------------------------------------------------------------
@@ -47,9 +62,37 @@ def news_service(ctx: AppContext) -> NewsService:
 def job_fetch(ctx: AppContext) -> dict[str, Any]:
     res = news_service(ctx).run()
     llm = LlmService(ctx)
-    if llm.enabled():
+    ai = AiGateway(ctx)
+    # Die strukturierte Analyse (job_analyze) ersetzt die frühere Kurzzusammenfassung; ohne sie bleibt der alte Weg.
+    if llm.enabled() and not (ctx.settings.get("news.analysis", True) and ai.enabled()):
         res["llm"] = llm.summarize()
+    if ctx.scheduler is not None:  # Stufe B getrennt: Fehler dort blockieren den Import nie
+        ctx.scheduler.trigger("news_enrich", 5)
+        ctx.scheduler.trigger("news_group", 20)
     return res
+
+
+def job_enrich(ctx: AppContext) -> dict[str, Any]:
+    res = enrich_service(ctx).run()
+    if ctx.scheduler is not None and res.get("selected"):
+        ctx.scheduler.trigger("news_analyze", 10)
+    return res
+
+
+def job_analyze(ctx: AppContext) -> dict[str, Any]:
+    res = AnalysisService(ctx).run()
+    if ctx.scheduler is not None and res.get("analyzed"):
+        ctx.scheduler.trigger("news_group", 5)
+    return res
+
+
+def job_group(ctx: AppContext) -> dict[str, Any]:
+    return EventService(ctx).run()
+
+
+def job_report(ctx: AppContext, manual: bool = False) -> dict[str, Any]:
+    svc = ReportService(ctx)
+    return svc.generate(manual=True) if manual else svc.run_due()
 
 
 def job_rematch(ctx: AppContext) -> dict[str, Any]:
@@ -61,6 +104,8 @@ def job_discovery(ctx: AppContext) -> dict[str, Any]:
 
 
 def job_digest(ctx: AppContext) -> dict[str, Any]:
+    if ctx.settings.get("news.report", True) and AiGateway(ctx).enabled():
+        return {"skipped": "ersetzt durch den täglichen Finanzmarktbericht"}
     return LlmService(ctx).digest()
 
 
@@ -72,6 +117,10 @@ def _register_jobs(s: Scheduler) -> None:
     s.register("news_rematch", job_rematch, None)
     s.register("youtube_discovery", job_discovery, CronTrigger(hour=7, minute=5))
     s.register("llm_digest", job_digest, CronTrigger(hour=7, minute=40))
+    s.register("news_enrich", job_enrich, IntervalTrigger(minutes=15))
+    s.register("news_analyze", job_analyze, IntervalTrigger(minutes=20))
+    s.register("news_group", job_group, IntervalTrigger(minutes=20))
+    s.register("news_report", job_report, IntervalTrigger(minutes=15))
 
 
 startup_job("news_fetch", 45)
@@ -124,8 +173,19 @@ def query_items(ctx: AppContext, *, kind: str, asset: str = "", source: str = ""
         for a in ctx.db.q(f"SELECT item_id, asset_id FROM news_asset WHERE item_id IN ({ph}) ORDER BY score DESC", ids):
             assets_by_item.setdefault(a["item_id"], []).append(a["asset_id"])
     pf = ctx.portfolio()
+    events: dict[int, Any] = {}
+    cstatus: dict[int, str] = {}
+    if ids:
+        ph = ",".join("?" * len(ids))
+        for e in ctx.db.q(f"SELECT i.item_id, i.event_id, v.n_sources, v.n_items FROM news_event_item i "
+                          f"JOIN news_event v ON v.id=i.event_id WHERE i.item_id IN ({ph})", ids):
+            events[e["item_id"]] = e
+        for c in ctx.db.q(f"SELECT item_id, status FROM news_content WHERE item_id IN ({ph})", ids):
+            cstatus[c["item_id"]] = c["status"]
     for x in page:
         x["assets"] = [(aid, pf.asset(aid).name if pf else aid) for aid in assets_by_item.get(x["row"]["id"], [])]
+        x["event"] = events.get(x["row"]["id"])
+        x["cstatus"] = cstatus.get(x["row"]["id"])
     return page, total
 
 
@@ -133,19 +193,49 @@ def query_items(ctx: AppContext, *, kind: str, asset: str = "", source: str = ""
 # Routen
 # ----------------------------------------------------------------------------------------------------
 
+def _safe_back(back: str) -> str:
+    """Rücksprung nur auf interne News-Seiten (kein Open-Redirect)."""
+    return back if back.startswith("/news") and "//" not in back and "\\" not in back else "/news"
+
+
+def report_ctx(ctx: AppContext, report_id: int = 0) -> dict[str, Any]:
+    svc = ReportService(ctx)
+    rep = svc.by_id(report_id) if report_id else svc.latest()
+    return {"report": rep, "history": svc.history(30), "report_error": svc.last_error(),
+            "ai_status": AiGateway(ctx).status(), "report_time": svc.due_time(),
+            "report_on": bool(ctx.settings.get("news.report", True))}
+
+
+def reader_context(ctx: AppContext, row: Any, back: str = "") -> dict[str, Any]:
+    """Alles, was die Leseansicht braucht – getrennt nach Quelle (Artikel), KI-Zusammenfassung und KI-Einordnung."""
+    iid = row["id"]
+    content = ctx.db.q1("SELECT * FROM news_content WHERE item_id=?", (iid,))
+    analysis = AnalysisService(ctx).get(iid)
+    events = EventService(ctx)
+    ev = events.event_of(iid)
+    others = [m for m in events.members(ev["id"]) if m["id"] != iid] if ev else []
+    pf = ctx.portfolio()
+    assets = [(r["asset_id"], pf.asset(r["asset_id"]).name if pf else r["asset_id"]) for r in ctx.db.q(
+        "SELECT asset_id FROM news_asset WHERE item_id=? ORDER BY score DESC", (iid,))]
+    paragraphs = [p for p in (content["content"] or "").split("\n\n") if p.strip()] if content else []
+    return {"n": row, "content": content, "paragraphs": paragraphs, "analysis": analysis, "event": ev,
+            "others": others, "assets": assets, "back": _safe_back(back), "ai": AiGateway(ctx)}
+
+
 def make_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/news", response_class=HTMLResponse)
     def news_page(request: Request, tab: str = "articles", asset: str = "", source: str = "", days: int = 7,
                   status: str = "all", sort: str = "relevance", shorts: int = 0, hidden: int = 0,
-                  page: int = 1) -> HTMLResponse:
+                  page: int = 1, report_id: int = 0) -> HTMLResponse:
         ctx = get_ctx(request)
         svc = news_service(ctx)
         days = max(1, min(int(days), 90))
         params = {"tab": tab, "asset": asset, "source": source, "days": days, "status": status, "sort": sort,
                   "shorts": shorts, "hidden": hidden}
-        base: dict[str, Any] = {"active": "news", "params": params, "cfg_errors": svc.cfg.errors}
+        base: dict[str, Any] = {"active": "news", "params": params, "cfg_errors": svc.cfg.errors,
+                                "back_url": "/news?" + urlencode({k: v for k, v in params.items() if v not in ("", 0)})}
         pf = ctx.portfolio()
         val = ctx.valuation()
         base["assets"] = [(p.asset_id, p.asset.name) for p in (val.positions if val else []) if not p.asset.is_fiat]
@@ -154,6 +244,9 @@ def make_router() -> APIRouter:
         digest = ctx.db.q1("SELECT * FROM digest ORDER BY day DESC LIMIT 1")
         base["digest"] = digest
         base["llm"] = LlmService(ctx)
+        rep = ReportService(ctx)
+        base["report_teaser"] = rep.latest()
+        base["ai"] = AiGateway(ctx)
         if tab in ("articles", "videos"):
             kind = "article" if tab == "articles" else "video"
             page = max(1, int(page))
@@ -170,6 +263,10 @@ def make_router() -> APIRouter:
                         channels=svc.channel_state(), discovery=svc.cfg.discovery(),
                         yt_units=svc.yt.units_used(), has_yt_key=bool(ctx.config.secrets.youtube_api_key),
                         settings=svc.cfg.settings, sources_path=str(ctx.config.sources_path))
+        elif tab == "report":
+            base.update(report_ctx(ctx, report_id))
+        elif tab == "status":
+            base["st"] = pipeline_status(ctx)
         elif tab == "suggestions":
             base["suggestions"] = ctx.db.q(
                 "SELECT * FROM yt_suggestion ORDER BY CASE status WHEN 'new' THEN 0 ELSE 1 END, hits DESC, "
@@ -177,7 +274,71 @@ def make_router() -> APIRouter:
         del pf
         return render(request, "news.html", **base)
 
-    @router.post("/news/{item_id}/read")
+    @router.get("/news/{item_id:int}", response_class=HTMLResponse)
+    def reader(request: Request, item_id: int, back: str = "", keep: int = 0) -> Response:
+        ctx = get_ctx(request)
+        row = ctx.db.q1("SELECT * FROM news_item WHERE id=?", (item_id,))
+        if row is None:
+            raise HTTPException(404, "Meldung nicht gefunden")
+        if row["kind"] == "video":  # Videos laufen beim Anbieter
+            ctx.db.x("UPDATE news_item SET is_read=1 WHERE id=?", (item_id,))
+            return RedirectResponse(row["url"], status_code=303)
+        if not keep and not row["is_read"]:
+            ctx.db.x("UPDATE news_item SET is_read=1 WHERE id=?", (item_id,))
+            row = ctx.db.q1("SELECT * FROM news_item WHERE id=?", (item_id,))
+        return render(request, "news_reader.html", active="news", **reader_context(ctx, row, back))
+
+    @router.get("/news/event/{event_id:int}", response_class=HTMLResponse)
+    def event_page(request: Request, event_id: int, back: str = "") -> HTMLResponse:
+        ctx = get_ctx(request)
+        ev = ctx.db.q1("SELECT * FROM news_event WHERE id=?", (event_id,))
+        if ev is None:
+            raise HTTPException(404, "Ereignis nicht gefunden")
+        svc = EventService(ctx)
+        return render(request, "news_event.html", active="news", ev=ev, members=svc.members(event_id),
+                      back=_safe_back(back))
+
+    @router.post("/news/{item_id:int}/event/split")
+    def event_split(request: Request, item_id: int) -> Response:
+        ctx = get_ctx(request)
+        ok = EventService(ctx).split_item(item_id)
+        if not ok:
+            raise HTTPException(404, "Meldung gehört zu keinem Ereignis")
+        return Response(status_code=204, headers={"HX-Redirect": f"/news/{item_id}?keep=1"})
+
+    @router.post("/news/{item_id:int}/refetch")
+    def refetch(request: Request, item_id: int) -> Response:
+        ctx = get_ctx(request)
+        if ctx.db.q1("SELECT 1 FROM news_item WHERE id=?", (item_id,)) is None:
+            raise HTTPException(404)
+        enrich_service(ctx).reset(item_id)
+        if ctx.scheduler is not None:
+            ctx.scheduler.trigger("news_enrich", 1)
+        return Response(status_code=204, headers={"HX-Redirect": f"/news/{item_id}?keep=1"})
+
+    @router.post("/news/report/regenerate", response_class=HTMLResponse)
+    def report_regenerate(request: Request) -> HTMLResponse:
+        ctx = get_ctx(request)
+        if not AiGateway(ctx).enabled():
+            return HTMLResponse('<span class="badge warn">KI ist nicht aktiviert (Einstellungen → News)</span>')
+        if ctx.scheduler is not None:
+            ctx.scheduler.trigger("news_report", 0.5, manual=True)
+            return HTMLResponse('<span class="badge info">Bericht wird erstellt – bitte in einigen Sekunden neu laden.'
+                                '</span>')
+        res = job_report(ctx, manual=True)
+        return HTMLResponse(f'<span class="badge">{"Bericht erstellt" if res.get("report") else "Nicht erstellt"}'
+                            "</span>")
+
+    @router.post("/news/pipeline/run", response_class=HTMLResponse)
+    def pipeline_run(request: Request) -> HTMLResponse:
+        ctx = get_ctx(request)
+        if ctx.scheduler is None:
+            return HTMLResponse('<span class="badge warn">Scheduler inaktiv</span>')
+        for name, delay in (("news_enrich", 0.5), ("news_analyze", 30), ("news_group", 60)):
+            ctx.scheduler.trigger(name, delay)
+        return HTMLResponse('<span class="badge info">Anreicherung, Analyse und Gruppierung gestartet.</span>')
+
+    @router.post("/news/{item_id:int}/read")
     async def mark_read(request: Request, item_id: int) -> Response:
         ctx = get_ctx(request)
         form = await request.form()

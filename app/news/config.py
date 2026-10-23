@@ -58,6 +58,21 @@ class Source:
     note: str = ""
 
 
+# Marktweite Quellen für den Tagesbericht: Notenbanken (Primärquellen) und allgemeine Wirtschaftsnachrichten.
+# ``require_match: false`` – Meldungen bleiben auch ohne Bezug zu einer Position erhalten.
+MARKET_SOURCES: list[dict[str, Any]] = [
+    {"id": "tagesschau_wirtschaft", "name": "tagesschau Wirtschaft", "type": "rss", "weight": 0.8, "language": "de",
+     "url": "https://www.tagesschau.de/wirtschaft/index~rss2.xml", "require_match": False, "active": True,
+     "note": "marktweit"},
+    {"id": "fed_press", "name": "Federal Reserve (Pressemitteilungen)", "type": "rss", "weight": 1.0,
+     "language": "en", "url": "https://www.federalreserve.gov/feeds/press_all.xml", "require_match": False,
+     "active": True, "note": "marktweit, Primärquelle"},
+    {"id": "ecb_press", "name": "EZB (Pressemitteilungen)", "type": "rss", "weight": 1.0, "language": "en",
+     "url": "https://www.ecb.europa.eu/rss/press.html", "require_match": False, "active": True,
+     "note": "marktweit, Primärquelle"},
+]
+
+
 @dataclass
 class Channel:
     handle: str | None
@@ -200,6 +215,26 @@ class SourcesConfig:
         if d.get("youtube") is None:
             d["youtube"] = CommentedMap()
         return d["youtube"]
+
+    def ensure_market_sources(self) -> list[str]:
+        """Marktweite Quellen (ohne Positionsbezug) einmalig ergänzen, falls sie in einer älteren ``sources.yaml``
+        fehlen – bestehende Einträge werden nie verändert oder ersetzt. Gebraucht für den täglichen Marktbericht."""
+        with self._lock:
+            d = self.data()
+            if not isinstance(d, CommentedMap) or d.get("sources") is None:
+                return []
+            have = {str(x.get("id")) for x in d["sources"]}
+            added = []
+            for src in MARKET_SOURCES:
+                if src["id"] in have:
+                    continue
+                entry = CommentedMap(src)
+                entry.fa.set_flow_style()
+                d["sources"].append(entry)
+                added.append(src["id"])
+            if added:
+                self.save(d)
+            return added
 
     def add_channel(self, channel_id: str, title: str | None, handle: str | None, language: str = "en",
                     weight: float = 0.6, group: str = "Entdeckt") -> None:

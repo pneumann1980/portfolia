@@ -166,6 +166,23 @@ async def save_settings(request: Request) -> Response:
         model = str(f.get("llm_model") or "").strip()
         if model:
             s.set("llm.model", model[:80])
+        from app.news.ai import GEMINI_DEFAULT, model_allowed
+
+        s.set("llm.provider", "gemini" if f.get("llm_provider") == "gemini" else "claude")
+        gm = str(f.get("gemini_model") or "").strip().lower()
+        s.set("llm.gemini_model", gm if gm and model_allowed(gm) else GEMINI_DEFAULT)
+        s.set("llm.gemini_rpm", _int(f.get("gemini_rpm"), 5, 1, 1000))
+        s.set("llm.gemini_tpm", _int(f.get("gemini_tpm"), 100000, 1000, 10_000_000))
+        s.set("llm.gemini_rpd", _int(f.get("gemini_rpd"), 100, 1, 100000))
+        s.set("llm.gemini_daily_token_budget", _int(f.get("gemini_budget"), 200000, 0, 50_000_000))
+        s.set("news.enrich", f.get("news_enrich") == "1")
+        s.set("news.content_mode", "excerpt" if f.get("content_mode") == "excerpt" else "full")
+        s.set("news.analysis", f.get("news_analysis") == "1")
+        s.set("news.group", f.get("news_group") == "1")
+        s.set("news.group_llm", f.get("news_group_llm") == "1")
+        s.set("news.report", f.get("news_report") == "1")
+        s.set("news.report_hour", _int(f.get("report_hour"), 7, 0, 23))
+        s.set("news.report_minute", _int(f.get("report_minute"), 30, 0, 59))
     elif section == "backup":
         s.set("backup.keep", _int(f.get("keep"), 14, 1, 365))
         s.set("backup.hour", _int(f.get("hour"), 3, 0, 23))

@@ -13,12 +13,20 @@
 <nav class="tabs" aria-label="Bereiche">
   {{ tab_link('articles', 'Artikel') }}
   {{ tab_link('videos', 'Videos') }}
+  {{ tab_link('report', 'Tagesbericht') }}
   {{ tab_link('suggestions', 'Kanal-Vorschläge', n_suggestions if n_suggestions else None) }}
   {{ tab_link('sources', 'Quellen') }}
+  {{ tab_link('status', 'Status') }}
 </nav>
 
 {% if params.tab in ('articles', 'videos') %}
-  {% if digest and llm.enabled() %}
+  {% if report_teaser %}
+  <details class="box" style="margin-bottom:12px">
+    <summary>Tagesbericht vom {{ report_teaser.day|date_de }} <span class="badge info">KI</span></summary>
+    <div class="small" style="margin-top:8px">{{ report_teaser.content.ueberblick }}</div>
+    <p class="hint"><a href="/news?tab=report">Ganzen Bericht mit Quellen lesen</a> · von KI erstellt, keine Anlageberatung.</p>
+  </details>
+  {% elif digest and llm.enabled() %}
   <details class="box" style="margin-bottom:12px" open>
     <summary>Tagesdigest vom {{ digest.day|date_de }} <span class="badge info">KI-Zusammenfassung</span></summary>
     <div class="small" style="white-space:pre-line;margin-top:8px">{{ digest.content }}</div>
@@ -61,6 +69,27 @@
       {% include "partials/news_items.html" %}
     </div>
   </section>
+
+{% elif params.tab == 'report' %}
+  <section class="card">
+    <div class="card-head"><h2>Täglicher Finanzmarktbericht</h2>
+      <div class="row"><button class="btn sm" hx-post="/news/report/regenerate" hx-target="#report-msg" {% if not ai_status.enabled %}disabled{% endif %}>Neu erzeugen</button><span id="report-msg"></span></div></div>
+    {% if not ai_status.enabled %}<p class="hint">Der Bericht benötigt die KI-Funktionen (Einstellungen → News &amp; KI: Anbieter wählen, API-Schlüssel setzen, aktivieren). Es werden nur öffentliche Artikelanalysen verwendet.</p>
+    {% elif not report_on %}<p class="hint">Der Tagesbericht ist in den Einstellungen ausgeschaltet.</p>
+    {% else %}<p class="hint">Automatisch täglich ab {{ '%02d:%02d'|format(report_time[0], report_time[1]) }} Uhr (Europe/Berlin), aus den gespeicherten Analysen der letzten 24 Stunden.</p>{% endif %}
+    {% if report_error %}<div class="alert warn" role="status"><span class="icon">!</span><div>Letzter Versuch fehlgeschlagen ({{ report_error.at|datetime_de if report_error.at else '' }}): {{ report_error.text }} – ein vorhandener Bericht bleibt unverändert.</div></div>{% endif %}
+  </section>
+  {% if report %}{% include "partials/news_report_view.html" %}
+  {% else %}<section class="card"><p class="hint">Noch kein Bericht vorhanden. Er entsteht, sobald genug Meldungen analysiert wurden (mindestens 3).</p></section>{% endif %}
+  {% if history %}
+  <section class="card" style="margin-top:16px"><div class="card-head"><h2>Historie</h2></div>
+    <div class="list">{% for h in history %}
+      <a class="list-item" href="/news?tab=report&report_id={{ h.id }}"><span class="grow"><span class="title">{{ h.day|date_de }}{% if h.version > 1 %} · Version {{ h.version }}{% endif %}</span>
+        <span class="meta"> erstellt {{ h.created_at|datetime_de }} · {{ h.provider }} · {{ h.n_items }} Meldungen</span></span></a>{% endfor %}</div>
+  </section>{% endif %}
+
+{% elif params.tab == 'status' %}
+  {% include "partials/news_status.html" %}
 
 {% elif params.tab == 'suggestions' %}
   <section class="card">
