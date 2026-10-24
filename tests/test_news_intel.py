@@ -453,6 +453,27 @@ def test_enrich_resolves_google_news_and_skips_hosts_after_failures(ctx):
     assert ctx.db.scalar(f"SELECT COUNT(*) FROM news_content WHERE item_id IN ({marks})") < 8
 
 
+def pause_host(ctx, host, hours):
+    ctx.db.set_state(f"news.enrich.host.{host}", {"fails": 0, "until": iso(datetime.now(UTC) + timedelta(hours=hours))})
+
+
+def test_enrich_paused_host_does_not_starve_other_sources(ctx):
+    slow = [add_item(ctx, f"Wichtige Meldung {i} gesperrter Quelle", f"https://blocked.example.com/{i}", relevance=0.9,
+                     hours=0.1 + i * 0.01) for i in range(6)]
+    ok = [add_item(ctx, f"Normale Meldung {i} offener Quelle", f"https://open.example.com/{i}", relevance=0.3,
+                   hours=10 + i) for i in range(3)]
+    pause_host(ctx, "blocked.example.com", 5)
+    svc = EnrichService(ctx, mock_fetcher(lambda req: httpx.Response(200, headers={"content-type": "text/html"},
+                                                                     text=article_html())))
+    assert [c["id"] for c in svc.candidates(3)] == ok  # pausierte Quelle belegt keine Plätze
+    assert len(svc.candidates(100, include_paused=True)) == 9
+    assert set(svc.paused_hosts()) == {"blocked.example.com"}
+    res = svc.run(limit=3)
+    assert res["success"] == 3 and res["skipped_host"] == 0
+    marks = ",".join(map(str, slow))
+    assert ctx.db.scalar(f"SELECT COUNT(*) FROM news_content WHERE item_id IN ({marks})") == 0
+
+
 def test_enrich_excerpt_mode_and_reset(ctx):
     iid = add_item(ctx, "Bitcoin steigt deutlich", "https://ok.example.com/a")
     ctx.settings.set("news.content_mode", "excerpt")
@@ -1263,6 +1284,27 @@ def test_status_tab_reports_counts_budget_errors(client):
     st = pipeline_status(ctx)
     assert st["imported"] >= 1 and st["content"]["success"] == 1 and st["analyzed"] == 1
     assert st["ai"]["usage"]["requests"] == 7 and st["ai"]["requests_left"] == 93
+    assert "Engpass" in t and st["backlog"]["bottleneck"]
+
+
+def test_status_explains_bottleneck_and_paused_hosts(client):
+    from app.news.status import pipeline_status
+
+    ctx = wctx(client)
+    gemini_ctx(ctx, _no_http)
+    for i in range(3):
+        add_item(ctx, f"Offene Meldung {i} ohne Text", f"https://open.example.com/{i}", hours=1 + i * 0.01)
+    add_item(ctx, "Gesperrte Meldung ohne Text", "https://blocked.example.com/1", hours=1)
+    pause_host(ctx, "blocked.example.com", 4)
+    b = pipeline_status(ctx)["backlog"]
+    assert b["enrich"] == 3 and b["enrich_paused"] == 1 and b["paused_hosts"][0][0] == "blocked.example.com"
+    assert "Abruf-Takt" in b["bottleneck"]
+    t = client.get("/news?tab=status").text
+    assert "Pausierte Quellen" in t and "blocked.example.com" in t and "Abruf-Takt" in t
+    ctx.db.set_state("ai.pause.gemini", {"until": iso(datetime.now(UTC) + timedelta(hours=2)), "reason": "Quota"})
+    old = iso(NOW - timedelta(hours=8))
+    ctx.db.x("UPDATE news_item SET fetched_at=?, published_at=?", (old, old))
+    assert "KI-Kontingent" in pipeline_status(ctx)["backlog"]["bottleneck"]
 
 
 def test_settings_save_and_render_new_options(client):

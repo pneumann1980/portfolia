@@ -57,9 +57,25 @@ class EnrichService:
         return self._limiters[host]
 
     # -- Auswahl -----------------------------------------------------------------------------------------
-    def candidates(self, limit: int) -> list[dict[str, Any]]:
-        """Noch nicht (erfolgreich) angereicherte Artikel in Prioritätsreihenfolge."""
+    def paused_hosts(self) -> dict[str, datetime]:
+        """Quellen, die nach wiederholten Fehlern/Sperren pausiert sind (Host -> pausiert bis)."""
+        now = datetime.now(UTC)
+        out: dict[str, datetime] = {}
+        for r in self.db.q("SELECT key FROM app_state WHERE key LIKE 'news.enrich.host.%'"):
+            st = self.db.get_state(r["key"]) or {}
+            until = parse_iso(st.get("until")) if isinstance(st, dict) else None
+            if until is not None and until > now:
+                out[r["key"].removeprefix("news.enrich.host.")] = until
+        return out
+
+    def candidates(self, limit: int, *, include_paused: bool = False) -> list[dict[str, Any]]:
+        """Noch nicht (erfolgreich) angereicherte Artikel in Prioritätsreihenfolge.
+
+        Artikel pausierter Quellen werden übersprungen (``include_paused`` zählt sie mit): Sonst belegen sie die
+        ersten Plätze jedes Laufs und verdrängen abrufbare Artikel anderer Quellen.
+        """
         days = int(self.ctx.settings.get("news.enrich_days", 3))
+        paused = set() if include_paused else set(self.paused_hosts())
         since = iso(datetime.now(UTC) - timedelta(days=days))
         now = iso(datetime.now(UTC))
         rows = self.db.q(
@@ -72,7 +88,10 @@ class EnrichService:
         pub_now = datetime.now(UTC)
         scored = []
         for r in rows:
-            if any(_host(r["url"]) == h or _host(r["url"]).endswith("." + h) for h in SKIP_HOSTS):
+            host = _host(r["url"])
+            if any(host == h or host.endswith("." + h) for h in SKIP_HOSTS):
+                continue
+            if host in paused:
                 continue
             pub = parse_iso(r["published_at"]) or pub_now
             age_h = max(0.0, (pub_now - pub).total_seconds() / 3600)
@@ -88,7 +107,7 @@ class EnrichService:
         res = {"selected": 0, "success": 0, "partial": 0, "blocked": 0, "failed": 0, "retry": 0, "skipped_host": 0}
         if not self.enabled():
             return {"skipped": "Artikelinhalte deaktiviert"}
-        limit = limit or int(self.ctx.settings.get("news.enrich_per_run", 20))
+        limit = limit or int(self.ctx.settings.get("news.enrich_per_run", 40))
         batch = self.candidates(limit)
         res["selected"] = len(batch)
         for it in batch:

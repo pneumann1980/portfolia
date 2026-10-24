@@ -1426,6 +1426,11 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.47.2 – News-Status: Abruf-Rückstau
+
+* **Behoben:** Artikel pausierter Quellen verdrängten abrufbare Artikel aus der Auswahl jedes Laufs (Rückstau sank nicht).
+* Abruf je Lauf 20 → 40; Status zeigt Zeitraum, Engpass und pausierte Quellen; Hinweisbalken der KI-Box mit mehr Abstand.
+
 ## 0.47.1 – Startseite: Ausfall-Fallback und Umschalter KI | Original
 
 * Bei ausgeschalteter, pausierter oder zuletzt fehlgeschlagener KI zeigt die Startseite einen Hinweis mit Grund und die

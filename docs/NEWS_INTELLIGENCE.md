@@ -1,6 +1,6 @@
 # News-Intelligence (0.46): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
 
-Stand: 0.47.1. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
+Stand: 0.47.2. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
 **rückwärtskompatibel**: der Feed-Import, die Relevanz-/Dedupe-Logik, YouTube und Claude-Zusammenfassungen laufen
 unverändert; die neuen Stufen sind eigene Hintergrundjobs, deren Ausfall den Import nie blockiert.
 
@@ -48,8 +48,9 @@ löscht Inhalt, Analyse und Ereigniszuordnung mit. Bestehende Daten bleiben unve
 
 * **Auswahl:** noch nicht angereicherte Artikel der letzten 3 Tage, nach Priorität = Positionsbezug (Relevanz)
   + Mehrfachberichte (`dup_count`) + Quellgewicht + Aktualität. **Marktweite Meldungen ohne Positionsbezug werden
-  ebenfalls angereichert** (für den Tagesbericht); pro Lauf höchstens 20 (Einstellung `news.enrich_per_run`, nicht in
-  der Oberfläche). Videos, YouTube/Social-Hosts, ausgeblendete Meldungen werden übersprungen.
+  ebenfalls angereichert** (für den Tagesbericht); pro Lauf höchstens 40 (Einstellung `news.enrich_per_run`, nicht in
+  der Oberfläche; alle 15 min). **Artikel pausierter Quellen** (nach wiederholten Fehlern/Sperren 6 h Ruhe) werden bei der
+  Auswahl übersprungen – vorher belegten sie die vordersten Plätze jedes Laufs und hielten den Abruf anderer Quellen auf. Videos, YouTube/Social-Hosts, ausgeblendete Meldungen werden übersprungen.
 * **Marktweite Quellen:** `examples/sources.yaml` enthält neu tagesschau Wirtschaft, Federal Reserve und EZB mit
   `require_match: false`. In bestehenden `sources.yaml` werden sie **einmalig** ergänzt (Kommentare und vorhandene
   Einträge bleiben unverändert; später gelöschte Einträge kommen nicht zurück). Alle URLs werden – wie bisher – zur
@@ -217,6 +218,10 @@ letzte Fehler. Der Hinweis zur Free-Tier-Garantie steht dort ebenfalls.
   Ein Schalter **KI-Auswertung | Original** im Kasten wechselt zur bisherigen Liste; die Wahl steht im Browser
   (`localStorage`, nur Anzeige, keine Serverdaten). Grenze: Der Zustand wird erst nach einem fehlgeschlagenen Aufruf
   erkannt (kein aktiver Ping); ohne JavaScript bleibt die KI-Ansicht sichtbar.
+* **Status (0.47.2):** „Rückstau“ nennt den Zeitraum (Artikeltexte: letzte 3 Tage), „Engpass“ sagt, worauf die Pipeline wartet
+  (KI-Kontingent/Pause, KI aus, Abruf-Takt, Analyse-Takt oder nichts), „Pausierte Quellen“ listet Hosts mit Ruhezeit und die
+  Zahl zurückgestellter Artikel. Der Textabruf-Rückstau zählt **alle** noch nicht abgerufenen Artikel der letzten 3 Tage
+  (nicht nur „heute“ importierte); die Analyse wartet nicht auf den Text (nach 6 h wird mit dem Anreißer analysiert).
 * **Längere Texte (Prompt-Version 2):** Zusammenfassung 4–5 Sätze; Einordnung 3–5 Sätze (Relevanz, mögliche Folgen,
   Beobachtungspunkte, als Einschätzung formuliert); Bericht: Überblick 6–8 Sätze, Kernaussage 2–3, Einordnung 2–3,
   Krypto 4–6. Da die Version im Eingabe-Hash steckt, werden **nur Meldungen der letzten 48 h** neu analysiert; ältere

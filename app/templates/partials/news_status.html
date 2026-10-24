@@ -7,7 +7,9 @@
     <dt>Text geladen</dt><dd>{{ st.content.success }} vollständig · {{ st.content.partial }} Teiltext · {{ st.content.blocked }} gesperrt · {{ st.content.failed }} fehlgeschlagen · {{ st.content.pending }} Wiederholung geplant</dd>
     {% if st.content_reasons %}<dt>Häufige Gründe</dt><dd>{% for r, k in st.content_reasons %}{{ r }} ({{ k }}){{ ', ' if not loop.last }}{% endfor %}</dd>{% endif %}
     <dt>Analysiert</dt><dd>{{ st.analyzed }}{% if st.analysis_failed %} · {{ st.analysis_failed }} verworfen{% endif %}</dd>
-    <dt>Rückstau</dt><dd>{{ st.backlog.enrich }} Artikeltexte · {{ st.backlog.analyze }} Analysen (letzte 48 h) warten{% if st.backlog.analyze %} – werden laufend abgearbeitet{% endif %}</dd>
+    <dt>Rückstau</dt><dd>{{ st.backlog.enrich }} Artikeltexte (letzte {{ st.backlog.days }} Tage) · {{ st.backlog.analyze }} Analysen (letzte 48 h) warten{% if st.backlog.enrich or st.backlog.analyze %} – werden laufend abgearbeitet{% endif %}</dd>
+    <dt>Engpass</dt><dd>{{ st.backlog.bottleneck }}</dd>
+    {% if st.backlog.paused_hosts %}<dt>Pausierte Quellen</dt><dd>{% for h, u in st.backlog.paused_hosts %}<span class="mono">{{ h }}</span> bis {{ u|datetime_de }}{{ '; ' if not loop.last }}{% endfor %} ({{ st.backlog.enrich_paused }} Artikel zurückgestellt – nach vielen Fehlern/Sperren, damit sie andere nicht aufhalten)</dd>{% endif %}
     <dt>Ereignisse (24 h)</dt><dd>{{ st.events }} ({{ st.events_multi }} mit mehreren Quellen)</dd>
     <dt>Letzter Tagesbericht</dt><dd>{% if st.last_report %}<a href="/news?tab=report&report_id={{ st.last_report.id }}">{{ st.last_report.day|date_de }}</a> · erstellt {{ st.last_report.created_at|datetime_de }}{% else %}–{% endif %}</dd>
   </dl>

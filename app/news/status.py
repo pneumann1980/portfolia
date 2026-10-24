@@ -27,7 +27,24 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         "SELECT status, COUNT(*) AS n FROM news_content WHERE fetched_at>=? GROUP BY status", (day,))}
     reasons = db.q("SELECT reason, COUNT(*) AS n FROM news_content WHERE fetched_at>=? AND reason IS NOT NULL "
                    "GROUP BY reason ORDER BY n DESC LIMIT 6", (day,))
-    ai = AiGateway(ctx).status()
+    gw = AiGateway(ctx)
+    ai = gw.status()
+    enrich = EnrichService(ctx)
+    paused = enrich.paused_hosts()
+    enrich_total = len(enrich.candidates(100_000, include_paused=True))
+    enrich_ready = len(enrich.candidates(100_000))
+    analyze_backlog = AnalysisService(ctx).backlog()
+    per_run = int(ctx.settings.get("news.enrich_per_run", 40))
+    if analyze_backlog and ai.get("paused_until"):
+        bottleneck = "KI-Kontingent (Anbieter pausiert, Analyse wartet)"
+    elif analyze_backlog and not ai.get("enabled"):
+        bottleneck = "KI ausgeschaltet – Analysen warten"
+    elif enrich_ready:
+        bottleneck = f"Abruf-Takt: {per_run} Artikeltexte je Lauf, alle 15 min (Wartezeit je Quelle 2 s)"
+    elif analyze_backlog:
+        bottleneck = "Analyse-Takt: läuft in Runden, alle 10 min"
+    else:
+        bottleneck = "keiner – alles abgearbeitet"
     jobs = ctx.job_status()
     errors = []
     for j in JOBS:
@@ -48,8 +65,9 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         "content_reasons": [(r["reason"], int(r["n"])) for r in reasons],
         "with_content_total": n("SELECT COUNT(*) FROM news_content WHERE status IN ('success','partial')"),
         "analyzed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NOT NULL AND analyzed_at>=?", day),
-        "backlog": {"enrich": len(EnrichService(ctx).candidates(100_000)),
-                    "analyze": AnalysisService(ctx).backlog()},
+        "backlog": {"enrich": enrich_ready, "enrich_paused": enrich_total - enrich_ready, "analyze": analyze_backlog,
+                    "days": int(ctx.settings.get("news.enrich_days", 3)), "per_run": per_run, "bottleneck": bottleneck,
+                    "paused_hosts": sorted(((h, u) for h, u in paused.items()), key=lambda x: x[1])},
         "analysis_failed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NULL AND analyzed_at>=?", day),
         "events": n("SELECT COUNT(*) FROM news_event WHERE last_seen>=?", since24),
         "events_multi": n("SELECT COUNT(*) FROM news_event WHERE last_seen>=? AND n_sources>=2", since24),

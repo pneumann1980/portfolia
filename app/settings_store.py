@@ -79,7 +79,7 @@ DEFAULTS: dict[str, Any] = {
     "llm.gemini_tokens_unlimited": False,  # Token-Tagesgrenze ausdrücklich aufheben (Anfragen-Limits bleiben)
     # News-Intelligence: Artikelinhalt, Analyse, Ereignisse, Tagesbericht
     "news.enrich": True,  # Volltext nachladen (Hintergrundjob, getrennt vom Feed-Import)
-    "news.enrich_per_run": 20,
+    "news.enrich_per_run": 40,
     "news.enrich_days": 3,
     "news.content_mode": "full",  # full = bereinigter Volltext | excerpt = nur Auszug (~1500 Zeichen)
     "news.analysis": True,  # strukturierte Einzelanalyse (nur mit aktivierter KI)
