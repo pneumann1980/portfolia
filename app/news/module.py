@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-import ipaddress
 import logging
-import socket
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.parse import urlencode, urlsplit
 
-import httpx
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import APIRouter, HTTPException, Request
@@ -23,6 +18,7 @@ from app.news.ai import AiGateway
 from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
 from app.news.events import EventService
+from app.news.images import cached_image
 from app.news.llm import LlmService
 from app.news.relevance import recency_factor
 from app.news.report import ReportService
@@ -35,7 +31,6 @@ from app.web.deps import get_ctx, render
 
 log = logging.getLogger(__name__)
 PAGE_SIZE = 30
-MAX_IMG_BYTES = 2 * 1024 * 1024
 _services: dict[int, NewsService] = {}
 _enrichers: dict[int, EnrichService] = {}
 
@@ -506,60 +501,3 @@ def make_router() -> APIRouter:
 
 
 register_router(make_router)
-
-
-# ----------------------------------------------------------------------------------------------------
-# Bild-Proxy mit Cache (SSRF-geschützt)
-# ----------------------------------------------------------------------------------------------------
-
-def _public_host(host: str, port: int) -> bool:
-    try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except OSError:
-        return False
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
-                or ip.is_unspecified):
-            return False
-    return bool(infos)
-
-
-def cached_image(ctx: AppContext, url: str) -> tuple[Path, str] | None:
-    key = hashlib.sha256(url.encode()).hexdigest()[:40]
-    row = ctx.db.q1("SELECT path, content_type FROM img_cache WHERE key=?", (key,))
-    if row is not None and Path(row["path"]).exists():
-        return Path(row["path"]), row["content_type"]
-    current = url
-    for _ in range(4):
-        parts = urlsplit(current)
-        if parts.scheme not in ("http", "https") or not parts.hostname:
-            return None
-        port = parts.port or (443 if parts.scheme == "https" else 80)
-        if port not in (80, 443) or not _public_host(parts.hostname, port):
-            return None
-        try:
-            with ctx.http.stream("GET", current, follow_redirects=False, timeout=10,
-                                 headers={"Accept": "image/avif,image/webp,image/*"}) as r:
-                if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
-                    current = urljoin(current, r.headers["location"])
-                    continue
-                ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
-                if r.status_code != 200 or not ctype.startswith("image/") or "svg" in ctype:
-                    return None
-                data = b""
-                for chunk in r.iter_bytes():
-                    data += chunk
-                    if len(data) > MAX_IMG_BYTES:
-                        return None
-        except httpx.HTTPError:
-            return None
-        ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
-               "image/avif": ".avif"}.get(ctype, ".img")
-        path = ctx.config.cache_dir / "img" / f"{key}{ext}"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        ctx.db.x("INSERT OR REPLACE INTO img_cache(key, path, content_type, size, fetched_at) VALUES (?,?,?,?,?)",
-                 (key, str(path), ctype, len(data), iso(datetime.now(UTC))))
-        return path, ctype
-    return None

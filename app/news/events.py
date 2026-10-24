@@ -27,6 +27,7 @@ from typing import Any
 
 from app.context import AppContext
 from app.news.ai import AiError, AiGateway, parse_json
+from app.news.config import ai_off_ids, not_in_clause
 from app.news.dedupe import tokens
 from app.util.timeutil import iso, parse_iso
 
@@ -79,13 +80,15 @@ class EventService:
     def _window(self) -> list[dict[str, Any]]:
         hours = int(self.ctx.settings.get("news.group_hours", 72))
         since = iso(datetime.now(UTC) - timedelta(hours=hours))
+        skip_sql, skip_args = not_in_clause("n.source_id", ai_off_ids(self.ctx.config.sources_path))
         rows = self.db.q(
             """SELECT n.id, n.title, n.title_norm, n.summary, n.published_at, n.source_id, n.source_weight, n.dup_count,
                       c.content_hash, a.result_json, a.category, a.importance, e.event_id, ev.locked
                FROM news_item n LEFT JOIN news_content c ON c.item_id=n.id
                     LEFT JOIN news_analysis a ON a.item_id=n.id AND a.summary IS NOT NULL
                     LEFT JOIN news_event_item e ON e.item_id=n.id LEFT JOIN news_event ev ON ev.id=e.event_id
-               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?""", (since,))
+               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?"""
+            + skip_sql, (since, *skip_args))
         out = []
         for r in rows:
             d = dict(r)

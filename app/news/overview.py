@@ -13,6 +13,7 @@ from typing import Any
 
 from app.context import AppContext
 from app.news.ai import AiGateway
+from app.news.config import ai_off_ids
 from app.news.report import ReportService
 from app.util.timeutil import iso, parse_iso
 
@@ -50,12 +51,13 @@ def _recent(ctx: AppContext, hours: int, limit: int = 60) -> list[dict[str, Any]
     min_rel = float(ctx.settings.get("news.min_relevance", 0.2))
     since = iso(datetime.now(UTC) - timedelta(hours=hours))
     rows = ctx.db.q(
-        """SELECT n.id, n.title, n.summary AS teaser, n.source_name, n.published_at, n.dup_count,
+        """SELECT n.id, n.title, n.summary AS teaser, n.source_name, n.source_id, n.published_at, n.dup_count,
                   a.summary AS asummary, a.sentiment, a.importance, a.category
            FROM news_item n LEFT JOIN news_analysis a ON a.item_id=n.id AND a.summary IS NOT NULL
            WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.relevance>=? AND n.published_at>=?
            ORDER BY n.published_at DESC LIMIT ?""", (min_rel, since, limit))
     names = _asset_names(ctx, [r["id"] for r in rows])
+    off = ai_off_ids(ctx.config.sources_path)
     out = []
     for r in rows:
         ai = r["asummary"] is not None
@@ -64,7 +66,7 @@ def _recent(ctx: AppContext, hours: int, limit: int = 60) -> list[dict[str, Any]
                     "sentiment": r["sentiment"] if ai else None, "importance": r["importance"] if ai else None,
                     "assets": names.get(r["id"], []), "reports": 1 + int(r["dup_count"] or 0),
                     "sources": [r["source_name"]] if r["source_name"] else [], "published_at": r["published_at"],
-                    "category": r["category"] if ai else None, "ai": ai})
+                    "category": r["category"] if ai else None, "ai": ai, "noai": r["source_id"] in off})
     return out
 
 
@@ -87,14 +89,14 @@ def top_news(ctx: AppContext, n: int = 5, hours: int = 24) -> dict[str, Any]:
         strong = [e for e in entries if e["bedeutung"] >= MIN_IMPORTANCE]
         ranked = strong + [e for e in entries if e not in strong]
         known = {e["id"] for e in entries}
-        raw = [r for r in recent if not r["ai"] and r["id"] not in known]
+        raw = [r for r in recent if not r["ai"] and not r["noai"] and r["id"] not in known]
         reserve = min(RESERVE, len(raw), n)
         picked = ranked[:n - reserve]
         rows = [{
             "id": e["id"], "title": e["titel"], "summary": _teaser(e["zusammenfassung"], 300),
             "sentiment": e["stimmung"], "importance": e["bedeutung"], "assets": e["bezug_assets"],
             "reports": e["anzahl_berichte"], "sources": e["quellen"], "published_at": e["veroeffentlicht"],
-            "category": e["kategorie"], "ai": True} for e in picked]
+            "category": e["kategorie"], "ai": True, "noai": False} for e in picked]
         have = {r["id"] for r in rows}
         rows += [r for r in raw if r["id"] not in have][:n - len(rows)]
         mode = "ki"

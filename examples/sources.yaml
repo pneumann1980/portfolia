@@ -16,7 +16,19 @@
 #   cryptopanic      – CryptoPanic-API (CRYPTOPANIC_API_KEY), Währungsfilter = gehaltene Coins
 #   binance_api      – Binance-Ankündigungen (öffentliche CMS-Schnittstelle, kein offizieller RSS)
 #   bybit_api        – Bybit-Ankündigungen (offizielle v5-API)
+#   telegram         – Telegram-Kanal über einen eigenen RSS-Bridge-/RSSHub-Feed (url); läuft standardmäßig OHNE KI
 # require_match: true → nur Meldungen behalten, die einem gehaltenen Asset zugeordnet werden können.
+# ai: false → Meldungen der Quelle laufen nicht durch KI-Analyse, Ereignisgruppen und Tagesbericht (sie erscheinen in der
+#             Ansicht „Original“ und im Feed). Bei type: telegram ist das der Standard; mit ai: true wieder einschalten.
+#
+# Beispiel (Telegram über RSS-Bridge, Format Atom; Host/Port = Ihr eigener Server):
+#   - id: tg_beispiel
+#     name: "Telegram · Beispielkanal"
+#     type: telegram
+#     url: "http://rss-bridge.local:7575/?action=display&bridge=TelegramBridge&username=%40Beispielkanal&format=Atom"
+#     language: en
+#     weight: 0.4
+#     require_match: true
 
 version: 1
 

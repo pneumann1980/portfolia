@@ -223,3 +223,118 @@ def test_llm_call_uses_structured_output_budget_and_fallbacks(ctx, monkeypatch):
     ctx.settings.set("llm.daily_token_budget", 500)
     assert llm._call("sys", "payload", 1000, None) is None  # Budget reicht nicht → kein Aufruf
     assert len(calls) == 1
+
+
+# ----------------------------------------------------------------------------------------------------
+# Telegram-Kanäle (RSS-Bridge) als Quelle: ohne KI, Titel aus Text, Bilder sofort gecacht
+# ----------------------------------------------------------------------------------------------------
+
+BRIDGE = "192.168.178.135"
+TG_URL = f"http://{BRIDGE}:7575/?action=display&bridge=TelegramBridge&username=%40AshCryptoTG&format=Atom"
+CDN_IMG = "https://cdn4.telesco.example/file/ash1.jpg"
+LAN_IMG = f"http://{BRIDGE}:7575/media/ash2.jpg"
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
+def telegram_atom():
+    def entry(n, title, html, hours):
+        return (f"<entry><id>https://t.me/AshCryptoTG/{n}</id><title>{title}</title>"
+                f'<link rel="alternate" href="https://t.me/AshCryptoTG/{n}"/>'
+                f"<updated>{(NOW - timedelta(hours=hours)).isoformat()}</updated>"
+                f'<content type="html">{html}</content></entry>')
+
+    return ('<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Ash</title>'
+            + entry(101, "", f"Bitcoin ETF inflows hit $1B on Monday. Analysts see more demand ahead.&lt;br&gt;"
+                    f"&lt;img src=&quot;{CDN_IMG}&quot;/&gt;", 1)
+            + entry(102, "BTC breaks out…", "BTC breaks out above resistance with rising volume across exchanges "
+                    "&lt;img src=&quot;" + LAN_IMG + "&quot;/&gt;", 2)
+            + entry(103, "", "Join our giveaway now and win big prizes today", 3)
+            + "</feed>").encode()
+
+
+def telegram_ctx(ctx, monkeypatch):
+    import app.news.images as I
+
+    base = ctx.http  # nur zum Wiederverwenden des vorhandenen Test-Handlers
+
+    def handler(request):
+        if request.url.host == BRIDGE and request.url.path == "/":
+            return httpx.Response(200, content=telegram_atom(), headers={"content-type": "application/atom+xml"})
+        if request.url.host == BRIDGE and request.url.path.startswith("/media/"):
+            return httpx.Response(200, content=PNG, headers={"content-type": "image/png"})
+        if request.url.host == "cdn4.telesco.example":
+            return httpx.Response(200, content=PNG, headers={"content-type": "image/png"})
+        return base._transport.handle_request(request)  # type: ignore[attr-defined]
+
+    ctx.http = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(I, "_public_host", lambda host, port: host == "cdn4.telesco.example")
+    cfg = SourcesConfig(ctx.config.sources_path, ROOT / "examples" / "sources.yaml")
+    d = cfg.data()
+    from ruamel.yaml.comments import CommentedMap
+
+    d["sources"].append(CommentedMap({"id": "tg_ash", "name": "Telegram · Ash Crypto", "type": "telegram",
+                                      "url": TG_URL, "language": "en", "weight": 0.4, "active": True}))
+    cfg.save(d)
+
+
+def test_telegram_feed_parses_titles_images_and_full_text():
+    from app.news.parse import parse_feed
+
+    items, err = parse_feed(telegram_atom(), telegram=True)
+    assert err is None and len(items) == 3
+    first, second, third = items
+    assert first.title == "Bitcoin ETF inflows hit $1B on Monday." and first.image_url == CDN_IMG
+    assert "Analysts see more demand" in first.summary  # voller Beitragstext bleibt erhalten
+    assert second.title.startswith("BTC breaks out above resistance") and not second.title.endswith("……")
+    assert second.image_url == LAN_IMG  # Bild vom eigenen Bridge-Host
+    assert third.image_url is None
+    plain, _ = parse_feed(telegram_atom(), telegram=False)
+    assert [i.title for i in plain] == ["BTC breaks out…"]  # normale Feeds: unverändert, Beiträge ohne Titel verworfen
+
+
+def test_telegram_source_runs_without_ai_and_caches_images(ctx, monkeypatch):
+    from app.news.analysis import AnalysisService
+    from app.news.config import ai_off_ids
+    from app.news.module import news_service
+    from app.news.overview import top_news
+
+    telegram_ctx(ctx, monkeypatch)
+    assert ai_off_ids(ctx.config.sources_path) == {"tg_ash"}  # Telegram: Standard ohne KI
+    svc = news_service(ctx)
+    svc.yt.limiter.min_interval = 0
+    import app.news.service as S
+
+    S.HOST_INTERVALS.clear()
+    for lim in svc._limiters.values():
+        lim.min_interval = 0
+    res = svc.run()
+    assert not [e for e in res["errors"] if "tg_ash" in e]
+    rows = {r["title"]: r for r in ctx.db.q("SELECT * FROM news_item WHERE source_id='tg_ash'")}
+    assert len(rows) == 2 and not any("giveaway" in t.lower() for t in rows)  # ohne Positionsbezug verworfen
+    first = rows["Bitcoin ETF inflows hit $1B on Monday."]
+    assert first["source_name"] == "Telegram · Ash Crypto" and first["image_url"] == CDN_IMG
+    # beide Bilder liegen bereits im Cache (CDN öffentlich, Bridge-Host ausdrücklich erlaubt)
+    assert ctx.db.scalar("SELECT COUNT(*) FROM img_cache") >= 2
+    # nicht in Analyse-Auswahl, Rückstau und Ereignissen; übrige Quellen unberührt
+    ctx.settings.set("news.enrich", False)  # frische Meldungen sofort analysierbar (kein Warten auf den Text)
+    ids = {c["id"] for c in AnalysisService(ctx).candidates(1000)}
+    tg_ids = {r["id"] for r in rows.values()}
+    others = {r["id"] for r in ctx.db.q("SELECT id FROM news_item WHERE source_id!='tg_ash' AND kind='article' "
+                                         "AND hidden_reason IS NULL")}
+    assert tg_ids and others and not ids & tg_ids and ids & others
+    assert AnalysisService(ctx).backlog() == len(ids) and AnalysisService(ctx).window_total() >= len(ids)
+    # Startseite: im Fallback ohne KI sichtbar, mit Kennzeichnung „ohne KI“, nie als „KI ausstehend“
+    ctx.settings.set("llm.enabled", False)
+    t = top_news(ctx, 10)
+    mine = [r for r in t["rows"] if r["id"] in tg_ids]
+    assert mine and all(r["noai"] for r in mine)
+
+
+def test_ai_off_flag_in_sources_yaml_overrides_default(ctx, monkeypatch):
+    from app.news.config import ai_off_ids
+
+    telegram_ctx(ctx, monkeypatch)
+    cfg = SourcesConfig(ctx.config.sources_path, ROOT / "examples" / "sources.yaml")
+    cfg.set_source("tg_ash", ai=True)
+    cfg.set_source("coindesk", ai=False)
+    assert ai_off_ids(ctx.config.sources_path) == {"coindesk"}

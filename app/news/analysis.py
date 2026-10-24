@@ -23,6 +23,7 @@ from typing import Any
 
 from app.context import AppContext
 from app.news.ai import AiError, AiGateway, AiUnavailable, BudgetExceeded, Paused, QuotaExceeded, parse_json
+from app.news.config import ai_off_ids, not_in_clause
 from app.util.timeutil import iso, parse_iso
 
 log = logging.getLogger(__name__)
@@ -184,6 +185,7 @@ class AnalysisService:
         hours = int(self.ctx.settings.get("news.analysis_hours", WINDOW_H))
         since = iso(datetime.now(UTC) - timedelta(hours=hours))
         wait_until = iso(datetime.now(UTC) - timedelta(hours=6))  # so lange auf den Artikelinhalt warten
+        skip_sql, skip_args = not_in_clause("n.source_id", ai_off_ids(self.ctx.config.sources_path))
         rows = self.db.q(
             """SELECT n.id, n.title, n.summary, n.source_name, n.published_at, n.relevance, n.dup_count,
                       n.source_weight, n.fetched_at,
@@ -193,9 +195,9 @@ class AnalysisService:
                     LEFT JOIN news_analysis a ON a.item_id=n.id
                WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?
                  AND (c.status IN ('success','partial','blocked','failed')
-                      OR (n.fetched_at <= ?) OR ? = 1)
+                      OR (n.fetched_at <= ?) OR ? = 1)""" + skip_sql + """
                ORDER BY n.published_at DESC LIMIT 5000""",
-            (since, wait_until, 1 if not self.ctx.settings.get("news.enrich", True) else 0))
+            (since, wait_until, 1 if not self.ctx.settings.get("news.enrich", True) else 0, *skip_args))
         now = datetime.now(UTC)
         out = []
         for r in rows:
@@ -254,11 +256,13 @@ class AnalysisService:
         hours = int(self.ctx.settings.get("news.analysis_hours", WINDOW_H))
         since = iso(datetime.now(UTC) - timedelta(hours=hours))
         wait_until = iso(datetime.now(UTC) - timedelta(hours=6))
+        skip_sql, skip_args = not_in_clause("n.source_id", ai_off_ids(self.ctx.config.sources_path))
         return int(self.db.scalar(
             """SELECT COUNT(*) FROM news_item n LEFT JOIN news_content c ON c.item_id=n.id
                WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?
-                 AND (c.status IN ('success','partial','blocked','failed') OR n.fetched_at <= ? OR ? = 1)""",
-            (since, wait_until, 1 if not self.ctx.settings.get("news.enrich", True) else 0), default=0) or 0)
+                 AND (c.status IN ('success','partial','blocked','failed') OR n.fetched_at <= ? OR ? = 1)"""
+            + skip_sql, (since, wait_until, 1 if not self.ctx.settings.get("news.enrich", True) else 0, *skip_args),
+            default=0) or 0)
 
     def run(self, limit: int | None = None, max_seconds: float | None = None) -> dict[str, Any]:
         """Rückstau abarbeiten: in Runden zu je ``PER_ROUND`` Meldungen (nach Priorität), bis nichts mehr wartet, ein

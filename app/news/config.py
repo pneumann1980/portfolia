@@ -17,7 +17,7 @@ from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 log = logging.getLogger(__name__)
 
-SOURCE_TYPES = {"rss", "rss_per_asset", "finnhub", "cryptopanic", "binance_api", "bybit_api"}
+SOURCE_TYPES = {"rss", "rss_per_asset", "finnhub", "cryptopanic", "binance_api", "bybit_api", "telegram"}
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "fetch_interval_minutes": 30,
@@ -56,6 +56,7 @@ class Source:
     keep_unmatched: bool = False
     assets: list[str] = field(default_factory=list)
     note: str = ""
+    ai: bool = True  # False: Meldungen dieser Quelle laufen nicht durch Analyse, Ereignisse und Tagesbericht
 
 
 # Marktweite Quellen für den Tagesbericht: Notenbanken (Primärquellen) und allgemeine Wirtschaftsnachrichten.
@@ -88,6 +89,33 @@ class Channel:
     @property
     def key(self) -> str:
         return self.handle or self.channel_id or "?"
+
+
+_AI_OFF_CACHE: dict[str, tuple[float, frozenset[str]]] = {}
+
+
+def ai_off_ids(path: Path) -> frozenset[str]:
+    """IDs der Quellen mit ``ai: false`` (bzw. Telegram ohne Angabe). Gelesen aus ``sources.yaml``, je Änderungszeit
+    zwischengespeichert – die KI-Auswahl fragt das bei jedem Lauf ab."""
+    try:
+        mtime = Path(path).stat().st_mtime
+    except OSError:
+        return frozenset()
+    hit = _AI_OFF_CACHE.get(str(path))
+    if hit and hit[0] == mtime:
+        return hit[1]
+    cfg = SourcesConfig(Path(path), Path(path))
+    ids = frozenset(src.id for src in cfg.sources() if not src.ai)
+    _AI_OFF_CACHE[str(path)] = (mtime, ids)
+    return ids
+
+
+def not_in_clause(column: str, ids: frozenset[str]) -> tuple[str, tuple[str, ...]]:
+    """``AND <column> NOT IN (...)`` für SQL; leer, wenn nichts auszuschließen ist."""
+    if not ids:
+        return "", ()
+    ordered = tuple(sorted(ids))
+    return f" AND {column} NOT IN ({','.join('?' * len(ordered))})", ordered
 
 
 def _yaml() -> YAML:
@@ -169,6 +197,7 @@ class SourcesConfig:
                     require_match=bool(r.get("require_match", True)),
                     keep_unmatched=bool(r.get("keep_unmatched", False)),
                     assets=[str(a) for a in (r.get("assets") or [])], note=str(r.get("note") or ""),
+                    ai=bool(r.get("ai", typ != "telegram")),  # Telegram: Standard ohne KI
                 )
             except (TypeError, ValueError) as e:
                 self.errors.append(f"Quelle #{i + 1}: {e}")

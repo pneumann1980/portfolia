@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 import httpx
 
@@ -16,6 +17,7 @@ from app.context import AppContext
 from app.ledger.models import AssetInfo
 from app.news.config import Channel, Source, SourcesConfig
 from app.news.dedupe import TitleIndex, normalize_title, normalize_url
+from app.news.images import cached_image
 from app.news.parse import RawItem, parse_binance, parse_bybit, parse_cryptopanic, parse_feed, parse_finnhub
 from app.news.relevance import Matcher, is_clickbait
 from app.news.youtube import YouTubeClient
@@ -97,7 +99,7 @@ class NewsService:
         for src in self.cfg.sources(include_inactive=False):
             stats.sources += 1
             try:
-                if src.type == "rss":
+                if src.type in ("rss", "telegram"):
                     if not src.url:
                         continue
                     self._rss(src, matcher, pfac, index, stats, max_items)
@@ -154,13 +156,37 @@ class NewsService:
         content = self._fetch_feed(src.id, src.name, src.url)
         if content is None:
             return
-        items, err = parse_feed(content, max_items)
+        items, err = parse_feed(content, max_items, telegram=src.type == "telegram")
         if err:
             self.ctx.guard.failure(src.id, "news", err, src.name)
             return
         self.db.x("UPDATE source_status SET items_last=? WHERE source_id=?", (len(items), src.id))
         for it in items:
             self._process(it, src, matcher, pfac, index, stats, implicit=src.assets)
+        if src.type == "telegram":
+            self._cache_images(src)
+
+    def _cache_images(self, src: Source, limit: int = 15) -> int:
+        """Bilder neuer Telegram-Beiträge sofort holen: die CDN-Links sind signiert und laufen ab. Der Feed-Server der
+        Quelle ist ausdrücklich erlaubt (eigene Bridge im LAN); nach drei Fehlern in Folge wird abgebrochen."""
+        parts = urlsplit(src.url)
+        allow = frozenset({((parts.hostname or "").lower(), parts.port or (443 if parts.scheme == "https" else 80))})
+        rows = self.db.q(
+            """SELECT id, image_url FROM news_item WHERE source_id=? AND image_url IS NOT NULL AND image_url != ''
+               ORDER BY id DESC LIMIT 40""", (src.id,))
+        done = failed = 0
+        for r in rows:
+            key = hashlib.sha256(r["image_url"].encode()).hexdigest()[:40]
+            if self.db.q1("SELECT 1 FROM img_cache WHERE key=?", (key,)):
+                continue
+            if done + failed >= limit or failed >= 3:
+                break
+            if cached_image(self.ctx, r["image_url"], allow) is None:
+                failed += 1
+            else:
+                done += 1
+                failed = 0
+        return done
 
     def rotation(self, key: str, assets: list[AssetInfo], size: int) -> list[AssetInfo]:
         """Feeds je Asset rotierend abrufen (begrenzt Last und Rate-Limits)."""

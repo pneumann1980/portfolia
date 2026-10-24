@@ -15,6 +15,7 @@
       {% if i.ai %}
         {% if i.sentiment %}<span class="badge {{ {'positiv': 'good', 'negativ': 'crit', 'gemischt': 'warn'}.get(i.sentiment, '') }}">{{ i.sentiment }}</span>{% endif %}
         {% if i.importance is not none and i.importance >= 0.7 %}<span class="badge warn">hohe Bedeutung</span>{% endif %}
+      {% elif i.noai %}<span class="badge" title="Diese Quelle läuft bewusst ohne KI-Auswertung">ohne KI</span>
       {% else %}<span class="badge" title="Für diese Meldung liegt noch keine KI-Analyse vor">KI ausstehend</span>{% endif %}
       {% for a in i.assets[:3] %}<span class="badge info">{{ a }}</span>{% endfor %}
       <span>{{ (i.sources[0] if i.sources else '') }}{% if i.reports > 1 %} · {{ i.reports }} Berichte{% endif %}</span>

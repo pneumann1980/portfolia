@@ -1426,6 +1426,12 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.48.0 – Telegram-Kanäle als News-Quelle
+
+* Quelltyp `telegram` (RSS/Atom, z. B. RSS-Bridge): Titel aus dem Text, voller Beitragstext, Bild beim Abruf sofort gecacht
+  (Quell-Host im LAN ausdrücklich erlaubt), Standard `ai: false` (keine Analyse/Ereignisse/Berichtsaufnahme), Kennzeichnung
+  „ohne KI“. Bild-Proxy in `app/news/images.py` ausgelagert. Details in `docs/NEWS_INTELLIGENCE.md`.
+
 ## 0.47.4 – News-Status: Restzeit
 
 * „Restzeit: ca. …“ unter den Rückstau-Balken (Durchsatz gemessen/nominal, Zufluss, Pause, Tageskontingent, „wächst derzeit“).

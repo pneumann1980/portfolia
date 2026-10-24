@@ -14,6 +14,8 @@ import feedparser
 _TAG_RE = re.compile(r"<[^>]+>")
 _IMG_RE = re.compile(r"<img[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
 _WS_RE = re.compile(r"\s+")
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s")
+TELEGRAM_TEXT_LIMIT = 2000
 
 
 @dataclass
@@ -74,8 +76,20 @@ def _image(entry: Any) -> str | None:
     return None
 
 
-def parse_feed(content: bytes, max_items: int = 60) -> tuple[list[RawItem], str | None]:
-    """Rückgabe: (Meldungen, Fehlertext bei unlesbarem Feed)."""
+def title_from_text(text: str, limit: int = 110) -> str:
+    """Titel für Beiträge ohne Titel (Telegram): erster Satz, sonst die ersten Wörter."""
+    text = text.strip()
+    if not text:
+        return ""
+    first = _SENTENCE_END.split(text, maxsplit=1)[0]
+    if len(first) <= limit:
+        return first
+    return text[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:- ") + "…"
+
+
+def parse_feed(content: bytes, max_items: int = 60, telegram: bool = False) -> tuple[list[RawItem], str | None]:
+    """Rückgabe: (Meldungen, Fehlertext bei unlesbarem Feed). ``telegram``: Beiträge ohne (brauchbaren) Titel
+    bekommen einen aus dem Text; der volle Text bleibt erhalten (bei Telegram ist der Feedtext der ganze Beitrag)."""
     d = feedparser.parse(content)
     if d.get("bozo") and not d.get("entries"):
         return [], f"Feed nicht lesbar: {d.get('bozo_exception')}"
@@ -83,13 +97,16 @@ def parse_feed(content: bytes, max_items: int = 60) -> tuple[list[RawItem], str 
     for e in (d.get("entries") or [])[:max_items]:
         title = clean_text(e.get("title"), 300)
         link = e.get("link") or ""
-        if not title or not link:
-            continue
         summary = e.get("summary") or ""
         if not summary and e.get("content"):
             summary = " ".join(c.get("value", "") for c in e["content"])
+        text = clean_text(summary, TELEGRAM_TEXT_LIMIT if telegram else 600)
+        if telegram and (len(title.rstrip("….")) < 8 or title.endswith("…")):
+            title = title_from_text(text) or title  # abgeschnittener oder fehlender Feedtitel
+        if not title or not link:
+            continue
         item = RawItem(
-            title=title, url=link, summary=clean_text(summary), published=_dt(e.get("published_parsed"))
+            title=title, url=link, summary=text, published=_dt(e.get("published_parsed"))
             or _dt(e.get("updated_parsed")), image_url=_image(e), author=e.get("author"),
         )
         vid = e.get("yt_videoid")

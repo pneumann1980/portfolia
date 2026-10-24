@@ -1,6 +1,6 @@
 # News-Intelligence (0.46): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
 
-Stand: 0.47.4. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
+Stand: 0.48.0. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
 **rückwärtskompatibel**: der Feed-Import, die Relevanz-/Dedupe-Logik, YouTube und Claude-Zusammenfassungen laufen
 unverändert; die neuen Stufen sind eigene Hintergrundjobs, deren Ausfall den Import nie blockiert.
 
@@ -240,6 +240,28 @@ letzte Fehler. Der Hinweis zur Free-Tier-Garantie steht dort ebenfalls.
 * **Stimmungsbarometer:** im Bericht die Verteilung positiv/neutral/negativ/gemischt über alle analysierten Meldungen des
   Berichtszeitraums, gesamt und je Portfolio-Asset – lokal aus den gespeicherten Analysen berechnet, Modell-Einschätzung
   (nicht gewichtet, keine Messung).
+
+## Telegram-Kanäle (0.48)
+
+Quelltyp `telegram` in `sources.yaml` (technisch ein RSS/Atom-Feed, z. B. RSS-Bridge `TelegramBridge` oder RSSHub auf dem
+eigenen Server):
+
+* **Titel:** Beiträge ohne oder mit abgeschnittenem Feedtitel (`…`, < 8 Zeichen) bekommen den ersten Satz des Textes (höchstens
+  110 Zeichen); Beiträge ganz ohne Text werden verworfen. Der volle Beitragstext (bis 2000 Zeichen) bleibt als Text erhalten.
+* **Ohne KI:** `ai: false` ist bei Telegram der Standard (überall setzbar, `ai: true` schaltet es wieder ein). Solche Quellen
+  werden nicht analysiert, nicht in Ereignisse gruppiert und kommen nicht in den Tagesbericht; sie zählen nicht zum
+  KI-Rückstau. Auf der Startseite erscheinen sie in der Ansicht „Original“ und – bei KI-Ausfall – in der Aktualitätsliste mit
+  dem Hinweis „ohne KI“ (nie als „KI ausstehend“).
+* **Bilder:** Das Bild des Beitrags wird beim Abruf sofort geholt und lokal gecacht (die Telegram-CDN-Links sind signiert und
+  laufen ab). Neben öffentlichen Hosts ist ausdrücklich der **Host der Quelle** erlaubt (eigene Bridge im LAN, beliebiger Port);
+  alles andere bleibt SSRF-geschützt (nur öffentliche Hosts, Port 80/443). Nach drei Fehlern in Folge pausiert der Bildabruf des
+  Laufs. Bild aus `enclosure`, `media:*` oder dem ersten `<img>` im Beitrag; CSS-Hintergrundbilder werden von `feedparser`
+  beim Bereinigen entfernt und deshalb nicht erkannt.
+* **Filter:** `require_match: true` (Standard) behält nur Beiträge mit Bezug zu einer Position; `title_blocklist` und
+  Dubletten-Erkennung gelten wie bei anderen Quellen. Empfohlen: `weight` um 0,4 (Meinung/Werbung, ungeprüft).
+* **Grenzen:** nicht gegen eine echte RSS-Bridge-Instanz getestet (Tests mit synthetischem Atom nach dem üblichen Format);
+  Albums/Mehrfachbilder: nur das erste Bild; Videos/Sprachnachrichten ohne Text werden verworfen; private Kanäle gehen nur,
+  wenn die Bridge sie liefert. Kein Telegram-Konto in der App.
 
 ## Tests
 
