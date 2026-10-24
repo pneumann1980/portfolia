@@ -127,18 +127,36 @@
       {% for s in src_list %}{% set st = status_rows.get(s.id) %}
         <tr>
           <td><b>{{ s.name }}</b><br><small class="muted">{{ s.language }}{% if s.require_match %} · nur zugeordnete{% endif %}{% if s.note %} · {{ s.note }}{% endif %}</small></td>
-          <td class="mono small">{{ s.type }}</td>
+          <td class="mono small">{{ s.type }}{% if not s.ai %}<br><span class="badge" title="Läuft nicht durch KI-Analyse, Ereignisse und Tagesbericht">ohne KI</span>{% endif %}</td>
           <td class="num"><form hx-post="/news/source" class="row" style="justify-content:flex-end;gap:4px"><input type="hidden" name="id" value="{{ s.id }}"><input type="hidden" name="action" value="weight">
             <input type="number" name="weight" min="0" max="1" step="0.1" value="{{ s.weight }}" style="width:70px"><button class="btn sm ghost" type="submit">✓</button></form></td>
           <td>{% if not s.active %}<span class="badge">inaktiv</span>{% elif st and st.verified == 'unreachable' %}<span class="badge crit" title="{{ st.last_error or '' }}">nicht erreichbar – pausiert</span>{% elif st and st.verified == 'ok' %}<span class="badge good">ok</span>{% elif s.type in ('finnhub', 'cryptopanic') %}<span class="badge">API-Key nötig</span>{% else %}<span class="badge">noch nicht geprüft</span>{% endif %}
             {% if st and st.last_error and st.consecutive_failures %}<br><small class="muted">{{ st.last_error[:90] }}</small>{% endif %}</td>
           <td>{{ st.last_success|datetime_de if st else '–' }}</td>
           <td class="num">{{ counts.get(s.id, 0) }}</td>
-          <td><button class="btn sm" hx-post="/news/source" hx-vals='{"id": "{{ s.id }}", "action": "{{ 'deactivate' if s.active else 'activate' }}"}'>{{ 'Deaktivieren' if s.active else 'Aktivieren' }}</button></td>
+          <td class="nowrap"><button class="btn sm" hx-post="/news/source" hx-vals='{"id": "{{ s.id }}", "action": "{{ 'deactivate' if s.active else 'activate' }}"}'>{{ 'Deaktivieren' if s.active else 'Aktivieren' }}</button>
+            <button class="btn sm ghost" hx-post="/news/source" hx-vals='{"id": "{{ s.id }}", "action": "{{ 'ai_off' if s.ai else 'ai_on' }}"}' title="KI-Auswertung für diese Quelle ein-/ausschalten">{{ 'KI aus' if s.ai else 'KI an' }}</button>
+            {% if s.type == 'telegram' %}<button class="btn sm ghost" hx-post="/news/source" hx-vals='{"id": "{{ s.id }}", "action": "remove"}' hx-confirm="Kanal „{{ s.name }}“ aus den Quellen entfernen? Bereits gespeicherte Beiträge bleiben erhalten.">Entfernen</button>{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table></div>
+  </section>
+  <section class="card" style="margin-top:16px">
+    <div class="card-head"><h2>Telegram-Kanal hinzufügen</h2></div>
+    <form hx-post="/news/source/telegram" hx-target="#tg-msg" hx-disabled-elt="find button" class="stack">
+      <div class="form-grid">
+        <label class="field">Kanal<input type="text" name="channel" required maxlength="500" placeholder="@CoinBureau, t.me/CoinBureau oder Feed-URL" autocomplete="off"></label>
+        <label class="field">Adresse Ihrer RSS-Bridge<input type="text" name="bridge" value="{{ tg_bridge }}" maxlength="200" placeholder="http://192.168.1.10:7575" autocomplete="off"></label>
+        <label class="field">Name (optional)<input type="text" name="name" maxlength="80" placeholder="Telegram · Kanalname"></label>
+        <label class="field">Sprache<select name="language"><option value="en">Englisch</option><option value="de">Deutsch</option></select></label>
+        <label class="field">Gewicht (0–1)<input type="number" name="weight" min="0" max="1" step="0.1" value="0.4"></label>
+      </div>
+      <label class="check"><input type="checkbox" name="require_match" value="1" checked> Nur Beiträge mit Bezug zu meinen Positionen übernehmen</label>
+      <label class="check"><input type="checkbox" name="ai" value="1"> Mit KI auswerten (Standard: aus – Beiträge erscheinen im Original)</label>
+      <div class="row"><button class="btn primary" type="submit">Prüfen &amp; hinzufügen</button><span id="tg-msg"></span></div>
+    </form>
+    <p class="hint">Mit Kanalname und Bridge-Adresse wird die Feed-URL der <b>RSS-Bridge</b> (<span class="mono">TelegramBridge</span>, Format Atom) gebildet; alternativ kann hier direkt eine fertige Feed-URL stehen. Der Feed wird vor dem Speichern einmal abgerufen. Bilder werden beim Abruf lokal gespeichert. Eingetragen wird in <code>sources.yaml</code>.</p>
   </section>
   <section class="card" style="margin-top:16px">
     <div class="card-head"><h2>YouTube-Kanäle</h2><span class="hint">{% if has_yt_key %}API-Key gesetzt · {{ yt_units }} Einheiten heute{% else %}ohne API-Key (Kanal-RSS){% endif %}</span></div>

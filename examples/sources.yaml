@@ -21,11 +21,19 @@
 # ai: false → Meldungen der Quelle laufen nicht durch KI-Analyse, Ereignisgruppen und Tagesbericht (sie erscheinen in der
 #             Ansicht „Original“ und im Feed). Bei type: telegram ist das der Standard; mit ai: true wieder einschalten.
 #
-# Beispiel (Telegram über RSS-Bridge, Format Atom; Host/Port = Ihr eigener Server):
-#   - id: tg_beispiel
-#     name: "Telegram · Beispielkanal"
+# Telegram-Kanäle lassen sich auch direkt in der App hinzufügen (News → Quellen → „Telegram-Kanal hinzufügen“).
+# Beispiel von Hand (RSS-Bridge „TelegramBridge“, Format Atom; Host/Port = Ihr eigener Server):
+#   - id: tg_ashcryptotg
+#     name: "Telegram · Ash Crypto"
 #     type: telegram
-#     url: "http://rss-bridge.local:7575/?action=display&bridge=TelegramBridge&username=%40Beispielkanal&format=Atom"
+#     url: "http://192.168.178.135:7575/?action=display&bridge=TelegramBridge&username=%40AshCryptoTG&format=Atom"
+#     language: en
+#     weight: 0.4
+#     require_match: true
+#   - id: tg_coinbureau
+#     name: "Telegram · Coin Bureau"
+#     type: telegram
+#     url: "http://192.168.178.135:7575/?action=display&bridge=TelegramBridge&username=%40CoinBureau&format=Atom"
 #     language: en
 #     weight: 0.4
 #     require_match: true

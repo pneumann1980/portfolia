@@ -335,6 +335,31 @@ class SourcesConfig:
                     return True
             return False
 
+    def add_source(self, fields: dict[str, Any]) -> None:
+        """Neue Quelle ans Ende von ``sources:`` (Kommentare und übrige Einträge bleiben unverändert)."""
+        with self._lock:
+            d = self.data()
+            if not isinstance(d, CommentedMap):
+                d = CommentedMap()
+            if d.get("sources") is None:
+                d["sources"] = CommentedSeq()
+            entry = CommentedMap()
+            for k, v in fields.items():
+                entry[k] = v
+            d["sources"].append(entry)
+            self.save(d)
+
+    def remove_source(self, source_id: str) -> bool:
+        with self._lock:
+            d = self.data()
+            seq = d.get("sources") or []
+            for i, s in enumerate(seq):
+                if s.get("id") == source_id:
+                    del seq[i]
+                    self.save(d)
+                    return True
+            return False
+
     def set_source(self, source_id: str, **fields: Any) -> bool:
         with self._lock:
             d = self.data()

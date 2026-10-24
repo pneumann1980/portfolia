@@ -1426,6 +1426,11 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.48.1 – Telegram-Kanäle in der App hinzufügen
+
+* Formular in *News → Quellen* (Kanal oder Feed-URL + Bridge-Adresse), Feed-Prüfung vor dem Speichern, Duplikatschutz,
+  `sources.yaml` kommentarerhaltend; je Quelle „KI an/aus“, „Entfernen“ (nur Telegram). `app/news/telegram.py`.
+
 ## 0.48.0 – Telegram-Kanäle als News-Quelle
 
 * Quelltyp `telegram` (RSS/Atom, z. B. RSS-Bridge): Titel aus dem Text, voller Beitragstext, Bild beim Abruf sofort gecacht

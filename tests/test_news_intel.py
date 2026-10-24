@@ -1766,3 +1766,119 @@ def test_progress_phases_for_report_exist():
     assert out[-1]["phase_label"] == PHASE_LABEL["rep_ai"] == "KI erstellt den Bericht" and 10 <= out[-1]["pct"] < 95
     p.finish(True, "ok")
     assert out[-1]["pct"] == 100 and out[-1]["running"] is False
+
+
+# ----------------------------------------------------------------------------------------------------
+# Telegram-Kanäle in der App hinzufügen (News → Quellen)
+# ----------------------------------------------------------------------------------------------------
+
+TG_ATOM = (b'<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>x</title>'
+           b'<entry><id>https://t.me/CoinBureau/1</id><title>Bitcoin ETF inflows hit a new record today</title>'
+           b'<link rel="alternate" href="https://t.me/CoinBureau/1"/><updated>2026-10-24T08:00:00+00:00</updated>'
+           b'<content type="html">Bitcoin ETF inflows hit a new record today.</content></entry></feed>')
+
+
+def bridge_http(status=200, body=TG_ATOM):
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        return httpx.Response(status, content=body, headers={"content-type": "application/atom+xml"})
+
+    return httpx.Client(transport=httpx.MockTransport(handler)), seen
+
+
+def test_telegram_input_parsing_and_urls():
+    from app.news.telegram import (
+        TelegramInputError,
+        clean_base,
+        feed_url,
+        handle_from_url,
+        parse_channel_input,
+        source_id,
+    )
+
+    for raw in ("@CoinBureau", "CoinBureau", "t.me/CoinBureau", "https://t.me/s/CoinBureau", "https://t.me/CoinBureau/123"):
+        assert parse_channel_input(raw) == ("CoinBureau", "")
+    url = "http://192.168.1.2:7575/?action=display&bridge=TelegramBridge&username=%40AshCryptoTG&format=Atom"
+    assert parse_channel_input(url) == ("", url) and handle_from_url(url) == "AshCryptoTG"
+    for bad in ("", "ab", "@1abc_def", "has space", "t.me/", "ftp://x/y", "x" * 600):
+        with pytest.raises(TelegramInputError):
+            parse_channel_input(bad)
+    assert clean_base("192.168.1.2:7575/irgendwas?x=1") == "http://192.168.1.2:7575"
+    assert feed_url("http://b:7575", "CoinBureau") == \
+        "http://b:7575/?action=display&bridge=TelegramBridge&username=%40CoinBureau&format=Atom"
+    with pytest.raises(TelegramInputError):
+        clean_base("javascript:alert(1)")
+    assert source_id("Coin_Bureau") == "tg_coin_bureau"
+
+
+def test_add_telegram_channel_via_form_persists_and_keeps_yaml_comments(client):
+    from app.news.module import news_service
+
+    ctx = wctx(client)
+    ctx.http, seen = bridge_http()
+    svc = news_service(ctx)
+    svc.cfg.ensure()
+    before = ctx.config.sources_path.read_text(encoding="utf-8")
+    assert "# Portfolia – Quellen" in before
+    page = client.get("/news?tab=sources").text
+    assert "Telegram-Kanal hinzufügen" in page and 'name="channel"' in page
+    r = client.post("/news/source/telegram", data={
+        "channel": "@CoinBureau", "bridge": "192.168.178.135:7575", "name": "", "language": "en", "weight": "0.4",
+        "require_match": "1"})
+    assert r.status_code == 204 and r.headers.get("hx-refresh") == "true"
+    assert seen == ["http://192.168.178.135:7575/?action=display&bridge=TelegramBridge&username=%40CoinBureau&format=Atom"]
+    src = next(s for s in svc.cfg.sources() if s.id == "tg_coinbureau")
+    assert src.type == "telegram" and not src.ai and src.require_match and src.weight == 0.4
+    assert src.name == "Telegram · CoinBureau" and src.language == "en" and src.active
+    after = ctx.config.sources_path.read_text(encoding="utf-8")
+    assert "# Portfolia – Quellen" in after and "tg_coinbureau" in after  # Kommentare bleiben erhalten
+    assert ctx.settings.get("news.telegram_bridge") == "http://192.168.178.135:7575"
+    page = client.get("/news?tab=sources").text
+    assert "Telegram · CoinBureau" in page and "ohne KI" in page and 'value="http://192.168.178.135:7575"' in page
+
+
+def test_add_telegram_channel_rejects_bad_input_duplicates_and_dead_feeds(client):
+    from app.news.module import news_service
+
+    ctx = wctx(client)
+    svc = news_service(ctx)
+
+    def post(**kw):
+        data = {"channel": "@CoinBureau", "bridge": "http://b:7575", "language": "en", "weight": "0.4"}
+        data.update(kw)
+        return client.post("/news/source/telegram", data=data)
+
+    ctx.http, _ = bridge_http()
+    assert "kein gültiger Kanalname" in post(channel="a b").text
+    assert "Bridge-Adresse" in post(bridge="").text or "Bridge" in post(bridge="").text
+    assert "Gewicht ungültig" in post(weight="abc").text
+    ctx.http, _ = bridge_http(status=503)
+    assert "HTTP 503" in post().text
+    ctx.http, _ = bridge_http(body=b"<html>nope</html>")
+    assert post().status_code == 200 and not any(s.id == "tg_coinbureau" for s in svc.cfg.sources())
+    ctx.http, _ = bridge_http(body=b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>')
+    assert "keine lesbaren Beiträge" in post().text
+    ctx.http, _ = bridge_http()
+    assert post().status_code == 204
+    assert "bereits als Quelle eingetragen" in post().text  # Duplikat
+
+
+def test_source_actions_ai_toggle_remove_and_protect_builtin_sources(client):
+    from app.news.module import news_service
+
+    ctx = wctx(client)
+    ctx.http, _ = bridge_http()
+    svc = news_service(ctx)
+    assert client.post("/news/source/telegram", data={"channel": "t.me/CoinBureau", "bridge": "http://b:7575"}
+                       ).status_code == 204
+    assert client.post("/news/source", data={"id": "tg_coinbureau", "action": "ai_on"}).status_code == 204
+    assert next(s for s in svc.cfg.sources() if s.id == "tg_coinbureau").ai is True
+    assert client.post("/news/source", data={"id": "tg_coinbureau", "action": "ai_off"}).status_code == 204
+    assert next(s for s in svc.cfg.sources() if s.id == "tg_coinbureau").ai is False
+    builtin = svc.cfg.sources()[0].id
+    assert client.post("/news/source", data={"id": builtin, "action": "remove"}).status_code == 400
+    assert any(s.id == builtin for s in svc.cfg.sources())
+    assert client.post("/news/source", data={"id": "tg_coinbureau", "action": "remove"}).status_code == 204
+    assert not any(s.id == "tg_coinbureau" for s in svc.cfg.sources())

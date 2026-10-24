@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -11,6 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from app.context import AppContext
 from app.jobs.scheduler import Scheduler, extra_jobs, startup_job
@@ -24,6 +26,7 @@ from app.news.relevance import recency_factor
 from app.news.report import ReportService
 from app.news.service import NewsService
 from app.news.status import pipeline_status
+from app.news.telegram import TelegramInputError, add_telegram_source
 from app.progress import Progress, job_progress
 from app.util.timeutil import iso, parse_iso
 from app.web.app import register_router
@@ -304,7 +307,8 @@ def make_router() -> APIRouter:
             base.update(src_list=svc.cfg.sources(), status_rows=status_rows, counts=counts,
                         channels=svc.channel_state(), discovery=svc.cfg.discovery(),
                         yt_units=svc.yt.units_used(), has_yt_key=bool(ctx.config.secrets.youtube_api_key),
-                        settings=svc.cfg.settings, sources_path=str(ctx.config.sources_path))
+                        settings=svc.cfg.settings, sources_path=str(ctx.config.sources_path),
+                        tg_bridge=str(ctx.settings.get("news.telegram_bridge", "")))
         elif tab == "report":
             base.update(report_ctx(ctx, report_id))
         elif tab == "status":
@@ -480,6 +484,36 @@ def make_router() -> APIRouter:
             except ValueError:
                 raise HTTPException(400, "Gewicht ungültig") from None
             svc.cfg.set_source(sid, weight=w)
+        elif action in ("ai_on", "ai_off"):
+            svc.cfg.set_source(sid, ai=action == "ai_on")
+        elif action == "remove":
+            src = next((x for x in svc.cfg.sources() if x.id == sid), None)
+            if src is None or src.type != "telegram":  # nur selbst hinzugefügte Telegram-Kanäle sind löschbar
+                raise HTTPException(400, "Nur Telegram-Kanäle können entfernt werden (andere: deaktivieren).")
+            svc.cfg.remove_source(sid)
+        return Response(status_code=204, headers={"HX-Refresh": "true"})
+
+    @router.post("/news/source/telegram")
+    async def add_telegram(request: Request) -> Response:
+        ctx = get_ctx(request)
+        svc = news_service(ctx)
+        form = await request.form()
+        try:
+            weight = float(str(form.get("weight") or "0.4").replace(",", "."))
+        except ValueError:
+            return HTMLResponse('<span class="badge crit">Gewicht ungültig (0 bis 1).</span>')
+        try:
+            res = await run_in_threadpool(
+                add_telegram_source, svc.cfg, ctx.http, channel=str(form.get("channel") or ""),
+                bridge=str(form.get("bridge") or ctx.settings.get("news.telegram_bridge", "")),
+                name=str(form.get("name") or ""), language=str(form.get("language") or "en"), weight=weight,
+                require_match=form.get("require_match") == "1", ai=form.get("ai") == "1")
+        except TelegramInputError as e:
+            return HTMLResponse(f'<span class="badge crit">{html.escape(str(e))}</span>')
+        if res["base"]:
+            ctx.settings.set("news.telegram_bridge", res["base"])
+        if ctx.scheduler is not None:
+            ctx.scheduler.trigger("news_fetch", 1)
         return Response(status_code=204, headers={"HX-Refresh": "true"})
 
     @router.get("/img/news/{item_id}")

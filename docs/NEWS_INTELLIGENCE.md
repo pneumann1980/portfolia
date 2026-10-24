@@ -1,6 +1,6 @@
 # News-Intelligence (0.46): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
 
-Stand: 0.48.0. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
+Stand: 0.48.1. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
 **rückwärtskompatibel**: der Feed-Import, die Relevanz-/Dedupe-Logik, YouTube und Claude-Zusammenfassungen laufen
 unverändert; die neuen Stufen sind eigene Hintergrundjobs, deren Ausfall den Import nie blockiert.
 
@@ -246,6 +246,14 @@ letzte Fehler. Der Hinweis zur Free-Tier-Garantie steht dort ebenfalls.
 Quelltyp `telegram` in `sources.yaml` (technisch ein RSS/Atom-Feed, z. B. RSS-Bridge `TelegramBridge` oder RSSHub auf dem
 eigenen Server):
 
+* **In der App hinzufügen (0.48.1):** *News → Quellen → Telegram-Kanal hinzufügen*. Eingabe: Kanal (`@Name`, `Name`, `t.me/Name`,
+  `t.me/s/Name` oder eine fertige Feed-URL) und die Adresse der RSS-Bridge (wird für die nächsten Kanäle gemerkt, `news.telegram_bridge`).
+  Aus Kanalname + Bridge-Adresse wird `…/?action=display&bridge=TelegramBridge&username=%40Name&format=Atom` gebildet. Vor dem
+  Speichern wird der Feed einmal abgerufen und gelesen (nicht erreichbar, HTTP-Fehler, nicht lesbar, keine Beiträge → Meldung, nichts
+  wird gespeichert); Duplikate (gleiche ID oder URL) werden abgelehnt. Eintrag in `sources.yaml` ohne Änderung der Kommentare und
+  übrigen Quellen; Abruf startet sofort. Je Quelle: „KI an/aus“ (`ai:`), „Deaktivieren“, „Entfernen“ (nur Telegram-Quellen;
+  gespeicherte Beiträge bleiben). Grenzen: nur RSS-Bridge-Format (Atom) wird aus dem Kanalnamen gebildet, RSSHub o. ä. per fertiger
+  Feed-URL; Bridge-Adressen sind frei wählbar (auch LAN), das ist beabsichtigt – die App ist nur mit Anmeldung erreichbar.
 * **Titel:** Beiträge ohne oder mit abgeschnittenem Feedtitel (`…`, < 8 Zeichen) bekommen den ersten Satz des Textes (höchstens
   110 Zeichen); Beiträge ganz ohne Text werden verworfen. Der volle Beitragstext (bis 2000 Zeichen) bleibt als Text erhalten.
 * **Ohne KI:** `ai: false` ist bei Telegram der Standard (überall setzbar, `ai: true` schaltet es wieder ein). Solche Quellen
