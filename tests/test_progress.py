@@ -158,3 +158,36 @@ def test_zip_import_reports_progress(tmp_path):
     tasks.import_check(ctx, "poll")  # unveränderte Datei: kein neuer Fortschritt
     assert json.loads(ctx.db.scalar("SELECT progress_json FROM job_status WHERE job='import'"))["started_at"] == \
         p["started_at"]
+
+
+def test_late_heartbeat_never_overwrites_finished_state():
+    """Lebenszeichen (Hintergrund-Thread) und Abschluss laufen nebenläufig: Ein Lebenszeichen, das vor dem Abschluss
+    berechnet, aber erst danach gespeichert wird, darf „läuft“ nicht wieder setzen (sonst bleibt der Vorgang in der
+    globalen Anzeige hängen)."""
+    import threading
+
+    writes: list[dict] = []
+    first_write_started = threading.Event()
+    release = threading.Event()
+    calls = {"n": 0}
+
+    def sink(payload: dict) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:  # das Lebenszeichen (n == 1 ist der Start im Konstruktor)
+            first_write_started.set()
+            assert release.wait(5)
+        writes.append(payload)
+
+    p = Progress(sink, "Import")
+    beat = threading.Thread(target=p.touch)
+    beat.start()
+    assert first_write_started.wait(5)
+    done = threading.Thread(target=lambda: p.finish(True, "ok"))
+    done.start()
+    release.set()
+    beat.join(5)
+    done.join(5)
+    assert not beat.is_alive() and not done.is_alive()
+    assert writes[-1]["running"] is False and writes[-1]["ok"] is True  # zuletzt gespeichert: der Abschluss
+    p.touch()  # nach dem Abschluss ohne Wirkung
+    assert writes[-1]["running"] is False and calls["n"] == len(writes)

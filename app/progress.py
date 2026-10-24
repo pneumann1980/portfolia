@@ -106,6 +106,7 @@ class Progress:
         self.extra: dict[str, Any] = {}
         self._last_write = -math.inf
         self._lock = threading.Lock()
+        self._emit_lock = threading.Lock()  # Berechnen und Speichern einer Meldung ist unteilbar (siehe ``_emit``)
         self.finished = False
         self._emit(force=True)
 
@@ -196,7 +197,7 @@ class Progress:
             if ok:
                 self.pct = 100.0
             self.phase_key = "done" if ok else self.phase_key
-        self._emit(force=True)
+        self._emit(force=True, final=True)
 
     # -- Berechnung ---------------------------------------------------------------------------------------
     def _recompute(self) -> None:
@@ -270,15 +271,21 @@ class Progress:
                 rem += w / r
         return rem
 
-    def _emit(self, force: bool = False) -> None:
-        now = self.clock()
-        if not force and now - self._last_write < _WRITE_EVERY_S:
-            return
-        self._last_write = now
-        try:
-            self.sink(self.payload())
-        except Exception as e:  # Anzeige darf den Vorgang nie stören
-            log.debug("Fortschritt nicht gespeichert: %s", e)
+    def _emit(self, force: bool = False, final: bool = False) -> None:
+        """Zustand speichern. Berechnen und Speichern laufen unter einer Sperre: Ein Lebenszeichen (Hintergrund-
+        Thread) kann so nicht mit veraltetem „läuft“-Zustand nach dem Abschluss ankommen. Nach dem Abschluss schreibt
+        nur noch der Abschluss selbst (``final``)."""
+        with self._emit_lock:
+            if self.finished and not final:
+                return
+            now = self.clock()
+            if not force and now - self._last_write < _WRITE_EVERY_S:
+                return
+            self._last_write = now
+            try:
+                self.sink(self.payload())
+            except Exception as e:  # Anzeige darf den Vorgang nie stören
+                log.debug("Fortschritt nicht gespeichert: %s", e)
 
 
 def fmt_clock(seconds: float) -> str:
