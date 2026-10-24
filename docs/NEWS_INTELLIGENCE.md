@@ -1,6 +1,6 @@
 # News-Intelligence (0.46): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
 
-Stand: 0.47.0. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
+Stand: 0.47.1. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
 **rückwärtskompatibel**: der Feed-Import, die Relevanz-/Dedupe-Logik, YouTube und Claude-Zusammenfassungen laufen
 unverändert; die neuen Stufen sind eigene Hintergrundjobs, deren Ausfall den Import nie blockiert.
 
@@ -209,6 +209,14 @@ letzte Fehler. Der Hinweis zur Free-Tier-Garantie steht dort ebenfalls.
   als 36 h) und die fünf wichtigsten Ereignisse der letzten 24 h (Rang: Bedeutung, Positionsbezug, Anzahl Berichte,
   Relevanz) mit Zusammenfassung, Stimmung, Assets und Quellen; freie Plätze füllt die bisherige Liste („KI ausstehend“).
   Ohne Analysen bleibt die bisherige Liste. Die Artikelliste unter *News* zeigt ebenfalls das Stimmungs-Badge.
+* **Ausfall-Fallback (0.47.1):** `AiGateway.health()` meldet „KI nicht erreichbar“, wenn die KI ausgeschaltet/ohne Schlüssel ist,
+  der Anbieter pausiert oder der jüngste Aufruf der letzten 30 min fehlgeschlagen ist und seither kein Erfolg folgte
+  (`ai.last_ok`/`ai.last_error`). Dann zeigt die Startseite einen Hinweis mit Grund und die **neuesten** Meldungen nach
+  Aktualität; vorhandene Analysen erscheinen nur als Zusatz. Im Normalbetrieb sind **2 der 5 Plätze** für die neuesten
+  noch nicht analysierten Meldungen („KI ausstehend“) reserviert (gibt es weniger, fallen sie an die Analysen).
+  Ein Schalter **KI-Auswertung | Original** im Kasten wechselt zur bisherigen Liste; die Wahl steht im Browser
+  (`localStorage`, nur Anzeige, keine Serverdaten). Grenze: Der Zustand wird erst nach einem fehlgeschlagenen Aufruf
+  erkannt (kein aktiver Ping); ohne JavaScript bleibt die KI-Ansicht sichtbar.
 * **Längere Texte (Prompt-Version 2):** Zusammenfassung 4–5 Sätze; Einordnung 3–5 Sätze (Relevanz, mögliche Folgen,
   Beobachtungspunkte, als Einschätzung formuliert); Bericht: Überblick 6–8 Sätze, Kernaussage 2–3, Einordnung 2–3,
   Krypto 4–6. Da die Version im Eingabe-Hash steckt, werden **nur Meldungen der letzten 48 h** neu analysiert; ältere

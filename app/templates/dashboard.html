@@ -120,9 +120,19 @@
   </section>
   <section class="card" aria-labelledby="news-h">
     {% if top and top.analyzed %}
-    <div class="card-head"><h2 id="news-h">Top-News mit KI-Auswertung</h2><a class="btn sm ghost" href="/news">Alle</a></div>
-    {% include "partials/news_top.html" %}
-    <p class="hint">Von einer KI aus öffentlichen Artikeltexten ausgewertet – keine Anlageberatung.</p>
+    <div class="card-head news-head"><h2 id="news-h">Top-News</h2>
+      <div class="row">
+        <div class="seg" role="group" aria-label="Ansicht der News" data-news-switch>
+          <button type="button" data-news-view="ki" aria-pressed="true">KI-Auswertung</button>
+          <button type="button" data-news-view="orig" aria-pressed="false">Original</button>
+        </div>
+        <a class="btn sm ghost" href="/news">Alle</a></div></div>
+    <div class="nv nv-ki">
+      {% if top.degraded %}<div class="alert warn" role="status"><span class="icon">!</span><div>KI-Auswertung derzeit eingeschränkt – {{ top.reason }} Angezeigt werden die neuesten Meldungen; vorhandene Analysen erscheinen als Zusatz.</div></div>{% endif %}
+      {% include "partials/news_top.html" %}
+      <p class="hint">Von einer KI aus öffentlichen Artikeltexten ausgewertet – keine Anlageberatung.</p>
+    </div>
+    <div class="nv nv-orig">{% include "partials/news_list_compact.html" %}</div>
     {% else %}
     <div class="card-head"><h2 id="news-h">Neueste relevante News</h2><a class="btn sm ghost" href="/news">Alle</a></div>
     {% include "partials/news_list_compact.html" %}

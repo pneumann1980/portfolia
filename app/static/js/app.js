@@ -170,6 +170,29 @@
   document.body.addEventListener("htmx:afterSwap", syncHideTotal);
   syncHideTotal();
 
+  // --- Startseite: News-Ansicht „KI-Auswertung“ / „Original“ (Auswahl bleibt im Browser erhalten) ---------
+  (function () {
+    var sw = document.querySelector("[data-news-switch]");
+    if (!sw) return;
+    var card = sw.closest("section");
+    function apply(v) {
+      card.classList.toggle("show-orig", v === "orig");
+      sw.querySelectorAll("[data-news-view]").forEach(function (b) {
+        b.setAttribute("aria-pressed", b.getAttribute("data-news-view") === v ? "true" : "false");
+      });
+    }
+    var saved = null;
+    try { saved = localStorage.getItem("portfolia-news-view"); } catch (e) { /* privat/gesperrt – ignorieren */ }
+    apply(saved === "orig" ? "orig" : "ki");
+    sw.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-news-view]");
+      if (!b) return;
+      var v = b.getAttribute("data-news-view");
+      apply(v);
+      try { localStorage.setItem("portfolia-news-view", v); } catch (err) { /* nur für diese Seite */ }
+    });
+  })();
+
   // --- Reiter: aktiven Reiter in horizontal scrollenden Leisten sichtbar machen ---------------------------
   document.querySelectorAll(".tabs a.active").forEach(function (a) {
     var bar = a.parentElement;

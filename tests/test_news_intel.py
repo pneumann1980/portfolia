@@ -1459,14 +1459,19 @@ def test_events_rebuild_once_keeps_locked_events(ctx):
     assert ctx.db.scalar("SELECT COUNT(*) FROM news_event") == n  # Neuaufbau nur einmal
 
 
+def _no_http(req):
+    raise AssertionError("kein KI-Aufruf erwartet")
+
+
 def test_dashboard_shows_top_news_with_ai_and_falls_back(sample_client):
     from app.news.overview import top_news
 
     c = sample_client
     ctx = wctx(c)
+    gemini_ctx(ctx, _no_http)
     page = c.get("/").text
     # ohne Analysen: bisherige Liste
-    assert "Neueste relevante News" in page and "Top-News mit KI-Auswertung" not in page
+    assert "Neueste relevante News" in page and "data-news-switch" not in page
     a = add_item(ctx, "Notenbank überrascht Märkte mit Zinsschritt", "https://a.example.com/1", hours=2, relevance=0.9,
                  source="reuters")
     b = add_item(ctx, "Kaspa erreicht neues Hoch bei Mining", "https://a.example.com/2", hours=3, relevance=0.8,
@@ -1476,14 +1481,79 @@ def test_dashboard_shows_top_news_with_ai_and_falls_back(sample_client):
                  zusammenfassung="Die Notenbank hat die Zinsen überraschend angehoben. " * 8)
     put_analysis(ctx, b, bedeutung=0.6, stimmung="positiv", ereignis="Kaspa mit neuem Hoch")
     t = top_news(ctx, 5)
+    assert t["mode"] == "ki" and not t["degraded"]
     assert {i["id"] for i in t["rows"][:2]} == {a, b}  # Positionsbezug (Kaspa) hebt die Meldung im Rang
     assert t["rows"][2]["id"] == raw and not t["rows"][2]["ai"]
     assert all(len(i["summary"]) <= 301 for i in t["rows"]) and t["analyzed"] == 2
     page = c.get("/").text
-    assert "Top-News mit KI-Auswertung" in page and "Neueste relevante News" not in page
+    assert "Top-News" in page and "Neueste relevante News" not in page
+    assert "KI-Auswertung derzeit eingeschränkt" not in page
+    assert "data-news-switch" in page and 'class="nv nv-orig"' in page and 'data-news-view="orig"' in page
     assert f'href="/news/{a}"' in page and f'href="/news/{b}"' in page and f'href="/news/{raw}"' in page
     assert ">negativ<" in page and ">positiv<" in page and "KI ausstehend" in page and "hohe Bedeutung" in page
     assert "keine Anlageberatung" in page
+
+
+def test_dashboard_reserves_slots_for_newest_unanalysed(sample_client):
+    from app.news.overview import top_news
+
+    ctx = wctx(sample_client)
+    gemini_ctx(ctx, _no_http)
+    analysed = []
+    for i in range(6):
+        iid = add_item(ctx, f"Analysierte Meldung {i} zu Märkten", f"https://x{i}.example.com/a", hours=10 + i,
+                       relevance=0.6, source=f"quelle{i}")
+        put_analysis(ctx, iid, bedeutung=0.9 - i * 0.05, ereignis=f"Ereignis {i} am Markt")
+        analysed.append(iid)
+    fresh = [add_item(ctx, f"Frische Meldung {i} ohne Analyse", f"https://f{i}.example.com/a", hours=0.2 + i * 0.1,
+                      relevance=0.6, source=f"frisch{i}") for i in range(4)]
+    t = top_news(ctx, 5)
+    pending = [r["id"] for r in t["rows"] if not r["ai"]]
+    assert len(t["rows"]) == 5 and pending == fresh[:2]  # genau die zwei neuesten, Reserve = 2
+    assert [r["id"] for r in t["rows"] if r["ai"]] == analysed[:3]
+    # nur eine unanalysierte Meldung: der freie Platz geht an die Analysen
+    ctx.db.x("DELETE FROM news_item WHERE id IN (?,?,?)", tuple(fresh[1:]))
+    t = top_news(ctx, 5)
+    assert len(t["rows"]) == 5 and sum(1 for r in t["rows"] if not r["ai"]) == 1
+
+
+def test_dashboard_degraded_shows_newest_first_with_reason(sample_client):
+    from app.news.overview import top_news
+
+    c = sample_client
+    ctx = wctx(c)
+    old = add_item(ctx, "Ältere analysierte Meldung zum Markt", "https://o.example.com/1", hours=20, relevance=0.9)
+    put_analysis(ctx, old, bedeutung=0.95, stimmung="positiv", ereignis="Altes Ereignis")
+    new = add_item(ctx, "Brandneue Meldung ohne Analyse", "https://o.example.com/2", hours=0.5, relevance=0.5)
+    mid = add_item(ctx, "Mittlere Meldung ohne Analyse", "https://o.example.com/3", hours=5, relevance=0.5)
+    # KI aus: nach Aktualität, Analyse bleibt Zusatz
+    ctx.settings.set("llm.enabled", False)
+    t = top_news(ctx, 5)
+    assert t["mode"] == "recency" and t["degraded"] and "ausgeschaltet" in t["reason"]
+    assert [r["id"] for r in t["rows"]] == [new, mid, old]
+    assert t["rows"][2]["ai"] and t["rows"][2]["sentiment"] == "positiv" and not t["rows"][0]["ai"]
+    page = c.get("/").text
+    assert "KI-Auswertung derzeit eingeschränkt" in page and "ausgeschaltet" in page
+    assert page.index(f'href="/news/{new}"') < page.index(f'href="/news/{old}"')
+    # KI an, aber pausiert: ebenfalls Fallback mit Uhrzeit
+    gemini_ctx(ctx, _no_http)
+    ctx.db.set_state("ai.pause.gemini", {"until": iso(datetime.now(UTC) + timedelta(hours=2)), "reason": "Quota"})
+    t = top_news(ctx, 5)
+    assert t["degraded"] and "pausiert" in t["reason"] and t["rows"][0]["id"] == new
+
+
+def test_ai_health_states(ctx):
+    gw = gemini_ctx(ctx, _no_http)
+    assert gw.health() == (True, "")
+    ctx.db.set_state("ai.last_error", {"at": iso(datetime.now(UTC) - timedelta(minutes=3)), "text": "HTTP 503"})
+    ok, why = gw.health()
+    assert not ok and "fehlgeschlagen" in why and "503" in why
+    gw._ok()  # späterer Erfolg hebt die Störung auf
+    assert gw.health() == (True, "")
+    ctx.db.set_state("ai.last_error", {"at": iso(datetime.now(UTC) - timedelta(hours=3)), "text": "alt"})
+    assert gw.health() == (True, "")  # alter Fehler zählt nicht mehr
+    ctx.settings.set("llm.enabled", False)
+    assert not gw.health()[0]
 
 
 def test_dashboard_overview_teaser_from_fresh_report_only(sample_client):

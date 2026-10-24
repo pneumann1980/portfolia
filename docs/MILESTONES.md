@@ -1426,6 +1426,13 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.47.1 – Startseite: Ausfall-Fallback und Umschalter KI | Original
+
+* Bei ausgeschalteter, pausierter oder zuletzt fehlgeschlagener KI zeigt die Startseite einen Hinweis mit Grund und die
+  neuesten Meldungen nach Aktualität (Analysen nur als Zusatz); `AiGateway.health()`.
+* Im Normalbetrieb 2 von 5 Plätzen für die neuesten noch nicht analysierten Meldungen („KI ausstehend“).
+* Umschalter **KI-Auswertung | Original** im Nachrichtenkasten, Wahl im Browser (`localStorage`).
+
 ## 0.47.0 – News-Intelligence: Rückstau, Startseite, Berichts-Fortschritt, längere Texte
 
 Details in `docs/NEWS_INTELLIGENCE.md` (Abschnitt „0.47“).

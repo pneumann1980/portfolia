@@ -31,7 +31,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.context import AppContext
-from app.util.timeutil import iso, parse_iso, today_local
+from app.util.timeutil import iso, local_tz, parse_iso, today_local
 
 log = logging.getLogger(__name__)
 
@@ -292,6 +292,25 @@ class AiGateway:
     def _error(self, text: str) -> None:
         self.db.set_state("ai.last_error", {"text": text[:300], "at": iso(datetime.now(UTC))})
 
+    def _ok(self) -> None:
+        self.db.set_state("ai.last_ok", iso(datetime.now(UTC)))
+
+    def health(self, window_min: int = 30) -> tuple[bool, str]:
+        """(erreichbar, Grund). „Nicht erreichbar“ heißt: aus/ohne Schlüssel, pausiert oder der jüngste Aufruf der
+        letzten ``window_min`` Minuten ist fehlgeschlagen und danach gab es keinen Erfolg."""
+        if not self.enabled():
+            return False, "Die KI ist ausgeschaltet oder nicht konfiguriert."
+        until = self.paused_until()
+        if until is not None:
+            return False, f"Der KI-Anbieter pausiert bis {until.astimezone(local_tz()):%H:%M} Uhr."
+        err = self.db.get_state("ai.last_error")
+        at = parse_iso(err.get("at")) if isinstance(err, dict) else None
+        if at is not None and datetime.now(UTC) - at < timedelta(minutes=window_min):
+            ok = parse_iso(self.db.get_state("ai.last_ok") or None)
+            if ok is None or ok < at:
+                return False, f"Der letzte KI-Aufruf ist fehlgeschlagen ({str(err.get('text', ''))[:120]})."
+        return True, ""
+
     # -- Aufruf --------------------------------------------------------------------------------------------
     def generate(self, system: str, user: str, schema: dict[str, Any] | None, max_tokens: int,
                  json_mode: bool = False) -> AiResult:
@@ -320,6 +339,7 @@ class AiGateway:
         if not text:
             self._error("Claude: keine verwertbare Antwort (Fehler, Rate-Limit oder Ablehnung)")
             raise AiUnavailable("Claude: keine Antwort")
+        self._ok()
         return AiResult(text, after[0] - before[0], after[1] - before[1], "claude", self.model())
 
     def _gemini(self, system: str, user: str, json_mode: bool, max_tokens: int) -> AiResult:
@@ -352,6 +372,7 @@ class AiGateway:
                 self._backoff("gemini", e.text)
             raise
         self.db.set_state("ai.fail.gemini", 0)
+        self._ok()
         slot[1] = res.input_tokens + res.output_tokens
         self._record("gemini", res.input_tokens, res.output_tokens)
         return res
