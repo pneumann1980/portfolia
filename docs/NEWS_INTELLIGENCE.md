@@ -1,6 +1,6 @@
 # News-Intelligence (0.46): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
 
-Stand: 0.48.1. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
+Stand: 0.48.2. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
 **rückwärtskompatibel**: der Feed-Import, die Relevanz-/Dedupe-Logik, YouTube und Claude-Zusammenfassungen laufen
 unverändert; die neuen Stufen sind eigene Hintergrundjobs, deren Ausfall den Import nie blockiert.
 
@@ -254,6 +254,10 @@ eigenen Server):
   übrigen Quellen; Abruf startet sofort. Je Quelle: „KI an/aus“ (`ai:`), „Deaktivieren“, „Entfernen“ (nur Telegram-Quellen;
   gespeicherte Beiträge bleiben). Grenzen: nur RSS-Bridge-Format (Atom) wird aus dem Kanalnamen gebildet, RSSHub o. ä. per fertiger
   Feed-URL; Bridge-Adressen sind frei wählbar (auch LAN), das ist beabsichtigt – die App ist nur mit Anmeldung erreichbar.
+* **Reiter „Community“ (0.48.2):** *News → Community* zeigt nur die Beiträge der Telegram-Quellen, neueste zuerst, mit vollem Text
+  (nicht auf 3 Zeilen gekürzt), Bild und Link „Telegram ↗“; Filter nach Kanal, Position, Zeitraum, Status. „Alle als gelesen“ gilt dort
+  nur für die Community-Quellen. Die Beiträge bleiben zusätzlich im allgemeinen Artikel-Feed. Inaktive oder entfernte Kanäle: vorhandene
+  Beiträge eines noch eingetragenen (auch inaktiven) Kanals bleiben sichtbar, nach „Entfernen“ nur noch im Artikel-Feed.
 * **Titel:** Beiträge ohne oder mit abgeschnittenem Feedtitel (`…`, < 8 Zeichen) bekommen den ersten Satz des Textes (höchstens
   110 Zeichen); Beiträge ganz ohne Text werden verworfen. Der volle Beitragstext (bis 2000 Zeichen) bleibt als Text erhalten.
 * **Ohne KI:** `ai: false` ist bei Telegram der Standard (überall setzbar, `ai: true` schaltet es wieder ein). Solche Quellen

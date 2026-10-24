@@ -13,14 +13,16 @@
 <nav class="tabs" aria-label="Bereiche">
   {{ tab_link('articles', 'Artikel') }}
   {{ tab_link('videos', 'Videos') }}
+  {{ tab_link('community', 'Community') }}
   {{ tab_link('report', 'Tagesbericht') }}
   {{ tab_link('suggestions', 'Kanal-Vorschläge', n_suggestions if n_suggestions else None) }}
   {{ tab_link('sources', 'Quellen') }}
   {{ tab_link('status', 'Status') }}
 </nav>
 
-{% if params.tab in ('articles', 'videos') %}
-  {% if report_teaser %}
+{% if params.tab in ('articles', 'videos', 'community') %}
+  {% if params.tab == 'community' %}
+  {% elif report_teaser %}
   <details class="box" style="margin-bottom:12px">
     <summary>Tagesbericht vom {{ report_teaser.day|date_de }} <span class="badge info">KI</span></summary>
     <div class="small" style="margin-top:8px">{{ report_teaser.content.ueberblick }}</div>
@@ -53,19 +55,20 @@
       <select name="status" data-autosubmit>
         {% for v, l in [('all', 'Alle'), ('unread', 'Ungelesen'), ('read', 'Gelesen')] %}<option value="{{ v }}" {% if params.status == v %}selected{% endif %}>{{ l }}</option>{% endfor %}
       </select></label>
-    <label class="field">Sortierung
+    {% if params.tab != 'community' %}<label class="field">Sortierung
       <select name="sort" data-autosubmit>
         <option value="relevance" {% if params.sort == 'relevance' %}selected{% endif %}>Relevanz</option>
         <option value="time" {% if params.sort == 'time' %}selected{% endif %}>Zeit</option>
-      </select></label>
+      </select></label>{% endif %}
     {% if params.tab == 'videos' %}<label class="check"><input type="checkbox" name="shorts" value="1" data-autosubmit {% if params.shorts %}checked{% endif %}> Shorts</label>{% endif %}
     <label class="check"><input type="checkbox" name="hidden" value="1" data-autosubmit {% if params.hidden %}checked{% endif %}> Ausgeblendete</label>
     <button class="btn sm ghost" type="button" hx-post="/news/read-all" hx-vals='{"tab": "{{ params.tab }}", "days": "{{ params.days }}"}'>Alle als gelesen</button>
   </form>
   <section class="card">
-    <div class="card-head"><h2>{{ total }} {{ 'Artikel' if params.tab == 'articles' else 'Videos' }}</h2>
-      <span class="hint" title="Relevanz = Treffer (Titel > Beschreibung) × Quellgewicht × Positionsgewicht × Aktualität">Sortiert nach {{ 'Relevanz' if params.sort == 'relevance' else 'Zeit' }} ⓘ</span></div>
-    <div id="news-list">
+    <div class="card-head"><h2>{{ total }} {{ {'articles': 'Artikel', 'videos': 'Videos', 'community': 'Beiträge'}[params.tab] }}</h2>
+      {% if params.tab == 'community' %}<span class="hint">Telegram-Kanäle · neueste zuerst · ohne KI</span>
+      {% else %}<span class="hint" title="Relevanz = Treffer (Titel > Beschreibung) × Quellgewicht × Positionsgewicht × Aktualität">Sortiert nach {{ 'Relevanz' if params.sort == 'relevance' else 'Zeit' }} ⓘ</span>{% endif %}</div>
+    <div id="news-list"{% if params.tab == 'community' %} class="community"{% endif %}>
       {% include "partials/news_items.html" %}
     </div>
   </section>

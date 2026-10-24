@@ -138,10 +138,17 @@ startup_job("news_fetch", 45)
 
 def query_items(ctx: AppContext, *, kind: str, asset: str = "", source: str = "", days: int = 7,
                 status: str = "all", sort: str = "relevance", shorts: bool = False, hidden: bool = False,
-                offset: int = 0, limit: int = PAGE_SIZE) -> tuple[list[dict[str, Any]], int]:
+                offset: int = 0, limit: int = PAGE_SIZE,
+                sources: list[str] | None = None) -> tuple[list[dict[str, Any]], int]:
+    """``sources``: nur diese Quellen (z. B. Community); leere Liste = keine Treffer."""
     since = iso(datetime.now(UTC) - timedelta(days=days))
     where = ["n.kind=?", "n.published_at>=?"]
     params: list[Any] = [kind, since]
+    if sources is not None:
+        if not sources:
+            return [], 0
+        where.append(f"n.source_id IN ({','.join('?' * len(sources))})")
+        params.extend(sources)
     if asset:
         where.append("n.id IN (SELECT item_id FROM news_asset WHERE asset_id=?)")
         params.append(asset)
@@ -157,7 +164,7 @@ def query_items(ctx: AppContext, *, kind: str, asset: str = "", source: str = ""
     if kind == "video" and not shorts:
         where.append("COALESCE(n.is_short, 0)=0")
     min_rel = float(ctx.settings.get("news.min_relevance", 0.2))
-    if not asset and not source and sort == "relevance":
+    if not asset and not source and sources is None and sort == "relevance":
         where.append("(n.relevance>=? OR n.kind='video')")
         params.append(min_rel * 0.5)
     sql = f"SELECT n.* FROM news_item n WHERE {' AND '.join(where)} ORDER BY n.published_at DESC LIMIT 1500"
@@ -267,6 +274,11 @@ def reader_context(ctx: AppContext, row: Any, back: str = "") -> dict[str, Any]:
             "others": others, "assets": assets, "back": _safe_back(back), "ai": AiGateway(ctx)}
 
 
+def community_ids(svc: NewsService) -> list[str]:
+    """IDs der Community-Quellen (Telegram-Kanäle) – eigener Reiter, auch inaktive (vorhandene Beiträge bleiben)."""
+    return [x.id for x in svc.cfg.sources() if x.type == "telegram"]
+
+
 def make_router() -> APIRouter:
     router = APIRouter()
 
@@ -292,11 +304,18 @@ def make_router() -> APIRouter:
         rep = ReportService(ctx)
         base["report_teaser"] = rep.latest()
         base["ai"] = AiGateway(ctx)
-        if tab in ("articles", "videos"):
-            kind = "article" if tab == "articles" else "video"
+        if tab in ("articles", "videos", "community"):
+            kind = "video" if tab == "videos" else "article"
             page = max(1, int(page))
+            community = community_ids(svc) if tab == "community" else None
+            if community is not None:  # Community: Telegram-Kanäle, neueste zuerst
+                base["sources"] = ctx.db.q(
+                    f"SELECT DISTINCT source_id, source_name FROM news_item WHERE source_id IN "
+                    f"({','.join('?' * len(community)) or 'NULL'}) ORDER BY source_name", community)
+                sort = base["params"]["sort"] = "time"
             items, total = query_items(ctx, kind=kind, asset=asset, source=source, days=days, status=status, sort=sort,
-                                       shorts=bool(shorts), hidden=bool(hidden), offset=(page - 1) * PAGE_SIZE)
+                                       shorts=bool(shorts), hidden=bool(hidden), offset=(page - 1) * PAGE_SIZE,
+                                       sources=community)
             base.update(items=items, total=total, page=page, page_size=PAGE_SIZE)
             if request.headers.get("hx-target") == "news-more":
                 return render(request, "partials/news_items.html", alerts=[], **base)
@@ -409,6 +428,12 @@ def make_router() -> APIRouter:
         kind = "video" if form.get("tab") == "videos" else "article"
         days = int(form.get("days") or 7)
         since = iso(datetime.now(UTC) - timedelta(days=days))
+        if form.get("tab") == "community":  # nur die Community-Quellen
+            ids = community_ids(news_service(ctx))
+            if ids:
+                ctx.db.x(f"UPDATE news_item SET is_read=1 WHERE kind='article' AND published_at>=? "
+                         f"AND source_id IN ({','.join('?' * len(ids))})", (since, *ids))
+            return Response(status_code=204, headers={"HX-Refresh": "true"})
         ctx.db.x("UPDATE news_item SET is_read=1 WHERE kind=? AND published_at>=?", (kind, since))
         return Response(status_code=204, headers={"HX-Refresh": "true"})
 

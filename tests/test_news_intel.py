@@ -1882,3 +1882,34 @@ def test_source_actions_ai_toggle_remove_and_protect_builtin_sources(client):
     assert any(s.id == builtin for s in svc.cfg.sources())
     assert client.post("/news/source", data={"id": "tg_coinbureau", "action": "remove"}).status_code == 204
     assert not any(s.id == "tg_coinbureau" for s in svc.cfg.sources())
+
+
+def test_community_tab_lists_only_telegram_sources_newest_first(client):
+    from app.news.module import news_service
+
+    ctx = wctx(client)
+    ctx.http, _ = bridge_http()
+    svc = news_service(ctx)
+    svc.cfg.ensure()
+    empty = client.get("/news?tab=community").text
+    assert ">Community<" in empty and "Noch keine Community-Beiträge" in empty
+    assert client.post("/news/source/telegram", data={"channel": "@CoinBureau", "bridge": "http://b:7575"}
+                       ).status_code == 204
+    tg = "tg_coinbureau"
+    old = add_item(ctx, "Aelterer Telegram Beitrag zu Bitcoin", "https://t.me/CoinBureau/1", hours=5, source=tg)
+    new = add_item(ctx, "Neuer Telegram Beitrag zu Bitcoin", "https://t.me/CoinBureau/2", hours=1, source=tg)
+    news = add_item(ctx, "Normale Zeitungsmeldung zu Bitcoin", "https://zeitung.example.com/a", hours=1,
+                    source="reuters")
+    ctx.db.x("UPDATE news_item SET image_url='https://cdn.example.org/a.jpg' WHERE id=?", (new,))
+    page = client.get("/news?tab=community").text
+    assert "Neuer Telegram Beitrag" in page and "Aelterer Telegram Beitrag" in page
+    assert "Normale Zeitungsmeldung" not in page
+    assert page.index("Neuer Telegram Beitrag") < page.index("Aelterer Telegram Beitrag")  # neueste zuerst
+    assert 'href="https://t.me/CoinBureau/2"' in page and "Telegram ↗" in page and f'src="/img/news/{new}"' in page
+    assert 'name="sort"' not in page  # Community ist immer nach Zeit sortiert
+    assert "Normale Zeitungsmeldung" in client.get("/news?tab=articles&sort=time").text
+    assert "Telegram Beitrag" in client.get("/news?tab=articles&sort=time").text  # bleibt auch im Artikel-Feed
+    # „Alle als gelesen“ im Community-Reiter betrifft nur Community-Quellen
+    assert client.post("/news/read-all", data={"tab": "community", "days": "7"}).status_code == 204
+    reads = {r["id"]: r["is_read"] for r in ctx.db.q("SELECT id, is_read FROM news_item")}
+    assert reads[old] == 1 and reads[new] == 1 and reads[news] == 0

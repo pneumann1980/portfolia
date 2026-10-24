@@ -24,7 +24,8 @@
       {% if x.event %}<a class="badge info" href="/news/event/{{ x.event.event_id }}" title="Mehrere Berichte zum selben Ereignis">Ereignis · {{ x.event.n_items }} Berichte</a>{% endif %}
       {% if x.cstatus == 'success' %}<span class="badge good" title="Volltext lokal verfügbar">Volltext</span>{% elif x.cstatus == 'blocked' %}<span class="badge" title="Verlag sperrt den Text (Bezahl-/Zustimmungsschranke)">gesperrt</span>{% endif %}
       {% if n.hidden_reason %}<span class="badge warn">ausgeblendet: {{ n.hidden_reason }}</span>{% endif %}
-      <span class="badge" title="Relevanz inkl. Aktualität">{{ x.score|num(2) }}</span>
+      {% if params.tab == 'community' %}<a class="badge info" href="{{ n.url }}" target="_blank" rel="noopener noreferrer" title="Beitrag in Telegram öffnen">Telegram ↗</a>
+      {% else %}<span class="badge" title="Relevanz inkl. Aktualität">{{ x.score|num(2) }}</span>{% endif %}
     </div>
     {% if n.llm_summary %}<div class="summary"><span class="badge info">KI</span> {{ n.llm_summary }}</div>
     {% elif n.summary %}<div class="summary">{{ n.summary }}</div>{% endif %}
@@ -32,7 +33,8 @@
   <div id="rb-{{ n.id }}">{% include "partials/news_read_button.html" %}</div>
 </article>
 {% else %}
-<p class="hint">Keine Meldungen für diese Auswahl. Quellen werden alle 30 Minuten abgerufen; Status unter „Quellen“.</p>
+{% if params.tab == 'community' %}<p class="hint">Noch keine Community-Beiträge. Telegram-Kanäle fügen Sie unter <a href="/news?tab=sources">Quellen</a> hinzu; Beiträge erscheinen nach dem nächsten Abruf (alle 30 Minuten) – nur mit Bezug zu Ihren Positionen, solange „nur Beiträge mit Bezug“ aktiv ist.</p>
+{% else %}<p class="hint">Keine Meldungen für diese Auswahl. Quellen werden alle 30 Minuten abgerufen; Status unter „Quellen“.</p>{% endif %}
 {% endfor %}
 {% if total > page * page_size %}
 <div id="news-more" style="text-align:center;margin-top:10px">

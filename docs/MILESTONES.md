@@ -1426,6 +1426,10 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.48.2 – Reiter „Community“
+
+* Eigener Reiter *News → Community* für die Telegram-Kanäle (neueste zuerst, voller Text, Bild, Telegram-Link, Kanal-Filter).
+
 ## 0.48.1 – Telegram-Kanäle in der App hinzufügen
 
 * Formular in *News → Quellen* (Kanal oder Feed-URL + Bridge-Adresse), Feed-Prüfung vor dem Speichern, Duplikatschutz,
