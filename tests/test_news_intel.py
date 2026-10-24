@@ -468,6 +468,38 @@ def test_status_bars_progress_with_done_work(ctx):
     assert pipeline_status(ctx)["bars"]["enrich"]["pct"] == 100  # nichts zu tun = voll
 
 
+def test_eta_enrich_nominal_measured_growing_and_formatting():
+    from app.news.eta import enrich_eta, fmt_minutes
+
+    assert [fmt_minutes(m) for m in (1, 45, 60, 150, 1500, 2880)] == [
+        "ca. 1 Min.", "ca. 45 Min.", "ca. 1 Std.", "ca. 2 Std. 30 Min.", "ca. 1 Tag 1 Std.", "ca. 2 Tage"]
+    assert enrich_eta(0, per_run=40)["text"] == "kein Rückstau"
+    # Nennleistung 40 je 15 min = 160/Std.; 320 wartend -> 8 Läufe = 120 min
+    e = enrich_eta(320, per_run=40)
+    assert e["minutes"] == 120 and e["basis"] == "Nennleistung" and not e["growing"]
+    # gemessen: 60 in 3 h = 20/Std. (zu wenig Laufleistung) -> deutlich länger
+    m = enrich_eta(320, per_run=40, observed_done_3h=60)
+    assert m["basis"] == "gemessen" and m["minutes"] > e["minutes"]
+    # Zufluss frisst die Leistung: wächst
+    g = enrich_eta(100, per_run=40, inflow_per_hour=200)
+    assert g["growing"] and g["minutes"] is None and "wächst" in g["text"]
+
+
+def test_eta_analyze_quota_pause_and_disabled():
+    from app.news.eta import analyze_eta
+
+    now = datetime.now(UTC)
+    base = {"per_run": 240, "inflow_per_hour": 0.0}
+    assert analyze_eta(0, **base)["text"] == "kein Rückstau"
+    assert "ausgeschaltet" in analyze_eta(50, enabled=False, **base)["text"]
+    ok = analyze_eta(480, **base)  # 240 je Lauf, 10 min -> 2 Läufe
+    assert ok["minutes"] == 20
+    q = analyze_eta(600, requests_left=10, reset_at=now + timedelta(hours=5), **base)  # 10*6=60 passen
+    assert q["minutes"] is None and "Tageskontingent reicht für ca. 60" in q["text"] and "Rest ab" in q["text"]
+    p = analyze_eta(100, paused_until=now + timedelta(hours=1), **base)
+    assert "pausiert bis" in p["text"] and p["minutes"] == 10
+
+
 def pause_host(ctx, host, hours):
     ctx.db.set_state(f"news.enrich.host.{host}", {"fails": 0, "until": iso(datetime.now(UTC) + timedelta(hours=hours))})
 
@@ -1318,6 +1350,7 @@ def test_status_explains_bottleneck_and_paused_hosts(client):
     assert bars["enrich"] == {"done": 0, "waiting": 4, "total": 4, "pct": 0}  # gesperrte Quelle zählt als wartend
     t = client.get("/news?tab=status").text
     assert 'role="progressbar"' in t and 'aria-valuenow="0"' in t and "0 von 4" in t
+    assert "Restzeit:" in t and pipeline_status(ctx)["eta"]["enrich"]["minutes"] > 0
     assert "Pausierte Quellen" in t and "blocked.example.com" in t and "Abruf-Takt" in t
     ctx.db.set_state("ai.pause.gemini", {"until": iso(datetime.now(UTC) + timedelta(hours=2)), "reason": "Quota"})
     old = iso(NOW - timedelta(hours=8))

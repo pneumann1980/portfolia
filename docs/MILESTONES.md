@@ -1426,6 +1426,10 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.47.4 – News-Status: Restzeit
+
+* „Restzeit: ca. …“ unter den Rückstau-Balken (Durchsatz gemessen/nominal, Zufluss, Pause, Tageskontingent, „wächst derzeit“).
+
 ## 0.47.3 – News-Status: Fortschrittsbalken
 
 * Balken für Rückstau Artikeltexte (3 Tage) und KI-Analysen (48 h) unter „Pipeline heute“ (`role="progressbar"`).

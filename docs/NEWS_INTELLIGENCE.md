@@ -1,6 +1,6 @@
 # News-Intelligence (0.46): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
 
-Stand: 0.47.3. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
+Stand: 0.47.4. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
 **rückwärtskompatibel**: der Feed-Import, die Relevanz-/Dedupe-Logik, YouTube und Claude-Zusammenfassungen laufen
 unverändert; die neuen Stufen sind eigene Hintergrundjobs, deren Ausfall den Import nie blockiert.
 
@@ -226,6 +226,13 @@ letzte Fehler. Der Hinweis zur Free-Tier-Garantie steht dort ebenfalls.
   erledigt / (erledigt + wartend). Beim Abruf zählen pausierte Quellen und Videos/Social-Hosts nicht als erledigt bzw. nur
   die pausierten als wartend; Meldungen, die aus der Auswahl fallen (ausgeblendet, älter als das Fenster), zählen nicht mit.
   Ohne Arbeit steht der Balken auf 100 %. Näherung: Neue Meldungen senken den Wert wieder.
+* **Restzeit (0.47.4):** unter jedem Balken „Restzeit: ca. …“ (`app/news/eta.py`). Rechnung: wartende Einheiten ÷ (Durchsatz −
+  Zufluss neuer Meldungen), aufgerundet auf ganze Lauf-Intervalle (Abruf 15 min, Analyse 10 min). Durchsatz = tatsächlich erledigt in
+  den letzten 3 h (ab 12 Einheiten, „gemessen“), sonst Nennleistung je Lauf („Nennleistung“: 40 Texte je Lauf; Analyse
+  Anfragen/min × 8 min × 6 Meldungen, höchstens `news.analysis_max_per_run`). Zusätzlich: Anbieter-Pause („bis …, danach“),
+  Gemini-Tageskontingent („reicht für ca. N Meldungen, Rest ab 09:00“; Tagesgrenze = Mitternacht Pacific) und „wächst derzeit“, wenn mehr
+  eintrifft als abgearbeitet wird. Grenzen: Schätzung; Tokens/min, Netz, Quellensperren und Nachtruhe der Quellen sind nicht
+  modelliert; direkt nach einer Änderung wirkt der Messwert der letzten 3 h noch nach.
 * **Längere Texte (Prompt-Version 2):** Zusammenfassung 4–5 Sätze; Einordnung 3–5 Sätze (Relevanz, mögliche Folgen,
   Beobachtungspunkte, als Einschätzung formuliert); Bericht: Überblick 6–8 Sätze, Kernaussage 2–3, Einordnung 2–3,
   Krypto 4–6. Da die Version im Eingabe-Hash steckt, werden **nur Meldungen der letzten 48 h** neu analysiert; ältere

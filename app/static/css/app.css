@@ -1002,3 +1002,4 @@ details.ds-rename { margin: 8px 0 12px; }
 .bar-row { margin: 2px 0 8px; }
 .bar-label { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85rem; color: var(--ink-2); margin-bottom: 3px; }
 .bar-row .progress { height: 8px; }
+.bar-eta { margin-top: 3px; font-size: 0.82rem; }
