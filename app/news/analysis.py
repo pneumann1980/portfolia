@@ -249,6 +249,17 @@ class AnalysisService:
         """Anzahl der Meldungen (48 h), die auf eine Analyse warten."""
         return len(self.candidates(100_000))
 
+    def window_total(self) -> int:
+        """Meldungen im Analysefenster, die überhaupt analysiert werden sollen (Nenner für den Fortschrittsbalken)."""
+        hours = int(self.ctx.settings.get("news.analysis_hours", WINDOW_H))
+        since = iso(datetime.now(UTC) - timedelta(hours=hours))
+        wait_until = iso(datetime.now(UTC) - timedelta(hours=6))
+        return int(self.db.scalar(
+            """SELECT COUNT(*) FROM news_item n LEFT JOIN news_content c ON c.item_id=n.id
+               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?
+                 AND (c.status IN ('success','partial','blocked','failed') OR n.fetched_at <= ? OR ? = 1)""",
+            (since, wait_until, 1 if not self.ctx.settings.get("news.enrich", True) else 0), default=0) or 0)
+
     def run(self, limit: int | None = None, max_seconds: float | None = None) -> dict[str, Any]:
         """Rückstau abarbeiten: in Runden zu je ``PER_ROUND`` Meldungen (nach Priorität), bis nichts mehr wartet, ein
         Limit (Minute/Tag/Budget) greift, der Anbieter stört oder die Laufzeit-Obergrenze erreicht ist."""

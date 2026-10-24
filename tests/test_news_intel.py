@@ -453,6 +453,21 @@ def test_enrich_resolves_google_news_and_skips_hosts_after_failures(ctx):
     assert ctx.db.scalar(f"SELECT COUNT(*) FROM news_content WHERE item_id IN ({marks})") < 8
 
 
+def test_status_bars_progress_with_done_work(ctx):
+    from app.news.status import pipeline_status
+
+    ids = [add_item(ctx, f"Meldung {i} zum Markt heute", f"https://done.example.com/{i}", hours=1 + i * 0.01)
+           for i in range(4)]
+    store_content(ctx, ids[0])
+    store_content(ctx, ids[1])
+    st = pipeline_status(ctx)
+    assert st["bars"]["enrich"] == {"done": 2, "waiting": 2, "total": 4, "pct": 50}
+    assert st["bars"]["analyze"]["total"] >= 2
+    ctx.db.x("DELETE FROM news_content")
+    ctx.db.x("DELETE FROM news_item")
+    assert pipeline_status(ctx)["bars"]["enrich"]["pct"] == 100  # nichts zu tun = voll
+
+
 def pause_host(ctx, host, hours):
     ctx.db.set_state(f"news.enrich.host.{host}", {"fails": 0, "until": iso(datetime.now(UTC) + timedelta(hours=hours))})
 
@@ -1299,7 +1314,10 @@ def test_status_explains_bottleneck_and_paused_hosts(client):
     b = pipeline_status(ctx)["backlog"]
     assert b["enrich"] == 3 and b["enrich_paused"] == 1 and b["paused_hosts"][0][0] == "blocked.example.com"
     assert "Abruf-Takt" in b["bottleneck"]
+    bars = pipeline_status(ctx)["bars"]
+    assert bars["enrich"] == {"done": 0, "waiting": 4, "total": 4, "pct": 0}  # gesperrte Quelle zählt als wartend
     t = client.get("/news?tab=status").text
+    assert 'role="progressbar"' in t and 'aria-valuenow="0"' in t and "0 von 4" in t
     assert "Pausierte Quellen" in t and "blocked.example.com" in t and "Abruf-Takt" in t
     ctx.db.set_state("ai.pause.gemini", {"until": iso(datetime.now(UTC) + timedelta(hours=2)), "reason": "Quota"})
     old = iso(NOW - timedelta(hours=8))

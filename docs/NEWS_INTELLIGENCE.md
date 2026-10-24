@@ -1,6 +1,6 @@
 # News-Intelligence (0.46): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
 
-Stand: 0.47.2. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
+Stand: 0.47.3. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
 **rückwärtskompatibel**: der Feed-Import, die Relevanz-/Dedupe-Logik, YouTube und Claude-Zusammenfassungen laufen
 unverändert; die neuen Stufen sind eigene Hintergrundjobs, deren Ausfall den Import nie blockiert.
 
@@ -222,6 +222,10 @@ letzte Fehler. Der Hinweis zur Free-Tier-Garantie steht dort ebenfalls.
   (KI-Kontingent/Pause, KI aus, Abruf-Takt, Analyse-Takt oder nichts), „Pausierte Quellen“ listet Hosts mit Ruhezeit und die
   Zahl zurückgestellter Artikel. Der Textabruf-Rückstau zählt **alle** noch nicht abgerufenen Artikel der letzten 3 Tage
   (nicht nur „heute“ importierte); die Analyse wartet nicht auf den Text (nach 6 h wird mit dem Anreißer analysiert).
+* **Fortschrittsbalken (0.47.3):** unter „Pipeline heute“ je ein Balken für Artikeltexte (3 Tage) und KI-Analysen (48 h):
+  erledigt / (erledigt + wartend). Beim Abruf zählen pausierte Quellen und Videos/Social-Hosts nicht als erledigt bzw. nur
+  die pausierten als wartend; Meldungen, die aus der Auswahl fallen (ausgeblendet, älter als das Fenster), zählen nicht mit.
+  Ohne Arbeit steht der Balken auf 100 %. Näherung: Neue Meldungen senken den Wert wieder.
 * **Längere Texte (Prompt-Version 2):** Zusammenfassung 4–5 Sätze; Einordnung 3–5 Sätze (Relevanz, mögliche Folgen,
   Beobachtungspunkte, als Einschätzung formuliert); Bericht: Überblick 6–8 Sätze, Kernaussage 2–3, Einordnung 2–3,
   Krypto 4–6. Da die Version im Eingabe-Hash steckt, werden **nur Meldungen der letzten 48 h** neu analysiert; ältere

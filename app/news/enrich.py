@@ -68,6 +68,14 @@ class EnrichService:
                 out[r["key"].removeprefix("news.enrich.host.")] = until
         return out
 
+    def done_count(self) -> int:
+        """Artikel im Abrufzeitraum mit abgeschlossenem Abruf (Text, Teiltext, gesperrt, endgültig fehlgeschlagen)."""
+        since = iso(datetime.now(UTC) - timedelta(days=int(self.ctx.settings.get("news.enrich_days", 3))))
+        return int(self.db.scalar(
+            """SELECT COUNT(*) FROM news_item n JOIN news_content c ON c.item_id=n.id
+               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at>=? AND c.status!='pending'""",
+            (since,), default=0) or 0)
+
     def candidates(self, limit: int, *, include_paused: bool = False) -> list[dict[str, Any]]:
         """Noch nicht (erfolgreich) angereicherte Artikel in Prioritätsreihenfolge.
 

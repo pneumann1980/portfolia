@@ -14,6 +14,12 @@ from app.util.timeutil import iso, now_local
 JOBS = ("news_fetch", "news_enrich", "news_analyze", "news_group", "news_report")
 
 
+def _bar(done: int, waiting: int) -> dict[str, int]:
+    """Fortschritt des Rückstaus: erledigt / (erledigt + wartend); ohne Arbeit gilt der Balken als voll."""
+    total = done + waiting
+    return {"done": done, "waiting": waiting, "total": total, "pct": 100 if total == 0 else int(100 * done / total)}
+
+
 def pipeline_status(ctx: AppContext) -> dict[str, Any]:
     db = ctx.db
     local_start = now_local().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
@@ -33,7 +39,10 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
     paused = enrich.paused_hosts()
     enrich_total = len(enrich.candidates(100_000, include_paused=True))
     enrich_ready = len(enrich.candidates(100_000))
-    analyze_backlog = AnalysisService(ctx).backlog()
+    analysis = AnalysisService(ctx)
+    analyze_backlog = analysis.backlog()
+    analyze_total = max(analysis.window_total(), analyze_backlog)
+    enrich_done = enrich.done_count()
     per_run = int(ctx.settings.get("news.enrich_per_run", 40))
     if analyze_backlog and ai.get("paused_until"):
         bottleneck = "KI-Kontingent (Anbieter pausiert, Analyse wartet)"
@@ -65,6 +74,8 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         "content_reasons": [(r["reason"], int(r["n"])) for r in reasons],
         "with_content_total": n("SELECT COUNT(*) FROM news_content WHERE status IN ('success','partial')"),
         "analyzed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NOT NULL AND analyzed_at>=?", day),
+        "bars": {"enrich": _bar(enrich_done, enrich_total),
+                 "analyze": _bar(analyze_total - analyze_backlog, analyze_backlog)},
         "backlog": {"enrich": enrich_ready, "enrich_paused": enrich_total - enrich_ready, "analyze": analyze_backlog,
                     "days": int(ctx.settings.get("news.enrich_days", 3)), "per_run": per_run, "bottleneck": bottleneck,
                     "paused_hosts": sorted(((h, u) for h, u in paused.items()), key=lambda x: x[1])},
