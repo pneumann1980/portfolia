@@ -1,0 +1,16 @@
+{% from "partials/progress.html" import bar %}
+{# Antwort auf „Neu erzeugen“ und Abfrage-Ziel (alle 2 s), bis der Bericht fertig oder fehlgeschlagen ist. #}
+{% if st.state == 'wartend' %}
+<div id="report-live" class="stack" hx-get="/news/report/status" hx-trigger="every 2s" hx-swap="outerHTML">
+  <div class="pg" role="status" aria-live="polite"><div class="pg-head"><b>Täglicher Finanzmarktbericht</b> <span class="badge">wartet</span></div>
+    <div class="progress"><div style="width:2%"></div></div>
+    <div class="hint">Der Auftrag ist eingereiht und startet, sobald ein Arbeitsplatz frei ist.</div></div>
+</div>
+{% elif st.state == 'laeuft' %}
+<div id="report-live" class="stack" hx-get="/news/report/status" hx-trigger="every 2s" hx-swap="outerHTML">
+  {{ bar(progress_view(st.p)) }}
+</div>
+{% elif st.state == 'fehler' %}
+<div id="report-live" class="alert warn" role="alert"><span class="icon">!</span><div><b>Der Bericht wurde nicht erstellt.</b> {{ st.text }}
+  Ein vorhandener Bericht bleibt unverändert.</div></div>
+{% endif %}

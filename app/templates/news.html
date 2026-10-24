@@ -73,7 +73,8 @@
 {% elif params.tab == 'report' %}
   <section class="card">
     <div class="card-head"><h2>Täglicher Finanzmarktbericht</h2>
-      <div class="row"><button class="btn sm" hx-post="/news/report/regenerate" hx-target="#report-msg" {% if not ai_status.enabled %}disabled{% endif %}>Neu erzeugen</button><span id="report-msg"></span></div></div>
+      <div class="row"><button class="btn sm" hx-post="/news/report/regenerate" hx-target="#report-msg" hx-swap="innerHTML" {% if not ai_status.enabled %}disabled{% endif %}>Neu erzeugen</button></div></div>
+    <div id="report-msg" style="margin-top:8px">{% set st = live %}{% include "partials/report_progress.html" %}</div>
     {% if not ai_status.enabled %}<p class="hint">Der Bericht benötigt die KI-Funktionen (Einstellungen → News &amp; KI: Anbieter wählen, API-Schlüssel setzen, aktivieren). Es werden nur öffentliche Artikelanalysen verwendet.</p>
     {% elif not report_on %}<p class="hint">Der Tagesbericht ist in den Einstellungen ausgeschaltet.</p>
     {% else %}<p class="hint">Automatisch täglich ab {{ '%02d:%02d'|format(report_time[0], report_time[1]) }} Uhr (Europe/Berlin), aus den gespeicherten Analysen der letzten 24 Stunden.</p>{% endif %}

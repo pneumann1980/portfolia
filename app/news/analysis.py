@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -26,9 +27,12 @@ from app.util.timeutil import iso, parse_iso
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2  # 2: ausführlichere Zusammenfassung und dreiteilige Einordnung
 SCHEMA_VERSION = 1
-BATCH = 4
+BATCH = 6  # Artikel je Anfrage (weniger Anfragen = schonender für Minuten-/Tageskontingente)
+WINDOW_H = 48  # nur Meldungen der letzten 48 Stunden werden (neu) analysiert
+MAX_SECONDS = 480  # Laufzeit-Obergrenze je Job-Lauf (der nächste Lauf macht weiter)
+PER_ROUND = BATCH * 6
 TEXT_LIMIT = 3200  # Zeichen je Artikel in der Anfrage (Anfang des Artikels enthält die Kernaussagen)
 RETRY_AFTER_ERROR = timedelta(hours=12)
 
@@ -47,13 +51,16 @@ SCHEMA_TEXT = """{"analysen":[{
                  "richtung": "@DIRECTIONS@"}],
  "fakten": ["Aussagen, die im Artikeltext ausdrücklich stehen (Zahlen exakt wie im Text)"],
  "zitierte_einschaetzungen": [{"quelle": "wer laut Artikel etwas einschätzt", "aussage": "..."}],
- "einordnung": "Deine eigene knappe Einordnung (max. 2 Sätze); keine Anlageempfehlung",
+ "einordnung": "Deine eigene Einordnung in 3–5 Sätzen: warum das relevant ist, mögliche Folgen für die
+                betroffenen Werte, was man beobachten sollte – als Einschätzung formuliert ('könnte',
+                'spricht für'); keine Anlageempfehlung",
  "unsicherheiten": ["was unklar, offen oder nicht belegt ist"],
  "stimmung": "@SENTIMENTS@",
  "bedeutung": <0..1: Marktrelevanz des Ereignisses>,
  "konfidenz": <0..1: wie sicher die Analyse auf Basis des gelieferten Textes ist>,
  "ereignis": "neutraler Ereignistitel, höchstens 12 Wörter, ohne Verlagsnamen",
- "zusammenfassung": "2–3 sachliche Sätze"
+ "zusammenfassung": "4–5 sachliche Sätze: was ist passiert, wer ist beteiligt, welche Zahlen und
+                     Zeitpunkte nennt der Text, Hintergrund"
 }]}"""
 for _tag, _vals in (("CATEGORIES", CATEGORIES), ("SCOPES", SCOPES), ("KINDS", KINDS), ("DIRECTIONS", DIRECTIONS),
                     ("SENTIMENTS", SENTIMENTS)):
@@ -69,7 +76,8 @@ SYSTEM = (
     "hinzurechnen). Einschätzungen, Prognosen und Kursziele Dritter gehören in 'zitierte_einschaetzungen'. "
     "Deine eigene Sicht steht nur in 'einordnung'. Offenes steht in 'unsicherheiten'.\n"
     "3. Erfinde nichts. Fehlt der Volltext (nur Anreißer), sag das in 'unsicherheiten' und senke 'konfidenz'.\n"
-    "4. Keine Anlageempfehlung, keine Kursprognose als eigene Aussage.\n"
+    "4. Keine Anlageempfehlung, keine Kursprognose als eigene Aussage. Schreibe ausführlich genug, dass ein Leser die "
+    "Meldung ohne den Artikel versteht (Zusammenfassung 4–5 Sätze, Einordnung 3–5 Sätze), aber ohne Füllwörter.\n"
     "5. 'bedeutung' misst die Marktrelevanz des Ereignisses (0 = belanglos, 1 = marktbewegend), nicht die Wichtigkeit "
     "für eine bestimmte Person.\n"
     f"SCHEMA:\n{SCHEMA_TEXT}"
@@ -120,7 +128,7 @@ def validate(obj: Any, source_text: str = "") -> dict[str, Any] | None:
     """Eine Einzelanalyse prüfen und bereinigen; ``None``, wenn Pflichtfelder fehlen oder unbrauchbar sind."""
     if not isinstance(obj, dict):
         return None
-    summary = _text(obj.get("zusammenfassung"), 700)
+    summary = _text(obj.get("zusammenfassung"), 1400)
     if len(summary) < 20:
         return None
     src_digits = _digits(source_text) if source_text else None
@@ -149,7 +157,7 @@ def validate(obj: Any, source_text: str = "") -> dict[str, Any] | None:
         "kategorie": _enum(obj.get("kategorie"), CATEGORIES, "sonstiges"),
         "geltungsbereich": _enum(obj.get("geltungsbereich"), SCOPES, "sonstiges"),
         "betroffene": affected, "fakten": facts, "zitierte_einschaetzungen": views,
-        "einordnung": _text(obj.get("einordnung"), 420), "unsicherheiten": unc,
+        "einordnung": _text(obj.get("einordnung"), 1100), "unsicherheiten": unc,
         "stimmung": _enum(obj.get("stimmung"), SENTIMENTS, "unklar"),
         "bedeutung": round(_num(obj.get("bedeutung"), 0.3), 2), "konfidenz": round(_num(obj.get("konfidenz"), 0.5), 2),
         "ereignis": _text(obj.get("ereignis"), 140), "zusammenfassung": summary,
@@ -173,8 +181,8 @@ class AnalysisService:
 
     # -- Auswahl -----------------------------------------------------------------------------------------
     def candidates(self, limit: int) -> list[dict[str, Any]]:
-        days = int(self.ctx.settings.get("news.enrich_days", 3))
-        since = iso(datetime.now(UTC) - timedelta(days=days))
+        hours = int(self.ctx.settings.get("news.analysis_hours", WINDOW_H))
+        since = iso(datetime.now(UTC) - timedelta(hours=hours))
         wait_until = iso(datetime.now(UTC) - timedelta(hours=6))  # so lange auf den Artikelinhalt warten
         rows = self.db.q(
             """SELECT n.id, n.title, n.summary, n.source_name, n.published_at, n.relevance, n.dup_count,
@@ -186,7 +194,7 @@ class AnalysisService:
                WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?
                  AND (c.status IN ('success','partial','blocked','failed')
                       OR (n.fetched_at <= ?) OR ? = 1)
-               ORDER BY n.published_at DESC LIMIT 800""",
+               ORDER BY n.published_at DESC LIMIT 5000""",
             (since, wait_until, 1 if not self.ctx.settings.get("news.enrich", True) else 0))
         now = datetime.now(UTC)
         out = []
@@ -237,31 +245,49 @@ class AnalysisService:
         return json.dumps({"artikel": items}, ensure_ascii=False), basis
 
     # -- Lauf -------------------------------------------------------------------------------------------
-    def run(self, limit: int | None = None) -> dict[str, Any]:
+    def backlog(self) -> int:
+        """Anzahl der Meldungen (48 h), die auf eine Analyse warten."""
+        return len(self.candidates(100_000))
+
+    def run(self, limit: int | None = None, max_seconds: float | None = None) -> dict[str, Any]:
+        """Rückstau abarbeiten: in Runden zu je ``PER_ROUND`` Meldungen (nach Priorität), bis nichts mehr wartet, ein
+        Limit (Minute/Tag/Budget) greift, der Anbieter stört oder die Laufzeit-Obergrenze erreicht ist."""
         res: dict[str, Any] = {"analyzed": 0, "rejected": 0, "requests": 0}
         if not self.enabled():
             return {"skipped": "Analyse deaktiviert oder KI nicht konfiguriert"}
-        limit = limit or int(self.ctx.settings.get("news.analysis_per_run", 12))
-        rows = self.candidates(limit)
-        res["selected"] = len(rows)
-        for i in range(0, len(rows), BATCH):
-            chunk = rows[i:i + BATCH]
-            try:
-                self._batch(chunk, res)
-            except (Paused, QuotaExceeded, BudgetExceeded) as e:
-                res["stopped"] = e.text
+        limit = limit or int(self.ctx.settings.get("news.analysis_max_per_run", 400))
+        deadline = time.monotonic() + (max_seconds if max_seconds is not None else MAX_SECONDS)
+        res["selected"] = 0
+        while res["selected"] < limit and time.monotonic() < deadline:
+            rows = self.candidates(min(PER_ROUND, limit - res["selected"]))
+            if not rows:
                 break
-            except AiError as e:
-                res["error"] = e.text
-                if not isinstance(e, AiUnavailable):  # abgelehnt (Filter, Schlüssel …): nicht sofort wiederholen
-                    for r in chunk:
-                        self._store_error(r, e.code)
-                break  # vorübergehende Störung: nichts markieren, beim nächsten Lauf geht es weiter
+            res["selected"] += len(rows)
+            stop = False
+            for i in range(0, len(rows), BATCH):
+                chunk = rows[i:i + BATCH]
+                try:
+                    self._batch(chunk, res)
+                except (Paused, QuotaExceeded, BudgetExceeded) as e:
+                    res["stopped"] = e.text
+                    stop = True
+                except AiError as e:
+                    res["error"] = e.text
+                    if not isinstance(e, AiUnavailable):  # abgelehnt (Filter, Schlüssel …): nicht sofort wiederholen
+                        for r in chunk:
+                            self._store_error(r, e.code)
+                    stop = True  # vorübergehende Störung: nichts markieren, der nächste Lauf macht weiter
+                if stop or time.monotonic() >= deadline:
+                    stop = True
+                    break
+            if stop:
+                break
+        res["backlog_left"] = self.backlog()
         return res
 
     def _batch(self, chunk: list[dict[str, Any]], res: dict[str, Any]) -> None:
         user, basis = self.payload(chunk)
-        out = self.ai.generate(SYSTEM, user, None, 1400 * len(chunk), json_mode=True)
+        out = self.ai.generate(SYSTEM, user, None, 1800 * len(chunk), json_mode=True)
         res["requests"] += 1
         try:
             data = parse_json(out.text)
@@ -306,7 +332,7 @@ class AnalysisService:
              tin, tout, iso(datetime.now(UTC))))
         # die Listenansicht zeigt die KI-Zusammenfassung wie bisher (llm_summary), jetzt aus der Analyse
         self.db.x("UPDATE news_item SET llm_summary=?, llm_score=? WHERE id=?",
-                  (v["zusammenfassung"][:600], v["bedeutung"], r["id"]))
+                  (v["zusammenfassung"][:1000], v["bedeutung"], r["id"]))
 
     def _store_error(self, r: dict[str, Any], code: str, out: Any = None) -> None:
         self.db.x(

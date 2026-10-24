@@ -24,18 +24,21 @@ class Scheduler:
         tz = ctx.config.tz
         self.sched = BackgroundScheduler(
             timezone=tz,
-            executors={"default": ThreadPoolExecutor(max_workers=3)},
+            # „interactive“: kurze, vom Nutzer ausgelöste Jobs (z. B. Tagesbericht) warten nicht hinter dem Import
+            executors={"default": ThreadPoolExecutor(max_workers=3), "interactive": ThreadPoolExecutor(max_workers=2)},
             job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 600},
         )
         self.jobs: dict[str, Callable[..., Any]] = {}
+        self._executor: dict[str, str] = {}
 
-    def register(self, name: str, fn: Callable[..., Any], trigger: Any) -> None:
+    def register(self, name: str, fn: Callable[..., Any], trigger: Any, executor: str = "default") -> None:
         def runner(**kwargs: Any) -> Any:
             return tasks.run_job(self.ctx, name, lambda: fn(self.ctx, **kwargs))
 
         self.jobs[name] = runner
+        self._executor[name] = executor
         if trigger is not None:
-            self.sched.add_job(runner, trigger, id=name, name=name, replace_existing=True)
+            self.sched.add_job(runner, trigger, id=name, name=name, replace_existing=True, executor=executor)
 
     def trigger(self, name: str, delay_s: float = 1.0, **kwargs: Any) -> bool:
         runner = self.jobs.get(name)
@@ -43,7 +46,7 @@ class Scheduler:
             return False
         self.sched.add_job(runner, "date", run_date=datetime.now(UTC) + timedelta(seconds=delay_s),
                            id=f"{name}-once-{datetime.now(UTC).timestamp()}", kwargs=kwargs,
-                           misfire_grace_time=3600)
+                           misfire_grace_time=3600, executor=self._executor.get(name, "default"))
         return True
 
     def debounce(self, name: str, delay_s: float, **kwargs: Any) -> bool:
@@ -52,7 +55,8 @@ class Scheduler:
         if runner is None:
             return False
         self.sched.add_job(runner, "date", run_date=datetime.now(UTC) + timedelta(seconds=delay_s),
-                           id=f"{name}-debounce", kwargs=kwargs, replace_existing=True, misfire_grace_time=3600)
+                           id=f"{name}-debounce", kwargs=kwargs, replace_existing=True, misfire_grace_time=3600,
+                           executor=self._executor.get(name, "default"))
         return True
 
     def setup_default_jobs(self) -> None:

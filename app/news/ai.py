@@ -237,8 +237,9 @@ class AiGateway:
 
     def limits(self) -> dict[str, int]:
         g = lambda k, d: max(0, int(self.s.get(k, d) or 0))  # noqa: E731
+        unlimited = bool(self.s.get("llm.gemini_tokens_unlimited", False))  # 0 = ohne Token-Tagesgrenze
         return {"rpm": g("llm.gemini_rpm", 5), "tpm": g("llm.gemini_tpm", 100_000), "rpd": g("llm.gemini_rpd", 100),
-                "tpd": g("llm.gemini_daily_token_budget", 200_000)}
+                "tpd": 0 if unlimited else g("llm.gemini_daily_token_budget", 200_000)}
 
     # -- Nutzung ---------------------------------------------------------------------------------------
     def day_key(self, provider: str | None = None) -> str:
@@ -249,14 +250,18 @@ class AiGateway:
         r = self.db.q1("SELECT * FROM ai_usage WHERE day=? AND provider=?", (day or self.day_key(p), p))
         return {k: int(r[k]) if r else 0 for k in ("requests", "input_tokens", "output_tokens", "errors", "quota_hits")}
 
-    def tokens_left(self) -> int:
+    def tokens_left(self) -> int | None:
+        """Restliche Tokens heute; ``None`` = unbegrenzt (nur Gemini, ausdrücklich gewählt)."""
         p = self.provider_name()
         if p == "claude":
             from app.news.llm import LlmService
 
             return LlmService(self.ctx).budget_left()
+        tpd = self.limits()["tpd"]
+        if not tpd:
+            return None
         u = self.usage(p)
-        return self.limits()["tpd"] - u["input_tokens"] - u["output_tokens"]
+        return tpd - u["input_tokens"] - u["output_tokens"]
 
     def requests_left(self) -> int | None:
         if self.provider_name() != "gemini":

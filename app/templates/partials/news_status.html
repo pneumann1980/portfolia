@@ -7,6 +7,7 @@
     <dt>Text geladen</dt><dd>{{ st.content.success }} vollständig · {{ st.content.partial }} Teiltext · {{ st.content.blocked }} gesperrt · {{ st.content.failed }} fehlgeschlagen · {{ st.content.pending }} Wiederholung geplant</dd>
     {% if st.content_reasons %}<dt>Häufige Gründe</dt><dd>{% for r, k in st.content_reasons %}{{ r }} ({{ k }}){{ ', ' if not loop.last }}{% endfor %}</dd>{% endif %}
     <dt>Analysiert</dt><dd>{{ st.analyzed }}{% if st.analysis_failed %} · {{ st.analysis_failed }} verworfen{% endif %}</dd>
+    <dt>Rückstau</dt><dd>{{ st.backlog.enrich }} Artikeltexte · {{ st.backlog.analyze }} Analysen (letzte 48 h) warten{% if st.backlog.analyze %} – werden laufend abgearbeitet{% endif %}</dd>
     <dt>Ereignisse (24 h)</dt><dd>{{ st.events }} ({{ st.events_multi }} mit mehreren Quellen)</dd>
     <dt>Letzter Tagesbericht</dt><dd>{% if st.last_report %}<a href="/news?tab=report&report_id={{ st.last_report.id }}">{{ st.last_report.day|date_de }}</a> · erstellt {{ st.last_report.created_at|datetime_de }}{% else %}–{% endif %}</dd>
   </dl>
@@ -18,8 +19,8 @@
     <dt>Schlüssel</dt><dd>{{ 'gesetzt' if ai_s.key else 'nicht gesetzt' }}</dd>
     <dt>Heute ({{ ai_s.day }}{{ ' Pacific' if ai_s.provider == 'gemini' }})</dt><dd>{{ ai_s.usage.requests }} Anfragen · {{ ai_s.usage.input_tokens|num(0) }} Tokens ein · {{ ai_s.usage.output_tokens|num(0) }} aus · {{ ai_s.usage.errors }} Fehler · {{ ai_s.usage.quota_hits }} Kontingenttreffer</dd>
     {% if ai_s.provider == 'gemini' %}
-    <dt>Lokale Grenzen</dt><dd>{{ ai_s.limits.rpm }}/min · {{ ai_s.limits.tpm|num(0) }} Tokens/min · {{ ai_s.limits.rpd }} Anfragen/Tag · {{ ai_s.limits.tpd|num(0) }} Tokens/Tag</dd>
-    <dt>Restbudget</dt><dd>{% if ai_s.enabled %}{{ ai_s.requests_left }} Anfragen · {{ ai_s.tokens_left|num(0) }} Tokens{% else %}–{% endif %}</dd>
+    <dt>Lokale Grenzen</dt><dd>{{ ai_s.limits.rpm }}/min · {{ ai_s.limits.tpm|num(0) }} Tokens/min · {{ ai_s.limits.rpd }} Anfragen/Tag · {% if ai_s.limits.tpd %}{{ ai_s.limits.tpd|num(0) }} Tokens/Tag{% else %}Tokens/Tag unbegrenzt{% endif %}</dd>
+    <dt>Restbudget</dt><dd>{% if ai_s.enabled %}{{ ai_s.requests_left }} Anfragen · {% if ai_s.tokens_left is none %}Tokens unbegrenzt{% else %}{{ ai_s.tokens_left|num(0) }} Tokens{% endif %}{% else %}–{% endif %}</dd>
     {% else %}
     <dt>Restbudget</dt><dd>{% if ai_s.enabled %}{{ ai_s.tokens_left|num(0) }} Tokens{% else %}–{% endif %}</dd>
     {% endif %}

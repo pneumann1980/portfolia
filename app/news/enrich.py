@@ -68,7 +68,7 @@ class EnrichService:
                FROM news_item n LEFT JOIN news_content c ON c.item_id = n.id
                WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?
                  AND (c.item_id IS NULL OR (c.status='pending' AND (c.next_attempt IS NULL OR c.next_attempt <= ?)))
-               ORDER BY n.published_at DESC LIMIT 600""", (since, now))
+               ORDER BY n.published_at DESC LIMIT 5000""", (since, now))
         pub_now = datetime.now(UTC)
         scored = []
         for r in rows:

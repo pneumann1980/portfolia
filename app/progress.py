@@ -57,6 +57,10 @@ EXTRA_PHASES: list[tuple[str, str, int]] = [
     ("zip_eval", "Dokumente erkennen und auswerten", 70),
     ("zip_match", "Buchungen zuordnen", 10),
     ("zip_report", "Bericht erstellen", 5),
+    # Tagesbericht der News (app.news.report)
+    ("rep_collect", "Meldungen sammeln", 10),
+    ("rep_ai", "KI erstellt den Bericht", 75),
+    ("rep_save", "Prüfen und speichern", 15),
 ]
 PHASE_LABEL = {k: v for k, v, _w in PHASES + EXTRA_PHASES} | {"done": "Fertig"}
 STALE_S = 180  # ohne Lebenszeichen gilt ein „laufender“ Fortschritt als abgebrochen

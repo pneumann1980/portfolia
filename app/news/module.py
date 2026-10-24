@@ -28,6 +28,7 @@ from app.news.relevance import recency_factor
 from app.news.report import ReportService
 from app.news.service import NewsService
 from app.news.status import pipeline_status
+from app.progress import Progress, job_progress
 from app.util.timeutil import iso, parse_iso
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
@@ -90,9 +91,16 @@ def job_group(ctx: AppContext) -> dict[str, Any]:
     return EventService(ctx).run()
 
 
+def _report_progress(ctx: AppContext) -> Progress:
+    return job_progress(ctx, "news_report", "Täglicher Finanzmarktbericht",
+                        phases=["rep_collect", "rep_ai", "rep_save"], unit="Schritte")
+
+
 def job_report(ctx: AppContext, manual: bool = False) -> dict[str, Any]:
     svc = ReportService(ctx)
-    return svc.generate(manual=True) if manual else svc.run_due()
+    if manual:
+        return svc.generate(manual=True, progress=lambda: _report_progress(ctx))
+    return svc.run_due(progress=lambda: _report_progress(ctx))
 
 
 def job_rematch(ctx: AppContext) -> dict[str, Any]:
@@ -118,9 +126,9 @@ def _register_jobs(s: Scheduler) -> None:
     s.register("youtube_discovery", job_discovery, CronTrigger(hour=7, minute=5))
     s.register("llm_digest", job_digest, CronTrigger(hour=7, minute=40))
     s.register("news_enrich", job_enrich, IntervalTrigger(minutes=15))
-    s.register("news_analyze", job_analyze, IntervalTrigger(minutes=20))
+    s.register("news_analyze", job_analyze, IntervalTrigger(minutes=10))
     s.register("news_group", job_group, IntervalTrigger(minutes=20))
-    s.register("news_report", job_report, IntervalTrigger(minutes=15))
+    s.register("news_report", job_report, IntervalTrigger(minutes=15), executor="interactive")
 
 
 startup_job("news_fetch", 45)
@@ -175,6 +183,7 @@ def query_items(ctx: AppContext, *, kind: str, asset: str = "", source: str = ""
     pf = ctx.portfolio()
     events: dict[int, Any] = {}
     cstatus: dict[int, str] = {}
+    sentiment: dict[int, tuple[str, float]] = {}
     if ids:
         ph = ",".join("?" * len(ids))
         for e in ctx.db.q(f"SELECT i.item_id, i.event_id, v.n_sources, v.n_items FROM news_event_item i "
@@ -182,10 +191,14 @@ def query_items(ctx: AppContext, *, kind: str, asset: str = "", source: str = ""
             events[e["item_id"]] = e
         for c in ctx.db.q(f"SELECT item_id, status FROM news_content WHERE item_id IN ({ph})", ids):
             cstatus[c["item_id"]] = c["status"]
+        for a in ctx.db.q(f"SELECT item_id, sentiment, importance FROM news_analysis "
+                          f"WHERE summary IS NOT NULL AND item_id IN ({ph})", ids):
+            sentiment[a["item_id"]] = (a["sentiment"], a["importance"])
     for x in page:
         x["assets"] = [(aid, pf.asset(aid).name if pf else aid) for aid in assets_by_item.get(x["row"]["id"], [])]
         x["event"] = events.get(x["row"]["id"])
         x["cstatus"] = cstatus.get(x["row"]["id"])
+        x["sentiment"], x["importance"] = sentiment.get(x["row"]["id"], (None, None))
     return page, total
 
 
@@ -201,9 +214,43 @@ def _safe_back(back: str) -> str:
 def report_ctx(ctx: AppContext, report_id: int = 0) -> dict[str, Any]:
     svc = ReportService(ctx)
     rep = svc.by_id(report_id) if report_id else svc.latest()
-    return {"report": rep, "history": svc.history(30), "report_error": svc.last_error(),
+    return {"report": rep, "history": svc.history(30), "report_error": svc.last_error(), "live": report_state(ctx),
             "ai_status": AiGateway(ctx).status(), "report_time": svc.due_time(),
             "report_on": bool(ctx.settings.get("news.report", True))}
+
+
+def report_state(ctx: AppContext) -> dict[str, Any]:
+    """Zustand einer manuell angestoßenen Berichtserstellung: wartend | laeuft | fertig | fehler | leer."""
+    req = ctx.db.get_state("news.report.manual")
+    st = ctx.job_status().get("news_report") or {}
+    asked = parse_iso(req.get("requested_at")) if isinstance(req, dict) else None
+    if asked is None or (datetime.now(UTC) - asked).total_seconds() > 3600:
+        return {"state": "leer"}  # alte Meldungen (auch Fehler) nicht ewig anzeigen
+    started = parse_iso(st.get("last_start")) if st.get("last_start") else None
+    if st.get("running") and started and started >= asked - timedelta(seconds=2):
+        p = st.get("progress") or {}
+        return {"state": "laeuft", "p": p if p.get("v") == 2 else {"v": 2, "label": "Täglicher Finanzmarktbericht",
+                                                                   "running": True, "pct": 1, "phase_label": "Start"}}
+    ended = parse_iso(st.get("last_end")) if st.get("last_end") else None
+    if started and started >= asked - timedelta(seconds=2) and ended and ended >= started:
+        res = st.get("progress") or {}
+        if st.get("last_ok") and res.get("report"):
+            return {"state": "fertig"}
+        err = (ReportService(ctx).last_error() or {}).get("text") or res.get("skipped") or res.get("error") \
+            or st.get("last_error") or "Der Bericht wurde nicht erstellt."
+        return {"state": "fehler", "text": str(err)}
+    if (datetime.now(UTC) - asked).total_seconds() > 600:
+        return {"state": "fehler", "text": "Keine Rückmeldung – der Auftrag wurde nicht gestartet (Scheduler prüfen)."}
+    return {"state": "wartend"}
+
+
+def report_status_view(request: Request, ctx: AppContext) -> HTMLResponse:
+    st = report_state(ctx)
+    resp = render(request, "partials/report_progress.html", alerts=[], st=st)
+    if st["state"] == "fertig":
+        ctx.db.set_state("news.report.manual", None)
+        resp.headers["HX-Refresh"] = "true"
+    return resp
 
 
 def reader_context(ctx: AppContext, row: Any, back: str = "") -> dict[str, Any]:
@@ -321,13 +368,18 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         if not AiGateway(ctx).enabled():
             return HTMLResponse('<span class="badge warn">KI ist nicht aktiviert (Einstellungen → News)</span>')
+        ctx.db.set_state("news.report.manual", {"requested_at": iso(datetime.now(UTC))})
         if ctx.scheduler is not None:
-            ctx.scheduler.trigger("news_report", 0.5, manual=True)
-            return HTMLResponse('<span class="badge info">Bericht wird erstellt – bitte in einigen Sekunden neu laden.'
-                                '</span>')
-        res = job_report(ctx, manual=True)
-        return HTMLResponse(f'<span class="badge">{"Bericht erstellt" if res.get("report") else "Nicht erstellt"}'
-                            "</span>")
+            ctx.scheduler.trigger("news_report", 0.3, manual=True)
+        else:  # ohne Scheduler (Tests, Einzelaufruf): sofort erzeugen, Zustand wie bei einem Job festhalten
+            from app.jobs import tasks
+
+            tasks.run_job(ctx, "news_report", lambda: job_report(ctx, manual=True))
+        return report_status_view(request, ctx)
+
+    @router.get("/news/report/status", response_class=HTMLResponse)
+    def report_status(request: Request) -> HTMLResponse:
+        return report_status_view(request, get_ctx(request))
 
     @router.post("/news/pipeline/run", response_class=HTMLResponse)
     def pipeline_run(request: Request) -> HTMLResponse:

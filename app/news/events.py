@@ -9,6 +9,9 @@ Regeln (bewusst konservativ; im Zweifel bleiben Meldungen getrennt):
 * Liegt die KI-Analyse vor, zählt zusätzlich der neutrale ``ereignis``-Titel (gleiche Kategorie vorausgesetzt).
 * Grenzfälle (mittlere Ähnlichkeit) gehen – nur wenn KI aktiv ist und das Budget es zulässt – gebündelt in **einer**
   Anfrage an den Anbieter; ohne KI bleiben sie getrennt.
+* **Keine Ketten:** Zwei Gruppen werden nur vereint, wenn die *mittlere* Ähnlichkeit aller Paare zwischen ihnen
+  mindestens ``AVG_MIN`` beträgt (Einfach-Verkettung „A≈B, B≈C ⇒ A=C“ erzeugte Haufen mit Hunderten Meldungen);
+  ein Ereignis hat höchstens ``MAX_EVENT`` Meldungen.
 * Manuelle Korrektur: „Aus Ereignis lösen“ merkt sich das Paar (``news_event_split``) – es wird nie wieder automatisch
   zusammengeführt; Ereignisse mit ``locked=1`` werden nicht mehr automatisch erweitert.
 """
@@ -34,6 +37,9 @@ WEAK = 0.35
 MIN_SHARED = 3
 MAX_DF = 60  # Wörter, die in mehr Titeln vorkommen, erzeugen keine Kandidatenpaare
 LLM_PAIRS = 8
+MAX_EVENT = 30  # Obergrenze je Ereignis: Vorlagen-Titel („ETH price on … Robinhood“) bilden keine Riesenhaufen
+AVG_MIN = 0.4  # mittlere Ähnlichkeit zwischen zwei zusammenzuführenden Gruppen (verhindert Ketten A–B–C–D …)
+CROSS_CAP = 400
 _NUMS = re.compile(r"\d+(?:[.,]\d+)?")
 
 
@@ -117,10 +123,45 @@ class EventService:
             sc = sc if sc >= 0.85 else sc * 0.5  # Zahlenkonflikt: nur bei nahezu identischem Titel zusammenführen
         return round(sc, 3), method
 
+    def _try_merge(self, x: int, y: int, uf: _UF, comp: dict[int, list[int]], by_id: dict[int, dict[str, Any]],
+                   pairs: dict[tuple[int, int], tuple[float, str]], force: bool = False) -> bool:
+        """Gruppen von ``x`` und ``y`` vereinen – nur wenn die Obergrenze hält und (außer bei ``force``) die mittlere
+        Ähnlichkeit über alle Paare zwischen den Gruppen reicht."""
+        rx, ry = uf.find(x), uf.find(y)
+        if rx == ry:
+            return True
+        a_members, b_members = comp.setdefault(rx, [rx]), comp.setdefault(ry, [ry])
+        if len(a_members) + len(b_members) > MAX_EVENT:
+            return False
+        if not force:
+            cross = [(a, b) for a in a_members for b in b_members][:CROSS_CAP]
+            total = 0.0
+            for a, b in cross:
+                key = (min(a, b), max(a, b))
+                total += (pairs[key] if key in pairs else self.score(by_id[key[0]], by_id[key[1]]))[0]
+            if total / len(cross) < AVG_MIN:
+                return False
+        uf.union(x, y)
+        root = uf.find(x)
+        merged = a_members + b_members
+        comp.pop(rx, None)
+        comp.pop(ry, None)
+        comp[root] = merged
+        return True
+
+    def _rebuild_once(self) -> None:
+        """Einmalig (Version 2): abgeleitete, nicht fixierte Ereignisse verwerfen und neu aufbauen – frühere Läufe mit
+        Einfach-Verkettung konnten Riesen-Ereignisse erzeugen. Manuell korrigierte (fixierte) bleiben."""
+        if self.db.get_state("news.events_v2"):
+            return
+        self.db.x("DELETE FROM news_event WHERE locked=0")
+        self.db.set_state("news.events_v2", True)
+
     # -- Lauf -----------------------------------------------------------------------------------------------
     def run(self) -> dict[str, Any]:
         if not self.ctx.settings.get("news.group", True):
             return {"skipped": "Gruppierung deaktiviert"}
+        self._rebuild_once()
         items = self._window()
         by_id = {it["id"]: it for it in items}
         splits = self._splits()
@@ -130,9 +171,11 @@ class EventService:
             uf.find(it["id"])
             if it["event_id"]:
                 members.setdefault(it["event_id"], []).append(it["id"])
+        comp: dict[int, list[int]] = {}
         for ids in members.values():  # bestehende Gruppen bleiben zusammen
             for other in ids[1:]:
                 uf.union(ids[0], other)
+            comp[uf.find(ids[0])] = list(ids)
         index: dict[str, list[int]] = {}
         for it in items:
             for t in it["tok"] | it["ev_tok"]:
@@ -165,21 +208,20 @@ class EventService:
                     pairs[key] = (0.0, "") if a["event_id"] and a["event_id"] == b["event_id"] else self.score(a, b)
         res = {"items": len(items), "merged": 0, "llm_pairs": 0, "events": 0}
         grey: list[tuple[int, int]] = []
-        for (x, y), (sc, _method) in pairs.items():
+        for (x, y), (sc, _method) in sorted(pairs.items(), key=lambda kv: -kv[1][0]):  # stärkste Paare zuerst
             a, b = by_id[x], by_id[y]
             locked = bool(a["locked"] or b["locked"])
             if sc >= STRONG:
                 if locked and not (a["event_id"] and a["event_id"] == b["event_id"]):
                     continue  # manuell bestätigte Ereignisse werden nicht automatisch erweitert
-                uf.union(x, y)
+                self._try_merge(x, y, uf, comp, by_id, pairs, force=sc >= 1.0)  # gleicher Text (1,0) ist immer sicher
             elif sc >= WEAK and not locked and abs((a["pub"] - b["pub"]).total_seconds()) <= 24 * 3600:
                 grey.append((x, y))
         if grey and self.ctx.settings.get("news.group_llm", True) and self.ai.enabled():
             grey.sort(key=lambda p: -pairs[p][0])
             decided = self._ask_llm([(by_id[x], by_id[y]) for x, y in grey[:LLM_PAIRS]], res)
             for (x, y), same in zip(grey[:LLM_PAIRS], decided, strict=False):
-                if same:
-                    uf.union(x, y)
+                if same and self._try_merge(x, y, uf, comp, by_id, pairs, force=True):
                     pairs[(x, y)] = (max(pairs[(x, y)][0], STRONG), "llm")
         comps: dict[int, list[int]] = {}
         for it in items:

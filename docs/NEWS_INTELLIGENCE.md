@@ -1,6 +1,6 @@
 # News-Intelligence (0.46): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
 
-Stand: 0.46.0. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
+Stand: 0.47.0. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
 **rückwärtskompatibel**: der Feed-Import, die Relevanz-/Dedupe-Logik, YouTube und Claude-Zusammenfassungen laufen
 unverändert; die neuen Stufen sind eigene Hintergrundjobs, deren Ausfall den Import nie blockiert.
 
@@ -188,6 +188,34 @@ Ereignis (keine automatische Erweiterung mehr). Ereignisse mit < 2 Meldungen exi
 Gründe) / analysiert / verworfen / Ereignisse; KI-Anbieter, Modell, Nutzung heute (Anfragen, Tokens, Fehler,
 Kontingenttreffer), lokale Grenzen, **Restbudget**, Pause bis …, letzter Tagesbericht, Job-Status mit Ergebnis,
 letzte Fehler. Der Hinweis zur Free-Tier-Garantie steht dort ebenfalls.
+
+## 0.47: Rückstau, Startseite, Berichts-Fortschritt, längere Texte
+
+* **Rückstau:** `news_analyze` läuft alle 10 Minuten und arbeitet **in Runden** (36 Meldungen je Runde, Stapel zu 6) alles
+  ab, was in den letzten **48 Stunden** noch keine aktuelle Analyse hat – nach Priorität (Positionsbezug,
+  Mehrfachberichte, Quellgewicht, Aktualität) – bis nichts mehr wartet, ein Limit (Minute/Tag/Budget) greift, der Anbieter
+  stört oder die Laufzeitgrenze (8 min) erreicht ist. Einstellungen ohne Oberfläche: `news.analysis_max_per_run` (400),
+  `news.analysis_hours` (48). *News → Status* zeigt den Rückstau (Artikeltexte und Analysen).
+* **Token-Budget:** *Einstellungen → News & KI → „Token-Tagesgrenze aufheben (unbegrenzt)“* (nur Gemini, ausdrücklich zu
+  wählen; Standard bleibt 200.000). Anfragen pro Minute und pro Tag sowie Tokens pro Minute bleiben bestehen. Die
+  Status-Seite zeigt dann „unbegrenzt“. Claude hat bewusst keine unbegrenzte Option (kostenpflichtig).
+* **Tagesbericht „Neu erzeugen“:** Fortschritt in Phasen (Meldungen sammeln → KI erstellt den Bericht → Prüfen und
+  speichern), Abfrage alle 2 s, automatisches Neuladen nach Abschluss; Fehler erscheinen direkt (Grund, „bestehender
+  Bericht bleibt unverändert“). Der Job läuft im Pool `interactive` (2 Threads) – nicht hinter Import und Analyse.
+* **Ereignisse:** Gruppen werden nur vereint, wenn die *mittlere* Ähnlichkeit aller Paare zwischen ihnen ≥ 0,4 ist; höchstens
+  30 Meldungen je Ereignis; stärkste Paare zuerst. Beim ersten Lauf nach dem Update wird der abgeleitete, nicht fixierte
+  Ereignisbestand einmalig verworfen und sauber neu aufgebaut (manuell fixierte Ereignisse bleiben).
+* **Startseite:** Der Kasten unten zeigt **Top-News mit KI-Auswertung**: Tagesüberblick (Kurzfassung des Berichts, wenn jünger
+  als 36 h) und die fünf wichtigsten Ereignisse der letzten 24 h (Rang: Bedeutung, Positionsbezug, Anzahl Berichte,
+  Relevanz) mit Zusammenfassung, Stimmung, Assets und Quellen; freie Plätze füllt die bisherige Liste („KI ausstehend“).
+  Ohne Analysen bleibt die bisherige Liste. Die Artikelliste unter *News* zeigt ebenfalls das Stimmungs-Badge.
+* **Längere Texte (Prompt-Version 2):** Zusammenfassung 4–5 Sätze; Einordnung 3–5 Sätze (Relevanz, mögliche Folgen,
+  Beobachtungspunkte, als Einschätzung formuliert); Bericht: Überblick 6–8 Sätze, Kernaussage 2–3, Einordnung 2–3,
+  Krypto 4–6. Da die Version im Eingabe-Hash steckt, werden **nur Meldungen der letzten 48 h** neu analysiert; ältere
+  Analysen bleiben unverändert (Kosten: etwa 1,5× Ausgabe-Tokens).
+* **Stimmungsbarometer:** im Bericht die Verteilung positiv/neutral/negativ/gemischt über alle analysierten Meldungen des
+  Berichtszeitraums, gesamt und je Portfolio-Asset – lokal aus den gespeicherten Analysen berechnet, Modell-Einschätzung
+  (nicht gewichtet, keine Messung).
 
 ## Tests
 

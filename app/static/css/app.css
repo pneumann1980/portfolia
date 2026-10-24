@@ -989,3 +989,6 @@ details.ds-rename { margin: 8px 0 12px; }
 .reader .list-item .title { overflow-wrap: anywhere; }
 @media (max-width: 520px) { .reader-body { font-size: 0.97rem; } }
 .meta-row { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.sbar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--surface-3); gap: 2px; margin: 6px 0 2px; }
+.sbar span { display: block; min-width: 3px; }
+.sb-pos { background: #2e9e5b; } .sb-neg { background: #d4483b; } .sb-neu { background: #8a93a0; } .sb-mix { background: #d9a31b; }

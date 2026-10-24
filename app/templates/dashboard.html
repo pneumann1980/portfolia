@@ -119,8 +119,14 @@
     <p class="hint">% = Kursänderung seit dem Vortagesschluss; € = Wertänderung der Position (Menge × Kursänderung).</p>
   </section>
   <section class="card" aria-labelledby="news-h">
+    {% if top and top.analyzed %}
+    <div class="card-head"><h2 id="news-h">Top-News mit KI-Auswertung</h2><a class="btn sm ghost" href="/news">Alle</a></div>
+    {% include "partials/news_top.html" %}
+    <p class="hint">Von einer KI aus öffentlichen Artikeltexten ausgewertet – keine Anlageberatung.</p>
+    {% else %}
     <div class="card-head"><h2 id="news-h">Neueste relevante News</h2><a class="btn sm ghost" href="/news">Alle</a></div>
     {% include "partials/news_list_compact.html" %}
+    {% endif %}
   </section>
 </div>
 {% endblock %}

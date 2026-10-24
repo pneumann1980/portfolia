@@ -7,6 +7,8 @@ from typing import Any
 
 from app.context import AppContext
 from app.news.ai import AiGateway
+from app.news.analysis import AnalysisService
+from app.news.enrich import EnrichService
 from app.util.timeutil import iso, now_local
 
 JOBS = ("news_fetch", "news_enrich", "news_analyze", "news_group", "news_report")
@@ -46,6 +48,8 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         "content_reasons": [(r["reason"], int(r["n"])) for r in reasons],
         "with_content_total": n("SELECT COUNT(*) FROM news_content WHERE status IN ('success','partial')"),
         "analyzed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NOT NULL AND analyzed_at>=?", day),
+        "backlog": {"enrich": len(EnrichService(ctx).candidates(100_000)),
+                    "analyze": AnalysisService(ctx).backlog()},
         "analysis_failed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NULL AND analyzed_at>=?", day),
         "events": n("SELECT COUNT(*) FROM news_event WHERE last_seen>=?", since24),
         "events_multi": n("SELECT COUNT(*) FROM news_event WHERE last_seen>=? AND n_sources>=2", since24),

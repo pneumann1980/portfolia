@@ -142,7 +142,8 @@
       <label class="field">Gemini: Anfragen/Minute<input type="number" min="1" name="gemini_rpm" value="{{ s['llm.gemini_rpm'] }}"></label>
       <label class="field">Gemini: Tokens/Minute<input type="number" min="1000" name="gemini_tpm" value="{{ s['llm.gemini_tpm'] }}"></label>
       <label class="field">Gemini: Anfragen/Tag<input type="number" min="1" name="gemini_rpd" value="{{ s['llm.gemini_rpd'] }}"></label>
-      <label class="field">Gemini: Tages-Token-Budget<input type="number" min="0" name="gemini_budget" value="{{ s['llm.gemini_daily_token_budget'] }}"></label>
+      <label class="field">Gemini: Tages-Token-Budget<input type="number" min="1000" name="gemini_budget" value="{{ s['llm.gemini_daily_token_budget'] }}"></label>
+      <label class="check" style="align-self:end"><input type="checkbox" name="gemini_unlimited" value="1" {% if s['llm.gemini_tokens_unlimited'] %}checked{% endif %}> Token-Tagesgrenze aufheben (unbegrenzt)</label>
     </div>
     <p class="hint">Gemini: Es stehen nur Flash-/Flash-Lite-Modelle mit kostenlosem Kontingent zur Wahl. Die Grenzen oben sind <b>eigene, vorsichtige Annahmen</b> – Google veröffentlicht die genauen Free-Tier-Werte nur in AI Studio und kann sie ändern; bitte dort prüfen und anpassen. Die lokalen Zähler begrenzen die Last, garantieren aber nicht, dass Google die Nutzung als kostenlos wertet (Kontingent gilt je Google-Projekt; ein Schlüssel eines Projekts mit Abrechnung wird abgerechnet). Meldet Google ein erschöpftes Kontingent, pausiert Portfolia den Anbieter – ohne Wechsel auf ein anderes Modell oder einen anderen Anbieter. Im kostenlosen Kontingent dürfen Eingaben zur Produktverbesserung genutzt werden.</p>
     <div class="grid-3">

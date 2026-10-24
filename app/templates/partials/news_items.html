@@ -20,6 +20,7 @@
       {% endif %}
       {% for aid, name in x.assets[:4] %}<a class="badge info" href="/news?tab={{ 'videos' if n.kind == 'video' else 'articles' }}&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
       {% if n.dup_count %}<span class="badge" title="Weitere Quellen berichten ebenfalls">+{{ n.dup_count }}</span>{% endif %}
+      {% if x.sentiment %}<span class="badge {{ {'positiv': 'good', 'negativ': 'crit', 'gemischt': 'warn'}.get(x.sentiment, '') }}" title="KI-Einschätzung der Stimmung der Meldung">{{ x.sentiment }}</span>{% endif %}
       {% if x.event %}<a class="badge info" href="/news/event/{{ x.event.event_id }}" title="Mehrere Berichte zum selben Ereignis">Ereignis · {{ x.event.n_items }} Berichte</a>{% endif %}
       {% if x.cstatus == 'success' %}<span class="badge good" title="Volltext lokal verfügbar">Volltext</span>{% elif x.cstatus == 'blocked' %}<span class="badge" title="Verlag sperrt den Text (Bezahl-/Zustimmungsschranke)">gesperrt</span>{% endif %}
       {% if n.hidden_reason %}<span class="badge warn">ausgeblendet: {{ n.hidden_reason }}</span>{% endif %}

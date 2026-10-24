@@ -1,0 +1,28 @@
+{# Startseite: Top-News mit KI-Auswertung. Erwartet ``top`` (app.news.overview.top_news). #}
+{% if top.report and top.overview %}
+<div class="ai-box top-overview">
+  <div class="meta meta-row"><span class="badge info">KI</span><b>Tagesüberblick</b>
+    <span class="hint">{{ top.report.created_at|datetime_de }}</span></div>
+  <p class="small" style="margin:6px 0">{{ top.overview }}</p>
+  <a class="small" href="/news?tab=report">Ganzen Bericht mit Quellen lesen →</a>
+</div>
+{% endif %}
+<div class="list top-news">
+{% for i in top.rows %}
+  <article class="list-item top-item" style="display:block">
+    <a class="title" href="/news/{{ i.id }}">{{ i.title }}</a>
+    <div class="meta meta-row">
+      {% if i.ai %}
+        {% if i.sentiment %}<span class="badge {{ {'positiv': 'good', 'negativ': 'crit', 'gemischt': 'warn'}.get(i.sentiment, '') }}">{{ i.sentiment }}</span>{% endif %}
+        {% if i.importance is not none and i.importance >= 0.7 %}<span class="badge warn">hohe Bedeutung</span>{% endif %}
+      {% else %}<span class="badge" title="Für diese Meldung liegt noch keine KI-Analyse vor">KI ausstehend</span>{% endif %}
+      {% for a in i.assets[:3] %}<span class="badge info">{{ a }}</span>{% endfor %}
+      <span>{{ (i.sources[0] if i.sources else '') }}{% if i.reports > 1 %} · {{ i.reports }} Berichte{% endif %}</span>
+      <span>· {{ i.published_at|rel_time_iso }}</span>
+    </div>
+    {% if i.summary %}<div class="summary small">{{ i.summary }}</div>{% endif %}
+  </article>
+{% else %}
+  <p class="hint">Noch keine News. Quellen werden alle 30 Minuten abgerufen (<a href="/news">News &amp; Videos</a>).</p>
+{% endfor %}
+</div>

@@ -19,17 +19,19 @@ from __future__ import annotations
 import json
 import logging
 import math
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.context import AppContext
 from app.news.ai import AiError, AiGateway, BudgetExceeded, Paused, QuotaExceeded, parse_json
 from app.news.analysis import _text
+from app.progress import Progress
 from app.util.timeutil import iso, now_local, parse_iso
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2  # 2: ausführlichere Texte, Stimmungsbarometer
 MAX_ENTRIES = 24
 MIN_ENTRIES = 3
 MAX_TRIES_PER_DAY = 3
@@ -37,12 +39,15 @@ RETRY_AFTER = timedelta(hours=1)
 IMPORTANCE = ("hoch", "mittel", "niedrig")
 
 SCHEMA_TEXT = """{
- "ueberblick": "Marktüberblick in 3–5 Sätzen (Aktien, Zinsen, Rohstoffe, Stimmung – nur was Meldungen belegen)",
- "ereignisse": [{"ref": <Nummer>, "titel": "...", "kernaussage": "1–2 Sätze, belegt",
+ "ueberblick": "Marktüberblick in 6–8 Sätzen (Aktien, Zinsen/Notenbanken, Rohstoffe, Krypto, Stimmung –
+                nur was Meldungen belegen)",
+ "ereignisse": [{"ref": <Nummer>, "titel": "...", "kernaussage": "2–3 Sätze, belegt",
                  "bedeutung": "hoch|mittel|niedrig",
-                 "einordnung": "knappe eigene Einordnung (1 Satz), klar als Einschätzung formuliert"}],
- "krypto": "2–4 Sätze zum Kryptomarkt oder leer, wenn die Meldungen nichts hergeben",
- "portfolio": [{"asset": "<exakt ein Name aus bezug_assets>", "aussage": "qualitative Bedeutung, ohne Beträge",
+                 "einordnung": "eigene Einordnung in 2–3 Sätzen (Relevanz, mögliche Folgen), als Einschätzung
+                                formuliert"}],
+ "krypto": "4–6 Sätze zum Kryptomarkt oder leer, wenn die Meldungen nichts hergeben",
+ "portfolio": [{"asset": "<exakt ein Name aus bezug_assets>",
+                "aussage": "qualitative Bedeutung in 2–3 Sätzen, ohne Beträge",
                 "richtung": "positiv|negativ|neutral|unklar", "refs": [<Nummern>]}],
  "ausblick": [{"punkt": "anstehender Termin/Erwartung, die in einer Meldung genannt wird", "ref": <Nummer>}],
  "unsicherheiten": ["Lücken, widersprüchliche oder dünn belegte Punkte"]
@@ -69,19 +74,19 @@ def validate(obj: Any, entries: dict[int, dict[str, Any]], asset_names: set[str]
     """Bericht prüfen: Verweise müssen existieren, Portfolio-Assets müssen geliefert worden sein."""
     if not isinstance(obj, dict):
         return None
-    overview = _text(obj.get("ueberblick"), 1400)
+    overview = _text(obj.get("ueberblick"), 2600)
     events = []
     for e in (obj.get("ereignisse") or [])[:10]:
         if not isinstance(e, dict):
             continue
         ref = _ref(e.get("ref"), entries)
-        claim = _text(e.get("kernaussage"), 500)
+        claim = _text(e.get("kernaussage"), 900)
         if ref is None or not claim:
             continue
         imp = str(e.get("bedeutung", "")).lower()
         events.append({"ref": ref, "titel": _text(e.get("titel"), 160) or entries[ref]["titel"], "kernaussage": claim,
                        "bedeutung": imp if imp in IMPORTANCE else "mittel",
-                       "einordnung": _text(e.get("einordnung"), 320)})
+                       "einordnung": _text(e.get("einordnung"), 700)})
     if len(overview) < 40 or not events:
         return None
     portfolio = []
@@ -89,7 +94,7 @@ def validate(obj: Any, entries: dict[int, dict[str, Any]], asset_names: set[str]
         if not isinstance(p, dict) or str(p.get("asset", "")) not in asset_names:
             continue
         refs = [r for r in (_ref(x, entries) for x in (p.get("refs") or [])[:5]) if r is not None]
-        stmt = _text(p.get("aussage"), 400)
+        stmt = _text(p.get("aussage"), 800)
         if refs and stmt:
             d = str(p.get("richtung", "")).lower()
             portfolio.append({"asset": str(p["asset"]), "aussage": stmt, "refs": refs,
@@ -101,7 +106,7 @@ def validate(obj: Any, entries: dict[int, dict[str, Any]], asset_names: set[str]
         ref, pt = _ref(o.get("ref"), entries), _text(o.get("punkt"), 260)
         if ref is not None and pt:
             outlook.append({"punkt": pt, "ref": ref})
-    return {"ueberblick": overview, "ereignisse": events, "krypto": _text(obj.get("krypto"), 900),
+    return {"ueberblick": overview, "ereignisse": events, "krypto": _text(obj.get("krypto"), 1600),
             "portfolio": portfolio, "ausblick": outlook,
             "unsicherheiten": [t for t in (_text(u, 240) for u in (obj.get("unsicherheiten") or [])[:6]) if t]}
 
@@ -168,7 +173,9 @@ class ReportService:
                 "zusammenfassung": data.get("zusammenfassung", ""), "kategorie": main["category"],
                 "geltungsbereich": main["scope"], "stimmung": main["sentiment"],
                 "bedeutung": float(main["importance"] or 0), "konfidenz": float(main["confidence"] or 0),
-                "fakten": (data.get("fakten") or [])[:3], "quellen": sources[:5], "anzahl_berichte": n_reports,
+                "fakten": (data.get("fakten") or [])[:3],
+                "einordnung_artikel": str(data.get("einordnung") or "")[:400], "quellen": sources[:5],
+                "anzahl_berichte": n_reports,
                 "betroffene": [b.get("name") for b in (data.get("betroffene") or [])[:5] if isinstance(b, dict)],
                 "bezug_assets": names[:4], "veroeffentlicht": main["published_at"],
                 "ereignis_seit": main["first_seen"] or main["published_at"], "_rank": rank, "_url": main["url"],
@@ -182,6 +189,33 @@ class ReportService:
                 picked.append(extra)
         return {e["id"]: e for e in picked}
 
+    def sentiment_barometer(self, hours: int | None = None) -> dict[str, Any]:
+        """Stimmungsverteilung (positiv/neutral/negativ/gemischt) der analysierten Meldungen: gesamt und je Asset.
+        Lokal berechnet aus den gespeicherten Analysen – eine Modell-Einschätzung, keine Messung."""
+        hours = hours or int(self.ctx.settings.get("news.report_hours", 24))
+        since = iso(datetime.now(UTC) - timedelta(hours=hours))
+        kinds = ("positiv", "neutral", "negativ", "gemischt")
+        total = dict.fromkeys(kinds, 0)
+        for r in self.db.q("""SELECT a.sentiment AS s, COUNT(*) AS n
+                              FROM news_analysis a JOIN news_item n ON n.id=a.item_id
+                              WHERE a.summary IS NOT NULL AND n.hidden_reason IS NULL AND n.published_at >= ?
+                              GROUP BY a.sentiment""", (since,)):
+            if r["s"] in total:
+                total[r["s"]] += int(r["n"])
+        per: dict[str, dict[str, int]] = {}
+        pf = self.ctx.portfolio()
+        if pf is not None:
+            for r in self.db.q("""SELECT na.asset_id AS aid, a.sentiment AS s, COUNT(*) AS n
+                                  FROM news_analysis a JOIN news_item n ON n.id=a.item_id
+                                       JOIN news_asset na ON na.item_id=n.id
+                                  WHERE a.summary IS NOT NULL AND n.hidden_reason IS NULL AND n.published_at >= ?
+                                  GROUP BY na.asset_id, a.sentiment""", (since,)):
+                if r["s"] in kinds:
+                    per.setdefault(pf.asset(r["aid"]).name, dict.fromkeys(kinds, 0))[r["s"]] += int(r["n"])
+        assets = [{"name": k, **v, "n": sum(v.values())} for k, v in per.items() if sum(v.values()) >= 2]
+        assets.sort(key=lambda a: -a["n"])
+        return {"gesamt": {**total, "n": sum(total.values())}, "assets": assets[:8]}
+
     @staticmethod
     def payload(entries: dict[int, dict[str, Any]]) -> str:
         out = []
@@ -190,16 +224,34 @@ class ReportService:
         return json.dumps({"meldungen": out}, ensure_ascii=False)
 
     # -- Erzeugen ---------------------------------------------------------------------------------------------
-    def generate(self, day: str | None = None, *, manual: bool = False) -> dict[str, Any]:
+    def generate(self, day: str | None = None, *, manual: bool = False,
+                 progress: Callable[[], Progress] | None = None) -> dict[str, Any]:
+        """Bericht erzeugen. ``progress`` (Fabrik) wird erst gerufen, wenn wirklich erzeugt wird – so bleibt der
+        15-Minuten-Takt ohne Fortschrittsanzeige, solange nichts zu tun ist."""
         day = day or now_local().date().isoformat()
         if not self.ai.enabled():
             return {"skipped": "KI nicht aktiviert"}
+        prog = progress() if progress is not None else None
+        try:
+            return self._generate(day, manual, prog)
+        finally:
+            if prog is not None and not prog.finished:
+                prog.finish(False, "nicht erstellt")
+
+    def _generate(self, day: str, manual: bool, prog: Progress | None) -> dict[str, Any]:
+        if prog:
+            prog.phase("rep_collect", text="Analysierte Meldungen der letzten 24 Stunden sammeln")
         entries = self.entries()
         if len(entries) < MIN_ENTRIES:
             return {"skipped": f"zu wenige analysierte Meldungen ({len(entries)} < {MIN_ENTRIES})"}
         asset_names = {n for e in entries.values() for n in e["bezug_assets"]}
+        if prog:
+            prog.phase("rep_ai", text=f"{len(entries)} Meldungen an {self.ai.provider_name().capitalize()} gesendet – "
+                                      "die Antwort dauert meist 20–90 Sekunden")
         try:
-            out = self.ai.generate(SYSTEM, self.payload(entries), None, 4000, json_mode=True)
+            out = self.ai.generate(SYSTEM, self.payload(entries), None, 6000, json_mode=True)
+            if prog:
+                prog.phase("rep_save", text="Antwort prüfen, Quellen zuordnen, speichern")
             data = validate(parse_json(out.text), entries, asset_names)
         except (Paused, QuotaExceeded, BudgetExceeded) as e:
             return self._failed(day, e.text, manual)
@@ -216,7 +268,8 @@ class ReportService:
                             "url": entries[i]["_url"], "artikelzeit": entries[i]["veroeffentlicht"],
                             "ereigniszeit": entries[i]["ereignis_seit"], "berichte": entries[i]["anzahl_berichte"],
                             "quellen": entries[i]["quellen"]} for i in sorted(used)}
-        content = {**data, "quellen": sources, "prompt_version": PROMPT_VERSION}
+        content = {**data, "quellen": sources, "prompt_version": PROMPT_VERSION,
+                   "stimmung": self.sentiment_barometer()}
         version = int(self.db.scalar("SELECT COALESCE(MAX(version),0)+1 FROM news_report WHERE day=?", (day,),
                                      default=1) or 1)
         now = datetime.now(UTC)
@@ -227,6 +280,8 @@ class ReportService:
              iso(now - timedelta(hours=int(self.ctx.settings.get("news.report_hours", 24)))), iso(now),
              json.dumps(content, ensure_ascii=False), len(entries), iso(now)))
         self.db.set_state("news.report.last_error", None)
+        if prog:
+            prog.finish(True, f"Bericht vom {day} (Version {version}) erstellt")
         return {"report": True, "day": day, "version": version, "entries": len(entries)}
 
     def _failed(self, day: str, text: str, manual: bool) -> dict[str, Any]:
@@ -235,7 +290,7 @@ class ReportService:
         return {"report": False, "error": text}
 
     # -- Planung ---------------------------------------------------------------------------------------------------
-    def run_due(self) -> dict[str, Any]:
+    def run_due(self, progress: Callable[[], Progress] | None = None) -> dict[str, Any]:
         """Job (alle 15 min): Bericht des Tages erzeugen, sobald die Uhrzeit erreicht ist – höchstens einmal je Tag."""
         if not self.enabled():
             return {"skipped": "Tagesbericht deaktiviert oder KI nicht konfiguriert"}
@@ -253,7 +308,7 @@ class ReportService:
             return {"skipped": "Versuche für heute aufgebraucht"}
         if nxt and datetime.now(UTC) < nxt:
             return {"skipped": "Wiederholung später"}
-        res = self.generate(day)
+        res = self.generate(day, progress=progress)
         if res.get("report") is False:  # echter Fehlschlag: zählt gegen das Tageskontingent an Versuchen
             self.db.set_state("news.report.tries", {"day": day, "n": tries + 1,
                                                     "next": iso(datetime.now(UTC) + RETRY_AFTER)})

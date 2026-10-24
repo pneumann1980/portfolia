@@ -3,6 +3,7 @@ Tagesbericht.
 
 Keine echten Netzwerk- oder KI-Aufrufe: HTTP über ``httpx.MockTransport``, KI über Attrappen. Synthetische Daten."""
 
+# ruff: noqa: F811  (Fixture ``sample_client`` wird importiert und als Argument verwendet)
 from __future__ import annotations
 
 import base64
@@ -738,14 +739,14 @@ def echo_answers(user: str) -> dict[str, Any]:
 
 
 def test_analysis_end_to_end_idempotent_and_hash_driven(ctx):
-    ids = seed_for_analysis(ctx, 5)
+    ids = seed_for_analysis(ctx, 8)
     gw = FakeGateway(echo_answers)
     svc = AnalysisService(ctx, gw)
     res = svc.run()
-    assert res["analyzed"] == 5 and res["requests"] == 2  # Stapel zu je 4 Artikeln
+    assert res["analyzed"] == 8 and res["requests"] == 2 and res["backlog_left"] == 0  # Stapel zu je 6 Artikeln
     row = ctx.db.q1("SELECT * FROM news_analysis WHERE item_id=?", (ids[0],))
     assert row["provider"] == "gemini" and row["model"] == "gemini-3.5-flash-lite" and row["basis"] == "fulltext"
-    assert row["prompt_version"] == 1 and row["input_hash"] and row["category"] == "krypto-markt"
+    assert row["prompt_version"] == 2 and row["input_hash"] and row["category"] == "krypto-markt"
     assert ctx.db.scalar("SELECT llm_summary FROM news_item WHERE id=?", (ids[0],)).startswith("Der Bitcoin-Kurs")
     got = svc.get(ids[0])
     assert got["fakten"] and got["einordnung"] and got["zitierte_einschaetzungen"] and got["provider"] == "gemini"
@@ -1093,6 +1094,9 @@ def test_report_daily_schedule_is_idempotent_with_catch_up_and_retry_limits(ctx,
 # Oberfläche: Reader, Ereignis, Tagesbericht, Status, Einstellungen, Jobs
 # ----------------------------------------------------------------------------------------------------
 
+from tests.test_journal import sample_client  # noqa: E402,F401  (Fixture für die Startseiten-Tests)
+
+
 @pytest.fixture
 def client(config):
     from tests.test_journal import _client
@@ -1321,3 +1325,281 @@ def test_market_sources_are_added_once_without_touching_existing_entries(tmp_pat
     fresh = SourcesConfig(tmp_path / "neu.yaml", example)
     fresh.ensure()
     assert fresh.ensure_market_sources() == []
+
+
+# ----------------------------------------------------------------------------------------------------
+# 0.47: Rückstau, Token-Budget, Gruppierung ohne Riesenhaufen, Startseite, Bericht-Fortschritt, Barometer
+# ----------------------------------------------------------------------------------------------------
+
+def test_analysis_drains_backlog_in_rounds_within_48h_window(ctx):
+    ids = seed_for_analysis(ctx, 50)
+    old = add_item(ctx, "Alte Meldung ohne Analyse zu Aktien", "https://old.example.com/x", hours=60)
+    store_content(ctx, old)
+    gw = FakeGateway(echo_answers)
+    svc = AnalysisService(ctx, gw)
+    assert svc.backlog() == 50  # 60 Stunden alt: außerhalb des 48-h-Fensters
+    res = svc.run()
+    # 36 + 14 Artikel in Stapeln zu 6 → 6 + 3 Anfragen
+    assert res["analyzed"] == 50 and res["backlog_left"] == 0 and res["requests"] == 9
+    assert ctx.db.q1("SELECT 1 FROM news_analysis WHERE item_id=?", (old,)) is None and ids
+
+
+def test_analysis_stops_on_limit_or_time_and_keeps_backlog(ctx):
+    seed_for_analysis(ctx, 20)
+    paused = FakeGateway([A.Paused("Minutenlimit lokal erreicht", NOW + timedelta(seconds=40))])
+    res = AnalysisService(ctx, paused).run()
+    assert res["stopped"].startswith("Minutenlimit") and res["analyzed"] == 0 and res["backlog_left"] == 20
+    res2 = AnalysisService(ctx, FakeGateway(echo_answers)).run(max_seconds=0)
+    assert res2["analyzed"] == 0 and res2["backlog_left"] == 20  # Laufzeitgrenze: nichts angefangen, nichts verloren
+    res3 = AnalysisService(ctx, FakeGateway(echo_answers)).run(limit=6)
+    assert res3["analyzed"] == 6 and res3["backlog_left"] == 14
+
+
+def test_analysis_reanalyses_old_prompt_version_only_inside_48h(ctx):
+    fresh = add_item(ctx, "Frische Meldung zu Aktien heute", "https://a.example.com/f", hours=5)
+    older = add_item(ctx, "Ältere Meldung zu Aktien gestern", "https://a.example.com/o", hours=60)
+    for i in (fresh, older):
+        store_content(ctx, i)
+        put_analysis(ctx, i)  # input_hash "h" = Stand einer früheren Prompt-Version
+    gw = FakeGateway(echo_answers)
+    res = AnalysisService(ctx, gw).run()
+    picked = [a["id"] for c in gw.calls for a in json.loads(c["user"])["artikel"]]
+    assert picked == [fresh] and res["analyzed"] == 1
+    assert ctx.db.scalar("SELECT prompt_version FROM news_analysis WHERE item_id=?", (fresh,)) == 2
+    assert ctx.db.scalar("SELECT prompt_version FROM news_analysis WHERE item_id=?", (older,)) == 1  # alt bleibt
+
+
+def test_longer_texts_prompt_v2():
+    from app.news.analysis import PROMPT_VERSION, SYSTEM
+    from app.news.report import PROMPT_VERSION as REPORT_VERSION
+    from app.news.report import SYSTEM as REPORT_SYSTEM
+
+    assert PROMPT_VERSION == 2 and REPORT_VERSION == 2
+    assert "4–5 Sätze" in SYSTEM and "3–5 Sätze" in SYSTEM and "6–8 Sätze" in REPORT_SYSTEM
+    long = "Ein ausführlicher Satz mit genug Inhalt. " * 25  # ca. 1000 Zeichen
+    v = validate(analysis_for({"id": 1}, zusammenfassung=long, einordnung=long), "")
+    assert len(v["zusammenfassung"]) > 900 and len(v["einordnung"]) > 900  # früher bei 700 bzw. 420 abgeschnitten
+
+
+def test_gemini_token_budget_can_be_lifted_explicitly(ctx):
+    calls = []
+    gw = gemini_ctx(ctx, lambda req: calls.append(1) or gem_ok(inp=50_000, out=10_000),
+                    **{"llm.gemini_daily_token_budget": 1000, "llm.gemini_rpm": 100, "llm.gemini_tpm": 10_000_000})
+    with pytest.raises(A.BudgetExceeded):
+        gw.generate("s", "x" * 4000, None, 500)  # mit Tagesbudget 1000 blockiert
+    ctx.settings.set("llm.gemini_tokens_unlimited", True)
+    gw.generate("s", "x" * 4000, None, 500)
+    gw.generate("s", "x" * 4000, None, 500)
+    assert len(calls) == 2
+    assert gw.limits()["tpd"] == 0 and gw.tokens_left() is None
+    st = gw.status()
+    assert st["tokens_left"] is None and st["usage"]["input_tokens"] == 100_000
+    assert gw.requests_left() is not None  # Anfragen-Limit bleibt bestehen
+
+
+def test_settings_unlimited_checkbox_and_status_text(client):
+    ctx = wctx(client)
+    base = {"section": "news", "min_relevance": "0.2", "dashboard_count": "5", "llm_provider": "gemini",
+            "gemini_model": A.GEMINI_DEFAULT, "gemini_rpm": "10", "gemini_tpm": "100000", "gemini_rpd": "100",
+            "gemini_budget": "5", "report_hour": "7", "report_minute": "30"}
+    client.post("/settings/save", data=base, follow_redirects=False)
+    assert not ctx.settings.get("llm.gemini_tokens_unlimited")
+    assert ctx.settings.get("llm.gemini_daily_token_budget") == 1000
+    client.post("/settings/save", data={**base, "gemini_unlimited": "1"}, follow_redirects=False)
+    assert ctx.settings.get("llm.gemini_tokens_unlimited") is True
+    page = client.get("/settings").text
+    assert "Token-Tagesgrenze aufheben" in page and "gemini_unlimited" in page
+    from dataclasses import replace
+
+    ctx.config = replace(ctx.config, secrets=Secrets(gemini_api_key="test-gemini-key-0123456789abcdef"))
+    ctx.settings.set("llm.enabled", True)
+    t = client.get("/news?tab=status").text
+    assert "Tokens/Tag unbegrenzt" in t and "Tokens unbegrenzt" in t and "Rückstau" in t
+
+
+def test_events_never_form_giant_clusters(ctx):
+    """Vorlagen-Titel („ETH price on … Robinhood“) und Ketten ähnlicher Titel dürfen keinen Haufen bilden."""
+    from app.news.events import MAX_EVENT
+
+    tpl = "ETH price on Oct {d}, 2026 at {h}am EDT Crypto Prediction Market Robinhood"
+    ids = [add_item(ctx, tpl.format(d=24 + i % 3, h=i % 12 + 1),
+                    f"https://g{i}.example.com/x", source=f"quelle{i % 7}", hours=1 + i * 0.2) for i in range(80)]
+    EventService(ctx, FakeGateway(enabled=False)).run()
+    sizes = [len(g) for g in events_of(ctx)]
+    assert sizes and max(sizes) <= MAX_EVENT and len(ids) == 80
+    # Kette: A≈B, B≈C, C≈D … aber A und Z teilen kaum Wörter → kein gemeinsames Ereignis
+    ctx.db.x("DELETE FROM news_event")
+    ctx.db.x("DELETE FROM news_item")
+    words = [f"wort{i}" for i in range(14)]
+    chain = [add_item(ctx, " ".join(words[i:i + 5]), f"https://c{i}.example.com/x", hours=2) for i in range(9)]
+    EventService(ctx, FakeGateway(enabled=False)).run()
+    for g in events_of(ctx):
+        assert not ({chain[0], chain[-1]} <= g)
+
+
+def test_events_rebuild_once_keeps_locked_events(ctx):
+    a = add_item(ctx, "Bitcoin steigt über 100000 Dollar nach ETF Zuflüssen", "https://a.com/1", hours=3)
+    b = add_item(ctx, "Bitcoin steigt über 100000 Dollar dank ETF Zuflüssen", "https://b.com/2", hours=2)
+    cc = add_item(ctx, "Fed erhöht Leitzins um 25 Basispunkte auf Rekordhoch", "https://c.com/3", hours=2)
+    d = add_item(ctx, "Fed erhöht Leitzins um 25 Basispunkte auf neues Rekordhoch", "https://d.com/4", hours=2)
+    for x, y, locked in ((a, b, 0), (cc, d, 1)):  # Altbestand (vor Version 2): ein lockerer, ein fixierter Haufen
+        eid = ctx.db.x("INSERT INTO news_event(title, first_seen, last_seen, n_items, locked) VALUES ('t','x','y',2,?)",
+                       (locked,)).lastrowid
+        for i in (x, y):
+            ctx.db.x("INSERT INTO news_event_item(item_id, event_id, score, method, added_at) "
+                     "VALUES (?,?,1,'title','x')", (i, eid))
+    ctx.db.x("INSERT INTO news_event(title, first_seen, last_seen, n_items) VALUES ('Riese','x','y',99)")
+    EventService(ctx, FakeGateway(enabled=False)).run()
+    assert ctx.db.get_state("news.events_v2") is True
+    assert ctx.db.scalar("SELECT COUNT(*) FROM news_event WHERE title='Riese'") == 0  # lockerer Altbestand verworfen
+    assert {cc, d} in events_of(ctx)  # fixiertes Ereignis bleibt
+    assert {a, b} in events_of(ctx)  # neu und sauber aufgebaut
+    n = ctx.db.scalar("SELECT COUNT(*) FROM news_event")
+    EventService(ctx, FakeGateway(enabled=False)).run()
+    assert ctx.db.scalar("SELECT COUNT(*) FROM news_event") == n  # Neuaufbau nur einmal
+
+
+def test_dashboard_shows_top_news_with_ai_and_falls_back(sample_client):
+    from app.news.overview import top_news
+
+    c = sample_client
+    ctx = wctx(c)
+    page = c.get("/").text
+    # ohne Analysen: bisherige Liste
+    assert "Neueste relevante News" in page and "Top-News mit KI-Auswertung" not in page
+    a = add_item(ctx, "Notenbank überrascht Märkte mit Zinsschritt", "https://a.example.com/1", hours=2, relevance=0.9,
+                 source="reuters")
+    b = add_item(ctx, "Kaspa erreicht neues Hoch bei Mining", "https://a.example.com/2", hours=3, relevance=0.8,
+                 source="coindesk", assets=("KAS",))
+    raw = add_item(ctx, "Unanalysierte Meldung zu Ölpreisen heute", "https://a.example.com/3", hours=1, relevance=0.7)
+    put_analysis(ctx, a, bedeutung=0.9, stimmung="negativ", ereignis="Zinsschritt überrascht Märkte",
+                 zusammenfassung="Die Notenbank hat die Zinsen überraschend angehoben. " * 8)
+    put_analysis(ctx, b, bedeutung=0.6, stimmung="positiv", ereignis="Kaspa mit neuem Hoch")
+    t = top_news(ctx, 5)
+    assert {i["id"] for i in t["rows"][:2]} == {a, b}  # Positionsbezug (Kaspa) hebt die Meldung im Rang
+    assert t["rows"][2]["id"] == raw and not t["rows"][2]["ai"]
+    assert all(len(i["summary"]) <= 301 for i in t["rows"]) and t["analyzed"] == 2
+    page = c.get("/").text
+    assert "Top-News mit KI-Auswertung" in page and "Neueste relevante News" not in page
+    assert f'href="/news/{a}"' in page and f'href="/news/{b}"' in page and f'href="/news/{raw}"' in page
+    assert ">negativ<" in page and ">positiv<" in page and "KI ausstehend" in page and "hohe Bedeutung" in page
+    assert "keine Anlageberatung" in page
+
+
+def test_dashboard_overview_teaser_from_fresh_report_only(sample_client):
+    from app.news.overview import top_news
+
+    ctx = wctx(sample_client)
+    seed_report(ctx)
+    assert top_news(ctx)["report"] is None
+    ReportService(ctx, FakeGateway(report_answer)).generate("2026-10-22")
+    t = top_news(ctx)
+    assert t["report"] is not None and t["overview"].startswith("Die Märkte zeigten sich")
+    page = sample_client.get("/").text
+    assert "Tagesüberblick" in page and "Ganzen Bericht mit Quellen lesen" in page
+    ctx.db.x("UPDATE news_report SET created_at=?", (iso(NOW - timedelta(hours=40)),))
+    assert top_news(ctx)["report"] is None  # älter als 36 Stunden: kein Überblick
+
+
+def test_list_rows_show_ai_sentiment_badge(client):
+    ctx = wctx(client)
+    a = add_item(ctx, "Notenbank überrascht Märkte mit Zinsschritt", "https://a.example.com/1", hours=1, relevance=0.9)
+    put_analysis(ctx, a, stimmung="negativ")
+    assert ">negativ<" in client.get("/news?tab=articles&sort=time").text
+
+
+def test_report_progress_states_and_error_display(client):
+    from app.news.module import report_state
+
+    ctx = wctx(client)
+    assert report_state(ctx)["state"] == "leer"
+    now = datetime.now(UTC)
+    ctx.db.set_state("news.report.manual", {"requested_at": iso(now)})
+    assert report_state(ctx)["state"] == "wartend"
+    assert "wartet" in client.get("/news/report/status").text  # Abfrage-Ziel zeigt „wartet“ und fragt weiter
+    ctx.db.x("""INSERT INTO job_status(job, last_start, running, progress_json) VALUES ('news_report', ?, 1, ?)
+                ON CONFLICT(job) DO UPDATE SET last_start=excluded.last_start, running=1,
+                progress_json=excluded.progress_json""",
+             (iso(now + timedelta(seconds=1)),
+              json.dumps({"v": 2, "running": True, "label": "Täglicher Finanzmarktbericht", "phase": "rep_ai",
+                          "phase_label": "KI erstellt den Bericht", "pct": 40, "text": "12 Meldungen gesendet",
+                          "steps": []})))
+    st = report_state(ctx)
+    assert st["state"] == "laeuft"
+    t = client.get("/news/report/status").text
+    assert "KI erstellt den Bericht" in t and 'hx-trigger="every 2s"' in t and "12 Meldungen gesendet" in t
+    ctx.db.x("UPDATE job_status SET running=0, last_end=?, last_ok=1, progress_json=? WHERE job='news_report'",
+             (iso(now + timedelta(seconds=9)), json.dumps({"report": False, "error": "Gemini: Kontingent erschöpft"})))
+    st = report_state(ctx)
+    assert st["state"] == "fehler" and "Kontingent" in st["text"]
+    t = client.get("/news/report/status").text
+    assert "nicht erstellt" in t and "Kontingent" in t and "every 2s" not in t
+    ctx.db.set_state("news.report.manual", {"requested_at": iso(now - timedelta(hours=2))})
+    assert report_state(ctx)["state"] == "leer"  # alte Meldungen bleiben nicht ewig stehen
+    ctx.db.set_state("news.report.manual", {"requested_at": iso(now - timedelta(minutes=30))})
+    ctx.db.x("DELETE FROM job_status WHERE job='news_report'")
+    assert report_state(ctx)["state"] == "fehler"  # nie gestartet: klare Meldung statt endlosem Warten
+
+
+def test_report_regenerate_end_to_end_without_scheduler(client):
+    ctx = wctx(client)
+    seed_report(ctx)
+
+    def handler(req):
+        user = json.loads(req.content)["contents"][0]["parts"][0]["text"]
+        return gem_ok(text=json.dumps(report_answer(user), ensure_ascii=False))
+
+    gemini_ctx(ctx, handler)
+    ctx.settings.set("llm.gemini_rpm", 100)
+    r = client.post("/news/report/regenerate")
+    assert r.status_code == 200 and r.headers.get("hx-refresh") == "true"  # fertig → Seite lädt neu
+    assert ctx.db.scalar("SELECT COUNT(*) FROM news_report") == 1
+    page = client.get("/news?tab=report").text
+    assert "Stimmungsbarometer" in page and "Wichtigste Ereignisse" in page
+    rep = ReportService(ctx).latest()
+    assert rep["content"]["stimmung"]["gesamt"]["n"] == 5 and rep["content"]["prompt_version"] == 2
+    # Fehlerfall: Anbieter nicht erreichbar → Fehlermeldung statt Schweigen, vorhandener Bericht bleibt
+    ctx.http = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(503)))
+    r2 = client.post("/news/report/regenerate")
+    assert "nicht erstellt" in r2.text and not r2.headers.get("hx-refresh")
+    assert ctx.db.scalar("SELECT COUNT(*) FROM news_report") == 1
+
+
+def test_sentiment_barometer_counts_overall_and_per_asset(ctx):
+    ids = []
+    for i, s in enumerate(("positiv", "positiv", "negativ", "neutral", "gemischt")):
+        iid = add_item(ctx, f"Meldung {i} zum Markt heute", f"https://s{i}.example.com/x", hours=2,
+                       assets=("BTC",) if i < 3 else ())
+        put_analysis(ctx, iid, stimmung=s)
+        ids.append(iid)
+    old = add_item(ctx, "Alte Meldung zum Markt vorgestern", "https://old.example.com/x", hours=40)
+    put_analysis(ctx, old, stimmung="negativ")  # außerhalb der 24 h
+    bar = ReportService(ctx, FakeGateway(enabled=False)).sentiment_barometer()
+    assert bar["gesamt"] == {"positiv": 2, "neutral": 1, "negativ": 1, "gemischt": 1, "n": 5}
+    assert bar["assets"] == []  # ohne Portfolio keine Asset-Namen
+
+
+def test_scheduler_has_interactive_pool_for_report(config):
+    from app.jobs.scheduler import Scheduler
+
+    c = AppContext(config)
+    c.startup()
+    sched = Scheduler(c)
+    sched.setup_default_jobs()
+    assert "interactive" in sched.sched._executors and sched.sched.get_job("news_report").executor == "interactive"
+    assert sched.sched.get_job("news_enrich").executor == "default"
+    assert sched.trigger("news_report", 5, manual=True)
+    once = [j for j in sched.sched.get_jobs() if j.id.startswith("news_report-once-")]
+    assert once and once[0].executor == "interactive"  # manueller Bericht wartet nicht hinter Import/Analyse
+    c.shutdown()
+
+
+def test_progress_phases_for_report_exist():
+    from app.progress import PHASE_LABEL, Progress
+
+    out: list[dict] = []
+    p = Progress(out.append, "Bericht", phases=["rep_collect", "rep_ai", "rep_save"])
+    p.phase("rep_ai", text="läuft")
+    assert out[-1]["phase_label"] == PHASE_LABEL["rep_ai"] == "KI erstellt den Bericht" and 10 <= out[-1]["pct"] < 95
+    p.finish(True, "ok")
+    assert out[-1]["pct"] == 100 and out[-1]["running"] is False

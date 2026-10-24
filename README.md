@@ -1859,6 +1859,8 @@ Speichern aus der Oberfläche erhalten).
 * **Leseansicht:** Ein Klick auf einen Artikel öffnet die **interne Leseansicht** (`/news/<id>`): bereinigter
   Artikeltext (im Hintergrund nachgeladen, ohne Umgehung von Bezahl- oder Zustimmungsschranken), KI-Zusammenfassung
   und KI-Einordnung klar getrennt vom Artikel, weitere Berichte zum selben Ereignis, Original-Link separat.
+* **Startseite:** unten „Top-News mit KI-Auswertung“ (Tagesüberblick und die wichtigsten Ereignisse mit Stimmung,
+  Bedeutung und Quellen; ohne KI die bisherige Liste).
 * **Ereignisse und Tagesbericht:** Berichte zum selben Ereignis werden lokal gruppiert (nie nur wegen desselben
   Werts); ein täglicher **Finanzmarktbericht** (Deutsch, mit Quellen, Historie, manueller Neuerzeugung) entsteht aus
   den gespeicherten Analysen.

@@ -14,6 +14,22 @@
 
   <section class="card"><div class="card-head"><h2>Marktüberblick</h2></div><p>{{ c.ueberblick }}</p></section>
 
+  {% macro sbar(d) -%}
+  {%- set n = d.n or 1 -%}
+  <div class="sbar" role="img" aria-label="positiv {{ d.positiv }}, neutral {{ d.neutral }}, negativ {{ d.negativ }}, gemischt {{ d.gemischt }}">
+    {% for k, cls in (('positiv', 'sb-pos'), ('neutral', 'sb-neu'), ('gemischt', 'sb-mix'), ('negativ', 'sb-neg')) %}{% if d[k] %}<span class="{{ cls }}" style="width:{{ (d[k] * 100 / n)|round(1) }}%" title="{{ k }}: {{ d[k] }}"></span>{% endif %}{% endfor %}
+  </div>
+  <div class="hint">{{ d.positiv }} positiv · {{ d.neutral }} neutral · {{ d.negativ }} negativ{% if d.gemischt %} · {{ d.gemischt }} gemischt{% endif %}</div>
+  {%- endmacro %}
+  {% if c.stimmung and c.stimmung.gesamt.n %}
+  <section class="card"><div class="card-head"><h2>Stimmungsbarometer</h2><span class="hint">{{ c.stimmung.gesamt.n }} analysierte Meldungen</span></div>
+    {{ sbar(c.stimmung.gesamt) }}
+    {% if c.stimmung.assets %}<div class="list" style="margin-top:8px">{% for a in c.stimmung.assets %}
+      <div class="list-item" style="display:block"><div class="title small">{{ a.name }} <span class="hint">({{ a.n }})</span></div>{{ sbar(a) }}</div>{% endfor %}</div>{% endif %}
+    <p class="hint">Einschätzung der KI je Meldung (nicht gewichtet, keine Messung) – ausgewertet über alle Meldungen des Berichtszeitraums.</p>
+  </section>
+  {% endif %}
+
   <section class="card"><div class="card-head"><h2>Wichtigste Ereignisse</h2></div>
     <div class="list">{% for e in c.ereignisse %}{% set s = c.quellen.get(e.ref|string) %}
       <div class="list-item" style="display:block">

@@ -1426,6 +1426,23 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.47.0 – News-Intelligence: Rückstau, Startseite, Berichts-Fortschritt, längere Texte
+
+Details in `docs/NEWS_INTELLIGENCE.md` (Abschnitt „0.47“).
+
+* **Tagesbericht „Neu erzeugen“** mit Fortschrittsbalken (Phasen, 2-s-Abfrage, automatisches Neuladen), sichtbarer Fehlermeldung
+  und eigenem Thread-Pool (`interactive`) – der Auftrag wartet nicht mehr hinter Import, Textabruf und Analyse.
+* **Analyse-Rückstau** wird in Runden abgearbeitet (48-h-Fenster, Stapel zu 6, Priorität nach Positionsbezug,
+  Mehrfachberichten, Aktualität; Laufzeitgrenze 8 min, Job alle 10 min); „Pipeline heute“ zeigt den Rückstau.
+* **Gemini-Token-Tagesgrenze** ausdrücklich aufhebbar („unbegrenzt“); Anfragen pro Minute/Tag bleiben bestehen.
+* **Ereignisgruppierung** ohne Riesenhaufen: Durchschnitts- statt Einfachverkettung, höchstens 30 Meldungen je
+  Ereignis, einmaliger Neuaufbau des abgeleiteten Bestands (fixierte Ereignisse bleiben).
+* **Startseite:** „Top-News mit KI-Auswertung“ (Tagesüberblick, Top-Ereignisse mit Stimmung, Bedeutung, Assets, Quellen);
+  Rückfall auf die bisherige Liste ohne Analysen. Stimmungs-Badge auch in der Artikelliste.
+* **Längere KI-Texte** (Prompt-Version 2: Zusammenfassung 4–5 Sätze, dreiteilige Einordnung, Marktüberblick 6–8 Sätze);
+  Neuanalyse nur für die letzten 48 h. **Stimmungsbarometer** im Bericht (gesamt und je Asset, lokal berechnet).
+* **Behoben:** verspätetes Lebenszeichen überschrieb den Abschluss eines Fortschritts (Anzeige „läuft“ blieb hängen).
+
 ## 0.46.0 – News-Intelligence: Leseansicht, Gemini, Analyse, Ereignisse, Tagesbericht
 
 Details, Grenzen und Datenschutz in `docs/NEWS_INTELLIGENCE.md`.
