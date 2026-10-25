@@ -92,15 +92,15 @@ Regelwerke dürfen keine Netzwerkzugriffe durchführen und erhalten nur lokale D
 |---|---|
 | Haltefrist § 23 | `holding_end = Anschaffung + 1 Jahr + 1 Tag` (29.02. → 01.03.); Veräußerung am Jahrestag ist steuerpflichtig |
 | Verbrauchsfolge | FIFO je Wallet/Konto (Standard) oder global |
-| Freigrenze § 23 | Jahressaldo < Grenze → 0; sonst voll; Verlustvortrag als Option; Verluste nur mit § 23 verrechenbar |
+| Freigrenze § 23 | Jahressaldo < Grenze → 0; sonst voll; Verlustvortrag leer = automatisch aus den Vorjahren (Eingabe überschreibt); Verluste nur mit § 23 verrechenbar; Rücktrag nicht berücksichtigt |
 | Tausch | Veräußerung des abgegebenen und Anschaffung des erhaltenen Werts (neue Haltefrist) |
 | Gebühren | Wert mindert den Erlös; Gebühren-Einheiten beim Handel als Veräußerung (Option), Transfergebühren nicht steuerbar (Option) |
 | Erträge § 22 Nr. 3 | Wert bei Zufluss; Einstufung je Tag (Standard: Staking, Lending, Zinsen, Reward, Bonus, Mining, Airdrop, Sonstige → § 22 Nr. 3; Cashback, Fork → nicht steuerbar) |
 | Datenlücken | fehlende Anschaffung → Anschaffungskosten 0 €, steuerpflichtig; Zugänge ohne Gegenbuchung → Zugangsdatum/-wert |
-| Kapitalerträge | FIFO je Depot; Aktien-Topf; Fonds mit Teilfreistellung; Vorabpauschale (Kurse Jahresanfang/-ende, Ausschüttungen je Anteil, 1/12-Kürzung im Erwerbsjahr, Zufluss im Folgejahr, Abzug bei Veräußerung); Quellensteuer anrechenbar bis 15 % |
+| Kapitalerträge | FIFO je Depot; Aktien-Topf; Derivate (Turbo, Optionsschein, Warrant) als Termingeschäft im Topf „Sonstige“ (20.000-€-Grenze entfällt seit JStG 2024); Fonds mit Teilfreistellung; Vorabpauschale (Kurse Jahresanfang/-ende, Ausschüttungen je Anteil, 1/12-Kürzung im Erwerbsjahr, Zufluss im Folgejahr, Abzug bei Veräußerung); Quellensteuer anrechenbar bis 15 % |
 | Inland/Ausland | Depots mit inländischem Steuerabzug nur nachrichtlich (Steuerbescheinigung maßgeblich); Einstufung je Depot (Einstellung, Import-Spalte `tax_withholding`, sonst „Inland“ für Wertpapierdepots) |
 | Schätzung | § 23 + § 22 Nr. 3 × Grenzsteuersatz (Option); Abgeltungsteuer mit Soli/KiSt nach Sparer-Pauschbetrag |
 
 Nicht abgedeckt (im Bericht als Annahme genannt): Fremdwährungsgewinne (§ 23), Altanteile an Fonds vor
-2018, gewerbliche Einkünfte (z. B. Mining in größerem Umfang), Termingeschäfte/Derivate, Günstigerprüfung,
+2018, gewerbliche Einkünfte (z. B. Mining in größerem Umfang), Günstigerprüfung,
 Schenkungsteuer.

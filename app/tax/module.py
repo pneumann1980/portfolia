@@ -106,7 +106,8 @@ def make_router() -> APIRouter:
                         n = None
                     if spec.kind == "percent" and n is not None and not (0 <= Decimal(n) <= 100):
                         n = None
-                    values[spec.key] = n if n is not None else (0 if spec.kind == "amount" else None)
+                    values[spec.key] = n if n is not None else (
+                        0 if spec.kind == "amount" and not spec.auto else None)  # auto: leer = automatisch
             elif spec.kind == "map":
                 current = dict(svc.options(pack, year).get(spec.key) or spec.default or {})
                 allowed = dict(spec.choices)

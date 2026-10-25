@@ -1426,6 +1426,24 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.49.1 – Steuer: Derivate, Verlustvortrag-Kette, Rundung, Hinweise
+
+* **Derivate** (Turbo-/Optionsscheine, Warrants, Mini-Futures, Knock-outs; Namenserkennung inkl. Kurzformen wie
+  „TURBOP O.END“ und „EMITTENT/CALL/…“): eigener Typ `derivative` → Termingeschäft (§ 20 Abs. 2 S. 1 Nr. 3 EStG),
+  Topf „Sonstige“ statt Aktien-Topf. Die frühere Verlustgrenze von 20.000 € (§ 20 Abs. 6 S. 5 a. F.) hat das
+  Jahressteuergesetz 2024 aufgehoben; für ≤ 2023 mit Verlusten über 20.000 € erscheint ein Hinweis. Im Export des
+  Entwicklers wurden 25 Derivate erkannt (zuvor als Aktie geführt).
+* **Verlustvortrag § 23**: leere Eingabe = automatisch aus den berechneten Vorjahren (Verlust erhöht, steuerpflichtiger
+  Gewinn verbraucht, unter der Freigrenze unverändert); ein eingetragener Betrag – auch „0“ – überschreibt. Summary
+  zeigt Vortrag aus Vorjahren und ins Folgejahr. `RulePack.carry_out` + `TaxService._year_result`.
+* **Rundung**: Zeilen gehen auf (Preis − Werbungskosten − Anschaffung = Gewinn); „−0,00 €“ wird „0,00 €“.
+* **Hinweise im Bericht**: Freigrenzen-Abstand (§ 23, § 22 Nr. 3) mit den zur Prüfung markierten Zuflüssen und dem
+  Wert ohne sie; „FIFO über alle Wallets“ als nicht BMF-konform (Rz. 61/62); Sparer-Pauschbetrag der Inlandsdepots.
+* **Zusammenveranlagung** steht als erste Option unter „Veranlagung“.
+* **Anlage KAP 2025**: Zeilen 7, 8, 16/17, 37, 38, 40 (Steuerbescheinigung der DKB 2025 auf dem amtlichen Muster) sowie
+  41/42 (Erläuterung derselben Bescheinigung) belegt; die Auslandsfelder (19–23) bleiben offen, da die Quellen sich
+  widersprechen.
+
 ## 0.49.0 – Steuer-PDFs: Portfolia-Name und Logo, Berichte ersetzen/löschen
 
 * Alle Steuer-PDFs (Report, Anlage SO, Anlage KAP) tragen das Portfolia-Logo (Variante für hellen Hintergrund,

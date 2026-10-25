@@ -52,7 +52,7 @@ def test_options_mapping_profile_roundtrip(client):
     pack = svc.pack()
     o25, o24 = svc.options(pack, 2025), svc.options(pack, 2024)
     assert o25["scope"] == "global" and o24["scope"] == "global"  # globale Option
-    assert o25["loss_cf_23"] == "1234.5" and o24["loss_cf_23"] == 0  # jahresbezogen
+    assert o25["loss_cf_23"] == "1234.5" and o24["loss_cf_23"] is None  # jahresbezogen, leer = automatisch
     assert o25["marginal_rate"] == "42" and o25["joint"] is True
     assert o25["income_map"]["airdrop"] == "none" and o25["income_map"]["staking"] == "22_3"
     r = client.post("/tax/options", data={"year": "2025", "marginal_rate": "250", "scope": "evil"},

@@ -214,10 +214,24 @@ class TaxService:
 
         def run() -> tuple[TaxInput | None, TaxResult | None]:
             inp = self.build_input(pack, opts)
-            return inp, (pack.compute(inp, year, opts) if inp is not None else None)
+            return inp, (self._year_result(pack, inp, year) if inp is not None else None)
 
         inp, res = self._cached(("year", pack.id, pack.version, year), run)
         return pack, inp, res
+
+    def _year_result(self, pack: RulePack, inp: TaxInput, year: int) -> TaxResult:
+        """Ergebnis eines Jahres mit den Vorträgen der berechneten Vorjahre (Verlustvortrag § 23: leere Eingabe =
+        automatisch). Die Kette nutzt dieselbe Eingangsdatenbasis und je Vorjahr dessen eigene Eingaben."""
+
+        def run() -> TaxResult:
+            o = dict(self.options(pack, year))
+            prev = [y for y in self.data_years(inp) if y < year]
+            if prev:
+                for key, val in pack.carry_out(self._year_result(pack, inp, prev[-1])).items():
+                    o[f"{key}_auto"] = val
+            return pack.compute(inp, year, o)
+
+        return self._cached(("res", pack.id, pack.version, year), run)
 
     # -- Berichte ----------------------------------------------------------------------------------------------
     def generate(self, year: int, doc_ids: list[str] | None = None, keep_previous: bool = False) -> dict[str, Any]:

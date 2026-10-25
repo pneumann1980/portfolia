@@ -18,8 +18,8 @@
 
 pack:
   id: de
-  version: "2026.2"
-  updated: "2026-09-27"
+  version: "2026.3"
+  updated: "2026-10-25"
   reviewed_through: 2026
   sources:
     - "§ 23 Abs. 1 S. 1 Nr. 2, Abs. 3 S. 5 EStG (private Veräußerungsgeschäfte, Freigrenze)"
@@ -97,6 +97,13 @@ forms:
         kap_foreign_losses_other: {section: "Kapitalerträge, die nicht dem inländischen Steuerabzug unterlegen haben", label: "darin enthaltene Verluste ohne Verluste aus der Veräußerung von Aktien", line: null}
         kap_foreign_losses_shares: {section: "Kapitalerträge, die nicht dem inländischen Steuerabzug unterlegen haben", label: "darin enthaltene Verluste aus der Veräußerung von Aktien i. S. d. § 20 Abs. 2 S. 1 Nr. 1 EStG", line: null}
         kap_wht: {section: "Anrechenbare ausländische Steuern", label: "Anrechenbare noch nicht angerechnete ausländische Steuern", line: null}
+        # Kontrollwerte für Depots mit inländischem Steuerabzug (maßgeblich ist die Steuerbescheinigung der Bank)
+        kap_dom_total: {section: "Kapitalerträge mit inländischem Steuerabzug – Kontrollwerte", label: "Höhe der Kapitalerträge", line: null}
+        kap_dom_share_gains: {section: "Kapitalerträge mit inländischem Steuerabzug – Kontrollwerte", label: "davon Gewinne aus Aktienveräußerungen", line: null}
+        kap_dom_pauschbetrag: {section: "Kapitalerträge mit inländischem Steuerabzug – Kontrollwerte", label: "in Anspruch genommener Sparer-Pauschbetrag", line: null}
+        kap_dom_kest: {section: "Kapitalerträge mit inländischem Steuerabzug – Kontrollwerte", label: "Einbehaltene Kapitalertragsteuer", line: null}
+        kap_dom_soli: {section: "Kapitalerträge mit inländischem Steuerabzug – Kontrollwerte", label: "Einbehaltener Solidaritätszuschlag", line: null}
+        kap_dom_wht: {section: "Kapitalerträge mit inländischem Steuerabzug – Kontrollwerte", label: "Summe der angerechneten ausländischen Steuer", line: null}
     anlage_kap_inv:
       title: "Anlage KAP-INV"
       fund_labels:
@@ -137,7 +144,11 @@ forms:
 
   # Veranlagungsjahr 2025 – Anlage SO mit eigenem Abschnitt für Kryptowerte (Zeilen 45–51). Anlage KAP und
   # KAP-INV wurden 2025 umgebaut (u. a. Wegfall der Zeilen zu Termingeschäften); die Quellen zu den neuen
-  # Zeilennummern widersprechen sich – daher bewusst nicht hinterlegt.
+  # Zeilennummern der Auslandsfelder widersprechen sich – daher bewusst nicht hinterlegt. Belegt (Steuerbescheinigung
+  # der DKB für 2025 auf dem amtlichen Muster, Stand 25.10.2026): Zeile 7 Kapitalerträge, 8 davon Aktiengewinne, 16/17
+  # Sparer-Pauschbetrag, 37 Kapitalertragsteuer, 38 Solidaritätszuschlag, 40 angerechnete ausländische Steuer; in den
+  # Erläuterungen derselben Bescheinigung: Zeile 41 (noch nicht angerechnete ausländische Steuer), 42 (fiktive
+  # Quellensteuer). Die Auslandsfelder (Zeilen 19–23) sind für 2025 weiter offen.
   2025:
     anlage_so:
       fields:
@@ -148,3 +159,12 @@ forms:
         so_23_cost: {section: "Private Veräußerungsgeschäfte – Kryptowerte", line: "49"}
         so_23_wk: {section: "Private Veräußerungsgeschäfte – Kryptowerte", line: "50"}
         so_23_gain: {section: "Private Veräußerungsgeschäfte – Kryptowerte", line: "51"}
+    anlage_kap:
+      fields:
+        kap_wht: {line: "41"}
+        kap_dom_total: {line: "7"}
+        kap_dom_share_gains: {line: "8"}
+        kap_dom_pauschbetrag: {line: "16/17"}
+        kap_dom_kest: {line: "37"}
+        kap_dom_soli: {line: "38"}
+        kap_dom_wht: {line: "40"}

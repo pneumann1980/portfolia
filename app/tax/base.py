@@ -41,6 +41,8 @@ def fmt_num(v: Any, decimals: int = 2) -> str:
     d = v if isinstance(v, Decimal) else Decimal(str(v))
     s = f"{d:,.{decimals}f}"
     s = s.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+    if s.startswith("-") and not any(ch in "123456789" for ch in s):  # „−0,00“ → „0,00“
+        s = s[1:]
     return "\u2212" + s[1:] if s.startswith("-") else s
 
 
@@ -292,6 +294,7 @@ class OptionSpec:
     help: str = ""
     per_year: bool = False
     group: str = "Allgemein"
+    auto: bool = False  # leere Eingabe = automatisch berechnet (z. B. Verlustvortrag aus den Vorjahren)
 
 
 @dataclass
@@ -390,6 +393,11 @@ class RulePack(ABC):
     def holding_end(self, asset: AssetInfo, acq: date) -> date | None:
         """Erster steuerfreier Tag nach Ablauf einer Haltefrist; ``None`` = keine Haltefrist."""
         return None
+
+    def carry_out(self, result: TaxResult) -> dict[str, Any]:
+        """Werte, die ins Folgejahr vorgetragen werden: Optionsschlüssel → Betrag (Verlustvorträge).
+        Der Service reicht sie dem Folgejahr als ``<Schlüssel>_auto`` weiter."""
+        return {}
 
     # -- Berechnung --------------------------------------------------------------------------------
     @abstractmethod

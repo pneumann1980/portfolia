@@ -200,7 +200,9 @@
             {% if s.help %}<span class="hint">{{ s.help }}</span>{% endif %}</label>
         {% elif s.kind in ('amount', 'percent') %}
           <label class="field"><span>{{ s.label }}{% if s.per_year %} <span class="badge">{{ year }}</span>{% endif %}</span>
-            <input type="text" inputmode="decimal" name="{{ s.key }}" value="{{ options[s.key] if options[s.key] is not none else '' }}" placeholder="{{ '0' if s.kind == 'amount' else 'z. B. 42' }}"></label>
+            {% set v = options[s.key] %}{% set shown = '' if (v is none or (s.auto and v is number and v == 0)) else v %}
+            <input type="text" inputmode="decimal" name="{{ s.key }}" value="{{ shown }}" placeholder="{{ ('automatisch: ' ~ (res.data.crypto.lcf|eur if s.key == 'loss_cf_23' and res and res.data.crypto else '0')) if s.auto else ('0' if s.kind == 'amount' else 'z. B. 42') }}">
+            {% if s.help %}<span class="hint">{{ s.help }}</span>{% endif %}</label>
         {% elif s.kind == 'map' %}
           <div class="field"><span>{{ s.label }}</span>
           {% if income_tags %}

@@ -179,6 +179,10 @@ class GermanyPack(RulePack):
 
     def option_specs(self) -> list[OptionSpec]:
         return [
+            OptionSpec("joint", "Zusammenveranlagung (Ehe/Lebenspartnerschaft)", "bool", False,
+                       help="Verdoppelt den Sparer-Pauschbetrag (2.000 €). Die Steuerbescheinigung der Bank weist bei "
+                            "Zusammenveranlagung 2.000 € als in Anspruch genommenen Pauschbetrag aus.",
+                       group="Veranlagung"),
             OptionSpec("scope", "Verbrauchsfolge Kryptowerte", "choice", "wallet",
                        (("wallet", "FIFO je Wallet/Konto (BMF, walletbezogen)"), ("global", "FIFO über alle Wallets")),
                        "Das BMF-Schreiben zu Kryptowerten sieht eine walletbezogene Betrachtung vor.",
@@ -199,8 +203,6 @@ class GermanyPack(RulePack):
                        group="Erträge"),
             OptionSpec("wk_22_3", "Werbungskosten zu Leistungen (§ 22 Nr. 3 EStG)", "amount", 0, per_year=True,
                        group="Erträge"),
-            OptionSpec("joint", "Zusammenveranlagung (Sparer-Pauschbetrag doppelt)", "bool", False,
-                       group="Kapitalerträge"),
             OptionSpec("pauschbetrag_used", "Bereits über Freistellungsaufträge genutzter Sparer-Pauschbetrag",
                        "amount", 0, per_year=True, group="Kapitalerträge"),
             OptionSpec("church_tax", "Kirchensteuersatz", "choice", "0",
@@ -210,8 +212,10 @@ class GermanyPack(RulePack):
                               "die Steuerbescheinigungen der Banken.", group="Kapitalerträge"),
             OptionSpec("marginal_rate", "Persönlicher Grenzsteuersatz für die Schätzung (%)", "percent", None,
                        per_year=True, group="Schätzung"),
-            OptionSpec("loss_cf_23", "Verlustvortrag private Veräußerungsgeschäfte (§ 23) aus Vorjahren", "amount", 0,
-                       per_year=True, group="Verlustvorträge"),
+            OptionSpec("loss_cf_23", "Verlustvortrag private Veräußerungsgeschäfte (§ 23)", "amount", None,
+                       "Leer = automatisch aus den berechneten Vorjahren. Ein eingetragener Betrag (auch 0) ersetzt "
+                       "die Berechnung; maßgeblich ist der Verlustfeststellungsbescheid des Finanzamts.",
+                       per_year=True, group="Verlustvorträge", auto=True),
             OptionSpec("loss_cf_kap_shares", "Verlustvortrag Aktienveräußerungen aus Vorjahren", "amount", 0,
                        per_year=True, group="Verlustvorträge"),
             OptionSpec("loss_cf_kap_other", "Verlustvortrag sonstige Kapitalerträge aus Vorjahren", "amount", 0,
@@ -222,6 +226,9 @@ class GermanyPack(RulePack):
         scope = "account" if options.get("scope", "wallet") == "wallet" else "global"
         return dataclasses.replace(base, scope=scope, method="fifo",
                                    snapshot_dates=tuple(date(y, 12, 31) for y in snapshot_years))
+
+    def carry_out(self, result: TaxResult) -> dict[str, Any]:
+        return {"loss_cf_23": result.data.get("crypto", {}).get("carry_out", ZERO)}
 
     def holding_end(self, asset: AssetInfo, acq: date) -> date | None:
         if not asset.is_crypto:
@@ -320,7 +327,6 @@ class GermanyPack(RulePack):
             for p in d.parts:
                 share = p.qty / d.qty if d.qty else ZERO
                 wk = d.fee_eur * share
-                gain = p.proceeds - p.cost
                 if p.missing_basis or p.acq_date is None or p.origin == "phantom":
                     # ohne nachgewiesene Anschaffung (Fehlbestand, Zugang ohne Lots): Haltedauer unbekannt –
                     # nie als steuerfrei einstufen, Einstand 0 € (konservativ), im Bericht ausgewiesen
@@ -331,10 +337,12 @@ class GermanyPack(RulePack):
                     taxable = free_from is None or d.date < free_from
                 if p.origin in ("deposit", "phantom"):
                     origins[p.origin] += 1
+                # Zeilen müssen aufgehen (Preis − Werbungskosten − Anschaffungskosten = Gewinn): erst runden
+                price_r, wk_r, cost_r = money(p.proceeds + wk), money(wk), money(p.cost)
                 row = {"asset": a.symbol, "asset_id": a.asset_id, "name": a.name, "account": d.account,
                        "kind": KIND_LABEL.get(d.kind, d.kind), "acq": p.acq_date, "disp": d.date,
                        "days": (d.date - p.acq_date).days if p.acq_date else None, "qty": p.qty,
-                       "price": money(p.proceeds + wk), "cost": money(p.cost), "wk": money(wk), "gain": money(gain),
+                       "price": price_r, "cost": cost_r, "wk": wk_r, "gain": price_r - wk_r - cost_r,
                        "origin": ORIGIN_LABEL.get(p.origin, p.origin) + (" · über Umstellung" if p.via else ""),
                        "free_from": free_from, "tx": d.tx_id}
                 (rows_tax if taxable else rows_free).append(row)
@@ -344,12 +352,20 @@ class GermanyPack(RulePack):
             taxable = ZERO
         else:
             taxable = net
-        lcf = _d(o.get("loss_cf_23"))
+        raw = o.get("loss_cf_23")
+        # leer/None – oder die frühere Standard-Null (int 0 aus dem Formular) – = automatisch aus den Vorjahren;
+        # ein eingetragener Wert (auch die Zeichenkette „0“) gilt als Eingabe
+        lcf_auto = raw is None or raw == "" or (isinstance(raw, int | float) and not isinstance(raw, bool) and raw == 0)
+        lcf = _d(o.get("loss_cf_23_auto")) if lcf_auto else _d(raw)
         after = max(ZERO, taxable - lcf) if taxable > 0 else ZERO
+        lcf_used = min(lcf, taxable) if taxable > 0 else ZERO
+        # Vortrag ins Folgejahr (§ 23 Abs. 3 S. 7–9 EStG, § 10d): Verlust erhöht ihn, ein steuerpflichtiger Gewinn
+        # verbraucht ihn; bleibt der Saldo unter der Freigrenze, wird er nicht verbraucht (kein positiver Betrag)
+        carry_out = lcf + (-net) if net < 0 else lcf - lcf_used
         return {
             "rows_tax": rows_tax, "rows_free": rows_free, "excluded": dict(excluded), "origins": dict(origins),
             "missing": missing, "net": net, "freigrenze": fg, "taxable": taxable, "after_lcf": after,
-            "lcf_used": min(lcf, taxable) if taxable > 0 else ZERO,
+            "lcf": lcf, "lcf_auto": lcf_auto, "lcf_used": lcf_used, "carry_out": carry_out,
             "gains": sum((r["gain"] for r in rows_tax if r["gain"] > 0), ZERO),
             "losses": sum((r["gain"] for r in rows_tax if r["gain"] < 0), ZERO),
             "price": sum((r["price"] for r in rows_tax), ZERO), "cost": sum((r["cost"] for r in rows_tax), ZERO),
@@ -387,6 +403,7 @@ class GermanyPack(RulePack):
         not_taxable: Counter[str] = Counter()
         kap_crypto: list[dict[str, Any]] = []
         valued: Counter[str] = Counter()
+        flags = {t.tx_id: t.flag for t in inp.pf.txs if t.flag}
         for e in inp.ledger.income:
             if e.date.year != year or self._is_capital_income(inp, e):
                 continue
@@ -396,7 +413,7 @@ class GermanyPack(RulePack):
             a = inp.asset(e.asset)
             row = {"date": e.date, "asset": a.symbol, "name": a.name, "account": e.account, "qty": e.qty,
                    "value": money(value), "tag": TAG_LABEL.get(e.tag, e.tag), "tag_id": e.tag, "valued": how,
-                   "tx": e.tx_id}
+                   "tx": e.tx_id, "flag": flags.get(e.tx_id, "")}
             if cat == "none":
                 not_taxable[e.tag] += 1
             elif cat == "kap":
@@ -431,6 +448,7 @@ class GermanyPack(RulePack):
         heuristic_assets: set[str] = set()
         default_accounts: set[str] = set()
         old_fund_lots = 0
+        deriv_loss = ZERO
         foreign_div_without_wht: set[str] = set()
         valued: Counter[str] = Counter()
         cap = _d(P["capital"]["wht_credit_cap"])
@@ -467,12 +485,18 @@ class GermanyPack(RulePack):
                     ded = p.qty * vp.accumulated(a.asset_id, p.acq_date, year)
                     gain -= ded
                 pot = "Aktien" if t == "share" else ("Fonds" if t in FUND_TYPES else "Sonstige")
+                # Zeile geht auf (Erlös − Anschaffungskosten − Veräußerungskosten − Abzug VP = Gewinn): erst runden
+                price_r, cost_r, wk_r, vp_r = money(p.proceeds + wk), money(p.cost), money(wk), money(ded)
+                gain = price_r - cost_r - wk_r - vp_r
+                notes = [n for n in ("Ausbuchung/Verlust" if d.kind == "lost" else "",
+                                     "Termingeschäft" if t == "derivative" else "") if n]
                 rows_sales.append({"account": d.account, "kind": "Ausland" if k == "foreign" else "Inland",
                                    "asset": a.name, "isin": a.isin or a.wkn or "", "type": ASSET_TYPES.get(t, t),
                                    "acq": p.acq_date, "disp": d.date, "qty": p.qty,
-                                   "price": money(p.proceeds + wk), "cost": money(p.cost), "wk": money(wk),
-                                   "vp": money(ded), "gain": money(gain), "pot": pot,
-                                   "note": "Ausbuchung/Verlust" if d.kind == "lost" else ""})
+                                   "price": price_r, "cost": cost_r, "wk": wk_r,
+                                   "vp": vp_r, "gain": gain, "pot": pot, "note": " · ".join(notes)})
+                if t == "derivative" and gain < 0:
+                    deriv_loss += gain
                 b = B[k]
                 if t == "share":
                     b["share_gain" if gain >= 0 else "share_loss"] += gain
@@ -570,7 +594,8 @@ class GermanyPack(RulePack):
         return {"B": B, "rows_sales": rows_sales, "rows_income": rows_income, "rows_vp": rows_vp,
                 "activity": activity, "heuristic_assets": sorted(heuristic_assets),
                 "default_accounts": sorted(default_accounts), "old_fund_lots": old_fund_lots,
-                "foreign_div_without_wht": sorted(foreign_div_without_wht), "valued": dict(valued)}
+                "foreign_div_without_wht": sorted(foreign_div_without_wht), "valued": dict(valued),
+                "deriv_loss": deriv_loss}
 
     # -- Zusammenfassung, Formularfelder, Schätzung ----------------------------------------------------------
     @staticmethod
@@ -615,8 +640,16 @@ class GermanyPack(RulePack):
         S.append(Line("davon Verluste", money(c["losses"]), indent=2))
         S.append(Line("steuerpflichtig nach Freigrenze", money(c["taxable"]), indent=1, strong=True,
                       note=f"Freigrenze {fmt_eur(c['freigrenze'])} (Gesamtgewinn unter der Grenze bleibt steuerfrei)"))
+        if c["lcf"]:
+            S.append(Line("Verlustvortrag aus Vorjahren", money(c["lcf"]), indent=1,
+                          note="automatisch aus den berechneten Vorjahren – maßgeblich ist der Feststellungsbescheid"
+                          if c["lcf_auto"] else "Eingabe"))
         if c["lcf_used"]:
             S.append(Line("nach Verlustvortrag", money(c["after_lcf"]), indent=1))
+        if c["net"] < 0 or c["lcf"]:
+            S.append(Line("Verlustvortrag ins Folgejahr", money(c["carry_out"]), indent=1,
+                          note="nur mit Gewinnen aus privaten Veräußerungsgeschäften verrechenbar (§ 23 Abs. 3 S. 7–9 "
+                               "EStG)"))
         S.append(Line("Steuerfreie Veräußerungen nach Ablauf der Haltefrist (nachrichtlich)", money(c["free_gain"]),
                       indent=1, note=f"{len(c['rows_free'])} Teilvorgänge, Erlös {fmt_eur(c['free_price'])}"))
         S.append(Line("Leistungen (§ 22 Nr. 3 EStG) – z. B. Staking, Lending", None, strong=True, kind="text"))
@@ -657,18 +690,27 @@ class GermanyPack(RulePack):
                                   indent=1, note=f"anrechenbar {fmt_eur(b['wht_credit'])}"))
                 if b["kest"]:
                     S.append(Line("Einbehaltene Kapitalertragsteuer lt. Daten", money(b["kest"]), indent=1))
+        gap23 = c["freigrenze"] - c["net"]
         res.meters.append(Meter("fg23", "Freigrenze private Veräußerungsgeschäfte (§ 23 EStG)",
                                 money(max(c["net"], ZERO)), money(c["freigrenze"]),
-                                note="nur Kryptowerte aus diesem Import"))
+                                note="nur Kryptowerte aus diesem Import" + (
+                                    f"; noch {fmt_eur(money(gap23))} Abstand" if 0 < c["net"] < c["freigrenze"]
+                                    else "")))
+        gap22 = i["freigrenze"] - i["einkuenfte"]
         res.meters.append(Meter("fg22", "Freigrenze Leistungen (§ 22 Nr. 3 EStG)", money(max(i["einkuenfte"], ZERO)),
-                                money(i["freigrenze"])))
+                                money(i["freigrenze"]),
+                                note=(f"noch {fmt_eur(money(gap22))} Abstand" if 0 < i["einkuenfte"] < i["freigrenze"]
+                                      else "")))
         if k["activity"]:
             pot = self._pot(("foreign", "domestic") if o.get("include_domestic") else ("foreign",), k, o, P)
             pb_total = _d(P["capital"]["sparer_pauschbetrag_joint" if o.get("joint")
                                          else "sparer_pauschbetrag_single"])
             res.meters.append(Meter("pb", "Sparer-Pauschbetrag (§ 20 Abs. 9 EStG)",
                                     money(pot["base"] + _d(o.get("pauschbetrag_used"))), money(pb_total),
-                                    kind="freibetrag", note="inkl. bereits genutzter Freistellungsaufträge"))
+                                    kind="freibetrag",
+                                    note=("Zusammenveranlagung; " if o.get("joint") else "")
+                                    + "inkl. bereits genutzter Freistellungsaufträge; Konten mit inländischem "
+                                      "Steuerabzug nur über den Eintrag „bereits genutzt“"))
 
     def _field(self, P: dict[str, Any], form: str, fid: str, amount: Decimal | None, note: str = "",
                text: str | None = None, label: str | None = None, section: str | None = None,
@@ -735,6 +777,9 @@ class GermanyPack(RulePack):
                 sec = "Kapitalerträge mit inländischem Steuerabzug – Kontrollwerte (Steuerbescheinigung maßgeblich)"
                 F.append(self._field(P, "anlage_kap", "kap_dom_total", dom_total, section=sec,
                                      label="Kapitalerträge lt. Daten (Saldo)"))
+                if bd["share_gain"]:
+                    F.append(self._field(P, "anlage_kap", "kap_dom_share_gains", bd["share_gain"], section=sec,
+                                         label="davon Gewinne aus Aktienveräußerungen lt. Daten"))
                 F.append(self._field(P, "anlage_kap", "kap_dom_kest", bd["kest"], section=sec,
                                      label="Einbehaltene Kapitalertragsteuer lt. Daten"))
 
@@ -811,9 +856,18 @@ class GermanyPack(RulePack):
                  f"{fmt_rate(P['capital']['wht_credit_cap'])} der Bruttodividende.")
         A.append("Vorabpauschale mit Börsenschlusskursen (erster/letzter Handelstag) statt Rücknahmepreisen; "
                  "Ausschüttungen je Anteil aus den gebuchten Ausschüttungen abgeleitet.")
+        A.append("Derivate (Turbo-/Optionsscheine, Warrants, Mini-Futures) gelten als Termingeschäfte "
+                 "(§ 20 Abs. 2 S. 1 Nr. 3 EStG) und stehen im Topf „Sonstige“, nicht im Aktien-Topf; ihre "
+                 "Verluste sind mit allen Kapitalerträgen verrechenbar. Die frühere Verlustgrenze von 20.000 € "
+                 "(§ 20 Abs. 6 S. 5 a. F.) hat das Jahressteuergesetz 2024 aufgehoben (Anwendung auf noch nicht "
+                 "bestandskräftige Fälle, § 52 Abs. 28 EStG).")
+        A.append("Verlustvortrag § 23 EStG: ohne Eingabe automatisch aus den berechneten Vorjahren fortgeschrieben "
+                 "(Verlust erhöht, steuerpflichtiger Gewinn verbraucht ihn; bleibt der Saldo unter der Freigrenze, "
+                 "wird er nicht verbraucht). Ein Verlustrücktrag (§ 10d Abs. 1 EStG) ist nicht berücksichtigt; "
+                 "maßgeblich ist der Feststellungsbescheid des Finanzamts.")
         A.append("Nicht ermittelt: Fremdwährungsgewinne (§ 23 EStG), Altanteile an Investmentfonds vor 2018 "
                  "(fiktive Veräußerung 31.12.2017), gewerbliche Tätigkeit (z. B. Mining im größeren Umfang), "
-                 "Termingeschäfte/Derivate, Günstigerprüfung.")
+                 "Günstigerprüfung.")
         A.append("Freigrenzen gelten je Person und für den Gesamtbetrag der jeweiligen Einkunftsart – andere private "
                  "Veräußerungsgeschäfte oder Leistungen außerhalb dieses Imports sind nicht enthalten.")
 
@@ -842,6 +896,13 @@ class GermanyPack(RulePack):
         if conf:
             issues.append(Issue("info", "confirmed_tx",
                                 f"{conf} freigegebene Sparplan-Buchungen sind noch nicht im Import enthalten.", conf))
+        if o_scope_global(res):
+            issues.append(Issue("warning", "scope_global",
+                                "Verbrauchsfolge „FIFO über alle Wallets“ gewählt – das BMF-Schreiben vom 06.03.2025 "
+                                "(Rz. 61/62) verlangt die Einzelbetrachtung je Wallet. Die Einstellung kann zu "
+                                "abweichenden Haltefristen und Gewinnen führen; nur nach Abstimmung mit dem "
+                                "Steuerberater verwenden."))
+        self._quality_thresholds(inp, res, year, c, i, k, P)
         if c["missing"]:
             issues.append(Issue("warning", "missing_basis",
                            f"{c['missing']} Veräußerungsteile ohne Anschaffungsdaten (Fehlbestand) – konservativ als "
@@ -912,6 +973,47 @@ class GermanyPack(RulePack):
         if n_led:
             issues.append(Issue("warning", "ledger", f"{n_led} Ledger-Warnungen zu Veräußerungen dieses Jahres "
                                                 "(siehe Datenqualität).", n_led))
+
+    def _quality_thresholds(self, inp: TaxInput, res: TaxResult, year: int, c: dict[str, Any], i: dict[str, Any],
+                            k: dict[str, Any], P: dict[str, Any]) -> None:
+        """Freigrenzen-Klippen, Derivate-Hinweis und Sparer-Pauschbetrag der Inlandsdepots."""
+        issues = res.issues
+        o = res.options
+        fg = i["freigrenze"]
+        marked = [r for r in i["rows"] if "REVIEW" in (r.get("flag") or "")]
+        if marked and i["total"] > 0:
+            s_marked = sum((r["value"] for r in marked), ZERO)
+            e, e_wo = i["einkuenfte"], i["einkuenfte"] - s_marked
+            flips = (e >= fg) != (e_wo >= fg)
+            first = marked[0]
+            issues.append(Issue(
+                "warning" if flips else "info", "fg22_marked",
+                f"§ 22 Nr. 3: Einkünfte {fmt_eur(money(e))} (Freigrenze {fmt_eur(fg)}: "
+                + ("überschritten – voll steuerpflichtig" if e >= fg else f"noch {fmt_eur(money(fg - e))} Abstand")
+                + f"). Darin {len(marked)} zur Prüfung markierte Zuflüsse ({fmt_eur(money(s_marked))}, z. B. "
+                f"{first['asset']} am {first['date'].strftime('%d.%m.%Y')}); ohne sie lägen die Einkünfte bei "
+                f"{fmt_eur(money(e_wo))} ({'über' if e_wo >= fg else 'unter'} der Freigrenze). Stammt ein Zufluss aus "
+                "einer Schenkung ohne Gegenleistung, ist er kein § 22 Nr. 3 – Einstufung unter „Erträge“ ändern.",
+                len(marked)))
+        if k["deriv_loss"] and year <= 2023 and -k["deriv_loss"] > Decimal(20000):
+            issues.append(Issue("warning", "deriv_loss_cap",
+                                f"Verluste aus Termingeschäften {fmt_eur(money(-k['deriv_loss']))}: Für {year} galt "
+                                "vor dem Jahressteuergesetz 2024 eine Verrechnungsgrenze von 20.000 € (§ 20 Abs. 6 "
+                                "S. 5 a. F.) – Anwendung der Aufhebung auf diesen Fall prüfen."))
+        if k["deriv_loss"] or any(r["type"] == ASSET_TYPES["derivative"] for r in k["rows_sales"]):
+            issues.append(Issue("info", "derivatives",
+                                "Derivate (Turbo-/Optionsscheine, Warrants) sind als Termingeschäfte im Topf "
+                                "„Sonstige“ erfasst (nicht im Aktien-Topf); Einstufung je Wertpapier unter „Zuordnung“ "
+                                "änderbar."))
+        if k["activity"]:
+            dom = self._pot(("domestic",), k, o, P)
+            if dom["base"] > 0 and not _d(o.get("pauschbetrag_used")):
+                issues.append(Issue(
+                    "info", "pb_domestic",
+                    f"Inländische Depots haben laut Daten Kapitalerträge von {fmt_eur(money(dom['base']))}; der "
+                    "Sparer-Pauschbetrag ist dort über den Freistellungsauftrag vermutlich bereits genutzt. "
+                    "Bitte unter „Bereits genutzter Sparer-Pauschbetrag“ den Betrag laut Steuerbescheinigung eintragen "
+                    "(bei Zusammenveranlagung 2.000 €) oder die Bescheinigung einlesen."))
 
     # -- Übersicht --------------------------------------------------------------------------------------
     def overview(self, inp: TaxInput, options: dict[str, Any]) -> Overview:
@@ -1018,6 +1120,10 @@ class GermanyPack(RulePack):
     # -- Dokumente ------------------------------------------------------------------------------------
     def build_document(self, doc_id: str, result: TaxResult, meta: ReportMeta) -> D.Doc:
         return build_document(self, doc_id, result, meta)
+
+
+def o_scope_global(res: TaxResult) -> bool:
+    return res.options.get("scope", "wallet") != "wallet"
 
 
 def build_sections(pack: GermanyPack, result: TaxResult, c: dict[str, Any], i: dict[str, Any],

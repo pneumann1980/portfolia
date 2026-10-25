@@ -8,7 +8,7 @@ import pytest
 
 from app.ledger.engine import EngineOptions, run_ledger
 from app.tax import registry
-from app.tax.base import TaxInput
+from app.tax.base import TaxInput, fmt_eur, fmt_num, money
 from app.tax.classify import classify_asset
 from app.tax.params import ParamSet
 from tests.helpers import ASSETS, portfolio, tx
@@ -16,6 +16,8 @@ from tests.helpers import ASSETS, portfolio, tx
 D = Decimal
 TAX_ASSETS = [
     *ASSETS,
+    {"asset_id": "TURBO", "name": "ENDLOS-TURBO CALL AUF SAP SE", "asset_class": "security", "isin": "DE000HC1ABC1",
+     "quote_source": "none", "quote_id": ""},
     {"asset_id": "US1", "name": "Alpha Inc.", "asset_class": "security", "isin": "US0000000001",
      "quote_source": "none", "quote_id": ""},
     {"asset_id": "US2", "name": "Beta Corp.", "asset_class": "security", "isin": "US0000000002",
@@ -208,7 +210,8 @@ def test_fund_teilfreistellung_and_vorabpauschale():
     # VP 2024 je Anteil: min(100 × 2,29 % × 0,7; 110 − 100) = 1,603; Erwerb im März → 10/12
     vp = D(10) * D("100") * D("0.0229") * D("0.7") * D(10) / D(12)
     assert b["fund_vp"]["etf_equity"] == vp
-    assert b["fund_gain"]["etf_equity"] == D("200") - vp  # Veräußerungsgewinn abzüglich angesetzter VP
+    # Veräußerungsgewinn abzüglich angesetzter VP – je Zeile auf Cent gerundet, damit die Zeile aufgeht
+    assert b["fund_gain"]["etf_equity"] == D("200") - money(vp)
     assert b["fund_dist"]["etf_equity"] == D("100")
     fields = {x.label: x.amount for x in res.fields if x.form == "Anlage KAP-INV"}
     assert fields["Vorabpauschalen – Aktienfonds"] == D("13.36")
@@ -265,7 +268,10 @@ def test_form_lines_by_year():
     f = {x.field_id: x for x in res.fields}
     assert f["so_23_gain"].line == "51" and f["so_23_price"].line == "48" and f["so_23_wk"].line == "50"
     assert f["so_23_gain"].section == "Private Veräußerungsgeschäfte – Kryptowerte" and f["so_23_desc"].line is None
-    assert all(x.line is None for x in res.fields if x.form in ("Anlage KAP", "Anlage KAP-INV"))
+    kap = {x.field_id: x.line for x in res.fields if x.form in ("Anlage KAP", "Anlage KAP-INV")}
+    assert kap.get("kap_foreign_total") is None and kap.get("kap_foreign_losses_shares") is None  # Auslandsfelder offen
+    assert kap.get("kap_wht") == "41"  # laut Erläuterung der Steuerbescheinigung 2025 belegt
+    assert all(v is None for kid, v in kap.items() if kid.startswith("inv_"))
     # 2026: noch keine geprüften Zeilen
     rows26 = [buy("c1", "2026-02-01", "ETH", 1, 1000), sell("c2", "2026-08-01", "ETH", 1, 3000)]
     _, res = run(rows26, 2026, today=date(2027, 3, 1))
@@ -333,3 +339,131 @@ def test_registry_and_neutral_pack():
     res = pack.compute(TaxInput(pf=pf, ledger=led, today=date(2026, 1, 5)), 2025, pack.defaults())
     assert res.data["total"] == D("540.00")
     assert pack.holding_end(pf.asset("ETH"), date(2025, 1, 1)) is None
+
+
+# -- Derivate, Rundung, Verlustvortrag, Hinweise (0.49.1) ----------------------------------------------------
+
+def test_derivatives_are_classified_and_sit_in_other_pot():
+    from app.ledger.models import AssetInfo
+
+    names = ["ENDLOS-TURBO CALL AUF SAP SE", "UBS AG TURBOP O.END RHEINME. 1330", "GAMESTOP CORP. WTS26",
+             "Knock-Out-Call auf Microsoft", "MORGAN STANLEY/CALL/IQIYI, INC./20/0.1/11.09.20",
+             "MINI FUTURE ZERTIFIKAT LONG AUF TESLA INC.", "OPEN END TURBO CALL WARRANT AUF TESLA INC.",
+             "FAKTOR-OPTIONSSCHEIN AUF CBOE VIX FUTURE"]
+    for n in names:
+        a = AssetInfo(asset_id=n, name=n, asset_class="security", quote_source="none", quote_id="")
+        assert classify_asset(a) == ("derivative", "heuristic"), n
+    for n in ("Alphabet Inc. Class A", "ETC-Zertifikat auf Silberpreis (Spot)", "Welt UCITS ETF", "Callaway Golf Co"):
+        a = AssetInfo(asset_id=n, name=n, asset_class="security", quote_source="none", quote_id="")
+        assert classify_asset(a)[0] != "derivative", n
+    # Verlust des Turbos steht im Topf „Sonstige“ und mindert Dividenden – er sperrt nicht den Aktien-Topf
+    rows = [buy("t1", "2025-01-10", "TURBO", 100, 1000, acc="IBKR"),
+            sell("t2", "2025-03-10", "TURBO", 100, 400, acc="IBKR"),
+            tx("d1", "2025-03-01", "deposit", tag="dividend", to=("IBKR", "EUR", 100), value=100, related="US1")]
+    _, res = run(rows, 2025, kinds={"IBKR": "foreign"})
+    b = res.data["capital"]["B"]["foreign"]
+    assert b["other_loss"] == D("-600.00") and b["share_loss"] == 0 and b["dividends"] == D("100.00")
+    sale = next(t for t in res.sections if t.id == "kap").tables[0].rows[0]
+    assert sale["pot"] == "Sonstige" and "Termingeschäft" in sale["note"]
+    assert any(i.code == "derivatives" for i in res.issues)
+    assert any("Termingeschäfte" in a and "Jahressteuergesetz 2024" in a for a in res.assumptions)
+
+
+def test_rows_add_up_and_no_negative_zero():
+    rows = [buy("b1", "2025-01-10", "ETH", "0.3333", "1000.01"),
+            tx("s1", "2025-03-10", "sell", frm=("Börse", "ETH", "0.1111"), to=("Börse", "EUR", "333.34"),
+               fee=("EUR", "1.115", "1.115"), value="334.455")]
+    _, res = run(rows, 2025)
+    for r in next(t for t in res.sections if t.id == "crypto23").tables[1].rows:
+        assert r["price"] - r["wk"] - r["cost"] == r["gain"]
+    assert fmt_num(D("-0.00")) == "0,00" and fmt_eur(D("-0.004")) == "0,00 €" and fmt_eur(D("-0.01")) == "−0,01 €"
+    # Kapitalerträge: Zeile geht ebenfalls auf (Erlös − Anschaffung − Kosten − VP = Gewinn)
+    _, res = run(_kap_rows(), 2025, kinds={"IBKR": "foreign"})
+    for r in next(t for t in res.sections if t.id == "kap").tables[0].rows:
+        assert r["price"] - r["cost"] - r["wk"] - r["vp"] == r["gain"]
+
+
+class _Settings:
+    version = 1
+
+    def __init__(self, options=None):
+        self._v = {"tax.options": options or {}, "tax.rulepack": "de"}
+
+    def get(self, key, default=None):
+        return self._v.get(key, default)
+
+
+def _service(rows, year_options=None, today=date(2026, 9, 26)):
+    """TaxService mit gestelltem Eingang (ohne App-Kontext) – prüft die Verkettung der Vorjahre."""
+    from types import SimpleNamespace
+
+    from app.tax.service import TaxService
+
+    pack = registry.get("de")
+    opts = pack.defaults()
+    pf = portfolio(rows, TAX_ASSETS)
+    led = run_ledger(pf, pack.engine_options(EngineOptions(), opts, list(range(2018, today.year))))
+    types = {aid: classify_asset(a)[0] for aid, a in pf.assets.items()}
+    inp = TaxInput(pf=pf, ledger=led, today=today, asset_types=types, asset_type_source={},
+                   account_kinds=dict.fromkeys(pf.all_accounts(), "domestic"), account_kind_source={})
+    ctx = SimpleNamespace(settings=_Settings({"de": {"global": {}, "years": year_options or {}}}),
+                          prices=SimpleNamespace(version=1), history_version=1, data_version=1,
+                          config=SimpleNamespace(tz="Europe/Berlin", tax_rules_dir=None),
+                          active_import_id=lambda: 1)
+    svc = TaxService(ctx)
+    svc.build_input = lambda pack_, options: inp  # type: ignore[method-assign]
+    return svc
+
+
+def _carry_rows():
+    return [buy("a1", "2023-01-10", "ETH", 1, 1000), sell("a2", "2023-06-10", "ETH", 1, 400),     # 2023: −600
+            buy("b1", "2024-01-10", "ETH", 1, 1000), sell("b2", "2024-06-10", "ETH", 1, 700),     # 2024: −300
+            buy("c1", "2025-01-10", "ETH", 1, 1000), sell("c2", "2025-06-10", "ETH", 1, 3000)]    # 2025: +2.000
+
+
+def test_loss_carryforward_23_chains_over_years():
+    svc = _service(_carry_rows())
+    r23, r24, r25 = (svc.compute(y)[2].data["crypto"] for y in (2023, 2024, 2025))
+    assert r23["net"] == D("-600.00") and r23["lcf"] == 0 and r23["carry_out"] == D("600.00")
+    assert r24["lcf"] == D("600.00") and r24["lcf_auto"] and r24["carry_out"] == D("900.00")
+    assert r25["net"] == D("2000.00") and r25["taxable"] == D("2000.00")
+    assert r25["lcf"] == D("900.00") and r25["lcf_used"] == D("900.00")
+    assert r25["after_lcf"] == D("1100.00") and r25["carry_out"] == 0
+    res = svc.compute(2025)[2]
+    assert any(ln.label == "Verlustvortrag aus Vorjahren" and ln.amount == D("900.00") for ln in res.summary)
+    assert res.options["loss_cf_23_auto"] == D("900.00")
+
+
+def test_loss_carryforward_manual_override_and_legacy_zero():
+    # eingetragener Betrag überschreibt die Kette – auch die Zeichenkette „0“; die frühere Standard-Null (int) nicht
+    svc = _service(_carry_rows(), {"2025": {"loss_cf_23": "0"}})
+    c = svc.compute(2025)[2].data["crypto"]
+    assert c["lcf"] == 0 and not c["lcf_auto"] and c["after_lcf"] == D("2000.00")
+    svc = _service(_carry_rows(), {"2025": {"loss_cf_23": 0}})
+    assert svc.compute(2025)[2].data["crypto"]["lcf"] == D("900.00")
+    svc = _service(_carry_rows(), {"2024": {"loss_cf_23": "100"}})  # Eingabe eines Vorjahres wirkt auf die Folgejahre
+    c24, c25 = (svc.compute(y)[2].data["crypto"] for y in (2024, 2025))
+    assert c24["lcf"] == D("100") and c24["carry_out"] == D("400.00") and c25["lcf"] == D("400.00")
+
+
+def test_loss_carryforward_not_consumed_below_freigrenze():
+    rows = [buy("a1", "2023-01-10", "ETH", 1, 1000), sell("a2", "2023-06-10", "ETH", 1, 400),   # 2023: −600
+            buy("b1", "2024-01-10", "ETH", 1, 1000), sell("b2", "2024-06-10", "ETH", 1, 1500)]  # 2024: +500 < 1.000
+    svc = _service(rows)
+    c24 = svc.compute(2024)[2].data["crypto"]
+    assert c24["taxable"] == 0 and c24["lcf_used"] == 0 and c24["carry_out"] == D("600.00")
+
+
+def test_quality_hints_scope_marked_income_and_domestic_allowance():
+    rows = [tx("k1", "2025-10-22", "deposit", tag="other_income", to=("Wallet", "ETH", 1), value="200.71",
+               flag="REVIEW_INCOME"),
+            tx("k2", "2025-11-01", "deposit", tag="airdrop", to=("Wallet", "BTC", "0.01"), value="55.29"),
+            *_kap_rows()]
+    _, res = run(rows, 2025, options={"scope": "global"}, kinds={"IBKR": "domestic"})
+    codes = {i.code: i for i in res.issues}
+    assert "scope_global" in codes and "Rz. 61/62" in codes["scope_global"].text
+    fg = codes["fg22_marked"]
+    assert fg.severity == "warning"  # 256,00 € erreicht (200,71 + 55,29), ohne den markierten Posten 55,29 €
+    assert "55,29" in fg.text and "unter der Freigrenze" in fg.text
+    assert any(m.id == "fg22" for m in res.meters)
+    assert "pb_domestic" in codes  # Inlandsdepot mit Erträgen, Pauschbetrag nicht eingetragen

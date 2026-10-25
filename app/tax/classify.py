@@ -20,6 +20,7 @@ ASSET_TYPES: dict[str, str] = {
     "etf_other": "Sonstiger Investmentfonds (z. B. Renten-/Geldmarkt-ETF)",
     "bond": "Anleihe / Kapitalforderung",
     "other": "Sonstiges Wertpapier (z. B. Zertifikat, ETN/ETC)",
+    "derivative": "Derivat / Termingeschäft (Turbo, Optionsschein, Warrant)",
 }
 FUND_TYPES = frozenset({"etf_equity", "etf_mixed", "fund_realestate", "fund_realestate_foreign", "etf_other"})
 ACCOUNT_KINDS: dict[str, str] = {
@@ -30,6 +31,13 @@ ACCOUNT_KINDS: dict[str, str] = {
 _FUND_RE = re.compile(r"\b(ETF|UCITS|Fonds|Fund|iShares|Xtrackers|Vanguard|Amundi|SPDR|Lyxor|Invesco|"
                       r"Indexfonds|Thesaurierend|Ausschüttend)\b", re.IGNORECASE)
 _ETN_RE = re.compile(r"\b(ETN|ETC|Zertifikat|Certificate|Tracker)\b", re.IGNORECASE)
+# Turbos/Knock-outs, Optionsscheine, Warrants, Mini-Futures, Faktor-Papiere (Termingeschäfte, § 20 Abs. 2 S. 1 Nr. 3
+# EStG): die Emittenten kürzen die Namen („TURBOP O.END“, „TURBOC“, „WTS26“), daher auch die Kurzformen
+_DERIV_RE = re.compile(r"\b(TURBO[CP]?|OPTIONSSCHEINE?|WARRANTS?|WTS\d*|KNOCK[- ]?OUT|KO[- ]?(?:CALL|PUT)|"
+                       r"MINI[- ]?FUTURES?|FAKTOR[- ]?(?:LONG|SHORT|ZERTIFIKAT)|HEBEL[- ]?ZERTIFIKAT|"
+                       r"(?:CALL|PUT)[- ]?(?:OS|OPTIONSSCHEIN)|OPEN[- ]?END[- ]?(?:TURBO|ZERTIFIKAT))\b"
+                       r"|/(?:CALL|PUT)/",  # Optionsscheine aus Abrechnungen: „EMITTENT/CALL/BASISWERT/Strike/…“
+                       re.IGNORECASE)
 
 
 def classify_asset(a: AssetInfo, overrides: dict[str, Any] | None = None) -> tuple[str, str]:
@@ -45,6 +53,8 @@ def classify_asset(a: AssetInfo, overrides: dict[str, Any] | None = None) -> tup
     if imp in ASSET_TYPES:
         return imp, "import"
     text = " ".join([a.name or "", a.category or "", *a.aliases])
+    if _DERIV_RE.search(text):
+        return "derivative", "heuristic"
     if _ETN_RE.search(text):
         return "other", "heuristic"
     if _FUND_RE.search(text):
