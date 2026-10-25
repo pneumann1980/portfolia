@@ -1011,3 +1011,25 @@ details.ds-rename { margin: 8px 0 12px; }
 .bar-row .progress { height: 8px; }
 .bar-eta { margin-top: 3px; font-size: 0.82rem; }
 .community .news-item .summary { display: block; -webkit-line-clamp: unset; overflow: visible; font-size: 0.9rem; line-height: 1.45; }
+
+/* -- Steuerseite: Kopfleiste, Reiter, Hinweise -------------------------------------------------------- */
+.taxbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin-bottom: 8px; }
+.taxbar form { margin: 0; }
+.taxbar .field-form { flex: 1 1 170px; min-width: 0; }
+.taxbar .field-form select { width: 100%; max-width: 100%; }
+.taxbar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex: 1 1 260px; }
+.taxbar-note { flex: 1 1 100%; margin: 0; }
+.inline-details { display: inline-block; margin-left: 6px; }
+.inline-details summary { cursor: pointer; display: inline; color: var(--accent); }
+.inline-details[open] { display: block; margin: 6px 0 0; }
+.issue-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.issue-list li { display: flex; gap: 8px; align-items: flex-start; overflow-wrap: anywhere; }
+.issue-list .icon { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--warn-bg, var(--surface-2)); color: var(--warn-ink, var(--ink)); font-size: 0.72rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; margin-top: 2px; }
+.issue-list li.critical .icon { background: var(--crit-bg, var(--surface-2)); color: var(--crit-ink, var(--ink)); }
+details.issues > summary, details.adv > summary { cursor: pointer; font-weight: 560; }
+details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
+.plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+#rulesets .report-item form.inline { display: inline; }
+#rulesets .report-docs { align-items: center; }
+.tax-all-progress { margin: 6px 0; }
+#rulesets code { overflow-wrap: anywhere; }

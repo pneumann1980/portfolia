@@ -12,6 +12,7 @@ import logging
 import re
 import shutil
 import threading
+import zipfile
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -20,15 +21,23 @@ from typing import Any
 from app import __version__
 from app.context import AppContext
 from app.prices.isin import isin_service
+from app.progress import job_progress, view
 from app.tax import registry
 from app.tax.base import Overview, ReportMeta, RulePack, TaxInput, TaxResult
 from app.tax.classify import classify_account, classify_asset, securities_accounts
 from app.tax.pdf import render
+from app.tax.rulesets import RulesetStore
 from app.taxcert.service import taxcert_service
 from app.util.timeutil import iso, now_local, today_local
 
 log = logging.getLogger(__name__)
 KEEP_REPORTS = 60
+FUTURE_YEARS = 2  # Jahresauswahl: so viele Jahre nach dem laufenden Jahr
+MIN_YEAR, MAX_YEAR = 2000, 2100
+ALL_JOB = "tax_all"
+ALL_ZIP_KEY = "tax_all_last"
+ALL_LABEL = "Alle Steuerberichte"
+_ALL_LOCK = threading.Lock()
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
@@ -45,9 +54,54 @@ class TaxService:
         self._cache: dict[Any, Any] = {}
 
     # -- Regelwerk & Optionen ------------------------------------------------------------------------
+    def pack_id(self) -> str:
+        return registry.resolve_id(self.ctx.settings.get("tax.rulepack", "auto"), self.ctx.config.tz)
+
+    def ruleset_slug(self) -> str:
+        """Kennung der gewählten Regelwerk-Datei (Parameterstand); leer = Standard. Eine gelöschte Datei gilt nicht."""
+        slug = str((self.ctx.settings.get("tax.ruleset") or {}).get(self.pack_id()) or "")
+        return slug if slug and self.rulesets().path(slug) is not None else ""
+
+    def rulesets(self) -> RulesetStore:
+        pid = self.pack_id()
+        cls = next((c for c in registry.available() if c.id == pid), None)
+        schema = None
+        if cls is not None:
+            inst = registry.get(pid, self.ctx.config.tax_rules_dir)
+            schema = inst.params_schema() if inst is not None else None
+        return RulesetStore(self.ctx.config.tax_rules_dir, pid, registry.bundled_params(pid), schema)
+
+    def set_ruleset(self, slug: str) -> bool:
+        """Wählt den Parameterstand (``""`` = Standard). Unbekannte Kennungen werden abgelehnt."""
+        if slug and self.rulesets().path(slug) is None:
+            return False
+        cur = dict(self.ctx.settings.get("tax.ruleset") or {})
+        cur[self.pack_id()] = slug
+        self.ctx.settings.set("tax.ruleset", cur)
+        return True
+
+    def save_ruleset(self, raw: bytes) -> Any:
+        """Prüft und speichert eine Regelwerk-Datei; ein Neustand verwirft zwischengespeicherte Ergebnisse."""
+        v = self.rulesets().save(raw, today_local().year)
+        if v.ok:
+            self.ctx.settings.set("tax.ruleset_rev", iso(datetime.now(UTC)))
+        return v
+
+    def delete_ruleset(self, slug: str) -> bool:
+        if not self.rulesets().delete(slug):
+            return False
+        cur = dict(self.ctx.settings.get("tax.ruleset") or {})
+        if cur.get(self.pack_id()) == slug:
+            cur[self.pack_id()] = ""
+            self.ctx.settings.set("tax.ruleset", cur)
+        self.ctx.settings.set("tax.ruleset_rev", iso(datetime.now(UTC)))
+        return True
+
     def pack(self) -> RulePack:
+        slug = self.ruleset_slug()
+        path = self.rulesets().path(slug) if slug else None
         pack = registry.resolve(self.ctx.settings.get("tax.rulepack", "auto"), self.ctx.config.tz,
-                                self.ctx.config.tax_rules_dir)
+                                self.ctx.config.tax_rules_dir, path)
         assert pack is not None
         return pack
 
@@ -193,6 +247,22 @@ class TaxService:
                 self._cache[key] = val
         return val
 
+    def year_choices(self, inp: TaxInput | None, selected: int) -> dict[str, Any]:
+        """Auswahl der Steuerjahre: vom ersten Buchungsjahr bis zwei Jahre nach dem laufenden Jahr (und bis zum
+        gewählten Jahr). Gruppen: mit Daten · ohne Daten · Zukunft (vorläufig)."""
+        today = today_local()
+        data = self.data_years(inp) if inp is not None else []
+        first = data[0] if data else today.year
+        if inp is not None and inp.ledger.first_date is not None:
+            first = min(first, inp.ledger.first_date.year)
+        last = max(today.year + FUTURE_YEARS, selected)
+        lo = min(first, selected)  # ein früher gewähltes Jahr bleibt sichtbar
+        have = set(data)
+        past_with = [y for y in range(today.year, lo - 1, -1) if y in have]
+        past_without = [y for y in range(today.year, lo - 1, -1) if y not in have]
+        future = list(range(last, today.year, -1))
+        return {"first": first, "last": last, "with_data": past_with, "without_data": past_without, "future": future}
+
     def data_years(self, inp: TaxInput) -> list[int]:
         ys = {d.date.year for d in inp.ledger.disposals} | {e.date.year for e in inp.ledger.income}
         ys |= {t.date.year for t in inp.ledger.taxes}
@@ -250,7 +320,8 @@ class TaxService:
         created = now_local()
         meta = ReportMeta(created_at=created, app_version=__version__, import_id=inp.pf.import_id,
                           import_file=inp.import_meta.get("filename"), import_sha=inp.import_meta.get("file_sha256"),
-                          valuation_date=inp.import_meta.get("valuation_date"), profile=inp.profile)
+                          valuation_date=inp.import_meta.get("valuation_date"), profile=inp.profile,
+                          ruleset=pack.params.ruleset_info(year) if pack.params.ruleset_applies(year) else None)
         stem = f"{created.strftime('%Y%m%d-%H%M%S')}-{_SAFE.sub('_', pack.id)}"
         rel_dir = Path("tax") / str(year) / stem
         n = 1
@@ -271,7 +342,7 @@ class TaxService:
             shutil.rmtree(out_dir, ignore_errors=True)
             raise
         summary = res.summary_json()
-        summary.update({"docs": docs, "params_fingerprint": pack.params.fingerprint(year),
+        summary.update({"docs": docs, "params_fingerprint": pack.params.fingerprint(year), "ruleset": meta.ruleset,
                         "created": iso(datetime.now(UTC))})
         rid = self.ctx.db.x(
             "INSERT INTO tax_report(year, rulepack, options_json, import_id, created_at, file_path, summary_json) "
@@ -283,6 +354,72 @@ class TaxService:
         replaced = 0 if keep_previous else self._replace_older(year, pack.id, rid)
         self._prune()
         return {"id": rid, "docs": docs, "year": year, "replaced": replaced}
+
+    # -- Alle Jahre ----------------------------------------------------------------------------------------
+    def report_years(self) -> list[int]:
+        """Jahre, für die „Alle Jahre erzeugen“ Berichte anlegt: alle Jahre mit Daten (bis einschließlich laufendes)."""
+        _, inp, _ = self.overview()
+        return self.data_years(inp) if inp is not None else []
+
+    def generate_all(self, prog: Any | None = None, doc_ids: list[str] | None = None) -> dict[str, Any]:
+        """Erzeugt die Berichte aller Jahre mit Daten (je Jahr ersetzt die neue Fassung die alte) und packt sie in ein
+        ZIP. Ein fehlerhaftes Jahr stoppt den Lauf nicht; es wird im Ergebnis genannt."""
+        years = self.report_years()
+        if not years:
+            raise ValueError("Keine Jahre mit Daten – bitte zuerst Daten importieren.")
+        prog = prog or job_progress(self.ctx, ALL_JOB, ALL_LABEL, unit="Jahre", phases=["tax_years", "tax_zip"])
+        prog.phase("tax_years", total=len(years), text=f"{years[0]}–{years[-1]}")
+        created: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        for y in years:
+            try:
+                created.append(self.generate(y, doc_ids, keep_previous=False))
+            except Exception as e:
+                log.exception("Steuerbericht %s fehlgeschlagen", y)
+                failed.append({"year": y, "error": f"{type(e).__name__}: {e}"[:200]})
+            prog.advance(1, text=f"{y} erledigt")
+        prog.phase("tax_zip", text="ZIP-Archiv erstellen")
+        zip_rel = self._build_zip(created)
+        out = {"years": [c["year"] for c in created], "failed": failed, "zip": zip_rel,
+               "created": iso(datetime.now(UTC))}
+        self.ctx.db.set_state(ALL_ZIP_KEY, out)
+        prog.finish(not failed, result=f"{len(created)} Jahre erzeugt" + (f", {len(failed)} fehlgeschlagen"
+                                                                          if failed else ""))
+        return out
+
+    def _build_zip(self, created: list[dict[str, Any]]) -> str:
+        out_dir = self.ctx.config.reports_dir / "tax" / "all"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = now_local().strftime("%Y%m%d-%H%M%S")
+        path = out_dir / f"Steuerberichte-{stamp}.zip"
+        tmp = path.with_suffix(".tmp")
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            for c in sorted(created, key=lambda c: c["year"]):
+                for d in c["docs"]:
+                    found = self.report_file(c["id"], d["id"])
+                    if found is not None:
+                        zf.write(found[0], f"{c['year']}/{found[1]}")
+        tmp.replace(path)
+        for old in out_dir.glob("Steuerberichte-*.zip"):  # nur das neueste Archiv behalten
+            if old != path:
+                old.unlink(missing_ok=True)
+        return (Path("tax") / "all" / path.name).as_posix()
+
+    def all_zip(self) -> tuple[Path, str] | None:
+        """Neuestes ZIP aller Berichte (nur innerhalb des Berichtsordners)."""
+        st = self.ctx.db.get_state(ALL_ZIP_KEY)
+        rel = st.get("zip") if isinstance(st, dict) else None
+        if not rel:
+            return None
+        base = self.ctx.config.reports_dir.resolve()
+        path = (base / rel).resolve()
+        if base not in path.parents or not path.is_file():
+            return None
+        return path, path.name
+
+    def all_state(self) -> dict[str, Any]:
+        st = self.ctx.db.get_state(ALL_ZIP_KEY)
+        return st if isinstance(st, dict) else {}
 
     def reports(self, limit: int = 30) -> list[dict[str, Any]]:
         out = []
@@ -337,6 +474,38 @@ class TaxService:
         rows = self.ctx.db.q("SELECT id FROM tax_report ORDER BY id DESC LIMIT -1 OFFSET ?", (KEEP_REPORTS,))
         for r in rows:
             self.delete_report(r["id"])
+
+
+def all_running(ctx: AppContext) -> dict[str, Any] | None:
+    """Anzeige des laufenden Sammellaufs (oder None)."""
+    st = ctx.job_status().get(ALL_JOB) or {}
+    if not st.get("running"):
+        return None
+    p = view({**(st.get("progress") or {}), "running": True, "label": ALL_LABEL})
+    return None if p.get("stale") else p
+
+
+def start_all(ctx: AppContext, *, wait: bool = False) -> bool:
+    """Startet „Alle Jahre erzeugen“ im Hintergrund; ``False``, wenn bereits einer läuft."""
+    if not _ALL_LOCK.acquire(blocking=False):
+        return False
+    svc = tax_service(ctx)
+    prog = job_progress(ctx, ALL_JOB, ALL_LABEL, unit="Jahre", phases=["tax_years", "tax_zip"])
+
+    def work() -> None:
+        try:
+            svc.generate_all(prog)
+        except Exception as e:
+            log.exception("Alle Steuerberichte fehlgeschlagen")
+            prog.finish(False, result=f"{type(e).__name__}: {e}"[:300])
+        finally:
+            _ALL_LOCK.release()
+
+    if wait:
+        work()
+    else:
+        threading.Thread(target=work, name="tax-all", daemon=True).start()
+    return True
 
 
 _services: dict[int, TaxService] = {}

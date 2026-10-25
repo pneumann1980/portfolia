@@ -1426,6 +1426,26 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.52.0 – Steuerseite: freie Jahre, Reiter, Regelwerk-Dateien (YAML)
+
+* **Jahresauswahl** vom Jahr der ersten Buchung bis in die Zukunft (Auswahl bis laufendes Jahr + 2, jedes Jahr 2000–2100
+  eingebbar; Gruppen „Mit Daten“, „Ohne Daten“, „Zukunft (vorläufig)“). Berichte lassen sich für jedes Jahr erzeugen.
+* **Alle Jahre erzeugen** als Hintergrundlauf mit Fortschritt und ZIP-Download (je Jahr ersetzt die neue Fassung die
+  frühere; ein fehlerhaftes Jahr stoppt den Lauf nicht).
+* **Steuerseite vereinfacht:** Kopfleiste (Jahr · Parameterstand · „Bericht erzeugen“ · „Alle Jahre erzeugen“),
+  vier Reiter (Übersicht · Steuerjahr · Belege & Berichte · Einstellungen), Hinweise je Seite gruppiert/zugeklappt,
+  seltene Optionen unter „Erweitert“.
+* **Regelwerk-Dateien (Parameterstände)** als YAML: Upload mit Schema- und Plausibilitätsprüfung, Diff-Vorschau,
+  Aktivieren/Deaktivieren/Herunterladen/Löschen, Vorlage-Download; Gültigkeitsjahre, Status Entwurf/gültig, Quelle.
+  Der Bericht nennt Parameterstand und Datei-Prüfsumme (Datengrundlage); Entwürfe → Hinweis „vorläufig“.
+* **Regelschalter** (Standard = geltendes Recht): `crypto.exempt_after_holding`, `crypto.freigrenze_mode`
+  (Freigrenze/Freibetrag), `capital.derivative_loss_cap` (bisher fest 2023; jetzt Parameter: 20.000 € für Verluste
+  2021–2023). Grenze: nur Werte/Schalter, keine Rechenlogik; eine Auslegungswahl BMF 2022/2025 ist ohne belegten
+  rechenwirksamen Unterschied nicht umgesetzt (Verbrauchsfolge und Ertragseinstufung sind bereits Optionen).
+* **Grenzen:** Der Schalter `exempt_after_holding` und die Haltefrist richten sich nach dem Anschaffungsjahr der Lots;
+  `derivative_loss_cap` löst nur den Hinweis `deriv_loss_cap` aus (keine getrennte Verrechnung); Werte in Dateien gelten
+  „ab Jahr“ und werden von späteren Standardeinträgen überdeckt (Warnung beim Hochladen).
+
 ## 0.51.2 – Steuer-PDF und Berichtsliste (mobil)
 
 * **PDF:** Kopf- und Fußzeile kürzen den linken Text mit „…“, damit er nie in den rechten Text („Portfolia · Jahr“,

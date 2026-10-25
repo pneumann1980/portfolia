@@ -34,9 +34,11 @@ def client(config):
 def test_tax_page_and_year_views(client):
     r = client.get("/tax")
     assert r.status_code == 200
-    assert "Steuerjahr 2025" in r.text and "Informativ – keine Steuerberatung" in r.text
-    assert "Freigaben der nächsten 12 Monate" in r.text and "Übertragungshilfe" in r.text
-    r = client.get("/tax?year=2024")
+    assert "Informativ – keine Steuerberatung" in r.text and "Freigaben der nächsten 12 Monate" in r.text
+    assert 'class="tabs"' in r.text and "Belege &amp; Berichte" in r.text
+    r = client.get("/tax?tab=year")
+    assert "Steuerjahr 2025" in r.text and "Übertragungshilfe" in r.text
+    r = client.get("/tax?year=2024&tab=year")
     assert "Steuerjahr 2024" in r.text and "Freigrenze erreicht" in r.text  # § 22 Nr. 3: 328,10 € ≥ 256 €
     data = client.get("/api/tax/releases").json()
     assert data["months"] and all({"month", "value", "gain", "count"} <= set(m) for m in data["months"])
@@ -152,14 +154,14 @@ def test_delete_all_reports_of_a_year(client):
     client.post("/tax/report", data={"year": "2024", "doc": "report"}, follow_redirects=False)
     folders = [ctx.config.reports_dir / r["file_path"] for r in svc.reports() if r["year"] == 2025]
     assert len(folders) == 2 and all(f.is_dir() for f in folders)
-    page = client.get("/tax?year=2025").text
+    page = client.get("/tax?year=2025&tab=docs").text
     assert "Alle 2025 löschen" in page and "Vorige Fassung behalten" in page
     # je Bericht ein beschrifteter Löschen-Knopf (2× 2025, 1× 2024)
     assert page.count('class="btn sm danger"') == 3 and ">Löschen</button>" in page
     r = client.post("/tax/reports/2025/delete", follow_redirects=False)
     assert r.status_code == 303 and "saved=deleted" in r.headers["location"]
     assert [r["year"] for r in svc.reports()] == [2024] and not any(f.exists() for f in folders)
-    assert "Berichte gelöscht" in client.get("/tax?year=2025&saved=deleted").text
+    assert "Berichte gelöscht" in client.get("/tax?year=2025&tab=docs&saved=deleted").text
     del client.headers["X-CSRF-Token"]
     assert client.post("/tax/reports/2024/delete").status_code == 403
 
@@ -168,18 +170,18 @@ def test_isin_button_and_manual_run(client):
     import httpx
 
     ctx = client.app.state.ctx
-    page = client.get("/tax").text
+    page = client.get("/tax?tab=settings").text
     assert "ISIN jetzt abrufen" in page and 'action="/tax/isin/run"' in page
     ctx.http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"list": []})))
     r = client.post("/tax/isin/run", data={"year": "2025"}, follow_redirects=False)
     assert r.status_code == 303 and "saved=isin" in r.headers["location"]
-    assert "ISIN-Abruf abgeschlossen" in client.get("/tax?year=2025&saved=isin").text
+    assert "ISIN-Abruf abgeschlossen" in client.get("/tax?year=2025&tab=settings&saved=isin").text
     # tägliche Suche abschaltbar; der Knopf läuft weiter
     from app.prices.isin_web import isin_job
 
     assert client.post("/tax/isin/settings", data={"year": "2025"}, follow_redirects=False).status_code == 303
     assert ctx.settings.get("isin.auto") is False and isin_job(ctx) == {"skipped": 0}
-    assert 'name="auto" value="1" checked' not in client.get("/tax").text
+    assert 'name="auto" value="1" checked' not in client.get("/tax?tab=settings").text
     client.post("/tax/isin/settings", data={"year": "2025", "auto": "1"})
     assert ctx.settings.get("isin.auto") is True
     del client.headers["X-CSRF-Token"]

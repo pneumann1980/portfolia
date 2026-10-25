@@ -1,0 +1,6 @@
+{# Fortschritt „Alle Jahre erzeugen“ (htmx-Abfrage alle 2 s; fertig → Seite neu laden). Erwartet: p, year. #}
+{% from "partials/progress.html" import bar %}
+<div class="tax-all-progress" id="tax-all-progress" hx-get="/tax/reports/all/progress?year={{ (year|string)|urlencode }}" hx-trigger="every 2s" hx-swap="outerHTML" aria-live="polite">
+  {{ bar(p) }}
+  <p class="hint">Die Berichte werden lokal erzeugt. Sie können die Seite verlassen; der Lauf geht weiter.</p>
+</div>

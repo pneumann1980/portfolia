@@ -8,7 +8,8 @@ eines Landes nach Gesetzes- oder Formularänderungen aktualisieren – meist ohn
 app/tax/
   base.py        Datenmodell (TaxInput, TaxResult, Line, Meter, Table, FormField, Issue, Overview)
                  und die abstrakte Klasse RulePack
-  params.py      Parameter je Jahr: mitgelieferte YAML + Override aus /data/tax_rules/<id>.yaml
+  params.py      Parameter je Jahr: mitgelieferte YAML + Override aus /data/tax_rules/<id>.yaml + Regelwerk-Datei
+  rulesets.py    Regelwerk-Dateien (Parameterstände): Prüfung, Ablage, Vorschau, Vorlage
   registry.py    Findet Regelwerke unter app/tax/packs/<id>/ (PACK = Klasse), Auswahl „auto“
   classify.py    Einstufung von Wertpapieren (Aktie, Fondsart …) und Depots (Inland/Ausland)
   document.py    Dokumentmodell (Überschriften, Tabellen, Formularfelder, Hinweise)
@@ -69,6 +70,70 @@ forms:
 Zahlenfelder werden auf Tippfehler geprüft (z. B. `'1.000'` als Text); ein fehlerhafter Override wird
 komplett ignoriert und auf der Steuerseite angezeigt. Für Jahre nach `reviewed_through` werden die Werte
 des letzten Jahres fortgeschrieben und der Bericht enthält eine Warnung.
+
+## Regelwerk-Dateien (Parameterstände, ab 0.52)
+
+Neben dem lokalen Override (`/data/tax_rules/<id>.yaml`, gilt immer) lassen sich auf *Steuern → Einstellungen →
+Regelwerk-Dateien* beliebig viele **Parameterstände** als YAML importieren und per Auswahl „Parameterstand“ (Kopf der
+Steuerseite) aktivieren – z. B. eine frühere Rechtslage zum Vergleich oder ein Entwurf für ein künftiges Jahr.
+Ablage: `/data/tax_rules/<id>/sets/<kennung>.yaml` (Teil von Sicherung und Export).
+
+```yaml
+ruleset:                       # Kopf (Pflicht: name)
+  name: "BMF 2022 – frühere Rechtslage"
+  id: bmf-2022                 # optional; sonst aus dem Namen
+  valid_from: 2022             # gilt nur in diesen Veranlagungsjahren; sonst gilt der Standard
+  valid_to: 2024
+  status: draft                # draft = Entwurf (Berichte „vorläufig“) | valid = gültig
+  source: "BMF-Schreiben vom 10.05.2022, Rz. …"
+  description: "Vergleichsrechnung"
+rules:    {2022: {crypto: {freigrenze_23: 600}}}     # wie params.yaml (Werte gelten „ab Jahr“)
+per_year: {basiszins: {2027: 0.03}}
+forms:    {2026: {anlage_so: {fields: {so_23_gain: {line: "51"}}}}}
+```
+
+* **Grenze:** Eine Datei ändert nur Werte und dokumentierte Schalter – keine Rechenlogik.
+* **Prüfung beim Hochladen** (nichts wird bei Fehlern gespeichert): UTF-8, höchstens 256 KB, YAML-Syntax, Kopf,
+  unbekannte Abschnitte/Schlüssel/Formulare/Felder, Typen (Zahl, ganze Zahl, true/false, Auswahl) und Wertebereiche
+  (`app/tax/packs/<id>/schema.py`). **Warnungen:** starke Abweichung vom Standard (Faktor > 5), Status `valid` ohne
+  Quelle, Einträge nach `valid_to`, und Werte „ab Jahr X“, die ein **späterer Standardeintrag überdeckt** (die Werte
+  gelten ab dem Jahr, bis ein späteres sie ändert – im Zweifel das Jahr des Standardeintrags ebenfalls eintragen).
+* **Vorschau:** Unterschiede der wirksamen Parameter zum Standard je Jahr (zu Bereichen zusammengefasst) und
+  Plausibilitätshinweise; erst „Aktivieren“ macht die Datei wirksam. Aktivieren, Deaktivieren, Herunterladen, Löschen;
+  „Vorlage herunterladen“ liefert eine Startdatei mit den aktuell wirksamen Werten.
+* **Nachvollziehbarkeit:** Der Bericht nennt unter *Datengrundlage* den Parameterstand (Name, Jahre, Status, Quelle,
+  SHA-256 der Datei); dasselbe steht im Berichtsdatensatz (`summary.ruleset`). Version und Cache-Schlüssel tragen die
+  Kennung (`2026.3+bmf-2022`). Entwürfe erzeugen den Hinweis `ruleset_draft` („vorläufig“). Ist die Datei
+  nicht lesbar, gilt der Standard und die Seite meldet es.
+
+### Regelschalter (Standard = geltendes Recht)
+
+| Schlüssel (`rules.<Jahr>.…`) | Wirkung |
+|---|---|
+| `crypto.holding_period_years` | Haltefrist in Jahren (nach dem **Anschaffungsjahr** der Lots) |
+| `crypto.exempt_after_holding` | `false`: auch nach Fristablauf steuerpflichtig (Gesetzesänderung/Vergleich); Anschaffungsjahr maßgeblich |
+| `crypto.freigrenze_23`, `freigrenze_22_3` | Beträge § 23 Abs. 3 S. 5 / § 22 Nr. 3 S. 2 EStG |
+| `crypto.freigrenze_mode` | `freigrenze` (alles oder nichts) oder `freibetrag` (nur der übersteigende Teil) – nur § 23 |
+| `capital.*` | Abgeltungsteuer-, Soli-Satz, Sparer-Pauschbetrag, Vorabpauschale-Faktor, Quellensteuer-Grenze, Teilfreistellung |
+| `capital.derivative_loss_cap` | Verrechnungsgrenze für Verluste aus Termingeschäften (20.000 € für Verluste 2021–2023; `null` = keine). **Nur Hinweis**: Ein Überschreiten erzeugt die Warnung `deriv_loss_cap`; der übersteigende Teil wird nicht gesondert ausgewiesen. |
+
+**Auslegungswahl (BMF 2022 / BMF 2025)** ist bewusst *kein* eigener Schalter: Ein rechenwirksamer Unterschied ist nur
+bei der Verbrauchsfolge (wallet­bezogen oder global – bereits Option `scope`) und der Einstufung von Erträgen
+(Staking, Lending, Airdrops – bereits Option `income_map`) belegt; beides ist je Jahr wählbar. Weitere Unterschiede
+lassen sich über eine eigene Regelwerk-Datei abbilden, sobald sie rechtlich geprüft sind (siehe Rechtsgrundlagen-Prüfung
+unten). Gesetzentwürfe (z. B. BT-Drs. 21/5752) sind ungeprüft und nicht hinterlegt.
+
+## Steuerseite: Jahre, Reiter, Sammelerzeugung (ab 0.52)
+
+* **Jahresauswahl** im Kopf: vom Jahr der ersten Buchung bis zwei Jahre nach dem laufenden Jahr, gruppiert in
+  „Zukunft (vorläufig)“, „Mit Daten“, „Ohne Daten“; jedes Jahr 2000–2100 lässt sich über „Anderes Jahr“ eingeben. Berichte
+  sind für jedes Jahr erzeugbar (leere und künftige Jahre enthalten die Hinweise bzw. die Kennzeichnung „vorläufig“).
+* **Reiter:** Übersicht · Steuerjahr · Belege & Berichte · Einstellungen (`?tab=overview|year|docs|settings`).
+  Das Jahresergebnis wird nur für „Steuerjahr“ und „Einstellungen“ berechnet. Hinweise sind je Seite in einem
+  aufklappbaren Block zusammengefasst; seltene Optionen stehen unter „Erweitert“.
+* **Alle Jahre erzeugen:** Hintergrundlauf mit Fortschritt (Standard-Dokumente je Jahr mit Daten; je Jahr ersetzt die neue
+  Fassung die frühere); ein Fehler in einem Jahr stoppt den Lauf nicht. Ergebnis: ZIP (`<Jahr>/<Dokument>.pdf`) unter
+  `reports/tax/all/` – es wird nur das jeweils neueste behalten.
 
 ## Neues Land hinzufügen
 

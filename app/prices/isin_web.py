@@ -40,7 +40,7 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         await run_in_threadpool(isin_job, ctx, True)
         year = (await request.form()).get("year") or ""
-        target = f"/tax?year={year}&saved=isin#mapping"
+        target = f"/tax?year={year}&tab=settings&saved=isin#mapping"
         if request.headers.get("hx-request") == "true":
             return Response(status_code=204, headers={"HX-Redirect": target})
         return Response(status_code=303, headers={"Location": target})
@@ -49,7 +49,7 @@ def make_router() -> APIRouter:
     async def settings(request: Request) -> Response:
         f = await request.form()
         get_ctx(request).settings.set("isin.auto", f.get("auto") == "1")
-        target = f"/tax?year={f.get('year') or ''}#mapping"
+        target = f"/tax?year={f.get('year') or ''}&tab=settings#mapping"
         if request.headers.get("hx-request") == "true":
             return Response(status_code=204, headers={"HX-Redirect": target})
         return Response(status_code=303, headers={"Location": target})

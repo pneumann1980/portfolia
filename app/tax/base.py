@@ -295,6 +295,7 @@ class OptionSpec:
     per_year: bool = False
     group: str = "Allgemein"
     auto: bool = False  # leere Eingabe = automatisch berechnet (z. B. Verlustvortrag aus den Vorjahren)
+    advanced: bool = False  # seltene Option: in der Oberfläche unter „Erweitert“
 
 
 @dataclass
@@ -353,6 +354,7 @@ class ReportMeta:
     import_sha: str | None
     valuation_date: str | None
     profile: dict[str, Any]
+    ruleset: dict[str, Any] | None = None  # Regelwerk-Datei (Parameterstand) mit Hash, falls für das Jahr wirksam
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -399,6 +401,10 @@ class RulePack(ABC):
 
     def holding_end(self, asset: AssetInfo, acq: date) -> date | None:
         """Erster steuerfreier Tag nach Ablauf einer Haltefrist; ``None`` = keine Haltefrist."""
+        return None
+
+    def params_schema(self) -> dict[str, Any] | None:
+        """Schema für Regelwerk-Dateien (:mod:`app.tax.schema`); ``None`` = nur Strukturprüfung."""
         return None
 
     def carry_out(self, result: TaxResult) -> dict[str, Any]:

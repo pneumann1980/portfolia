@@ -76,7 +76,7 @@
           <td class="num" data-label="laut DKB">{% if it.value is sameas true %}ja{% elif it.value is sameas false %}nein{% else %}{{ it.value|eur }}{% endif %}</td>
           <td data-label="Gültigkeit">{{ it.scope }}</td></tr>{% endfor %}</tbody>
       </table></div>
-      <label><input type="checkbox" name="confirm" value="1"> Ich bestätige die Übernahme in die Steueroptionen (zurücknehmbar unter <a href="/tax?year={{ d.year }}#options">Steuer → Optionen</a>).</label>
+      <label><input type="checkbox" name="confirm" value="1"> Ich bestätige die Übernahme in die Steueroptionen (zurücknehmbar unter <a href="/tax?year={{ d.year }}&tab=settings#options">Steuer → Optionen</a>).</label>
       <div><button class="btn primary" type="submit">Ausgewählte Werte übernehmen</button></div>
     </form>
     {% endif %}

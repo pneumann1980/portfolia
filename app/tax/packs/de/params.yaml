@@ -35,6 +35,8 @@ rules:
     currency: EUR
     crypto:
       holding_period_years: 1        # § 23 Abs. 1 S. 1 Nr. 2 EStG
+      exempt_after_holding: true     # Schalter: false = auch nach Ablauf der Haltefrist steuerpflichtig (Gesetzesänderung)
+      freigrenze_mode: freigrenze    # Schalter: freigrenze (alles oder nichts) | freibetrag (nur der übersteigende Teil)
       freigrenze_23: 600             # § 23 Abs. 3 S. 5 EStG (bis VZ 2023)
       freigrenze_22_3: 256           # § 22 Nr. 3 S. 2 EStG
     capital:
@@ -44,17 +46,23 @@ rules:
       sparer_pauschbetrag_joint: 1602
       vp_factor: 0.7                 # § 18 Abs. 1 InvStG: 70 % des Basiszinses
       wht_credit_cap: 0.15           # anrechenbare Quellensteuer im DBA-Regelfall
+      derivative_loss_cap: null      # Verrechnungsgrenze Verluste aus Termingeschäften (null = keine); 20.000 € in 2021–2023
       teilfreistellung:              # § 20 InvStG (Privatvermögen)
         etf_equity: 0.30
         etf_mixed: 0.15
         fund_realestate: 0.60
         fund_realestate_foreign: 0.80
         etf_other: 0.0
+  2021:
+    capital:
+      derivative_loss_cap: 20000         # § 20 Abs. 6 S. 5 EStG a. F. (JStG 2020), Verluste ab 2021
   2023:
     capital:
       sparer_pauschbetrag_single: 1000   # § 20 Abs. 9 EStG ab VZ 2023
       sparer_pauschbetrag_joint: 2000
   2024:
+    capital:
+      derivative_loss_cap: null          # JStG 2024: Verrechnungsgrenze aufgehoben
     crypto:
       freigrenze_23: 1000            # ab VZ 2024
 

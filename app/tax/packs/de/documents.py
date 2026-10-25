@@ -31,12 +31,23 @@ def _person(meta: ReportMeta, year: int) -> list[tuple[str, str]]:
     return rows
 
 
+def _ruleset_text(meta: ReportMeta) -> str:
+    rs = meta.ruleset
+    if not rs:
+        return "Standard (mitgeliefert)"
+    years = f"{rs.get('valid_from') or '…'}–{rs.get('valid_to') or 'offen'}"
+    state = "gültig" if rs.get("status") == "valid" else "Entwurf – vorläufig"
+    text = f"„{rs.get('name')}“ ({years}, {state}), Datei SHA-256 {str(rs.get('sha256') or '')[:16]}…"
+    return text + (f", Quelle: {rs['source']}" if rs.get("source") else "")
+
+
 def _data_rows(result: TaxResult, meta: ReportMeta) -> list[tuple[str, str]]:
     src = meta.import_file or "–"
     if meta.import_sha:
         src += f" (SHA-256 {meta.import_sha[:12]}…)"
     rows = [
         ("Regelwerk", f"{result.pack_name} – Version {result.pack_version}"),
+        ("Parameterstand", _ruleset_text(meta)),
         ("Datenstand", f"Import #{meta.import_id or '–'}: {src}"),
         ("Bewertungsstichtag Import", fmt_date(meta.valuation_date)),
     ]

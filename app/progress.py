@@ -61,6 +61,9 @@ EXTRA_PHASES: list[tuple[str, str, int]] = [
     ("rep_collect", "Meldungen sammeln", 10),
     ("rep_ai", "KI erstellt den Bericht", 75),
     ("rep_save", "Prüfen und speichern", 15),
+    # Alle Steuerberichte erzeugen (app.tax.service)
+    ("tax_years", "Berichte je Jahr erzeugen", 90),
+    ("tax_zip", "ZIP-Archiv erstellen", 10),
 ]
 PHASE_LABEL = {k: v for k, v, _w in PHASES + EXTRA_PHASES} | {"done": "Fertig"}
 STALE_S = 180  # ohne Lebenszeichen gilt ein „laufender“ Fortschritt als abgebrochen

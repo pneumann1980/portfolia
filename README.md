@@ -1947,6 +1947,9 @@ Das Steuermodul ist bewusst modular (Details: [`docs/tax-rulepacks.md`](docs/tax
       anlage_so: {fields: {so_23_gain: {line: "51"}}}   # nur geprüfte Zeilennummern eintragen
       anlage_kap_inv: {fields: {inv_vp: {lines: {etf_equity: "9"}}}}   # KAP-INV: Zeile je Fondsart
   ```
+* **Parameterstände (Regelwerk-Dateien):** Auf *Steuern → Einstellungen* lassen sich YAML-Dateien mit Parametern und
+  Schaltern importieren (Prüfung, Diff-Vorschau, Aktivieren; gültig nur in ihren Jahren; Entwurf = „vorläufig“). Der Bericht nennt
+  Stand und Datei-Prüfsumme. Das Jahr ist frei wählbar (ab erster Buchung bis in die Zukunft); „Alle Jahre erzeugen“ liefert ein ZIP.
 
   Fehlerhafte Overrides werden ignoriert und auf der Steuerseite gemeldet. Jeder Bericht dokumentiert
   Regelwerk-, Parameter-Version und einen Fingerabdruck der verwendeten Parameter.

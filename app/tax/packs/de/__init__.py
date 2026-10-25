@@ -54,6 +54,8 @@ from app.tax.classify import ASSET_TYPES, FUND_TYPES
 from app.tax.packs.de.annex import FLAG_LABEL, _flags, annex_section, data_fingerprint
 from app.util.timeutil import add_years
 
+ADVANCED_OPTIONS = frozenset({"crypto_fee", "transfer_fee", "lost", "income_map", "wk_22_3", "include_domestic",
+                              "loss_cf_kap_shares", "loss_cf_kap_other"})
 KIND_LABEL = {"sell": "Verkauf", "trade": "Tausch", "fee": "Gebühr", "transfer_fee": "Transfergebühr",
               "spend": "Bezahlung", "lost": "Verlust", "gift": "Schenkung", "withdrawal": "Abgang"}
 ORIGIN_LABEL = {"buy": "Kauf", "trade": "Tausch", "income": "Ertrag", "deposit": "Zugang ohne Gegenbuchung",
@@ -178,6 +180,11 @@ class GermanyPack(RulePack):
                    "Kapitalerträge inkl. Investmentfonds (§ 20 EStG, InvStG).")
 
     # -- Parameter & Optionen -----------------------------------------------------------------------
+    def params_schema(self) -> dict[str, Any] | None:
+        from app.tax.packs.de.schema import SCHEMA
+
+        return SCHEMA
+
     def p(self, year: int) -> dict[str, Any]:
         years = self.years()
         if years:
@@ -185,7 +192,7 @@ class GermanyPack(RulePack):
         return self.year_params(year)
 
     def option_specs(self) -> list[OptionSpec]:
-        return [
+        specs = [
             OptionSpec("joint", "Zusammenveranlagung (Ehe/Lebenspartnerschaft)", "bool", False,
                        help="Verdoppelt den Sparer-Pauschbetrag (2.000 €). Die Steuerbescheinigung der Bank weist bei "
                             "Zusammenveranlagung 2.000 € als in Anspruch genommenen Pauschbetrag aus.",
@@ -231,6 +238,9 @@ class GermanyPack(RulePack):
             OptionSpec("loss_cf_kap_other", "Verlustvortrag sonstige Kapitalerträge aus Vorjahren", "amount", 0,
                        per_year=True, group="Verlustvorträge"),
         ]
+        for spec in specs:  # seltene Optionen erscheinen in der Oberfläche unter „Erweitert“
+            spec.advanced = spec.key in ADVANCED_OPTIONS
+        return specs
 
     def engine_options(self, base: EngineOptions, options: dict[str, Any], snapshot_years: list[int]) -> EngineOptions:
         scope = "account" if options.get("scope", "wallet") == "wallet" else "global"
@@ -255,8 +265,10 @@ class GermanyPack(RulePack):
     def holding_end(self, asset: AssetInfo, acq: date) -> date | None:
         if not asset.is_crypto:
             return None
-        years = int(self.p(acq.year)["crypto"]["holding_period_years"])
-        return add_years(acq, years) + timedelta(days=1)
+        cp = self.p(acq.year)["crypto"]
+        if not cp.get("exempt_after_holding", True):  # Schalter: Veräußerung nach Ablauf bleibt steuerpflichtig
+            return None
+        return add_years(acq, int(cp["holding_period_years"])) + timedelta(days=1)
 
     def documents(self) -> list[DocumentSpec]:
         return [
@@ -387,8 +399,11 @@ class GermanyPack(RulePack):
                 (rows_tax if taxable else rows_free).append(row)
         net = sum((r["gain"] for r in rows_tax), ZERO)
         fg = _d(P["crypto"]["freigrenze_23"])
+        fg_mode = str(P["crypto"].get("freigrenze_mode", "freigrenze"))
         if net <= 0 or net < fg:
             taxable = ZERO
+        elif fg_mode == "freibetrag":  # Schalter: nur der Teil über dem Betrag ist steuerpflichtig
+            taxable = net - fg
         else:
             taxable = net
         raw = o.get("loss_cf_23")
@@ -402,7 +417,8 @@ class GermanyPack(RulePack):
         return {
             "rows_tax": rows_tax, "rows_free": rows_free, "excluded": dict(excluded), "origins": dict(origins),
             "excluded_cost": dict(excluded_cost), "origin_cost": dict(origin_cost),
-            "missing": missing, "net": net, "freigrenze": fg, "taxable": taxable, "after_lcf": after,
+            "missing": missing, "net": net, "freigrenze": fg, "fg_mode": fg_mode, "taxable": taxable,
+            "after_lcf": after,
             "lcf": lcf, "lcf_auto": lcf_auto, "lcf_used": lcf_used, "carry_out": carry_out,
             "gains": sum((r["gain"] for r in rows_tax if r["gain"] > 0), ZERO),
             "losses": sum((r["gain"] for r in rows_tax if r["gain"] < 0), ZERO),
@@ -731,8 +747,11 @@ class GermanyPack(RulePack):
                 if b["kest"]:
                     S.append(Line("Einbehaltene Kapitalertragsteuer lt. Daten", money(b["kest"]), indent=1))
         gap23 = c["freigrenze"] - c["net"]
-        res.meters.append(Meter("fg23", "Freigrenze private Veräußerungsgeschäfte (§ 23 EStG)",
+        as_betrag = c["fg_mode"] == "freibetrag"
+        res.meters.append(Meter("fg23", ("Freibetrag" if as_betrag else "Freigrenze")
+                                + " private Veräußerungsgeschäfte (§ 23 EStG)",
                                 money(max(c["net"], ZERO)), money(c["freigrenze"]),
+                                kind="freibetrag" if as_betrag else "freigrenze",
                                 note="nur Kryptowerte aus diesem Import" + (
                                     f"; noch {fmt_eur(money(gap23))} Abstand" if 0 < c["net"] < c["freigrenze"]
                                     else "")))
@@ -887,6 +906,12 @@ class GermanyPack(RulePack):
         A.append("Haltefrist: Veräußerung steuerfrei, wenn zwischen Anschaffung und Veräußerung mehr als "
                  f"{P['crypto']['holding_period_years']} Jahr liegt; Fristberechnung nach §§ 187, 188 BGB – steuerfrei "
                  "ab dem Tag nach dem Jahrestag der Anschaffung.")
+        if not P["crypto"].get("exempt_after_holding", True):
+            A.append("Parameterstand: Veräußerungen bleiben auch nach Ablauf der Haltefrist steuerpflichtig "
+                     "(Schalter exempt_after_holding = false).")
+        if str(P["crypto"].get("freigrenze_mode", "freigrenze")) == "freibetrag":
+            A.append("Parameterstand: Der Betrag nach § 23 Abs. 3 S. 5 EStG wird als Freibetrag angewendet "
+                     "(nur der übersteigende Teil ist steuerpflichtig; Schalter freigrenze_mode = freibetrag).")
         A.append("Veräußerungspreis = Gegenwert laut Import (value_eur); Werbungskosten = Gebühren des Vorgangs; "
                  "Anschaffungskosten inkl. Anschaffungsnebenkosten.")
         A.append(f"Gebühren in Kryptowerten beim Handel: {choice('crypto_fee')}. Transfergebühren: "
@@ -927,6 +952,11 @@ class GermanyPack(RulePack):
             issues.append(Issue("warning", "params_unreviewed",
                            f"Steuerparameter für {year} sind nicht geprüft – Werte des Vorjahres fortgeschrieben. "
                            "Update oder /data/tax_rules/de.yaml prüfen."))
+        rs = (P.get("_meta") or {}).get("ruleset")
+        if rs and rs.get("status") != "valid":
+            issues.append(Issue("warning", "ruleset_draft",
+                                f"Parameterstand „{rs.get('name') or rs.get('slug')}“ ist ein Entwurf – "
+                                "Berechnung vorläufig, bis der Stand als „gültig“ geführt wird."))
         if year >= inp.today.year:
             issues.append(Issue("info", "year_open",
                                 f"Das Jahr {year} ist noch nicht abgeschlossen – vorläufige Werte."))
@@ -1047,11 +1077,14 @@ class GermanyPack(RulePack):
                 f"{fmt_eur(money(e_wo))} ({'über' if e_wo >= fg else 'unter'} der Freigrenze). Stammt ein Zufluss aus "
                 "einer Schenkung ohne Gegenleistung, ist er kein § 22 Nr. 3 – Einstufung unter „Erträge“ ändern.",
                 len(marked)))
-        if k["deriv_loss"] and year <= 2023 and -k["deriv_loss"] > Decimal(20000):
+        dcap = P["capital"].get("derivative_loss_cap")
+        if k["deriv_loss"] and dcap is not None and -k["deriv_loss"] > _d(dcap):
             issues.append(Issue("warning", "deriv_loss_cap",
                                 f"Verluste aus Termingeschäften {fmt_eur(money(-k['deriv_loss']))}: Für {year} galt "
-                                "vor dem Jahressteuergesetz 2024 eine Verrechnungsgrenze von 20.000 € (§ 20 Abs. 6 "
-                                "S. 5 a. F.) – Anwendung der Aufhebung auf diesen Fall prüfen."))
+                                f"eine Verrechnungsgrenze von {fmt_eur(_d(dcap), 0)} (§ 20 Abs. 6 S. 5 a. F., vor dem "
+                                "Jahressteuergesetz 2024) – der übersteigende Verlust ist nur mit Gewinnen aus "
+                                "Termingeschäften verrechenbar und wird hier nicht gesondert ausgewiesen; bitte "
+                                "prüfen."))
         if k["deriv_loss"] or any(r["type"] == ASSET_TYPES["derivative"] for r in k["rows_sales"]):
             issues.append(Issue("info", "derivatives",
                                 "Derivate (Turbo-/Optionsscheine, Warrants) sind als Termingeschäfte im Topf "

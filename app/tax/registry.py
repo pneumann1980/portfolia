@@ -48,24 +48,42 @@ def available() -> list[type[RulePack]]:
         return sorted(_classes.values(), key=lambda c: (c.country is None, c.name))
 
 
-def get(pack_id: str, override_dir: Path | None = None) -> RulePack | None:
+def get(pack_id: str, override_dir: Path | None = None, ruleset: Path | None = None) -> RulePack | None:
+    """``ruleset``: gewählte Regelwerk-Datei (Parameterstand); ohne Datei gilt der Standard."""
     with _lock:
         _discover()
         cls = _classes.get(pack_id)
         if cls is None:
             return None
-        key = (pack_id, str(override_dir) if override_dir else "")
+        key = (pack_id, str(override_dir) if override_dir else "", str(ruleset) if ruleset else "")
         inst = _instances.get(key)
         if inst is None:
-            params = ParamSet(pack_id, PACKS_DIR / pack_id / "params.yaml", override_dir)
+            params = ParamSet(pack_id, PACKS_DIR / pack_id / "params.yaml", override_dir, ruleset)
             inst = cls(params)
             _instances[key] = inst
         return inst
 
 
-def resolve(setting: str | None, tz: str | None = None, override_dir: Path | None = None) -> RulePack | None:
-    """``auto`` wählt anhand der Zeitzone (Europe/Berlin → de), sonst das neutrale Regelwerk."""
+def resolve_id(setting: str | None, tz: str | None = None) -> str:
+    """Kennung des Regelwerks: ``auto`` wählt anhand der Zeitzone (Europe/Berlin → de), sonst ``neutral``."""
     pack_id = (setting or "auto").strip().lower()
     if pack_id == "auto":
         pack_id = "de" if (tz or "").startswith("Europe/Berlin") or not tz else "neutral"
-    return get(pack_id, override_dir) or get("neutral", override_dir)
+    return pack_id if _has(pack_id) else "neutral"
+
+
+def _has(pack_id: str) -> bool:
+    with _lock:
+        _discover()
+        return pack_id in _classes
+
+
+def bundled_params(pack_id: str) -> Path:
+    return PACKS_DIR / pack_id / "params.yaml"
+
+
+def resolve(setting: str | None, tz: str | None = None, override_dir: Path | None = None,
+            ruleset: Path | None = None) -> RulePack | None:
+    """``auto`` wählt anhand der Zeitzone (Europe/Berlin → de), sonst das neutrale Regelwerk."""
+    pack_id = resolve_id(setting, tz)
+    return get(pack_id, override_dir, ruleset) or get("neutral", override_dir)
