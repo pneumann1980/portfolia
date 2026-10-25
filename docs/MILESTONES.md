@@ -1426,6 +1426,16 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.52.1 – Steuer-PDF: Wortmarke „Portfolia“ in Firefox/Android
+
+* **Fehlerbild:** Im PDF-Betrachter von Firefox (Android) fehlte im Titelblock das „P“ („ortfolia“); Adobe, Chrome, pdfium,
+  PyMuPDF und pdf.js am Desktop (auch Firefox 142) zeigten den Text korrekt – die Textebene war immer vollständig.
+* **Maßnahme (ohne Reproduktion im betroffenen Viewer):** Die einzige Besonderheit der Stelle war ein Bild mit Transparenzmaske
+  (Logo) unmittelbar vor dem Text. Das Logo wird jetzt **opak auf Weiß** gerechnet (keine `/SMask`), der Titelblock ist ein
+  eigener Flowable, der **erst den gesamten Text und zuletzt das Bild** zeichnet; ebenso die Kopfzeile. Test:
+  keine `/SMask`/`/Mask` im PDF, Text steht im Inhaltsstrom vor dem Bild.
+* **Grenze:** Ob der Viewer des Anwenders damit korrekt darstellt, ließ sich hier nicht prüfen.
+
 ## 0.52.0 – Steuerseite: freie Jahre, Reiter, Regelwerk-Dateien (YAML)
 
 * **Jahresauswahl** vom Jahr der ersten Buchung bis in die Zukunft (Auswahl bis laufendes Jahr + 2, jedes Jahr 2000–2100

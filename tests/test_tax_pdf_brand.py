@@ -98,3 +98,25 @@ def test_glyphs_missing_in_font_are_replaced(tmp_path: Path):
     pdf = pdfium.PdfDocument(P.render(doc, tmp_path / "f.pdf"))
     text = pdf[0].get_textpage().get_text_bounded()
     assert "Steuern -> Regelwerk <-> Bank" in text
+
+
+def test_logo_is_opaque_and_drawn_after_the_text(tmp_path: Path):
+    """Regression „ortfolia“: kein Bild mit Transparenzmaske vor dem Namen (Firefox/Android verlor das „P“)."""
+    import base64
+    import re
+    import zlib
+
+    out = P.render(_doc(pages=2), tmp_path / "g.pdf")
+    raw = out.read_bytes()
+    assert b"/SMask" not in raw and b"/Mask" not in raw  # Logo ist opak (auf Weiß gerechnet)
+    page1 = pdfium.PdfDocument(out)[0]
+    assert page1.get_textpage().get_text_bounded().count("Portfolia") >= 2
+    streams = []
+    for m in re.findall(rb"stream\r?\n(.*?)endstream", raw, re.S):
+        try:  # ReportLab: je nach Einstellung unkomprimiert oder ASCII85 + Flate
+            streams.append(zlib.decompress(base64.a85decode(m.strip().removesuffix(b"~>"))))
+        except Exception:
+            streams.append(m)
+    content = next(s for s in streams if b"(Portfolia)" in s and b"Do" in s)
+    # im Titelblock steht der Text vor dem Bild; kein Bild zwischen Textbeginn und Wortmarke
+    assert content.index(b"(Portfolia)") < content.index(b" Do")
