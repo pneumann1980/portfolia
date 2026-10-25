@@ -1426,6 +1426,16 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.49.0 – Steuer-PDFs: Portfolia-Name und Logo, Berichte ersetzen/löschen
+
+* Alle Steuer-PDFs (Report, Anlage SO, Anlage KAP) tragen das Portfolia-Logo (Variante für hellen Hintergrund,
+  `app/static/img/logo-light.png`) in der Kopfzeile jeder Seite und als Titelblock auf Seite 1; fehlt die Datei,
+  entsteht der Bericht ohne Logo. `Doc.brand=False` schaltet das Branding ab.
+* Ein neuer Bericht **ersetzt** die früheren Berichte desselben Jahres und Regelwerks (erst nach erfolgreicher
+  Erzeugung); „Vorige Fassung behalten“ hebt das auf. Zusätzlich „Alle {Jahr} löschen“ (mit Rückfrage).
+* Behoben: Zwei Berichte in derselben Sekunde teilten sich einen Ordner – Ordnernamen sind jetzt eindeutig, und
+  `delete_report` löscht keinen Ordner, den ein anderer Bericht nutzt.
+
 ## 0.48.2 – Reiter „Community“
 
 * Eigener Reiter *News → Community* für die Telegram-Kanäle (neueste zuerst, voller Text, Bild, Telegram-Link, Kanal-Filter).

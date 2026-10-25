@@ -176,8 +176,9 @@ def make_router() -> APIRouter:
         except (TypeError, ValueError):
             raise HTTPException(400, "Jahr fehlt") from None
         docs = [str(v) for k, v in f.multi_items() if k == "doc"]
+        keep = f.get("keep") == "1"
         try:
-            out = await run_in_threadpool(svc.generate, year, docs or None)
+            out = await run_in_threadpool(svc.generate, year, docs or None, keep)
         except ValueError as e:
             return HTMLResponse(f'<div class="alert warn"><span class="icon">!</span><div>{e}</div></div>')
         except Exception as e:  # PDF-Fehler sichtbar machen, Details ins Log
@@ -203,6 +204,13 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         tax_service(ctx).delete_report(rid)
         return _back(request, "/tax#reports")
+
+    @router.post("/tax/reports/{year}/delete")
+    def delete_year_reports(request: Request, year: int) -> Response:
+        ctx = get_ctx(request)
+        n = tax_service(ctx).delete_year(year)
+        log.info("Steuerberichte %s gelöscht (%d)", year, n)
+        return _back(request, f"/tax?year={year}&saved=deleted#reports")
 
     @router.get("/tax/quality", response_class=HTMLResponse)
     async def tax_quality(request: Request) -> HTMLResponse:

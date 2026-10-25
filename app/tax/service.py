@@ -220,7 +220,9 @@ class TaxService:
         return pack, inp, res
 
     # -- Berichte ----------------------------------------------------------------------------------------------
-    def generate(self, year: int, doc_ids: list[str] | None = None) -> dict[str, Any]:
+    def generate(self, year: int, doc_ids: list[str] | None = None, keep_previous: bool = False) -> dict[str, Any]:
+        """Erzeugt die gewählten PDFs. Standard: Die Berichte desselben Jahres und Regelwerks werden **ersetzt** (erst
+        nach erfolgreicher Erzeugung); ``keep_previous`` behält sie."""
         pack, inp, res = self.compute(year)
         if inp is None or res is None:
             raise ValueError("Kein aktiver Import – bitte zuerst Daten importieren.")
@@ -232,7 +234,12 @@ class TaxService:
         meta = ReportMeta(created_at=created, app_version=__version__, import_id=inp.pf.import_id,
                           import_file=inp.import_meta.get("filename"), import_sha=inp.import_meta.get("file_sha256"),
                           valuation_date=inp.import_meta.get("valuation_date"), profile=inp.profile)
-        rel_dir = Path("tax") / str(year) / f"{created.strftime('%Y%m%d-%H%M%S')}-{_SAFE.sub('_', pack.id)}"
+        stem = f"{created.strftime('%Y%m%d-%H%M%S')}-{_SAFE.sub('_', pack.id)}"
+        rel_dir = Path("tax") / str(year) / stem
+        n = 1
+        while (self.ctx.config.reports_dir / rel_dir).exists():  # zwei Berichte in derselben Sekunde
+            n += 1
+            rel_dir = Path("tax") / str(year) / f"{stem}-{n}"
         out_dir = self.ctx.config.reports_dir / rel_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         docs = []
@@ -256,8 +263,9 @@ class TaxService:
              iso(datetime.now(UTC)), rel_dir.as_posix(), json.dumps(summary, default=str)),
         ).lastrowid
         log.info("Steuerbericht %s erzeugt (%s, %d Dokumente)", year, pack.id, len(docs))
+        replaced = 0 if keep_previous else self._replace_older(year, pack.id, rid)
         self._prune()
-        return {"id": rid, "docs": docs, "year": year}
+        return {"id": rid, "docs": docs, "year": year, "replaced": replaced}
 
     def reports(self, limit: int = 30) -> list[dict[str, Any]]:
         out = []
@@ -287,10 +295,26 @@ class TaxService:
             return False
         base = self.ctx.config.reports_dir.resolve()
         path = (base / r["file_path"]).resolve()
-        if base in path.parents and path.is_dir():
+        shared = self.ctx.db.q1("SELECT 1 FROM tax_report WHERE file_path=? AND id<>?", (r["file_path"], rid))
+        if base in path.parents and path.is_dir() and shared is None:
             shutil.rmtree(path, ignore_errors=True)
         self.ctx.db.x("DELETE FROM tax_report WHERE id=?", (rid,))
         return True
+
+    def _replace_older(self, year: int, pack_id: str, keep_id: int) -> int:
+        """Löscht frühere Berichte desselben Jahres und Regelwerks (die neue Fassung ersetzt sie)."""
+        n = 0
+        for r in self.ctx.db.q("SELECT id FROM tax_report WHERE year=? AND rulepack LIKE ? AND id<>?",
+                               (year, f"{pack_id}@%", keep_id)):
+            n += self.delete_report(r["id"])
+        return n
+
+    def delete_year(self, year: int) -> int:
+        """Löscht alle Berichte eines Jahres; Rückgabe = Anzahl."""
+        n = 0
+        for r in self.ctx.db.q("SELECT id FROM tax_report WHERE year=?", (year,)):
+            n += self.delete_report(r["id"])
+        return n
 
     def _prune(self) -> None:
         rows = self.ctx.db.q("SELECT id FROM tax_report ORDER BY id DESC LIMIT -1 OFFSET ?", (KEEP_REPORTS,))

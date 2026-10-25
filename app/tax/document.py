@@ -75,6 +75,7 @@ class Doc:
     keywords: str = ""
     footer: str = ""
     orientation: str = "portrait"
+    brand: bool = True  # Portfolia-Name und Logo (Titelblock auf Seite 1, Logo in der Kopfzeile)
     blocks: list[Any] = field(default_factory=list)
 
     def add(self, *blocks: Any) -> Doc:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import threading
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
@@ -19,6 +20,7 @@ from reportlab.lib.enums import TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfbase.ttfonts import TTFont
@@ -27,6 +29,7 @@ from reportlab.platypus import (
     BaseDocTemplate,
     CondPageBreak,
     Frame,
+    Image,
     KeepTogether,
     LongTable,
     NextPageTemplate,
@@ -56,6 +59,11 @@ CHUNK_ROWS = 400
 MARGIN_X = 15 * mm
 MARGIN_TOP = 18 * mm
 MARGIN_BOTTOM = 16 * mm
+BRAND_NAME = "Portfolia"
+BRAND_TAGLINE = "Portfolio- und Steuerauswertung"
+LOGO_PATH = Path(__file__).resolve().parent.parent / "static" / "img" / "logo-light.png"  # für hellen Hintergrund
+LOGO_HEADER = 5.2 * mm
+LOGO_TITLE = 13 * mm
 
 
 def fonts() -> dict[str, str]:
@@ -78,6 +86,18 @@ def fonts() -> dict[str, str]:
         return _FONTS
 
 
+@lru_cache(maxsize=1)
+def _logo_file() -> str | None:
+    """Pfad des Logos; fehlt oder beschädigt die Datei, läuft der Bericht ohne Logo (nie ein Fehler)."""
+    try:
+        if LOGO_PATH.is_file():
+            ImageReader(os.fspath(LOGO_PATH))  # prüft, dass die Datei lesbar ist
+            return os.fspath(LOGO_PATH)
+    except Exception:  # pragma: no cover - nur bei beschädigter Datei
+        return None
+    return None
+
+
 # ----------------------------------------------------------------------------------------------------
 # Seitenvorlagen
 # ----------------------------------------------------------------------------------------------------
@@ -88,6 +108,7 @@ class _NumberedCanvas(rl_canvas.Canvas):
     header_left = ""
     header_right = ""
     footer_left = ""
+    brand = True
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -115,7 +136,15 @@ class _NumberedCanvas(rl_canvas.Canvas):
         self.line(MARGIN_X, 11 * mm, w - MARGIN_X, 11 * mm)
         self.setFillColor(INK2)
         self.setFont(f["regular"], 7.5)
-        self.drawString(MARGIN_X, h - 10.5 * mm, self.header_left[:140])
+        x = MARGIN_X
+        logo = _logo_file() if self.brand else None
+        if logo:
+            try:
+                self.drawImage(logo, MARGIN_X, h - 11.4 * mm, width=LOGO_HEADER, height=LOGO_HEADER, mask="auto")
+                x += LOGO_HEADER + 2 * mm
+            except Exception:  # pragma: no cover - Bild nicht zeichenbar → ohne Logo weiter
+                pass
+        self.drawString(x, h - 10.5 * mm, self.header_left[:140])
         self.drawRightString(w - MARGIN_X, h - 10.5 * mm, self.header_right)
         self.drawString(MARGIN_X, 7.5 * mm, self.footer_left[:180])
         self.drawRightString(w - MARGIN_X, 7.5 * mm, f"Seite {self._pageNumber} von {total}")
@@ -125,7 +154,8 @@ class _NumberedCanvas(rl_canvas.Canvas):
 def _canvas_class(doc: D.Doc, header_right: str) -> type[_NumberedCanvas]:
     return type("DocCanvas", (_NumberedCanvas,), {"header_left": doc.title + (f" – {doc.subtitle}" if doc.subtitle
                                                                                else ""),
-                                                  "header_right": header_right, "footer_left": doc.footer})
+                                                  "header_right": header_right, "footer_left": doc.footer,
+                                                  "brand": doc.brand})
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -329,6 +359,27 @@ class Renderer:
             out += [KeepTogether([Paragraph(escape(form), self.st["h2"]), t]), RLSpacer(1, 2 * mm)]
         return out
 
+    def brand_block(self, orientation: str) -> list[Any]:
+        """Titelblock auf Seite 1: Logo, Name und Zeile darunter (nur wenn ``Doc.brand``)."""
+        logo = _logo_file()
+        name = Paragraph(escape(BRAND_NAME), ParagraphStyle("brand", fontName=self.f["bold"], fontSize=17, leading=20,
+                                                           textColor=INK))
+        tag = Paragraph(escape(BRAND_TAGLINE), self.st["small"])
+        cells: list[Any] = []
+        widths = [self._width(orientation)]
+        if logo:
+            try:
+                cells.append(Image(logo, width=LOGO_TITLE, height=LOGO_TITLE, mask="auto"))
+                widths = [LOGO_TITLE + 3 * mm, self._width(orientation) - LOGO_TITLE - 3 * mm]
+            except Exception:  # pragma: no cover
+                cells = []
+        cells.append([name, tag])
+        t = RLTable([cells], colWidths=widths)
+        t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                               ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
+                               ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+        return [t, RLSpacer(1, 4 * mm)]
+
     # -- Dokument ------------------------------------------------------------------------------------
     def render(self, doc: D.Doc, path: Path, header_right: str = "Portfolia") -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -346,7 +397,7 @@ class Renderer:
                              pageTemplates=templates, title=doc.title, author="Portfolia", subject=doc.subject,
                              keywords=doc.keywords, creator="Portfolia", leftMargin=MARGIN_X, rightMargin=MARGIN_X,
                              topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM)
-        story: list[Any] = []
+        story: list[Any] = self.brand_block(doc.orientation) if doc.brand else []
         orient = doc.orientation
         for b in doc.blocks:
             if isinstance(b, D.PageBreak):

@@ -43,7 +43,7 @@
   „{{ pack.name }}“ (Version {{ pack.version }}). Maßgeblich sind amtliche Vordrucke/ELSTER und Steuerbescheinigungen.</div></div>
 <p class="hint"><a href="/tax/data">Steuerdaten je Jahr</a> – externe Steuerberichte (JSON/CSV) je Steuerjahr verwalten und Buchungen zuordnen.</p>
 {% if override_error %}<div class="alert crit"><span class="icon">!</span><div>Lokale Steuerparameter ignoriert: {{ override_error }}</div></div>{% endif %}
-{% if saved %}<div class="alert good"><span class="icon">✓</span><div>{% if saved.startswith('report') %}Bericht erzeugt – Download unten.{% else %}Gespeichert.{% endif %}</div></div>{% endif %}
+{% if saved %}<div class="alert good"><span class="icon">✓</span><div>{% if saved.startswith('report') %}Bericht erzeugt – Download unten.{% elif saved == 'deleted' %}Berichte gelöscht.{% else %}Gespeichert.{% endif %}</div></div>{% endif %}
 
 {% if ov and ov.has_holding_period %}
 {% for i in ov.issues %}<div class="alert warn"><span class="icon">!</span><div>{{ i.text }}</div></div>{% endfor %}
@@ -162,11 +162,13 @@
     {% for d in documents %}
     <label class="check"><input type="checkbox" name="doc" value="{{ d.id }}" {% if d.default %}checked{% endif %}> <span><b>{{ d.title }}</b><br><span class="hint">{{ d.description }}</span></span></label>
     {% endfor %}
+    <label class="check"><input type="checkbox" name="keep" value="1"> <span>Vorige Fassung behalten<br><span class="hint">Standard: Ein neuer Bericht ersetzt die früheren Berichte {{ year }}.</span></span></label>
     <div class="row"><button class="btn primary" type="submit">Steuerbericht {{ year }} erzeugen</button><span id="rep-spin" class="htmx-indicator spinner"></span></div>
     <div id="report-result"></div>
   </form>
   {% if reports %}
-  <h3 style="margin-top:14px">Erzeugte Berichte</h3>
+  <div class="row" style="margin-top:14px;justify-content:space-between;align-items:center"><h3 style="margin:0">Erzeugte Berichte</h3>
+    {% if reports|selectattr('year', 'equalto', year)|list %}<form method="post" action="/tax/reports/{{ year }}/delete" data-confirm="Alle erzeugten Berichte {{ year }} löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Alle {{ year }} löschen</button></form>{% endif %}</div>
   <ul class="list">
     {% for r in reports %}
     <li class="list-item">

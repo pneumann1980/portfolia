@@ -121,3 +121,42 @@ def test_quality_page_loads_tax_fragment(client):
     assert r.status_code == 200 and 'hx-get="/tax/quality"' in r.text
     r = client.get("/tax/quality")
     assert r.status_code == 200 and "Regelwerk" in r.text
+
+
+def test_new_report_replaces_previous_unless_kept(client):
+    ctx = client.app.state.ctx
+    svc = tax_service(ctx)
+    for _ in range(2):  # zweiter Lauf ersetzt den ersten (gleiches Jahr und Regelwerk)
+        assert client.post("/tax/report", data={"year": "2025", "doc": "report"}, follow_redirects=False
+                           ).status_code == 303
+    reps = [r for r in svc.reports() if r["year"] == 2025]
+    assert len(reps) == 1
+    first = reps[0]
+    folder = ctx.config.reports_dir / first["file_path"]
+    assert folder.is_dir()
+    # „Vorige Fassung behalten“ → beide bleiben
+    client.post("/tax/report", data={"year": "2025", "doc": "report", "keep": "1"}, follow_redirects=False)
+    assert len([r for r in svc.reports() if r["year"] == 2025]) == 2 and folder.is_dir()
+    # anderes Jahr bleibt beim Ersetzen unberührt
+    client.post("/tax/report", data={"year": "2024", "doc": "report"}, follow_redirects=False)
+    client.post("/tax/report", data={"year": "2025", "doc": "report"}, follow_redirects=False)
+    years = sorted(r["year"] for r in svc.reports())
+    assert years == [2024, 2025] and not folder.exists()
+
+
+def test_delete_all_reports_of_a_year(client):
+    ctx = client.app.state.ctx
+    svc = tax_service(ctx)
+    client.post("/tax/report", data={"year": "2025", "doc": "report", "keep": "1"}, follow_redirects=False)
+    client.post("/tax/report", data={"year": "2025", "doc": "anlage_so", "keep": "1"}, follow_redirects=False)
+    client.post("/tax/report", data={"year": "2024", "doc": "report"}, follow_redirects=False)
+    folders = [ctx.config.reports_dir / r["file_path"] for r in svc.reports() if r["year"] == 2025]
+    assert len(folders) == 2 and all(f.is_dir() for f in folders)
+    page = client.get("/tax?year=2025").text
+    assert "Alle 2025 löschen" in page and "Vorige Fassung behalten" in page
+    r = client.post("/tax/reports/2025/delete", follow_redirects=False)
+    assert r.status_code == 303 and "saved=deleted" in r.headers["location"]
+    assert [r["year"] for r in svc.reports()] == [2024] and not any(f.exists() for f in folders)
+    assert "Berichte gelöscht" in client.get("/tax?year=2025&saved=deleted").text
+    del client.headers["X-CSRF-Token"]
+    assert client.post("/tax/reports/2024/delete").status_code == 403
