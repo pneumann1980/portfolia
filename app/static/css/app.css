@@ -1033,3 +1033,4 @@ details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
 #rulesets .report-docs { align-items: center; }
 .tax-all-progress { margin: 6px 0; }
 #rulesets code { overflow-wrap: anywhere; }
+.taxbar-reports { display: block; margin-top: 4px; overflow-wrap: anywhere; }

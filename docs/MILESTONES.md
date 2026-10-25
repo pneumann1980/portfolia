@@ -1426,6 +1426,14 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.52.2 – Steuerseite: Berichte überall erreichbar, schneller
+
+* **Berichte nach Neustart „weg“:** Die Berichte waren vorhanden (Datenbank und `/data/reports`), standen nach dem Umbau aber nur im
+  Reiter „Belege & Berichte“, die Startansicht „Übersicht“ zeigte sie nicht. Jetzt nennt die Kopfleiste auf **jedem Reiter** die
+  erzeugten Berichte des gewählten Jahres mit Download-Links, der Reiter trägt die Anzahl. Test inkl. Neustart mit derselben Datenablage.
+* **Ladezeit:** `ParamSet.for_year` wurde je Buchungsteil mehrfach neu berechnet (Tiefenmischung, bei 0.52 zusätzlich mehrere Dateiprüfungen).
+  Das Ergebnis wird jetzt zwischengespeichert (bis sich eine Datei ändert): 20.000 Aufrufe 7,7 s → 0,4 s.
+
 ## 0.52.1 – Steuer-PDF: Wortmarke „Portfolia“ in Firefox/Android
 
 * **Fehlerbild:** Im PDF-Betrachter von Firefox (Android) fehlte im Titelblock das „P“ („ortfolia“); Adobe, Chrome, pdfium,

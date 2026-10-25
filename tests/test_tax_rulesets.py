@@ -414,3 +414,33 @@ def test_progress_partial_while_running(client):
     page = client.get("/tax?tab=docs").text
     assert 'id="tax-all-progress"' in page
     prog.finish(True, result="x")
+
+
+def test_reports_are_reachable_from_every_tab_and_survive_restart(client, config):
+    svc = tax_service(client.app.state.ctx)
+    r = client.post("/tax/report", data={"year": "2025", "doc": ["report"]}, follow_redirects=False)
+    assert r.status_code == 303
+    rid = svc.reports()[0]["id"]
+    for tab in ("overview", "year", "settings", "docs"):  # auch auf der Startansicht, nicht nur im Reiter „Berichte“
+        page = client.get(f"/tax?year=2025&tab={tab}").text
+        assert f"/tax/report/{rid}/report.pdf" in page and "Erzeugte Berichte 2025" in page, tab
+    assert "noch keinen Bericht" in client.get("/tax?year=2024&tab=overview").text
+    # Neustart mit derselben Datenablage: Berichte stehen weiter in Datenbank und Dateiablage
+    with TestClient(build_app(config, start_scheduler=False)) as c2:
+        c2.get("/settings")
+        page = c2.get("/tax?year=2025").text
+        assert f"/tax/report/{rid}/report.pdf" in page
+        assert c2.get(f"/tax/report/{rid}/report.pdf").status_code == 200
+
+
+def test_year_params_are_cached_but_follow_file_changes(tmp_path: Path):
+    f = _put(tmp_path, GOOD)
+    ps = ParamSet("de", BUNDLED, None, f)
+    assert ps.for_year(2025) is ps.for_year(2025)  # zwischengespeichert
+    assert ps.for_year(2025)["crypto"]["freigrenze_23"] == 600
+    f.write_text(GOOD.replace("freigrenze_23: 600", "freigrenze_23: 700"), encoding="utf-8")
+    import os
+
+    st = f.stat()
+    os.utime(f, (st.st_atime, st.st_mtime + 5))  # Änderung sicher erkennbar
+    assert ps.for_year(2025)["crypto"]["freigrenze_23"] == 700

@@ -111,6 +111,11 @@
   <div class="hint taxbar-note">
     {% if year in years %}Jahr mit Daten.{% elif year > today.year %}<span class="badge warn">Zukunft</span> vorläufig: noch keine Buchungen, Parameter ggf. nicht geprüft.{% else %}Keine Buchungen in {{ year }} – der Bericht enthält nur die Hinweise.{% endif %}
     {% if ruleset_info %}Parameterstand „{{ ruleset_info.name }}“ ({{ 'gültig' if ruleset_info.status == 'valid' else 'Entwurf' }}){% if not ruleset_info.applies %} gilt nur {{ ruleset_info.valid_from or '…' }}–{{ ruleset_info.valid_to or 'offen' }}; für {{ year }} gilt der Standard{% elif ruleset_info.status != 'valid' %} – Ergebnisse vorläufig{% endif %}.{% endif %}
+    {% set yr_reports = reports|selectattr('year', 'equalto', year)|list %}
+    {% if yr_reports %}<span class="taxbar-reports">Erzeugte Berichte {{ year }}:
+      {% for d in yr_reports[0].summary.docs or [] %}<a href="/tax/report/{{ yr_reports[0].id }}/{{ d.id }}.pdf" download>{{ d.title }}</a>{{ ' · ' if not loop.last }}{% endfor %}
+      · <a href="/tax?year={{ year }}&tab=docs#reports">alle {{ reports|length }} Berichte</a></span>
+    {% elif reports %}<span class="taxbar-reports">Für {{ year }} gibt es noch keinen Bericht · <a href="/tax?year={{ year }}&tab=docs#reports">alle {{ reports|length }} Berichte</a></span>{% endif %}
     <details class="inline-details"><summary>Anderes Jahr</summary>
       <form method="get" action="/tax" class="row" style="gap:6px"><input type="hidden" name="tab" value="{{ tab }}">
         <input type="number" name="year" min="{{ MIN_YEAR }}" max="{{ MAX_YEAR }}" value="{{ year }}" aria-label="Jahr eingeben" style="width:6.5rem"><button class="btn sm" type="submit">Anzeigen</button></form></details>
@@ -118,7 +123,7 @@
 </section>
 
 <nav class="tabs" aria-label="Bereiche der Steuerseite">
-  {% for tid, tlabel in tabs %}<a class="{{ 'active' if tid == tab }}" href="/tax?year={{ year }}&tab={{ tid }}" {{ 'aria-current=page' if tid == tab }}>{{ tlabel }}</a>{% endfor %}
+  {% for tid, tlabel in tabs %}<a class="{{ 'active' if tid == tab }}" href="/tax?year={{ year }}&tab={{ tid }}" {{ 'aria-current=page' if tid == tab }}>{{ tlabel }}{% if tid == 'docs' and reports %} <span class="badge">{{ reports|length }}</span>{% endif %}</a>{% endfor %}
 </nav>
 {% if tab == 'overview' %}
 {% if ov and ov.has_holding_period %}

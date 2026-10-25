@@ -110,6 +110,7 @@ class ParamSet:
         self._mtime: tuple[float, float, float] | None = None
         self._data: dict[str, Any] = {}
         self._merged: dict[str, Any] | None = None
+        self._years: dict[int, dict[str, Any]] = {}  # Ergebnis von for_year (wird je Aufruf hundertfach gebraucht)
         self.reload()
 
     # -- Laden --------------------------------------------------------------------------------------
@@ -134,6 +135,7 @@ class ParamSet:
                 log.warning("Steuerparameter-Override ignoriert: %s", self.override_error)
         self._data = data
         self._merged = None
+        self._years = {}
         self.ruleset_error, self.ruleset_head, self.ruleset_sha = None, {}, ""
         if self.ruleset_path is not None:
             try:
@@ -207,6 +209,15 @@ class ParamSet:
         return rt is None or year <= int(rt)
 
     def for_year(self, year: int) -> dict[str, Any]:
+        """Wirksame Parameter eines Jahres. Das Ergebnis wird zwischengespeichert (bis sich eine Datei ändert) und
+        **nicht verändert** – Aufrufer lesen nur."""
+        self._fresh()
+        hit = self._years.get(year)
+        if hit is None:
+            hit = self._years[year] = self._for_year(year)
+        return hit
+
+    def _for_year(self, year: int) -> dict[str, Any]:
         d = self._data_for(year)
         eff: dict[str, Any] = {}
         for y in sorted(k for k in d.get("rules", {}) if isinstance(k, int)):
