@@ -241,13 +241,6 @@ def make_router() -> APIRouter:
         log.info("Alle Steuerberichte gelöscht (%d)", n)
         return _back(request, "/tax?tab=docs&saved=deleted_all#reports")
 
-    @router.post("/tax/reports/{year}/delete")
-    def delete_year_reports(request: Request, year: int) -> Response:
-        ctx = get_ctx(request)
-        n = tax_service(ctx).delete_year(year)
-        log.info("Steuerberichte %s gelöscht (%d)", year, n)
-        return _back(request, f"/tax?year={year}&tab=docs&saved=deleted#reports")
-
     # -- Alle Jahre erzeugen ---------------------------------------------------------------------------
     @router.post("/tax/reports/all")
     async def create_all(request: Request) -> Response:

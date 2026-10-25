@@ -146,24 +146,26 @@ def test_new_report_replaces_previous_unless_kept(client):
     assert years == [2024, 2025] and not folder.exists()
 
 
-def test_delete_all_reports_of_a_year(client):
+def test_report_list_has_one_delete_button_per_report_and_one_for_all(client):
     ctx = client.app.state.ctx
     svc = tax_service(ctx)
     client.post("/tax/report", data={"year": "2025", "doc": "report", "keep": "1"}, follow_redirects=False)
     client.post("/tax/report", data={"year": "2025", "doc": "anlage_so", "keep": "1"}, follow_redirects=False)
     client.post("/tax/report", data={"year": "2024", "doc": "report"}, follow_redirects=False)
-    folders = [ctx.config.reports_dir / r["file_path"] for r in svc.reports() if r["year"] == 2025]
-    assert len(folders) == 2 and all(f.is_dir() for f in folders)
+    reps = svc.reports()
+    assert len(reps) == 3
     page = client.get("/tax?year=2025&tab=docs").text
-    assert "Nur 2025 löschen" in page and "Alle Berichte löschen" in page and "Vorige Fassung behalten" in page
-    # je Bericht ein beschrifteter Löschen-Knopf (2× 2025, 1× 2024) und „Alle Berichte löschen“
+    assert "Alle Berichte löschen" in page and "Vorige Fassung behalten" in page and "Nur 2025" not in page
+    # je Bericht ein beschrifteter Löschen-Knopf und „Alle Berichte löschen“
     assert page.count('class="btn sm danger"') == 4 and ">Löschen</button>" in page
-    r = client.post("/tax/reports/2025/delete", follow_redirects=False)
-    assert r.status_code == 303 and "saved=deleted" in r.headers["location"]
-    assert [r["year"] for r in svc.reports()] == [2024] and not any(f.exists() for f in folders)
-    assert "Berichte des Jahres gelöscht" in client.get("/tax?year=2025&tab=docs&saved=deleted").text
+    victim = next(r for r in reps if r["year"] == 2024)
+    folder = ctx.config.reports_dir / victim["file_path"]
+    assert folder.is_dir()
+    r = client.post(f"/tax/report/{victim['id']}/delete", follow_redirects=False)
+    assert r.status_code == 303 and not folder.exists()
+    assert sorted(x["year"] for x in svc.reports()) == [2025, 2025]
     del client.headers["X-CSRF-Token"]
-    assert client.post("/tax/reports/2024/delete").status_code == 403
+    assert client.post("/tax/report/1/delete").status_code == 403
 
 
 def test_isin_button_and_manual_run(client):

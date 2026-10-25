@@ -463,13 +463,6 @@ class TaxService:
             n += self.delete_report(r["id"])
         return n
 
-    def delete_year(self, year: int) -> int:
-        """Löscht alle Berichte eines Jahres; Rückgabe = Anzahl."""
-        n = 0
-        for r in self.ctx.db.q("SELECT id FROM tax_report WHERE year=?", (year,)):
-            n += self.delete_report(r["id"])
-        return n
-
     def delete_all(self) -> int:
         """Löscht **alle** Berichte aller Jahre samt Sammel-ZIP; Rückgabe = Anzahl der Berichte."""
         n = 0

@@ -1426,10 +1426,14 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.52.4 – Jahres-Löschknopf entfernt
+
+* „Nur {Jahr} löschen“ entfällt (überflüssig neben „Löschen“ je Bericht und „Alle Berichte löschen“); Route und Service-Funktion entfernt.
+
 ## 0.52.3 – „Alle Berichte löschen“
 
 * Der Knopf „Alle {Jahr} löschen“ löschte nur das gewählte Jahr. Neu: **„Alle Berichte löschen“** entfernt alle Berichte aller Jahre samt
-  Sammel-ZIP (mit Rückfrage und Anzahl); „Nur {Jahr} löschen“ bleibt als kleinere Schaltfläche.
+  Sammel-ZIP (mit Rückfrage und Anzahl). Einzelne Berichte löscht der Knopf „Löschen“ am Bericht; der Jahres-Knopf entfällt.
 
 ## 0.52.2 – Steuerseite: Berichte überall erreichbar, schneller
 

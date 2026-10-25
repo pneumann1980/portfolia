@@ -76,7 +76,7 @@
   „{{ pack.name }}“ (Version {{ pack.version }}). Maßgeblich sind amtliche Vordrucke/ELSTER und Steuerbescheinigungen.</div></div>
 {% if override_error %}<div class="alert crit"><span class="icon">!</span><div>Lokale Steuerparameter ignoriert: {{ override_error }}</div></div>{% endif %}
 {% if ruleset_error %}<div class="alert crit"><span class="icon">!</span><div>Regelwerk-Datei ignoriert (es gilt der Standard): {{ ruleset_error }}</div></div>{% endif %}
-{% if saved %}<div class="alert {{ 'warn' if saved == 'allbusy' else 'good' }}"><span class="icon">{{ '!' if saved == 'allbusy' else '✓' }}</span><div>{% if saved.startswith('report') %}Bericht erzeugt – Download unten.{% elif saved == 'deleted' %}Berichte des Jahres gelöscht.{% elif saved == 'deleted_all' %}Alle Berichte gelöscht.{% elif saved == 'isin' %}ISIN-Abruf abgeschlossen.{% elif saved == 'allbusy' %}Es läuft bereits eine Sammelerzeugung.{% elif saved == 'ruleset' %}Regelwerk-Datei gespeichert und geprüft – Vorschau unten; erst „Aktivieren“ macht sie wirksam.{% elif saved == 'ruleset_deleted' %}Regelwerk-Datei gelöscht.{% else %}Gespeichert.{% endif %}</div></div>{% endif %}
+{% if saved %}<div class="alert {{ 'warn' if saved == 'allbusy' else 'good' }}"><span class="icon">{{ '!' if saved == 'allbusy' else '✓' }}</span><div>{% if saved.startswith('report') %}Bericht erzeugt – Download unten.{% elif saved == 'deleted_all' %}Alle Berichte gelöscht.{% elif saved == 'isin' %}ISIN-Abruf abgeschlossen.{% elif saved == 'allbusy' %}Es läuft bereits eine Sammelerzeugung.{% elif saved == 'ruleset' %}Regelwerk-Datei gespeichert und geprüft – Vorschau unten; erst „Aktivieren“ macht sie wirksam.{% elif saved == 'ruleset_deleted' %}Regelwerk-Datei gelöscht.{% else %}Gespeichert.{% endif %}</div></div>{% endif %}
 <section class="card taxbar" id="taxbar" aria-label="Steuerjahr, Parameterstand und Berichte">
   <form method="get" action="/tax" class="field-form">
     <input type="hidden" name="tab" value="{{ tab }}">
@@ -276,7 +276,6 @@
   {% if reports %}
   <div class="row" style="margin-top:14px;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><h3 style="margin:0">Erzeugte Berichte <span class="badge">{{ reports|length }}</span></h3>
     <span class="row" style="gap:6px;flex-wrap:wrap">
-    {% if reports|selectattr('year', 'equalto', year)|list %}<form method="post" action="/tax/reports/{{ year }}/delete" data-confirm="Alle erzeugten Berichte {{ year }} löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Nur {{ year }} löschen</button></form>{% endif %}
     <form method="post" action="/tax/reports/delete-all" data-confirm="ALLE {{ reports|length }} erzeugten Berichte aller Jahre (inkl. ZIP) löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm danger" type="submit">Alle Berichte löschen</button></form></span></div>
   <ul class="list">
     {% for r in reports %}
