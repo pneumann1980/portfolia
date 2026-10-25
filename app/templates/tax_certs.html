@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Steuerbescheinigungen{% endblock %}
+{% block heading %}Steuerbescheinigungen der Bank{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/tax">← Steuern &amp; Haltefristen</a> · Jahressteuerbescheinigung und Erträgnisaufstellung der Bank (PDF) hochladen: Die Werte
+    gelten für die Kapitalerträge mit inländischem Steuerabzug als <b>maßgeblich</b> und fließen als Kontrollwerte, genutzter Sparer-Pauschbetrag
+    und Abgleich der Verkäufe in den Steuerbericht ein. Es entstehen keine Buchungen.</p>
+
+  {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+  {% for r in results %}
+  <div class="alert {{ 'good' if r.ok and not r.warnings else ('warn' if r.ok else 'crit') }}" role="status"><span class="icon">{{ '✓' if r.ok and not r.warnings else '!' }}</span><div>
+    <b>{{ r.file }}</b>{% if r.ok %} – {{ r.label }} {{ r.year }}: {{ r.message }}{% else %}: {{ r.message }}{% endif %}
+    {% if r.joint_enabled %}<br>Die Bescheinigung weist mehr als den Einzel-Pauschbetrag aus – <b>Zusammenveranlagung wurde aktiviert</b> (Optionen auf der Steuerseite änderbar).{% endif %}
+    {% for w in r.warnings %}<br>{{ w }}{% endfor %}</div></div>
+  {% endfor %}
+
+  <section class="card" id="upload">
+    <div class="card-head"><h2>Dokumente hochladen</h2><span class="hint">Jahressteuerbescheinigung · Erträgnisaufstellung („Erläuterungen zur Steuerbescheinigung“)</span></div>
+    <form method="post" action="/tax/certs/upload" enctype="multipart/form-data" class="stack" style="gap:10px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="field">PDF-Dateien (bis zu {{ max_files }}, je höchstens {{ max_mb }} MB)<input type="file" name="file" accept=".pdf,application/pdf" multiple required></label>
+      <div><button class="btn primary" type="submit">Hochladen und lesen</button></div>
+      <p class="hint">Je Steuerjahr gilt eine Fassung je Dokumentart; ein erneuter Upload ersetzt die frühere Fassung. Die Dateien werden
+        lokal ausgewertet (isolierter Prozess, kein OCR, kein Netzwerk) und als Beleg im Datenordner abgelegt; Name, Anschrift und
+        Kundennummer werden nicht übernommen.</p>
+    </form>
+  </section>
+
+  {% for r in rows %}
+  <section class="card" id="y{{ r.year }}">
+    <div class="card-head"><h2>Steuerjahr {{ r.year }}</h2>
+      <span class="hint">{% if r.b %}{{ r.b.issuer or 'Bank' }}{% elif r.e %}{{ r.e.issuer or 'Bank' }}{% endif %}</span></div>
+    {% for c in r.checks %}<div class="alert warn"><span class="icon">!</span><div>{{ c }}</div></div>{% endfor %}
+    {% if r.b %}
+    <h3>Jahressteuerbescheinigung</h3>
+    <div class="table-wrap"><table class="compact">
+      <thead><tr><th>Angabe</th><th>Anlage KAP</th><th class="num">Betrag</th></tr></thead>
+      <tbody>
+        <tr><td>Höhe der Kapitalerträge</td><td>Zeile 7</td><td class="num">{{ r.vals.capital_total|eur }}</td></tr>
+        <tr><td>davon Gewinn aus Aktienveräußerungen</td><td>Zeile 8</td><td class="num">{{ r.vals.share_gains|eur if 'share_gains' in r.vals else '–' }}</td></tr>
+        <tr><td>in Anspruch genommener Sparer-Pauschbetrag</td><td>Zeile 16 oder 17</td><td class="num">{{ r.vals.pauschbetrag|eur if 'pauschbetrag' in r.vals else '–' }}</td></tr>
+        <tr><td>Kapitalertragsteuer</td><td>Zeile 37</td><td class="num">{{ r.vals.kest|eur if 'kest' in r.vals else '–' }}</td></tr>
+        <tr><td>Solidaritätszuschlag</td><td>Zeile 38</td><td class="num">{{ r.vals.soli|eur if 'soli' in r.vals else '–' }}</td></tr>
+        {% if 'kist' in r.vals %}<tr><td>Kirchensteuer</td><td>Zeile 39</td><td class="num">{{ r.vals.kist|eur }}</td></tr>{% endif %}
+        <tr><td>Summe der angerechneten ausländischen Steuer</td><td>Zeile 40</td><td class="num">{{ r.vals.wht_credited|eur if 'wht_credited' in r.vals else '–' }}</td></tr>
+        {% if 'share_gains_gross' in r.vals %}<tr><td>nachrichtlich: Aktiengewinne vor Verrechnung mit sonstigen Verlusten</td><td>–</td><td class="num">{{ r.vals.share_gains_gross|eur }}</td></tr>{% endif %}
+      </tbody></table></div>
+    {% for n in r.b.notes %}<p class="hint">Hinweis: {{ n }}</p>{% endfor %}
+    <div class="row" style="gap:8px;margin-top:6px"><a class="btn sm" href="/tax/certs/{{ r.year }}/bescheinigung.pdf" target="_blank" rel="noopener">Original öffnen</a>
+      <span class="hint">{{ r.b.filename }} · hochgeladen {{ r.b.uploaded[:10]|date_de }}</span>
+      <form method="post" action="/tax/certs/{{ r.year }}/bescheinigung/delete" data-confirm="Jahressteuerbescheinigung {{ r.year }} löschen?" style="margin:0"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form></div>
+    {% endif %}
+
+    {% if r.e %}
+    <h3 style="margin-top:14px">Erträgnisaufstellung</h3>
+    <div class="table-wrap"><table class="compact">
+      <thead><tr><th>Summenzeile</th><th class="num">Betrag</th></tr></thead>
+      <tbody>
+        <tr><td>I – laufende Erträge / Gewinne</td><td class="num">{{ r.totals.income|eur }}</td></tr>
+        <tr><td>II – verrechenbare Verluste (sonstige) / gezahlte Stückzinsen</td><td class="num">{{ r.totals.loss_other|eur }}</td></tr>
+        <tr><td>III – Aktiengewinne</td><td class="num">{{ r.totals.share_gains|eur }}</td></tr>
+        <tr><td>IV – Aktienverluste</td><td class="num">{{ r.totals.share_losses|eur }}</td></tr>
+        <tr><td>VII – anrechenbare ausländische Quellensteuer</td><td class="num">{{ r.totals.wht|eur }}</td></tr>
+        <tr><td>Verlusttöpfe aus dem Vorjahr eingebucht (Aktien / sonstige)</td><td class="num">{{ r.carry_in.shares|eur }} / {{ r.carry_in.other|eur }}</td></tr>
+        <tr><td>ins neue Jahr vorgetragene Verlusttöpfe (Aktien / sonstige)</td><td class="num">{{ r.carry_out.shares|eur }} / {{ r.carry_out.other|eur }}</td></tr>
+      </tbody></table></div>
+    <p class="hint">{{ r.e.events|length }} Einzelvorgänge gelesen{% if r.e.column_probe %}; Spaltensummen stimmen mit der Summenzeile überein{% elif r.e.column_probe is not none %}; Spaltensummen weichen ab – nur die Summenzeile wird verwendet{% endif %}.
+      Der Abgleich der Verkäufe mit Portfolia steht im Steuerbericht (Aufstellung zur Anlage KAP).</p>
+    <div class="row" style="gap:8px;margin-top:6px"><a class="btn sm" href="/tax/certs/{{ r.year }}/ertraegnis.pdf" target="_blank" rel="noopener">Original öffnen</a>
+      <span class="hint">{{ r.e.filename }} · hochgeladen {{ r.e.uploaded[:10]|date_de }}</span>
+      <form method="post" action="/tax/certs/{{ r.year }}/ertraegnis/delete" data-confirm="Erträgnisaufstellung {{ r.year }} löschen?" style="margin:0"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form></div>
+    {% endif %}
+  </section>
+  {% else %}
+  <p class="hint">Noch keine Steuerbescheinigungen hochgeladen.</p>
+  {% endfor %}
+</div>
+{% endblock %}

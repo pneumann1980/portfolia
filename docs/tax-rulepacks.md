@@ -104,3 +104,16 @@ Regelwerke dürfen keine Netzwerkzugriffe durchführen und erhalten nur lokale D
 Nicht abgedeckt (im Bericht als Annahme genannt): Fremdwährungsgewinne (§ 23), Altanteile an Fonds vor
 2018, gewerbliche Einkünfte (z. B. Mining in größerem Umfang), Günstigerprüfung,
 Schenkungsteuer.
+
+## Steuerbescheinigungen der Bank (ab 0.50)
+
+Unter `/tax/certs` lassen sich Jahressteuerbescheinigung und Erträgnisaufstellung hochladen (`app/taxcert`). Das
+Regelwerk bekommt sie über `TaxInput.certs` (Jahr → Dokumentart → Werte als Text) und
+
+* zeigt die bescheinigten Beträge als maßgebliche Kontrollwerte (Summary, Übertragungshilfe Anlage KAP, Zeilen aus
+  `params.yaml`: 7, 8, 16/17, 37, 38, 40),
+* nutzt den bescheinigten Sparer-Pauschbetrag als „bereits genutzt“, wenn die Option leer ist (`auto`),
+* gleicht die Verkäufe der Erträgnisaufstellung mit den Inlandsdepots in Portfolia ab (`packs/de/certs.py`).
+
+Optionen mit `auto=True` (Verlustvortrag § 23, bereits genutzter Pauschbetrag): leer = automatisch; ein eingetragener
+Wert – auch „0“ – gilt als Eingabe. Die frühere Standard-Null (Zahl 0) wird wie „leer“ behandelt.

@@ -74,6 +74,12 @@ def _d(v: Any) -> Decimal:
     return v if isinstance(v, Decimal) else Decimal(str(v))
 
 
+def _is_auto(raw: Any) -> bool:
+    """Leere Eingabe – oder die frühere Standard-Null (int 0 aus dem Formular) – = automatisch ermitteln; ein
+    eingetragener Wert (auch die Zeichenkette „0“) gilt als Eingabe."""
+    return raw is None or raw == "" or (isinstance(raw, int | float) and not isinstance(raw, bool) and raw == 0)
+
+
 class _Vp:
     """Vorabpauschale je Fondsanteil und Jahr (§ 18 InvStG), mit Cache."""
 
@@ -204,7 +210,10 @@ class GermanyPack(RulePack):
             OptionSpec("wk_22_3", "Werbungskosten zu Leistungen (§ 22 Nr. 3 EStG)", "amount", 0, per_year=True,
                        group="Erträge"),
             OptionSpec("pauschbetrag_used", "Bereits über Freistellungsaufträge genutzter Sparer-Pauschbetrag",
-                       "amount", 0, per_year=True, group="Kapitalerträge"),
+                       "amount", None,
+                       "Leer = automatisch aus der hochgeladenen Steuerbescheinigung der Bank (sonst 0). Ein "
+                       "eingetragener Betrag (auch 0) ersetzt den Wert.",
+                       per_year=True, group="Kapitalerträge", auto=True),
             OptionSpec("church_tax", "Kirchensteuersatz", "choice", "0",
                        (("0", "keine"), ("8", "8 %"), ("9", "9 %")), group="Kapitalerträge"),
             OptionSpec("include_domestic", "Konten mit inländischem Steuerabzug in Schätzung einbeziehen", "bool",
@@ -229,6 +238,18 @@ class GermanyPack(RulePack):
 
     def carry_out(self, result: TaxResult) -> dict[str, Any]:
         return {"loss_cf_23": result.data.get("crypto", {}).get("carry_out", ZERO)}
+
+    # -- Steuerbescheinigung der Bank ------------------------------------------------------------------------
+    @staticmethod
+    def _apply_cert(inp: TaxInput, year: int, o: dict[str, Any]) -> dict[str, Any]:
+        """Bescheinigung des Jahres; der darin ausgewiesene Sparer-Pauschbetrag ersetzt „bereits genutzt“, solange
+        dort nichts eingetragen ist."""
+        cert = (inp.certs or {}).get(year) or {}
+        pb = (((cert.get("bescheinigung") or {}).get("values")) or {}).get("pauschbetrag")
+        if _is_auto(o.get("pauschbetrag_used")):
+            o["pauschbetrag_used"] = _d(pb)
+            o["pauschbetrag_used_src"] = "cert" if pb is not None else ""
+        return cert
 
     def holding_end(self, asset: AssetInfo, acq: date) -> date | None:
         if not asset.is_crypto:
@@ -256,6 +277,7 @@ class GermanyPack(RulePack):
                         params_version=self.params.version, year=year,
                         params={k: v for k, v in P.items() if k != "forms"}, options=o)
         res.params["basiszins_prev"] = self.p(year - 1).get("basiszins")
+        cert = self._apply_cert(inp, year, o)
         vp = _Vp(self, inp)
         c = self._crypto(inp, year, o, P, res)
         i = self._income(inp, year, o, P, res)
@@ -263,13 +285,20 @@ class GermanyPack(RulePack):
         build_sections(self, res, c, i, k)
         res.has_activity = bool(c["rows_tax"] or c["rows_free"] or i["rows"] or k["activity"])
         self._summary(res, c, i, k, o, P)
-        self._fields(res, c, i, k, o, P)
+        self._fields(res, c, i, k, o, P, cert)
         self._estimate(res, c, i, k, o, P)
         self._assumptions(res, o, P)
         self._quality(inp, res, year, c, i, k, vp, P)
+        from app.tax.packs.de.certs import cert_report
+
+        cert_report(self, res, year, k, o, P, cert)
         res.data = {"crypto": {kk: vv for kk, vv in c.items() if not kk.startswith("rows")},
                     "income": {kk: vv for kk, vv in i.items() if kk != "rows"},
-                    "capital": {kk: vv for kk, vv in k.items() if kk not in ("rows_sales", "rows_income", "rows_vp")}}
+                    "capital": {kk: vv for kk, vv in k.items() if kk not in ("rows_sales", "rows_income", "rows_vp")},
+                    "certs": {kind: {"filename": e.get("filename"), "sha256": e.get("sha256"),
+                                     "uploaded": e.get("uploaded"), "issuer": e.get("issuer")}
+                              for kind, e in cert.items() if isinstance(e, dict)},
+                    "pauschbetrag_from_cert": o.get("pauschbetrag_used_src") == "cert"}
         return res
 
     def capital_for_accounts(self, inp: TaxInput, year: int, options: dict[str, Any],
@@ -353,9 +382,7 @@ class GermanyPack(RulePack):
         else:
             taxable = net
         raw = o.get("loss_cf_23")
-        # leer/None – oder die frühere Standard-Null (int 0 aus dem Formular) – = automatisch aus den Vorjahren;
-        # ein eingetragener Wert (auch die Zeichenkette „0“) gilt als Eingabe
-        lcf_auto = raw is None or raw == "" or (isinstance(raw, int | float) and not isinstance(raw, bool) and raw == 0)
+        lcf_auto = _is_auto(raw)
         lcf = _d(o.get("loss_cf_23_auto")) if lcf_auto else _d(raw)
         after = max(ZERO, taxable - lcf) if taxable > 0 else ZERO
         lcf_used = min(lcf, taxable) if taxable > 0 else ZERO
@@ -724,7 +751,7 @@ class GermanyPack(RulePack):
                          line=str(line) if line not in (None, "") else None, note=note, text=text)
 
     def _fields(self, res: TaxResult, c: dict[str, Any], i: dict[str, Any], k: dict[str, Any], o: dict[str, Any],
-                P: dict[str, Any]) -> None:
+                P: dict[str, Any], cert: dict[str, Any] | None = None) -> None:
         F = res.fields
         if c["rows_tax"]:
             F.append(self._field(P, "anlage_so", "so_23_desc", None, text="Kryptowerte lt. beigefügter Aufstellung"))
@@ -769,7 +796,16 @@ class GermanyPack(RulePack):
                     F.append(self._field(P, "anlage_kap_inv", fid, v,
                                          label=f"{spec.get('label', fid)} – {labels.get(t, t)}",
                                          line=(spec.get("lines") or {}).get(t)))
-        if o.get("include_domestic"):
+        bv = (((cert or {}).get("bescheinigung") or {}).get("values")) or {}
+        if bv:
+            sec = "Kapitalerträge mit inländischem Steuerabzug – laut Steuerbescheinigung der Bank"
+            for key, fid in (("capital_total", "kap_dom_total"), ("share_gains", "kap_dom_share_gains"),
+                             ("pauschbetrag", "kap_dom_pauschbetrag"), ("kest", "kap_dom_kest"),
+                             ("soli", "kap_dom_soli"), ("wht_credited", "kap_dom_wht")):
+                if key in bv:
+                    F.append(self._field(P, "anlage_kap", fid, _d(bv[key]), section=sec,
+                                         note="Wert der Bescheinigung (Original hochgeladen)"))
+        elif o.get("include_domestic"):
             bd = k["B"]["domestic"]
             dom_total = (bd["dividends"] + bd["interest"] + bd["share_gain"] + bd["share_loss"] + bd["other_gain"]
                          + bd["other_loss"])

@@ -329,6 +329,8 @@ class TaxInput:
     fx_eur: FxFn | None = None  # EUR-Wert einer Einheit Fremdwährung am/vor Datum
     import_meta: dict[str, Any] = field(default_factory=dict)
     profile: dict[str, Any] = field(default_factory=dict)
+    # Steuerbescheinigungen der Bank je Jahr: {Jahr: {"bescheinigung": {...}, "ertraegnis": {...}}} (Beträge als Text)
+    certs: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def asset(self, asset_id: str) -> AssetInfo:
         return self.pf.asset(asset_id)

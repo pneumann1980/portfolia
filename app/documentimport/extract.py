@@ -196,6 +196,20 @@ def _pdf_lines(textpage: Any, width: float, height: float, page_no: int) -> list
     return out
 
 
+def _plain_lines(textpage: Any, page_no: int) -> list[Line]:
+    """Text in der Reihenfolge des PDF-Inhalts (ohne Geometrie). Für Tabellen auf gedrehten Seiten, bei denen die
+    Zeilenrekonstruktion aus Zeichenpositionen unleserlich wird (z. B. die Erträgnisaufstellung der DKB)."""
+    n = min(textpage.count_chars(), MAX_CHARS)
+    if n <= 0:
+        return []
+    out: list[Line] = []
+    for raw in textpage.get_text_range(0, n).replace("\r", "\n").split("\n"):
+        s = re.sub(r"[ \t]+", " ", raw).strip()
+        if s:
+            out.append(Line(s[:2000], page_no, len(out) + 1, None, None))
+    return out
+
+
 def _open_pdf(data: bytes) -> Any:
     try:
         import pypdfium2 as pdfium
@@ -234,7 +248,7 @@ def render_page(data: bytes, page_no: int, scale: float = 2.0) -> Any:
         pdf.close()
 
 
-def _extract_pdf(data: bytes, res: DocumentResult, language: str, ocr: bool) -> None:
+def _extract_pdf(data: bytes, res: DocumentResult, language: str, ocr: bool, plain: bool = False) -> None:
     pdf = _open_pdf(data)
     try:
         n = len(pdf)
@@ -250,7 +264,7 @@ def _extract_pdf(data: bytes, res: DocumentResult, language: str, ocr: bool) -> 
                     raise DocumentError(f"PDF-Seite {i + 1} ist zu groß.")
                 tp = page.get_textpage()
                 try:
-                    lines = _pdf_lines(tp, w, h, i + 1)
+                    lines = _plain_lines(tp, i + 1) if plain else _pdf_lines(tp, w, h, i + 1)
                 finally:
                     tp.close()
                 pg = Page(i + 1, "text", lines, width=w, height=h)
@@ -429,7 +443,8 @@ def _extract_image(data: bytes, res: DocumentResult, language: str) -> None:
 # Einstieg
 # ----------------------------------------------------------------------------------------------------
 
-def extract_document(data: bytes, *, language: str = "deu+eng", ocr: bool = True) -> DocumentResult:
+def extract_document(data: bytes, *, language: str = "deu+eng", ocr: bool = True,
+                     plain: bool = False) -> DocumentResult:
     """CPU-basierte Extraktion ohne Netzwerkzugriff. Für nicht vertrauenswürdige Dateien über
     :func:`app.documentimport.worker.extract_isolated` aufrufen (Speicher-, CPU- und Zeitlimit)."""
     import time
@@ -438,7 +453,7 @@ def extract_document(data: bytes, *, language: str = "deu+eng", ocr: bool = True
     res = DocumentResult(sha256(data), kind, len(data))
     t0 = time.perf_counter()
     if kind == "pdf":
-        _extract_pdf(data, res, language, ocr)
+        _extract_pdf(data, res, language, ocr, plain)
     else:
         if not ocr:
             raise DocumentError("Bilder brauchen OCR – OCR ist abgeschaltet.")

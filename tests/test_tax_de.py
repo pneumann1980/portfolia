@@ -29,7 +29,7 @@ TAX_ASSETS = [
 ]
 
 
-def run(rows, year, *, options=None, kinds=None, year_prices=None, today=date(2026, 9, 26)):
+def run(rows, year, *, options=None, kinds=None, year_prices=None, today=date(2026, 9, 26), certs=None):
     pack = registry.get("de")
     pf = portfolio(rows, TAX_ASSETS)
     opts = {**pack.defaults(), **(options or {})}
@@ -41,7 +41,7 @@ def run(rows, year, *, options=None, kinds=None, year_prices=None, today=date(20
     inp = TaxInput(pf=pf, ledger=led, today=today, asset_types=types, asset_type_source=tsrc,
                    account_kinds={a: (kinds or {}).get(a, "domestic") for a in accs},
                    account_kind_source=dict.fromkeys(accs, "settings"),
-                   year_prices=(lambda aid, y: (year_prices or {}).get((aid, y), (None, None))))
+                   year_prices=(lambda aid, y: (year_prices or {}).get((aid, y), (None, None))), certs=certs or {})
     return pack, pack.compute(inp, year, opts)
 
 

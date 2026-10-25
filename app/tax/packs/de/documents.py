@@ -35,12 +35,19 @@ def _data_rows(result: TaxResult, meta: ReportMeta) -> list[tuple[str, str]]:
     src = meta.import_file or "–"
     if meta.import_sha:
         src += f" (SHA-256 {meta.import_sha[:12]}…)"
-    return [
+    rows = [
         ("Regelwerk", f"{result.pack_name} – Version {result.pack_version}"),
         ("Datenstand", f"Import #{meta.import_id or '–'}: {src}"),
         ("Bewertungsstichtag Import", fmt_date(meta.valuation_date)),
-        ("Erstellt", f"{meta.created_at.strftime('%d.%m.%Y %H:%M')} mit Portfolia {meta.app_version}"),
     ]
+    for kind, label in (("bescheinigung", "Jahressteuerbescheinigung"), ("ertraegnis", "Erträgnisaufstellung")):
+        c = (result.data.get("certs") or {}).get(kind)
+        if c:
+            up = fmt_date(str(c.get("uploaded") or "")[:10])
+            rows.append((label, f"{c.get('issuer') or 'Bank'} (hochgeladen {up}, "
+                                f"SHA-256 {str(c.get('sha256') or '')[:12]}…)"))
+    rows.append(("Erstellt", f"{meta.created_at.strftime('%d.%m.%Y %H:%M')} mit Portfolia {meta.app_version}"))
+    return rows
 
 
 def _footer(title: str, result: TaxResult, meta: ReportMeta) -> str:
@@ -124,7 +131,8 @@ def build(pack: Any, doc_id: str, result: TaxResult, meta: ReportMeta) -> D.Doc:
         t = _table(result, tid)
         if t is not None and t.rows:
             doc.add(D.TableBlock(t))
-    landscape_tables = ["c23_taxable", "c23_free", "i22", "i22_tags", "k_sales", "k_income", "k_vp", "k_crypto"]
+    landscape_tables = ["c23_taxable", "c23_free", "i22", "i22_tags", "k_sales", "k_cert", "k_income", "k_vp",
+                        "k_crypto"]
     tables = [t for tid in landscape_tables if (t := _table(result, tid)) is not None and t.rows]
     if tables:
         doc.add(D.PageBreak("landscape"), D.H1("Aufstellungen"))
@@ -183,7 +191,8 @@ def _anlage_kap(pack: Any, result: TaxResult, meta: ReportMeta) -> D.Doc:
     kap_fields = [f for f in result.fields if f.form.startswith("Anlage KAP")]
     if kap_fields:
         doc.add(D.H2("Übertragungshilfe"), D.Fields(kap_fields))
-    tables = [t for tid in ("k_sales", "k_income", "k_vp") if (t := _table(result, tid)) is not None and t.rows]
+    tables = [t for tid in ("k_sales", "k_cert", "k_income", "k_vp")
+              if (t := _table(result, tid)) is not None and t.rows]
     if tables:
         doc.add(D.PageBreak("landscape"))
         for t in tables:

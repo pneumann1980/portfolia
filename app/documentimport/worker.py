@@ -44,7 +44,7 @@ class Cancelled(DocumentError):
 
 
 def extract_isolated(data: bytes, *, language: str = "deu+eng", ocr: bool = True,
-                     timeout: int | None = None, cancel: Any = None) -> DocumentResult:
+                     timeout: int | None = None, cancel: Any = None, plain: bool = False) -> DocumentResult:
     """Extraktion im Kindprozess. Fehler (Limit, Zeitüberschreitung, Absturz) → :class:`DocumentError`;
     ``cancel`` (``threading.Event``) beendet den Kindprozess sofort."""
     import time
@@ -59,7 +59,8 @@ def extract_isolated(data: bytes, *, language: str = "deu+eng", ocr: bool = True
                                                              "PORTFOLIA_DOC_MEM_MB", "PORTFOLIA_DOC_CPU_S")}
         env["OMP_THREAD_LIMIT"] = "1"
         proc = subprocess.Popen(  # noqa: S603 - fester Aufruf ohne Shell
-            [sys.executable, "-I", "-c", _BOOT, str(ROOT), str(path), language, "1" if ocr else "0"],
+            [sys.executable, "-I", "-c", _BOOT, str(ROOT), str(path), language, "1" if ocr else "0",
+             "1" if plain else "0"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=str(ROOT),
             preexec_fn=_limit if os.name == "posix" else None)
         end = time.monotonic() + (timeout or WALL_LIMIT)
@@ -92,9 +93,10 @@ def extract_isolated(data: bytes, *, language: str = "deu+eng", ocr: bool = True
 
 def main(argv: list[str]) -> int:  # pragma: no cover - Kindprozess
     path, language, ocr = argv[0], argv[1], argv[2] == "1"
+    plain = len(argv) > 3 and argv[3] == "1"
     try:
         data = Path(path).read_bytes()
-        res = extract_document(data, language=language, ocr=ocr)
+        res = extract_document(data, language=language, ocr=ocr, plain=plain)
         payload: dict[str, Any] = {"result": res.to_json()}
     except DocumentError as e:
         payload = {"error": str(e)}

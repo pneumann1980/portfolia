@@ -1426,6 +1426,24 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.50.0 – Steuerbescheinigungen der Bank einlesen
+
+* Neue Seite **/tax/certs** („Steuerbescheinigungen“): Jahressteuerbescheinigung und Erträgnisaufstellung der Bank als PDF
+  hochladen. Auswertung lokal im isolierten Prozess (kein OCR, kein Netzwerk; neuer Modus `plain` für gedrehte
+  Tabellenseiten), Dokumentart aus dem Inhalt, keine Personendaten, Rechenprobe der Kapitalertragsteuer; Original als
+  Beleg unter `<data>/tax/certs/<Jahr>/`, Werte in der Einstellung `tax.certs`; erneuter Upload ersetzt, gleicher
+  Inhalt wird nur gemeldet, Löschen je Dokument.
+* Wirkung im Steuerbericht: Kontrollwerte laut Bescheinigung (Anlage KAP Zeilen 7, 8, 16/17, 37, 38, 40) als
+  maßgeblich für Inlandsdepots; der ausgewiesene **Sparer-Pauschbetrag ersetzt „bereits genutzt“**, solange dort nichts
+  eingetragen ist; weist die Bank mehr als den Einzel-Pauschbetrag aus, wird **Zusammenveranlagung automatisch
+  aktiviert** (Hinweis im Upload-Ergebnis, Option bleibt änderbar).
+* **Abgleich Verkäufe** (Tabelle in der Aufstellung zur Anlage KAP): Verkäufe der Erträgnisaufstellung ↔ Portfolia (ISIN,
+  Datum ± 3 Tage; bei Wertpapieren ohne ISIN über Datum und Betrag) mit Status übereinstimmend / Rundung / abweichend /
+  fehlt in Portfolia / nur in Portfolia; Hinweise zu Aktien-Saldo und Kapitalerträgen gegenüber der Bank (Verlusttöpfe
+  der Bank, „Einbuchung VT Sonstige aus wertlosen Anlagen“).
+* Grenzen: Layout der DKB (andere Banken: Summenzeile und Bescheinigung ggf. nicht lesbar – dann klare Meldung);
+  Originaldateien sind nicht Teil des Vollexports (Werte schon, über die Einstellungen).
+
 ## 0.49.1 – Steuer: Derivate, Verlustvortrag-Kette, Rundung, Hinweise
 
 * **Derivate** (Turbo-/Optionsscheine, Warrants, Mini-Futures, Knock-outs; Namenserkennung inkl. Kurzformen wie
