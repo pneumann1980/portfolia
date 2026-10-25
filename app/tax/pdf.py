@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 from functools import lru_cache
@@ -139,11 +140,9 @@ class _NumberedCanvas(rl_canvas.Canvas):
         x = MARGIN_X
         logo = _logo_file() if self.brand else None
         if logo:
-            try:
+            with contextlib.suppress(Exception):  # Bild nicht zeichenbar → ohne Logo weiter
                 self.drawImage(logo, MARGIN_X, h - 11.4 * mm, width=LOGO_HEADER, height=LOGO_HEADER, mask="auto")
                 x += LOGO_HEADER + 2 * mm
-            except Exception:  # pragma: no cover - Bild nicht zeichenbar → ohne Logo weiter
-                pass
         self.drawString(x, h - 10.5 * mm, self.header_left[:140])
         self.drawRightString(w - MARGIN_X, h - 10.5 * mm, self.header_right)
         self.drawString(MARGIN_X, 7.5 * mm, self.footer_left[:180])
