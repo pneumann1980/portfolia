@@ -30,7 +30,8 @@ ASSETS = [
 
 def tx(tx_id: str, dt: str, typ: str, *, tag: str | None = None, frm: tuple | None = None, to: tuple | None = None,
        fee: tuple | None = None, value: str | float | None = None, related: str | None = None,
-       flag: str | None = None) -> dict[str, Any]:
+       flag: str | None = None, origin: str | None = None, source: str | None = None,
+       note: str | None = None) -> dict[str, Any]:
     """Transaktion als CSV-Zeile (Strings). frm/to = (account, asset, qty); fee = (asset, qty, eur)."""
     r: dict[str, Any] = {"tx_id": tx_id, "datetime": dt, "type": typ, "tag": tag or ""}
     for side, leg in (("from", frm), ("to", to)):
@@ -41,8 +42,9 @@ def tx(tx_id: str, dt: str, typ: str, *, tag: str | None = None, frm: tuple | No
     r["value_eur"] = "" if value is None else str(value)
     if related:
         r["related_asset"] = related
-    if flag:
-        r["flag"] = flag
+    for key, val in (("flag", flag), ("origin", origin), ("source", source), ("note", note)):
+        if val:
+            r[key] = val
     return r
 
 
@@ -63,7 +65,8 @@ def portfolio(rows: list[dict[str, Any]], assets: list[dict[str, Any]] | None = 
             to_account=r.get("to_account") or None, to_asset=r.get("to_asset") or None, to_qty=_d(r.get("to_qty")),
             fee_asset=r.get("fee_asset") or None, fee_qty=_d(r.get("fee_qty")), fee_eur=_d(r.get("fee_eur")),
             value_eur=_d(r.get("value_eur")), related_asset=r.get("related_asset") or None,
-            flag=r.get("flag") or None,
+            flag=r.get("flag") or None, source=r.get("source") or None, note=r.get("note") or None,
+            origin=r.get("origin") or "import",
         ))
     return Portfolio(
         import_id=1, txs=txs,

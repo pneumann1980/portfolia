@@ -46,6 +46,10 @@ def _data_rows(result: TaxResult, meta: ReportMeta) -> list[tuple[str, str]]:
             up = fmt_date(str(c.get("uploaded") or "")[:10])
             rows.append((label, f"{c.get('issuer') or 'Bank'} (hochgeladen {up}, "
                                 f"SHA-256 {str(c.get('sha256') or '')[:12]}…)"))
+    fp = result.data.get("data") or {}
+    if fp.get("sha256"):
+        rows.append(("Buchungsstand", f"{fp['txs']} Buchungen (davon {fp['manual']} in Portfolia erfasst, "
+                                      f"synchronisiert oder geschätzt), SHA-256 {fp['sha256'][:16]}…"))
     rows.append(("Erstellt", f"{meta.created_at.strftime('%d.%m.%Y %H:%M')} mit Portfolia {meta.app_version}"))
     return rows
 
@@ -132,7 +136,7 @@ def build(pack: Any, doc_id: str, result: TaxResult, meta: ReportMeta) -> D.Doc:
         if t is not None and t.rows:
             doc.add(D.TableBlock(t))
     landscape_tables = ["c23_taxable", "c23_free", "i22", "i22_tags", "k_sales", "k_cert", "k_income", "k_vp",
-                        "k_crypto"]
+                        "k_crypto", "x_adjust", "x_stock", "x_transfers"]
     tables = [t for tid in landscape_tables if (t := _table(result, tid)) is not None and t.rows]
     if tables:
         doc.add(D.PageBreak("landscape"), D.H1("Aufstellungen"))
@@ -154,7 +158,7 @@ def _anlage_so(pack: Any, result: TaxResult, meta: ReportMeta) -> D.Doc:
                 subject=f"Aufstellung private Veräußerungsgeschäfte und Leistungen {y}",
                 keywords="Anlage SO, § 23 EStG, § 22 Nr. 3 EStG, Kryptowerte", footer=_footer(title, result, meta))
     c, i = result.data["crypto"], result.data["income"]
-    doc.add(D.H1(title), D.KV(_person(meta, y)),
+    doc.add(D.H1(title), D.KV(_person(meta, y) + _data_rows(result, meta)),
             D.P("Private Veräußerungsgeschäfte mit Kryptowerten (§ 23 Abs. 1 S. 1 Nr. 2 EStG) und Einkünfte aus "
                 "Leistungen (§ 22 Nr. 3 EStG). Verbrauchsfolge und Bewertung siehe Methodik am Ende.", "small"),
             D.H2("Private Veräußerungsgeschäfte – Summen (Haltedauer bis 1 Jahr)"), D.Lines(_crypto_lines(result)))
@@ -167,7 +171,7 @@ def _anlage_so(pack: Any, result: TaxResult, meta: ReportMeta) -> D.Doc:
     t = _table(result, "i22_tags")
     if t is not None and t.rows:
         doc.add(D.TableBlock(t))
-    detail = [t for tid in ("c23_taxable", "i22") if (t := _table(result, tid)) is not None and t.rows]
+    detail = [t for tid in ("c23_taxable", "i22", "x_adjust") if (t := _table(result, tid)) is not None and t.rows]
     if detail:
         doc.add(D.PageBreak("landscape"))
         for t in detail:
@@ -185,7 +189,7 @@ def _anlage_kap(pack: Any, result: TaxResult, meta: ReportMeta) -> D.Doc:
     doc = D.Doc(title=title, subtitle="Wertpapiere", filename=f"Anlage_KAP_Aufstellung_{y}.pdf",
                 subject=f"Aufstellung Kapitalerträge {y}", keywords="Anlage KAP, KAP-INV, Kapitalerträge",
                 footer=_footer(title, result, meta))
-    doc.add(D.H1(title), D.KV(_person(meta, y)),
+    doc.add(D.H1(title), D.KV(_person(meta, y) + _data_rows(result, meta)),
             D.P("Kapitalerträge aus Wertpapieren und Investmentfonds je Depot. Für Depots mit inländischem "
                 "Steuerabzug sind die Steuerbescheinigungen maßgeblich (Werte hier zur Kontrolle).", "small"))
     kap_fields = [f for f in result.fields if f.form.startswith("Anlage KAP")]

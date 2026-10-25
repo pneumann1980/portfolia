@@ -117,3 +117,13 @@ Regelwerk bekommt sie über `TaxInput.certs` (Jahr → Dokumentart → Werte als
 
 Optionen mit `auto=True` (Verlustvortrag § 23, bereits genutzter Pauschbetrag): leer = automatisch; ein eingetragener
 Wert – auch „0“ – gilt als Eingabe. Die frühere Standard-Null (Zahl 0) wird wie „leer“ behandelt.
+
+## Rechtsgrundlagen-Prüfung (Stand 25.10.2026)
+
+| Punkt | Ergebnis | Quelle |
+|---|---|---|
+| § 20 Abs. 6 EStG | Abs. 6 hat 5 Sätze (S. 1–3 Verlustverrechnung/-vortrag, S. 4 Aktienverluste nur mit Aktiengewinnen, S. 5 Bescheinigung nach § 43a Abs. 3 S. 4). Die frühere Verlustgrenze für Termingeschäfte (20.000 €) und die Totalausfallregel sind gestrichen (JStG 2024, BGBl. 05.12.2024; Anwendung nach § 52 Abs. 28 EStG auf noch nicht bestandskräftige Fälle). | gesetze-im-internet.de (Wortlaut Abs. 6), Fachbeiträge (CMS, NWB, DER BETRIEB) zur Anwendung |
+| Derivate | Turbo-/Optionsscheine, Warrants: Termingeschäfte (§ 20 Abs. 2 S. 1 Nr. 3 EStG) → Topf „Sonstige“, nicht Aktien-Topf. Bestätigt durch die Töpfe der DKB-Erträgnisaufstellung (Aktien / Sonstige). | § 20 Abs. 2, DKB-Erträgnisaufstellung 2025 |
+| Schenkung | § 23 Abs. 1 S. 3 EStG: Bei unentgeltlichem Erwerb sind dem Einzelrechtsnachfolger Anschaffung (und Veräußerung) des Rechtsvorgängers zuzurechnen – Haltefrist und Anschaffungskosten des Schenkers. § 11d EStDV regelt nur die Absetzung für Abnutzung (kein Anschaffungszeitpunkt). Zufluss aus Schenkung ohne Gegenleistung ist keine Leistung nach § 22 Nr. 3 EStG. | BFH IX R 3/21 (Zitat § 23 Abs. 1 S. 3), gesetze-im-internet.de (§ 11d EStDV) |
+| Anlage KAP 2025, Zeilen | Belegt (Steuerbescheinigung DKB 2025 auf amtlichem Muster): 7, 8, 16/17, 37, 38, 40; Erläuterung derselben Bescheinigung: 41, 42. Auslandsfelder 19–23: Quellen widersprüchlich, nicht hinterlegt. | DKB-Steuerbescheinigung 2025; Formularauszüge von Drittseiten (nicht amtlich) |
+| Gesetzgebung | Ein Gesetzentwurf (BT-Drs. 21/5752, Fraktion Bündnis 90/Die Grünen, Mai 2026) betrifft laut Suchtreffer die Haltefrist für Kryptowerte (§ 23 EStG). Inhalt und Stand nicht verifiziert – nicht berücksichtigt; beobachten. | dserver.bundestag.de (Titel/Metadaten) |

@@ -51,6 +51,7 @@ from app.tax.base import (
     money,
 )
 from app.tax.classify import ASSET_TYPES, FUND_TYPES
+from app.tax.packs.de.annex import FLAG_LABEL, _flags, annex_section, data_fingerprint
 from app.util.timeutil import add_years
 
 KIND_LABEL = {"sell": "Verkauf", "trade": "Tausch", "fee": "Gebühr", "transfer_fee": "Transfergebühr",
@@ -283,6 +284,7 @@ class GermanyPack(RulePack):
         i = self._income(inp, year, o, P, res)
         k = self._capital(inp, year, o, P, res, vp)
         build_sections(self, res, c, i, k)
+        res.sections.append(annex_section(inp, year))
         res.has_activity = bool(c["rows_tax"] or c["rows_free"] or i["rows"] or k["activity"])
         self._summary(res, c, i, k, o, P)
         self._fields(res, c, i, k, o, P, cert)
@@ -298,7 +300,8 @@ class GermanyPack(RulePack):
                     "certs": {kind: {"filename": e.get("filename"), "sha256": e.get("sha256"),
                                      "uploaded": e.get("uploaded"), "issuer": e.get("issuer")}
                               for kind, e in cert.items() if isinstance(e, dict)},
-                    "pauschbetrag_from_cert": o.get("pauschbetrag_used_src") == "cert"}
+                    "pauschbetrag_from_cert": o.get("pauschbetrag_used_src") == "cert",
+                    "data": data_fingerprint(inp)}
         return res
 
     def capital_for_accounts(self, inp: TaxInput, year: int, options: dict[str, Any],
@@ -342,7 +345,10 @@ class GermanyPack(RulePack):
         rows_tax: list[dict[str, Any]] = []
         rows_free: list[dict[str, Any]] = []
         excluded: Counter[str] = Counter()
+        excluded_cost: dict[str, Decimal] = defaultdict(lambda: ZERO)
         origins: Counter[str] = Counter()
+        origin_cost: dict[str, Decimal] = defaultdict(lambda: ZERO)
+        source_of = {t.tx_id: t.source or "" for t in inp.pf.txs}
         missing = 0
         for d in inp.ledger.disposals:
             if d.date.year != year:
@@ -352,6 +358,7 @@ class GermanyPack(RulePack):
                 continue
             if not self._crypto_treatment(d, o):
                 excluded[d.kind] += 1
+                excluded_cost[d.kind] += d.cost
                 continue
             for p in d.parts:
                 share = p.qty / d.qty if d.qty else ZERO
@@ -366,6 +373,7 @@ class GermanyPack(RulePack):
                     taxable = free_from is None or d.date < free_from
                 if p.origin in ("deposit", "phantom"):
                     origins[p.origin] += 1
+                    origin_cost[p.origin] += money(p.cost)
                 # Zeilen müssen aufgehen (Preis − Werbungskosten − Anschaffungskosten = Gewinn): erst runden
                 price_r, wk_r, cost_r = money(p.proceeds + wk), money(wk), money(p.cost)
                 row = {"asset": a.symbol, "asset_id": a.asset_id, "name": a.name, "account": d.account,
@@ -373,6 +381,8 @@ class GermanyPack(RulePack):
                        "days": (d.date - p.acq_date).days if p.acq_date else None, "qty": p.qty,
                        "price": price_r, "cost": cost_r, "wk": wk_r, "gain": price_r - wk_r - cost_r,
                        "origin": ORIGIN_LABEL.get(p.origin, p.origin) + (" · über Umstellung" if p.via else ""),
+                       "unit": (price_r / p.qty) if p.qty else None,
+                       "ref": f"{source_of.get(d.tx_id) or '–'} · {d.tx_id[:8]}",
                        "free_from": free_from, "tx": d.tx_id}
                 (rows_tax if taxable else rows_free).append(row)
         net = sum((r["gain"] for r in rows_tax), ZERO)
@@ -391,6 +401,7 @@ class GermanyPack(RulePack):
         carry_out = lcf + (-net) if net < 0 else lcf - lcf_used
         return {
             "rows_tax": rows_tax, "rows_free": rows_free, "excluded": dict(excluded), "origins": dict(origins),
+            "excluded_cost": dict(excluded_cost), "origin_cost": dict(origin_cost),
             "missing": missing, "net": net, "freigrenze": fg, "taxable": taxable, "after_lcf": after,
             "lcf": lcf, "lcf_auto": lcf_auto, "lcf_used": lcf_used, "carry_out": carry_out,
             "gains": sum((r["gain"] for r in rows_tax if r["gain"] > 0), ZERO),
@@ -431,6 +442,7 @@ class GermanyPack(RulePack):
         kap_crypto: list[dict[str, Any]] = []
         valued: Counter[str] = Counter()
         flags = {t.tx_id: t.flag for t in inp.pf.txs if t.flag}
+        sources = {t.tx_id: t.source or "" for t in inp.pf.txs}
         for e in inp.ledger.income:
             if e.date.year != year or self._is_capital_income(inp, e):
                 continue
@@ -440,7 +452,7 @@ class GermanyPack(RulePack):
             a = inp.asset(e.asset)
             row = {"date": e.date, "asset": a.symbol, "name": a.name, "account": e.account, "qty": e.qty,
                    "value": money(value), "tag": TAG_LABEL.get(e.tag, e.tag), "tag_id": e.tag, "valued": how,
-                   "tx": e.tx_id, "flag": flags.get(e.tx_id, "")}
+                   "tx": e.tx_id, "flag": flags.get(e.tx_id, ""), "src": sources.get(e.tx_id, "")}
             if cat == "none":
                 not_taxable[e.tag] += 1
             elif cat == "kap":
@@ -945,13 +957,16 @@ class GermanyPack(RulePack):
                            "steuerpflichtig mit Anschaffungskosten 0 € angesetzt.", c["missing"]))
         if c["origins"].get("deposit"):
             n = c["origins"]["deposit"]
+            dc = fmt_eur(money(c["origin_cost"].get("deposit", ZERO)))
             issues.append(Issue("warning", "deposit_basis",
-                           f"{n} Veräußerungsteile stammen aus Zugängen ohne Gegenbuchung – Anschaffungsdatum/-wert = "
-                           "Zugang; bei Übertrag von eigener Wallet fehlen die ursprünglichen Daten.", n))
+                           f"{n} Veräußerungsteile (Anschaffungskosten {dc}) stammen aus Zugängen ohne Gegenbuchung – "
+                           "Anschaffungsdatum/-wert = Zugang, die Haltefrist beginnt neu; bei Übertrag von einer "
+                           "eigenen Wallet fehlen die ursprünglichen Daten.", n))
         for kind, n in sorted(c["excluded"].items()):
+            ec = c["excluded_cost"].get(kind, ZERO)
             issues.append(Issue("info", f"excluded_{kind}",
                            f"{n} × {KIND_LABEL.get(kind, kind)} nicht als Veräußerung berücksichtigt "
-                           "(Einstellung/Regel).",
+                           f"(Einstellung/Regel; Anschaffungskosten der betroffenen Einheiten {fmt_eur(money(ec))}).",
                            n))
         if i["valued"].get("fehlt"):
             n = i["valued"]["fehlt"]
@@ -1170,9 +1185,11 @@ def build_sections(pack: GermanyPack, result: TaxResult, c: dict[str, Any], i: d
         Column("account", "Wallet/Konto", "text", 1.2), Column("kind", "Vorgang", "text", 0.8),
         Column("acq", "Anschaffung", "date", 0.85), Column("disp", "Veräußerung", "date", 0.85),
         Column("days", "Tage", "int", 0.5), Column("qty", "Menge", "qty", 1.1),
+        Column("unit", "Kurs je Einheit (EUR)", "qty", 0.95), Column("origin", "Anschaffung durch", "text", 1.1),
         Column("price", "Veräußerungspreis", "eur", 1.05, True),
         Column("cost", "Anschaffungskosten", "eur", 1.05, True),
         Column("wk", "Werbungskosten", "eur", 0.85, True), Column("gain", "Gewinn/Verlust", "eur", 1.0, True),
+        Column("ref", "Quelle · Tx", "text", 1.0),
     ]
     rows_tax = [dict(r, nr=n) for n, r in enumerate(sorted(c["rows_tax"], key=lambda r: (r["disp"], r["asset"])), 1)]
     rows_free = [dict(r, nr=n) for n, r in enumerate(sorted(c["rows_free"], key=lambda r: (r["disp"], r["asset"])), 1)]
@@ -1191,19 +1208,27 @@ def build_sections(pack: GermanyPack, result: TaxResult, c: dict[str, Any], i: d
         Column("wk", "Werbungskosten", "eur", 1.0, True), Column("gain", "Gewinn/Verlust", "eur", 1.1, True),
     ], sorted(per_asset.values(), key=lambda r: r["asset"])).with_totals())
     sec.tables.append(Table("c23_taxable", "Steuerpflichtige Veräußerungen (Haltedauer bis 1 Jahr)", cols23, rows_tax,
-                            note="Je Zeile ein veräußerter Anschaffungsposten (Lot) nach FIFO. Beträge in EUR.",
+                            note="Je Zeile ein veräußerter Anschaffungsposten (Lot) nach FIFO. Beträge in EUR; Kurs je "
+                                 "Einheit = Veräußerungspreis ÷ Menge (Wert laut Buchung/Quelle, BMF Rz. 91/103); "
+                                 "„Quelle · Tx“ = Datenquelle und Kennung der Buchung.",
                             landscape=True).with_totals("asset"))
     sec.tables.append(Table("c23_free", "Nachrichtlich: steuerfreie Veräußerungen (Haltedauer über 1 Jahr)", cols23,
                             rows_free, landscape=True).with_totals("asset"))
     result.sections.append(sec)
     s22 = Section("income22", "Leistungen nach § 22 Nr. 3 EStG")
-    rows22 = [dict(r, nr=n) for n, r in enumerate(sorted(i["rows"], key=lambda r: (r["date"], r["asset"])), 1)]
+    rows22 = [dict(r, nr=n, flag="; ".join(FLAG_LABEL.get(f, f) for f in _flags(r.get("flag"))) or "",
+                   ref=f"{r.get('src') or '–'} · {r['tx'][:8]}")
+              for n, r in enumerate(sorted(i["rows"], key=lambda r: (r["date"], r["asset"])), 1)]
     s22.tables.append(Table("i22", "Zuflüsse (Wert bei Zufluss)", [
         Column("nr", "Nr.", "int", 0.45), Column("date", "Datum", "date", 0.85),
         Column("asset", "Kryptowert", "text", 0.9), Column("account", "Wallet/Konto", "text", 1.3),
         Column("tag", "Art", "text", 0.9), Column("qty", "Menge", "qty", 1.2),
         Column("value", "Wert (EUR)", "eur", 1.0, True), Column("valued", "Bewertung", "text", 0.9),
-    ], rows22, landscape=True).with_totals("asset"))
+        Column("flag", "Markierung", "text", 1.2), Column("ref", "Quelle · Tx", "text", 1.0),
+    ], rows22, landscape=True,
+        note="Airdrops sind nur bei einer Gegenleistung des Empfängers Einkünfte nach § 22 Nr. 3 EStG (BMF Rz. "
+             "70–75); die Teilnahmebedingungen stehen nicht in den Daten und sind bei Rückfragen nachzuweisen."
+        ).with_totals("asset"))
     by_tag = [{"tag": t, "value": v} for t, v in sorted(i["by_tag"].items())]
     s22.tables.append(Table("i22_tags", "Summe je Art",
                             [Column("tag", "Art", "text", 2), Column("value", "Wert", "eur", 1, True)],

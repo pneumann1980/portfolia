@@ -1426,6 +1426,19 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.51.0 – Nachweise für Prüfung und Rückfragen (BMF Rz. 90–104)
+
+* **Veräußerungsliste** (Kryptowerte): je Zeile zusätzlich *Kurs je Einheit*, *Anschaffung durch* (Kauf, Tausch, Ertrag,
+  Zugang ohne Gegenbuchung …) und *Quelle · Tx* (Datenquelle und Kennung der Buchung).
+* **Anhang im Steuerreport** (und „Anpassungen“ in der Aufstellung zur Anlage SO): Anpassungen, Schätzungen und
+  manuelle Buchungen des Jahres mit Markierung im Klartext (Presale-Tranche, im Quellsystem manuell angelegt,
+  Durchschnittskurs, rekonstruiert …), Herkunft und Hinweis; **Bestand zum 31.12.** je Wallet/Konto mit
+  Anschaffungskosten; **Umschichtungen** zwischen eigenen Wallets.
+* **Buchungsstand** (SHA-256 über alle Buchungen inkl. in Portfolia erfasster, synchronisierter und geschätzter) und
+  Steuerbescheinigungen (Datei-Hash) in allen drei PDFs.
+* Hinweise beziffern: Zugänge ohne Gegenbuchung (Anschaffungskosten, neue Haltefrist), Abgänge ohne Gegenbuchung
+  (Anschaffungskosten der Einheiten); Einkünfte-Tabelle mit Markierung, Quelle und Airdrop-Hinweis (Rz. 70–75).
+
 ## 0.50.1 – Verkaufsbeleg der Bank ↔ Ausbuchung in Portfolia
 
 * Im „Abgleich Verkäufe“ erkennt Portfolia einen **Verkauf laut Bank, der in Portfolia fehlt**, wenn dasselbe Wertpapier
