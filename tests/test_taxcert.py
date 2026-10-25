@@ -232,3 +232,22 @@ def test_bank_sale_vs_later_write_off_in_portfolia():
     only = by["DE0000000003"]
     assert only["status"].startswith("nur in Portfolia – Ausbuchung (Totalverlust) ohne Bankbeleg")
     assert only["pf"] == D("-400.00")
+
+
+def test_sales_comparison_uses_automatically_resolved_isin():
+    from tests.test_tax_de import TAX_ASSETS
+
+    TAX_ASSETS.append({"asset_id": "WKNONLY", "name": "Delta SE", "asset_class": "security", "wkn": "A1B2C3",
+                       "quote_source": "none", "quote_id": ""})
+    try:
+        rows = [buy("a1", "2024-01-10", "WKNONLY", 10, 1000, acc="DKB"),
+                sell("a2", "2025-03-11", "WKNONLY", 10, 2651.40, acc="DKB")]
+        events = [{"kind": "Verkäufe Wertpapier", "date": "2025-03-10", "name": "DELTA SE", "isin": "DE000A1B2C31",
+                   "amounts": ["1651.40"], "pot": False}]
+        certs = {2025: {"ertraegnis": {"events": events, "carry_in": {"shares": "0", "other": "0"}}}}
+        _, res = run(rows, 2025, kinds={"DKB": "domestic"}, certs=certs, isin_map={"WKNONLY": "DE000A1B2C31"})
+        t = next(tb for s in res.sections for tb in s.tables if tb.id == "k_cert")
+        assert t.rows[0]["status"] == "übereinstimmend" and t.rows[0]["isin"] == "DE000A1B2C31"
+        assert t.rows[0]["pf"] == D("1651.40")
+    finally:
+        TAX_ASSETS.pop()

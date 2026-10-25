@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.importer import contract as C
+from app.prices.isin import isin_service
 from app.tax import registry
 from app.tax.base import RulePack, fmt_value
 from app.tax.classify import ACCOUNT_KINDS, ASSET_TYPES, securities_accounts
@@ -78,7 +79,9 @@ def make_router() -> APIRouter:
             ASSET_TYPES=ASSET_TYPES, profile=ctx.settings.get("tax.profile") or {}, saved=saved,
             params_meta=pack.params.meta, override_error=pack.params.override_error,
             override_active=pack.params.override_active, override_path=str(pack.params.override_path or ""),
-            html_rows=HTML_ROWS, today=today_local(),
+            html_rows=HTML_ROWS, today=today_local(), isin_entries=isin_service(ctx).entries(),
+            isin_last=isin_service(ctx).last(),
+            isin_auto=ctx.settings.get("isin.auto", True),
         )
 
     @router.post("/tax/options")

@@ -331,6 +331,11 @@ class TaxInput:
     profile: dict[str, Any] = field(default_factory=dict)
     # Steuerbescheinigungen der Bank je Jahr: {Jahr: {"bescheinigung": {...}, "ertraegnis": {...}}} (Beträge als Text)
     certs: dict[int, dict[str, Any]] = field(default_factory=dict)
+    isin_map: dict[str, str] = field(default_factory=dict)  # Asset-ID → ISIN (automatisch ermittelt, siehe prices/isin)
+
+    def isin_of(self, asset: AssetInfo) -> str:
+        """ISIN laut Stammdaten, sonst die automatisch ermittelte; leer, wenn unbekannt."""
+        return asset.isin or self.isin_map.get(asset.asset_id) or ""
 
     def asset(self, asset_id: str) -> AssetInfo:
         return self.pf.asset(asset_id)

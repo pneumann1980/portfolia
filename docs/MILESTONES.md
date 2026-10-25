@@ -1426,6 +1426,20 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.51.1 – ISIN automatisch ermitteln
+
+* Wertpapiere, die nur mit WKN geführt werden, bekommen ihre **ISIN automatisch** (`app/prices/isin.py`, täglicher Lauf
+  und Knopf „ISIN jetzt abrufen“ in *Steuern → Zuordnung Wertpapiere*; abschaltbar):
+  1. ISIN/WKN-Paare aus ausgewerteten Bankbelegen, 2. Onvista-Suche (öffentlich; nur die WKN wird übermittelt; Treffer nur
+  bei exakt gleicher WKN, gültiger Prüfziffer und eindeutiger ISIN), 3. für Derivate deutscher Emittenten die berechnete
+  ISIN `DE000` + WKN + Prüfziffer (als „berechnet“ gekennzeichnet).
+* Quelle und Zeitpunkt je Eintrag in der Einstellung `assets.isin`; die importierten Stammdaten bleiben unverändert, die
+  Steuerauswertung (Verkaufstabellen, Abgleich mit der Bank, Ausbuchungs-Erkennung) ergänzt fehlende ISIN daraus.
+  Ohne Treffer erneute Suche nach 14 Tagen; Netzwerkfehler gelten nicht als „kein Treffer“.
+* Echtdaten-Test (58 Wertpapiere ohne ISIN): 48 gefunden (38 online, 10 berechnete Derivate), 10 ohne Treffer (u. a.
+  delistete Werte). Der Abgleich mit der Erträgnisaufstellung erkennt jetzt auch T1 Energy (Verkauf 05.06.2025 laut Bank ↔
+  Totalverlust-Ausbuchung vom 28.09.2026 in Portfolia).
+
 ## 0.51.0 – Nachweise für Prüfung und Rückfragen (BMF Rz. 90–104)
 
 * **Veräußerungsliste** (Kryptowerte): je Zeile zusätzlich *Kurs je Einheit*, *Anschaffung durch* (Kauf, Tausch, Ertrag,

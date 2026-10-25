@@ -37,7 +37,7 @@ def lost_index(inp: Any) -> dict[str, list[tuple[date, Decimal]]]:
         a = inp.asset(d.asset)
         if not a.is_security:
             continue
-        for key in {a.isin, a.wkn} - {None, ""}:
+        for key in {a.isin, a.wkn, inp.isin_of(a)} - {None, ""}:
             out.setdefault(str(key), []).append((d.date, d.proceeds - d.cost))
     return out
 

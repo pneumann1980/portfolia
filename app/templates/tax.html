@@ -44,7 +44,7 @@
 <p class="hint"><a href="/tax/certs">Steuerbescheinigungen</a> – Jahressteuerbescheinigung und Erträgnisaufstellung der Bank (PDF) hochladen ·
   <a href="/tax/data">Steuerdaten je Jahr</a> – externe Steuerberichte (JSON/CSV) je Steuerjahr verwalten und Buchungen zuordnen.</p>
 {% if override_error %}<div class="alert crit"><span class="icon">!</span><div>Lokale Steuerparameter ignoriert: {{ override_error }}</div></div>{% endif %}
-{% if saved %}<div class="alert good"><span class="icon">✓</span><div>{% if saved.startswith('report') %}Bericht erzeugt – Download unten.{% elif saved == 'deleted' %}Berichte gelöscht.{% else %}Gespeichert.{% endif %}</div></div>{% endif %}
+{% if saved %}<div class="alert good"><span class="icon">✓</span><div>{% if saved.startswith('report') %}Bericht erzeugt – Download unten.{% elif saved == 'deleted' %}Berichte gelöscht.{% elif saved == 'isin' %}ISIN-Abruf abgeschlossen.{% else %}Gespeichert.{% endif %}</div></div>{% endif %}
 
 {% if ov and ov.has_holding_period %}
 {% for i in ov.issues %}<div class="alert warn"><span class="icon">!</span><div>{{ i.text }}</div></div>{% endfor %}
@@ -236,11 +236,23 @@
     {% endfor %}</fieldset>{% endif %}
     {% if securities %}<fieldset class="box"><legend>Wertpapiere</legend>
     {% for a in securities %}
-      <label class="field"><span>{{ a.name }} {% if asset_type_source.get(a.asset_id) == 'heuristic' %}<span class="badge warn">geschätzt</span>{% endif %}</span>
+      {% set ie = isin_entries.get(a.asset_id) or {} %}
+      <label class="field"><span>{{ a.name }} {% if asset_type_source.get(a.asset_id) == 'heuristic' %}<span class="badge warn">geschätzt</span>{% endif %}
+        {% if a.isin %}<span class="hint">· {{ a.isin }}</span>{% elif ie.isin %}<span class="hint" title="automatisch ermittelt: {{ ie.source }}">· {{ ie.isin }} <span class="badge">auto</span></span>{% elif a.wkn %}<span class="hint">· WKN {{ a.wkn }}, keine ISIN</span>{% endif %}</span>
         <select name="type__{{ a.asset_id }}"><option value="">automatisch ({{ ASSET_TYPES.get(asset_types.get(a.asset_id), '–') }})</option>
           {% for k, lbl in ASSET_TYPES.items() %}<option value="{{ k }}" {% if asset_type_source.get(a.asset_id) == 'settings' and asset_types.get(a.asset_id) == k %}selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></label>
     {% endfor %}</fieldset>{% endif %}
     <div class="row"><button class="btn primary" type="submit">Zuordnung speichern</button></div>
+  </form>
+  <form method="post" action="/tax/isin/run" class="row" style="gap:8px;align-items:center;margin-top:8px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}">
+    <button class="btn sm" type="submit">ISIN jetzt abrufen</button>
+    <span class="hint">Fehlende ISIN werden automatisch ergänzt (Bankbelege, Onvista – nur die WKN wird übermittelt).{% if isin_last %} Letzter Lauf {{ isin_last.at[:16]|replace('T', ' ') }}: {{ isin_last.found }} gefunden, {{ isin_last.open }} offen.{% endif %}</span>
+  </form>
+  <form method="post" action="/tax/isin/settings" class="row" style="gap:8px;align-items:center">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}">
+    <label class="row" style="gap:6px"><input type="checkbox" name="auto" value="1" {% if isin_auto %}checked{% endif %}> täglich automatisch suchen</label>
+    <button class="btn sm" type="submit">Speichern</button>
   </form>
   {% else %}<p class="hint">Keine Wertpapiere im Import.</p>{% endif %}
 </section>

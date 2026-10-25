@@ -160,3 +160,25 @@ def test_delete_all_reports_of_a_year(client):
     assert "Berichte gelöscht" in client.get("/tax?year=2025&saved=deleted").text
     del client.headers["X-CSRF-Token"]
     assert client.post("/tax/reports/2024/delete").status_code == 403
+
+
+def test_isin_button_and_manual_run(client):
+    import httpx
+
+    ctx = client.app.state.ctx
+    page = client.get("/tax").text
+    assert "ISIN jetzt abrufen" in page and 'action="/tax/isin/run"' in page
+    ctx.http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"list": []})))
+    r = client.post("/tax/isin/run", data={"year": "2025"}, follow_redirects=False)
+    assert r.status_code == 303 and "saved=isin" in r.headers["location"]
+    assert "ISIN-Abruf abgeschlossen" in client.get("/tax?year=2025&saved=isin").text
+    # tägliche Suche abschaltbar; der Knopf läuft weiter
+    from app.prices.isin_web import isin_job
+
+    assert client.post("/tax/isin/settings", data={"year": "2025"}, follow_redirects=False).status_code == 303
+    assert ctx.settings.get("isin.auto") is False and isin_job(ctx) == {"skipped": 0}
+    assert 'name="auto" value="1" checked' not in client.get("/tax").text
+    client.post("/tax/isin/settings", data={"year": "2025", "auto": "1"})
+    assert ctx.settings.get("isin.auto") is True
+    del client.headers["X-CSRF-Token"]
+    assert client.post("/tax/isin/run").status_code == 403

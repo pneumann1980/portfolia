@@ -530,7 +530,8 @@ class GermanyPack(RulePack):
                 notes = [n for n in ("Ausbuchung/Verlust" if d.kind == "lost" else "",
                                      "Termingeschäft" if t == "derivative" else "") if n]
                 rows_sales.append({"account": d.account, "kind": "Ausland" if k == "foreign" else "Inland",
-                                   "asset": a.name, "isin": a.isin or a.wkn or "", "type": ASSET_TYPES.get(t, t),
+                                   "asset": a.name, "isin": inp.isin_of(a) or a.wkn or "",
+                                   "type": ASSET_TYPES.get(t, t),
                                    "acq": p.acq_date, "disp": d.date, "qty": p.qty,
                                    "price": price_r, "cost": cost_r, "wk": wk_r,
                                    "vp": vp_r, "gain": gain, "pot": pot, "note": " · ".join(notes)})
@@ -586,7 +587,7 @@ class GermanyPack(RulePack):
                 b["fund_dist"][t] += value
             else:
                 b["dividends"] += value
-            if wht == 0 and (ra.isin or "")[:2] not in ("", "DE"):
+            if wht == 0 and inp.isin_of(ra)[:2] not in ("", "DE"):
                 foreign_div_without_wht.add(ra.name)
             rows_income.append({"date": e.date, "account": e.account, "kind": "Ausland" if k == "foreign" else "Inland",
                                 "asset": ra.name, "type": ("Ausschüttung" if t in FUND_TYPES else "Dividende"),

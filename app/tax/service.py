@@ -19,6 +19,7 @@ from typing import Any
 
 from app import __version__
 from app.context import AppContext
+from app.prices.isin import isin_service
 from app.tax import registry
 from app.tax.base import Overview, ReportMeta, RulePack, TaxInput, TaxResult
 from app.tax.classify import classify_account, classify_asset, securities_accounts
@@ -169,7 +170,7 @@ class TaxService:
             current_prices={k: v for k, v in prices.items() if v is not None},
             price_eur=self._series_price, year_prices=self._year_prices, fx_eur=self._fx,
             import_meta=dict(imp) if imp else {}, profile=s.get("tax.profile") or {},
-            certs=taxcert_service(self.ctx).for_tax(),
+            certs=taxcert_service(self.ctx).for_tax(), isin_map=isin_service(self.ctx).mapping(),
         )
 
     # -- Berechnung (gecacht) ------------------------------------------------------------------------------
