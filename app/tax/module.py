@@ -235,6 +235,12 @@ def make_router() -> APIRouter:
         tax_service(ctx).delete_report(rid)
         return _back(request, "/tax?tab=docs#reports")
 
+    @router.post("/tax/reports/delete-all")
+    def delete_all_reports(request: Request) -> Response:
+        n = tax_service(get_ctx(request)).delete_all()
+        log.info("Alle Steuerberichte gelöscht (%d)", n)
+        return _back(request, "/tax?tab=docs&saved=deleted_all#reports")
+
     @router.post("/tax/reports/{year}/delete")
     def delete_year_reports(request: Request, year: int) -> Response:
         ctx = get_ctx(request)

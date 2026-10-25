@@ -155,13 +155,13 @@ def test_delete_all_reports_of_a_year(client):
     folders = [ctx.config.reports_dir / r["file_path"] for r in svc.reports() if r["year"] == 2025]
     assert len(folders) == 2 and all(f.is_dir() for f in folders)
     page = client.get("/tax?year=2025&tab=docs").text
-    assert "Alle 2025 löschen" in page and "Vorige Fassung behalten" in page
-    # je Bericht ein beschrifteter Löschen-Knopf (2× 2025, 1× 2024)
-    assert page.count('class="btn sm danger"') == 3 and ">Löschen</button>" in page
+    assert "Nur 2025 löschen" in page and "Alle Berichte löschen" in page and "Vorige Fassung behalten" in page
+    # je Bericht ein beschrifteter Löschen-Knopf (2× 2025, 1× 2024) und „Alle Berichte löschen“
+    assert page.count('class="btn sm danger"') == 4 and ">Löschen</button>" in page
     r = client.post("/tax/reports/2025/delete", follow_redirects=False)
     assert r.status_code == 303 and "saved=deleted" in r.headers["location"]
     assert [r["year"] for r in svc.reports()] == [2024] and not any(f.exists() for f in folders)
-    assert "Berichte gelöscht" in client.get("/tax?year=2025&tab=docs&saved=deleted").text
+    assert "Berichte des Jahres gelöscht" in client.get("/tax?year=2025&tab=docs&saved=deleted").text
     del client.headers["X-CSRF-Token"]
     assert client.post("/tax/reports/2024/delete").status_code == 403
 
@@ -186,3 +186,21 @@ def test_isin_button_and_manual_run(client):
     assert ctx.settings.get("isin.auto") is True
     del client.headers["X-CSRF-Token"]
     assert client.post("/tax/isin/run").status_code == 403
+
+
+def test_delete_all_reports_of_all_years_including_zip(client):
+    ctx = client.app.state.ctx
+    svc = tax_service(ctx)
+    svc.generate_all()
+    assert len(svc.reports(100)) >= 3 and svc.all_zip() is not None
+    folders = [ctx.config.reports_dir / r["file_path"] for r in svc.reports(100)]
+    assert all(f.is_dir() for f in folders)
+    page = client.get("/tax?tab=docs").text
+    assert "Alle Berichte löschen" in page and "aller Jahre" in page
+    r = client.post("/tax/reports/delete-all", follow_redirects=False)
+    assert r.status_code == 303 and "saved=deleted_all" in r.headers["location"]
+    assert svc.reports(100) == [] and not any(f.exists() for f in folders)
+    assert svc.all_zip() is None and not (ctx.config.reports_dir / "tax" / "all").exists()
+    assert "Alle Berichte gelöscht" in client.get("/tax?tab=docs&saved=deleted_all").text
+    del client.headers["X-CSRF-Token"]
+    assert client.post("/tax/reports/delete-all").status_code == 403

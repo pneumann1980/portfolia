@@ -1426,6 +1426,11 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.52.3 – „Alle Berichte löschen“
+
+* Der Knopf „Alle {Jahr} löschen“ löschte nur das gewählte Jahr. Neu: **„Alle Berichte löschen“** entfernt alle Berichte aller Jahre samt
+  Sammel-ZIP (mit Rückfrage und Anzahl); „Nur {Jahr} löschen“ bleibt als kleinere Schaltfläche.
+
 ## 0.52.2 – Steuerseite: Berichte überall erreichbar, schneller
 
 * **Berichte nach Neustart „weg“:** Die Berichte waren vorhanden (Datenbank und `/data/reports`), standen nach dem Umbau aber nur im

@@ -470,6 +470,15 @@ class TaxService:
             n += self.delete_report(r["id"])
         return n
 
+    def delete_all(self) -> int:
+        """Löscht **alle** Berichte aller Jahre samt Sammel-ZIP; Rückgabe = Anzahl der Berichte."""
+        n = 0
+        for r in self.ctx.db.q("SELECT id FROM tax_report"):
+            n += self.delete_report(r["id"])
+        shutil.rmtree(self.ctx.config.reports_dir / "tax" / "all", ignore_errors=True)
+        self.ctx.db.set_state(ALL_ZIP_KEY, {})
+        return n
+
     def _prune(self) -> None:
         rows = self.ctx.db.q("SELECT id FROM tax_report ORDER BY id DESC LIMIT -1 OFFSET ?", (KEEP_REPORTS,))
         for r in rows:
