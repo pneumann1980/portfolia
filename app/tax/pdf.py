@@ -13,7 +13,7 @@ import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape as _xml_escape
 
 import reportlab
 from reportlab.lib import colors
@@ -44,6 +44,29 @@ from reportlab.platypus import Table as RLTable
 
 from app.tax import document as D
 from app.tax.base import Column, Table, fmt_date, fmt_eur, fmt_num, fmt_qty, fmt_value  # noqa: F401
+
+# Zeichen, die die eingebettete Schrift nicht enthält (sonst erscheint ein leeres Kästchen)
+_GLYPH_FALLBACK = str.maketrans({"→": "->", "↔": "<->", "✓": "ok", "⚠": "!"})
+
+
+def pdf_text(s: str) -> str:
+    """Ersetzt Zeichen ohne Glyph in der PDF-Schrift durch lesbare Entsprechungen."""
+    return s.translate(_GLYPH_FALLBACK)
+
+
+def escape(s: str) -> str:
+    return _xml_escape(pdf_text(s))
+
+
+def _fit(text: str, font: str, size: float, max_w: float) -> str:
+    """Kürzt ``text`` mit „…“ auf ``max_w`` Punkte, damit Kopf- und Fußzeilen nicht ineinanderlaufen."""
+    text = pdf_text(text)
+    if stringWidth(text, font, size) <= max_w:
+        return text
+    while text and stringWidth(text + "…", font, size) > max_w:
+        text = text[:-1]
+    return text.rstrip() + "…"
+
 
 _FONT_LOCK = threading.Lock()
 _FONTS: dict[str, str] | None = None
@@ -143,10 +166,15 @@ class _NumberedCanvas(rl_canvas.Canvas):
             with contextlib.suppress(Exception):  # Bild nicht zeichenbar → ohne Logo weiter
                 self.drawImage(logo, MARGIN_X, h - 11.4 * mm, width=LOGO_HEADER, height=LOGO_HEADER, mask="auto")
                 x += LOGO_HEADER + 2 * mm
-        self.drawString(x, h - 10.5 * mm, self.header_left[:140])
-        self.drawRightString(w - MARGIN_X, h - 10.5 * mm, self.header_right)
-        self.drawString(MARGIN_X, 7.5 * mm, self.footer_left[:180])
-        self.drawRightString(w - MARGIN_X, 7.5 * mm, f"Seite {self._pageNumber} von {total}")
+        font, size, gap = f["regular"], 7.5, 4 * mm
+        right = pdf_text(self.header_right)
+        self.drawRightString(w - MARGIN_X, h - 10.5 * mm, right)
+        room = w - MARGIN_X - stringWidth(right, font, size) - gap - x
+        self.drawString(x, h - 10.5 * mm, _fit(self.header_left, font, size, room))
+        pages = f"Seite {self._pageNumber} von {total}"
+        self.drawRightString(w - MARGIN_X, 7.5 * mm, pages)
+        room = w - 2 * MARGIN_X - stringWidth(pages, font, size) - gap
+        self.drawString(MARGIN_X, 7.5 * mm, _fit(self.footer_left, font, size, room))
         self.restoreState()
 
 

@@ -154,6 +154,8 @@ def test_delete_all_reports_of_a_year(client):
     assert len(folders) == 2 and all(f.is_dir() for f in folders)
     page = client.get("/tax?year=2025").text
     assert "Alle 2025 löschen" in page and "Vorige Fassung behalten" in page
+    # je Bericht ein beschrifteter Löschen-Knopf (2× 2025, 1× 2024)
+    assert page.count('class="btn sm danger"') == 3 and ">Löschen</button>" in page
     r = client.post("/tax/reports/2025/delete", follow_redirects=False)
     assert r.status_code == 303 and "saved=deleted" in r.headers["location"]
     assert [r["year"] for r in svc.reports()] == [2024] and not any(f.exists() for f in folders)

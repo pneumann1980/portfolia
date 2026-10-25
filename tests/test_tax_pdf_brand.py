@@ -63,3 +63,38 @@ def test_missing_logo_falls_back_to_text_only(tmp_path: Path, monkeypatch: pytes
     finally:
         monkeypatch.undo()
         P._logo_file.cache_clear()
+
+
+def _text_in(pdf: pdfium.PdfDocument, page: int, rect: tuple[float, float, float, float]) -> str:
+    left, bottom, right, top = rect
+    return pdf[page].get_textpage().get_text_bounded(left=left, bottom=bottom, right=right, top=top).strip()
+
+
+def test_logo_never_covers_text_and_name_is_complete(tmp_path: Path):
+    doc = _doc(pages=2)
+    doc.orientation = "landscape"
+    pdf = pdfium.PdfDocument(P.render(doc, tmp_path / "d.pdf"))
+    for i in range(len(pdf)):
+        page = pdf[i]
+        assert "Portfolia" in page.get_textpage().get_text_bounded()
+        for obj in page.get_objects(filter=[pdfium_c.FPDF_PAGEOBJ_IMAGE]):
+            assert _text_in(pdf, i, obj.get_pos()) == ""  # unter und neben dem Logo steht kein Text
+    # Titelblock: „Portfolia“ beginnt rechts neben dem Logo und ist vollständig lesbar
+    assert any(line.strip() == "Portfolia" for line in pdf[0].get_textpage().get_text_bounded().splitlines())
+
+
+def test_long_header_and_footer_do_not_collide(tmp_path: Path):
+    doc = D.Doc(title="Sehr langer Titel " * 8, subtitle="Untertitel " * 6, footer="Fußnote " * 40)
+    doc.add(D.H1("Titel"), D.P("Text"))
+    pdf = pdfium.PdfDocument(P.render(doc, tmp_path / "e.pdf", header_right="Portfolia · 2025"))
+    text = pdf[0].get_textpage().get_text_bounded()
+    assert "Portfolia · 2025" in text and "Seite 1 von 1" in text  # rechte Textteile unversehrt
+    assert "…" in text  # linke Textteile gekürzt statt überschrieben
+
+
+def test_glyphs_missing_in_font_are_replaced(tmp_path: Path):
+    doc = D.Doc(title="Test", footer="Fuß")
+    doc.add(D.P("Steuern → Regelwerk ↔ Bank"))
+    pdf = pdfium.PdfDocument(P.render(doc, tmp_path / "f.pdf"))
+    text = pdf[0].get_textpage().get_text_bounded()
+    assert "Steuern -> Regelwerk <-> Bank" in text

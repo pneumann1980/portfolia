@@ -486,8 +486,15 @@ label.check { align-items: flex-start; }
 label.check input { margin-top: 3px; }
 label.field.inline { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
 label.field.inline select { max-width: 62%; }
-#reports .list-item { align-items: flex-start; justify-content: space-between; }
-#reports .list-item form { flex: none; }
+#reports .report-item { flex-direction: column; align-items: stretch; gap: 8px; }
+#reports .report-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; min-width: 0; }
+#reports .report-head .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#reports .report-head form { flex: none; }
+#reports .report-docs { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+#reports .doc-pair { display: inline-flex; gap: 4px; max-width: 100%; min-width: 0; }
+#reports .doc-pair .btn:first-child { flex: 0 1 auto; min-width: 0; justify-content: flex-start; white-space: normal; text-align: left; line-height: 1.25; }
+#reports .doc-pair .btn:last-child { flex: none; }
+#reports ul.list { padding: 0; margin: 0; list-style: none; }
 
 /* -- Sparpläne ----------------------------------------------------------------------------------- */
 form.inline { display: inline; }

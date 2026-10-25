@@ -172,14 +172,16 @@
     {% if reports|selectattr('year', 'equalto', year)|list %}<form method="post" action="/tax/reports/{{ year }}/delete" data-confirm="Alle erzeugten Berichte {{ year }} löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Alle {{ year }} löschen</button></form>{% endif %}</div>
   <ul class="list">
     {% for r in reports %}
-    <li class="list-item">
-      <div><b>{{ r.year }}</b> · {{ r.created_at|datetime_de }} <span class="hint">· {{ r.rulepack }}{% if r.import_id %} · Import #{{ r.import_id }}{% endif %}</span>
-        <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:4px">{% for d in r.summary.docs or [] %}
-          <a class="btn sm" href="/tax/report/{{ r.id }}/{{ d.id }}.pdf" download>{{ d.title }} <span class="hint">({{ (d.bytes / 1024)|round|int }} KB)</span></a>
-          <a class="btn sm ghost" href="/tax/report/{{ r.id }}/{{ d.id }}.pdf?inline=1" target="_blank" rel="noopener" title="Im Browser öffnen" aria-label="{{ d.title }} im Browser öffnen">↗</a>
-        {% endfor %}</div></div>
-      <form method="post" action="/tax/report/{{ r.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button class="icon-btn" title="Bericht löschen" aria-label="Bericht löschen">×</button></form>
+    <li class="list-item report-item">
+      <div class="report-head">
+        <div class="grow"><b>{{ r.year }}</b> · {{ r.created_at|datetime_de }}<br><span class="hint">{{ r.rulepack }}{% if r.import_id %} · Import #{{ r.import_id }}{% endif %}</span></div>
+        <form method="post" action="/tax/report/{{ r.id }}/delete" data-confirm="Diesen Bericht löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="btn sm danger" type="submit" title="Bericht löschen" aria-label="Bericht {{ r.year }} vom {{ r.created_at|datetime_de }} löschen">Löschen</button></form>
+      </div>
+      <div class="report-docs">{% for d in r.summary.docs or [] %}
+        <span class="doc-pair"><a class="btn sm" href="/tax/report/{{ r.id }}/{{ d.id }}.pdf" download><span>{{ d.title }} <span class="hint" style="white-space:nowrap">({{ (d.bytes / 1024)|round|int }} KB)</span></span></a>
+        <a class="btn sm ghost" href="/tax/report/{{ r.id }}/{{ d.id }}.pdf?inline=1" target="_blank" rel="noopener" title="Im Browser öffnen" aria-label="{{ d.title }} im Browser öffnen">↗</a></span>
+      {% endfor %}</div>
     </li>
     {% endfor %}
   </ul>

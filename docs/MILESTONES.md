@@ -1426,6 +1426,15 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.51.2 – Steuer-PDF und Berichtsliste (mobil)
+
+* **PDF:** Kopf- und Fußzeile kürzen den linken Text mit „…“, damit er nie in den rechten Text („Portfolia · Jahr“,
+  „Seite x von y“) hineinläuft; Zeichen ohne Glyph in der eingebetteten Schrift (→, ↔) werden durch „->“/„<->“ ersetzt
+  (vorher leeres Kästchen, z. B. im Deckblatt „Steuern → Regelwerk“). Tests: Logo überdeckt keinen Text (Hoch- und
+  Querformat), „Portfolia“ steht vollständig auf jeder Seite.
+* **Mobil:** Berichtsliste in *Steuern → PDF-Bericht* ohne Überlauf (Kopfzeile mit Datum/Regelwerk, Download-Knöpfe
+  brechen um); Löschen als beschrifteter Knopf „Löschen“ mit Rückfrage statt „×“.
+
 ## 0.51.1 – ISIN automatisch ermitteln
 
 * Wertpapiere, die nur mit WKN geführt werden, bekommen ihre **ISIN automatisch** (`app/prices/isin.py`, täglicher Lauf
