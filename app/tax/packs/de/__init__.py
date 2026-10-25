@@ -291,7 +291,7 @@ class GermanyPack(RulePack):
         self._quality(inp, res, year, c, i, k, vp, P)
         from app.tax.packs.de.certs import cert_report
 
-        cert_report(self, res, year, k, o, P, cert)
+        cert_report(self, inp, res, year, k, o, P, cert)
         res.data = {"crypto": {kk: vv for kk, vv in c.items() if not kk.startswith("rows")},
                     "income": {kk: vv for kk, vv in i.items() if kk != "rows"},
                     "capital": {kk: vv for kk, vv in k.items() if kk not in ("rows_sales", "rows_income", "rows_vp")},

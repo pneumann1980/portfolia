@@ -9,6 +9,7 @@ from reportlab.pdfgen import canvas
 
 from app.taxcert import parse as P
 from app.taxcert.service import taxcert_service
+from tests.helpers import tx
 from tests.test_tax_de import buy, run, sell
 from tests.test_tax_web import client  # noqa: F401  (Fixture)
 
@@ -210,3 +211,24 @@ def test_sales_comparison_falls_back_to_date_and_amount_for_wkn_only_assets():
         assert "über Datum und Betrag" in t.rows[0]["status"] and t.rows[0]["pf"] == D("1650.00")
     finally:
         TAX_ASSETS.pop()
+
+
+def test_bank_sale_vs_later_write_off_in_portfolia():
+    # Bank: Verkauf 05.06.2025 mit Verlust; Portfolia: stattdessen „Totalverlust“-Ausbuchung im September 2026
+    rows = [buy("b1", "2024-01-10", "US2", 10, 1000, acc="DKB"),
+            tx("w1", "2026-09-28 12:00", "withdrawal", tag="lost", frm=("DKB", "US2", 10), value="0"),
+            buy("c1", "2024-01-10", "BOND", 1, 400, acc="DKB"),
+            tx("w2", "2025-09-28 12:00", "withdrawal", tag="lost", frm=("DKB", "BOND", 1), value="0")]
+    events = [{"kind": "Verkäufe Wertpapier", "date": "2025-06-05", "name": "BETA CORP.", "isin": "US0000000002",
+               "amounts": ["-150.33"], "pot": False}]
+    certs = {2025: {"ertraegnis": {"events": events, "carry_in": {"shares": "0", "other": "0"}}}}
+    _, res = run(rows, 2025, kinds={"DKB": "domestic"}, certs=certs)
+    t = next(tb for s in res.sections for tb in s.tables if tb.id == "k_cert")
+    by = {r["isin"]: r for r in t.rows}
+    miss = by["US0000000002"]
+    assert miss["status"].startswith("fehlt in Portfolia – dort stattdessen als Ausbuchung (Totalverlust) am "
+                                     "28.09.2026")
+    assert "−1.000,00 €" in miss["status"] and "durch den Verkauf ersetzen" in miss["status"]
+    only = by["DE0000000003"]
+    assert only["status"].startswith("nur in Portfolia – Ausbuchung (Totalverlust) ohne Bankbeleg")
+    assert only["pf"] == D("-400.00")

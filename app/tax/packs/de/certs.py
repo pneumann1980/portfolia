@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -28,8 +28,22 @@ def _d(v: Any) -> Decimal:
     return v if isinstance(v, Decimal) else Decimal(str(v))
 
 
-def cert_report(pack: Any, res: TaxResult, year: int, k: dict[str, Any], o: dict[str, Any], P: dict[str, Any],
-                cert: dict[str, Any]) -> None:
+def lost_index(inp: Any) -> dict[str, list[tuple[date, Decimal]]]:
+    """Ausbuchungen (Totalverlust) von Wertpapieren: ISIN bzw. WKN → [(Datum, Ergebnis)] – über alle Jahre."""
+    out: dict[str, list[tuple[date, Decimal]]] = {}
+    for d in inp.ledger.disposals:
+        if d.kind != "lost":
+            continue
+        a = inp.asset(d.asset)
+        if not a.is_security:
+            continue
+        for key in {a.isin, a.wkn} - {None, ""}:
+            out.setdefault(str(key), []).append((d.date, d.proceeds - d.cost))
+    return out
+
+
+def cert_report(pack: Any, inp: Any, res: TaxResult, year: int, k: dict[str, Any], o: dict[str, Any],
+                P: dict[str, Any], cert: dict[str, Any]) -> None:
     """Fügt Zusammenfassung, Hinweise und die Tabelle „Abgleich Verkäufe“ hinzu (nur wenn Belege hochgeladen sind)."""
     if not cert:
         return
@@ -38,7 +52,7 @@ def cert_report(pack: Any, res: TaxResult, year: int, k: dict[str, Any], o: dict
     if bv:
         _from_bescheinigung(pack, res, k, o, P, b, bv, e)
     if e:
-        table, stats = sales_table(year, e, k)
+        table, stats = sales_table(year, e, k, lost_index(inp))
         sk = res.section("kap")
         if sk is not None and table.rows:
             sk.tables.append(table)
@@ -113,14 +127,16 @@ def _is_isin(code: str) -> bool:
     return len(code) == 12 and code[:2].isalpha() and code[:2].isupper()
 
 
-def sales_table(year: int, e: dict[str, Any], k: dict[str, Any]) -> tuple[Table, dict[str, int]]:
+def sales_table(year: int, e: dict[str, Any], k: dict[str, Any],
+                lost: dict[str, list[tuple[date, Decimal]]] | None = None) -> tuple[Table, dict[str, int]]:
     """Verkäufe laut Erträgnisaufstellung ↔ Verkäufe inländischer Depots in Portfolia (ISIN, Datum ± 3 Tage)."""
     groups: dict[tuple[str, date], dict[str, Any]] = {}
     for r in k["rows_sales"]:
         if r["kind"] != "Inland":
             continue
-        g = groups.setdefault((r["isin"], r["disp"]), {"name": r["asset"], "gain": ZERO, "used": False})
+        g = groups.setdefault((r["isin"], r["disp"]), {"name": r["asset"], "gain": ZERO, "used": False, "lost": False})
         g["gain"] += r["gain"]
+        g["lost"] = g["lost"] or "Ausbuchung" in (r.get("note") or "")
     rows: list[dict[str, Any]] = []
     stats = {"same": 0, "diff": 0, "missing": 0, "only_pf": 0}
     for ev in e.get("events") or []:
@@ -140,7 +156,14 @@ def sales_table(year: int, e: dict[str, Any], k: dict[str, Any]) -> tuple[Table,
         base = {"date": d, "asset": ev.get("name", ""), "isin": ev.get("isin", ""), "bank": money(bank)}
         if hit is None:
             stats["missing"] += 1
-            rows.append({**base, "pf": None, "diff": None, "status": "fehlt in Portfolia"})
+            status = "fehlt in Portfolia"
+            hits = (lost or {}).get(str(ev.get("isin")), [])
+            later = sorted((ld, lg) for ld, lg in hits if ld >= d - timedelta(days=3))
+            if later:
+                status += (f" – dort stattdessen als Ausbuchung (Totalverlust) am {later[0][0].strftime('%d.%m.%Y')} "
+                           f"gebucht ({fmt_eur(money(later[0][1]))}); Verkaufsbeleg der Bank prüfen und die Ausbuchung "
+                           "durch den Verkauf ersetzen")
+            rows.append({**base, "pf": None, "diff": None, "status": status})
             continue
         hit["used"] = True
         diff = money(hit["gain"] - bank)
@@ -151,8 +174,10 @@ def sales_table(year: int, e: dict[str, Any], k: dict[str, Any]) -> tuple[Table,
     for (isin, gd), g in sorted(groups.items(), key=lambda it: (it[0][1], it[0][0])):
         if not g["used"] and gd.year == year:
             stats["only_pf"] += 1
+            status = ("nur in Portfolia – Ausbuchung (Totalverlust) ohne Bankbeleg; die Bank hat nicht ausgebucht"
+                      if g["lost"] else "nur in Portfolia (bei der Bank nicht als Verkauf geführt)")
             rows.append({"date": gd, "asset": g["name"], "isin": isin, "bank": None, "pf": money(g["gain"]),
-                         "diff": None, "status": "nur in Portfolia (bei der Bank nicht als Verkauf geführt)"})
+                         "diff": None, "status": status})
     rows.sort(key=lambda r: (r["date"], r["asset"]))
     table = Table(
         "k_cert", f"Abgleich Verkäufe {year}: Erträgnisaufstellung der Bank ↔ Portfolia (Inlandsdepots)",

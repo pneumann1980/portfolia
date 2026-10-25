@@ -1426,6 +1426,16 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.50.1 – Verkaufsbeleg der Bank ↔ Ausbuchung in Portfolia
+
+* Im „Abgleich Verkäufe“ erkennt Portfolia einen **Verkauf laut Bank, der in Portfolia fehlt**, wenn dasselbe Wertpapier
+  (ISIN bzw. WKN) dort später als Totalverlust-Ausbuchung gebucht ist, und nennt Datum und Betrag der Ausbuchung. Umgekehrt
+  werden **Ausbuchungen ohne Bankbeleg** („nur in Portfolia – Ausbuchung (Totalverlust)“) gekennzeichnet.
+* Bewusst **kein Auto-Ersatz**: Die Buchung ersetzt der Nutzer im Journal (Ausbuchung löschen, Verkauf buchen bzw. den
+  Verkaufsbeleg über den DKB-Import zuordnen) – die Wirkung hängt von Belegen ab, die Portfolia nicht kennt.
+* Grenze: Der Abgleich nutzt die ISIN der Bankliste; Wertpapiere, die in Portfolia nur mit WKN geführt werden, werden nur
+  über Datum und Betrag zugeordnet (ISIN in den Stammdaten nachtragen verbessert die Zuordnung).
+
 ## 0.50.0 – Steuerbescheinigungen der Bank einlesen
 
 * Neue Seite **/tax/certs** („Steuerbescheinigungen“): Jahressteuerbescheinigung und Erträgnisaufstellung der Bank als PDF
