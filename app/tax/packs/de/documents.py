@@ -22,7 +22,7 @@ def _table(result: TaxResult, tid: str) -> Table | None:
 
 def _person(meta: ReportMeta, year: int) -> list[tuple[str, str]]:
     p = meta.profile or {}
-    rows = [("Steuerpflichtige Person", p.get("name") or "–")]
+    rows = [("Steuerpflichtige Person", p.get("name") or "– (nicht hinterlegt: Steuern → Regelwerk & Deckblatt)")]
     if p.get("tax_id"):
         rows.append(("Steuer-Identifikationsnummer", p["tax_id"]))
     if p.get("tax_number"):
