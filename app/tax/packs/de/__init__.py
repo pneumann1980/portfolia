@@ -48,7 +48,9 @@ from app.tax.base import (
     Table,
     TaxInput,
     TaxResult,
+    fmt_date,
     fmt_eur,
+    fmt_num,
     fmt_rate,
     money,
 )
@@ -70,6 +72,7 @@ INCOME_DEFAULTS = {"staking": "22_3", "lending": "22_3", "interest": "22_3", "re
 INCOME_CHOICES = (("22_3", "Sonstige Einkünfte § 22 Nr. 3 EStG"), ("kap", "Kapitalerträge § 20 EStG"),
                   ("none", "nicht steuerbar"))
 FIRST_VP_YEAR = 2018
+VP_PRICE_GAP_DAYS = 7  # Abstand des ersten/letzten Jahreskurses vom Jahresrand, ab dem die VP als vorläufig gilt
 KINDS = ("foreign", "domestic")
 
 
@@ -85,6 +88,13 @@ def _is_auto(raw: Any) -> bool:
     return raw is None or raw == "" or (isinstance(raw, int | float) and not isinstance(raw, bool) and raw == 0)
 
 
+def _vp_price_cells(prices: dict[str, Any] | None) -> dict[str, str]:
+    if not prices:
+        return {"p_start": "–", "p_end": "–"}
+    return {"p_start": f"{fmt_date(prices['d0'])} · {fmt_num(prices['p0'], 4)}",
+            "p_end": f"{fmt_date(prices['d1'])} · {fmt_num(prices['p1'], 4)}"}
+
+
 class _Vp:
     """Vorabpauschale je Fondsanteil und Jahr (§ 18 InvStG), mit Cache."""
 
@@ -93,6 +103,7 @@ class _Vp:
         self.inp = inp
         self.units: dict[tuple[str, int], Decimal | None] = {}
         self.missing: dict[tuple[str, int], str] = {}
+        self.basis: dict[tuple[str, int], dict[str, Any]] = {}  # verwendete Kurse (Datum, Kurs) je Fonds und Jahr
         self._qty: dict[str, tuple[list[date], list[Decimal]]] = {}
 
     def _qty_series(self, asset: str) -> tuple[list[date], list[Decimal]]:
@@ -148,6 +159,7 @@ class _Vp:
                     self.missing[key] = f"Kurse {year} fehlen (Anfang/Ende des Jahres)"
                 else:
                     p0, p1 = first[1], last[1]
+                    self.basis[key] = {"d0": first[0], "p0": p0, "d1": last[0], "p1": p1}
                     dist = self.dist_per_unit(asset, year)
                     basis = p0 * _d(bz) * _d(p["capital"]["vp_factor"])
                     cap = max(ZERO, p1 - p0 + dist)
@@ -552,6 +564,7 @@ class GermanyPack(RulePack):
                         old_fund_lots += 1
                     ded = p.qty * vp.accumulated(a.asset_id, p.acq_date, year)
                     gain -= ded
+                gain_x = gain  # ungerundet: Summen entstehen daraus (die Zeile ist nur zur Anzeige auf Cent gerundet)
                 pot = "Aktien" if t == "share" else ("Fonds" if t in FUND_TYPES else "Sonstige")
                 # Zeile geht auf (Erlös − Anschaffungskosten − Veräußerungskosten − Abzug VP = Gewinn): erst runden
                 price_r, cost_r, wk_r, vp_r = money(p.proceeds + wk), money(p.cost), money(wk), money(ded)
@@ -564,15 +577,15 @@ class GermanyPack(RulePack):
                                    "acq": p.acq_date, "disp": d.date, "qty": p.qty,
                                    "price": price_r, "cost": cost_r, "wk": wk_r,
                                    "vp": vp_r, "gain": gain, "pot": pot, "note": " · ".join(notes)})
-                if t == "derivative" and gain < 0:
-                    deriv_loss += gain
+                if t == "derivative" and gain_x < 0:
+                    deriv_loss += gain_x
                 b = B[k]
                 if t == "share":
-                    b["share_gain" if gain >= 0 else "share_loss"] += gain
+                    b["share_gain" if gain_x >= 0 else "share_loss"] += gain_x
                 elif t in FUND_TYPES:
-                    b["fund_gain"][t] += gain
+                    b["fund_gain"][t] += gain_x
                 else:
-                    b["other_gain" if gain >= 0 else "other_loss"] += gain
+                    b["other_gain" if gain_x >= 0 else "other_loss"] += gain_x
 
         # Steuerereignisse (Quellensteuer, einbehaltene KapESt)
         wht_index: dict[tuple[str | None, str | None], list[Any]] = defaultdict(list)
@@ -653,15 +666,25 @@ class GermanyPack(RulePack):
             rows_vp.append({"account": lot.account, "kind": "Ausland" if k == "foreign" else "Inland",
                             "asset": a.name, "type": ASSET_TYPES.get(t, t), "year": vy, "acq": lot.acq_date,
                             "qty": lot.qty, "unit": unit.quantize(Decimal("0.000001")), "factor": f,
-                            "amount": money(amount)})
+                            "amount": money(amount), "prices": vp.basis.get((a.asset_id, vy))})
 
+        # Veräußerungssummen: erst jetzt auf Cent runden; die Differenz zur Summe der gerundeten Zeilen wird ausgewiesen
+        for b in B.values():
+            for key in ("share_gain", "share_loss", "other_gain", "other_loss"):
+                b[key] = money(b[key])
+            for ft in list(b["fund_gain"]):
+                b["fund_gain"][ft] = money(b["fund_gain"][ft])
+        deriv_loss = money(deriv_loss)
+        sales_total = sum((b["share_gain"] + b["share_loss"] + b["other_gain"] + b["other_loss"]
+                           + sum(b["fund_gain"].values(), ZERO) for b in B.values()), ZERO)
+        round_diff = sales_total - sum((r["gain"] for r in rows_sales), ZERO)
         activity = bool(rows_sales or rows_income or rows_vp or any(B[k]["kest"] for k in KINDS))
         for b in B.values():
             b["fund_dist"] = dict(b["fund_dist"])
             b["fund_vp"] = dict(b["fund_vp"])
             b["fund_gain"] = dict(b["fund_gain"])
         return {"B": B, "rows_sales": rows_sales, "rows_income": rows_income, "rows_vp": rows_vp,
-                "activity": activity, "heuristic_assets": sorted(heuristic_assets),
+                "activity": activity, "round_diff": round_diff, "heuristic_assets": sorted(heuristic_assets),
                 "default_accounts": sorted(default_accounts), "old_fund_lots": old_fund_lots,
                 "foreign_div_without_wht": sorted(foreign_div_without_wht), "valued": dict(valued),
                 "deriv_loss": deriv_loss}
@@ -1009,6 +1032,11 @@ class GermanyPack(RulePack):
                            f"§ 23: Der Jahressaldo {fmt_eur(c['net'])} (Grundlage der Freigrenze) ist aus "
                            f"ungerundeten Werten gebildet; die Summe der einzeln auf Cent gerundeten Zeilen liegt um "
                            f"{fmt_eur(abs(c['round_diff']))} {'darunter' if c['round_diff'] > 0 else 'darüber'}."))
+        if k["round_diff"]:
+            issues.append(Issue("info", "rounding_capital",
+                           f"Kapitalerträge: Die Veräußerungssummen sind aus ungerundeten Teilgewinnen gebildet; die "
+                           f"Summe der einzeln auf Cent gerundeten Zeilen der Veräußerungsliste liegt um "
+                           f"{fmt_eur(abs(k['round_diff']))} {'darunter' if k['round_diff'] > 0 else 'darüber'}."))
         for label, shown, exact, fg in (("§ 23", c["net"], c["net_x"], c["freigrenze"]),
                                         ("§ 22 Nr. 3", i["einkuenfte"], i["einkuenfte_x"], i["freigrenze"])):
             if shown >= fg > exact and not (label == "§ 23" and c["fg_mode"] == "freibetrag"):
@@ -1056,9 +1084,10 @@ class GermanyPack(RulePack):
                            f"Fondsart für „{inp.asset(aid).name}“ automatisch angenommen "
                            f"({ASSET_TYPES.get(inp.asset_types.get(aid, ''), '?')}) – bitte unter Zuordnung prüfen."))
         if k["default_accounts"]:
-            issues.append(Issue("info", "account_kind_default",
-                           "Als Konto mit inländischem Steuerabzug angenommen: " + ", ".join(k["default_accounts"])
-                           + " – bei ausländischen Brokern unter Zuordnung umstellen."))
+            issues.append(Issue("warning", "account_kind_default",
+                           "Inland/Ausland nicht bestätigt – als Konto mit inländischem Steuerabzug angenommen: "
+                           + ", ".join(k["default_accounts"]) + ". Bei ausländischen Brokern fehlen sonst die Angaben "
+                           "in Anlage KAP; unter „Zuordnung“ bestätigen oder umstellen.", len(k["default_accounts"])))
         if k["foreign_div_without_wht"]:
             issues.append(Issue("info", "div_without_wht",
                            "Dividenden ausländischer Wertpapiere ohne gebuchte Quellensteuer: "
@@ -1068,6 +1097,17 @@ class GermanyPack(RulePack):
             issues.append(Issue("warning", "fund_pre2018",
                            f"{k['old_fund_lots']} Fondsanteile mit Erwerb vor 2018 veräußert – Übergangsregeln "
                            "(fiktive Veräußerung 31.12.2017, Bestandsschutz) nicht berücksichtigt."))
+        gaps = []
+        for (aid, y), b in sorted(vp.basis.items()):
+            lag_start, lag_end = (b["d0"] - date(y, 1, 1)).days, (date(y, 12, 31) - b["d1"]).days
+            if lag_start > VP_PRICE_GAP_DAYS or (lag_end > VP_PRICE_GAP_DAYS and y < inp.today.year):
+                gaps.append(f"{inp.asset(aid).name} {y} (Kurs ab {fmt_date(b['d0'])}, bis {fmt_date(b['d1'])})")
+        if gaps:
+            issues.append(Issue("warning", "vp_price_gap",
+                                "Vorabpauschale: Der erste bzw. letzte Kurs des Jahres liegt mehr als "
+                                f"{VP_PRICE_GAP_DAYS} Tage vom Jahresrand entfernt – Berechnung vorläufig, mit der "
+                                "Steuerbescheinigung der Bank abgleichen: " + "; ".join(gaps[:6])
+                                + (" …" if len(gaps) > 6 else ""), len(gaps)))
         for (aid, y), why in sorted(vp.missing.items()):
             issues.append(Issue("warning", "vp_missing",
                            f"Vorabpauschale {inp.asset(aid).name} {y}: {why} – mit 0 € angesetzt."))
@@ -1329,8 +1369,13 @@ def build_sections(pack: GermanyPack, result: TaxResult, c: dict[str, Any], i: d
         Column("asset", "Fonds", "text", 1.9), Column("type", "Fondsart", "text", 1.4),
         Column("acq", "Anschaffung", "date", 0.8), Column("qty", "Anteile", "qty", 0.8),
         Column("unit", "VP je Anteil", "qty", 0.8), Column("factor", "Anteil Jahr", "qty", 0.7),
+        Column("p_start", "Kurs Jahresbeginn", "text", 1.2), Column("p_end", "Kurs Jahresende", "text", 1.2),
         Column("amount", "Vorabpauschale", "eur", 0.9, True),
-    ], k["rows_vp"], landscape=True).with_totals("asset"))
+    ], [{**r, **_vp_price_cells(r.get("prices"))} for r in k["rows_vp"]], landscape=True,
+        note="Kurse: erster und letzter Schlusskurs des Jahres aus der Kursquelle des Wertpapiers (Börsenkurs, nicht "
+        "der festgesetzte Rücknahmepreis); Abweichungen wirken auf die Vorabpauschale – mit der Bankbescheinigung "
+        "abgleichen."
+    ).with_totals("asset"))
     if i["kap_rows"]:
         sk.tables.append(Table("k_crypto", "Erträge aus Kryptowerten, als Kapitalerträge eingestuft", [
             Column("date", "Datum", "date", 0.8), Column("asset", "Kryptowert", "text", 0.9),

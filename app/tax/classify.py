@@ -30,6 +30,11 @@ ACCOUNT_KINDS: dict[str, str] = {
 
 _FUND_RE = re.compile(r"\b(ETF|UCITS|Fonds|Fund|iShares|Xtrackers|Vanguard|Amundi|SPDR|Lyxor|Invesco|"
                       r"Indexfonds|Thesaurierend|Ausschüttend)\b", re.IGNORECASE)
+# Fonds ohne Aktienanteil bzw. mit Mischanteil: keine 30-%-Teilfreistellung für Aktienfonds (vorsichtig geraten, bleibt
+# eine zu bestätigende Annahme)
+_FUND_NONEQUITY_RE = re.compile(r"(Geldmarkt|Money[- ]?Market|Renten|Anleihe|Bonds?\b|Treasur|Government|Staatsanleihe|"
+                                r"Corporate|Aggregate|Floating[- ]?Rate|Overnight)", re.IGNORECASE)
+_FUND_MIXED_RE = re.compile(r"(Multi[- ]?Asset|Mischfonds|Balanced|Ausgewogen|Allocation)", re.IGNORECASE)
 _ETN_RE = re.compile(r"\b(ETN|ETC|Zertifikat|Certificate|Tracker)\b", re.IGNORECASE)
 # Turbos/Knock-outs, Optionsscheine, Warrants, Mini-Futures, Faktor-Papiere (Termingeschäfte, § 20 Abs. 2 S. 1 Nr. 3
 # EStG): die Emittenten kürzen die Namen („TURBOP O.END“, „TURBOC“, „WTS26“), daher auch die Kurzformen
@@ -58,6 +63,10 @@ def classify_asset(a: AssetInfo, overrides: dict[str, Any] | None = None) -> tup
     if _ETN_RE.search(text):
         return "other", "heuristic"
     if _FUND_RE.search(text):
+        if _FUND_NONEQUITY_RE.search(text):
+            return "etf_other", "heuristic"
+        if _FUND_MIXED_RE.search(text):
+            return "etf_mixed", "heuristic"
         return "etf_equity", "heuristic"
     return "share", "default"
 

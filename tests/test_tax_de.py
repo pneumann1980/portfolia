@@ -29,7 +29,8 @@ TAX_ASSETS = [
 ]
 
 
-def run(rows, year, *, options=None, kinds=None, year_prices=None, today=date(2026, 9, 26), certs=None, isin_map=None):
+def run(rows, year, *, options=None, kinds=None, year_prices=None, today=date(2026, 9, 26), certs=None, isin_map=None,
+        account_source="settings"):
     pack = registry.get("de")
     pf = portfolio(rows, TAX_ASSETS)
     opts = {**pack.defaults(), **(options or {})}
@@ -40,7 +41,7 @@ def run(rows, year, *, options=None, kinds=None, year_prices=None, today=date(20
     accs = pf.all_accounts()
     inp = TaxInput(pf=pf, ledger=led, today=today, asset_types=types, asset_type_source=tsrc,
                    account_kinds={a: (kinds or {}).get(a, "domestic") for a in accs},
-                   account_kind_source=dict.fromkeys(accs, "settings"),
+                   account_kind_source=dict.fromkeys(accs, account_source),
                    year_prices=(lambda aid, y: (year_prices or {}).get((aid, y), (None, None))), certs=certs or {},
                    isin_map=isin_map or {})
     return pack, pack.compute(inp, year, opts)
@@ -593,3 +594,92 @@ def test_freigrenze_22_3_compares_unrounded_sum():
     _, res2 = run(rows2, 2025)
     assert res2.data["income"]["taxable"] == D("256.00")
     assert not any(x.code == "freigrenze_edge" for x in res2.issues)
+
+
+def test_unconfirmed_account_is_a_warning_and_keeps_report_preliminary():
+    rows = [buy("b1", "2025-01-10", "US1", "1", "1000", acc="IBKR"),
+            sell("s1", "2025-02-01", "US1", "1", "1500", acc="IBKR")]
+    _, res = run(rows, 2025, account_source="default")
+    iss = [i for i in res.issues if i.code == "account_kind_default"]
+    assert iss and iss[0].severity == "warning" and "IBKR" in iss[0].text and "Anlage KAP" in iss[0].text
+    assert res.review()["status"] == "vorläufig" and "account_kind_default" in res.review()["codes"]
+    _, ok = run(rows, 2025)  # Einstufung bestätigt (Einstellung) → keine Annahme, kein offener Punkt
+    assert not any(i.code == "account_kind_default" for i in ok.issues)
+
+
+@pytest.mark.parametrize(("name", "expected"), [
+    ("Amundi Euro Geldmarkt UCITS ETF", "etf_other"),
+    ("iShares Core Euro Government Bond UCITS ETF", "etf_other"),
+    ("Xtrackers Global Aggregate Bond ETF", "etf_other"),
+    ("Vanguard LifeStrategy Multi-Asset ETF", "etf_mixed"),
+    ("iShares Core MSCI World UCITS ETF", "etf_equity"),
+    ("Bondora Group AG", "share"),                     # kein Fonds → kein Fondsmerkmal
+])
+def test_fund_type_guess_is_conservative_for_non_equity_names(name, expected):
+    pf = portfolio([], [{"asset_id": "X", "name": name, "asset_class": "security", "isin": "LU0000000001",
+                         "quote_source": "none", "quote_id": ""}])
+    typ, src = classify_asset(pf.asset("X"))
+    assert typ == expected
+    assert src == ("default" if expected == "share" else "heuristic")  # Fondsart bleibt eine zu bestätigende Annahme
+
+
+def test_opening_balance_is_a_known_tag():
+    from app.importer import contract as C
+
+    assert "opening_balance" in C.KNOWN_TAGS  # die Diagnose erzeugt es; der Validator darf nicht dauernd warnen
+
+
+def test_securities_gains_are_summed_unrounded_across_many_lots():
+    """100 Käufe zu je 1 € und ein Verkauf aller Anteile für 100,40 €: 0,40 € Gewinn, nicht 100 × 0,00 €."""
+    rows = [buy(f"b{i}", f"2025-01-{i % 28 + 1:02d}", "US1", "1", "1.00", acc="Depot") for i in range(100)]
+    rows += [sell("s1", "2025-06-01", "US1", "100", "100.40", acc="Depot"),
+             buy("bb", "2025-01-02", "US2", "1", "1000.00", acc="Depot"),
+             sell("s2", "2025-06-02", "US2", "1", "1999.90", acc="Depot")]
+    _, res = run(rows, 2025)
+    k = res.data["capital"]
+    assert k["B"]["domestic"]["share_gain"] == D("1000.30")  # nicht 999,90 €
+    assert k["round_diff"] == D("0.40")  # Zeilensumme 999,90 € vs. Summe 1.000,30 €
+    iss = next(i for i in res.issues if i.code == "rounding_capital")
+    assert "0,40" in iss.text and "darunter" in iss.text
+
+
+def test_securities_rounding_difference_is_zero_for_cent_exact_values():
+    rows = [buy("b1", "2025-01-10", "US1", "1", "1000.00", acc="Depot"),
+            sell("s1", "2025-02-01", "US1", "1", "1500.25", acc="Depot")]
+    _, res = run(rows, 2025)
+    assert res.data["capital"]["round_diff"] == 0
+    assert res.data["capital"]["B"]["domestic"]["share_gain"] == D("500.25")
+    assert not any(i.code == "rounding_capital" for i in res.issues)
+
+
+def test_securities_loss_and_gain_classification_uses_unrounded_sign():
+    # Teilgewinn −0,004 € (gerundet 0,00 €) ist ein Verlust und gehört in „share_loss“, nicht in „share_gain“
+    rows = [buy("b1", "2025-01-10", "US1", "1", "1.004", acc="Depot"),
+            sell("s1", "2025-02-01", "US1", "1", "1.000", acc="Depot")]
+    _, res = run(rows, 2025)
+    b = res.data["capital"]["B"]["domestic"]
+    assert b["share_gain"] == 0 and b["share_loss"] == D("0.00")
+
+
+def _vp_table(res):
+    return next(t for s in res.sections for t in s.tables if t.id == "k_vp")
+
+
+def test_vorabpauschale_report_names_the_prices_used():
+    prices = {("FUND", 2024): ((date(2024, 1, 2), D(100)), (date(2024, 12, 30), D(110)))}
+    rows = [buy("f1", "2024-03-10", "FUND", 10, 1000, acc="IBKR")]
+    _, res = run(rows, 2025, kinds={"IBKR": "foreign"}, year_prices=prices)
+    row = _vp_table(res).rows[0]
+    assert row["p_start"] == "02.01.2024 · 100,0000" and row["p_end"] == "30.12.2024 · 110,0000"
+    assert "Rücknahmepreis" in _vp_table(res).note
+    assert not any(i.code == "vp_price_gap" for i in res.issues)  # Kurse am Jahresrand → keine Lücke
+
+
+def test_vorabpauschale_price_gap_marks_report_preliminary():
+    # erster Kurs 11 Tage nach Jahresbeginn
+    prices = {("FUND", 2024): ((date(2024, 1, 12), D(100)), (date(2024, 12, 30), D(110)))}
+    rows = [buy("f1", "2024-03-10", "FUND", 10, 1000, acc="IBKR")]
+    _, res = run(rows, 2025, kinds={"IBKR": "foreign"}, year_prices=prices)
+    gap = next(i for i in res.issues if i.code == "vp_price_gap")
+    assert gap.severity == "warning" and "12.01.2024" in gap.text and "Steuerbescheinigung" in gap.text
+    assert "vp_price_gap" in res.review()["codes"] and res.review()["status"] == "vorläufig"

@@ -46,7 +46,8 @@ GIFT_OUT_TAGS = ("gift", "donation")
 GIFT_IN_TAGS = ("gift_received",)
 CORPORATE_TAGS = ("split", "reverse_split", "merger", "spinoff", "migration", "rename", "swap")
 OTHER_TAGS = ("exchange", "internal", "withholding_tax", "tax", "margin", "realized_gain", "realized_loss",
-              "bridge", "wrap", "unwrap", "liquidity_in", "liquidity_out", "refund")
+              "bridge", "wrap", "unwrap", "liquidity_in", "liquidity_out", "refund",
+              "opening_balance")  # Anfangsbestand mit nachgewiesenem Anschaffungsdatum (erzeugt die Diagnose)
 # Derivate (Futures, Perpetuals, Margin): mengenwirksam, aber weder externer Kapitalfluss noch automatisch steuerlich
 # eingeordnet – die Einordnung (z. B. Termingeschäft) ist gesondert zu prüfen; Portfolia rechnet sie nicht still mit.
 DERIVATIVE_TAGS = ("funding", "futures_pnl", "liquidation", "margin_interest", "margin", "realized_gain",

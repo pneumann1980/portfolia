@@ -1426,6 +1426,29 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.54.0 – Steuerreport: Zuordnungs-Annahmen, Kapitalertrags-Rundung, Vorabpauschale-Nachweis
+
+Anlass: zweite externe Review. Alle vier Punkte im Code nachvollzogen und reproduziert; Gewichtung weicht von der Review ab.
+
+* **Inland/Ausland nicht bestätigt (hoch):** Ein steuerlich aktives Konto ohne Einstellung gilt weiter als „Inland“, der Hinweis
+  `account_kind_default` ist jetzt aber eine **Warnung** und hält den Prüfstatus auf „vorläufig“, bis die Einstufung unter „Zuordnung“
+  bestätigt ist (sonst fehlen bei ausländischen Brokern die Angaben in Anlage KAP).
+* **Fondsart-Annahme vorsichtiger:** Namen mit Geldmarkt, Renten, Anleihe, Bond, Treasury, Government, Corporate, Aggregate, Floating Rate
+  oder Overnight werden als „Sonstiger Investmentfonds“ (keine Teilfreistellung) geraten, Multi-Asset/Mischfonds/Balanced als Mischfonds
+  (15 %), nicht mehr pauschal als Aktienfonds (30 %). Die Annahme bleibt eine Warnung (`fund_type_guess`).
+* **Kapitalerträge ungerundet (mittel):** Veräußerungsgewinne der Wertpapiere werden je FIFO-Teil ungerundet summiert und erst am Ende auf
+  Cent gerundet (wie bei Krypto); die Zeilen der Veräußerungsliste bleiben zur Anzeige gerundet, die Differenz steht als Hinweis
+  `rounding_capital`. Vorzeichen (Gewinn/Verlust) und Derivate-Verlust folgen dem ungerundeten Teilgewinn. Beispiel: 100 Käufe zu 1 € und
+  ein Verkauf für 100,40 € ergeben 0,40 € Gewinn (vorher 0,00 €). Wirkung: höchstens 0,005 € je Teil; der Sparer-Pauschbetrag ist ein
+  Freibetrag, kein Grenzbetrag.
+* **Vorabpauschale nachweisbar (niedrig bis mittel):** Die Tabelle nennt Kurs und Datum zu Jahresbeginn und Jahresende; liegt der erste bzw.
+  letzte Kurs mehr als 7 Tage vom Jahresrand entfernt, erscheint die Warnung `vp_price_gap` (Berechnung vorläufig). Die Rechnung selbst
+  ist unverändert; sie nutzt Börsenschlusskurse, **nicht** die festgesetzten Rücknahmepreise – dafür fehlt eine Datenquelle.
+* **`opening_balance` im Importvertrag:** Die Diagnose erzeugt das Tag; der Validator kennt es jetzt (`OTHER_TAGS`) und warnt nicht mehr
+  bei jedem Export. Es erscheint damit auch in der Tag-Auswahl der manuellen Buchung.
+* **Nicht im Code prüfbar:** 24 rekonstruierte Buchungen, fehlende Gebührenbewertung und die TH-Kurszuordnung stammen aus dem
+  Export vom 1. Oktober, der hier nicht vorliegt.
+
 ## 0.53.3 – Steuer-PDF: Logo als Vektorzeichnung (Firefox-Viewer)
 
 * **Fehlerbild:** Im PDF-Betrachter von Firefox (Android) fehlte nach „ortfolia“ (0.52.1) nun das „S“ von „Steuerreport“ in der Kopfzeile –
