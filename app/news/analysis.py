@@ -18,6 +18,7 @@ import logging
 import re
 import time
 import unicodedata
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -34,6 +35,7 @@ from app.news.ai import (
 )
 from app.news.config import ai_off_ids, not_in_clause
 from app.news.eta import analyze_eta
+from app.news.locks import exclusive
 from app.util.timeutil import iso, parse_iso
 
 log = logging.getLogger(__name__)
@@ -193,9 +195,10 @@ class AnalysisService:
         return bool(self.ctx.settings.get("news.analysis", True)) and self.ai.enabled()
 
     # -- Auswahl -----------------------------------------------------------------------------------------
-    def _raw_candidates(self) -> list[dict[str, Any]]:
-        """Alle Meldungen im Analysefenster, die auf eine Analyse warten (mit Alter und Grundpriorität), ungekürzt."""
-        hours = int(self.ctx.settings.get("news.analysis_hours", WINDOW_H))
+    def _raw_candidates(self, hours: float | None = None) -> list[dict[str, Any]]:
+        """Alle Meldungen im Analysefenster, die auf eine Analyse warten (mit Alter und Grundpriorität), ungekürzt.
+        ``hours`` ersetzt das eingestellte Fenster (manuelle Welle: 24 Stunden)."""
+        hours = hours or int(self.ctx.settings.get("news.analysis_hours", WINDOW_H))
         since = iso(datetime.now(UTC) - timedelta(hours=hours))
         wait_until = iso(datetime.now(UTC) - timedelta(hours=6))  # so lange auf den Artikelinhalt warten
         skip_sql, skip_args = not_in_clause("n.source_id", ai_off_ids(self.ctx.config.sources_path))
@@ -291,8 +294,8 @@ class AnalysisService:
         return {"active": active, "reason": reason, "eta": eta, "fresh": len(fresh), "older": len(rows) - len(fresh),
                 "total": len(rows), "age_h": age_max}
 
-    def candidates(self, limit: int) -> list[dict[str, Any]]:
-        out = self._raw_candidates()
+    def candidates(self, limit: int, hours: float | None = None) -> list[dict[str, Any]]:
+        out = self._raw_candidates(hours)
         guard = self.pressure(out)
         if guard["active"]:
             age_max = guard["age_h"]
@@ -331,9 +334,9 @@ class AnalysisService:
         return json.dumps({"artikel": items}, ensure_ascii=False), basis
 
     # -- Lauf -------------------------------------------------------------------------------------------
-    def backlog(self) -> int:
+    def backlog(self, hours: float | None = None) -> int:
         """Anzahl der Meldungen (48 h), die auf eine Analyse warten (unter Schutz nur die frischen)."""
-        return len(self.candidates(100_000))
+        return len(self.candidates(100_000, hours))
 
     def window_total(self) -> int:
         """Meldungen im Analysefenster, die überhaupt analysiert werden sollen (Nenner für den Fortschrittsbalken)."""
@@ -348,12 +351,22 @@ class AnalysisService:
             + skip_sql, (since, wait_until, 1 if not self.ctx.settings.get("news.enrich", True) else 0, *skip_args),
             default=0) or 0)
 
-    def run(self, limit: int | None = None, max_seconds: float | None = None) -> dict[str, Any]:
+    def run(self, limit: int | None = None, max_seconds: float | None = None, *, hours: float | None = None,
+            wait_s: float = 0.0, on_batch: Callable[[int], None] | None = None) -> dict[str, Any]:
         """Rückstau abarbeiten: in Runden zu je ``PER_ROUND`` Meldungen (nach Priorität), bis nichts mehr wartet, ein
-        Limit (Minute/Tag/Budget) greift, der Anbieter stört oder die Laufzeit-Obergrenze erreicht ist."""
+        Limit (Minute/Tag/Budget) greift, der Anbieter stört oder die Laufzeit-Obergrenze erreicht ist.
+        ``hours`` ersetzt das Analysefenster, ``wait_s`` wartet auf einen laufenden Lauf, ``on_batch`` meldet die
+        Zahl der je Anfrage bearbeiteten Meldungen (Fortschritt der Welle)."""
         res: dict[str, Any] = {"analyzed": 0, "rejected": 0, "requests": 0}
         if not self.enabled():
             return {"skipped": "Analyse deaktiviert oder KI nicht konfiguriert"}
+        with exclusive(self.ctx, "analyze", wait_s) as got:
+            if not got:
+                return {"skipped": "läuft bereits"}
+            return self._run(res, limit, max_seconds, hours, on_batch)
+
+    def _run(self, res: dict[str, Any], limit: int | None, max_seconds: float | None, hours: float | None,
+             on_batch: Callable[[int], None] | None) -> dict[str, Any]:
         guard = self.pressure()
         res["guard"] = guard["active"]
         if guard["active"]:
@@ -362,7 +375,7 @@ class AnalysisService:
         deadline = time.monotonic() + (max_seconds if max_seconds is not None else MAX_SECONDS)
         res["selected"] = 0
         while res["selected"] < limit and time.monotonic() < deadline:
-            rows = self.candidates(min(PER_ROUND, limit - res["selected"]))
+            rows = self.candidates(min(PER_ROUND, limit - res["selected"]), hours)
             if not rows:
                 break
             res["selected"] += len(rows)
@@ -371,6 +384,8 @@ class AnalysisService:
                 chunk = rows[i:i + BATCH]
                 try:
                     self._batch(chunk, res)
+                    if on_batch is not None:
+                        on_batch(len(chunk))
                 except (Paused, QuotaExceeded, BudgetExceeded) as e:
                     res["stopped"] = e.text
                     stop = True
@@ -385,7 +400,7 @@ class AnalysisService:
                     break
             if stop:
                 break
-        res["backlog_left"] = self.backlog()
+        res["backlog_left"] = self.backlog(hours)
         return res
 
     def _batch(self, chunk: list[dict[str, Any]], res: dict[str, Any]) -> None:

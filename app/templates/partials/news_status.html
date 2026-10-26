@@ -1,7 +1,9 @@
 {% set ai_s = st.ai %}
 <section class="card">
   <div class="card-head"><h2>Pipeline heute</h2>
-    <div class="row"><button class="btn sm" hx-post="/news/pipeline/run" hx-target="#pipe-msg">Anreicherung &amp; Analyse jetzt starten</button><span id="pipe-msg"></span></div></div>
+    <div class="row"><select name="fetch" id="pipe-fetch" class="sm" aria-label="Import"><option value="1">mit Import</option><option value="0">ohne Import</option></select>
+      <button class="btn sm" hx-post="/news/pipeline/run" hx-include="#pipe-fetch" hx-target="#pipe-wave" hx-swap="outerHTML">Welle jetzt starten</button></div></div>
+  {% include "partials/news_wave.html" %}
   <dl class="kv">
     <dt>Importiert (Artikel)</dt><dd>{{ st.imported }}</dd>
     <dt>Text geladen</dt><dd>{{ st.content.success }} vollständig · {{ st.content.partial }} Teiltext · {{ st.content.blocked }} gesperrt · {{ st.content.failed }} fehlgeschlagen · {{ st.content.pending }} Wiederholung geplant</dd>

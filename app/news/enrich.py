@@ -12,6 +12,7 @@ schranke, Zugriff verweigert – wird nicht umgangen), ``failed``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
@@ -19,6 +20,7 @@ from urllib.parse import urlsplit
 from app.context import AppContext
 from app.news import gnews
 from app.news.extract import assess, excerpt, parse_article
+from app.news.locks import exclusive
 from app.news.safefetch import FetchError, SafeFetcher
 from app.util.http import RateLimiter
 from app.util.timeutil import iso, parse_iso
@@ -85,15 +87,17 @@ class EnrichService:
                  AND c.next_attempt IS NOT NULL AND c.next_attempt > ?""",
             (since, iso(datetime.now(UTC))), default=0) or 0)
 
-    def candidates(self, limit: int, *, include_paused: bool = False) -> list[dict[str, Any]]:
+    def candidates(self, limit: int, *, include_paused: bool = False,
+                   hours: float | None = None) -> list[dict[str, Any]]:
         """Noch nicht (erfolgreich) angereicherte Artikel in Prioritätsreihenfolge.
 
         Artikel pausierter Quellen werden übersprungen (``include_paused`` zählt sie mit): Sonst belegen sie die
-        ersten Plätze jedes Laufs und verdrängen abrufbare Artikel anderer Quellen.
+        ersten Plätze jedes Laufs und verdrängen abrufbare Artikel anderer Quellen. ``hours`` begrenzt den Zeitraum
+        (manuelle Welle: 24 Stunden) statt ``news.enrich_days``.
         """
         days = int(self.ctx.settings.get("news.enrich_days", 3))
         paused = set() if include_paused else set(self.paused_hosts())
-        since = iso(datetime.now(UTC) - timedelta(days=days))
+        since = iso(datetime.now(UTC) - (timedelta(hours=hours) if hours else timedelta(days=days)))
         now = iso(datetime.now(UTC))
         rows = self.db.q(
             """SELECT n.id, n.url, n.title, n.summary, n.relevance, n.dup_count, n.source_weight, n.published_at,
@@ -120,26 +124,35 @@ class EnrichService:
         return scored[:limit]
 
     # -- Lauf ----------------------------------------------------------------------------------------------
-    def run(self, limit: int | None = None) -> dict[str, Any]:
+    def run(self, limit: int | None = None, *, hours: float | None = None, wait_s: float = 0.0,
+            on_item: Callable[[str], None] | None = None) -> dict[str, Any]:
+        """Einen Lauf abarbeiten. ``hours`` begrenzt den Zeitraum, ``wait_s`` wartet auf einen laufenden Lauf,
+        ``on_item`` meldet jeden bearbeiteten Artikel (Status) – für die Fortschrittsanzeige der Welle."""
         res = {"selected": 0, "success": 0, "partial": 0, "blocked": 0, "failed": 0, "retry": 0, "skipped_host": 0}
         if not self.enabled():
             return {"skipped": "Artikelinhalte deaktiviert"}
-        limit = limit or int(self.ctx.settings.get("news.enrich_per_run", 40))
-        batch = self.candidates(limit)
-        res["selected"] = len(batch)
-        for it in batch:
-            host = _host(it["url"])
-            if self._host_paused(host):
-                res["skipped_host"] += 1
-                continue
-            try:
-                status = self.process(it)
-            except Exception as e:  # ein Artikel darf den Lauf nie abbrechen
-                log.warning("Artikelinhalt %s: unerwarteter Fehler %s", it["id"], e)
-                status = self._store_failure(it, "internal", retry=False)
-            res[status if status in res else "failed"] += 1
-        res["total_success"] = self.db.scalar("SELECT COUNT(*) FROM news_content WHERE status='success'", default=0)
-        return res
+        with exclusive(self.ctx, "enrich", wait_s) as got:
+            if not got:
+                return {"skipped": "läuft bereits"}
+            limit = limit or int(self.ctx.settings.get("news.enrich_per_run", 40))
+            batch = self.candidates(limit, hours=hours)
+            res["selected"] = len(batch)
+            for it in batch:
+                host = _host(it["url"])
+                if self._host_paused(host):
+                    res["skipped_host"] += 1
+                    continue
+                try:
+                    status = self.process(it)
+                except Exception as e:  # ein Artikel darf den Lauf nie abbrechen
+                    log.warning("Artikelinhalt %s: unerwarteter Fehler %s", it["id"], e)
+                    status = self._store_failure(it, "internal", retry=False)
+                res[status if status in res else "failed"] += 1
+                if on_item is not None:
+                    on_item(status)
+            res["total_success"] = self.db.scalar("SELECT COUNT(*) FROM news_content WHERE status='success'",
+                                                  default=0)
+            return res
 
     def process(self, it: dict[str, Any]) -> str:
         url = it["url"]

@@ -10,7 +10,7 @@ import base64
 import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -2095,3 +2095,147 @@ def test_status_enrich_bar_excludes_paused_sources_and_planned_retries(ctx, monk
     assert st["backlog"]["bottleneck"].startswith("keiner – alles Abrufbare abgearbeitet")
     assert "2 Artikel pausierter Quellen" in st["backlog"]["bottleneck"]
     assert "1 Wiederholungen" in st["backlog"]["bottleneck"]
+
+
+# ----------------------------------------------------------------------------------------------------
+# Manuelle Pipeline-Welle (0.55.0)
+# ----------------------------------------------------------------------------------------------------
+
+def _ok_fetcher():
+    return mock_fetcher(lambda req: httpx.Response(200, headers={"content-type": "text/html"}, text=article_html()))
+
+
+def _wave(ctx, *, fetch=True, gw=None, fetcher=None):
+    from app.news.wave import WaveRunner
+
+    fetch_fn = (lambda: {"new": 2, "sources": 3, "errors": []}) if fetch else None
+    return WaveRunner(ctx, fetch_fn, enrich=EnrichService(ctx, fetcher or _ok_fetcher()),
+                      analysis=AnalysisService(ctx, gw or FakeGateway(echo_answers)))
+
+
+def test_wave_runs_all_stages_for_24h_window_only(ctx):
+    from app.news import wave as W
+
+    inside = [add_item(ctx, f"Meldung {i} zu Bitcoin und Zinsen", f"https://a.example.com/{i}", hours=2)
+              for i in range(3)]
+    old = add_item(ctx, "Alte Meldung außerhalb des Fensters", "https://a.example.com/old", hours=30)
+    assert W.reserve(ctx, True) is not None and W.reserve(ctx, True) is None  # Doppelklick wird abgefangen
+    res = _wave(ctx).run()
+    st = W.load(ctx)
+    assert res["status"] == "done" and st["status"] == "done" and st["finished_at"]
+    by = {s["key"]: s for s in st["stages"]}
+    assert by["fetch"]["status"] == "done" and "2 neue Meldungen" in by["fetch"]["note"]
+    assert (by["enrich"]["done"], by["enrich"]["total"], by["enrich"]["status"]) == (3, 3, "done")
+    assert (by["analyze"]["done"], by["analyze"]["total"], by["analyze"]["status"]) == (3, 3, "done")
+    assert by["group"]["status"] == "done"
+    assert ctx.db.q1("SELECT 1 FROM news_content WHERE item_id=?", (old,)) is None  # außerhalb 24 h: unberührt
+    assert all(ctx.db.q1("SELECT summary FROM news_analysis WHERE item_id=?", (i,)) for i in inside)
+    assert not W.is_running(ctx) and W.reserve(ctx, True) is not None  # danach ist eine neue Welle möglich
+
+
+def test_wave_without_fetch_skips_import_and_empty_stages_show_zero_of_zero(ctx):
+    from app.news import wave as W
+
+    _wave(ctx, fetch=False).run()
+    by = {s["key"]: s for s in W.load(ctx)["stages"]}
+    assert by["fetch"]["status"] == "skipped"
+    assert [(by[k]["done"], by[k]["total"]) for k in ("enrich", "analyze")] == [(0, 0), (0, 0)]
+    assert by["enrich"]["status"] == "done" and by["analyze"]["status"] == "done"
+
+
+def test_wave_marks_stage_blocked_when_provider_stops_and_continues(ctx):
+    from app.news import wave as W
+
+    seed_for_analysis(ctx, 4)
+    gw = FakeGateway(A.Paused("pausiert bis 18:00"))
+    res = _wave(ctx, gw=gw).run()
+    by = {s["key"]: s for s in W.load(ctx)["stages"]}
+    assert res["status"] == "partial" and by["analyze"]["status"] == "blocked"
+    assert "pausiert" in by["analyze"]["note"] and "4 warten" in by["analyze"]["note"]
+    assert by["group"]["status"] == "done"  # eine wartende Stufe hält die folgenden nicht auf
+
+
+def test_wave_stage_error_does_not_abort_following_stages(ctx):
+    from app.news import wave as W
+
+    class Boom(EnrichService):
+        def candidates(self, *a, **k):
+            raise RuntimeError("defekt")
+
+    from app.news.wave import WaveRunner
+
+    r = WaveRunner(ctx, None, enrich=Boom(ctx, _ok_fetcher()), analysis=AnalysisService(ctx, FakeGateway(echo_answers)))
+    assert r.run()["status"] == "error"
+    by = {s["key"]: s for s in W.load(ctx)["stages"]}
+    assert by["enrich"]["status"] == "error" and "defekt" in by["enrich"]["note"] and by["group"]["status"] == "done"
+
+
+def test_wave_without_heartbeat_counts_as_aborted(ctx):
+    from app.news import wave as W
+
+    st = W.reserve(ctx, True)
+    st["updated_at"] = iso(NOW - timedelta(hours=1))
+    ctx.db.set_state(W.STATE_KEY, st)
+    loaded = W.load(ctx)
+    assert loaded["status"] == "aborted" and not W.is_running(ctx)
+    assert all(s["status"] == "error" for s in loaded["stages"] if "abgebrochen" in s["note"])
+    assert W.reserve(ctx, True) is not None  # abgebrochene Welle blockiert keinen Neustart
+
+
+def test_stage_lock_prevents_parallel_runs_on_same_data(ctx):
+    from app.news.locks import exclusive
+
+    seed_for_analysis(ctx, 2)
+    gw = FakeGateway(echo_answers)
+    with exclusive(ctx, "analyze") as got:
+        assert got
+        assert AnalysisService(ctx, gw).run() == {"skipped": "läuft bereits"} and not gw.calls
+    assert AnalysisService(ctx, gw).run()["analyzed"] == 2
+    add_item(ctx, "Neue Meldung zu Aktien", "https://a.example.com/n", hours=1)
+    with exclusive(ctx, "enrich"):
+        assert EnrichService(ctx, _ok_fetcher()).run() == {"skipped": "läuft bereits"}
+    with exclusive(ctx, "group") as got:
+        from app.news import module as M
+
+        assert got and M.job_group(ctx) == {"skipped": "läuft bereits"}
+
+
+def test_pipeline_run_route_reserves_wave_and_polls(client):
+    from app.news import wave as W
+
+    ctx = wctx(client)
+
+    class Sched:
+        calls: ClassVar[list[tuple]] = []
+
+        def trigger(self, name, delay=1.0, **kw):
+            self.calls.append((name, kw))
+            return True
+
+    ctx.scheduler = Sched()
+    r = client.post("/news/pipeline/run", data={"fetch": "0"})
+    assert r.status_code == 200 and Sched.calls == [("news_wave", {"fetch": False})]
+    assert 'id="pipe-wave"' in r.text and 'hx-trigger="every 3s"' in r.text and "Manuelle Welle" in r.text
+    again = client.post("/news/pipeline/run", data={"fetch": "1"})  # läuft schon: kein zweiter Auftrag
+    assert len(Sched.calls) == 1 and "läuft bereits" in again.text
+    page = client.get("/news?tab=status").text
+    assert "Welle jetzt starten" in page and "Manuelle Welle" in page and "Artikeltexte" in page
+    assert client.get("/news/pipeline/wave?poll=1").headers.get("HX-Refresh") is None  # läuft noch: kein Neuladen
+    st = W.load(ctx)
+    st["status"], st["finished_at"] = "done", iso(NOW)
+    ctx.db.set_state(W.STATE_KEY, st)
+    done = client.get("/news/pipeline/wave?poll=1")
+    assert done.headers.get("HX-Refresh") == "true" and "hx-trigger" not in done.text and "abgeschlossen" in done.text
+    ctx.scheduler = None
+
+
+def test_wave_job_registered_on_own_single_worker_executor(config):
+    from app.jobs.scheduler import Scheduler
+
+    c = AppContext(config)
+    c.startup()
+    sched = Scheduler(c)
+    sched.setup_default_jobs()
+    assert "news_wave" in sched.jobs and sched._executor["news_wave"] == "wave"
+    assert sched.sched._executors["wave"]._pool._max_workers == 1
+    c.shutdown()

@@ -1426,6 +1426,27 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.55.0 – News: manuelle Pipeline-Welle statt Blind-Trigger, Stufensperren
+
+* **Vorher:** „Anreicherung & Analyse jetzt starten“ setzte drei Einmal-Jobs mit festen Verzögerungen (0,5/30/60 s) ab und zeigte ein
+  statisches Badge. Kein Import, kein Fortschritt, keine Rückmeldung; Einmal-Jobs haben eigene IDs (`max_instances=1` gilt je ID) und
+  konnten parallel zum Intervall-Job dieselben Kandidaten ziehen (doppelte KI-Anfragen).
+* **Jetzt:** Ein Klick erzeugt eine **Welle** (`app/news/wave.py`, Job `news_wave`, eigener 1-Worker-Pool): Import (wählbar „mit/ohne
+  Import“) → Artikeltexte → KI-Analyse → Gruppierung, begrenzt auf Meldungen der **letzten 24 Stunden**. Die Stufen laufen nacheinander (Ende
+  der Vorstufe startet die nächste, keine festen Verzögerungen). Je Stufe „n von m“, Status (wartet/läuft/fertig/übersprungen/wartet auf
+  Anbieter/Fehler) und Hinweis (z. B. N gesperrt, M Artikel pausierter Quellen zurückgestellt). Die Statusseite fragt alle 3 s nach, solange
+  die Welle läuft; am Ende lädt sie neu (Rückstau, Balken). Ohne Arbeit steht „0 von 0“.
+* **Stufensperren** (`app/news/locks.py`): Import, Artikeltexte, Analyse und Gruppierung laufen je Stufe nur einmal gleichzeitig. Der
+  Intervall-Job meldet „läuft bereits“ und übergeht den Lauf; die Welle wartet bis zu 15 min auf die Sperre. Doppelklick: eine laufende
+  Welle wird nicht ein zweites Mal gestartet.
+* **Zustand:** `app_state` `news.wave` (letzte Welle). Eine laufende Welle ohne Lebenszeichen (> 20 min) gilt als abgebrochen (Neustart,
+  Absturz) und blockiert keine neue.
+* **Grenzen/Annahmen:** Nenner = Zahl der wartenden Meldungen beim Start der Stufe. Hält der Anbieter an (Limit/Pause), endet die Stufe als
+  „wartet auf Anbieter/Limit“; der Intervall-Job arbeitet weiter, die Welle startet nicht neu. Obergrenze je Stufe 45 min. Die automatischen
+  Intervall-Läufe erzeugen keine Welle (Anzeige unter „Jobs“). Tagesbericht, Rematch und YouTube-Entdeckung sind nicht Teil der Welle.
+* **Tests:** Ablauf aller Stufen im 24-h-Fenster (Alt-Meldung unberührt), ohne Import, Anbieter pausiert, Stufenfehler hält die Folgestufen
+  nicht auf, abgebrochene Welle, Stufensperren (Analyse/Texte/Gruppierung), Route inkl. Doppelklick und Polling/Neuladen, Executor.
+
 ## 0.54.2 – News-Status: Balken „Artikeltexte“ nur mit Abrufbarem
 
 * **Irritation:** „Artikeltexte 85 % (830 von 969)“ neben „Rückstau 0“, „kein Rückstau“ und „Engpass: keiner“. Der Balken zählte Artikel

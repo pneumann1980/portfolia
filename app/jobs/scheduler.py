@@ -25,7 +25,8 @@ class Scheduler:
         self.sched = BackgroundScheduler(
             timezone=tz,
             # „interactive“: kurze, vom Nutzer ausgelöste Jobs (z. B. Tagesbericht) warten nicht hinter dem Import
-            executors={"default": ThreadPoolExecutor(max_workers=3), "interactive": ThreadPoolExecutor(max_workers=2)},
+            executors={"default": ThreadPoolExecutor(max_workers=3), "interactive": ThreadPoolExecutor(max_workers=2),
+                       "wave": ThreadPoolExecutor(max_workers=1)},  # manuelle News-Welle: lange, einzeln
             job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 600},
         )
         self.jobs: dict[str, Callable[..., Any]] = {}

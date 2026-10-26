@@ -210,6 +210,10 @@ letzte Fehler. Der Hinweis zur Free-Tier-Garantie steht dort ebenfalls.
   Oberfläche: `news.analysis_protect` (an), `news.analysis_protect_hours` (6), `news.analysis_protect_age_h` (24). Grenzen: Die
   Schwellen sind Annahmen; das Minutenlimit geht nur über die Nennleistung je Lauf ein. Der Token-Verbrauch je Analyse ist ein
   Durchschnitt der letzten 100; vor der ersten Analyse entfällt die Token-Prognose.
+* **Manuelle Welle (0.55.0):** *News → Status → „Welle jetzt starten“* (mit oder ohne Import) arbeitet Import → Artikeltexte → Analyse →
+  Gruppierung für die **letzten 24 Stunden** nacheinander ab und zeigt je Stufe „n von m“ mit Live-Aktualisierung (`app/news/wave.py`).
+  Stufensperren (`app/news/locks.py`) verhindern Parallelläufe mit den Intervall-Jobs. Hält der Anbieter an, endet die Stufe als
+  „wartet auf Anbieter/Limit“ und der Intervall-Job übernimmt den Rest.
 * **Token-Budget:** *Einstellungen → News & KI → „Token-Tagesgrenze aufheben (unbegrenzt)“* (nur Gemini, ausdrücklich zu
   wählen; Standard bleibt 200.000). Anfragen pro Minute und pro Tag sowie Tokens pro Minute bleiben bestehen. Die
   Status-Seite zeigt dann „unbegrenzt“. Claude hat bewusst keine unbegrenzte Option (kostenpflichtig).

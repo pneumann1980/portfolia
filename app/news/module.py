@@ -16,17 +16,20 @@ from starlette.concurrency import run_in_threadpool
 
 from app.context import AppContext
 from app.jobs.scheduler import Scheduler, extra_jobs, startup_job
+from app.news import wave
 from app.news.ai import AiGateway
 from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
 from app.news.events import EventService
 from app.news.images import cached_image
 from app.news.llm import LlmService
+from app.news.locks import exclusive
 from app.news.relevance import recency_factor
 from app.news.report import ReportService
 from app.news.service import NewsService
 from app.news.status import pipeline_status
 from app.news.telegram import TelegramInputError, add_telegram_source
+from app.news.wave import WaveRunner
 from app.progress import Progress, job_progress
 from app.util.timeutil import iso, parse_iso
 from app.web.app import register_router
@@ -59,7 +62,10 @@ def enrich_service(ctx: AppContext) -> EnrichService:
 # ----------------------------------------------------------------------------------------------------
 
 def job_fetch(ctx: AppContext) -> dict[str, Any]:
-    res = news_service(ctx).run()
+    with exclusive(ctx, "fetch") as got:
+        if not got:
+            return {"skipped": "läuft bereits"}
+        res = news_service(ctx).run()
     llm = LlmService(ctx)
     ai = AiGateway(ctx)
     # Die strukturierte Analyse (job_analyze) ersetzt die frühere Kurzzusammenfassung; ohne sie bleibt der alte Weg.
@@ -86,7 +92,20 @@ def job_analyze(ctx: AppContext) -> dict[str, Any]:
 
 
 def job_group(ctx: AppContext) -> dict[str, Any]:
-    return EventService(ctx).run()
+    with exclusive(ctx, "group") as got:
+        if not got:
+            return {"skipped": "läuft bereits"}
+        return EventService(ctx).run()
+
+
+def job_wave(ctx: AppContext, fetch: bool = True) -> dict[str, Any]:
+    """Manuelle Welle (Import → Artikeltexte → Analyse → Gruppierung, 24 h) – siehe ``app.news.wave``."""
+    with exclusive(ctx, "wave") as got:
+        if not got:
+            return {"skipped": "Welle läuft bereits"}
+        runner = WaveRunner(ctx, (lambda: news_service(ctx).run()) if fetch else None,
+                            enrich=enrich_service(ctx), state=wave.reserved(ctx))
+        return runner.run()
 
 
 def _report_progress(ctx: AppContext) -> Progress:
@@ -127,6 +146,7 @@ def _register_jobs(s: Scheduler) -> None:
     s.register("news_analyze", job_analyze, IntervalTrigger(minutes=10))
     s.register("news_group", job_group, IntervalTrigger(minutes=20))
     s.register("news_report", job_report, IntervalTrigger(minutes=15), executor="interactive")
+    s.register("news_wave", job_wave, None, executor="wave")
 
 
 startup_job("news_fetch", 45)
@@ -258,6 +278,11 @@ def report_status_view(request: Request, ctx: AppContext) -> HTMLResponse:
     return resp
 
 
+def wave_view(request: Request, ctx: AppContext, note: str = "") -> HTMLResponse:
+    """Fortschritt der manuellen Welle (Fragment; fragt sich selbst nach, solange die Welle läuft)."""
+    return render(request, "partials/news_wave.html", alerts=[], wave=wave.load(ctx), wave_note=note)
+
+
 def reader_context(ctx: AppContext, row: Any, back: str = "") -> dict[str, Any]:
     """Alles, was die Leseansicht braucht – getrennt nach Quelle (Artikel), KI-Zusammenfassung und KI-Einordnung."""
     iid = row["id"]
@@ -332,6 +357,7 @@ def make_router() -> APIRouter:
             base.update(report_ctx(ctx, report_id))
         elif tab == "status":
             base["st"] = pipeline_status(ctx)
+            base["wave"], base["wave_note"] = wave.load(ctx), ""
         elif tab == "suggestions":
             base["suggestions"] = ctx.db.q(
                 "SELECT * FROM yt_suggestion ORDER BY CASE status WHEN 'new' THEN 0 ELSE 1 END, hits DESC, "
@@ -400,13 +426,28 @@ def make_router() -> APIRouter:
         return report_status_view(request, get_ctx(request))
 
     @router.post("/news/pipeline/run", response_class=HTMLResponse)
-    def pipeline_run(request: Request) -> HTMLResponse:
+    async def pipeline_run(request: Request) -> HTMLResponse:
+        """Welle starten: Import (optional) → Artikeltexte → Analyse → Gruppierung für die letzten 24 Stunden."""
         ctx = get_ctx(request)
         if ctx.scheduler is None:
             return HTMLResponse('<span class="badge warn">Scheduler inaktiv</span>')
-        for name, delay in (("news_enrich", 0.5), ("news_analyze", 30), ("news_group", 60)):
-            ctx.scheduler.trigger(name, delay)
-        return HTMLResponse('<span class="badge info">Anreicherung, Analyse und Gruppierung gestartet.</span>')
+        form = await request.form()
+        fetch = str(form.get("fetch", "1")) not in ("0", "", "off")
+        if wave.reserve(ctx, fetch) is None:
+            note = "Eine Welle läuft bereits – sie ist unten sichtbar."
+        else:
+            ctx.scheduler.trigger("news_wave", 0.3, fetch=fetch)
+            note = ""
+        return wave_view(request, ctx, note)
+
+    @router.get("/news/pipeline/wave", response_class=HTMLResponse)
+    def pipeline_wave(request: Request, poll: int = 0) -> HTMLResponse:
+        ctx = get_ctx(request)
+        resp = wave_view(request, ctx)
+        st = wave.load(ctx)
+        if poll and (st is None or st.get("status") != "running"):
+            resp.headers["HX-Refresh"] = "true"  # fertig: Zähler, Rückstau und Balken der Seite neu laden
+        return resp
 
     @router.post("/news/{item_id:int}/read")
     async def mark_read(request: Request, item_id: int) -> Response:
