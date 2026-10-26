@@ -236,8 +236,8 @@ letzte Fehler. Der Hinweis zur Free-Tier-Garantie steht dort ebenfalls.
   Zahl zurückgestellter Artikel. Der Textabruf-Rückstau zählt **alle** noch nicht abgerufenen Artikel der letzten 3 Tage
   (nicht nur „heute“ importierte); die Analyse wartet nicht auf den Text (nach 6 h wird mit dem Anreißer analysiert).
 * **Fortschrittsbalken (0.47.3):** unter „Pipeline heute“ je ein Balken für Artikeltexte (3 Tage) und KI-Analysen (48 h):
-  erledigt / (erledigt + wartend). Beim Abruf zählen pausierte Quellen und Videos/Social-Hosts nicht als erledigt bzw. nur
-  die pausierten als wartend; Meldungen, die aus der Auswahl fallen (ausgeblendet, älter als das Fenster), zählen nicht mit.
+  erledigt / (erledigt + wartend). Beim Abruf zählt der Balken (ab 0.54.2) nur **jetzt Abrufbares** (erledigt / erledigt + abrufbar);
+  Artikel pausierter Quellen und geplante Wiederholungen stehen in der Zeile „Zurückgestellt“; Meldungen, die aus der Auswahl fallen (ausgeblendet, älter als das Fenster), zählen nicht mit.
   Ohne Arbeit steht der Balken auf 100 %. Näherung: Neue Meldungen senken den Wert wieder.
 * **Restzeit (0.47.4):** unter jedem Balken „Restzeit: ca. …“ (`app/news/eta.py`). Rechnung: wartende Einheiten ÷ (Durchsatz −
   Zufluss neuer Meldungen), aufgerundet auf ganze Lauf-Intervalle (Abruf 15 min, Analyse 10 min). Durchsatz = tatsächlich erledigt in

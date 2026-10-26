@@ -38,8 +38,9 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
     ai = gw.status()
     enrich = EnrichService(ctx)
     paused = enrich.paused_hosts()
-    enrich_total = len(enrich.candidates(100_000, include_paused=True))
-    enrich_ready = len(enrich.candidates(100_000))
+    enrich_ready = len(enrich.candidates(100_000))  # jetzt abrufbar (Quelle nicht pausiert, Abruf fällig)
+    enrich_paused = len(enrich.candidates(100_000, include_paused=True)) - enrich_ready  # Quelle pausiert
+    enrich_retry = enrich.retry_planned_count()  # fehlgeschlagen, Wiederholung später
     analysis = AnalysisService(ctx, gw)
     guard = analysis.pressure()  # Rückstau-Lage der Analyse (frisch/älter, Schutz aktiv?)
     analyze_backlog = guard["total"]
@@ -65,6 +66,9 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         bottleneck = f"Abruf-Takt: {per_run} Artikeltexte je Lauf, alle 15 min (Wartezeit je Quelle 2 s)"
     elif analyze_backlog:
         bottleneck = "Analyse-Takt: läuft in Runden, alle 10 min"
+    elif enrich_paused or enrich_retry:
+        bottleneck = (f"keiner – alles Abrufbare abgearbeitet ({enrich_paused} Artikel pausierter Quellen und "
+                      f"{enrich_retry} Wiederholungen später)")
     else:
         bottleneck = "keiner – alles abgearbeitet"
     jobs = ctx.job_status()
@@ -87,10 +91,11 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         "content_reasons": [(r["reason"], int(r["n"])) for r in reasons],
         "with_content_total": n("SELECT COUNT(*) FROM news_content WHERE status IN ('success','partial')"),
         "analyzed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NOT NULL AND analyzed_at>=?", day),
-        "bars": {"enrich": _bar(enrich_done, enrich_total),
+        "bars": {"enrich": _bar(enrich_done, enrich_ready),  # nur Abrufbares; Zurückgestelltes steht unter backlog
                  "analyze": _bar(analyze_total - analyze_backlog, analyze_backlog)},
         "eta": eta,
-        "backlog": {"enrich": enrich_ready, "enrich_paused": enrich_total - enrich_ready, "analyze": analyze_backlog,
+        "backlog": {"enrich": enrich_ready, "enrich_paused": enrich_paused, "enrich_retry": enrich_retry,
+                    "analyze": analyze_backlog,
                     "days": int(ctx.settings.get("news.enrich_days", 3)), "per_run": per_run, "bottleneck": bottleneck,
                     "paused_hosts": sorted(((h, u) for h, u in paused.items()), key=lambda x: x[1])},
         "analysis_failed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NULL AND analyzed_at>=?", day),

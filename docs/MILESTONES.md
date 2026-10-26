@@ -1426,6 +1426,16 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.54.2 – News-Status: Balken „Artikeltexte“ nur mit Abrufbarem
+
+* **Irritation:** „Artikeltexte 85 % (830 von 969)“ neben „Rückstau 0“, „kein Rückstau“ und „Engpass: keiner“. Der Balken zählte Artikel
+  pausierter Quellen (139) als wartend, der Rückstau-Zähler nicht; die „Wiederholung geplant“ fehlten im Balken ganz.
+* **Jetzt:** Der Balken enthält nur Abrufbares (erledigt / erledigt + jetzt abrufbar) und erreicht 100 %, wenn nichts mehr zu tun ist.
+  Eigene Zeile „Zurückgestellt“: Artikel pausierter Quellen · Wiederholung geplant (werden später erneut versucht). „Engpass“ nennt sie:
+  „keiner – alles Abrufbare abgearbeitet (N Artikel pausierter Quellen und M Wiederholungen später)“.
+* **Unverändert:** Abrufverhalten, Pausen und Wiederholungen. Ob dauerhaft sperrende Quellen nach einer Weile endgültig als „gesperrt“
+  gelten sollen, ist eine eigene Entscheidung (würde das Abrufverhalten ändern).
+
 ## 0.54.1 – News: Fehlalarm „wächst derzeit“ behoben, Rückstau-Schutz der KI-Analyse
 
 * **Fehlalarm:** Bei 9 wartenden Analysen (98 %) stand „Restzeit: wächst derzeit: Abarbeitung ca. 18/Std., neu ca. 25/Std.“. Ursachen:

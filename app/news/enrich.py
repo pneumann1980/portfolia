@@ -76,6 +76,15 @@ class EnrichService:
                WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at>=? AND c.status!='pending'""",
             (since,), default=0) or 0)
 
+    def retry_planned_count(self) -> int:
+        """Artikel im Abrufzeitraum, deren Abruf fehlgeschlagen ist und später wiederholt wird (noch nicht fällig)."""
+        since = iso(datetime.now(UTC) - timedelta(days=int(self.ctx.settings.get("news.enrich_days", 3))))
+        return int(self.db.scalar(
+            """SELECT COUNT(*) FROM news_item n JOIN news_content c ON c.item_id=n.id
+               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at>=? AND c.status='pending'
+                 AND c.next_attempt IS NOT NULL AND c.next_attempt > ?""",
+            (since, iso(datetime.now(UTC))), default=0) or 0)
+
     def candidates(self, limit: int, *, include_paused: bool = False) -> list[dict[str, Any]]:
         """Noch nicht (erfolgreich) angereicherte Artikel in Prioritätsreihenfolge.
 

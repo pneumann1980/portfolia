@@ -1359,9 +1359,11 @@ def test_status_explains_bottleneck_and_paused_hosts(client):
     assert b["enrich"] == 3 and b["enrich_paused"] == 1 and b["paused_hosts"][0][0] == "blocked.example.com"
     assert "Abruf-Takt" in b["bottleneck"]
     bars = pipeline_status(ctx)["bars"]
-    assert bars["enrich"] == {"done": 0, "waiting": 4, "total": 4, "pct": 0}  # gesperrte Quelle zählt als wartend
+    # gesperrte Quelle: zurückgestellt, nicht im Balken
+    assert bars["enrich"] == {"done": 0, "waiting": 3, "total": 3, "pct": 0}
     t = client.get("/news?tab=status").text
-    assert 'role="progressbar"' in t and 'aria-valuenow="0"' in t and "0 von 4" in t
+    assert 'role="progressbar"' in t and 'aria-valuenow="0"' in t and "0 von 3" in t
+    assert "Zurückgestellt" in t and "1 Artikel pausierter Quellen" in t
     assert "Restzeit:" in t and pipeline_status(ctx)["eta"]["enrich"]["minutes"] > 0
     assert "Pausierte Quellen" in t and "blocked.example.com" in t and "Abruf-Takt" in t
     ctx.db.set_state("ai.pause.gemini", {"until": iso(datetime.now(UTC) + timedelta(hours=2)), "reason": "Quota"})
@@ -2066,3 +2068,30 @@ def test_guard_ignores_daily_request_limit_zero_and_uses_token_budget(ctx):
     g = svc.pressure()
     assert g["active"] and g["eta"]["risk"] == "quota" and "Token-Budget" in g["eta"]["text"]
     assert not AnalysisService(ctx, QuotaGateway(None)).pressure()["active"]  # ohne Token-Grenze kein Druck
+
+
+# -- Statusseite: Balken „Artikeltexte“ nur mit Abrufbarem ----------------------------------------
+
+def test_status_enrich_bar_excludes_paused_sources_and_planned_retries(ctx, monkeypatch):
+    import app.news.analysis as AN
+    from app.news.status import pipeline_status
+
+    monkeypatch.setattr(AN, "ai_off_ids", lambda path: frozenset({"coindesk"}))  # keine Analyse-Meldung dazwischen
+    done = [add_item(ctx, f"Erledigte Meldung {i} zum Markt", f"https://ok.example.com/{i}", hours=1 + i * 0.01)
+            for i in range(3)]
+    for iid in done:
+        store_content(ctx, iid)
+    for i in range(2):  # Quelle pausiert: Artikel ohne Textabruf
+        add_item(ctx, f"Meldung {i} gesperrter Quelle", f"https://blocked.example.com/{i}", hours=2 + i * 0.01)
+    pause_host(ctx, "blocked.example.com", 5)
+    retry = add_item(ctx, "Meldung mit geplanter Wiederholung", "https://retry.example.com/a", hours=3)
+    store_content(ctx, retry, status="pending", text="", reason="network")
+    ctx.db.x("UPDATE news_content SET next_attempt=? WHERE item_id=?",
+             (iso(datetime.now(UTC) + timedelta(hours=2)), retry))
+    st = pipeline_status(ctx)
+    assert st["bars"]["enrich"] == {"done": 3, "waiting": 0, "total": 3, "pct": 100}  # Balken: nur Abrufbares
+    assert st["backlog"]["enrich"] == 0 and st["backlog"]["enrich_paused"] == 2 and st["backlog"]["enrich_retry"] == 1
+    assert st["eta"]["enrich"]["text"] == "kein Rückstau"
+    assert st["backlog"]["bottleneck"].startswith("keiner – alles Abrufbare abgearbeitet")
+    assert "2 Artikel pausierter Quellen" in st["backlog"]["bottleneck"]
+    assert "1 Wiederholungen" in st["backlog"]["bottleneck"]

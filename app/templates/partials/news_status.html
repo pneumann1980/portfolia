@@ -18,6 +18,7 @@
         <div class="progress" role="progressbar" aria-label="{{ label }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ b.pct }}"><div style="width:{{ b.pct }}%"></div></div>
         {% set e = st.eta[key] %}<div class="bar-eta hint">Restzeit: {{ e.text }}{% if e.basis and e.minutes %} <span title="Grundlage der Schätzung: {{ 'Durchsatz der letzten 3 Stunden' if e.basis == 'gemessen' else 'Nennleistung je Lauf (zu wenig Messwerte oder kleiner Rückstau – der gemessene Durchsatz zeigt dann nur das Angebot)' }}">({{ e.basis }})</span>{% endif %}</div></div>
       {% endfor %}</dd>
+    {% if st.backlog.enrich_paused or st.backlog.enrich_retry %}<dt>Zurückgestellt</dt><dd>{{ st.backlog.enrich_paused }} Artikel pausierter Quellen · {{ st.backlog.enrich_retry }} Wiederholung geplant – nicht im Balken „Artikeltexte“, werden später erneut versucht</dd>{% endif %}
     <dt>Engpass</dt><dd>{{ st.backlog.bottleneck }}</dd>
     {% if st.backlog.paused_hosts %}<dt>Pausierte Quellen</dt><dd>{% for h, u in st.backlog.paused_hosts %}<span class="mono">{{ h }}</span> bis {{ u|datetime_de }}{{ '; ' if not loop.last }}{% endfor %} ({{ st.backlog.enrich_paused }} Artikel zurückgestellt – nach vielen Fehlern/Sperren, damit sie andere nicht aufhalten)</dd>{% endif %}
     <dt>Ereignisse (24 h)</dt><dd>{{ st.events }} ({{ st.events_multi }} mit mehreren Quellen)</dd>
