@@ -468,3 +468,86 @@ def test_quality_hints_scope_marked_income_and_domestic_allowance():
     assert "55,29" in fg.text and "unter der Freigrenze" in fg.text
     assert any(m.id == "fg22" for m in res.meters)
     assert "pb_domestic" in codes  # Inlandsdepot mit Erträgen, Pauschbetrag nicht eingetragen
+
+
+# -- Rundung: Jahressaldo aus ungerundeten Werten -----------------------------------------------------------
+
+def _tiny_gains(extra_big_gain: str):
+    rows = [buy("b1", "2025-01-10", "BTC", "1.1", "1100.00"), sell("s0", "2025-02-01", "BTC", "1", extra_big_gain)]
+    rows += [sell(f"s{i}", "2025-02-02", "BTC", "0.001", "1.004") for i in range(1, 101)]
+    return rows
+
+
+def test_freigrenze_uses_unrounded_sum_not_sum_of_rounded_lines():
+    # 999,90 € + 100 × 0,004 € = 1.000,30 € ≥ 1.000 € (Freigrenze 2025) → voll steuerpflichtig; einzeln gerundet
+    # ergäbe 0,00 € je Kleingewinn und damit 999,90 € (steuerfrei)
+    _, res = run(_tiny_gains("1999.90"), 2025)
+    c = res.data["crypto"]
+    assert c["net"] == D("1000.30") and c["taxable"] == D("1000.30")
+    assert c["round_diff"] == D("0.40") and c["count_tax"] == 101
+    assert any(i.code == "rounding" for i in res.issues)
+    assert c["gains"] + c["losses"] == c["net"] and c["price"] - c["wk"] - c["cost"] == c["net"]
+    # knapp darunter bleibt steuerfrei
+    _, res2 = run(_tiny_gains("1999.50"), 2025)
+    c2 = res2.data["crypto"]
+    assert c2["net"] == D("999.90") and c2["taxable"] == 0
+
+
+def test_rounding_difference_is_zero_for_cent_exact_values():
+    rows = [buy("b1", "2025-01-10", "BTC", "1", "1000.00"), sell("s1", "2025-02-01", "BTC", "1", "1500.25")]
+    _, res = run(rows, 2025)
+    assert res.data["crypto"]["round_diff"] == 0
+    assert not any(i.code == "rounding" for i in res.issues)
+
+
+def test_unmatched_withholding_tax_is_not_credited_automatically():
+    rows = [r for r in _kap_rows() if r["tx_id"] != "k7"]  # Quellensteuer ohne zugehörige Dividende
+    _, res = run(rows, 2025, kinds={"IBKR": "foreign"}, options={"pauschbetrag_used": "1000"})
+    f = {x.field_id: x.amount for x in res.fields}
+    assert f.get("kap_wht", D(0)) == 0  # keine Anrechnung ohne Beleg-Zuordnung
+    est = {ln.label: ln.amount for ln in res.estimate}
+    assert est["Abgeltungsteuer nach Anrechnung Quellensteuer"] == D("125.00")  # 500 / 4, ohne Abzug
+    iss = [i for i in res.issues if i.code == "wht_unmatched"]
+    assert iss and "nicht angerechnet" in iss[0].text and "15,00" in iss[0].text
+
+
+def test_tax_prices_and_fx_have_a_maximum_age():
+    from types import SimpleNamespace
+
+    from app.tax.service import TaxService
+
+    asset = SimpleNamespace(asset_id="BTC")
+    pf = SimpleNamespace(asset=lambda aid: asset, manual_prices={})
+    rows = {"2026-01-10": {"date": "2026-01-10", "close": 100.0, "ccy": "USD"}}
+    store = SimpleNamespace(
+        close_on_or_before=lambda series, d: rows.get("2026-01-10") if d >= date(2026, 1, 10) else None,
+        fx_on_or_before=lambda ccy, d: (2.0, "2026-01-09", "yahoo") if d >= date(2026, 1, 9) else None)
+    ctx = SimpleNamespace(portfolio=lambda: pf, prices=SimpleNamespace(series_for=lambda a: "BTC-USD"), store=store)
+    svc = TaxService.__new__(TaxService)
+    svc.ctx = ctx
+    assert svc._series_price("BTC", date(2026, 1, 12)) == D("50")  # 100 USD ÷ 2,0 (FX vom Vortag des Kurses)
+    assert svc._series_price("BTC", date(2026, 1, 16)) == D("50")  # Kurs 6, Devisen 7 Tage alt → noch zulässig
+    assert svc._series_price("BTC", date(2026, 1, 17)) is None  # Devisenkurs 8 Tage alt → kein „Tageskurs“
+    assert svc._series_price("BTC", date(2026, 1, 18)) is None  # auch der Kurs ist jetzt 8 Tage alt
+    assert svc._fx("USD", date(2026, 1, 16)) == D("0.5") and svc._fx("USD", date(2026, 1, 17)) is None  # FX 8 Tage alt
+
+
+def test_reconstructed_booking_is_flagged_and_marks_report_as_preliminary():
+    rows = [buy("b1", "2025-01-10", "BTC", "1", "1000.00"), sell("s1", "2025-02-01", "BTC", "1", "1500.00")]
+    rows[0]["flag"] = "RECONSTRUCTED_GAP;KOINLY_MISSING_RATE"
+    _, res = run(rows, 2025)
+    iss = [i for i in res.issues if i.code == "reconstructed_tx"]
+    assert iss and iss[0].severity == "warning" and iss[0].count == 1  # eine Buchung, zwei Marken
+    assert "rekonstruiert" in iss[0].text and "Kurs fehlte" in iss[0].text
+    rv = res.review()
+    assert rv["status"] == "vorläufig" and "reconstructed_tx" in rv["codes"] and rv["open"] >= 1
+    assert res.summary_json()["review"] == rv
+
+
+def test_review_status_without_open_points_makes_no_claim_of_correctness():
+    rows = [buy("b1", "2025-01-10", "BTC", "1", "1000.00"), sell("s1", "2025-02-01", "BTC", "1", "1500.00")]
+    _, res = run(rows, 2025)
+    rv = res.review()
+    assert not any(i.code == "reconstructed_tx" for i in res.issues)
+    assert rv == {"status": "ohne automatisch erkannte offene Punkte", "open": 0, "codes": []}
+    assert "korrekt" not in rv["status"] and "final" not in rv["status"]

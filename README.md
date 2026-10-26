@@ -11,9 +11,9 @@ YouTube-Videos werden je Position gefiltert.
   **CSV-Exporten von Börsen, Wallets und Steuertools** übernommen (siehe [CSV-Import](#csv-import-aus-börsen-und-wallets))
   – auch ganz ohne Import. Börsen und öffentliche Wallet-Adressen lassen sich als [Datenquellen](#datenquellen-börsen-und-wallet-adressen)
   anlegen; **Bitpanda** und **Binance** werden read-only per API-Key synchronisiert (Schlüssel in der App eingegeben,
-  verschlüsselt gespeichert, jede Buchung vor der Übernahme prüfbar). **Wallets** auf zwölf Chains (u. a. Bitcoin,
+  verschlüsselt gespeichert, jede Buchung vor der Übernahme prüfbar). **Wallets** auf dreizehn Chains (u. a. Bitcoin,
   Ethereum, PulseChain, Robinhood Chain, Polkadot, peaq, Solana, Kaspa) werden read-only über öffentliche Adressen bzw. einen öffentlichen Kontoschlüssel
-  synchronisiert (siehe [Wallets](#wallets-read-only-zwölf-chains)) – nie Seed-Phrase, privater Schlüssel oder
+  synchronisiert (siehe [Wallets](#wallets-read-only-dreizehn-chains)) – nie Seed-Phrase, privater Schlüssel oder
   Signatur. In der App erfasste
   Buchungen und Assets liegen neben abgeleiteten Daten (Kurse, News, Snapshots, Berichte) in `/data/app.sqlite`.
 * **Export und Sicherung:** Alles lässt sich jederzeit im einheitlichen Import-Format (Datenvertrag, Schema 1.1)
@@ -44,7 +44,7 @@ für Smartphones (≈390 px) optimiert.
    [Importprüfung: Abgleich, Stapelaktionen, Verknüpfen](#importprüfung-abgleich-je-zeile-stapelaktionen-verknüpfen) ·
    [Belege: PDF & Screenshot](#belege-pdf--screenshot)
 6. [Datenquellen: Börsen und Wallet-Adressen](#datenquellen-börsen-und-wallet-adressen) ·
-   [Wallets (read-only, zwölf Chains)](#wallets-read-only-zwölf-chains) ·
+   [Wallets (read-only, dreizehn Chains)](#wallets-read-only-dreizehn-chains) ·
    [Diagnose: Datenqualität und Bestandsabgleich](#diagnose-datenqualität-und-bestandsabgleich) ·
    [Finanzielle Integritätsprüfung und Sammelbearbeitung](#finanzielle-integritätsprüfung-und-sammelbearbeitung)
 7. [Berechnungen](#berechnungen)
@@ -96,7 +96,7 @@ Package settings → Change visibility → Public*; es enthält nur den öffentl
 5. Container starten, Weboberfläche über *WebUI* öffnen (Port 8080).
 6. Optional Wallets einrichten: *Einstellungen → Datenquellen → „+ Wallet-Konto“* → Chain → Name/Gruppe →
    öffentliche Adresse (Bitcoin auch xpub/ypub/zpub) → „Verbindung testen“ → „Erstabruf starten“ (siehe
-   [Wallets](#wallets-read-only-zwölf-chains)). Der Container braucht dafür ausgehenden HTTPS-Zugriff auf die
+   [Wallets](#wallets-read-only-dreizehn-chains)). Der Container braucht dafür ausgehenden HTTPS-Zugriff auf die
    gewählten Anbieter.
 
 **Aktualisieren:** *Docker → portfolia → Update* (bzw. *Check for Updates*). Zeigt Unraid „not available“, hilft
@@ -173,7 +173,7 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 | `PORTFOLIA_MASTER_KEY` | – | alternativ der Master-Key selbst (sichtbar in `docker inspect` – Datei bevorzugen) |
 | `PORTFOLIA_MASTER_KEY_OLD_FILE` / `_OLD` | – | nur während einer Rotation: der bisherige Master-Key |
 | `PORTFOLIA_DS_<NAME>` | – | bisheriger Weg für Zugangsdaten einer [Datenquelle](#datenquellen-börsen-und-wallet-adressen) (API-Schlüssel mit Leserechten), alternativ `PORTFOLIA_DS_<NAME>_FILE` = Pfad einer Secret-Datei; in Portfolia steht nur der Variablenname. Funktioniert weiter, ein in der App gespeicherter Schlüssel hat Vorrang. |
-| `PORTFOLIA_DS_ETHERSCAN`, `…_ROUTESCAN`, `…_NODEREAL`, `…_HELIUS`, `…_KOIOS`, `…_PUBFI`, `…_SUBSCAN` | – | optional: [Anbieter-Schlüssel](#wallets-read-only-zwölf-chains) für Wallet-Abrufe als Container-Variable (bzw. `…_FILE`), falls nicht in der App gespeichert. Nötig: Etherscan (Ethereum, Polygon), NodeReal (BNB Chain, kostenlos; `…_NODEREAL`), PubFi **oder** Subscan (Polkadot, peaq); optional: Routescan, Koios. `PORTFOLIA_DS_<NAME>` für Börsen: Bitpanda-Key bzw. bei Binance `API-Key:Secret-Key`. |
+| `PORTFOLIA_DS_ETHERSCAN`, `…_ROUTESCAN`, `…_NODEREAL`, `…_HELIUS`, `…_KOIOS`, `…_PUBFI`, `…_SUBSCAN` | – | optional: [Anbieter-Schlüssel](#wallets-read-only-dreizehn-chains) für Wallet-Abrufe als Container-Variable (bzw. `…_FILE`), falls nicht in der App gespeichert. Nötig: Etherscan (Ethereum, Polygon), NodeReal (BNB Chain, kostenlos; `…_NODEREAL`), PubFi **oder** Subscan (Polkadot, peaq); optional: Routescan, Koios. `PORTFOLIA_DS_<NAME>` für Börsen: Bitpanda-Key bzw. bei Binance `API-Key:Secret-Key`. |
 
 ---
 
@@ -733,12 +733,12 @@ Desktop bietet keine Installation von Web-Apps an.
 anlegen, ansehen, bearbeiten, deaktivieren und entfernen – auch auf dem Smartphone.
 
 > **Stand 0.23:** Automatische Anbindung für **Bitpanda** (Public API), **Binance** (Spot-API, siehe
-> [Binance einrichten](#binance-einrichten)) und für **Wallets auf zwölf Chains** (Bitcoin, Ethereum, BNB Chain,
+> [Binance einrichten](#binance-einrichten)) und für **Wallets auf dreizehn Chains** (Bitcoin, Ethereum, BNB Chain,
 > Polygon, Avalanche C-Chain, PulseChain, Robinhood Chain, XRP Ledger, Cardano, Polkadot, peaq, Solana, Kaspa) – ausschließlich
 > lesend. Alle Anbindungen sind
 > mit anonymisierten bzw. synthetischen Testdaten (Fixtures) und nachgebildeten Anbieter-APIs geprüft, **noch
 > nicht live** – siehe [Grenzen der Bitpanda-Anbindung](#grenzen-der-bitpanda-anbindung) und
-> [Wallets](#wallets-read-only-zwölf-chains). Alle anderen Börsen und Chains zeigen ehrlich **„Manuell / noch
+> [Wallets](#wallets-read-only-dreizehn-chains). Alle anderen Börsen und Chains zeigen ehrlich **„Manuell / noch
 > nicht unterstützt“** und verweisen auf den CSV-Import.
 
 **Unabhängige Abrufe und Abbrechen (0.21.2):** Jede Datenquelle hat ihre eigene Sperre – ein langsamer Abruf (z. B.
@@ -1095,7 +1095,7 @@ mit der Serverzeit ab.
   Paging, Statuswerte, 429/418/-1021), **nicht mit einem echten Konto**. Beim ersten Abruf „Verbindung testen“,
   Bestandsprüfung und Prüf-Stapel ansehen.
 
-## Wallets (read-only, zwölf Chains)
+## Wallets (read-only, dreizehn Chains)
 
 *Einstellungen → Datenquellen → „+ Wallet-Konto“*: Chain wählen, Namen vergeben (z. B. „Ledger BTC“, „Ledger ETH“,
 „MetaMask BNB“), optional einer **Wallet-Gruppe** zuordnen („Ledger“, „MetaMask“), öffentliche Adresse eintragen –
@@ -2026,12 +2026,16 @@ Der Gesamtexport enthält alles, was eine neue Installation für denselben Stand
 | `portfolia/price_daily.csv`, `series_meta.csv` | Kurshistorie – wichtig, weil die CoinGecko-Demo-API nur 365 Tage nachliefert |
 | `portfolia/usage.json` | API-Verbrauch des Monats (das CoinGecko-Kontingent läuft weiter) |
 | `portfolia/taxdata.json` | Steuerdaten je Jahr: Dateien mit Status, Datensätzen, Zuordnungen und Ersetzungen (ab 0.21.0); Originaldateien unter `files/tax/` |
-| `portfolia/files/` | `sources.yaml` (News-Quellen), lokale Steuerregeln (`tax_rules/`), Original-Steuerberichte |
+| `portfolia/files/` | `sources.yaml` (News-Quellen), lokale Steuerregeln (`tax_rules/`), Originaldateien der Steuerdaten je Jahr (`files/tax/`, z. B. Bescheinigungen) |
 
 `state.json` enthält außerdem Watchlists und die Entscheidungen zu alternativen Kursreihen (ab 0.21.0); ältere
 Exporte ohne diese Teile bleiben übernehmbar.
 
-Nie enthalten sind API-Keys, Master-Key, Passwörter und Protokolle. Andere Werkzeuge ignorieren den Ordner
+Nie enthalten sind API-Keys, Master-Key, Passwörter und Protokolle. **Ebenfalls nicht im Export** (getrennt sichern, z. B. über die
+Appdata-Sicherung von `/data`): hochgeladene **Originalbelege** (`/data/documents`: PDF/Screenshots, DKB-Belege inkl. Zuordnung zu
+Buchungen), **erzeugte Steuerberichte** (`/data/reports`, jederzeit neu erzeugbar, aber nur aus dem dann gültigen Stand) sowie
+News, KI-Auswertungen und Snapshots. Ohne die Originalbelege lassen sich Belegangaben im Steuerreport nach einer
+Neuinstallation nicht mehr nachweisen. Andere Werkzeuge ignorieren den Ordner
 `portfolia/`; die Prüfsummen stehen im Manifest unter `extra_files`.
 
 **Ablauf:** Export-ZIP (Download unter *Einstellungen → ZIP-Sicherungen* bzw. *Buchungen → Gesamtexport*, oder eine

@@ -45,7 +45,9 @@ def _data_rows(result: TaxResult, meta: ReportMeta) -> list[tuple[str, str]]:
     src = meta.import_file or "–"
     if meta.import_sha:
         src += f" (SHA-256 {meta.import_sha[:12]}…)"
+    rv = result.review()
     rows = [
+        ("Prüfstatus", f"{rv['status']}" + (f" – {rv['open']} offene Punkte (siehe Hinweise)" if rv["open"] else "")),
         ("Regelwerk", f"{result.pack_name} – Version {result.pack_version}"),
         ("Parameterstand", _ruleset_text(meta)),
         ("Datenstand", f"Import #{meta.import_id or '–'}: {src}"),

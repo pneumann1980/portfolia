@@ -23,7 +23,7 @@ from app.context import AppContext
 from app.prices.isin import isin_service
 from app.progress import job_progress, view
 from app.tax import registry
-from app.tax.base import Overview, ReportMeta, RulePack, TaxInput, TaxResult
+from app.tax.base import FX_MAX_AGE_DAYS, PRICE_MAX_AGE_DAYS, Overview, ReportMeta, RulePack, TaxInput, TaxResult
 from app.tax.classify import classify_account, classify_asset, securities_accounts
 from app.tax.pdf import render
 from app.tax.rulesets import RulesetStore
@@ -39,6 +39,14 @@ ALL_ZIP_KEY = "tax_all_last"
 ALL_LABEL = "Alle Steuerberichte"
 _ALL_LOCK = threading.Lock()
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def _fx_fresh(fx: tuple[Any, ...], d: date) -> bool:
+    """Devisenkurs (Kurs, Datum, Quelle) höchstens ``FX_MAX_AGE_DAYS`` vor ``d``."""
+    try:
+        return (d - date.fromisoformat(str(fx[1]))).days <= FX_MAX_AGE_DAYS
+    except (ValueError, TypeError, IndexError):
+        return False
 
 
 def _dec(v: float | None) -> Decimal | None:
@@ -128,6 +136,7 @@ class TaxService:
 
     # -- Eingangsdaten -------------------------------------------------------------------------------------
     def _series_price(self, asset_id: str, d: date) -> Decimal | None:
+        """EUR-Kurs am/vor ``d`` – höchstens ``PRICE_MAX_AGE_DAYS`` alt (sonst ``None`` = fehlt)."""
         pf = self.ctx.portfolio()
         if pf is None:
             return None
@@ -135,9 +144,9 @@ class TaxService:
         series = self.ctx.prices.series_for(a)
         if series:
             row = self.ctx.store.close_on_or_before(series, d)
-            if row is not None:
+            if row is not None and (d - date.fromisoformat(row["date"])).days <= PRICE_MAX_AGE_DAYS:
                 return self._to_eur(Decimal(str(row["close"])), row["ccy"], d)
-        manual = [p for p in pf.manual_prices.get(asset_id, []) if p[0] <= d]
+        manual = [p for p in pf.manual_prices.get(asset_id, []) if p[0] <= d and (d - p[0]).days <= PRICE_MAX_AGE_DAYS]
         if manual:
             return Decimal(str(max(manual)[1]))
         return None
@@ -146,7 +155,7 @@ class TaxService:
         if not ccy or ccy.upper() == "EUR":
             return price
         fx = self.ctx.store.fx_on_or_before(ccy, d)
-        if not fx or not fx[0]:
+        if not fx or not fx[0] or not _fx_fresh(fx, d):
             return None
         return price / Decimal(str(fx[0]))
 
@@ -176,7 +185,7 @@ class TaxService:
 
     def _fx(self, ccy: str, d: date) -> Decimal | None:
         fx = self.ctx.store.fx_on_or_before(ccy, d)
-        if not fx or not fx[0]:
+        if not fx or not fx[0] or not _fx_fresh(fx, d):
             return None
         return Decimal(1) / Decimal(str(fx[0]))
 

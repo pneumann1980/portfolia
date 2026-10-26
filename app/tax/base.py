@@ -24,6 +24,12 @@ ZERO = Decimal(0)
 CENT = Decimal("0.01")
 
 
+# Höchstalter eines Kurses bzw. Devisenkurses, der steuerlich als „Tageskurs“ verwendet wird (Kalendertage vor dem
+# Ereignis); ältere Werte gelten als fehlend und erzeugen einen Prüfpunkt statt eines scheinbar tagesaktuellen Kurses.
+PRICE_MAX_AGE_DAYS = 7
+FX_MAX_AGE_DAYS = 7
+
+
 def money(v: Decimal | float | int | None) -> Decimal:
     """Auf Cent runden (kaufmännisch)."""
     if v is None:
@@ -231,6 +237,13 @@ class TaxResult:
     def section(self, sid: str) -> Section | None:
         return next((s for s in self.sections if s.id == sid), None)
 
+    def review(self) -> dict[str, Any]:
+        """Prüfstatus: „vorläufig“, solange offene Punkte (Warnungen/kritische Hinweise, offenes Jahr) bestehen.
+        Kein Nachweis der Richtigkeit – „offen: 0“ heißt nur, dass die Software nichts Auffälliges erkennt."""
+        items = [i for i in self.issues if i.severity != "info" or i.code == "year_open"]
+        return {"status": "vorläufig" if items else "ohne automatisch erkannte offene Punkte", "open": len(items),
+                "codes": [i.code for i in items]}
+
     def summary_json(self) -> dict[str, Any]:
         return {
             "pack": self.pack_id, "pack_version": self.pack_version, "params_version": self.params_version,
@@ -240,6 +253,7 @@ class TaxResult:
             "meters": [{"id": m.id, "value": str(m.value), "limit": str(m.limit), "state": m.state}
                        for m in self.meters],
             "issues": len([i for i in self.issues if i.severity != "info"]),
+            "review": self.review(),
         }
 
 

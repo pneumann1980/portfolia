@@ -423,3 +423,17 @@ def test_second_stack_while_running_is_rejected_cleanly(config: Config) -> None:
     assert not list((Path(config.data_dir) / "tmp" / "documents").glob("*.in"))
     again = svc.accept([("a.pdf", text_pdf(BANK))])  # danach erneut möglich
     assert again.stack_id and svc.run(again.stack_id)["transactions"] == 1
+
+
+def test_label_matching_folds_umlauts_lost_by_ocr():
+    """OCR liefert „Gebuhr“ statt „Gebühr“ – Bezeichnungen werden umlautgefaltet erkannt, der Rest bleibt gleich."""
+    from app.documentimport import profiles as PR
+
+    assert PR._label_of("Gebuhr: 1,49 EUR") == ("fee", "1,49 EUR")
+    assert PR._label_of("Gebühr 1,49 EUR") == ("fee", "1,49 EUR")
+    assert PR._label_of("  Ausfuhrungskurs 12,34") == ("price", "12,34")
+    assert PR._label_of("Stuck 10") == ("quantity", "10")
+    assert PR._label_of("Waehrung EUR") == ("ccy", "EUR")
+    assert PR._label_of("Waehrung: EUR")[0] == "ccy"
+    assert PR._header(["Datum", "Gebuhr"]) is None  # < 3 erkannte Spalten
+    assert set(PR._header(["Datum", "Gebuhr", "Menge", "Preis"]).values()) == {"date", "fee", "quantity", "price"}

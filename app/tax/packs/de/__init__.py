@@ -29,6 +29,8 @@ from app.ledger.engine import Disposal, EngineOptions
 from app.ledger.models import AssetInfo
 from app.tax import document as D
 from app.tax.base import (
+    FX_MAX_AGE_DAYS,
+    PRICE_MAX_AGE_DAYS,
     ZERO,
     Column,
     DocumentSpec,
@@ -51,7 +53,7 @@ from app.tax.base import (
     money,
 )
 from app.tax.classify import ASSET_TYPES, FUND_TYPES
-from app.tax.packs.de.annex import FLAG_LABEL, _flags, annex_section, data_fingerprint
+from app.tax.packs.de.annex import FLAG_LABEL, _flags, annex_section, data_fingerprint, unverified_txs
 from app.util.timeutil import add_years
 
 ADVANCED_OPTIONS = frozenset({"crypto_fee", "transfer_fee", "lost", "income_map", "wk_22_3", "include_domestic",
@@ -392,12 +394,20 @@ class GermanyPack(RulePack):
                        "kind": KIND_LABEL.get(d.kind, d.kind), "acq": p.acq_date, "disp": d.date,
                        "days": (d.date - p.acq_date).days if p.acq_date else None, "qty": p.qty,
                        "price": price_r, "cost": cost_r, "wk": wk_r, "gain": price_r - wk_r - cost_r,
+                       # ungerundet: Summen und Freigrenze entstehen daraus (Zeilen nur zur Anzeige gerundet)
+                       "gain_x": p.proceeds - p.cost, "cost_x": p.cost, "wk_x": wk,
                        "origin": ORIGIN_LABEL.get(p.origin, p.origin) + (" · über Umstellung" if p.via else ""),
                        "unit": (price_r / p.qty) if p.qty else None,
                        "ref": f"{source_of.get(d.tx_id) or '–'} · {d.tx_id[:8]}",
                        "free_from": free_from, "tx": d.tx_id}
                 (rows_tax if taxable else rows_free).append(row)
-        net = sum((r["gain"] for r in rows_tax), ZERO)
+        # Der Jahressaldo (Freigrenze!) wird aus den ungerundeten Teilwerten gebildet und erst dann auf Cent gerundet;
+        # die Summe der einzeln gerundeten Zeilen kann um Cent-Bruchteile abweichen (Rundungsdifferenz, ausgewiesen).
+        net = money(sum((r["gain_x"] for r in rows_tax), ZERO))
+        rows_gain_sum = sum((r["gain"] for r in rows_tax), ZERO)
+        round_diff = net - rows_gain_sum
+        wk_t = money(sum((r["wk_x"] for r in rows_tax), ZERO))
+        cost_t = money(sum((r["cost_x"] for r in rows_tax), ZERO))
         fg = _d(P["crypto"]["freigrenze_23"])
         fg_mode = str(P["crypto"].get("freigrenze_mode", "freigrenze"))
         if net <= 0 or net < fg:
@@ -420,11 +430,10 @@ class GermanyPack(RulePack):
             "missing": missing, "net": net, "freigrenze": fg, "fg_mode": fg_mode, "taxable": taxable,
             "after_lcf": after,
             "lcf": lcf, "lcf_auto": lcf_auto, "lcf_used": lcf_used, "carry_out": carry_out,
-            "gains": sum((r["gain"] for r in rows_tax if r["gain"] > 0), ZERO),
-            "losses": sum((r["gain"] for r in rows_tax if r["gain"] < 0), ZERO),
-            "price": sum((r["price"] for r in rows_tax), ZERO), "cost": sum((r["cost"] for r in rows_tax), ZERO),
-            "wk": sum((r["wk"] for r in rows_tax), ZERO),
-            "free_gain": sum((r["gain"] for r in rows_free), ZERO),
+            "gains": money(sum((r["gain_x"] for r in rows_tax if r["gain_x"] > 0), ZERO)),
+            "losses": net - money(sum((r["gain_x"] for r in rows_tax if r["gain_x"] > 0), ZERO)),
+            "price": net + wk_t + cost_t, "cost": cost_t, "wk": wk_t, "round_diff": round_diff,
+            "free_gain": money(sum((r["gain_x"] for r in rows_free), ZERO)),
             "free_price": sum((r["price"] for r in rows_free), ZERO),
             "count_tax": len(rows_tax), "count_free": len(rows_free),
         }
@@ -612,12 +621,12 @@ class GermanyPack(RulePack):
             for te in te_list:
                 if te.tx_id not in used_wht:
                     kk = kind_of(te.account)
+                    # ohne passende Dividende keine automatische Anrechnung (sonst wäre die Steuerschätzung zu niedrig)
                     B[kk]["wht_raw"] += _d(te.eur)
-                    B[kk]["wht_credit"] += _d(te.eur)
                     res.issues.append(Issue(
                         "warning", "wht_unmatched",
-                        f"Quellensteuer {te.tx_id} ohne zugehörige Dividende – voll als anrechenbar angesetzt, "
-                        "bitte prüfen"))
+                        f"Quellensteuer {te.tx_id} ({fmt_eur(money(_d(te.eur)))}) ohne zugehörige Dividende – bis zur "
+                        "Klärung nicht angerechnet; bei fehlender Dividendenbuchung diese ergänzen"))
 
         # Vorabpauschale des Vorjahres (gilt am ersten Werktag von `year` als zugeflossen)
         vy = year - 1
@@ -691,7 +700,9 @@ class GermanyPack(RulePack):
         S = res.summary
         S.append(Line("Private Veräußerungsgeschäfte mit Kryptowerten (§ 23 EStG)", None, strong=True, kind="text"))
         S.append(Line("Veräußerungen innerhalb der Haltefrist – Saldo", money(c["net"]), indent=1,
-                      note=f"{len(c['rows_tax'])} Teilvorgänge"))
+                      note=f"{len(c['rows_tax'])} Teilvorgänge" + (
+                          f"; Saldo aus ungerundeten Werten (Zeilensumme {fmt_eur(c['net'] - c['round_diff'])})"
+                          if c["round_diff"] else "")))
         S.append(Line("davon Gewinne", money(c["gains"]), indent=2))
         S.append(Line("davon Verluste", money(c["losses"]), indent=2))
         S.append(Line("steuerpflichtig nach Freigrenze", money(c["taxable"]), indent=1, strong=True,
@@ -965,6 +976,13 @@ class GermanyPack(RulePack):
             issues.append(Issue("warning", "estimated_tx",
                                 f"{est} geschätzte Sparplan-Buchungen (noch nicht freigegeben) sind enthalten – "
                                 "Bestände und Haltefristen vorläufig; vor der Abgabe unter „Sparpläne“ prüfen.", est))
+        n_unv, by_flag = unverified_txs(inp, year)
+        if n_unv:
+            what = ", ".join(f"{n} × {FLAG_LABEL.get(f, f)}" for f, n in sorted(by_flag.items()))
+            issues.append(Issue("warning", "reconstructed_tx",
+                                f"{n_unv} Buchungen des Jahres bzw. Anschaffungsbuchungen der Veräußerungen beruhen "
+                                f"nicht auf einem Beleg ({what}) – Menge, Zeitpunkt oder Wert vor der Abgabe anhand "
+                                "von Belegen prüfen (Anhang „Anpassungen“).", n_unv))
         manual = sum(1 for t in inp.pf.txs if t.origin == "journal" and t.date.year == year)
         if manual:
             issues.append(Issue("info", "manual_tx",
@@ -982,6 +1000,11 @@ class GermanyPack(RulePack):
                                 "abweichenden Haltefristen und Gewinnen führen; nur nach Abstimmung mit dem "
                                 "Steuerberater verwenden."))
         self._quality_thresholds(inp, res, year, c, i, k, P)
+        if c["round_diff"]:
+            issues.append(Issue("info", "rounding",
+                           f"§ 23: Der Jahressaldo {fmt_eur(c['net'])} (Grundlage der Freigrenze) ist aus "
+                           f"ungerundeten Werten gebildet; die Summe der einzeln auf Cent gerundeten Zeilen liegt um "
+                           f"{fmt_eur(abs(c['round_diff']))} {'darunter' if c['round_diff'] > 0 else 'darüber'}."))
         if c["missing"]:
             issues.append(Issue("warning", "missing_basis",
                            f"{c['missing']} Veräußerungsteile ohne Anschaffungsdaten (Fehlbestand) – konservativ als "
@@ -1002,7 +1025,9 @@ class GermanyPack(RulePack):
         if i["valued"].get("fehlt"):
             n = i["valued"]["fehlt"]
             issues.append(Issue("warning", "income_no_value",
-                                f"{n} Erträge ohne EUR-Wert und ohne Kurs – mit 0 € angesetzt.",
+                                f"{n} Erträge ohne EUR-Wert und ohne zeitnahen Kurs (Kurs höchstens "
+                                f"{PRICE_MAX_AGE_DAYS} Tage, Devisenkurs höchstens {FX_MAX_AGE_DAYS} Tage alt) – "
+                                "mit 0 € angesetzt.",
                            n))
         for how in ("Tageskurs", "EZB/Devisenkurs"):
             n = i["valued"].get(how, 0) + k["valued"].get(how, 0)

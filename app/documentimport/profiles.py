@@ -92,7 +92,15 @@ _SYN: list[tuple[str, tuple[str, ...]]] = [
     ("chain", ("netzwerk", "network", "blockchain", "chain")),
     ("ccy", ("währung", "waehrung", "currency")),
 ]
-_LABELS = sorted(((syn, f) for f, syns in _SYN for syn in syns), key=lambda x: -len(x[0]))
+# OCR verliert Umlaute häufig („Gebühr“ → „Gebuhr“): Bezeichnungen/Zellen werden längentreu umlautgefaltet verglichen
+_FOLD = str.maketrans("äöüßéè", "aousee")
+
+
+def _fold(text: str) -> str:
+    return text.lower().translate(_FOLD)
+
+
+_LABELS = sorted(((_fold(syn), f) for f, syns in _SYN for syn in syns), key=lambda x: -len(x[0]))
 _PROVIDERS = [
     ("bitpanda", ("bitpanda",)), ("binance", ("binance",)), ("coinbase", ("coinbase",)), ("kraken", ("kraken",)),
     ("ledger", ("ledger live", "ledger nano", "ledger")), ("trade_republic", ("trade republic",)),
@@ -206,10 +214,11 @@ def _cells(text: str) -> list[str]:
 
 def _label_of(cell: str) -> tuple[str | None, str]:
     """Zelle beginnt mit einer bekannten Bezeichnung? → (Feld, Rest der Zelle)."""
-    low = cell.lower().strip()
+    low = _fold(cell).strip()
+    lead = len(_fold(cell)) - len(_fold(cell).lstrip())
     for syn, fld in _LABELS:
         if low == syn or low.startswith(syn + ":") or low.startswith(syn + " ") or low == syn + ":":
-            rest = cell[len(syn):].lstrip(" :.").strip()
+            rest = cell[lead + len(syn):].lstrip(" :.").strip()
             if fld == "ext_id" and syn == "id" and rest and not re.search(r"\d", rest):
                 continue
             return fld, rest
@@ -473,11 +482,14 @@ _COLS = {
 }
 
 
+_COLS_FOLDED = {col: tuple(_fold(s) for s in syns) for col, syns in _COLS.items()}
+
+
 def _header(cells: list[str]) -> dict[int, str] | None:
     m: dict[int, str] = {}
     for i, c in enumerate(cells):
-        low = c.lower().strip(" :")
-        for col, syns in _COLS.items():
+        low = _fold(c).strip(" :")
+        for col, syns in _COLS_FOLDED.items():
             if low in syns or any(low.startswith(s + " ") or low.startswith(s + "(") for s in syns):
                 if col not in m.values():
                     m[i] = col

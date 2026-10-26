@@ -1426,6 +1426,30 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.53.0 – Review-Korrekturen Steuerreport (Rundung, Prüfstatus, Quellensteuer, Kursalter, OCR)
+
+Anlass: externe Review des Steuermoduls. Befunde im Code nachvollzogen, bestätigte Punkte korrigiert:
+
+* **§ 23 Rundung (P0):** Der Jahressaldo und damit die Freigrenze werden aus **ungerundeten** Einzelwerten gebildet; die Zeilen
+  sind nur zur Anzeige auf Cent gerundet. Beispiel: 999,90 € + 100 × 0,004 € = 1.000,30 € ist voll steuerpflichtig, die
+  Zeilensumme ergäbe 999,90 €. Die Differenz steht als Hinweis `rounding` im Bericht (`round_diff`).
+* **Prüfstatus (P0):** Jeder Bericht trägt „Prüfstatus: vorläufig – N offene Punkte“ (Deckblatt, Reiter Steuerjahr, Berichtsliste),
+  solange Warnungen/kritische Hinweise oder ein offenes Jahr bestehen. „Ohne automatisch erkannte offene Punkte“ ist ausdrücklich
+  **kein** Nachweis der Richtigkeit.
+* **Rekonstruierte/geschätzte Buchungen (P0):** neuer Warnhinweis `reconstructed_tx` für Buchungen des Jahres und Anschaffungs-
+  buchungen der Veräußerungen mit Marke rekonstruiert (Sparplan/Lücke), Korrekturvorschlag, automatisch korrigiert, geschätzt,
+  Durchschnittskurs, fehlender Kurs/Negativbestand im Quellsystem, auf Anweisung gebucht.
+* **Quellensteuer ohne zugeordnete Dividende (P1):** wird nur gemeldet (`wht_unmatched`), nicht mehr automatisch angerechnet.
+* **Höchstalter von Kursen/Devisenkursen (P1):** für steuerlich verwendete Werte höchstens 7 Tage (`PRICE_MAX_AGE_DAYS`,
+  `FX_MAX_AGE_DAYS`); ältere Werte gelten als fehlend (Ertrag „ohne Wert“ → Warnung `income_no_value`).
+* **OCR (P1):** Bezeichnungen und Spaltenköpfe werden umlautgefaltet erkannt („Gebuhr“ = „Gebühr“, „Stuck“, „Ausfuhrungskurs“).
+* **README (P2):** Chain-Zahl korrigiert (dreizehn); Umfang der ZIP-Sicherung präzisiert (Originalbelege und erzeugte Berichte
+  gehören nicht dazu).
+* **Nicht im Code prüfbar (Nutzerdaten):** 24 rekonstruierte Buchungen, fehlendes `fee_eur`, unbekannte `opening_balance`-Tags,
+  CoinGecko-ID des TH-Tokens – siehe Datenqualität bzw. Anhang „Anpassungen“ im Bericht.
+* **Grenzen:** Fondsart und Inland/Ausland bleiben Annahmen (Hinweise `fund_type_guess`, `account_kind_default`); keine
+  Steuerberatung.
+
 ## 0.52.4 – Jahres-Löschknopf entfernt
 
 * „Nur {Jahr} löschen“ entfällt (überflüssig neben „Löschen“ je Bericht und „Alle Berichte löschen“); Route und Service-Funktion entfernt.

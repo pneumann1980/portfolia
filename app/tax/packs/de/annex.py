@@ -36,6 +36,9 @@ FLAG_LABEL = {
     "TRANSFER_IN_FROM_FLATEX": "Übertrag von flatex",
 }
 SKIP_FLAGS = frozenset({"BROKER_UNASSIGNED", "SAVINGS_PLAN"})  # Verwaltungsmarken ohne Wertung
+# Markierungen: Menge, Zeitpunkt oder Wert stammen nicht aus einem Beleg (rekonstruiert, geschätzt, korrigiert)
+UNVERIFIED_FLAGS = frozenset({"RECONSTRUCTED_PLAN", "RECONSTRUCTED_GAP", "PROPOSED_B", "CORRECTED_A", "ESTIMATE",
+                              "AVG_PRICE", "KOINLY_MISSING_RATE", "KOINLY_NEG_BALANCE", "USER_INSTRUCTION"})
 ORIGIN_LABEL = {"import": "Import", "journal": "in Portfolia erfasst/synchronisiert", "plan": "Sparplan (geschätzt)"}
 TYPE_LABEL = {
     "buy": "Kauf",
@@ -52,6 +55,24 @@ MIN_QTY = Decimal("1e-9")
 
 def _flags(raw: str | None) -> list[str]:
     return [f for f in (raw or "").split(";") if f and f not in SKIP_FLAGS]
+
+
+def unverified_txs(inp: TaxInput, year: int) -> tuple[int, dict[str, int]]:
+    """Buchungen des Jahres und Anschaffungsbuchungen der Veräußerungen des Jahres mit Rekonstruktions-/Schätz-/
+    Korrekturmarke (``UNVERIFIED_FLAGS``): (Anzahl Buchungen, Anzahl je Marke)."""
+    wanted = {t.tx_id for t in inp.pf.txs if t.date.year == year}
+    for d in inp.ledger.disposals:
+        if d.date.year == year:
+            wanted.update(p.acq_tx for p in d.parts if p.acq_tx)
+    out: dict[str, int] = {}
+    n = 0
+    for t in inp.pf.txs:
+        if t.tx_id in wanted:
+            marks = {f for f in _flags(t.flag) if f in UNVERIFIED_FLAGS}
+            n += bool(marks)
+            for f in marks:
+                out[f] = out.get(f, 0) + 1
+    return n, out
 
 
 def data_fingerprint(inp: TaxInput) -> dict[str, Any]:

@@ -181,6 +181,8 @@
 <section class="card" id="year" style="margin-top:16px">
   <div class="card-head"><h2>Steuerjahr {{ year }}</h2>{% if year_info %}<span class="hint">{{ year_info }}</span>{% endif %}</div>
   {% if res %}
+  {% set rv = res.review() %}
+  <p class="hint" style="margin:4px 0 8px">Prüfstatus: <span class="badge {{ 'warn' if rv.open else 'good' }}" title="Kein Nachweis der Richtigkeit – Belege und Ansätze vor der Abgabe prüfen.">{{ rv.status }}{% if rv.open %} · {{ rv.open }} offene Punkte{% endif %}</span></p>
   {{ issues_box(res.issues|rejectattr('severity', 'equalto', 'info')|list, 'Hinweise zum Jahr ' ~ year) }}
   <div class="grid-2">
     <div>
@@ -281,7 +283,7 @@
     {% for r in reports %}
     <li class="list-item report-item">
       <div class="report-head">
-        <div class="grow"><b>{{ r.year }}</b> · {{ r.created_at|datetime_de }}<br><span class="hint">{{ r.rulepack }}{% if r.import_id %} · Import #{{ r.import_id }}{% endif %}</span></div>
+        <div class="grow"><b>{{ r.year }}</b> · {{ r.created_at|datetime_de }}<br><span class="hint">{{ r.rulepack }}{% if r.import_id %} · Import #{{ r.import_id }}{% endif %}</span>{% if r.summary.review %} <span class="badge {{ 'warn' if r.summary.review.open else 'good' }}">{{ r.summary.review.status }}{% if r.summary.review.open %} · {{ r.summary.review.open }}{% endif %}</span>{% endif %}</div>
         <form method="post" action="/tax/report/{{ r.id }}/delete" data-confirm="Diesen Bericht löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button class="btn sm danger" type="submit" title="Bericht löschen" aria-label="Bericht {{ r.year }} vom {{ r.created_at|datetime_de }} löschen">Löschen</button></form>
       </div>

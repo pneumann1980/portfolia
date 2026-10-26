@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -288,7 +289,7 @@ def test_pages_and_routes(config, master, api):
         wait(sid)
         page = c.get(f"/settings/datasources/{sid}/uebernahme").text
         assert "Beweis" in page and "erbracht" in page and "Import-Buchungen ohne Gegenstück" in page
-        assert "K9" not in page and "API maßgeblich machen" in page
+        assert not re.search(r"\bK9\b", page) and "API maßgeblich machen" in page  # Token ist zufällig
         token = TK.assess(ctx(c), sid).token
         no = post(c, f"/settings/datasources/{sid}/uebernahme/uebernehmen", token=token)  # ohne Bestätigung
         assert no.status_code == 303 and not sync_txs(c)
