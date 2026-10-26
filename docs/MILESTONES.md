@@ -1426,6 +1426,18 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.53.3 – Steuer-PDF: Logo als Vektorzeichnung (Firefox-Viewer)
+
+* **Fehlerbild:** Im PDF-Betrachter von Firefox (Android) fehlte nach „ortfolia“ (0.52.1) nun das „S“ von „Steuerreport“ in der Kopfzeile –
+  wieder der erste Buchstabe eines Textes, der unmittelbar rechts neben dem Logo-Bild beginnt. Die Reihenfolge (Text vor Bild) und das
+  opake Bild aus 0.52.1 haben das nicht verhindert. Am Desktop (pdf.js, pdfium, Adobe) war der Text immer vollständig.
+* **Maßnahme:** Das Logo ist eine einfache Vektorgrafik (zwei Ringbögen, ein Punkt) und wird jetzt als **Pfade** gezeichnet; das PDF enthält
+  **kein Bild** und keine Transparenz mehr (kein `/XObject`, keine `/SMask`). Der Abstand zwischen Logo und Kopfzeilentext wächst um 1 mm.
+  Tests: kein Bildobjekt im PDF, Logo als Pfade auf jeder Seite, unter dem Logo steht kein Text.
+* **Grenze:** Die Ursache im Android-Viewer ließ sich hier nicht nachstellen (pdf.js am Desktop zeigt den Text vor und nach der Änderung
+  korrekt). Die Maßnahme entfernt den gemeinsamen Nenner beider Fehlerbilder (Bild neben Text). Bleibt der Fehler bestehen, ist die Ursache
+  im Schriftschnitt (eingebettete Teilmenge der Schrift) zu suchen; nächster Schritt wäre die Kopfzeile ohne Logo.
+
 ## 0.53.2 – Freigrenzen: Vergleich mit dem ungerundeten Betrag
 
 * **Fehlerbild (Review):** Der Jahressaldo wurde zwar aus ungerundeten Teilwerten gebildet, aber vor dem Vergleich mit der Freigrenze auf

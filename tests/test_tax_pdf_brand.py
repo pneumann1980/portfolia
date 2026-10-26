@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pypdfium2 as pdfium
 import pypdfium2.raw as pdfium_c
-import pytest
 
 from app.tax import document as D
 from app.tax import pdf as P
@@ -18,6 +17,16 @@ def _doc(brand: bool = True, pages: int = 3) -> D.Doc:
     return doc
 
 
+def _logo_boxes(pdf: pdfium.PdfDocument, i: int) -> list[tuple[float, float, float, float]]:
+    """Pfade des Logos (kleine Vektorobjekte; die Linien von Kopf und Fuß sind breit)."""
+    boxes = []
+    for obj in pdf[i].get_objects(filter=[pdfium_c.FPDF_PAGEOBJ_PATH]):
+        left, bottom, right, top = obj.get_pos()
+        if right - left < 80 and top - bottom < 80 and (top - bottom) > 1:
+            boxes.append((left, bottom, right, top))
+    return boxes
+
+
 def _images(pdf: pdfium.PdfDocument) -> list[int]:
     out = []
     for i in range(len(pdf)):
@@ -26,21 +35,13 @@ def _images(pdf: pdfium.PdfDocument) -> list[int]:
     return out
 
 
-def test_logo_asset_is_light_background_png():
-    from PIL import Image
-
-    assert P.LOGO_PATH.is_file()
-    img = Image.open(P.LOGO_PATH)
-    assert img.mode == "RGBA" and img.size[0] == img.size[1] >= 256
-    assert img.getpixel((0, 0))[3] == 0  # transparenter Rand (kein dunkler Grund)
-
-
 def test_every_page_has_logo_and_name(tmp_path: Path):
     out = P.render(_doc(), tmp_path / "a.pdf")
     pdf = pdfium.PdfDocument(out)
     assert len(pdf) == 3
-    counts = _images(pdf)
-    assert counts[0] >= 2 and all(c >= 1 for c in counts)  # Seite 1: Titelblock + Kopfzeile
+    assert _images(pdf) == [0, 0, 0]  # das Logo ist eine Vektorzeichnung, kein Bild
+    boxes = [_logo_boxes(pdf, k) for k in range(3)]
+    assert len(boxes[0]) >= 2 * len(boxes[1]) > 0 and len(boxes[1]) == len(boxes[2])  # Seite 1: Titelblock + Kopfzeile
     text1 = pdf[0].get_textpage().get_text_bounded()
     assert "Portfolia" in text1 and "Portfolio- und Steuerauswertung" in text1
     assert "Portfolia" in pdf[1].get_textpage().get_text_bounded()  # rechts in der Kopfzeile
@@ -49,20 +50,8 @@ def test_every_page_has_logo_and_name(tmp_path: Path):
 
 def test_brand_can_be_disabled(tmp_path: Path):
     pdf = pdfium.PdfDocument(P.render(_doc(brand=False, pages=2), tmp_path / "b.pdf"))
-    assert _images(pdf) == [0, 0]
+    assert _images(pdf) == [0, 0] and not _logo_boxes(pdf, 0) and not _logo_boxes(pdf, 1)
     assert "Portfolio- und Steuerauswertung" not in pdf[0].get_textpage().get_text_bounded()
-
-
-def test_missing_logo_falls_back_to_text_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(P, "LOGO_PATH", tmp_path / "gibt-es-nicht.png")
-    P._logo_file.cache_clear()
-    try:
-        pdf = pdfium.PdfDocument(P.render(_doc(pages=2), tmp_path / "c.pdf"))
-        assert _images(pdf) == [0, 0]
-        assert "Portfolia" in pdf[0].get_textpage().get_text_bounded()
-    finally:
-        monkeypatch.undo()
-        P._logo_file.cache_clear()
 
 
 def _text_in(pdf: pdfium.PdfDocument, page: int, rect: tuple[float, float, float, float]) -> str:
@@ -77,8 +66,8 @@ def test_logo_never_covers_text_and_name_is_complete(tmp_path: Path):
     for i in range(len(pdf)):
         page = pdf[i]
         assert "Portfolia" in page.get_textpage().get_text_bounded()
-        for obj in page.get_objects(filter=[pdfium_c.FPDF_PAGEOBJ_IMAGE]):
-            assert _text_in(pdf, i, obj.get_pos()) == ""  # unter und neben dem Logo steht kein Text
+        for box in _logo_boxes(pdf, i):
+            assert _text_in(pdf, i, box) == ""  # unter und neben dem Logo steht kein Text
     # Titelblock: „Portfolia“ beginnt rechts neben dem Logo und ist vollständig lesbar
     assert any(line.strip() == "Portfolia" for line in pdf[0].get_textpage().get_text_bounded().splitlines())
 
@@ -100,23 +89,12 @@ def test_glyphs_missing_in_font_are_replaced(tmp_path: Path):
     assert "Steuern -> Regelwerk <-> Bank" in text
 
 
-def test_logo_is_opaque_and_drawn_after_the_text(tmp_path: Path):
-    """Regression „ortfolia“: kein Bild mit Transparenzmaske vor dem Namen (Firefox/Android verlor das „P“)."""
-    import base64
-    import re
-    import zlib
-
+def test_pdf_contains_no_image_and_no_transparency(tmp_path: Path):
+    """Regression „ortfolia“/„teuerreport“: Der Firefox-Viewer (Android) verlor den ersten Buchstaben eines Textes neben
+    einem Bild. Das Logo wird deshalb als Vektorzeichnung ausgegeben – kein Bild, keine Transparenzmaske."""
     out = P.render(_doc(pages=2), tmp_path / "g.pdf")
     raw = out.read_bytes()
-    assert b"/SMask" not in raw and b"/Mask" not in raw  # Logo ist opak (auf Weiß gerechnet)
+    assert b"/Subtype /Image" not in raw and b"/XObject" not in raw  # (/ProcSet nennt /ImageB nur als Vorgabe)
+    assert b"/SMask" not in raw and b"/Mask" not in raw
     page1 = pdfium.PdfDocument(out)[0]
     assert page1.get_textpage().get_text_bounded().count("Portfolia") >= 2
-    streams = []
-    for m in re.findall(rb"stream\r?\n(.*?)endstream", raw, re.S):
-        try:  # ReportLab: je nach Einstellung unkomprimiert oder ASCII85 + Flate
-            streams.append(zlib.decompress(base64.a85decode(m.strip().removesuffix(b"~>"))))
-        except Exception:
-            streams.append(m)
-    content = next(s for s in streams if b"(Portfolia)" in s and b"Do" in s)
-    # im Titelblock steht der Text vor dem Bild; kein Bild zwischen Textbeginn und Wortmarke
-    assert content.index(b"(Portfolia)") < content.index(b" Do")

@@ -7,11 +7,8 @@
 
 from __future__ import annotations
 
-import contextlib
-import io
 import os
 import threading
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as _xml_escape
@@ -22,7 +19,6 @@ from reportlab.lib.enums import TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfbase.ttfonts import TTFont
@@ -86,7 +82,6 @@ MARGIN_TOP = 18 * mm
 MARGIN_BOTTOM = 16 * mm
 BRAND_NAME = "Portfolia"
 BRAND_TAGLINE = "Portfolio- und Steuerauswertung"
-LOGO_PATH = Path(__file__).resolve().parent.parent / "static" / "img" / "logo-light.png"  # für hellen Hintergrund
 LOGO_HEADER = 5.2 * mm
 LOGO_TITLE = 13 * mm
 
@@ -111,26 +106,25 @@ def fonts() -> dict[str, str]:
         return _FONTS
 
 
-@lru_cache(maxsize=1)
-def _logo_file() -> ImageReader | None:
-    """Logo als **opakes** Bild auf weißem Grund (keine Transparenzmaske) – die Berichte haben weißen Hintergrund.
-    Manche PDF-Betrachter (Firefox/Android) verschluckten den ersten Buchstaben des Textes direkt nach einem Bild mit
-    Maske („ortfolia“). Fehlt oder beschädigt die Datei, läuft der Bericht ohne Logo (nie ein Fehler)."""
-    try:
-        if not LOGO_PATH.is_file():
-            return None
-        from PIL import Image as PILImage
+# Logo (siehe app/static/img/icon.svg): Ringbögen mit runden Enden und ein Punkt, im 64er-Raster
+LOGO_BLUE, LOGO_ORANGE, LOGO_GREEN = "#3987e5", "#d95926", "#199e70"
 
-        with PILImage.open(LOGO_PATH) as src:
-            rgba = src.convert("RGBA")
-        flat = PILImage.new("RGB", rgba.size, (255, 255, 255))
-        flat.paste(rgba, mask=rgba.getchannel("A"))
-        buf = io.BytesIO()
-        flat.save(buf, "PNG", optimize=True)
-        buf.seek(0)
-        return ImageReader(buf)
-    except Exception:  # pragma: no cover - nur bei beschädigter Datei
-        return None
+
+def _draw_logo(c: rl_canvas.Canvas, x: float, y: float, size: float) -> None:
+    """Logo als **Vektorzeichnung** (Pfade), nicht als Bild: Betrachter wie der Firefox-Viewer (Android) verloren den
+    ersten Buchstaben eines Textes neben einem Bild („ortfolia“, „teuerreport“). Ohne Bild kein Bildpfad im Viewer."""
+    k = size / 64
+    cx, cy, r = x + 32 * k, y + 32 * k, 20 * k
+    c.saveState()
+    c.setLineCap(1)
+    c.setLineWidth(7 * k)
+    c.setStrokeColor(colors.HexColor(LOGO_BLUE))
+    c.arc(cx - r, cy - r, cx + r, cy + r, 90, -255)
+    c.setStrokeColor(colors.HexColor(LOGO_ORANGE))
+    c.arc(cx - r, cy - r, cx + r, cy + r, 90, 105)
+    c.setFillColor(colors.HexColor(LOGO_GREEN))
+    c.circle(cx, cy, 6 * k, stroke=0, fill=1)
+    c.restoreState()
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -171,8 +165,7 @@ class _NumberedCanvas(rl_canvas.Canvas):
         self.line(MARGIN_X, 11 * mm, w - MARGIN_X, 11 * mm)
         self.setFillColor(INK2)
         self.setFont(f["regular"], 7.5)
-        logo = _logo_file() if self.brand else None
-        x = MARGIN_X + (LOGO_HEADER + 2 * mm if logo else 0)
+        x = MARGIN_X + (LOGO_HEADER + 3 * mm if self.brand else 0)
         font, size, gap = f["regular"], 7.5, 4 * mm
         right = pdf_text(self.header_right)
         self.drawRightString(w - MARGIN_X, h - 10.5 * mm, right)
@@ -182,9 +175,8 @@ class _NumberedCanvas(rl_canvas.Canvas):
         self.drawRightString(w - MARGIN_X, 7.5 * mm, pages)
         room = w - 2 * MARGIN_X - stringWidth(pages, font, size) - gap
         self.drawString(MARGIN_X, 7.5 * mm, _fit(self.footer_left, font, size, room))
-        if logo:  # das Bild kommt nach allem Text (siehe _logo_file)
-            with contextlib.suppress(Exception):  # Bild nicht zeichenbar → ohne Logo weiter
-                self.drawImage(logo, MARGIN_X, h - 11.4 * mm, width=LOGO_HEADER, height=LOGO_HEADER)
+        if self.brand:  # nach allem Text
+            _draw_logo(self, MARGIN_X, h - 11.4 * mm, LOGO_HEADER)
         self.restoreState()
 
 
@@ -200,27 +192,25 @@ def _canvas_class(doc: D.Doc, header_right: str) -> type[_NumberedCanvas]:
 # ----------------------------------------------------------------------------------------------------
 
 class _BrandBlock(Flowable):
-    """Name, Zeile darunter und Logo direkt gezeichnet: erst der gesamte Text, zuletzt das (opake) Bild."""
+    """Name, Zeile darunter und Logo direkt gezeichnet: erst der gesamte Text, zuletzt das Logo (Vektorzeichnung)."""
 
-    def __init__(self, width: float, fnt: dict[str, str], logo: ImageReader | None) -> None:
+    def __init__(self, width: float, fnt: dict[str, str]) -> None:
         super().__init__()
-        self.width, self.height, self.fnt, self.logo = width, LOGO_TITLE, fnt, logo
+        self.width, self.height, self.fnt = width, LOGO_TITLE, fnt
 
     def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
         return self.width, self.height
 
     def draw(self) -> None:
         c = self.canv
-        x = LOGO_TITLE + 3 * mm if self.logo else 0
+        x = LOGO_TITLE + 3 * mm
         c.setFillColor(INK)
         c.setFont(self.fnt["bold"], 17)
         c.drawString(x, 16.7, BRAND_NAME)
         c.setFillColor(INK2)
         c.setFont(self.fnt["regular"], 7.8)
         c.drawString(x, 5.9, BRAND_TAGLINE)
-        if self.logo:
-            with contextlib.suppress(Exception):  # Bild nicht zeichenbar → ohne Logo weiter
-                c.drawImage(self.logo, 0, 0, width=LOGO_TITLE, height=LOGO_TITLE)
+        _draw_logo(c, 0, 0, LOGO_TITLE)
 
 
 class Renderer:
@@ -422,7 +412,7 @@ class Renderer:
 
     def brand_block(self, orientation: str) -> list[Any]:
         """Titelblock auf Seite 1: Logo, Name und Zeile darunter (nur wenn ``Doc.brand``)."""
-        return [_BrandBlock(self._width(orientation), self.f, _logo_file()), RLSpacer(1, 4 * mm)]
+        return [_BrandBlock(self._width(orientation), self.f), RLSpacer(1, 4 * mm)]
 
     # -- Dokument ------------------------------------------------------------------------------------
     def render(self, doc: D.Doc, path: Path, header_right: str = "Portfolia") -> Path:
