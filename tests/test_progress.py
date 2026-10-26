@@ -191,3 +191,11 @@ def test_late_heartbeat_never_overwrites_finished_state():
     assert writes[-1]["running"] is False and writes[-1]["ok"] is True  # zuletzt gespeichert: der Abschluss
     p.touch()  # nach dem Abschluss ohne Wirkung
     assert writes[-1]["running"] is False and calls["n"] == len(writes)
+
+
+def test_extra_is_part_of_the_very_first_state():
+    """Regression (CI-Flake): ``href`` darf nicht erst nach dem ersten Schreiben gesetzt werden – ein Poller sah sonst
+    einen laufenden Vorgang ohne Verweis."""
+    seen: list[dict] = []
+    Progress(seen.append, "Test", extra={"href": "/x", "rid": 7})
+    assert seen and seen[0]["href"] == "/x" and seen[0]["rid"] == 7

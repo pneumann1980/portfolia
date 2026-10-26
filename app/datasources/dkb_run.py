@@ -596,8 +596,8 @@ def _work(ctx: Any, sid: int, rid: int, path: Path, account: str, name: str, s: 
     try:
         rates = _rates(ctx)
         prog = Progress(job_sink(ctx, JOB.format(sid=sid)), "DKB-Wertpapierdokumente (ZIP)", source=name,
-                        unit="Dokumente", phases=["zip_unpack", "zip_eval", "zip_match", "zip_report"], eta=True)
-        prog.extra.update(href=f"/settings/datasources/{sid}/dkb/zip/{rid}", rid=rid)
+                        unit="Dokumente", phases=["zip_unpack", "zip_eval", "zip_match", "zip_report"], eta=True,
+                        extra={"href": f"/settings/datasources/{sid}/dkb/zip/{rid}", "rid": rid})
         prog.touch()
 
         def beat() -> None:

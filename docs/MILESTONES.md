@@ -1426,6 +1426,14 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.53.1 – CI-Flake: Fortschrittsanzeige der DKB-ZIP-Verarbeitung
+
+* **Fehlerbild:** `test_progress_job_visible_globally_while_running` schlug in der CI mit `KeyError: 'href'` fehl. `Progress` schrieb im
+  Konstruktor sofort einen ersten Zustand, der Verweis (`href`) wurde erst danach gesetzt – ein Poller dazwischen sah einen laufenden
+  Vorgang ohne Verweis (Race, nicht durch 0.53.0 verursacht, auf dem langsameren Runner sichtbar).
+* **Maßnahme:** `Progress(..., extra=…)` – Zusatzfelder sind schon im ersten Zustand enthalten; die DKB-ZIP-Verarbeitung übergibt `href`
+  und `rid` dort. Regressionstest im ersten Zustand. Weitere Stellen, die `extra` nachträglich setzen, wurden nicht umgestellt.
+
 ## 0.53.0 – Review-Korrekturen Steuerreport (Rundung, Prüfstatus, Quellensteuer, Kursalter, OCR)
 
 Anlass: externe Review des Steuermoduls. Befunde im Code nachvollzogen, bestätigte Punkte korrigiert:

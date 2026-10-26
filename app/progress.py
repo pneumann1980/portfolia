@@ -79,7 +79,8 @@ class Progress:
 
     def __init__(self, sink: Callable[[dict[str, Any]], None], label: str, *, source: str | None = None,
                  unit: str = "Datensätze", phases: list[str] | None = None,
-                 clock: Callable[[], float] = time.monotonic, eta: bool = False) -> None:
+                 clock: Callable[[], float] = time.monotonic, eta: bool = False,
+                 extra: dict[str, Any] | None = None) -> None:
         self.sink = sink
         self.label = label
         self.source = source
@@ -110,7 +111,7 @@ class Progress:
         self.text = ""
         self.pct = 0.0
         self.started_at = iso(datetime.now(UTC))
-        self.extra: dict[str, Any] = {}
+        self.extra: dict[str, Any] = dict(extra or {})  # schon beim ersten Schreiben sichtbar (z. B. ``href``)
         self._last_write = -math.inf
         self._lock = threading.Lock()
         self._emit_lock = threading.Lock()  # Berechnen und Speichern einer Meldung ist unteilbar (siehe ``_emit``)
