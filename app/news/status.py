@@ -1,4 +1,6 @@
-"""Überwachung der News-Pipeline: heute importiert, extrahiert, analysiert, gruppiert – und was fehlschlug."""
+"""Überwachung der News-Pipeline: eine Zeile je Stufe (Import, Artikeltexte, KI-Analyse, Gruppierung, Tagesbericht),
+Balken nur für die beiden Stufen mit Warteschlange (``app.news.queue``), dazu wer gerade läuft (automatisch/manuell),
+Tageszahlen und was fehlschlug."""
 
 from __future__ import annotations
 
@@ -6,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.context import AppContext
+from app.news import queue, wave
 from app.news.ai import AiGateway
 from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
@@ -13,12 +16,29 @@ from app.news.eta import enrich_eta
 from app.util.timeutil import iso, now_local
 
 JOBS = ("news_fetch", "news_enrich", "news_analyze", "news_group", "news_report")
+STAGE_JOB = {"fetch": "news_fetch", "enrich": "news_enrich", "analyze": "news_analyze", "group": "news_group",
+             "report": "news_report"}
+_MANUAL_BADGE = {"blocked": ("warn", "wartet auf Anbieter/Limit"), "error": ("crit", "Fehler (manuell)")}
 
 
-def _bar(done: int, waiting: int) -> dict[str, int]:
-    """Fortschritt des Rückstaus: erledigt / (erledigt + wartend); ohne Arbeit gilt der Balken als voll."""
-    total = done + waiting
-    return {"done": done, "waiting": waiting, "total": total, "pct": 100 if total == 0 else int(100 * done / total)}
+def _badges(jobs: dict[str, Any], manual: dict[str, Any] | None) -> dict[str, tuple[str, str] | None]:
+    """Wer arbeitet gerade an der Stufe? Manueller Lauf vor Intervall-Job, danach Ergebnis des letzten manuellen
+    Laufs (wartet auf Anbieter, Fehler)."""
+    out: dict[str, tuple[str, str] | None] = {}
+    running = bool(manual and manual.get("status") == "running")
+    for key, job in STAGE_JOB.items():
+        m = (manual or {}).get("stages", {}).get(key, {})
+        if running and manual.get("stage") == key:
+            out[key] = ("info", "läuft (manuell)")
+        elif (jobs.get(job) or {}).get("running"):
+            out[key] = ("info", "läuft (automatisch)")
+        elif running and m.get("status") == "waiting":
+            out[key] = ("", "angestoßen")
+        elif manual and m.get("status") in _MANUAL_BADGE:
+            out[key] = _MANUAL_BADGE[m["status"]]
+        else:
+            out[key] = None
+    return out
 
 
 def pipeline_status(ctx: AppContext) -> dict[str, Any]:
@@ -44,8 +64,6 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
     analysis = AnalysisService(ctx, gw)
     guard = analysis.pressure()  # Rückstau-Lage der Analyse (frisch/älter, Schutz aktiv?)
     analyze_backlog = guard["total"]
-    analyze_total = max(analysis.window_total(), analyze_backlog)
-    enrich_done = enrich.done_count()
     per_run = int(ctx.settings.get("news.enrich_per_run", 40))
     since3 = iso(datetime.now(UTC) - timedelta(hours=3))
     inflow = n("SELECT COUNT(*) FROM news_item WHERE kind='article' AND hidden_reason IS NULL AND fetched_at>=?",
@@ -72,6 +90,10 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
     else:
         bottleneck = "keiner – alles abgearbeitet"
     jobs = ctx.job_status()
+    manual = wave.load(ctx)
+    badges = _badges(jobs, manual)
+    fetch_res = (jobs.get("news_fetch") or {}).get("progress") or {}
+    next_runs = ctx.scheduler.next_runs() if ctx.scheduler is not None else {}
     errors = []
     for j in JOBS:
         st = jobs.get(j)
@@ -91,8 +113,8 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         "content_reasons": [(r["reason"], int(r["n"])) for r in reasons],
         "with_content_total": n("SELECT COUNT(*) FROM news_content WHERE status IN ('success','partial')"),
         "analyzed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NOT NULL AND analyzed_at>=?", day),
-        "bars": {"enrich": _bar(enrich_done, enrich_ready),  # nur Abrufbares; Zurückgestelltes steht unter backlog
-                 "analyze": _bar(analyze_total - analyze_backlog, analyze_backlog)},
+        "bars": {"enrich": queue.bar(ctx, "enrich", enrich_ready),
+                 "analyze": queue.bar(ctx, "analyze", analyze_backlog)},
         "eta": eta,
         "backlog": {"enrich": enrich_ready, "enrich_paused": enrich_paused, "enrich_retry": enrich_retry,
                     "analyze": analyze_backlog,
@@ -105,6 +127,11 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
                           "older": guard["older"], "age_h": int(guard["age_h"]),
                           "quota_note": guard["eta"].get("quota_note", "")},
         "ai": ai, "last_report": dict(last_report) if last_report else None, "errors": errors[:8],
+        "badges": badges, "manual": manual,
+        "running": any(b is not None and b[1].startswith(("läuft", "angestoßen")) for b in badges.values()),
+        "fetch": {"last_end": (jobs.get("news_fetch") or {}).get("last_end"), "new": fetch_res.get("new"),
+                  "errors": len(fetch_res.get("errors") or []), "next": next_runs.get("news_fetch")},
+        "group_last": (jobs.get("news_group") or {}).get("last_end"),
         "jobs": {j: {k: jobs[j].get(k) for k in ("last_start", "last_end", "last_ok", "running")}
                  for j in JOBS if j in jobs},
         "results": {j: jobs[j]["progress"] for j in JOBS if j in jobs and jobs[j].get("progress")},

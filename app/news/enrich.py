@@ -87,17 +87,15 @@ class EnrichService:
                  AND c.next_attempt IS NOT NULL AND c.next_attempt > ?""",
             (since, iso(datetime.now(UTC))), default=0) or 0)
 
-    def candidates(self, limit: int, *, include_paused: bool = False,
-                   hours: float | None = None) -> list[dict[str, Any]]:
+    def candidates(self, limit: int, *, include_paused: bool = False) -> list[dict[str, Any]]:
         """Noch nicht (erfolgreich) angereicherte Artikel in Prioritätsreihenfolge.
 
         Artikel pausierter Quellen werden übersprungen (``include_paused`` zählt sie mit): Sonst belegen sie die
-        ersten Plätze jedes Laufs und verdrängen abrufbare Artikel anderer Quellen. ``hours`` begrenzt den Zeitraum
-        (manuelle Welle: 24 Stunden) statt ``news.enrich_days``.
+        ersten Plätze jedes Laufs und verdrängen abrufbare Artikel anderer Quellen.
         """
         days = int(self.ctx.settings.get("news.enrich_days", 3))
         paused = set() if include_paused else set(self.paused_hosts())
-        since = iso(datetime.now(UTC) - (timedelta(hours=hours) if hours else timedelta(days=days)))
+        since = iso(datetime.now(UTC) - timedelta(days=days))
         now = iso(datetime.now(UTC))
         rows = self.db.q(
             """SELECT n.id, n.url, n.title, n.summary, n.relevance, n.dup_count, n.source_weight, n.published_at,
@@ -124,10 +122,10 @@ class EnrichService:
         return scored[:limit]
 
     # -- Lauf ----------------------------------------------------------------------------------------------
-    def run(self, limit: int | None = None, *, hours: float | None = None, wait_s: float = 0.0,
+    def run(self, limit: int | None = None, *, wait_s: float = 0.0,
             on_item: Callable[[str], None] | None = None) -> dict[str, Any]:
-        """Einen Lauf abarbeiten. ``hours`` begrenzt den Zeitraum, ``wait_s`` wartet auf einen laufenden Lauf,
-        ``on_item`` meldet jeden bearbeiteten Artikel (Status) – für die Fortschrittsanzeige der Welle."""
+        """Einen Lauf abarbeiten. ``wait_s`` wartet auf einen laufenden Lauf derselben Stufe, ``on_item`` meldet jeden
+        bearbeiteten Artikel (Status) – Lebenszeichen des manuellen Laufs."""
         res = {"selected": 0, "success": 0, "partial": 0, "blocked": 0, "failed": 0, "retry": 0, "skipped_host": 0}
         if not self.enabled():
             return {"skipped": "Artikelinhalte deaktiviert"}
@@ -135,7 +133,7 @@ class EnrichService:
             if not got:
                 return {"skipped": "läuft bereits"}
             limit = limit or int(self.ctx.settings.get("news.enrich_per_run", 40))
-            batch = self.candidates(limit, hours=hours)
+            batch = self.candidates(limit)
             res["selected"] = len(batch)
             for it in batch:
                 host = _host(it["url"])

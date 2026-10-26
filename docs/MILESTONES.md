@@ -1426,6 +1426,30 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.56.0 – News: eine Pipeline-Anzeige, Warteschlange je Stufe, automatische und manuelle Läufe gemeinsam
+
+* **Problem in 0.55.0:** Zwei Fortschrittssysteme nebeneinander. Die Welle zählte nur den manuellen Lauf (24 h, Nenner beim Start der
+  Stufe fixiert: „Artikeltexte 0 von 0“, obwohl 5 warteten), die Rückstau-Balken zeigten das Fenster (3 Tage/48 h) ohne Bezug zu Läufen.
+* **Jetzt:** Karte „Pipeline“ mit einer Zeile je Stufe. **Balken nur für Artikeltexte und KI-Analyse** (die Stufen mit Warteschlange);
+  Import, Gruppierung und Tagesbericht als Statuszeile (letzter/nächster Abruf, neue Meldungen, Ereignisse, letzter Bericht).
+* **Warteschlange als Zyklus** (`app/news/queue.py`): Ein Zyklus beginnt, wenn Arbeit wartet, und endet, wenn nichts mehr wartet.
+  Balken = seit Zyklusbeginn bearbeitet / (bearbeitet + jetzt wartend). Leer: „0 von 0 · zuletzt fertig HH:MM (N bearbeitet)“ – der alte
+  Vorgang fällt heraus. Intervall-Jobs und manueller Lauf arbeiten **dieselbe** Warteschlange ab und bewegen denselben Balken; ein Badge
+  zeigt, wer gerade arbeitet: „läuft (automatisch)“, „läuft (manuell)“, „angestoßen“, nach dem Lauf ggf. „wartet auf Anbieter/Limit“.
+  Den Zyklus schreiben nur die Jobs (vor/nach jedem Lauf); die Statusseite liest nur.
+* **Fenster:** einheitlich die der Jobs (Artikeltexte `news.enrich_days` = 3 Tage, Analyse `news.analysis_hours` = 48 h). Das
+  24-h-Sonderfenster des manuellen Laufs entfällt (sonst bekämen verspätet gelieferte Artikel nie Text).
+* **Knopf „Jetzt abarbeiten“** (mit/ohne Import): Import → Artikeltexte → Analyse → Gruppierung sofort und nacheinander, mit den
+  Stufensperren aus 0.55.0; keine eigenen Zähler mehr. Die Pipeline-Zeilen fragen sich alle 3 s neu ab, solange etwas läuft, sonst
+  jede Minute. Tageszahlen (importiert, Text geladen, Gründe, analysiert) stehen in einer eigenen Karte „Heute“.
+* **Grenzen/Annahmen:** Bei Dauerzufluss endet ein Zyklus nie – sein Beginn reicht höchstens 24 Std. zurück. Meldungen, die das Fenster
+  verlassen, verlassen die Warteschlange, ohne als erledigt zu zählen. Zeitstempel sind sekundengenau; ein neuer Zyklus beginnt
+  frühestens eine Sekunde nach dem Ende des alten. Artikel pausierter Quellen und geplante Wiederholungen stehen als „zurückgestellt“
+  unter dem Balken, nicht darin.
+* **Tests:** Zyklus (öffnen, Fortschritt, schließen, neuer Zyklus, 24-h-Grenze), Analyse-Zyklus und lesende Statusseite, manueller Lauf
+  auf derselben Warteschlange (inkl. 30 h alter Meldung), Badges manuell/automatisch/angestoßen, Anbieter pausiert, Stufenfehler,
+  abgebrochener Lauf, Seite mit genau zwei Balken und Route inkl. Doppelklick und Polling.
+
 ## 0.55.0 – News: manuelle Pipeline-Welle statt Blind-Trigger, Stufensperren
 
 * **Vorher:** „Anreicherung & Analyse jetzt starten“ setzte drei Einmal-Jobs mit festen Verzögerungen (0,5/30/60 s) ab und zeigte ein

@@ -1,30 +1,17 @@
 {% set ai_s = st.ai %}
 <section class="card">
-  <div class="card-head"><h2>Pipeline heute</h2>
+  <div class="card-head"><h2>Pipeline</h2>
     <div class="row"><select name="fetch" id="pipe-fetch" class="sm" aria-label="Import"><option value="1">mit Import</option><option value="0">ohne Import</option></select>
-      <button class="btn sm" hx-post="/news/pipeline/run" hx-include="#pipe-fetch" hx-target="#pipe-wave" hx-swap="outerHTML">Welle jetzt starten</button></div></div>
-  {% include "partials/news_wave.html" %}
+      <button class="btn sm" hx-post="/news/pipeline/run" hx-include="#pipe-fetch" hx-target="#pipe-live" hx-swap="outerHTML">Jetzt abarbeiten</button></div></div>
+  {% include "partials/news_pipeline.html" %}
+</section>
+<section class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Heute</h2></div>
   <dl class="kv">
     <dt>Importiert (Artikel)</dt><dd>{{ st.imported }}</dd>
     <dt>Text geladen</dt><dd>{{ st.content.success }} vollständig · {{ st.content.partial }} Teiltext · {{ st.content.blocked }} gesperrt · {{ st.content.failed }} fehlgeschlagen · {{ st.content.pending }} Wiederholung geplant</dd>
     {% if st.content_reasons %}<dt>Häufige Gründe</dt><dd>{% for r, k in st.content_reasons %}{{ r }} ({{ k }}){{ ', ' if not loop.last }}{% endfor %}</dd>{% endif %}
     <dt>Analysiert</dt><dd>{{ st.analyzed }}{% if st.analysis_failed %} · {{ st.analysis_failed }} verworfen{% endif %}</dd>
-    <dt>Rückstau</dt><dd>{{ st.backlog.enrich }} Artikeltexte (letzte {{ st.backlog.days }} Tage) · {{ st.backlog.analyze }} Analysen (letzte 48 h) warten{% if st.backlog.enrich or st.backlog.analyze %} – werden laufend abgearbeitet{% endif %}</dd>
-    {% if st.analyze_guard.active %}<dt>Rückstau-Schutz</dt><dd><span class="badge warn">aktiv</span> {{ st.analyze_guard.reason }}
-      Analysiert werden nur Meldungen der letzten {{ st.analyze_guard.age_h }} Std., die neuesten zuerst; {{ st.analyze_guard.older }} ältere warten zurück
-      und kommen wieder dran, sobald der Rückstau abgebaut ist.{% if st.analyze_guard.quota_note %} {{ st.analyze_guard.quota_note }}.{% endif %}
-      Abhilfe: KI-Grenzen erhöhen, Quellen auf <span class="mono">ai: false</span> setzen oder Quellen verringern.</dd>{% endif %}
-    <dt>Fortschritt</dt><dd>
-      {% for key, label, span in (('enrich', 'Artikeltexte', st.backlog.days ~ ' Tage'), ('analyze', 'KI-Analysen', '48 h')) %}{% set b = st.bars[key] %}
-      <div class="bar-row"><div class="bar-label"><span>{{ label }} ({{ span }})</span><span>{{ b.pct }} % · {{ b.done }} von {{ b.total }}</span></div>
-        <div class="progress" role="progressbar" aria-label="{{ label }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ b.pct }}"><div style="width:{{ b.pct }}%"></div></div>
-        {% set e = st.eta[key] %}<div class="bar-eta hint">Restzeit: {{ e.text }}{% if e.basis and e.minutes %} <span title="Grundlage der Schätzung: {{ 'Durchsatz der letzten 3 Stunden' if e.basis == 'gemessen' else 'Nennleistung je Lauf (zu wenig Messwerte oder kleiner Rückstau – der gemessene Durchsatz zeigt dann nur das Angebot)' }}">({{ e.basis }})</span>{% endif %}</div></div>
-      {% endfor %}</dd>
-    {% if st.backlog.enrich_paused or st.backlog.enrich_retry %}<dt>Zurückgestellt</dt><dd>{{ st.backlog.enrich_paused }} Artikel pausierter Quellen · {{ st.backlog.enrich_retry }} Wiederholung geplant – nicht im Balken „Artikeltexte“, werden später erneut versucht</dd>{% endif %}
-    <dt>Engpass</dt><dd>{{ st.backlog.bottleneck }}</dd>
-    {% if st.backlog.paused_hosts %}<dt>Pausierte Quellen</dt><dd>{% for h, u in st.backlog.paused_hosts %}<span class="mono">{{ h }}</span> bis {{ u|datetime_de }}{{ '; ' if not loop.last }}{% endfor %} ({{ st.backlog.enrich_paused }} Artikel zurückgestellt – nach vielen Fehlern/Sperren, damit sie andere nicht aufhalten)</dd>{% endif %}
-    <dt>Ereignisse (24 h)</dt><dd>{{ st.events }} ({{ st.events_multi }} mit mehreren Quellen)</dd>
-    <dt>Letzter Tagesbericht</dt><dd>{% if st.last_report %}<a href="/news?tab=report&report_id={{ st.last_report.id }}">{{ st.last_report.day|date_de }}</a> · erstellt {{ st.last_report.created_at|datetime_de }}{% else %}–{% endif %}</dd>
   </dl>
 </section>
 <section class="card" style="margin-top:16px">

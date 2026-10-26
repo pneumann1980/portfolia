@@ -1,0 +1,34 @@
+{# Pipeline: eine Zeile je Stufe. Balken nur für die Stufen mit Warteschlange (Artikeltexte, KI-Analyse): „n von m“ für
+   alles, was seit Beginn des Zyklus anstand (app/news/queue.py). Automatische und manuelle Läufe bewegen dieselben Balken.
+   Fragt sich alle 3 s neu ab, solange etwas läuft, sonst jede Minute. #}
+{% set bdg = st.badges %}
+{% set labels = {'fetch': 'Import', 'enrich': 'Artikeltexte', 'analyze': 'KI-Analyse', 'group': 'Gruppierung'} %}
+{% macro badge(x) %}{% if x %} <span class="badge {{ x[0] }}">{{ x[1] }}</span>{% endif %}{% endmacro %}
+<div id="pipe-live" class="pipe" aria-live="polite" hx-get="/news/pipeline/live" hx-trigger="every {{ '3s' if st.running else '60s' }}" hx-swap="outerHTML">
+  {% if pipe_note %}<p class="hint">{{ pipe_note }}</p>{% endif %}
+  {% set m = st.manual %}
+  {% if m %}<p class="hint">Manuell angestoßen {{ m.started_at|datetime_de }}{{ ' (ohne Import)' if not m.fetch }}:
+    {% if m.status == 'running' %}läuft{% elif m.status == 'done' %}abgeschlossen {{ m.finished_at|datetime_de }}{% elif m.status == 'partial' %}teilweise – den Rest übernimmt der Intervall-Job{% elif m.status == 'aborted' %}abgebrochen (Neustart oder Absturz){% else %}mit Fehlern{% endif %}{% for k, s in m.stages.items() if s.note and s.status in ('blocked', 'error') %} · {{ labels[k] }}: {{ s.note }}{% endfor %}</p>{% endif %}
+  <dl class="kv">
+    <dt>Import{{ badge(bdg['fetch']) }}</dt>
+    <dd>{% if st.fetch.last_end %}letzter Abruf {{ st.fetch.last_end|datetime_de }}{% if st.fetch.new is not none %} · {{ st.fetch.new }} neue Meldungen{% endif %}{% if st.fetch.errors %} · {{ st.fetch.errors }} Quellenfehler{% endif %}{% else %}noch kein Abruf{% endif %}{% if st.fetch.next %} · nächster {{ st.fetch.next|datetime_de }}{% endif %}</dd>
+    {% for key, label in (('enrich', 'Artikeltexte'), ('analyze', 'KI-Analyse')) %}{% set q = st.bars[key] %}{% set e = st.eta[key] %}
+    <dt>{{ label }}{{ badge(bdg[key]) }}</dt>
+    <dd><div class="bar-row"><div class="bar-label">
+        <span>{% if q.total %}{{ q.done }} von {{ q.total }}{% else %}0 von 0{% if q.finished_at %} · zuletzt fertig {{ q.finished_at|datetime_de }}{% endif %}{% if q.last_done %} ({{ q.last_done }} bearbeitet){% endif %}{% endif %}</span>
+        <span>{% if q.waiting %}{{ 'Rest ' if e.minutes }}{{ e.text }}{% if e.basis and e.minutes %} <span title="Grundlage der Schätzung: {{ 'Durchsatz der letzten 3 Stunden' if e.basis == 'gemessen' else 'Nennleistung je Lauf (zu wenig Messwerte oder kleiner Rückstau)' }}">({{ e.basis }})</span>{% endif %}{% endif %}</span></div>
+      <div class="progress" role="progressbar" aria-label="{{ label }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ q.pct }}"><div style="width:{{ q.pct }}%"></div></div>
+      {% if key == 'enrich' and (st.backlog.enrich_paused or st.backlog.enrich_retry) %}<div class="bar-eta hint">zurückgestellt (nicht im Balken):{% if st.backlog.enrich_paused %} {{ st.backlog.enrich_paused }} Artikel pausierter Quellen{% endif %}{% if st.backlog.enrich_paused and st.backlog.enrich_retry %} ·{% endif %}{% if st.backlog.enrich_retry %} {{ st.backlog.enrich_retry }} Wiederholungen später{% endif %}</div>{% endif %}
+      {% if key == 'analyze' and st.analyze_guard.active %}<div class="bar-eta hint"><span class="badge warn">Rückstau-Schutz aktiv</span> {{ st.analyze_guard.reason }}
+        Nur Meldungen der letzten {{ st.analyze_guard.age_h }} Std., neueste zuerst; {{ st.analyze_guard.older }} ältere warten.{% if st.analyze_guard.quota_note %} {{ st.analyze_guard.quota_note }}.{% endif %}
+        Abhilfe: KI-Grenzen erhöhen, Quellen auf <span class="mono">ai: false</span> setzen oder Quellen verringern.</div>{% endif %}
+    </div></dd>
+    {% endfor %}
+    <dt>Gruppierung{{ badge(bdg['group']) }}</dt>
+    <dd>{% if st.group_last %}zuletzt {{ st.group_last|datetime_de }} · {% endif %}{{ st.events }} Ereignisse in 24 h ({{ st.events_multi }} mit mehreren Quellen)</dd>
+    <dt>Tagesbericht{{ badge(bdg['report']) }}</dt>
+    <dd>{% if st.last_report %}<a href="/news?tab=report&report_id={{ st.last_report.id }}">{{ st.last_report.day|date_de }}</a> · erstellt {{ st.last_report.created_at|datetime_de }}{% else %}–{% endif %}</dd>
+    <dt>Engpass</dt><dd>{{ st.backlog.bottleneck }}</dd>
+    {% if st.backlog.paused_hosts %}<dt>Pausierte Quellen</dt><dd>{% for h, u in st.backlog.paused_hosts %}<span class="mono">{{ h }}</span> bis {{ u|datetime_de }}{{ '; ' if not loop.last }}{% endfor %} (nach vielen Fehlern/Sperren, damit sie andere nicht aufhalten)</dd>{% endif %}
+  </dl>
+</div>
