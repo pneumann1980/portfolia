@@ -1435,6 +1435,8 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   Transkript sind bewusst nicht umgesetzt (Entscheidung: später).
 * **Grenze:** Die Liste zeigt den Gelesen-Status erst nach dem nächsten Laden der Seite.
 * **Test:** Video-Link ohne `hx-post`, Weiterleitung 303 auf die YouTube-Adresse, Gelesen-Markierung.
+* **CI:** Der Docker-Smoke-Test suchte auf der Statusseite noch „Pipeline heute“ (seit 0.56.0 umbenannt) – CI 0.56.0/0.56.1 rot im
+  Image-Job; prüft jetzt „Jetzt abarbeiten“. App-Code unverändert.
 
 ## 0.56.0 – News: eine Pipeline-Anzeige, Warteschlange je Stufe, automatische und manuelle Läufe gemeinsam
 
