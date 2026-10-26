@@ -111,6 +111,18 @@ class FakeGateway:
     def model(self) -> str:
         return "gemini-3.5-flash-lite"
 
+    def limits(self) -> dict[str, int]:
+        return {"rpm": 0, "tpm": 0, "rpd": 0, "tpd": 0}  # keine lokalen Grenzen
+
+    def requests_left(self) -> int | None:
+        return None
+
+    def tokens_left(self) -> int | None:
+        return None  # ohne Token-Tagesgrenze
+
+    def paused_until(self):
+        return None
+
     def generate(self, system, user, schema, max_tokens, json_mode=False):
         self.calls.append({"system": system, "user": user, "max_tokens": max_tokens})
         if callable(self.answers):
@@ -1913,3 +1925,144 @@ def test_community_tab_lists_only_telegram_sources_newest_first(client):
     assert client.post("/news/read-all", data={"tab": "community", "days": "7"}).status_code == 204
     reads = {r["id"]: r["is_read"] for r in ctx.db.q("SELECT id, is_read FROM news_item")}
     assert reads[old] == 1 and reads[new] == 1 and reads[news] == 0
+
+
+# -- Rückstau-Schutz und Restzeit der KI-Analyse ------------------------------------------------------
+
+class QuotaGateway(FakeGateway):
+    def __init__(self, left: int | None, **kw: Any) -> None:
+        super().__init__(echo_answers, **kw)
+        self.left = left
+
+    def requests_left(self) -> int | None:
+        return self.left
+
+    def generate(self, *args: Any, **kw: Any):
+        if self.left is not None:  # wie das echte Gateway: Tageslimit verbraucht sich und stoppt den Lauf
+            if self.left <= 0:
+                raise A.BudgetExceeded("Gemini: Tageslimit für Anfragen erreicht")
+            self.left -= 1
+        return super().generate(*args, **kw)
+
+
+def test_eta_small_backlog_is_no_false_alarm_but_real_growth_still_warns():
+    from app.news.eta import analyze_eta
+
+    # 9 warten, Pipeline schafft 240 je Lauf: der gemessene Durchsatz (18/Std.) zeigt nur das Angebot
+    ok = analyze_eta(9, per_run=240, inflow_per_hour=25.0, observed_done_3h=54)
+    assert not ok["growing"] and ok["risk"] == "none" and ok["basis"] == "Nennleistung" and ok["minutes"] == 10
+    # ausgelastet (mehr wartend als ein Lauf schafft) und der Zufluss übersteigt die belegte Leistung: Warnung
+    bad = analyze_eta(500, per_run=240, inflow_per_hour=25.0, observed_done_3h=54)
+    assert bad["growing"] and bad["risk"] == "growing" and bad["minutes"] is None and "wächst" in bad["text"]
+
+
+def test_eta_warns_when_daily_quota_will_not_last_until_reset():
+    from app.news.eta import analyze_eta
+
+    now = datetime.now(UTC)
+    r = analyze_eta(9, per_run=240, inflow_per_hour=25.0, requests_left=10, batch=6,
+                    reset_at=now + timedelta(hours=8))
+    assert r["risk"] == "quota" and r["minutes"] is not None  # jetzt kein Rückstau, aber Kontingent reicht nicht
+    assert "Tageskontingent reicht voraussichtlich nicht" in r["quota_note"]
+    assert "Kontingent für ca. 60" in r["quota_note"]
+    fine = analyze_eta(9, per_run=240, inflow_per_hour=25.0, requests_left=100, batch=6,
+                       reset_at=now + timedelta(hours=8))
+    assert fine["risk"] == "none" and "quota_note" not in fine
+
+
+def test_inflow_counts_only_analysable_sources(ctx, monkeypatch):
+    import app.news.analysis as AN
+
+    for i in range(5):
+        add_item(ctx, f"Meldung {i} der Hauptquelle zu Bitcoin", f"https://a.example.com/{i}", hours=2)
+    for i in range(20):
+        add_item(ctx, f"Kanalmeldung {i} ohne KI zu Bitcoin", f"https://t.example.com/{i}", source="tg_x", hours=2)
+    svc = AnalysisService(ctx, FakeGateway())
+    assert svc.inflow_per_hour() == 25 / 24
+    monkeypatch.setattr(AN, "ai_off_ids", lambda path: frozenset({"tg_x"}))
+    assert svc.inflow_per_hour() == 5 / 24  # Quellen mit ai: false laufen nie durch die KI
+
+
+def test_guard_inactive_without_pressure_and_status_has_no_false_alarm(ctx):
+    from app.news.status import pipeline_status
+
+    seed_for_analysis(ctx, 9)
+    svc = AnalysisService(ctx, QuotaGateway(None))
+    g = svc.pressure()
+    assert not g["active"] and g["older"] == 0 and g["eta"]["risk"] == "none"
+    st = pipeline_status(ctx)
+    assert st["analyze_guard"]["active"] is False and "wächst" not in st["eta"]["analyze"]["text"]
+
+
+def test_guard_prefers_newest_and_skips_old_when_quota_is_short(ctx):
+    a = add_item(ctx, "Relevante Meldung von gestern Abend zu Aktien", "https://a.example.com/a", hours=20,
+                 relevance=0.9)
+    b = add_item(ctx, "Frische Meldung zu Aktien von eben", "https://a.example.com/b", hours=1, relevance=0.4)
+    old = add_item(ctx, "Sehr relevante Meldung von vorgestern zu Aktien", "https://a.example.com/o", hours=30,
+                   relevance=0.95)
+    for i in (a, b, old):
+        store_content(ctx, i)
+    ids_fresh = seed_for_analysis(ctx, 12, hours=2)  # 14 frische Meldungen, Kontingent nur für 6
+    svc = AnalysisService(ctx, QuotaGateway(1))
+    g = svc.pressure()
+    assert g["active"] and g["eta"]["risk"] == "quota" and g["older"] == 1 and g["fresh"] == 14
+    order = [r["id"] for r in svc.candidates(100)]
+    assert old not in order and set(ids_fresh) <= set(order)  # die Meldung von vorgestern wird übersprungen
+    assert order.index(b) < order.index(a)  # neueste zuerst, Relevanz nur noch innerhalb ähnlicher Aktualität
+    # ohne Schutz (Einstellung) zählt wieder die Relevanz, und alte Meldungen sind dabei
+    ctx.settings.set("news.analysis_protect", False)
+    order2 = [r["id"] for r in svc.candidates(100)]
+    assert old in order2 and order2.index(old) < order2.index(b)
+
+
+def test_guard_run_reports_skipped_old_and_releases_when_pressure_ends(ctx):
+    old = add_item(ctx, "Alte Meldung zu Aktien von vorgestern", "https://a.example.com/o", hours=30)
+    store_content(ctx, old)
+    seed_for_analysis(ctx, 10, hours=2)
+    res = AnalysisService(ctx, QuotaGateway(1)).run()  # Kontingent für 6 → Schutz aktiv, 6 Meldungen je Anfrage
+    assert res["guard"] is True and res["skipped_old"] == 1 and res["analyzed"] == 6 and "Tageslimit" in res["stopped"]
+    assert ctx.db.q1("SELECT 1 FROM news_analysis WHERE item_id=?", (old,)) is None
+    # Kontingent wieder ausreichend: kein Druck mehr, die ältere Meldung kommt dran
+    res2 = AnalysisService(ctx, QuotaGateway(None)).run()
+    assert res2["guard"] is False and ctx.db.q1("SELECT 1 FROM news_analysis WHERE item_id=?", (old,)) is not None
+
+
+def test_eta_token_budget_counts_like_the_request_quota():
+    from app.news.eta import analyze_eta
+
+    now = datetime.now(UTC)
+    base = {"per_run": 240, "inflow_per_hour": 25.0, "reset_at": now + timedelta(hours=8)}
+    # Tokens für 10 Meldungen (30.000 ÷ 3.000), Anfragen reichlich → das Token-Budget ist die Grenze
+    t = analyze_eta(9, requests_left=100, batch=6, tokens_left=30_000, tokens_per_item=3000.0, **base)
+    assert t["risk"] == "quota" and "Kontingent für ca. 10 (Token-Budget)" in t["quota_note"]
+    # jetzt schon zu wenig Tokens für den Rückstau
+    n = analyze_eta(50, tokens_left=30_000, tokens_per_item=3000.0, **base)
+    assert n["risk"] == "quota" and n["minutes"] is None and "reicht für ca. 10 Meldungen (Token-Budget)" in n["text"]
+    # ohne Token-Grenze (unbegrenzt) oder ohne Verbrauchsdaten keine Token-Prognose
+    assert analyze_eta(9, tokens_left=None, tokens_per_item=3000.0, **base)["risk"] == "none"
+    assert analyze_eta(9, tokens_left=1000, tokens_per_item=None, **base)["risk"] == "none"
+
+
+def test_gateway_requests_left_is_unlimited_when_daily_limit_is_zero(ctx):
+    ctx.settings.set("llm.provider", "gemini")
+    gw = A.AiGateway(ctx)
+    ctx.settings.set("llm.gemini_rpd", 100)
+    assert gw.requests_left() == 100
+    ctx.settings.set("llm.gemini_rpd", 0)  # 0 = ohne Tageslimit (früher: negative Restzahl → falscher Alarm)
+    assert gw.requests_left() is None
+
+
+def test_guard_ignores_daily_request_limit_zero_and_uses_token_budget(ctx):
+    class TokenGateway(QuotaGateway):
+        def tokens_left(self) -> int | None:
+            return 6000
+
+    seed_for_analysis(ctx, 9)
+    for i, iid in enumerate(r["id"] for r in ctx.db.q("SELECT id FROM news_item ORDER BY id LIMIT 3")):
+        put_analysis(ctx, iid)
+        ctx.db.x("UPDATE news_analysis SET input_tokens=2000, output_tokens=1000 WHERE item_id=?", (iid,))
+    svc = AnalysisService(ctx, TokenGateway(None))  # kein Anfragenlimit, aber nur Tokens für ca. 2 Meldungen
+    assert svc.tokens_per_item() == 3000.0
+    g = svc.pressure()
+    assert g["active"] and g["eta"]["risk"] == "quota" and "Token-Budget" in g["eta"]["text"]
+    assert not AnalysisService(ctx, QuotaGateway(None)).pressure()["active"]  # ohne Token-Grenze kein Druck

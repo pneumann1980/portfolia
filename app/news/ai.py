@@ -264,9 +264,11 @@ class AiGateway:
         return tpd - u["input_tokens"] - u["output_tokens"]
 
     def requests_left(self) -> int | None:
+        """Restliche Anfragen heute; ``None`` = ohne Tageslimit (Claude oder ``llm.gemini_rpd`` = 0)."""
         if self.provider_name() != "gemini":
             return None
-        return self.limits()["rpd"] - self.usage("gemini")["requests"]
+        rpd = self.limits()["rpd"]
+        return rpd - self.usage("gemini")["requests"] if rpd else None
 
     def _record(self, provider: str, inp: int = 0, out: int = 0, *, ok: bool = True, quota: bool = False) -> None:
         self.db.x(

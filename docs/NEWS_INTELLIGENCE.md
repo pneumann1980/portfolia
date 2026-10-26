@@ -197,6 +197,19 @@ letzte Fehler. Der Hinweis zur Free-Tier-Garantie steht dort ebenfalls.
   Mehrfachberichte, Quellgewicht, Aktualität) – bis nichts mehr wartet, ein Limit (Minute/Tag/Budget) greift, der Anbieter
   stört oder die Laufzeitgrenze (8 min) erreicht ist. Einstellungen ohne Oberfläche: `news.analysis_max_per_run` (400),
   `news.analysis_hours` (48). *News → Status* zeigt den Rückstau (Artikeltexte und Analysen).
+* **Rückstau-Schutz (0.54.1):** Die Restzeit der Analyse rechnet mit dem Zufluss **analysierbarer** Meldungen (ohne Quellen mit
+  `ai: false`). Der gemessene Durchsatz gilt nur als Kapazität, wenn die Pipeline ausgelastet war (mehr wartend als ein Lauf
+  schafft); bei kleinem Rückstau misst er lediglich das Angebot, dann gilt die Nennleistung – die frühere Meldung „wächst
+  derzeit“ bei 9 wartenden Meldungen war ein Fehlalarm. Zusätzlich prognostiziert sie das Tageskontingent bis zum Zurücksetzen: das Knappere aus restlichen Anfragen (× 6 je
+  Anfrage) und restlichem Token-Budget (÷ mittlerer Verbrauch je Analyse). Ohne Tagesgrenze (`llm.gemini_rpd` = 0 bzw.
+  „Token-Tagesgrenze aufheben“) entfällt der jeweilige Teil.
+  Kann der Rückstau der **frischen** Meldungen (bis 24 h) nicht rechtzeitig abgebaut werden (wächst, Kontingent reicht nicht oder
+  dauert länger als 6 Std.), ist der Schutz **aktiv**: analysiert werden nur Meldungen der letzten 24 Std., die **neuesten zuerst**
+  (Aktualität vor Relevanz); ältere werden nicht mehr bearbeitet, bis der Druck weg ist – statt am Ende Altes aufzuarbeiten.
+  *News → Status* zeigt „Rückstau-Schutz: aktiv“ mit Grund, Zahl der zurückgestellten Meldungen und Abhilfe. Einstellungen ohne
+  Oberfläche: `news.analysis_protect` (an), `news.analysis_protect_hours` (6), `news.analysis_protect_age_h` (24). Grenzen: Die
+  Schwellen sind Annahmen; das Minutenlimit geht nur über die Nennleistung je Lauf ein. Der Token-Verbrauch je Analyse ist ein
+  Durchschnitt der letzten 100; vor der ersten Analyse entfällt die Token-Prognose.
 * **Token-Budget:** *Einstellungen → News & KI → „Token-Tagesgrenze aufheben (unbegrenzt)“* (nur Gemini, ausdrücklich zu
   wählen; Standard bleibt 200.000). Anfragen pro Minute und pro Tag sowie Tokens pro Minute bleiben bestehen. Die
   Status-Seite zeigt dann „unbegrenzt“. Claude hat bewusst keine unbegrenzte Option (kostenpflichtig).

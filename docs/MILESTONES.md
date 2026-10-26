@@ -1426,6 +1426,23 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.54.1 – News: Fehlalarm „wächst derzeit“ behoben, Rückstau-Schutz der KI-Analyse
+
+* **Fehlalarm:** Bei 9 wartenden Analysen (98 %) stand „Restzeit: wächst derzeit: Abarbeitung ca. 18/Std., neu ca. 25/Std.“. Ursachen:
+  (1) Der gemessene Durchsatz der letzten 3 Std. wurde bei kleinem Rückstau als Kapazität gewertet, er misst dann nur das Angebot.
+  (2) Der Zufluss zählte auch Quellen mit `ai: false` (Telegram), die nie analysiert werden. Jetzt: Kapazität = Nennleistung bei kleinem
+  Rückstau; Zufluss nur analysierbarer Quellen; zusätzlich Prognose, ob das Tageskontingent bis zum Zurücksetzen reicht
+  (Anfragen und Token-Budget, das Knappere zählt). `llm.gemini_rpd` = 0 gilt als „ohne Tageslimit“ (`requests_left()` lieferte
+  eine negative Zahl und hätte den Schutz fälschlich ausgelöst; Statusseite zeigt „Anfragen unbegrenzt“).
+* **Rückstau-Schutz:** Schafft die Pipeline die frischen Meldungen (≤ 24 h) nicht rechtzeitig (wächst, Kontingent reicht nicht, > 6 Std.),
+  werden nur noch frische Meldungen analysiert, neueste zuerst (Aktualität vor Relevanz); ältere warten, bis der Druck weg ist. Statusseite
+  zeigt Grund, Zahl der zurückgestellten Meldungen und Abhilfe. Einstellungen: `news.analysis_protect`, `…_hours`, `…_age_h`.
+* **Tests:** kein Fehlalarm bei kleinem Rückstau, Warnung bei echtem Wachstum und bei zu knappem Tageskontingent, Zufluss ohne
+  `ai: false`, Reihenfolge und Überspringen unter Schutz, Freigabe nach Abbau, Abschaltung per Einstellung.
+* **Grenzen:** Schwellen (6 Std., 24 Std.) sind Annahmen; das Minutenlimit geht nur über die Nennleistung ein, der Token-Verbrauch ist
+  ein Durchschnitt der letzten 100 Analysen; die Abruf-Restzeit
+  der Artikeltexte (separate Anzeige) wurde nicht verändert.
+
 ## 0.54.0 – Steuerreport: Zuordnungs-Annahmen, Kapitalertrags-Rundung, Vorabpauschale-Nachweis
 
 Anlass: zweite externe Review. Alle vier Punkte im Code nachvollzogen und reproduziert; Gewichtung weicht von der Review ab.

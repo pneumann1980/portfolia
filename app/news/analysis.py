@@ -22,8 +22,18 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.context import AppContext
-from app.news.ai import AiError, AiGateway, AiUnavailable, BudgetExceeded, Paused, QuotaExceeded, parse_json
+from app.news.ai import (
+    AiError,
+    AiGateway,
+    AiUnavailable,
+    BudgetExceeded,
+    Paused,
+    QuotaExceeded,
+    next_pacific_midnight,
+    parse_json,
+)
 from app.news.config import ai_off_ids, not_in_clause
+from app.news.eta import analyze_eta
 from app.util.timeutil import iso, parse_iso
 
 log = logging.getLogger(__name__)
@@ -36,6 +46,8 @@ MAX_SECONDS = 480  # Laufzeit-Obergrenze je Job-Lauf (der nächste Lauf macht we
 PER_ROUND = BATCH * 6
 TEXT_LIMIT = 3200  # Zeichen je Artikel in der Anfrage (Anfang des Artikels enthält die Kernaussagen)
 RETRY_AFTER_ERROR = timedelta(hours=12)
+PROTECT_HOURS = 6  # Rückstau-Schutz ab dieser geschätzten Abarbeitungsdauer (Einstellung news.analysis_protect_hours)
+PROTECT_AGE_H = 24  # unter Schutz nur Meldungen bis zu diesem Alter (news.analysis_protect_age_h)
 
 CATEGORIES = ("unternehmen", "makro", "notenbank", "regulierung", "krypto-protokoll", "krypto-markt", "rohstoffe",
               "geopolitik", "branche", "analystenstimme", "sonstiges")
@@ -181,7 +193,8 @@ class AnalysisService:
         return bool(self.ctx.settings.get("news.analysis", True)) and self.ai.enabled()
 
     # -- Auswahl -----------------------------------------------------------------------------------------
-    def candidates(self, limit: int) -> list[dict[str, Any]]:
+    def _raw_candidates(self) -> list[dict[str, Any]]:
+        """Alle Meldungen im Analysefenster, die auf eine Analyse warten (mit Alter und Grundpriorität), ungekürzt."""
         hours = int(self.ctx.settings.get("news.analysis_hours", WINDOW_H))
         since = iso(datetime.now(UTC) - timedelta(hours=hours))
         wait_until = iso(datetime.now(UTC) - timedelta(hours=6))  # so lange auf den Artikelinhalt warten
@@ -212,9 +225,80 @@ class AnalysisService:
             pub = parse_iso(r["published_at"]) or now
             age_h = max(0.0, (now - pub).total_seconds() / 3600)
             r["hash"] = h
+            r["age_h"] = age_h
             r["priority"] = (float(r["relevance"]) + 0.06 * min(int(r["dup_count"]), 6)
                              + 0.1 * float(r["source_weight"]) + 0.2 / (1.0 + age_h / 12.0))
             out.append(r)
+        return out
+
+    # -- Rückstau-Schutz -------------------------------------------------------------------------------
+    def nominal_per_run(self) -> int:
+        """Nennleistung je Lauf: Obergrenze der Einstellung, bei Gemini zusätzlich durch das Minutenlimit begrenzt."""
+        max_run = int(self.ctx.settings.get("news.analysis_max_per_run", 400))
+        if self.ai.provider_name() == "gemini":
+            rpm = self.ai.limits()["rpm"]
+            if rpm:
+                return min(max_run, int(rpm * (MAX_SECONDS / 60) * BATCH))
+        return max_run
+
+    def inflow_per_hour(self) -> float:
+        """Neue **analysierbare** Meldungen je Stunde (24 h), ohne Quellen mit ``ai: false`` (nie durch die KI)."""
+        skip_sql, skip_args = not_in_clause("source_id", ai_off_ids(self.ctx.config.sources_path))
+        since = iso(datetime.now(UTC) - timedelta(hours=24))
+        return int(self.db.scalar(
+            "SELECT COUNT(*) FROM news_item WHERE kind='article' AND hidden_reason IS NULL AND fetched_at>=?"
+            + skip_sql, (since, *skip_args), default=0) or 0) / 24
+
+    def tokens_per_item(self) -> float | None:
+        """Mittlerer Tokenverbrauch (ein + aus) je analysierter Meldung der letzten Analysen; ``None`` = keine Daten."""
+        v = self.db.scalar(
+            """SELECT AVG(input_tokens + output_tokens) FROM (SELECT input_tokens, output_tokens FROM news_analysis
+               WHERE summary IS NOT NULL AND input_tokens > 0 ORDER BY analyzed_at DESC LIMIT 100)""", default=None)
+        return float(v) if v else None
+
+    def pressure(self, raw: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Rückstau-Lage: Wie lange dauert es, die **frischen** Meldungen (bis ``PROTECT_AGE_H``) abzuarbeiten, und
+        wächst der Rückstau? Wenn nicht rechtzeitig zu schaffen, ist der Schutz aktiv: nur frische Meldungen, die
+        neuesten zuerst – statt am Ende Altes aufzuarbeiten. Ältere Meldungen kommen wieder dran, sobald der Druck
+        weg ist."""
+        s = self.ctx.settings
+        rows = raw if raw is not None else self._raw_candidates()
+        age_max = float(s.get("news.analysis_protect_age_h", PROTECT_AGE_H))
+        hours = float(s.get("news.analysis_protect_hours", PROTECT_HOURS))
+        fresh = [r for r in rows if r["age_h"] <= age_max]
+        gemini = self.ai.provider_name() == "gemini"
+        since3 = iso(datetime.now(UTC) - timedelta(hours=3))
+        eta = analyze_eta(
+            len(fresh), per_run=self.nominal_per_run(), inflow_per_hour=self.inflow_per_hour(), batch=BATCH,
+            enabled=self.enabled(),
+            observed_done_3h=int(self.db.scalar(
+                "SELECT COUNT(*) FROM news_analysis WHERE summary IS NOT NULL AND analyzed_at>=?", (since3,),
+                default=0) or 0),
+            requests_left=self.ai.requests_left() if gemini else None, paused_until=self.ai.paused_until(),
+            reset_at=next_pacific_midnight() if gemini else None,
+            tokens_left=self.ai.tokens_left() if gemini else None,
+            tokens_per_item=self.tokens_per_item() if gemini else None)
+        risk = eta.get("risk", "none")
+        slow = bool(eta["minutes"] and eta["minutes"] > hours * 60)
+        reason = ""
+        if risk == "growing":
+            reason = "Der Zufluss übersteigt die belegte Leistung."
+        elif risk == "quota":
+            reason = "Das Tageskontingent der KI reicht nicht für den Rückstau."
+        elif slow:
+            reason = f"Die Abarbeitung dauert voraussichtlich mehr als {hours:g} Std."
+        active = bool(s.get("news.analysis_protect", True)) and bool(reason)
+        return {"active": active, "reason": reason, "eta": eta, "fresh": len(fresh), "older": len(rows) - len(fresh),
+                "total": len(rows), "age_h": age_max}
+
+    def candidates(self, limit: int) -> list[dict[str, Any]]:
+        out = self._raw_candidates()
+        guard = self.pressure(out)
+        if guard["active"]:
+            age_max = guard["age_h"]
+            out = [r for r in out if r["age_h"] <= age_max]
+            for r in out:  # neueste zuerst; die Relevanz entscheidet nur noch innerhalb ähnlicher Aktualität
+                r["priority"] += max(0.0, 1.0 - r["age_h"] / age_max)
         out.sort(key=lambda x: -x["priority"])
         return out[:limit]
 
@@ -248,7 +332,7 @@ class AnalysisService:
 
     # -- Lauf -------------------------------------------------------------------------------------------
     def backlog(self) -> int:
-        """Anzahl der Meldungen (48 h), die auf eine Analyse warten."""
+        """Anzahl der Meldungen (48 h), die auf eine Analyse warten (unter Schutz nur die frischen)."""
         return len(self.candidates(100_000))
 
     def window_total(self) -> int:
@@ -270,6 +354,10 @@ class AnalysisService:
         res: dict[str, Any] = {"analyzed": 0, "rejected": 0, "requests": 0}
         if not self.enabled():
             return {"skipped": "Analyse deaktiviert oder KI nicht konfiguriert"}
+        guard = self.pressure()
+        res["guard"] = guard["active"]
+        if guard["active"]:
+            res["skipped_old"] = guard["older"]
         limit = limit or int(self.ctx.settings.get("news.analysis_max_per_run", 400))
         deadline = time.monotonic() + (max_seconds if max_seconds is not None else MAX_SECONDS)
         res["selected"] = 0

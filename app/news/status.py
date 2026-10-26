@@ -6,10 +6,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.context import AppContext
-from app.news.ai import AiGateway, next_pacific_midnight
-from app.news.analysis import BATCH, MAX_SECONDS, AnalysisService
+from app.news.ai import AiGateway
+from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
-from app.news.eta import analyze_eta, enrich_eta
+from app.news.eta import enrich_eta
 from app.util.timeutil import iso, now_local
 
 JOBS = ("news_fetch", "news_enrich", "news_analyze", "news_group", "news_report")
@@ -40,30 +40,24 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
     paused = enrich.paused_hosts()
     enrich_total = len(enrich.candidates(100_000, include_paused=True))
     enrich_ready = len(enrich.candidates(100_000))
-    analysis = AnalysisService(ctx)
-    analyze_backlog = analysis.backlog()
+    analysis = AnalysisService(ctx, gw)
+    guard = analysis.pressure()  # Rückstau-Lage der Analyse (frisch/älter, Schutz aktiv?)
+    analyze_backlog = guard["total"]
     analyze_total = max(analysis.window_total(), analyze_backlog)
     enrich_done = enrich.done_count()
     per_run = int(ctx.settings.get("news.enrich_per_run", 40))
     since3 = iso(datetime.now(UTC) - timedelta(hours=3))
     inflow = n("SELECT COUNT(*) FROM news_item WHERE kind='article' AND hidden_reason IS NULL AND fetched_at>=?",
                since24) / 24
-    max_run = int(ctx.settings.get("news.analysis_max_per_run", 400))
-    gemini = ai.get("provider") == "gemini"
-    rpm = ai["limits"]["rpm"] if gemini else 0
-    nominal_run = min(max_run, int(rpm * (MAX_SECONDS / 60) * BATCH)) if rpm else max_run
     eta = {
         "enrich": enrich_eta(
             enrich_ready, per_run=per_run, inflow_per_hour=inflow,
             observed_done_3h=n("SELECT COUNT(*) FROM news_content WHERE fetched_at>=? AND status!='pending'", since3)),
-        "analyze": analyze_eta(
-            analyze_backlog, per_run=nominal_run, inflow_per_hour=inflow, batch=BATCH, enabled=ai["enabled"],
-            observed_done_3h=n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NOT NULL AND analyzed_at>=?",
-                               since3),
-            requests_left=ai.get("requests_left") if gemini else None, paused_until=ai.get("paused_until"),
-            reset_at=next_pacific_midnight() if gemini else None),
+        "analyze": guard["eta"],
     }
-    if analyze_backlog and ai.get("paused_until"):
+    if guard["active"]:
+        bottleneck = f"KI-Analyse: {guard['reason']}"
+    elif analyze_backlog and ai.get("paused_until"):
         bottleneck = "KI-Kontingent (Anbieter pausiert, Analyse wartet)"
     elif analyze_backlog and not ai.get("enabled"):
         bottleneck = "KI ausgeschaltet – Analysen warten"
@@ -102,6 +96,9 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         "analysis_failed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NULL AND analyzed_at>=?", day),
         "events": n("SELECT COUNT(*) FROM news_event WHERE last_seen>=?", since24),
         "events_multi": n("SELECT COUNT(*) FROM news_event WHERE last_seen>=? AND n_sources>=2", since24),
+        "analyze_guard": {"active": guard["active"], "reason": guard["reason"], "fresh": guard["fresh"],
+                          "older": guard["older"], "age_h": int(guard["age_h"]),
+                          "quota_note": guard["eta"].get("quota_note", "")},
         "ai": ai, "last_report": dict(last_report) if last_report else None, "errors": errors[:8],
         "jobs": {j: {k: jobs[j].get(k) for k in ("last_start", "last_end", "last_ok", "running")}
                  for j in JOBS if j in jobs},
