@@ -403,17 +403,18 @@ class GermanyPack(RulePack):
                 (rows_tax if taxable else rows_free).append(row)
         # Der Jahressaldo (Freigrenze!) wird aus den ungerundeten Teilwerten gebildet und erst dann auf Cent gerundet;
         # die Summe der einzeln gerundeten Zeilen kann um Cent-Bruchteile abweichen (Rundungsdifferenz, ausgewiesen).
-        net = money(sum((r["gain_x"] for r in rows_tax), ZERO))
+        net_x = sum((r["gain_x"] for r in rows_tax), ZERO)  # ungerundet: Grundlage des Freigrenzen-Vergleichs
+        net = money(net_x)
         rows_gain_sum = sum((r["gain"] for r in rows_tax), ZERO)
         round_diff = net - rows_gain_sum
         wk_t = money(sum((r["wk_x"] for r in rows_tax), ZERO))
         cost_t = money(sum((r["cost_x"] for r in rows_tax), ZERO))
         fg = _d(P["crypto"]["freigrenze_23"])
         fg_mode = str(P["crypto"].get("freigrenze_mode", "freigrenze"))
-        if net <= 0 or net < fg:
+        if net_x <= 0 or net_x < fg:  # „weniger als“ die Grenze – verglichen wird der ungerundete Saldo
             taxable = ZERO
         elif fg_mode == "freibetrag":  # Schalter: nur der Teil über dem Betrag ist steuerpflichtig
-            taxable = net - fg
+            taxable = money(net_x - fg)
         else:
             taxable = net
         raw = o.get("loss_cf_23")
@@ -427,7 +428,7 @@ class GermanyPack(RulePack):
         return {
             "rows_tax": rows_tax, "rows_free": rows_free, "excluded": dict(excluded), "origins": dict(origins),
             "excluded_cost": dict(excluded_cost), "origin_cost": dict(origin_cost),
-            "missing": missing, "net": net, "freigrenze": fg, "fg_mode": fg_mode, "taxable": taxable,
+            "missing": missing, "net": net, "net_x": net_x, "freigrenze": fg, "fg_mode": fg_mode, "taxable": taxable,
             "after_lcf": after,
             "lcf": lcf, "lcf_auto": lcf_auto, "lcf_used": lcf_used, "carry_out": carry_out,
             "gains": money(sum((r["gain_x"] for r in rows_tax if r["gain_x"] > 0), ZERO)),
@@ -476,7 +477,8 @@ class GermanyPack(RulePack):
             valued[how] += 1
             a = inp.asset(e.asset)
             row = {"date": e.date, "asset": a.symbol, "name": a.name, "account": e.account, "qty": e.qty,
-                   "value": money(value), "tag": TAG_LABEL.get(e.tag, e.tag), "tag_id": e.tag, "valued": how,
+                   "value": money(value), "value_x": value, "tag": TAG_LABEL.get(e.tag, e.tag), "tag_id": e.tag,
+                   "valued": how,
                    "tx": e.tx_id, "flag": flags.get(e.tx_id, ""), "src": sources.get(e.tx_id, "")}
             if cat == "none":
                 not_taxable[e.tag] += 1
@@ -484,15 +486,17 @@ class GermanyPack(RulePack):
                 kap_crypto.append(row)
             else:
                 rows.append(row)
-        total = sum((r["value"] for r in rows), ZERO)
+        total_x = sum((r["value_x"] for r in rows), ZERO)  # ungerundet: Grundlage des Freigrenzen-Vergleichs
         wk = _d(o.get("wk_22_3"))
-        einkuenfte = total - wk
+        einkuenfte_x = total_x - wk
+        total, einkuenfte = money(total_x), money(einkuenfte_x)
         fg = _d(P["crypto"]["freigrenze_22_3"])
-        taxable = ZERO if einkuenfte < fg else einkuenfte
+        taxable = ZERO if einkuenfte_x < fg else einkuenfte
         by_tag: dict[str, Decimal] = defaultdict(lambda: ZERO)
         for r in rows:
             by_tag[r["tag"]] += r["value"]
-        return {"rows": rows, "total": total, "wk": wk, "einkuenfte": einkuenfte, "freigrenze": fg,
+        return {"rows": rows, "total": total, "wk": wk, "einkuenfte": einkuenfte, "einkuenfte_x": einkuenfte_x,
+                "freigrenze": fg,
                 "taxable": max(taxable, ZERO), "not_taxable": dict(not_taxable), "kap_rows": kap_crypto,
                 "by_tag": dict(by_tag), "valued": dict(valued),
                 "mining": any(r["tag_id"] == "mining" for r in rows)}
@@ -757,19 +761,19 @@ class GermanyPack(RulePack):
                                   indent=1, note=f"anrechenbar {fmt_eur(b['wht_credit'])}"))
                 if b["kest"]:
                     S.append(Line("Einbehaltene Kapitalertragsteuer lt. Daten", money(b["kest"]), indent=1))
-        gap23 = c["freigrenze"] - c["net"]
+        gap23 = c["freigrenze"] - c["net_x"]
         as_betrag = c["fg_mode"] == "freibetrag"
         res.meters.append(Meter("fg23", ("Freibetrag" if as_betrag else "Freigrenze")
                                 + " private Veräußerungsgeschäfte (§ 23 EStG)",
-                                money(max(c["net"], ZERO)), money(c["freigrenze"]),
+                                max(c["net_x"], ZERO), money(c["freigrenze"]),  # ungerundet: Zustand = Vergleich
                                 kind="freibetrag" if as_betrag else "freigrenze",
                                 note="nur Kryptowerte aus diesem Import" + (
-                                    f"; noch {fmt_eur(money(gap23))} Abstand" if 0 < c["net"] < c["freigrenze"]
+                                    f"; noch {fmt_eur(money(gap23))} Abstand" if 0 < c["net_x"] < c["freigrenze"]
                                     else "")))
-        gap22 = i["freigrenze"] - i["einkuenfte"]
-        res.meters.append(Meter("fg22", "Freigrenze Leistungen (§ 22 Nr. 3 EStG)", money(max(i["einkuenfte"], ZERO)),
+        gap22 = i["freigrenze"] - i["einkuenfte_x"]
+        res.meters.append(Meter("fg22", "Freigrenze Leistungen (§ 22 Nr. 3 EStG)", max(i["einkuenfte_x"], ZERO),
                                 money(i["freigrenze"]),
-                                note=(f"noch {fmt_eur(money(gap22))} Abstand" if 0 < i["einkuenfte"] < i["freigrenze"]
+                                note=(f"noch {fmt_eur(money(gap22))} Abstand" if 0 < i["einkuenfte_x"] < i["freigrenze"]
                                       else "")))
         if k["activity"]:
             pot = self._pot(("foreign", "domestic") if o.get("include_domestic") else ("foreign",), k, o, P)
@@ -1005,6 +1009,15 @@ class GermanyPack(RulePack):
                            f"§ 23: Der Jahressaldo {fmt_eur(c['net'])} (Grundlage der Freigrenze) ist aus "
                            f"ungerundeten Werten gebildet; die Summe der einzeln auf Cent gerundeten Zeilen liegt um "
                            f"{fmt_eur(abs(c['round_diff']))} {'darunter' if c['round_diff'] > 0 else 'darüber'}."))
+        for label, shown, exact, fg in (("§ 23", c["net"], c["net_x"], c["freigrenze"]),
+                                        ("§ 22 Nr. 3", i["einkuenfte"], i["einkuenfte_x"], i["freigrenze"])):
+            if shown >= fg > exact and not (label == "§ 23" and c["fg_mode"] == "freibetrag"):
+                issues.append(Issue("info", "freigrenze_edge",
+                                    f"{label}: Angezeigt werden {fmt_eur(shown)} (auf Cent gerundet), der ungerundete "
+                                    f"Betrag liegt mit {f'{exact:.4f}'.replace('.', ',')} € knapp unter der "
+                                    f"Freigrenze von {fmt_eur(fg)} – maßgeblich ist hier der ungerundete Betrag "
+                                    "(„weniger als“), daher steuerfrei. Randfall: Wertansatz und Rundung ggf. mit "
+                                    "dem Steuerberater abstimmen."))
         if c["missing"]:
             issues.append(Issue("warning", "missing_basis",
                            f"{c['missing']} Veräußerungsteile ohne Anschaffungsdaten (Fehlbestand) – konservativ als "
@@ -1089,8 +1102,8 @@ class GermanyPack(RulePack):
         fg = i["freigrenze"]
         marked = [r for r in i["rows"] if "REVIEW" in (r.get("flag") or "")]
         if marked and i["total"] > 0:
-            s_marked = sum((r["value"] for r in marked), ZERO)
-            e, e_wo = i["einkuenfte"], i["einkuenfte"] - s_marked
+            s_marked = sum((r["value_x"] for r in marked), ZERO)
+            e, e_wo = i["einkuenfte_x"], i["einkuenfte_x"] - s_marked
             flips = (e >= fg) != (e_wo >= fg)
             first = marked[0]
             issues.append(Issue(

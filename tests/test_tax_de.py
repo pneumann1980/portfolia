@@ -551,3 +551,45 @@ def test_review_status_without_open_points_makes_no_claim_of_correctness():
     assert not any(i.code == "reconstructed_tx" for i in res.issues)
     assert rv == {"status": "ohne automatisch erkannte offene Punkte", "open": 0, "codes": []}
     assert "korrekt" not in rv["status"] and "final" not in rv["status"]
+
+
+@pytest.mark.parametrize("proceeds, shown, taxable", [
+    ("1999.994", "999.99", 0),
+    ("1999.995", "1000.00", 0),          # angezeigt 1.000,00 €, aber ungerundet < 1.000 € → steuerfrei
+    ("1999.9999", "1000.00", 0),
+    ("2000.000", "1000.00", "1000.00"),  # genau an der Grenze → nicht „weniger als“
+    ("2000.004", "1000.00", "1000.00"),
+])
+def test_freigrenze_23_compares_unrounded_saldo(proceeds, shown, taxable):
+    rows = [buy("b1", "2025-01-10", "BTC", "1", "1000"), sell("s1", "2025-02-01", "BTC", "1", proceeds)]
+    _, res = run(rows, 2025)
+    c = res.data["crypto"]
+    assert c["net"] == D(shown) and c["taxable"] == D(taxable)
+    meter = next(m for m in res.meters if m.id == "fg23")
+    edge = any(i.code == "freigrenze_edge" for i in res.issues)
+    if D(proceeds) - 1000 < 1000 <= c["net"]:
+        assert edge and meter.state != "crit"  # Randfall wird erklärt, Anzeige „Freigrenze erreicht“ bleibt aus
+    else:
+        assert not edge
+    assert (meter.state == "crit") == (D(proceeds) - 1000 >= 1000)
+
+
+def test_freigrenze_edge_note_names_both_amounts():
+    rows = [buy("b1", "2025-01-10", "BTC", "1", "1000"), sell("s1", "2025-02-01", "BTC", "1", "1999.995")]
+    _, res = run(rows, 2025)
+    note = next(i.text for i in res.issues if i.code == "freigrenze_edge")
+    assert "1.000,00" in note and "999,9950" in note
+    assert "ungerundet" in note and "weniger als" in note
+
+
+def test_freigrenze_22_3_compares_unrounded_sum():
+    rows = [tx("r1", "2025-05-01", "deposit", tag="staking", to=("Börse", "ETH", "0.1"), value="255.995")]
+    _, res = run(rows, 2025)
+    i = res.data["income"]
+    assert i["einkuenfte"] == D("256.00") and i["taxable"] == 0  # 255,995 € < 256 €
+    assert any(x.code == "freigrenze_edge" and "§ 22 Nr. 3" in x.text for x in res.issues)
+    assert next(m for m in res.meters if m.id == "fg22").state != "crit"
+    rows2 = [tx("r1", "2025-05-01", "deposit", tag="staking", to=("Börse", "ETH", "0.1"), value="256.000")]
+    _, res2 = run(rows2, 2025)
+    assert res2.data["income"]["taxable"] == D("256.00")
+    assert not any(x.code == "freigrenze_edge" for x in res2.issues)

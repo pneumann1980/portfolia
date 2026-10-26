@@ -1426,6 +1426,18 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.53.2 – Freigrenzen: Vergleich mit dem ungerundeten Betrag
+
+* **Fehlerbild (Review):** Der Jahressaldo wurde zwar aus ungerundeten Teilwerten gebildet, aber vor dem Vergleich mit der Freigrenze auf
+  Cent gerundet. 999,995 € erschien als 1.000,00 € und galt als „Freigrenze erreicht“ (voll steuerpflichtig), obwohl der Betrag
+  rechnerisch unter 1.000 € liegt („weniger als“).
+* **Maßnahme:** § 23 (1.000 €) und § 22 Nr. 3 (256 €) vergleichen den **ungerundeten** Betrag (`net_x`, `einkuenfte_x`); Anzeige und
+  Ausgabewerte bleiben auf Cent gerundet. Die Ampel (Meter) folgt dem ungerundeten Wert. Im Randfall („1.000,00 € angezeigt, aber unter
+  der Freigrenze“) erscheint der Hinweis `freigrenze_edge` mit beiden Beträgen. Im Modus „Freibetrag“ ist die Rundung unkritisch.
+* **Tests:** Grenztabelle 999,994 / 999,995 / 999,9999 / 1.000,000 / 1.000,004 für § 23, Randfall und Gegenprobe für § 22 Nr. 3.
+* **Grenze:** Ob die Finanzverwaltung vor dem Vergleich auf Cent rundet, ist nicht entschieden; der Hinweis empfiehlt die Abstimmung im
+  Randfall.
+
 ## 0.53.1 – CI-Flake: Fortschrittsanzeige der DKB-ZIP-Verarbeitung
 
 * **Fehlerbild:** `test_progress_job_visible_globally_while_running` schlug in der CI mit `KeyError: 'href'` fehl. `Progress` schrieb im
