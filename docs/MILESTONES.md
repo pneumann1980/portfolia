@@ -1426,6 +1426,16 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.56.1 – Videos: Link öffnet wieder
+
+* **Fehler:** Ein Klick auf ein Video (Titel oder Vorschaubild) tat nichts. Der Link trug zusätzlich `hx-post` (als gelesen
+  markieren) mit `hx-trigger="click"`; htmx unterdrückt dann die normale Link-Navigation – es wurde nur markiert, YouTube öffnete nie.
+* **Jetzt:** Videos verlinken auf `/news/<id>` (neuer Tab). Der Server markiert als gelesen und leitet zu YouTube weiter (303) – auf
+  dem Handy öffnet sich je nach System die YouTube-App. Gleiches gilt für die kompakte Liste (Startseite). Eingebettetes Abspielen und
+  Transkript sind bewusst nicht umgesetzt (Entscheidung: später).
+* **Grenze:** Die Liste zeigt den Gelesen-Status erst nach dem nächsten Laden der Seite.
+* **Test:** Video-Link ohne `hx-post`, Weiterleitung 303 auf die YouTube-Adresse, Gelesen-Markierung.
+
 ## 0.56.0 – News: eine Pipeline-Anzeige, Warteschlange je Stufe, automatische und manuelle Läufe gemeinsam
 
 * **Problem in 0.55.0:** Zwei Fortschrittssysteme nebeneinander. Die Welle zählte nur den manuellen Lauf (24 h, Nenner beim Start der

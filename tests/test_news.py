@@ -146,6 +146,13 @@ def test_pipeline_end_to_end(ctx):
             assert client.get(f"/news?tab={tab}").status_code == 200
         page = client.get("/news?tab=articles&days=7&sort=time").text
         assert "Bitcoin tops $100k" in page and "100x" not in page
+        # Video-Link: öffnet über /news/<id> (gelesen + Weiterleitung), ohne hx-post am Link (blockierte das Öffnen)
+        vid = vids["vid00000001"]
+        vpage = client.get("/news?tab=videos&days=30").text
+        assert f'href="/news/{vid["id"]}" target="_blank"' in vpage and 'hx-trigger="click"' not in vpage
+        r = client.get(f"/news/{vid['id']}", follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == vid["url"]
+        assert ctx.db.scalar("SELECT is_read FROM news_item WHERE id=?", (vid["id"],)) == 1
     # Rematch nach Import behält Zuordnungen
     assert svc.rematch()["items"] >= 4
 
