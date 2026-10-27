@@ -68,7 +68,7 @@
     <div class="card-head"><h2>{{ total }} {{ {'articles': 'Artikel', 'videos': 'Videos', 'community': 'Beiträge'}[params.tab] }}</h2>
       {% if params.tab == 'community' %}<span class="hint">Telegram-Kanäle · neueste zuerst · ohne KI</span>
       {% else %}<span class="hint" title="Relevanz = Treffer (Titel > Beschreibung) × Quellgewicht × Positionsgewicht × Aktualität">Sortiert nach {{ 'Relevanz' if params.sort == 'relevance' else 'Zeit' }} ⓘ</span>{% endif %}</div>
-    <div id="news-list"{% if params.tab == 'community' %} class="community"{% endif %}>
+    <div id="news-list"{% if params.tab == 'community' %} class="community"{% elif params.tab == 'videos' %} class="vgrid"{% endif %}>
       {% include "partials/news_items.html" %}
     </div>
   </section>
@@ -99,23 +99,27 @@
   <section class="card">
     <div class="card-head"><h2>Kanal-Vorschläge aus der Entdeckung</h2><span class="hint">Gefunden über die YouTube-Suche zu den größten Positionen</span></div>
     {% if not suggestions %}<p class="hint">Noch keine Vorschläge. Die Entdeckung läuft täglich und benötigt <code>YOUTUBE_API_KEY</code>.</p>{% endif %}
-    <div class="list">
+    <div class="vgrid">
     {% for s in suggestions %}
-      <div class="list-item">
-        {% if s.sample_video %}<img class="thumb" style="width:96px;aspect-ratio:16/9;border-radius:6px;object-fit:cover" src="https://i.ytimg.com/vi/{{ s.sample_video }}/mqdefault.jpg" alt="" loading="lazy">{% endif %}
-        <div class="grow">
-          <div class="title">{{ s.title or s.channel_id }} {% if s.handle %}<span class="muted small">{{ s.handle }}</span>{% endif %}</div>
-          <div class="meta">{{ (s.subscribers or 0)|num(0) }} Abonnenten · {{ s.hits }} Treffer · zu: {{ s.found_for }} · zuletzt {{ s.last_seen|rel_time_iso }}</div>
-          {% if s.sample_title %}<div class="meta">z. B. „{{ s.sample_title }}“</div>{% endif %}
+      {# gleiches Kartenlayout wie die Video-Liste; Buttons nur hier (Entscheidung über den Kanal) #}
+      <article class="vcard">
+        <a class="vthumb" href="{{ ('https://www.youtube.com/watch?v=' ~ s.sample_video) if s.sample_video else ('https://www.youtube.com/channel/' ~ s.channel_id) }}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true">
+          {% if s.sample_video %}<img src="https://i.ytimg.com/vi/{{ s.sample_video }}/hqdefault.jpg" alt="" loading="lazy">{% else %}<span class="vph">{{ (s.title or s.channel_id)[:1]|upper }}</span>{% endif %}
+        </a>
+        <div class="vbody">
+          <a class="title" href="https://www.youtube.com/channel/{{ s.channel_id }}" target="_blank" rel="noopener noreferrer" title="Kanal auf YouTube ansehen">{{ s.title or s.channel_id }}{% if s.handle %} <span class="muted small">{{ s.handle }}</span>{% endif %} ↗</a>
+          <div class="vmeta"><span>{{ (s.subscribers or 0)|num(0) }} Abonnenten</span><span>{{ s.hits }} Treffer</span><span>zuletzt {{ s.last_seen|rel_time_iso }}</span></div>
+          {% if s.found_for %}<div class="vtags"><span class="badge info" title="Gefunden über die YouTube-Suche zu dieser Position">zu: {{ s.found_for }}</span></div>{% endif %}
+          {% if s.sample_title %}<div class="summary">z. B. „{{ s.sample_title }}“</div>{% endif %}
         </div>
+        <div class="vfoot vactions">
         {% if s.status == 'new' %}
-        <div class="row">
-          <button class="btn sm primary" hx-post="/youtube/suggestion/{{ s.channel_id }}/subscribe">Abonnieren</button>
-          <button class="btn sm" hx-post="/youtube/suggestion/{{ s.channel_id }}/ignore">Ignorieren</button>
-          <button class="btn sm" hx-post="/youtube/suggestion/{{ s.channel_id }}/block" hx-confirm="Kanal blockieren? Videos dieses Kanals werden überall ausgeblendet.">Blockieren</button>
-        </div>
+          <button class="btn primary" hx-post="/youtube/suggestion/{{ s.channel_id }}/subscribe">Abonnieren</button>
+          <button class="btn" hx-post="/youtube/suggestion/{{ s.channel_id }}/ignore">Ignorieren</button>
+          <button class="btn" hx-post="/youtube/suggestion/{{ s.channel_id }}/block" hx-confirm="Kanal blockieren? Videos dieses Kanals werden überall ausgeblendet.">Blockieren</button>
         {% else %}<span class="badge {{ 'good' if s.status == 'subscribed' else ('crit' if s.status == 'blocked' else '') }}">{{ {'subscribed': 'abonniert', 'ignored': 'ignoriert', 'blocked': 'blockiert'}.get(s.status, s.status) }}</span>{% endif %}
-      </div>
+        </div>
+      </article>
     {% endfor %}
     </div>
     <p class="hint">Entscheidungen werden in <code>/data/sources.yaml</code> gespeichert. Entdeckte Videos haben bis zur Bestätigung das Gewicht 0,4.</p>

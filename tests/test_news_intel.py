@@ -2293,3 +2293,38 @@ def test_wave_job_registered_on_own_single_worker_executor(config):
     assert "news_wave" in sched.jobs and sched._executor["news_wave"] == "wave"
     assert sched.sched._executors["wave"]._pool._max_workers == 1
     c.shutdown()
+
+
+# ----------------------------------------------------------------------------------------------------
+# Karten-Layout für Videos und Kanal-Vorschläge (0.57.0)
+# ----------------------------------------------------------------------------------------------------
+
+def test_video_list_and_channel_suggestions_share_card_layout(client):
+    ctx = wctx(client)
+    iid = add_item(ctx, "Tesla Stock Price Analysis heute", "https://www.youtube.com/watch?v=vid00000001", hours=3,
+                   kind="video", summary="Kurzbeschreibung des Videos.")
+    ctx.db.x("UPDATE news_item SET video_id='vid00000001', channel_name='Wicked Stocks', views=12450, duration_s=912 "
+             "WHERE id=?", (iid,))
+    seen = iso(NOW)
+    rows = (("UCnew1", "Wicked Stocks", "vid00000001", "new"), ("UCnew2", "Stock Moe", None, "new"),
+            ("UCsub1", "Coin Bureau", "vid00000002", "subscribed"))
+    for cid, title, vid, status in rows:
+        ctx.db.x("""INSERT INTO yt_suggestion(channel_id, title, handle, subscribers, hits, found_for, last_seen,
+                    first_seen, sample_video, sample_title, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                 (cid, title, "@" + title.split()[0].lower(), 103000, 3, "Tesla Inc", seen, seen, vid,
+                  "Beispielvideo" if vid else None, status))
+    videos = client.get("/news?tab=videos&days=30").text
+    assert 'id="news-list" class="vgrid"' in videos and 'class="vcard news-item' in videos
+    assert "https://i.ytimg.com/vi/vid00000001/hqdefault.jpg" in videos and ">15:12<" in videos  # Dauer im Bild
+    assert f'href="/news/{iid}" target="_blank"' in videos and 'hx-trigger="click"' not in videos
+    assert "12.450 Aufrufe" in videos and "Kurzbeschreibung des Videos." in videos
+    assert "/youtube/suggestion/" not in videos  # Buttons nur bei den Kanal-Vorschlägen
+    page = client.get("/news?tab=suggestions").text
+    assert page.count('class="vcard"') == 3 and 'class="vgrid"' in page
+    assert "https://i.ytimg.com/vi/vid00000001/hqdefault.jpg" in page and 'class="vph"' in page  # sonst Platzhalter
+    assert "https://www.youtube.com/channel/UCnew1" in page and "103.000 Abonnenten" in page
+    assert "zu: Tesla Inc" in page
+    for action in ("subscribe", "ignore", "block"):  # nur neue Vorschläge haben Entscheidungsknöpfe
+        assert page.count(f"/youtube/suggestion/UCnew1/{action}") == 1
+        assert f"/youtube/suggestion/UCsub1/{action}" not in page
+    assert "abonniert" in page

@@ -1426,6 +1426,22 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.57.0 – News: Karten-Layout für Videos und Kanal-Vorschläge
+
+* **Problem:** Auf dem Handy brach die Seite „Kanal-Vorschläge“ den Text in einzelne Wörter um (schmale Textspalte neben Vorschaubild und
+  drei Buttons); die Video-Liste zeigte nur ein kleines Vorschaubild (96–120 px) neben dem Titel.
+* **Jetzt:** Beide Seiten nutzen dasselbe Kartenlayout (`.vgrid`/`.vcard`): großes 16:9-Vorschaubild oben (Dauer, LIVE bzw. Short als Chip
+  im Bild), darunter Titel, Angaben (Kanal · Alter · Aufrufe bzw. Abonnenten · Treffer · zuletzt), Zuordnung als Badges und Beschreibung.
+  Eine Spalte auf dem Handy, Raster ab ca. 600 px Breite. Das Vorschaubild kommt als `hqdefault` (4:3 mit schwarzen Balken) und wird auf
+  16:9 zugeschnitten.
+* **Video-Karten:** Fußzeile mit Relevanz und Gelesen-Knopf; Titel und Bild öffnen weiter über `/news/<id>` (0.56.1).
+* **Kanal-Karten:** Buttons nur hier – „Abonnieren“ über die volle Breite, darunter „Ignorieren“ und „Blockieren“; entschiedene Vorschläge
+  zeigen stattdessen „abonniert“/„ignoriert“/„blockiert“. Neu: Kanalname verlinkt auf den YouTube-Kanal (neuer Tab), das Bild auf das
+  Beispielvideo – zum Ansehen vor der Entscheidung. Ohne Beispielvideo erscheint ein Platzhalter mit dem Anfangsbuchstaben.
+* **Unverändert:** Artikel- und Community-Liste (kleines Vorschaubild links), alle Aktionen und Daten.
+* **Grenze:** Das Raster passt sich der Breite an; „Weitere laden“ hängt neue Karten an und steht über die volle Breite.
+* **Test:** gleiche Kartenstruktur auf beiden Seiten, Dauer im Bild, Buttons nur bei neuen Kanal-Vorschlägen, Platzhalter.
+
 ## 0.56.1 – Videos: Link öffnet wieder
 
 * **Fehler:** Ein Klick auf ein Video (Titel oder Vorschaubild) tat nichts. Der Link trug zusätzlich `hx-post` (als gelesen

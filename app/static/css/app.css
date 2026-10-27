@@ -443,6 +443,31 @@ body.panel-open { overflow: hidden; }
 .news-item .icon-btn { font-size: 1.1rem; min-width: 34px; min-height: 34px; justify-content: center; }
 .news-item .summary { font-size: 0.86rem; color: var(--ink-2); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-width: 520px) { .news-item .thumb { flex-basis: 96px; width: 96px; } }
+/* Video-/Kanal-Karten: großes 16:9-Vorschaubild, darunter Text; Raster ab ~560 px, auf dem Handy eine Spalte */
+.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 16px; }
+.vgrid > .vmore, .vgrid > .hint { grid-column: 1 / -1; }
+.vcard { display: flex; flex-direction: column; gap: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; min-width: 0; }
+.vcard:last-child { border-bottom: 1px solid var(--border); }
+.vcard .vthumb { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; background: var(--surface-3); }
+.vcard .vthumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }  /* hqdefault ist 4:3 mit schwarzen Balken: auf 16:9 zuschneiden */
+.vcard.read .vthumb img { opacity: 0.6; }
+.vcard .vph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2.4rem; font-weight: 700; color: var(--ink-2); }
+.vcard .vchip { position: absolute; right: 8px; bottom: 8px; padding: 2px 6px; border-radius: 5px; background: rgba(0, 0, 0, .78); color: #fff; font-size: 0.74rem; font-weight: 600; line-height: 1.3; }
+.vcard .vchip.live { background: var(--crit-mark); }
+.vcard .vchip.short { right: auto; left: 8px; }
+.vcard .vbody { flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px 4px; min-width: 0; }
+.vcard .title { font-weight: 600; font-size: 1rem; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.vcard.read .title { color: var(--ink-2); font-weight: 500; }
+.vcard .vmeta { display: flex; flex-wrap: wrap; gap: 2px 0; font-size: 0.8rem; color: var(--ink-2); }
+.vcard .vmeta > span + span::before { content: "·"; margin: 0 6px; }
+.vcard .vtags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.vcard .summary { font-size: 0.86rem; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.vcard .vfoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 14px 12px; }
+.vcard .vfoot .icon-btn { font-size: 1.1rem; min-width: 36px; min-height: 36px; justify-content: center; }
+.vcard .vactions { flex-wrap: wrap; justify-content: stretch; }
+.vcard .vactions .btn { flex: 1 1 auto; justify-content: center; min-height: 40px; }
+.vcard .vactions .btn.primary { flex-basis: 100%; }
+.vcard .vactions .badge { margin: 0 auto 0 0; }
 .tabs { position: relative; display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-x: auto; }
 .tabs a { padding: 9px 12px; color: var(--ink-2); border-bottom: 2px solid transparent; white-space: nowrap; font-weight: 560; }
 .tabs a.active { color: var(--ink); border-bottom-color: var(--accent); }
