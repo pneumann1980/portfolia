@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.context import AppContext
-from app.news import queue, wave
+from app.news import hosts, queue, wave
 from app.news.ai import AiGateway
 from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
@@ -58,6 +58,15 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
     ai = gw.status()
     enrich = EnrichService(ctx)
     paused = enrich.paused_hosts()
+    teaser = enrich.teaser_hosts()  # Quellen ohne brauchbaren Volltext: kein Abruf, Analyse nimmt sofort den Teaser
+    teaser_n: dict[str, int] = {}
+    if teaser:
+        win = iso(datetime.now(UTC) - timedelta(days=int(ctx.settings.get("news.enrich_days", 3))))
+        for r in db.q("SELECT url FROM news_item WHERE kind='article' AND hidden_reason IS NULL AND published_at>=?",
+                      (win,)):
+            h = hosts.host_of(r["url"])
+            if h in teaser:
+                teaser_n[h] = teaser_n.get(h, 0) + 1
     enrich_ready = len(enrich.candidates(100_000))  # jetzt abrufbar (Quelle nicht pausiert, Abruf fällig)
     enrich_paused = len(enrich.candidates(100_000, include_paused=True)) - enrich_ready  # Quelle pausiert
     enrich_retry = enrich.retry_planned_count()  # fehlgeschlagen, Wiederholung später
@@ -119,7 +128,8 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         "backlog": {"enrich": enrich_ready, "enrich_paused": enrich_paused, "enrich_retry": enrich_retry,
                     "analyze": analyze_backlog,
                     "days": int(ctx.settings.get("news.enrich_days", 3)), "per_run": per_run, "bottleneck": bottleneck,
-                    "paused_hosts": sorted(((h, u) for h, u in paused.items()), key=lambda x: x[1])},
+                    "paused_hosts": sorted(((h, u) for h, u in paused.items()), key=lambda x: x[1]),
+                    "teaser_hosts": sorted(((h, teaser_n.get(h, 0)) for h in teaser), key=lambda x: (-x[1], x[0]))},
         "analysis_failed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NULL AND analyzed_at>=?", day),
         "events": n("SELECT COUNT(*) FROM news_event WHERE last_seen>=?", since24),
         "events_multi": n("SELECT COUNT(*) FROM news_event WHERE last_seen>=? AND n_sources>=2", since24),

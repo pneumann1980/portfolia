@@ -85,6 +85,7 @@ DEFAULTS: dict[str, Any] = {
     "news.analysis": True,  # strukturierte Einzelanalyse (nur mit aktivierter KI)
     "news.analysis_max_per_run": 400,  # Obergrenze je Lauf; der Rückstau wird in Runden abgearbeitet
     "news.analysis_hours": 48,
+    "news.analysis_wait_min": 60,  # so lange (Min. ab Import) wartet die Analyse höchstens auf den Artikeltext
     "news.analysis_protect": True,  # Rückstau-Schutz: bei nicht rechtzeitig schaffbarem Rückstau nur frische Meldungen
     "news.analysis_protect_hours": 6,  # … ab dieser geschätzten Abarbeitungsdauer (Std.)
     "news.analysis_protect_age_h": 24,  # … und nur Meldungen bis zu diesem Alter (Std.), neueste zuerst

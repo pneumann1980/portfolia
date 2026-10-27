@@ -2328,3 +2328,86 @@ def test_video_list_and_channel_suggestions_share_card_layout(client):
         assert page.count(f"/youtube/suggestion/UCnew1/{action}") == 1
         assert f"/youtube/suggestion/UCsub1/{action}" not in page
     assert "abonniert" in page
+
+
+# ----------------------------------------------------------------------------------------------------
+# Analyse wartet nicht auf Text, der nicht kommt; Quellen „nur Teaser“ (0.58.0)
+# ----------------------------------------------------------------------------------------------------
+
+def _teaser_host(ctx, host, *, blocked=8, success=0, transient=0, short=0):
+    """Legt Abrufergebnisse für ``host`` an (Sperren, Erfolge, vorübergehende Fehler, Teiltexte)."""
+    n = 0
+
+    def item():
+        nonlocal n
+        n += 1
+        return add_item(ctx, f"Meldung {n} von {host}", f"https://{host}/a{n}", hours=30 + n * 0.01)
+
+    for _ in range(blocked):
+        store_content(ctx, item(), status="blocked", text="", reason="http_denied")
+    for _ in range(success):
+        store_content(ctx, item())
+    for _ in range(transient):
+        store_content(ctx, item(), status="failed", text="", reason="network")
+    for _ in range(short):
+        store_content(ctx, item(), status="partial", reason="short")
+
+
+def test_host_is_teaser_only_after_repeated_denial_but_not_from_outages_or_success(ctx):
+    from app.news import hosts as H
+
+    _teaser_host(ctx, "denied.example.com", blocked=8)
+    _teaser_host(ctx, "mixed.example.com", blocked=8, success=2)  # zwei Erfolge unter den letzten 10: normal
+    _teaser_host(ctx, "outage.example.com", blocked=0, transient=12)  # Netzausfall stempelt keinen Host ab
+    _teaser_host(ctx, "few.example.com", blocked=5)  # zu wenige Ergebnisse
+    _teaser_host(ctx, "short.example.com", blocked=3, short=10)  # Teiltexte zählen nicht
+    teaser = H.teaser_hosts(ctx)
+    assert set(teaser) == {"denied.example.com"}
+    # Erfolge der letzten Ergebnisse zählen zuerst: ein Probeerfolg + früherer Erfolg hebt die Einstufung auf
+    store_content(ctx, add_item(ctx, "Probe 1", "https://denied.example.com/p1", hours=1))
+    assert "denied.example.com" in H.teaser_hosts(ctx)  # ein Erfolg reicht noch nicht
+    store_content(ctx, add_item(ctx, "Probe 2", "https://denied.example.com/p2", hours=1))
+    assert "denied.example.com" not in H.teaser_hosts(ctx)
+
+
+def test_enrich_skips_teaser_hosts_except_one_weekly_probe(ctx):
+    _teaser_host(ctx, "denied.example.com", blocked=8)
+    fresh = [add_item(ctx, f"Neue Meldung {i}", f"https://denied.example.com/n{i}", hours=1 + i * 0.01)
+             for i in range(3)]
+    other = add_item(ctx, "Andere Quelle", "https://ok.example.com/x", hours=1)
+    svc = EnrichService(ctx, _ok_fetcher())
+    assert [c["id"] for c in svc.candidates(50)] == [other]  # letzter Abruf frisch: kein Probeabruf
+    ctx.db.x("UPDATE news_content SET fetched_at=?", (iso(NOW - timedelta(days=8)),))
+    ids = [c["id"] for c in svc.candidates(50)]
+    assert other in ids and len([i for i in ids if i in fresh]) == 1  # genau ein Probeabruf je Quelle
+
+
+def test_analysis_does_not_wait_for_text_that_will_not_come(ctx):
+    normal = add_item(ctx, "Frische Meldung normaler Quelle", "https://ok.example.com/n", hours=0.3)
+    late = add_item(ctx, "Meldung seit 70 Minuten ohne Text", "https://ok.example.com/l", hours=1.2)
+    paused = add_item(ctx, "Frische Meldung pausierter Quelle", "https://finance.yahoo.com/p", hours=0.5)
+    pause_host(ctx, "finance.yahoo.com", 5)
+    _teaser_host(ctx, "denied.example.com", blocked=8)
+    teaser = add_item(ctx, "Frische Meldung einer Teaser-Quelle", "https://denied.example.com/t", hours=0.4)
+    svc = AnalysisService(ctx, FakeGateway(echo_answers))
+    ids = {r["id"] for r in svc._raw_candidates()}
+    assert paused in ids and teaser in ids and late in ids  # kein Warten auf Text, der nicht kommt
+    assert normal not in ids  # Text wird in Kürze erwartet
+    res = svc.run()
+    assert ctx.db.scalar("SELECT basis FROM news_analysis WHERE item_id=?", (paused,)) == "teaser"
+    assert res["analyzed"] >= 3
+    ctx.settings.set("news.analysis_wait_min", 120)  # Wartezeit einstellbar
+    late2 = add_item(ctx, "Meldung seit 70 Minuten, lange Wartezeit", "https://ok.example.com/l2", hours=1.2)
+    assert late2 not in {r["id"] for r in svc._raw_candidates()}
+
+
+def test_status_lists_teaser_hosts(client):
+    from app.news.status import pipeline_status
+
+    ctx = wctx(client)
+    _teaser_host(ctx, "denied.example.com", blocked=8)
+    add_item(ctx, "Neue Meldung", "https://denied.example.com/neu", hours=1)
+    st = pipeline_status(ctx)
+    assert st["backlog"]["teaser_hosts"][0][0] == "denied.example.com" and st["backlog"]["teaser_hosts"][0][1] >= 1
+    page = client.get("/news?tab=status").text
+    assert "Nur Teaser" in page and "denied.example.com" in page and "einmal pro Woche" in page

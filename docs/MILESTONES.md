@@ -1426,6 +1426,27 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.58.0 – News: Analyse wartet nicht auf Text, der nicht kommt; Quellen „nur Teaser“
+
+* **Problem:** Meldungen pausierter oder gesperrter Quellen (z. B. Yahoo Finance) blieben bis zu 6 Stunden „KI ausstehend“: Die Analyse
+  wartete auf einen Artikeltext, der nie kam. Sie waren weder Kandidat für den Textabruf noch für die Analyse – Warteschlange „0 von 0“,
+  Startseite „KI ausstehend“.
+* **C – Wartezeit:** Die Analyse wartet höchstens `news.analysis_wait_min` (Standard **60 Min.** ab Import) auf den Text. Gar nicht
+  wartet sie, wenn der Text fertig ist (auch gesperrt/fehlgeschlagen), der Abruf aus ist oder die Quelle pausiert bzw. „nur Teaser“ ist.
+  Dann wird sofort mit dem Teaser analysiert (`basis = teaser`, Konfidenz gedeckelt). Kommt der Text später doch, ändert sich der
+  Hash und die Meldung wird einmal neu analysiert (eine zusätzliche Anfrage).
+* **D – Quellen „nur Teaser“** (`app/news/hosts.py`): Aus den gespeicherten Abrufergebnissen der letzten 14 Tage: Von den letzten 10
+  zählbaren Ergebnissen eines Hosts sind mindestens 8 vorhanden und höchstens 1 Volltext → Host liefert keinen Volltext (Sperre/403,
+  Bezahlschranke, leere Seite, nur Anreißer). Vorübergehende Fehler (Zeitüberschreitung, Netz, DNS, 5xx) und Teiltexte zählen nicht –
+  ein Netzausfall stempelt keinen Host ab. Solche Hosts werden nicht mehr abgerufen (kein Hängen in Pause/Wiederholung), nur **einmal
+  pro Woche ein Probeabruf**; mit ≥ 2 Erfolgen unter den letzten 10 ist der Host wieder normal.
+* **Anzeige:** Pipeline-Karte zeigt „Nur Teaser: host (n Artikel)“. Etiketten der Startseite unverändert (Entscheidung des Nutzers).
+* **Grenzen/Annahmen:** Die Schwellen (8/1/10, 14 Tage, 7 Tage, 60 Min.) sind Annahmen und nicht an echten Daten kalibriert. Teaser-
+  Analysen sind dünner als Volltext-Analysen. Bei großem Rückstau des Textabrufs (> ca. 160 Artikel/Std.) können Meldungen die 60 Min.
+  überschreiten und erst mit dem Teaser, dann mit dem Text analysiert werden (Mehrkosten: eine Anfrage je betroffene Meldung).
+* **Tests:** Einstufung (Sperren, gemischt, Netzausfall, zu wenige Ergebnisse, Teiltexte, Aufhebung durch Probeerfolge), Probeabruf je
+  Woche, Wartelogik (normal/pausiert/Teaser/70 Min./einstellbar), Statusanzeige.
+
 ## 0.57.0 – News: Karten-Layout für Videos und Kanal-Vorschläge
 
 * **Problem:** Auf dem Handy brach die Seite „Kanal-Vorschläge“ den Text in einzelne Wörter um (schmale Textspalte neben Vorschaubild und

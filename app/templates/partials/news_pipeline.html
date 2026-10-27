@@ -29,6 +29,7 @@
     <dt>Tagesbericht{{ badge(bdg['report']) }}</dt>
     <dd>{% if st.last_report %}<a href="/news?tab=report&report_id={{ st.last_report.id }}">{{ st.last_report.day|date_de }}</a> · erstellt {{ st.last_report.created_at|datetime_de }}{% else %}–{% endif %}</dd>
     <dt>Engpass</dt><dd>{{ st.backlog.bottleneck }}</dd>
+    {% if st.backlog.teaser_hosts %}<dt>Nur Teaser</dt><dd>{% for h, k in st.backlog.teaser_hosts %}<span class="mono">{{ h }}</span> ({{ k }}){{ '; ' if not loop.last }}{% endfor %} – liefern keinen Volltext (Sperre, Bezahlschranke, leere Seite): kein Abruf, die KI-Analyse nutzt sofort den Teaser; einmal pro Woche wird neu geprüft</dd>{% endif %}
     {% if st.backlog.paused_hosts %}<dt>Pausierte Quellen</dt><dd>{% for h, u in st.backlog.paused_hosts %}<span class="mono">{{ h }}</span> bis {{ u|datetime_de }}{{ '; ' if not loop.last }}{% endfor %} (nach vielen Fehlern/Sperren, damit sie andere nicht aufhalten)</dd>{% endif %}
   </dl>
 </div>

@@ -15,10 +15,9 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlsplit
 
 from app.context import AppContext
-from app.news import gnews
+from app.news import gnews, hosts
 from app.news.extract import assess, excerpt, parse_article
 from app.news.locks import exclusive
 from app.news.safefetch import FetchError, SafeFetcher
@@ -35,11 +34,7 @@ HOST_PAUSE = timedelta(hours=6)
 SKIP_HOSTS = ("youtube.com", "youtu.be", "twitter.com", "x.com", "facebook.com", "instagram.com", "t.me")
 
 
-def _host(url: str) -> str:
-    try:
-        return (urlsplit(url).hostname or "").lower().removeprefix("www.")
-    except ValueError:
-        return ""
+_host = hosts.host_of
 
 
 class EnrichService:
@@ -61,14 +56,11 @@ class EnrichService:
     # -- Auswahl -----------------------------------------------------------------------------------------
     def paused_hosts(self) -> dict[str, datetime]:
         """Quellen, die nach wiederholten Fehlern/Sperren pausiert sind (Host -> pausiert bis)."""
-        now = datetime.now(UTC)
-        out: dict[str, datetime] = {}
-        for r in self.db.q("SELECT key FROM app_state WHERE key LIKE 'news.enrich.host.%'"):
-            st = self.db.get_state(r["key"]) or {}
-            until = parse_iso(st.get("until")) if isinstance(st, dict) else None
-            if until is not None and until > now:
-                out[r["key"].removeprefix("news.enrich.host.")] = until
-        return out
+        return hosts.paused_hosts(self.ctx)
+
+    def teaser_hosts(self) -> dict[str, datetime | None]:
+        """Quellen ohne brauchbaren Volltext (Host -> letzter Abruf): nicht mehr abgerufen, nur wöchentlich geprüft."""
+        return hosts.teaser_hosts(self.ctx)
 
     def done_count(self) -> int:
         """Artikel im Abrufzeitraum mit abgeschlossenem Abruf (Text, Teiltext, gesperrt, endgültig fehlgeschlagen)."""
@@ -91,10 +83,13 @@ class EnrichService:
         """Noch nicht (erfolgreich) angereicherte Artikel in Prioritätsreihenfolge.
 
         Artikel pausierter Quellen werden übersprungen (``include_paused`` zählt sie mit): Sonst belegen sie die
-        ersten Plätze jedes Laufs und verdrängen abrufbare Artikel anderer Quellen.
+        ersten Plätze jedes Laufs und verdrängen abrufbare Artikel anderer Quellen. „Nur Teaser“-Quellen (siehe
+        ``hosts``) werden nicht mehr abgerufen, bis auf einen Probeabruf je Quelle und Woche.
         """
         days = int(self.ctx.settings.get("news.enrich_days", 3))
         paused = set() if include_paused else set(self.paused_hosts())
+        teaser = self.teaser_hosts()
+        probed: set[str] = set()
         since = iso(datetime.now(UTC) - timedelta(days=days))
         now = iso(datetime.now(UTC))
         rows = self.db.q(
@@ -112,6 +107,10 @@ class EnrichService:
                 continue
             if host in paused:
                 continue
+            if host in teaser:  # kein Volltext zu erwarten: höchstens ein Probeabruf je Woche
+                if host in probed or not hosts.probe_due(teaser[host]):
+                    continue
+                probed.add(host)
             pub = parse_iso(r["published_at"]) or pub_now
             age_h = max(0.0, (pub_now - pub).total_seconds() / 3600)
             # Positionsbezug (relevance), Mehrfachberichte = marktweite Bedeutung, Quellgewicht, Aktualität

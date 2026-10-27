@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.context import AppContext
+from app.news import hosts
 from app.news.ai import (
     AiError,
     AiGateway,
@@ -48,6 +49,7 @@ MAX_SECONDS = 480  # Laufzeit-Obergrenze je Job-Lauf (der nächste Lauf macht we
 PER_ROUND = BATCH * 6
 TEXT_LIMIT = 3200  # Zeichen je Artikel in der Anfrage (Anfang des Artikels enthält die Kernaussagen)
 RETRY_AFTER_ERROR = timedelta(hours=12)
+WAIT_MIN = 60  # so lange (ab Import) wartet die Analyse höchstens auf den Artikeltext (news.analysis_wait_min)
 PROTECT_HOURS = 6  # Rückstau-Schutz ab dieser geschätzten Abarbeitungsdauer (Einstellung news.analysis_protect_hours)
 PROTECT_AGE_H = 24  # unter Schutz nur Meldungen bis zu diesem Alter (news.analysis_protect_age_h)
 
@@ -199,24 +201,30 @@ class AnalysisService:
         """Alle Meldungen im Analysefenster, die auf eine Analyse warten (mit Alter und Grundpriorität), ungekürzt."""
         hours = int(self.ctx.settings.get("news.analysis_hours", WINDOW_H))
         since = iso(datetime.now(UTC) - timedelta(hours=hours))
-        wait_until = iso(datetime.now(UTC) - timedelta(hours=6))  # so lange auf den Artikelinhalt warten
         skip_sql, skip_args = not_in_clause("n.source_id", ai_off_ids(self.ctx.config.sources_path))
         rows = self.db.q(
-            """SELECT n.id, n.title, n.summary, n.source_name, n.published_at, n.relevance, n.dup_count,
+            """SELECT n.id, n.url, n.title, n.summary, n.source_name, n.published_at, n.relevance, n.dup_count,
                       n.source_weight, n.fetched_at,
                       c.status AS cstatus, c.content, c.excerpt, c.content_hash, c.word_count,
                       a.input_hash AS ahash, a.analyzed_at, a.summary AS asummary
                FROM news_item n LEFT JOIN news_content c ON c.item_id=n.id
                     LEFT JOIN news_analysis a ON a.item_id=n.id
-               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?
-                 AND (c.status IN ('success','partial','blocked','failed')
-                      OR (n.fetched_at <= ?) OR ? = 1)""" + skip_sql + """
-               ORDER BY n.published_at DESC LIMIT 5000""",
-            (since, wait_until, 1 if not self.ctx.settings.get("news.enrich", True) else 0, *skip_args))
+               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?""" + skip_sql + """
+               ORDER BY n.published_at DESC LIMIT 5000""", (since, *skip_args))
+        # Auf den Artikeltext wartet nur, wer ihn bald bekommt: Text fertig (auch gesperrt/fehlgeschlagen), Abruf aus,
+        # Quelle pausiert oder „nur Teaser“ (kommt nie) oder die Wartezeit abgelaufen → sonst später (Teaser-Analyse)
+        wait = timedelta(minutes=int(self.ctx.settings.get("news.analysis_wait_min", WAIT_MIN)))
+        enrich_on = bool(self.ctx.settings.get("news.enrich", True))
+        paused, teaser = hosts.paused_hosts(self.ctx), hosts.teaser_hosts(self.ctx)
+        ready_before = datetime.now(UTC) - wait
         now = datetime.now(UTC)
         out = []
         for r in rows:
             r = dict(r)
+            if (enrich_on and r["cstatus"] not in ("success", "partial", "blocked", "failed")
+                    and (parse_iso(r["fetched_at"]) or now) > ready_before
+                    and not hosts.text_unlikely(hosts.host_of(r["url"]), paused, teaser)):
+                continue  # Text wird noch erwartet
             h = input_hash(r["title"], r["content_hash"], r["summary"] or "")
             if r["ahash"] == h:
                 if r["asummary"]:
@@ -338,17 +346,14 @@ class AnalysisService:
         return len(self.candidates(100_000))
 
     def window_total(self) -> int:
-        """Meldungen im Analysefenster, die überhaupt analysiert werden sollen (Nenner für den Fortschrittsbalken)."""
+        """Meldungen im Analysefenster, die überhaupt analysiert werden sollen (ohne Quellen mit ``ai: false``)."""
         hours = int(self.ctx.settings.get("news.analysis_hours", WINDOW_H))
         since = iso(datetime.now(UTC) - timedelta(hours=hours))
-        wait_until = iso(datetime.now(UTC) - timedelta(hours=6))
         skip_sql, skip_args = not_in_clause("n.source_id", ai_off_ids(self.ctx.config.sources_path))
         return int(self.db.scalar(
-            """SELECT COUNT(*) FROM news_item n LEFT JOIN news_content c ON c.item_id=n.id
-               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?
-                 AND (c.status IN ('success','partial','blocked','failed') OR n.fetched_at <= ? OR ? = 1)"""
-            + skip_sql, (since, wait_until, 1 if not self.ctx.settings.get("news.enrich", True) else 0, *skip_args),
-            default=0) or 0)
+            """SELECT COUNT(*) FROM news_item n
+               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?""" + skip_sql,
+            (since, *skip_args), default=0) or 0)
 
     def run(self, limit: int | None = None, max_seconds: float | None = None, *, wait_s: float = 0.0,
             on_batch: Callable[[int], None] | None = None) -> dict[str, Any]:
