@@ -1426,6 +1426,22 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.59.0 – News: Karten für Artikel und Community, Bilder verkleinert
+
+* **Karten:** Artikel und Community nutzen dieselbe Karte wie Videos und Kanal-Vorschläge (`.vgrid`/`.vcard`, eine Vorlage in
+  `partials/news_items.html`): großes 16:9-Bild oben, darunter Titel, Quelle · Alter, Badges (Zuordnung, Stimmung, Ereignis, Volltext)
+  und Text; Fußzeile mit „Relevanz“ (Community: Telegram-Link) und Gelesen-Knopf. Eine Spalte auf dem Handy, Raster ab ca. 600 px.
+* **Ohne Bild kein Platzhalter:** Artikel ohne Bild sind eine kompakte Textkarte; die Karten richten sich oben aus (keine gestreckten
+  Leerflächen). Bei Videos/Kanälen bleibt es beim bisherigen Verhalten.
+* **Textlängen unverändert:** Artikel 3 Zeilen, Community voller Text. Titel werden nirgends mehr gekürzt (auch bei Videos).
+* **Bilder verkleinern** (`app/news/images.py`): Neue Bilder werden beim Zwischenspeichern auf höchstens 800 px Breite verkleinert und
+  als WebP (Qualität 80) abgelegt; bereits gespeicherte große Originale (> 120 KB) werden beim nächsten Abruf einmal verkleinert, die
+  alte Datei entfällt. Original bleibt bei GIF/Animation, Formaten außer JPEG/PNG/WebP (Sicherheit: Pillow dekodiert nur diese), defekten oder schon kleinen Bildern, Bildern über 40 Mio. Pixeln und wenn das
+  Ergebnis nicht kleiner wäre. Gedacht gegen Datenvolumen: 30 große Bilder je Seite im Mobilfunk.
+* **Grenzen:** Ältere Browser ohne WebP zeigen das verkleinerte Bild nicht (alle aktuellen Browser unterstützen es). Nicht verkleinerbare
+  Altbilder werden je Prozess nur einmal geprüft.
+* **Tests:** Verkleinern (Größe/Format, GIF, klein, defekt), Cache (neu, Treffer, Altbestand), Karten mit und ohne Bild, Community-Raster.
+
 ## 0.58.0 – News: Analyse wartet nicht auf Text, der nicht kommt; Quellen „nur Teaser“
 
 * **Problem:** Meldungen pausierter oder gesperrter Quellen (z. B. Yahoo Finance) blieben bis zu 6 Stunden „KI ausstehend“: Die Analyse

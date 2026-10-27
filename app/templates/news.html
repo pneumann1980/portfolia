@@ -68,7 +68,7 @@
     <div class="card-head"><h2>{{ total }} {{ {'articles': 'Artikel', 'videos': 'Videos', 'community': 'Beiträge'}[params.tab] }}</h2>
       {% if params.tab == 'community' %}<span class="hint">Telegram-Kanäle · neueste zuerst · ohne KI</span>
       {% else %}<span class="hint" title="Relevanz = Treffer (Titel > Beschreibung) × Quellgewicht × Positionsgewicht × Aktualität">Sortiert nach {{ 'Relevanz' if params.sort == 'relevance' else 'Zeit' }} ⓘ</span>{% endif %}</div>
-    <div id="news-list"{% if params.tab == 'community' %} class="community"{% elif params.tab == 'videos' %} class="vgrid"{% endif %}>
+    <div id="news-list" class="vgrid{{ ' community' if params.tab == 'community' }}">
       {% include "partials/news_items.html" %}
     </div>
   </section>

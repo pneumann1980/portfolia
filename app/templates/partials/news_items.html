@@ -1,54 +1,37 @@
-{% for x in items %}{% set n = x.row %}
-{% if n.kind == 'video' %}
-{# Video-Karte: großes 16:9-Vorschaubild, darunter Titel, Angaben, Zuordnung und Beschreibung.
-   Öffnet über /news/<id> (markiert als gelesen, leitet zu YouTube weiter) – kein hx-post am Link (blockiert das Öffnen). #}
+{% for x in items %}{% set n = x.row %}{% set video = n.kind == 'video' %}
+{# Eine Karte für Videos, Artikel und Community: Bild oben (nur wenn vorhanden – kein Platzhalter), darunter Titel, Angaben,
+   Badges und Text (Artikel 3 Zeilen, Community voll). Videos öffnen über /news/<id> in neuem Tab (markiert gelesen, leitet zu
+   YouTube weiter) – kein hx-post am Link (blockiert das Öffnen). #}
+{% set href = '/news/' ~ n.id if video else '/news/' ~ n.id ~ '?back=' ~ urlq(back_url) %}
 <article class="vcard news-item {{ 'read' if n.is_read }}" id="news-{{ n.id }}">
-  <a class="vthumb" href="/news/{{ n.id }}" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">
-    {% if n.video_id %}<img src="https://i.ytimg.com/vi/{{ n.video_id }}/hqdefault.jpg" alt="" loading="lazy">{% endif %}
-    {% if n.is_live %}<span class="vchip live">LIVE</span>{% elif n.duration_s %}<span class="vchip">{{ n.duration_s|duration }}</span>{% endif %}
-    {% if n.is_short %}<span class="vchip short">Short</span>{% endif %}
+  {% if video or n.image_url %}
+  <a class="vthumb" href="{{ href }}"{% if video %} target="_blank" rel="noopener"{% endif %} tabindex="-1" aria-hidden="true">
+    {% if video %}
+      {% if n.video_id %}<img src="https://i.ytimg.com/vi/{{ n.video_id }}/hqdefault.jpg" alt="" loading="lazy">{% endif %}
+      {% if n.is_live %}<span class="vchip live">LIVE</span>{% elif n.duration_s %}<span class="vchip">{{ n.duration_s|duration }}</span>{% endif %}
+      {% if n.is_short %}<span class="vchip short">Short</span>{% endif %}
+    {% else %}<img src="/img/news/{{ n.id }}" alt="" loading="lazy">{% endif %}
   </a>
-  <div class="vbody">
-    <a class="title" href="/news/{{ n.id }}" target="_blank" rel="noopener">{{ n.title }}</a>
-    <div class="vmeta"><span>{{ n.channel_name or n.source_name }}</span><span>{{ n.published_at|rel_time_iso }}</span>{% if n.views %}<span>{{ n.views|num(0) }} Aufrufe</span>{% endif %}</div>
-    {% if x.assets or n.dup_count or x.sentiment or x.event or n.hidden_reason %}<div class="vtags">
-      {% for aid, name in x.assets[:4] %}<a class="badge info" href="/news?tab=videos&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
-      {% if n.dup_count %}<span class="badge" title="Weitere Quellen berichten ebenfalls">+{{ n.dup_count }}</span>{% endif %}
-      {% if x.sentiment %}<span class="badge {{ {'positiv': 'good', 'negativ': 'crit', 'gemischt': 'warn'}.get(x.sentiment, '') }}" title="KI-Einschätzung der Stimmung der Meldung">{{ x.sentiment }}</span>{% endif %}
-      {% if x.event %}<a class="badge info" href="/news/event/{{ x.event.event_id }}" title="Mehrere Berichte zum selben Ereignis">Ereignis · {{ x.event.n_items }} Berichte</a>{% endif %}
-      {% if n.hidden_reason %}<span class="badge warn">ausgeblendet: {{ n.hidden_reason }}</span>{% endif %}
-    </div>{% endif %}
-    {% if n.llm_summary %}<div class="summary"><span class="badge info">KI</span> {{ n.llm_summary }}</div>
-    {% elif n.summary %}<div class="summary">{{ n.summary }}</div>{% endif %}
-  </div>
-  <div class="vfoot"><span class="badge" title="Relevanz inkl. Aktualität">Relevanz {{ x.score|num(2) }}</span>
-    <div id="rb-{{ n.id }}">{% include "partials/news_read_button.html" %}</div></div>
-</article>
-{% else %}
-<article class="news-item {{ 'read' if n.is_read }}" id="news-{{ n.id }}">
-  {% if n.image_url %}
-    <img class="thumb" src="/img/news/{{ n.id }}" alt="" loading="lazy">
   {% endif %}
-  <div class="body">
-    <a class="title" href="/news/{{ n.id }}?back={{ urlq(back_url) }}">{{ n.title }}</a>
-    <div class="meta">
-      <span>{{ n.source_name }}</span>
-      <span>· {{ n.published_at|rel_time_iso }}</span>
-      {% for aid, name in x.assets[:4] %}<a class="badge info" href="/news?tab=articles&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
+  <div class="vbody">
+    <a class="title" href="{{ href }}"{% if video %} target="_blank" rel="noopener"{% endif %}>{{ n.title }}</a>
+    <div class="vmeta"><span>{{ n.channel_name or n.source_name if video else n.source_name }}</span><span>{{ n.published_at|rel_time_iso }}</span>{% if video and n.views %}<span>{{ n.views|num(0) }} Aufrufe</span>{% endif %}</div>
+    {% if x.assets or n.dup_count or x.sentiment or x.event or x.cstatus in ('success', 'blocked') or n.hidden_reason %}<div class="vtags">
+      {% for aid, name in x.assets[:4] %}<a class="badge info" href="/news?tab={{ 'videos' if video else params.tab }}&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
       {% if n.dup_count %}<span class="badge" title="Weitere Quellen berichten ebenfalls">+{{ n.dup_count }}</span>{% endif %}
       {% if x.sentiment %}<span class="badge {{ {'positiv': 'good', 'negativ': 'crit', 'gemischt': 'warn'}.get(x.sentiment, '') }}" title="KI-Einschätzung der Stimmung der Meldung">{{ x.sentiment }}</span>{% endif %}
       {% if x.event %}<a class="badge info" href="/news/event/{{ x.event.event_id }}" title="Mehrere Berichte zum selben Ereignis">Ereignis · {{ x.event.n_items }} Berichte</a>{% endif %}
       {% if x.cstatus == 'success' %}<span class="badge good" title="Volltext lokal verfügbar">Volltext</span>{% elif x.cstatus == 'blocked' %}<span class="badge" title="Verlag sperrt den Text (Bezahl-/Zustimmungsschranke)">gesperrt</span>{% endif %}
       {% if n.hidden_reason %}<span class="badge warn">ausgeblendet: {{ n.hidden_reason }}</span>{% endif %}
-      {% if params.tab == 'community' %}<a class="badge info" href="{{ n.url }}" target="_blank" rel="noopener noreferrer" title="Beitrag in Telegram öffnen">Telegram ↗</a>
-      {% else %}<span class="badge" title="Relevanz inkl. Aktualität">{{ x.score|num(2) }}</span>{% endif %}
-    </div>
+    </div>{% endif %}
     {% if n.llm_summary %}<div class="summary"><span class="badge info">KI</span> {{ n.llm_summary }}</div>
     {% elif n.summary %}<div class="summary">{{ n.summary }}</div>{% endif %}
   </div>
-  <div id="rb-{{ n.id }}">{% include "partials/news_read_button.html" %}</div>
+  <div class="vfoot">
+    {% if params.tab == 'community' %}<a class="badge info" href="{{ n.url }}" target="_blank" rel="noopener noreferrer" title="Beitrag in Telegram öffnen">Telegram ↗</a>
+    {% else %}<span class="badge" title="Relevanz inkl. Aktualität">Relevanz {{ x.score|num(2) }}</span>{% endif %}
+    <div id="rb-{{ n.id }}">{% include "partials/news_read_button.html" %}</div></div>
 </article>
-{% endif %}
 {% else %}
 {% if params.tab == 'community' %}<p class="hint">Noch keine Community-Beiträge. Telegram-Kanäle fügen Sie unter <a href="/news?tab=sources">Quellen</a> hinzu; Beiträge erscheinen nach dem nächsten Abruf (alle 30 Minuten) – nur mit Bezug zu Ihren Positionen, solange „nur Beiträge mit Bezug“ aktiv ist.</p>
 {% else %}<p class="hint">Keine Meldungen für diese Auswahl. Quellen werden alle 30 Minuten abgerufen; Status unter „Quellen“.</p>{% endif %}

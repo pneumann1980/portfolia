@@ -2411,3 +2411,95 @@ def test_status_lists_teaser_hosts(client):
     assert st["backlog"]["teaser_hosts"][0][0] == "denied.example.com" and st["backlog"]["teaser_hosts"][0][1] >= 1
     page = client.get("/news?tab=status").text
     assert "Nur Teaser" in page and "denied.example.com" in page and "einmal pro Woche" in page
+
+
+# ----------------------------------------------------------------------------------------------------
+# Karten für Artikel und Community, Bilder verkleinern (0.59.0)
+# ----------------------------------------------------------------------------------------------------
+
+def _noise_jpeg(width=1200, height=800) -> bytes:
+    import io
+    import os
+
+    from PIL import Image
+
+    im = Image.frombytes("RGB", (width, height), os.urandom(width * height * 3))
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=80)
+    return out.getvalue()
+
+
+def test_shrink_resizes_large_images_to_webp_and_keeps_the_rest():
+    import io
+
+    from PIL import Image
+
+    from app.news import images as I
+
+    big = _noise_jpeg()
+    assert I.SHRINK_ABOVE < len(big) < I.MAX_IMG_BYTES
+    data, ctype = I.shrink(big, "image/jpeg")
+    im = Image.open(io.BytesIO(data))
+    assert ctype == "image/webp" and im.format == "WEBP" and im.size == (I.MAX_WIDTH, 533) and len(data) < len(big)
+    small = io.BytesIO()
+    Image.new("RGB", (400, 300), "#336699").save(small, "JPEG")
+    assert I.shrink(small.getvalue(), "image/jpeg") is None  # schon klein: Original
+    gif = io.BytesIO()
+    Image.new("RGB", (1200, 800), "#336699").save(gif, "GIF")
+    assert I.shrink(gif.getvalue(), "image/gif") is None  # GIF (Animation möglich): Original
+    assert I.shrink(b"kein Bild", "image/jpeg") is None  # defekt: Original, kein Fehler
+    tiff = io.BytesIO()
+    Image.new("RGB", (1200, 800), "#336699").save(tiff, "TIFF")
+    assert I.shrink(tiff.getvalue(), "image/jpeg") is None  # Format außerhalb JPEG/PNG/WEBP wird nicht dekodiert
+
+
+def test_cached_image_stores_shrunk_copy_and_shrinks_old_originals_once(ctx, monkeypatch):
+    import io
+    from pathlib import Path
+
+    from PIL import Image
+
+    from app.news import images as I
+
+    big = _noise_jpeg()
+    monkeypatch.setattr(I, "_public_host", lambda host, port: True)
+    ctx.http = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, content=big, headers={"content-type": "image/jpeg"})))
+    path, ctype = I.cached_image(ctx, "https://cdn.example.org/big.jpg")
+    assert ctype == "image/webp" and path.suffix == ".webp" and path.stat().st_size < len(big)
+    assert Image.open(path).size[0] == I.MAX_WIDTH
+    assert I.cached_image(ctx, "https://cdn.example.org/big.jpg")[0] == path  # Cache-Treffer
+    # früher gespeichertes Original (große .jpg) wird beim nächsten Abruf einmal verkleinert, die alte Datei entfällt
+    key = "legacy0000000000000000000000000000000000"
+    legacy = Path(ctx.config.cache_dir) / "img" / f"{key}.jpg"
+    legacy.write_bytes(big)
+    url = "https://cdn.example.org/legacy.jpg"
+    import hashlib
+
+    real_key = hashlib.sha256(url.encode()).hexdigest()[:40]
+    legacy = legacy.rename(legacy.with_name(f"{real_key}.jpg"))
+    ctx.db.x("INSERT INTO img_cache(key, path, content_type, size, fetched_at) VALUES (?,?,?,?,?)",
+             (real_key, str(legacy), "image/jpeg", len(big), iso(NOW)))
+    I._tried.discard(real_key)
+    ctx.http = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(500)))  # kein Netz nötig
+    new_path, new_type = I.cached_image(ctx, url)
+    assert new_type == "image/webp" and new_path.suffix == ".webp" and not legacy.exists()
+    row = ctx.db.q1("SELECT path, content_type, size FROM img_cache WHERE key=?", (real_key,))
+    assert row["path"] == str(new_path) and row["content_type"] == "image/webp" and row["size"] < len(big)
+    assert io.BytesIO(new_path.read_bytes()).getbuffer().nbytes == row["size"]
+
+
+def test_article_and_community_cards_share_layout_without_placeholders(client):
+    ctx = wctx(client)
+    with_img = add_item(ctx, "Artikel mit Bild zu Bitcoin", "https://zeitung.example.com/a", hours=1, source="reuters")
+    no_img = add_item(ctx, "Artikel ohne Bild zu Bitcoin", "https://zeitung.example.com/b", hours=2, source="reuters")
+    ctx.db.x("UPDATE news_item SET image_url='https://cdn.example.org/a.jpg' WHERE id=?", (with_img,))
+    page = client.get("/news?tab=articles&sort=time").text
+    assert 'id="news-list" class="vgrid"' in page and page.count('class="vcard news-item') >= 2
+    card = lambda iid: page[page.index(f'id="news-{iid}"'):page.index("</article>", page.index(f'id="news-{iid}"'))]  # noqa: E731
+    assert 'class="vthumb"' in card(with_img) and f'src="/img/news/{with_img}"' in card(with_img)
+    assert 'class="vthumb"' not in card(no_img) and 'class="vph"' not in card(no_img)  # kein Platzhalter
+    assert f'href="/news/{no_img}?back=' in card(no_img) and "Relevanz " in card(no_img)
+    assert "Artikel mit Bild zu Bitcoin" in card(with_img)  # Titel vollständig (nicht gekürzt)
+    comm = client.get("/news?tab=community").text
+    assert 'id="news-list" class="vgrid community"' in comm  # Community: gleiche Karten, Text bleibt ungekürzt (CSS)

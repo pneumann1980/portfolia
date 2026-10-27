@@ -444,7 +444,7 @@ body.panel-open { overflow: hidden; }
 .news-item .summary { font-size: 0.86rem; color: var(--ink-2); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-width: 520px) { .news-item .thumb { flex-basis: 96px; width: 96px; } }
 /* Video-/Kanal-Karten: großes 16:9-Vorschaubild, darunter Text; Raster ab ~560 px, auf dem Handy eine Spalte */
-.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 16px; }
+.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 16px; align-items: start; }
 .vgrid > .vmore, .vgrid > .hint { grid-column: 1 / -1; }
 .vcard { display: flex; flex-direction: column; gap: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; min-width: 0; }
 .vcard:last-child { border-bottom: 1px solid var(--border); }
@@ -456,7 +456,7 @@ body.panel-open { overflow: hidden; }
 .vcard .vchip.live { background: var(--crit-mark); }
 .vcard .vchip.short { right: auto; left: 8px; }
 .vcard .vbody { flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px 4px; min-width: 0; }
-.vcard .title { font-weight: 600; font-size: 1rem; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.vcard .title { font-weight: 600; font-size: 1rem; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; }  /* Titel nie kürzen */
 .vcard.read .title { color: var(--ink-2); font-weight: 500; }
 .vcard .vmeta { display: flex; flex-wrap: wrap; gap: 2px 0; font-size: 0.8rem; color: var(--ink-2); }
 .vcard .vmeta > span + span::before { content: "·"; margin: 0 6px; }
