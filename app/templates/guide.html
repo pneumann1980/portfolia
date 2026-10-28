@@ -47,7 +47,6 @@
     {% if task.facts %}<ul class="guide-facts">{% for x in task.facts %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
     {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
 
-    {% if task.kind != 'seite' %}
     {% set main = task.answers|rejectattr('advanced')|list %}
     {% set more = task.answers|selectattr('advanced')|list %}
     {% set pick = chosen or ((main|selectattr('recommended')|first) or {'id': ''}).id %}
@@ -75,13 +74,6 @@
         <a class="btn ghost" href="/quality/assistent?skip={{ task.kid }}">Überspringen</a>
       </div>
     </form>
-    {% else %}
-    <div class="row guide-actions">
-      <a class="btn primary" href="{{ task.href }}">{{ task.cta }}</a>
-      <a class="btn ghost" href="/quality/assistent?skip={{ task.kid }}">Überspringen</a>
-    </div>
-    <p class="hint">Nach der Aktion dort kommst du automatisch hierher zurück.</p>
-    {% endif %}
   </section>
 
   {% if task.finding %}

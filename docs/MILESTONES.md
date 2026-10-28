@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.10.2026 · Version 0.74.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.10.2026 · Version 0.75.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,28 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.75.0 – „Buchungen prüfen“: jede Aufgabe im Assistenten beantwortbar, Mobil-Ansicht, Abnahmetests
+
+Schritt 4 von „Assistent 2.0“.
+
+* **Keine Seiten-Aufgaben mehr:** Jede Karte ist ein Formular mit Antworten. Was bisher nur auf einer anderen Seite ging, ist jetzt eine Frage:
+  * **von dir vorgemerkte Buchungen** („Du hast diese Buchung zum erneuten Prüfen vorgemerkt. Stimmt sie?“) → *Ja, Vormerkung entfernen* / *Nein, Buchung zurücknehmen und neu
+    entscheiden* (die Zeile erscheint wieder bei den neuen Vorgängen) / *Weiß ich nicht*; beides auf der nächsten Karte rückgängig;
+  * **Rechenprüfung** (kritische Befunde, die kein Einzelfall sind) → *Zur Kenntnis genommen* (mit Prüfsumme: ändert sich der Befund, wird wieder gefragt; im Prüfbericht bleibt er
+    sichtbar) / *Weiß ich nicht*; der Prüfbericht nur noch unter „Andere Möglichkeiten“;
+  * **Vorgänge mit fehlender Angabe oder unklarer Deutung** → „Bei diesem Vorgang fehlt eine Angabe. Gehört er in dein Depot?“ mit dem Grund in Alltagssprache („Die Menge
+    fehlt.“ statt `to_qty fehlt`) → *Nein, gehört nicht dazu* / *Weiß ich nicht* direkt hier; *Angabe selbst ergänzen* öffnet den Import nur, wenn man es ausdrücklich wählt.
+* **Eine andere Seite nur auf ausdrücklichen Wunsch** (`go:open`): das Ziel kommt aus der Aufgabe selbst, nie aus dem Formular (kein offener Redirect).
+* **Mobil (390 px):** Themenliste ausgeblendet, Knöpfe in voller Breite, kompakter Kopf – „Aufgabe n von m“, Thema, Frage und die empfohlene Antwort stehen ohne Scrollen im Bild
+  (mit Chromium bei 390 × 844 geprüft).
+* **Texte:** keine Fachbegriffe mehr in den Antworten („gemeinsame Simulation unauffällig“ entfällt), Mehrzahl korrekt.
+* **Abnahmekriterien als Tests** (`tests/test_assistant_accept.py`): (a) keine automatische Weiterleitung, jede Karte hat eine Antwort, die hier verarbeitet wird; (b) höchstens eine
+  vorausgewählte Antwort, die empfohlene ist vorausgewählt (ein Klick); (c) Reihenfolge Aufgabe → Thema → Frage → Antworten, Mobil-Regeln vorhanden; (d) eine Zählung (Heute =
+  Assistent); (e) Rückgängig für die neuen Antwortarten; (f) keine Fachbegriffe (Befund, Prüfstapel, Integrität, Dublette, Feldnamen …) im sichtbaren Teil der Karte.
+
+**Grenzen:** Fehlende Angaben (Asset zuordnen, Menge, EUR-Wert) lassen sich weiterhin nur auf der Importseite ergänzen; die Übernahme einer Quelle („Soll Bitpanda maßgeblich
+sein?“) öffnet nach „Ja“ die Übernahmeseite, weil Abruf und Nachweis Minuten dauern. Beides ist eine ausdrücklich gewählte Antwort, nie eine Weiterleitung.
 
 ## 0.74.0 – „Buchungen prüfen“: für alle gleich, Quellenvorrang und Blockchain-Suche als Antwort, Protokoll
 

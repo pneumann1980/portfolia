@@ -364,7 +364,7 @@ als Antwort „Empfehlung übernehmen“ plus „Weiß ich nicht“ (nie eine Sa
 | 0.72.0 | `Task`-Modell und Adapter für Diagnose-Befunde inkl. Fragenkatalog für die 6 häufigsten Arten; neue Assistent-Seite (Vorlage oben), Themen-Reihenfolge, eine Zählung (Heute = Assistent), Integritäts-Doppelzählung entfernt, Meldung „N weitere erledigt“ + Rückgängig | L |
 | 0.73.0 | Adapter Prüfstapel (sichere Vorgänge als eine Frage, unklare Zeilen einzeln) und Klärungsfälle – keine Weiterleitung mehr aus dem Assistenten | L |
 | 0.74.0 | „Für alle gleich beantworten“, Quellenvorrang als Frage je Konto, Kettenbestand als Frage, Protokoll „Was ich geändert habe“; Flow-Modus nur noch für „Details“ | M |
-| 0.75.0 | Feinschliff nach deiner Rückmeldung (Texte, Reihenfolge), Mobil-Ansicht, Bedientest (Abnahmekriterien 2a–f als automatische Tests) | M |
+| 0.75.0 | Restliche Seiten-Aufgaben als Frage (vorgemerkte Buchungen, Rechenprüfung, unvollständige Vorgänge), Mobil-Ansicht, Abnahmekriterien 2a–f als automatische Tests (`tests/test_assistant_accept.py`) – umgesetzt; Feinschliff der Texte nach deiner Rückmeldung | M |
 
 ### 9. Annahmen, Grenzen, offene Punkte
 

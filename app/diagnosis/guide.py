@@ -101,7 +101,7 @@ class Answer:
 class Task:
     key: str
     theme: str
-    kind: str  # frage (Diagnose-Befund) | zeile (Prüfstapel) | stapel (sichere Vorgänge) | fall | seite
+    kind: str  # frage | zeile | stapel | fall | vorrang | erneut | rechnung | seite (Wahl „ansehen“)
     heading: str  # kurze Einordnung: Konto · Datum bzw. Thema
     question: str = ""
     context: str = ""
@@ -174,6 +174,9 @@ def tasks(ctx: Any, *, hints: bool = False) -> list[Task]:
             continue
         if it.kind == "pruefstapel":  # neue Vorgänge: sichere gesammelt, übrige einzeln als Frage
             out += _stack_tasks(ctx)
+            continue
+        if it.key == "erneut":  # selbst vorgemerkte Buchungen: je Buchung eine Frage
+            out += _recheck_tasks(ctx)
             continue
         if it.kind == "fall" and it.cta == "Lösung prüfen":  # Klärungsfall mit vorbereiteter Lösung → Frage
             out.append(Task(key=it.key, theme=_theme_of(it, report), kind="fall", heading="Zusammenhängende Buchungen",
@@ -311,17 +314,8 @@ def _stack_tasks(ctx: Any) -> list[Task]:
         if it.state == "zurueckgestellt":
             continue  # „Weiß ich nicht“ bzw. bewusst zurückgestellt
         key = f"zeile:{it.batch_id}:{it.event}"
-        if it.status in ("invalid", "unclear"):  # fehlende Angabe bzw. Deutung – braucht die Stapelseite
-            out.append(Task(key=key, theme="import", kind="seite", heading="Neuer Vorgang",
-                            question=("Bei diesem Vorgang fehlt eine Angabe (Asset, Konto oder EUR-Wert)."
-                                      if it.status == "invalid" else
-                                      "Diesen Vorgang kann Portfolia nicht eindeutig deuten."),
-                            context=(it.reason or "") + " Auf der nächsten Seite ergänzt bzw. ordnest du ihn ein; "
-                                                        "danach geht es hier weiter.",
-                            href=f"/journal/csv/{it.batch_id}", cta="Vorgang ansehen", ref=f"{it.batch_id}:{it.event}"))
-            continue
         out.append(Task(key=key, theme="import", kind="zeile", heading="Neuer Vorgang",
-                        ref=f"{it.batch_id}:{it.event}", item=it))
+                        ref=f"{it.batch_id}:{it.event}", item=it, href=f"/journal/csv/{it.batch_id}"))
     return out
 
 
@@ -402,6 +396,21 @@ def _tx_text(ctx: Any, tx_id: str) -> str:
             + (f" ({src})" if src else ""))
 
 
+_REASONS = [(re.compile(r"\b(?:from|to|fee)_qty fehlt"), "Die Menge fehlt."),
+            (re.compile(r"Asset für „([^“]+)“ zuordnen"), "Portfolia kennt das Asset „{0}“ noch nicht."),
+            (re.compile(r"\b(?:from|to)_account fehlt"), "Das Konto fehlt."),
+            (re.compile(r"value_eur|EUR-Wert"), "Der Wert in Euro fehlt.")]
+
+
+def _plain_reason(reason: str) -> str:
+    """Grund einer unvollständigen Importzeile in Alltagssprache (Feldnamen wie ``to_qty`` nur unter Details)."""
+    for rx, text in _REASONS:
+        m = rx.search(reason)
+        if m:
+            return text.format(*m.groups())
+    return "Eine Angabe fehlt oder ist ungültig." if "_" in reason else _first_sentence(reason)
+
+
 def _row_detail(ctx: Any, task: Task) -> Task:
     from app.csvimport import model as M
     from app.csvimport import queue as Q
@@ -419,6 +428,21 @@ def _row_detail(ctx: Any, task: Task) -> Task:
     target = next((str(t) for rc in rows for t in [(rc.match or {}).get("target"), *rc.dup_of] if t), "")
     target = _tx_text(ctx, target) if target else ""
     link_like = (it.cat or "") in LINK_CATS or it.status == "duplicate"
+    if it.status in ("invalid", "unclear"):  # fehlende Angabe bzw. Deutung: ergänzen geht nur auf der Importseite
+        missing = it.status == "invalid"
+        why = next((str(m) for rc in rows for m in ((rc.errors if missing else rc.warnings) or [])), it.reason)
+        task.question = ("Bei diesem Vorgang fehlt eine Angabe. Gehört er in dein Depot?" if missing else
+                         "Portfolia versteht diesen Vorgang nicht sicher. Gehört er in dein Depot?")
+        task.context = (f"{what}. " + (_plain_reason(why) + " " if why else "")
+                        + ("Zum Buchen braucht Portfolia z. B. das Asset, das Konto oder den Wert in Euro."
+                           if missing else "Zum Buchen musst du ihn einmal selbst einordnen."))
+        task.answers = [
+            Answer("go:open", "Ja – Angabe selbst ergänzen" if missing else "Ja – selbst einordnen",
+                   "Öffnet den Import mit diesem Vorgang (für Fortgeschrittene). Danach geht es hier weiter."),
+            Answer("row:skip", "Nein, gehört nicht in mein Depot",
+                   "Wird nicht gebucht; Portfolia fragt bei diesem Vorgang nicht wieder."),
+            Answer("row:defer", "Weiß ich nicht", NO_CHANGE + " Der Vorgang wird zurückgestellt.")]
+        return task
     if link_like:
         task.question = "Ist dieser Vorgang schon gebucht?"
         task.context = (f"{what}. Portfolia hat eine ähnliche vorhandene Buchung gefunden"
@@ -437,7 +461,7 @@ def _row_detail(ctx: Any, task: Task) -> Task:
     task.answers += [
         Answer("row:skip", "Nicht buchen (gehört nicht in mein Depot)",
                "Wird nicht gebucht; Portfolia fragt bei diesem Vorgang nicht wieder."),
-        Answer("row:defer", "Weiß ich nicht", NO_CHANGE + " Der Vorgang bleibt zurückgestellt im Prüfstapel.")]
+        Answer("row:defer", "Weiß ich nicht", NO_CHANGE + " Der Vorgang wird zurückgestellt.")]
     return task
 
 
@@ -474,13 +498,14 @@ def _case_detail(ctx: Any, task: Task) -> Task:
     if len(case.findings) > 1:
         facts.append(f"Die Antwort klärt {len(case.findings)} zusammenhängende Fragen auf einmal")
     if hyp.resolved:
-        facts.append(f"danach erledigt: {len(hyp.resolved)} Frage(n)")
+        n = len(hyp.resolved)
+        facts.append(f"danach erledigt: {n} Frage{'n' if n != 1 else ''}")
     task.facts = facts
     task.payload = {"hyp": hyp.id, "version": case.version,
                     "tokens": json.dumps({c.key: c.plan.token for c in hyp.cands})}
     task.answers = [
-        Answer("case:apply", yes, "Portfolia korrigiert alles Zusammengehörige in einem Schritt (Belege: "
-               f"{dec.reason.rstrip('.')}); rückgängig mit einem Klick.", recommended=True),
+        Answer("case:apply", yes, "Portfolia korrigiert alles Zusammengehörige in einem Schritt; rückgängig mit "
+               "einem Klick.", recommended=True),
         Answer("case:defer", no, NO_CHANGE + " Portfolia fragt erst wieder, wenn neue Belege vorliegen."),
         Answer("skip", "Weiß ich nicht", NO_CHANGE + (f" Tipp: {tip}" if tip else ""))]
     return task
@@ -503,6 +528,14 @@ def _deferred(ctx: Any, report: Any) -> set[str]:
     return out
 
 
+INTEGRITY_ACK_KEY = "guide.integrity_ack"  # Befund-ID → Prüfsumme („zur Kenntnis genommen“)
+
+
+def _integrity_fp(it: Any) -> str:
+    raw = f"{it.title}|{it.cause}|{it.impact_eur}|{','.join(sorted(it.tx_ids))}"
+    return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+
+
 def _integrity_tasks(ctx: Any, report: Any) -> list[Task]:
     from app.diagnosis import integrity as I
 
@@ -510,39 +543,128 @@ def _integrity_tasks(ctx: Any, report: Any) -> list[Task]:
     if run is None:
         return []
     known = {f.id for f in report.findings}
+    acked = ctx.db.get_state(INTEGRITY_ACK_KEY) or {}
     out = []
     for it in run.items:
         if it.severity != "kritisch" or it.status != "offen" or (it.finding_id and it.finding_id in known):
             continue
+        if acked.get(it.id) == _integrity_fp(it):
+            continue  # zur Kenntnis genommen und unverändert
+        calc = it.cause_kind == "rechenfehler"
+        where = " · ".join(x for x in (", ".join(it.accounts[:2]), ", ".join(it.assets[:3])) if x)
         out.append(Task(
-            key=f"integritaet:{it.id}", theme="pruefung", kind="seite", heading="Rechenprüfung",
-            question=f"Portfolia hat beim Nachrechnen etwas gefunden: {it.title}",
-            context=(it.cause or it.recommendation or "")[:400]
-            + (" Das ist meist kein Fehler deiner Daten, sondern eine Unstimmigkeit in der Berechnung – im Bericht "
-               "steht die vorgeschlagene Lösung." if it.cause_kind == "rechenfehler" else ""),
-            href=f"/quality/integrity?severity=kritisch#{it.id}", cta="Bericht ansehen",
-            weight=Decimal(str(it.impact_eur or 0))))
+            key=f"integritaet:{it.id}", theme="pruefung", kind="rechnung", ref=it.id,
+            heading="Nachrechnen" + (f" · {where}" if where else ""),
+            question="Beim Nachrechnen passt etwas nicht zusammen. Nimmst du das zur Kenntnis?",
+            context=(f"{it.title}. " + _first_sentence(it.cause or it.recommendation or "", 300)
+                     + (" Das liegt meist nicht an deinen Buchungen, sondern an der Berechnung." if calc else "")),
+            facts=[it.impact] if it.impact else [],
+            href=f"/quality/integrity?severity=kritisch#{it.id}", weight=Decimal(str(it.impact_eur or 0)),
+            answers=[
+                Answer("int:ack", "Zur Kenntnis genommen", NO_CHANGE + " Portfolia fragt nicht wieder, solange es "
+                       "gleich bleibt; im Prüfbericht bleibt es sichtbar.", recommended=calc),
+                Answer("skip", "Weiß ich nicht – später", NO_CHANGE),
+                Answer("go:open", "Prüfbericht mit Lösungsvorschlag ansehen", "Öffnet den Prüfbericht (für "
+                       "Fortgeschrittene). Danach geht es hier weiter.", advanced=True)]))
     return out
 
 
+def ack_integrity(ctx: Any, iid: str) -> bool:
+    from app.diagnosis import integrity as I
+
+    run = I.load(ctx.db)
+    it = next((x for x in (run.items if run is not None else []) if x.id == iid), None)
+    if it is None:
+        return False
+    cur = dict(ctx.db.get_state(INTEGRITY_ACK_KEY) or {})
+    cur[iid] = _integrity_fp(it)
+    ctx.db.set_state(INTEGRITY_ACK_KEY, cur)
+    return True
+
+
+def unack_integrity(ctx: Any, iid: str) -> bool:
+    cur = dict(ctx.db.get_state(INTEGRITY_ACK_KEY) or {})
+    if cur.pop(iid, None) is None:
+        return False
+    ctx.db.set_state(INTEGRITY_ACK_KEY, cur)
+    return True
+
+
+# ----------------------------------------------------------------------------------------------------
+# Selbst vorgemerkte Buchungen („erneut prüfen“)
+# ----------------------------------------------------------------------------------------------------
+
+RECHECK_KEPT_KEY = "guide.recheck_kept"  # Buchung → entfernte Vormerkung (für Rückgängig)
+
+
+def _recheck_tasks(ctx: Any) -> list[Task]:
+    from app.diagnosis import recheck as RC
+
+    out = []
+    marks = RC.marks(ctx.db)
+    for tx_id, mk in sorted(marks.items(), key=lambda kv: str(kv[1].get("at") or "")):
+        i = RC.info(ctx, tx_id, marks)
+        answers = [Answer("re:keep", "Ja, sie stimmt – Vormerkung entfernen", NO_CHANGE + " Die Buchung bleibt.")]
+        if i is not None and i["can_reopen"]:
+            answers.append(Answer("re:reopen", "Nein – Buchung zurücknehmen und neu entscheiden",
+                                  "Die Buchung zählt vorerst nicht; der Vorgang erscheint wieder bei den neuen "
+                                  "Vorgängen und Portfolia fragt dich dort neu."))
+        answers.append(Answer("skip", "Weiß ich nicht – später", NO_CHANGE))
+        out.append(Task(
+            key=f"erneut:{tx_id}", theme="doppelt", kind="erneut", ref=tx_id, heading="Von dir vorgemerkt",
+            question="Du hast diese Buchung zum erneuten Prüfen vorgemerkt. Stimmt sie?",
+            context=(f"Grund: {mk.get('reason')}. " if mk.get("reason") else "")
+            + (f"Herkunft: {i['file'] or 'Abruf'}." if i is not None else ""),
+            facts=[_tx_text(ctx, tx_id)], answers=answers, weight=Decimal(1)))
+    return out
+
+
+def recheck_keep(ctx: Any, tx_id: str) -> bool:
+    from app.diagnosis import recheck as RC
+
+    mk = RC.marks(ctx.db).get(tx_id)
+    if mk is None or RC.unmark(ctx, tx_id)["errors"]:
+        return False
+    kept = dict(ctx.db.get_state(RECHECK_KEPT_KEY) or {})
+    kept[tx_id] = mk
+    ctx.db.set_state(RECHECK_KEPT_KEY, dict(list(kept.items())[-100:]))
+    return True
+
+
+def recheck_restore(ctx: Any, tx_id: str) -> bool:
+    """„Ja, sie stimmt“ zurücknehmen: die Vormerkung wieder setzen (so, wie sie war)."""
+    from app.diagnosis import recheck as RC
+
+    kept = dict(ctx.db.get_state(RECHECK_KEPT_KEY) or {})
+    mk = kept.pop(tx_id, None)
+    if mk is None:
+        return False
+    m = RC.marks(ctx.db)
+    m[tx_id] = mk
+    ctx.db.set_state(RC.MARKS_KEY, m)
+    ctx.db.set_state(RECHECK_KEPT_KEY, kept)
+    return True
+
+
 def _page_task(it: Any, theme: str) -> Task:
-    """Aufgaben mit eigener Seite (bis zu ihrer Frage-Fassung): klar erklärt, Rückkehr hierher nach der Aktion."""
+    """Aufgaben, die nur auf einer eigenen Seite zu lösen sind (z. B. ein Kontostand als Beleg): erklärt, als
+    ausdrückliche Wahl „ansehen“ – nach der Aktion dort geht es hier weiter. Nie automatisch weitergeleitet."""
     if it.kind == "pruefstapel":
-        return Task(key=it.key, theme=theme, kind="seite", heading="Neue Vorgänge",
-                    question=f"{it.n} Vorgänge aus deinen Abrufen und Importen sind noch nicht gebucht. Übernehmen?",
-                    context="Solange sie offen sind, fehlen sie in Beständen, Kostenbasis und Steuer – darum zuerst. "
-                            "Auf der nächsten Seite übernimmst du die eindeutigen gesammelt („Sichere übernehmen“), "
-                            "unklare entscheidest du einzeln. Danach geht es hier weiter.",
-                    href=it.href, cta="Vorgänge ansehen und übernehmen", item=it, weight=it.weight)
-    if it.kind == "fall":
-        return Task(key=it.key, theme=theme, kind="seite", heading="Zusammenhängende Buchungen",
-                    question=f"Diese Buchungen gehören vermutlich zusammen: {it.title}",
-                    context=(CASE_TEXT.get(it.cta, "Portfolia hat die Belege zusammengestellt.")
-                             + " Danach geht es hier weiter."),
-                    href=it.href, cta="Zusammenhang ansehen", item=it, weight=it.weight)
-    return Task(key=it.key, theme=theme, kind="seite", heading=it.title, question=it.title,
-                context=it.recommendation + (f" – {it.why}" if it.why else ""), href=it.href, cta=it.cta or "Öffnen",
-                item=it, weight=it.weight)
+        q, ctxt, cta = (f"{it.n} Vorgänge aus deinen Abrufen und Importen sind noch nicht gebucht. Jetzt ansehen?",
+                        "Solange sie offen sind, fehlen sie in Beständen und Steuer – darum zuerst.",
+                        "Ja – Vorgänge ansehen und übernehmen")
+    elif it.kind == "fall":
+        q, ctxt, cta = (f"Diese Buchungen gehören vermutlich zusammen: {it.title}. Jetzt klären?",
+                        CASE_TEXT.get(it.cta, "Portfolia hat die Belege zusammengestellt."),
+                        "Ja – Zusammenhang ansehen")
+    else:
+        q, ctxt, cta = (f"{it.title} – jetzt ansehen?", it.recommendation + (f" – {it.why}" if it.why else ""),
+                        f"Ja – {it.cta or 'ansehen'}")
+    return Task(key=it.key, theme=theme, kind="seite", heading=THEME_LABEL.get(theme, theme), question=q,
+                context=ctxt, href=it.href, cta=cta, item=it, weight=it.weight,
+                answers=[Answer("go:open", cta, "Öffnet die passende Seite. Danach geht es hier weiter.",
+                                recommended=True),
+                         Answer("skip", "Später", NO_CHANGE)])
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -709,6 +831,8 @@ def detail(ctx: Any, task: Task) -> Task:
     if task.kind == "fall":
         return _case_detail(ctx, task)
     if task.kind != "frage":
+        if not task.answers:  # jede Aufgabe ist im Assistenten beantwortbar – mindestens „später“
+            task.answers = [Answer("skip", "Später", NO_CHANGE)]
         return task
     from app.diagnosis.engine import report_for
     from app.diagnosis.recommend import recommend

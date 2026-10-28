@@ -1,15 +1,16 @@
 """Assistent „Buchungen prüfen“: eine Frage je Aufgabe, Antwort speichern, weiter – Rückgängig auf der nächsten Karte.
 
 ``GET /quality/assistent`` zeigt die nächste Aufgabe (:mod:`app.diagnosis.guide`): Diagnose-Befunde als Frage in
-Alltagssprache mit Antworten, darunter jeweils die Wirkung; Aufgaben mit eigener Seite (neue Vorgänge,
-zusammenhängende Buchungen, Rechenprüfung) erklärt und mit einem Knopf – nach der Aktion dort geht es dank Flow-Modus
-(:mod:`app.web.flow`) hier weiter. ``POST …/antwort`` führt die zugeordnete, vorhandene Aktion aus (Korrektur mit
+Alltagssprache mit Antworten, darunter jeweils die Wirkung. Eine andere Seite öffnet sich nur, wenn man die Antwort
+„… ansehen“ ausdrücklich wählt (``go:open``) – nach der Aktion dort geht es dank Flow-Modus (:mod:`app.web.flow`)
+hier weiter. ``POST …/antwort`` führt die zugeordnete, vorhandene Aktion aus (Korrektur mit
 Vorschau-Token bzw. Entscheidung ohne Datenänderung), ``POST …/rueckgaengig`` nimmt die letzte Antwort zurück.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 from urllib.parse import urlencode
 
@@ -27,6 +28,7 @@ log = logging.getLogger(__name__)
 FLOW_MAX_AGE = 4 * 3600
 COOKIES = ("dq_flow", "dq_cur", "dq_skip", "dq_hints")
 BASE = "/quality/assistent"
+_SAFE = re.compile(r"[A-Za-z0-9_:.\-]{1,120}")
 MARK_TEXT = {"defer": "Für später vorgemerkt – nichts geändert.", "reject": "Gespeichert: beide Buchungen bleiben.",
              "dismiss": "Gespeichert: ist in Ordnung so."}
 
@@ -56,7 +58,7 @@ def _params(form: Any) -> dict[str, list[str]]:
 def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new: int = 0, hints: str = "",
           done: int = 0, gone: int = 0, acts: str = "", kl: str = "", dids: str = "",
           same: dict[str, str] | None = None, errors: list[str] | None = None, chosen: str = "",
-          values: dict[str, list[str]] | None = None) -> Response:
+          values: dict[str, list[str]] | None = None, more: dict[str, str] | None = None) -> Response:
     ctx = get_ctx(request)
     show_hints = hints == "1" if hints else (request.cookies.get("dq_hints") == "1" and not new)
     skipped = [] if new else G.parse_skip(request.cookies.get("dq_skip", ""))
@@ -75,6 +77,8 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
         undo = {"kl": kl}
     elif dids and all(x.isdigit() for x in dids.split(",")):
         undo = {"dids": dids}
+    else:  # vorgemerkte Buchung bzw. Rechenprüfung
+        undo = next(({k: v} for k, v in (more or {}).items() if v and _SAFE.fullmatch(v)), None)
     batch = None
     if same and same.get("sig") and same.get("sa"):  # „für alle gleich beantworten“ anbieten
         n = len(G.similar(ctx, same["sig"], same["sa"]))
@@ -115,6 +119,19 @@ def _undo(ctx: Any, v: dict[str, str]) -> Response:
             errs += BA.undo(svc, a).get("errors") or []
         return _go(err=" ".join(errs[:3])) if errs else _go(msg="Zurückgenommen – die Vorgänge sind wieder offen.",
                                                             new=1)
+    if v["rm"]:  # „Buchung stimmt“ → Vormerkung wieder setzen
+        ok = G.recheck_restore(ctx, v["rm"])
+        return _go(msg="Zurückgenommen – die Buchung ist wieder vorgemerkt.", new=1) if ok else \
+            _go(err="Diese Antwort ist schon zurückgenommen.")
+    if v["ro"].isdigit():  # zurückgenommene Buchung wieder in Kraft setzen
+        from app.diagnosis import recheck as RC
+
+        errs = RC.undo(ctx, int(v["ro"]))["errors"]
+        return _go(err=" ".join(errs)) if errs else _go(msg="Zurückgenommen – die Buchung zählt wieder.", new=1)
+    if v["ia"]:
+        ok = G.unack_integrity(ctx, v["ia"])
+        return _go(msg="Zurückgenommen – die Aufgabe ist wieder offen.", new=1) if ok else \
+            _go(err="Diese Antwort ist schon zurückgenommen.")
     if v["kl"]:  # Klärungsfall
         from app.diagnosis import clarify as K
 
@@ -138,9 +155,10 @@ def make_router() -> APIRouter:
     @router.get(BASE, response_class=HTMLResponse)
     def assistant(request: Request, msg: str = "", err: str = "", skip: str = "", new: int = 0, hints: str = "",
                   done: int = 0, gone: int = 0, acts: str = "", kl: str = "", dids: str = "", sig: str = "",
-                  sa: str = "", st: str = "") -> Response:
+                  sa: str = "", st: str = "", rm: str = "", ro: int = 0, ia: str = "") -> Response:
         return _page(request, msg=msg, err=err, skip=skip, new=new, hints=hints, done=done, gone=gone, acts=acts,
-                     kl=kl, dids=dids, same={"sig": sig[:80], "sa": sa[:80], "st": st[:160]})
+                     kl=kl, dids=dids, same={"sig": sig[:80], "sa": sa[:80], "st": st[:160]},
+                     more={"rm": rm[:120], "ro": str(ro or ""), "ia": ia[:80]})
 
     @router.post(f"{BASE}/antwort")
     async def answer(request: Request) -> Response:
@@ -160,6 +178,11 @@ def make_router() -> APIRouter:
 
         if aid == "skip":
             return _go(skip=str(form.get("kid") or ""))
+        if aid == "go:open":  # ausdrücklich gewählt: Seite öffnen (Ziel aus der Aufgabe, nie aus dem Formular)
+            href = await run_in_threadpool(_href_of, ctx, str(form.get("kid") or ""))
+            return RedirectResponse(href, status_code=303) if href else _go(err="Die Aufgabe besteht nicht mehr.")
+        if typ in ("erneut", "rechnung"):
+            return await run_in_threadpool(_simple_answer, ctx, typ, fid, aid, gone)
         if typ in ("stapel", "zeile"):
             return await _stack_answer(ctx, typ, fid, aid, form, gone)
         if typ == "fall":
@@ -197,6 +220,30 @@ def make_router() -> APIRouter:
             return _go(err=" ".join(res.errors))
         return _go(msg="Gespeichert und korrigiert.", done=res.decision_id, gone=await run_in_threadpool(gone),
                    sig=sig, sa=aid if not params else "", st=text)
+
+    def _href_of(ctx: Any, kid: str) -> str:
+        t = next((t for t in G.tasks(ctx, hints=True) if t.kid == kid), None)
+        return t.href if t is not None and t.href.startswith("/") and not t.href.startswith("//") else ""
+
+    def _simple_answer(ctx: Any, typ: str, ref: str, aid: str, gone: Any) -> Response:
+        """Vorgemerkte Buchung (behalten/zurücknehmen) bzw. Rechenprüfung (zur Kenntnis genommen)."""
+        from app.diagnosis import recheck as RC
+
+        if typ == "rechnung" and aid == "int:ack":
+            if not G.ack_integrity(ctx, ref):
+                return _go(err="Die Aufgabe besteht nicht mehr.")
+            return _go(msg="Zur Kenntnis genommen – nichts geändert.", ia=ref, gone=gone())
+        if typ == "erneut" and aid == "re:keep":
+            if not G.recheck_keep(ctx, ref):
+                return _go(err="Die Buchung ist nicht mehr vorgemerkt.")
+            return _go(msg="Gespeichert: die Buchung stimmt.", rm=ref, gone=gone())
+        if typ == "erneut" and aid == "re:reopen":
+            res = RC.reopen(ctx, ref)
+            if res["errors"]:
+                return _go(err=" ".join(res["errors"]))
+            return _go(msg="Zurückgenommen – der Vorgang ist wieder bei den neuen Vorgängen.", ro=res["id"],
+                       gone=gone())
+        return _go(err="Unbekannte Antwort.")
 
     def _signature(ctx: Any, fid: str, aid: str) -> tuple[str, str]:
         """Muster des Befunds und Antworttext – vor dem Ausführen (danach gibt es den Befund nicht mehr)."""
@@ -356,7 +403,7 @@ def make_router() -> APIRouter:
     async def undo(request: Request) -> Response:
         ctx = get_ctx(request)
         form = await request.form()
-        vals = {k: str(form.get(k) or "") for k in ("acts", "kl", "dids", "d", "back")}
+        vals = {k: str(form.get(k) or "") for k in ("acts", "kl", "dids", "d", "back", "rm", "ro", "ia")}
         return await run_in_threadpool(_undo, ctx, vals)
 
     @router.get(f"{BASE}/ende")

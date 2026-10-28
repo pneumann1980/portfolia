@@ -1065,7 +1065,7 @@ details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
 .guide { display: grid; gap: 14px; max-width: 860px; margin: 0 auto; }
 .guide-head { display: grid; gap: 6px; }
 .guide-head-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.guide-head-row .btn { margin-left: auto; }
+.guide-head-row .btn:first-of-type { margin-left: auto; }
 .guide-themes { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; margin: 0; padding: 0; font-size: .85em; color: var(--muted); }
 .guide-themes li.cur { color: var(--text); font-weight: 600; }
 .guide-themes li.done { text-decoration: line-through; }
@@ -1083,3 +1083,13 @@ details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
 .guide-a:not(:has(input:checked)) .guide-params { display: none; }
 .guide-facts { margin: 4px 0 8px; padding-left: 1.2em; }
 .guide-facts li { margin: 2px 0; }
+/* Mobil (Abnahme c: Aufgabe n von m, Thema und Frage ohne Scrollen bei 390 px) */
+@media (max-width: 600px) {
+  .guide { gap: 10px; }
+  .guide-themes { display: none; }
+  .guide-head-row { gap: 6px; }
+  .guide-head-row .btn { padding: 4px 8px; }
+  .guide-card .guide-q { font-size: 1.1em; margin: 2px 0 6px; }
+  .guide-a { padding: 10px; }
+  .guide-actions .btn { flex: 1 1 100%; justify-content: center; text-align: center; }
+}
