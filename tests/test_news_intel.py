@@ -2499,9 +2499,10 @@ def test_cached_image_stores_shrunk_copy_and_shrinks_old_originals_once(ctx, mon
     from app.news import images as I
 
     big = _noise_jpeg()
-    monkeypatch.setattr(I, "_public_host", lambda host, port: True)
-    ctx.http = httpx.Client(transport=httpx.MockTransport(
-        lambda req: httpx.Response(200, content=big, headers={"content-type": "image/jpeg"})))
+    fetch = SafeFetcher(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, content=big, headers={"content-type": "image/jpeg"}))),
+        resolver=lambda host, port: ["93.184.216.34"], pin=False)
+    monkeypatch.setattr(I, "_fetchers", {id(ctx): fetch})
     path, ctype = I.cached_image(ctx, "https://cdn.example.org/big.jpg")
     assert ctype == "image/webp" and path.suffix == ".webp" and path.stat().st_size < len(big)
     assert Image.open(path).size[0] == I.MAX_WIDTH
@@ -2540,3 +2541,86 @@ def test_article_and_community_cards_share_layout_without_placeholders(client):
     assert "Artikel mit Bild zu Bitcoin" in card(with_img)  # Titel vollständig (nicht gekürzt)
     comm = client.get("/news?tab=community").text
     assert 'id="news-list" class="vgrid community"' in comm  # Community: gleiche Karten, Text bleibt ungekürzt (CSS)
+
+
+def _png_bytes(w=16, h=16) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), "#336699").save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_image_proxy_pins_checked_address_against_dns_rebinding(ctx, monkeypatch):
+    """M7: Prüfung und Verbindung nutzen dieselbe Adresse; ein zweiter, interner DNS-Treffer wird nie angesprochen."""
+    from app.news import images as I
+
+    answers = iter([["93.184.216.34"], ["127.0.0.1"], ["127.0.0.1"]])
+    resolved: list[str] = []
+    seen_hosts: list[str] = []
+
+    def handler(req):
+        seen_hosts.append(req.url.host)
+        return httpx.Response(200, content=_png_bytes(), headers={"content-type": "image/png"})
+
+    def resolver(host, port):
+        resolved.append(host)
+        return next(answers)
+
+    fetch = SafeFetcher(client=httpx.Client(transport=httpx.MockTransport(handler)), resolver=resolver, pin=True)
+    monkeypatch.setattr(I, "_fetchers", {id(ctx): fetch})
+    assert I.cached_image(ctx, "https://rebind.example.org/a.png") is not None
+    assert seen_hosts == ["93.184.216.34"] and len(resolved) == 1  # nur die geprüfte Adresse, einmal aufgelöst
+
+
+def test_image_proxy_refuses_internal_targets_redirects_and_oversized_or_svg(ctx, monkeypatch):
+    from app.news import images as I
+
+    def handler(req):
+        if req.url.path == "/redir":
+            return httpx.Response(302, headers={"location": "http://intern.example.org/x.png"})
+        if req.url.path == "/svg":
+            return httpx.Response(200, content=b"<svg/>", headers={"content-type": "image/svg+xml"})
+        if req.url.path == "/big":
+            return httpx.Response(200, content=b"x" * (I.MAX_IMG_BYTES + 10), headers={"content-type": "image/png"})
+        if req.url.path == "/html":
+            return httpx.Response(200, content=b"<html/>", headers={"content-type": "text/html"})
+        return httpx.Response(200, content=_png_bytes(), headers={"content-type": "image/png"})
+
+    def resolver(host, port):
+        return ["10.0.0.7"] if host.startswith("intern") else ["93.184.216.34"]
+
+    fetch = SafeFetcher(client=httpx.Client(transport=httpx.MockTransport(handler)), resolver=resolver, pin=False)
+    monkeypatch.setattr(I, "_fetchers", {id(ctx): fetch})
+    assert I.cached_image(ctx, "http://intern.example.org/a.png") is None  # direkt intern
+    assert I.cached_image(ctx, "https://cdn.example.org/redir") is None  # Weiterleitung auf internen Host
+    assert I.cached_image(ctx, "https://cdn.example.org/svg") is None
+    assert I.cached_image(ctx, "https://cdn.example.org/big") is None
+    assert I.cached_image(ctx, "https://cdn.example.org/html") is None
+    assert I.cached_image(ctx, "https://cdn.example.org:8443/a.png") is None  # nur Port 80/443
+    assert I.cached_image(ctx, "https://cdn.example.org/ok.png") is not None
+
+
+def test_image_proxy_still_reaches_explicitly_allowed_lan_host(ctx, monkeypatch):
+    """Die Telegram-Bridge im LAN bleibt erreichbar – nur dieser Host:Port, kein anderer interner."""
+    from app.news import images as I
+
+    ctx.http = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, content=_png_bytes(), headers={"content-type": "image/png"})))
+    fetch = SafeFetcher(client=httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(500))),
+                        resolver=lambda host, port: ["192.168.1.9"], pin=False)
+    monkeypatch.setattr(I, "_fetchers", {id(ctx): fetch})
+    allow = frozenset({("bridge.lan", 3000)})
+    assert I.cached_image(ctx, "http://bridge.lan:3000/media/1.png", allow) is not None
+    assert I.cached_image(ctx, "http://router.lan:3000/media/1.png", allow) is None  # anderer interner Host
+    assert I.cached_image(ctx, "http://bridge.lan:8080/media/1.png", allow) is None  # anderer Port
+
+
+def test_safefetcher_allowed_types_prefix_entry():
+    f = mock_fetcher(lambda req: httpx.Response(200, content=b"x", headers={"content-type": "image/png"}))
+    assert f.get("https://a.example.org/x", allowed_types=("image/",)).content_type == "image/png"
+    with pytest.raises(FetchError) as e:
+        f.get("https://a.example.org/x", allowed_types=("text/html",))
+    assert e.value.code == "content_type"

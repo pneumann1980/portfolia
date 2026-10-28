@@ -170,8 +170,9 @@ class SafeFetcher:
                     ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
                     if r.status_code >= 400:
                         raise FetchError(self._status_code(r.status_code), r.status_code)
-                    if ctype and allowed_types and ctype not in allowed_types:
-                        raise FetchError("content_type", r.status_code)
+                    if ctype and allowed_types and not any(
+                            ctype == t or (t.endswith("/") and ctype.startswith(t)) for t in allowed_types):
+                        raise FetchError("content_type", r.status_code)  # Eintrag auf „/“ = Präfix („image/“)
                     declared = r.headers.get("content-length")
                     if declared and declared.isdigit() and int(declared) > self.max_bytes:
                         raise FetchError("too_large", r.status_code)

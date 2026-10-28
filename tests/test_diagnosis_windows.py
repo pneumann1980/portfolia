@@ -247,3 +247,17 @@ def test_min_with_matches_the_reference_implementation():
         when = base + timedelta(hours=rnd.randrange(-20, 430))
         eff = D(rnd.choice((-9, -4, -1, 1, 3, 8)))
         assert ser.min_with(when, eff) == ser.min_running(extra=[(when, eff)]), (when, eff)
+
+
+def test_inline_chart_json_is_script_safe(cfg):
+    """L2: Daten in ``<script type="application/json">`` gehen durch ``tojson`` – ``</script>`` bricht nichts aus."""
+    from pathlib import Path
+
+    from app.main import build_app
+
+    for name in ("diagnosis_windows.html", "partials/klaerung_fenster.html"):
+        src = (Path(__file__).resolve().parent.parent / "app" / "templates" / name).read_text(encoding="utf-8")
+        assert "chart|safe" not in src and "chart|tojson" in src, name
+    env = build_app(cfg, start_scheduler=False).state.templates.env
+    out = env.from_string('<script type="application/json">{{ x|tojson }}</script>').render(x={"l": "</script><b>&"})
+    assert out.count("</script>") == 1 and "\\u003c/script\\u003e" in out

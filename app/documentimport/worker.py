@@ -27,16 +27,25 @@ _BOOT = ("import sys; sys.path.insert(0, sys.argv[1]); from app.documentimport.w
          "raise SystemExit(main(sys.argv[2:]))")
 
 
-def _limit() -> None:  # pragma: no cover - läuft im Kindprozess
+def apply_limits(mem: int | None = None, cpu: int | None = None) -> dict[str, int]:
+    """Speicher- und CPU-Grenzen für den **eigenen** Prozess setzen (aufgerufen im Kindprozess).
+
+    Bewusst nicht als ``preexec_fn`` von ``subprocess.Popen``: das läuft zwischen ``fork`` und ``exec`` und ist in
+    Prozessen mit Threads laut Python-Dokumentation unsicher (Verklemmung möglich). Tesseract & Co. erben die Grenzen.
+    Rückgabe: tatsächlich gesetzte Soft-Limits (für Tests/Diagnose)."""
     import resource
 
-    for res, val in ((resource.RLIMIT_AS, MEM_LIMIT), (resource.RLIMIT_CPU, CPU_LIMIT)):
+    applied: dict[str, int] = {}
+    for name, res, val in (("as", resource.RLIMIT_AS, MEM_LIMIT if mem is None else mem),
+                           ("cpu", resource.RLIMIT_CPU, CPU_LIMIT if cpu is None else cpu)):
         try:
             _soft, hard = resource.getrlimit(res)
             new = val if hard == resource.RLIM_INFINITY else min(val, hard)
             resource.setrlimit(res, (new, hard))
+            applied[name] = new
         except (ValueError, OSError):
             pass
+    return applied
 
 
 class Cancelled(DocumentError):
@@ -61,8 +70,7 @@ def extract_isolated(data: bytes, *, language: str = "deu+eng", ocr: bool = True
         proc = subprocess.Popen(  # noqa: S603 - fester Aufruf ohne Shell
             [sys.executable, "-I", "-c", _BOOT, str(ROOT), str(path), language, "1" if ocr else "0",
              "1" if plain else "0"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=str(ROOT),
-            preexec_fn=_limit if os.name == "posix" else None)
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=str(ROOT))
         end = time.monotonic() + (timeout or WALL_LIMIT)
         stdout = b""
         while True:
@@ -92,6 +100,8 @@ def extract_isolated(data: bytes, *, language: str = "deu+eng", ocr: bool = True
 
 
 def main(argv: list[str]) -> int:  # pragma: no cover - Kindprozess
+    if os.name == "posix":
+        apply_limits()
     path, language, ocr = argv[0], argv[1], argv[2] == "1"
     plain = len(argv) > 3 and argv[3] == "1"
     try:

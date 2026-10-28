@@ -437,3 +437,27 @@ def test_label_matching_folds_umlauts_lost_by_ocr():
     assert PR._label_of("Waehrung: EUR")[0] == "ccy"
     assert PR._header(["Datum", "Gebuhr"]) is None  # < 3 erkannte Spalten
     assert set(PR._header(["Datum", "Gebuhr", "Menge", "Preis"]).values()) == {"date", "fee", "quantity", "price"}
+
+
+def test_worker_limits_are_set_in_the_child_not_via_preexec_fn() -> None:
+    """L1: ``preexec_fn`` ist in Prozessen mit Threads unsicher – die Grenzen setzt der Kindprozess selbst."""
+    import ast
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from app.documentimport import worker
+
+    tree = ast.parse(Path(worker.__file__).read_text(encoding="utf-8"))
+    kws = {k.arg for n in ast.walk(tree) if isinstance(n, ast.Call) for k in n.keywords}
+    assert "preexec_fn" not in kws
+    code = (f"import sys; sys.path.insert(0, {str(worker.ROOT)!r}); import resource; "
+            "from app.documentimport.worker import apply_limits; "
+            "print(apply_limits(300*1024*1024, 7)); print(resource.getrlimit(resource.RLIMIT_CPU)[0]); "
+            "\ntry:\n    bytearray(900*1024*1024)\n    print('allocated')\nexcept MemoryError:\n"
+            "    print('MemoryError')")
+    out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60,
+                         check=False)
+    lines = out.stdout.split()
+    assert "'as':" in out.stdout and "'cpu':" in out.stdout, out
+    assert lines[-2] == "7" and lines[-1] == "MemoryError", out

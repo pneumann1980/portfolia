@@ -36,7 +36,7 @@
       <span class="hint">{{ tr.points|length }} Referenz{{ 'en' if tr.points|length != 1 else '' }}{% if tr.last and tr.last.diff %} · letzte Differenz {{ tr.last.diff|qty_exact }}{% if r.value is not none %} (≈ {{ r.value|eur }}){% endif %}{% endif %}</span></summary>
     <div class="stack" style="gap:10px;margin-top:10px">
       <div class="chart win-chart" data-chart="devwindows" data-inline="wd-{{ loop.index }}" data-lazy style="height:340px" role="img" aria-label="Referenzbestände, Ledger-Bestand und Differenz von {{ tr.account }} {{ tr.asset }}"></div>
-      <script type="application/json" id="wd-{{ loop.index }}">{{ r.chart|safe }}</script>
+      <script type="application/json" id="wd-{{ loop.index }}">{{ r.chart|tojson }}</script>
       <p class="hint">Gefüllte Punkte: Referenz (Nachweis). Ringe: Ledger-Bestand zum selben Zeitpunkt. Unten: Referenz − Ledger. Getönte Bänder sind Fenster zwischen zwei Nachweisen; Klick öffnet Buchungen und Kandidaten. Es gibt <em>keine</em> durchgehende Linie, weil zwischen den Nachweisen nichts gemessen wurde.</p>
 
       {% for c in tr.contradictions %}<div class="alert warn"><span class="icon">!</span><div>{{ c }}</div></div>{% endfor %}

@@ -1426,6 +1426,24 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.64.0 – Härtung: Bildproxy mit angepinnter Adresse, Dokument-Kindprozess ohne `preexec_fn`, skriptsichere Diagramm-Daten
+
+Paket E aus `docs/ARBEITSPLAN.md` (M7, L1, L2; L4 steckt seit 0.61.0 im Modulbericht).
+
+* **M7 Bildproxy:** Bilder fremder Hosts holt `news.images` jetzt über denselben `SafeFetcher` wie der Artikelabruf: Hostname einmal
+  auflösen, alle Adressen prüfen (öffentlich, nicht privat/loopback/CGNAT …), Verbindung **an die geprüfte Adresse** (Host-Header/SNI bleiben),
+  Weiterleitungen einzeln geprüft, keine Proxy-Umgebung, ≤ 2 MB, nur `image/*` (kein SVG). Vorher waren Prüfung und Abruf getrennt
+  (DNS-Rebinding: Feed-Betreiber hätte ein Bild von Router/NAS holen lassen können).
+* **Ausnahme Telegram-Bridge:** Der Feed-Server der Quelle (Host:Port) darf weiter direkt (LAN) angesprochen werden, **nur** dieser; Weiterleitungen
+  von dort auf andere Hosts laufen wieder über den geschützten Abruf. Andere interne Hosts oder Ports werden abgewiesen.
+* **L1 Dokument-Kindprozess:** Die Speicher-/CPU-Grenzen setzt der Kindprozess selbst (`worker.apply_limits()` am Anfang von `main`) statt über
+  `preexec_fn` (zwischen `fork` und `exec` in Prozessen mit Threads laut Python-Dokumentation unsicher, Verklemmung möglich). Wirkung für Tesseract
+  & Co. unverändert (Grenzen werden vererbt). Test: Grenzen gesetzt, 900-MB-Allokation scheitert mit `MemoryError`, kein `preexec_fn` im Code.
+* **L2 Diagramm-Daten in `<script type="application/json">`:** `|tojson` statt vorgefertigtem JSON mit `|safe` (beide Vorlagen); `</script>`,
+  `<`, `>` und `&` in Beschriftungen werden maskiert.
+* **Tests:** Rebinding (nur die geprüfte Adresse wird angesprochen), interne Ziele/Weiterleitungen/SVG/zu groß/falscher Typ/Port 8443,
+  Bridge-Host erlaubt – anderer interner Host/Port nicht, Präfix-Typen im `SafeFetcher`.
+
 ## 0.63.0 – Betrieb: eigener News-Pool, keine blockierende Datenbankarbeit im Ereignisschleifen-Thread, weniger Speicher je Verbindung
 
 Paket D aus `docs/ARBEITSPLAN.md` (M4, M5, M6).

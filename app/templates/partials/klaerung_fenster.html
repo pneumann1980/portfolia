@@ -8,7 +8,7 @@
       {% for t in tr.summary %}<span class="badge info">{{ t }}</span>{% endfor %}
       <a class="hint" href="/quality/diagnose/windows?acc={{ tr.account|urlencode }}&asset={{ tr.asset|urlencode }}&all=1">alle Fenster dieser Position</a></div>
     <div class="chart win-chart" data-chart="devwindows" data-inline="kwd-{{ loop.index }}" data-lazy style="height:300px" role="img" aria-label="Referenzbestände, Ledger-Bestand und Differenz von {{ tr.account }} {{ tr.asset }}"></div>
-    <script type="application/json" id="kwd-{{ loop.index }}">{{ row.chart|safe }}</script>
+    <script type="application/json" id="kwd-{{ loop.index }}">{{ row.chart|tojson }}</script>
     <details class="vk-table"><summary class="hint">Referenzpunkte als Tabelle</summary>
       <ul class="plain-list">{% for p in tr.points %}<li>{{ p.at|datetime_de }} ({{ p.basis_label }}): Referenz {{ sens(p.qty|qty_exact) }}, Ledger {{ sens(p.ledger|qty_exact) }}, Differenz {{ sens(p.diff|qty_exact) }}{% if p.conflict %} <span class="badge crit">widersprüchlich</span>{% endif %} <span class="hint">· {{ source_label.get(p.source, 'sonstiger Beleg') }}</span></li>{% endfor %}</ul></details>
     {% for c in tr.contradictions %}<div class="alert warn"><span class="icon">!</span><div>{{ c }}</div></div>{% endfor %}

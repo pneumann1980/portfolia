@@ -16,6 +16,7 @@ from app.importer.loader import check_import_dir
 from app.jobs import tasks
 from app.news.config import SourcesConfig
 from app.news.dedupe import normalize_title, normalize_url
+from app.news.safefetch import SafeFetcher
 from app.news.youtube import parse_channel_page, parse_count, parse_duration
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -274,7 +275,11 @@ def telegram_ctx(ctx, monkeypatch):
         return base._transport.handle_request(request)  # type: ignore[attr-defined]
 
     ctx.http = httpx.Client(transport=httpx.MockTransport(handler))
-    monkeypatch.setattr(I, "_public_host", lambda host, port: host == "cdn4.telesco.example")
+    # öffentliche Bild-Hosts laufen über den SSRF-geschützten Abruf (Mock-Transport; „cdn4“ löst öffentlich auf)
+    fetcher = SafeFetcher(
+        client=httpx.Client(transport=httpx.MockTransport(handler)), pin=False,
+        resolver=lambda host, port: ["93.184.216.34"] if host == "cdn4.telesco.example" else ["10.0.0.5"])
+    monkeypatch.setattr(I, "_fetchers", {id(ctx): fetcher})
     cfg = SourcesConfig(ctx.config.sources_path, ROOT / "examples" / "sources.yaml")
     d = cfg.data()
     from ruamel.yaml.comments import CommentedMap

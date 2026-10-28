@@ -4,7 +4,6 @@ Recherche liest (ausschließlich lesend) bei der Datenquelle – siehe :mod:`app
 
 from __future__ import annotations
 
-import json
 import re
 from datetime import UTC
 from decimal import Decimal
@@ -64,7 +63,7 @@ def _rows(ctx: Any, report: Any, only_dev: bool, acc: str, asset: str) -> list[d
         refs = {tx_id for s in tr.segments for tx_id in s.tx_ids}
         txs = {i: idx.ref(idx.by_id[i]) for i in refs if i in idx.by_id}
         plans = {sg.key: RS.plan_for(ctx, report, tr, sg) for sg in tr.segments if sg.kind != "ok"}
-        out.append({"tr": tr, "value": value, "chart": json.dumps(_chart_data(tr, fiat)), "txs": txs, "plans": plans,
+        out.append({"tr": tr, "value": value, "chart": _chart_data(tr, fiat), "txs": txs, "plans": plans,
                     "sort": (not tr.deviating, -(value or 0), tr.account, tr.asset)})
     out.sort(key=lambda r: r["sort"])
     return out

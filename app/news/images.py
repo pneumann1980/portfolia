@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import io
-import ipaddress
 import logging
-import socket
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -14,6 +13,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from app.context import AppContext
+from app.news.safefetch import FetchError, SafeFetcher
 from app.util.timeutil import iso
 
 log = logging.getLogger(__name__)
@@ -55,22 +55,35 @@ def shrink(data: bytes, ctype: str) -> tuple[bytes, str] | None:
     return (new, "image/webp") if 0 < len(new) < len(data) else None
 
 
-def _public_host(host: str, port: int) -> bool:
+_fetchers: dict[int, SafeFetcher] = {}
+_fetchers_lock = threading.Lock()
+
+
+def fetcher_for(ctx: AppContext) -> SafeFetcher:
+    """Fremde Bild-Hosts über denselben SSRF-Schutz wie der Artikelabruf: die geprüfte Adresse wird angepinnt (kein
+    DNS-Rebinding zwischen Prüfung und Verbindung), Weiterleitungen einzeln geprüft, keine Proxy-Umgebung."""
+    with _fetchers_lock:
+        f = _fetchers.get(id(ctx))
+        if f is None:
+            f = SafeFetcher(max_bytes=MAX_IMG_BYTES, max_redirects=4, timeout_s=10.0)
+            _fetchers[id(ctx)] = f
+        return f
+
+
+def _fetch_public(ctx: AppContext, url: str) -> tuple[bytes, str] | None:
     try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except OSError:
-        return False
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
-                or ip.is_unspecified):
-            return False
-    return bool(infos)
+        got = fetcher_for(ctx).get(url, accept="image/avif,image/webp,image/*", allowed_types=("image/",))
+    except FetchError as e:
+        log.debug("Bild nicht abrufbar (%s): %s", e.code, urlsplit(url).hostname)
+        return None
+    if "svg" in got.content_type or len(got.body) > MAX_IMG_BYTES:
+        return None
+    return got.body, got.content_type
 
 
 def cached_image(ctx: AppContext, url: str, allow: frozenset[tuple[str, int]] = frozenset()) -> tuple[Path, str] | None:
     """Bild holen und cachen. ``allow``: ausdrücklich erlaubte (Host, Port)-Paare, z. B. der eigene Feed-Server der
-    Quelle (sonst nur öffentliche Hosts auf Port 80/443)."""
+    Quelle (sonst nur öffentliche Hosts auf Port 80/443, über :class:`SafeFetcher`)."""
     key = hashlib.sha256(url.encode()).hexdigest()[:40]
     row = ctx.db.q1("SELECT path, content_type, size FROM img_cache WHERE key=?", (key,))
     if row is not None and Path(row["path"]).exists():
@@ -88,15 +101,17 @@ def cached_image(ctx: AppContext, url: str, allow: frozenset[tuple[str, int]] = 
                     path.unlink(missing_ok=True)
                 return new_path, ctype
         return path, ctype
+    got: tuple[bytes, str] | None = None
     current = url
     for _ in range(4):
         parts = urlsplit(current)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             return None
         port = parts.port or (443 if parts.scheme == "https" else 80)
-        trusted = (parts.hostname.lower(), port) in allow
-        if not trusted and (port not in (80, 443) or not _public_host(parts.hostname, port)):
-            return None
+        if (parts.hostname.lower(), port) not in allow:
+            got = _fetch_public(ctx, current)  # öffentlicher Host: geprüft, angepinnt, Weiterleitungen einzeln geprüft
+            break
+        # ausdrücklich erlaubter Host (eigener Feed-Server im LAN): direkt, Weiterleitungen werden hier verfolgt
         try:
             with ctx.http.stream("GET", current, follow_redirects=False, timeout=10,
                                  headers={"Accept": "image/avif,image/webp,image/*"}) as r:
@@ -111,20 +126,24 @@ def cached_image(ctx: AppContext, url: str, allow: frozenset[tuple[str, int]] = 
                     data += chunk
                     if len(data) > MAX_IMG_BYTES:
                         return None
+                got = (data, ctype)
+                break
         except httpx.HTTPError:
             return None
-        small = shrink(data, ctype)
-        if small is not None:
-            data, ctype = small
-        ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
-               "image/avif": ".avif"}.get(ctype, ".img")
-        path = ctx.config.cache_dir / "img" / f"{key}{ext}"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        ctx.db.x("INSERT OR REPLACE INTO img_cache(key, path, content_type, size, fetched_at) VALUES (?,?,?,?,?)",
-                 (key, str(path), ctype, len(data), iso(datetime.now(UTC))))
-        return path, ctype
-    return None
+    if got is None:
+        return None
+    data, ctype = got
+    small = shrink(data, ctype)
+    if small is not None:
+        data, ctype = small
+    ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
+           "image/avif": ".avif"}.get(ctype, ".img")
+    path = ctx.config.cache_dir / "img" / f"{key}{ext}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    ctx.db.x("INSERT OR REPLACE INTO img_cache(key, path, content_type, size, fetched_at) VALUES (?,?,?,?,?)",
+             (key, str(path), ctype, len(data), iso(datetime.now(UTC))))
+    return path, ctype
 
 
-__all__ = ["MAX_IMG_BYTES", "MAX_WIDTH", "cached_image", "shrink"]
+__all__ = ["MAX_IMG_BYTES", "MAX_WIDTH", "cached_image", "fetcher_for", "shrink"]
