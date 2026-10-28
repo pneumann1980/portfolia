@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
 from app.db import fallback
@@ -94,18 +94,6 @@ def add_years(d: date, years: int) -> date:
         return d.replace(year=d.year + years, day=28)
 
 
-def daterange(start: date, end: date):
-    d = start
-    one = timedelta(days=1)
-    while d <= end:
-        yield d
-        d += one
-
-
-def month_start(d: date) -> date:
-    return d.replace(day=1)
-
-
 def fmt_de_date(d: date | datetime | str | None) -> str:
     if d is None or d == "":
         return "–"
@@ -128,5 +116,6 @@ def fmt_de_datetime(d: datetime | str | None) -> str:
             d = parse_iso(d)
         except ValueError:
             return d
-    assert isinstance(d, datetime)
+    if not (isinstance(d, datetime)):
+        raise RuntimeError('Interne Annahme verletzt: isinstance(d, datetime)')
     return d.astimezone(_TZ).strftime("%d.%m.%Y %H:%M")

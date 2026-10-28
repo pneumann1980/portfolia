@@ -130,7 +130,8 @@ class WriteOffService:
         rep, parsed = validate_tx_rows([{**r, "tx_id": f"PF-PRUEFUNG-{i}"} for i, r in enumerate(rows)], classes)
         if rep.errors:
             return SaveResult(errors=list(dict.fromkeys(_strip(m.message) for m in rep.errors)))
-        assert len(parsed) == len(drafts)
+        if not (len(parsed) == len(drafts)):
+            raise RuntimeError('Interne Annahme verletzt: len(parsed) == len(drafts)')
         stamp = _now()
         res = SaveResult()
         with self.db.transaction() as conn:

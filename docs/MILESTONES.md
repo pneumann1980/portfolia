@@ -1,6 +1,9 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 02.10.2026 · Version 0.17.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 28.10.2026 · Version 0.65.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+
+Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
+Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
 
 Jeder Meilenstein endete mit lauffähigem Image, grünen Tests und Lint. Abnahmewerte stammen aus
 `scripts/bench.py` bzw. `tests/test_scale.py` und `tests/test_privacy.py`.
@@ -1425,6 +1428,26 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.65.0 – Aufräumen und Absicherung (L3, L6, L7, L8, Testlücken)
+
+Paket F aus `docs/ARBEITSPLAN.md`.
+
+* **L3 Toter Code:** 20 Funktionen ohne einen einzigen Aufrufer (Suche in `app`, `tests`, Vorlagen, Doku) entfernt, z. B. `analytics.performance.xnpv`,
+  `ledger.engine.realized_by_asset`, `datasources.vault.needs_rotation`, `util.timeutil.daterange/month_start`. Nur von Tests genutzte Funktionen
+  (`evidence.safe_for_booking`, `txdocs.unlink_document`, `maintenance.backup_path`, `provenance.retro_map`) bleiben – sie dokumentieren Semantik.
+  `GET /api/asset/{id}/position` bleibt als Schnittstelle für externe Auswertungen (jetzt so dokumentiert).
+* **L6 Zeit:** `date.today()` → `today_local()` (Prozess-Zeitzone vs. `TZ` der App); `ruff` meldet künftig `DTZ011`/`DTZ002`.
+* **L8 `assert`:** 42 `assert` im Produktivcode durch `if not …: raise RuntimeError` ersetzt (entfielen mit `python -O`); `ruff`-Regel `S101` gilt jetzt auch
+  für `app/` (Tests und Skripte bleiben ausgenommen).
+* **L7 CI:** neuer Job `checks` (`pip-audit` auf `requirements.txt`, `mypy` schrittweise – meldet nur, blockiert weder Tests noch Image);
+  neuer Workflow `nightly.yml` mit Abdeckungsgrenze `--cov-fail-under=84` (nachts, weil der Volltest mit Messung länger dauert);
+  `pytest-cov`, `mypy`, `pip-audit` in `requirements-dev.txt`.
+* **Testlücken (Abdeckung der betroffenen Module vorher):** Kommandozeile `app/cli.py` (0 %), Yahoo-Pfade (38 %), YouTube-Client (55 %),
+  Claude-Dienst (58 %) mit Mock-Transport/Fake-Client; alle eingebauten CSV-Profile (60 %) mit Müll-, Grenz- und Leerwerten (kein Profil
+  darf beim Hochladen werfen). **Nicht** ergänzt: Beispieldateien echter Broker-Exporte – ohne echte Exporte würden erfundene Zeilen nur
+  die aktuelle Annahme zementieren; sinnvoll bleibt, anonymisierte Originalzeilen aus eigenen Exporten als Fixtures hinzuzufügen.
+* **L5 Doku:** Kopf dieser Datei aktualisiert; die Befunde der Analyse tragen jetzt einen Behebungsstatus.
 
 ## 0.64.0 – Härtung: Bildproxy mit angepinnter Adresse, Dokument-Kindprozess ohne `preexec_fn`, skriptsichere Diagramm-Daten
 

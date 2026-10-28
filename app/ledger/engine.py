@@ -245,12 +245,6 @@ class LedgerResult:
     def cost_basis(self, asset: str, account: str | None = None) -> Decimal:
         return sum((lot.cost for lot in self.lots_for(asset, account)), ZERO)
 
-    def realized_by_asset(self, kinds: frozenset[str] | None = None) -> dict[str, Decimal]:
-        out: dict[str, Decimal] = defaultdict(lambda: ZERO)
-        for d in self.disposals:
-            if kinds is None or d.kind in kinds:
-                out[d.asset] += d.gain
-        return dict(out)
 
     def income_by_asset(self) -> dict[str, Decimal]:
         out: dict[str, Decimal] = defaultdict(lambda: ZERO)

@@ -24,7 +24,7 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -33,6 +33,7 @@ from app.csvimport.identity import note_identity_keys
 from app.db import fallback
 from app.documentimport.evidence import FieldEvidence
 from app.documentimport.profiles import CENT, DocTx, _money, parse_date, parse_time
+from app.util.timeutil import today_local
 
 log = logging.getLogger(__name__)
 NATIVE_PROVIDERS = {"bitpanda", "binance", "coinbase", "kraken", "dkb"}
@@ -327,7 +328,7 @@ def _stage4_local(c: Context, tx: DocTx, asset_id: str | None, steps: list[Step]
     if d is None:
         return
     pf = c.ctx.portfolio()
-    V = Valuer(c.ctx, c.assets, pf, date.today())
+    V = Valuer(c.ctx, c.assets, pf, today_local())
     if tx.value("value_eur") is None:
         gross, ccy = tx.dec("gross"), tx.value("ccy")
         if gross is not None and ccy and ccy != "EUR":

@@ -35,6 +35,28 @@ jobs:
       - name: Beispiel-Import validieren
         run: python -m app validate examples/beispiel-import.zip
 
+  # Prüfungen, die extern abhängen oder noch Altlasten melden: sichtbar, aber ohne den Image-Bau zu blockieren
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Abhängigkeiten
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Bekannte Schwachstellen (pip-audit)
+        # fragt die Schwachstellen-Datenbank ab: eine neu veröffentlichte Meldung darf keinen Push blockieren, soll aber auffallen
+        run: pip-audit -r requirements.txt --no-deps --disable-pip
+      - name: Typprüfung (mypy, schrittweise – meldet nur)
+        continue-on-error: true
+        run: mypy app/news app/jobs app/web app/health.py app/logging_setup.py --ignore-missing-imports --no-error-summary | tail -n 25 || true
+
   image:
     needs: test
     runs-on: ubuntu-latest

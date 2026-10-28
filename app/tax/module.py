@@ -16,7 +16,7 @@ from app.importer import contract as C
 from app.prices.isin import isin_service
 from app.tax import registry
 from app.tax import rulesets as RS
-from app.tax.base import RulePack, fmt_value
+from app.tax.base import fmt_value
 from app.tax.classify import ACCOUNT_KINDS, ASSET_TYPES, securities_accounts
 from app.tax.service import MAX_YEAR, MIN_YEAR, all_running, start_all, tax_service
 from app.util.numbers import parse_number
@@ -73,7 +73,8 @@ def make_router() -> APIRouter:
         sel = year if (year is not None and MIN_YEAR <= year <= MAX_YEAR) else _default_year(years)
         res = svc.compute(sel)[2] if tab in ("year", "settings") else None  # Ergebnis nur dort, wo es gebraucht wird
         pf = ctx.portfolio()
-        assert pf is not None and inp is not None
+        if not (pf is not None and inp is not None):
+            raise RuntimeError('Interne Annahme verletzt: pf is not None and inp is not None')
         sec_accounts = securities_accounts(pf)
         securities = sorted((a for a in pf.assets.values() if a.is_security), key=lambda a: a.name)
         store = svc.rulesets()
@@ -356,10 +357,6 @@ def _back(request: Request, target: str) -> Response:
     if request.headers.get("hx-request") == "true":
         return Response(status_code=204, headers={"HX-Redirect": target})
     return Response(status_code=303, headers={"Location": target})
-
-
-def active_pack(ctx: Any) -> RulePack:
-    return tax_service(ctx).pack()
 
 
 register_router(make_router)

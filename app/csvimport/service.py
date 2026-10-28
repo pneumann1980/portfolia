@@ -146,7 +146,8 @@ def rec_to_json(r: Rec) -> str:
 def rec_from_json(raw: str) -> Rec:
     d = json.loads(raw)
     ts = parse_iso(d.pop("ts"))
-    assert ts is not None
+    if not (ts is not None):
+        raise RuntimeError('Interne Annahme verletzt: ts is not None')
     for k in ("out_qty", "in_qty", "fee_qty", "value", "fee_value"):
         if k in d:
             d[k] = Decimal(d[k])
@@ -635,7 +636,8 @@ class CsvImportService:
 
     def _append(self, bid: int, recs: list[Rec], payload: bytes, skipped: Mapping[str, int]) -> int:
         batch = self.batch(bid)
-        assert batch is not None
+        if not (batch is not None):
+            raise RuntimeError('Interne Annahme verletzt: batch is not None')
         old = json.loads(self.raw(batch) or b"[]")
         new = json.loads(payload or b"[]")
         merged = json.dumps([*old, *new], ensure_ascii=False).encode()
@@ -1446,7 +1448,8 @@ class CsvImportService:
 
     def _value(self, rc: RowCtx, V: Valuer, first_pass: bool) -> None:
         row = rc.row
-        assert row is not None
+        if not (row is not None):
+            raise RuntimeError('Interne Annahme verletzt: row is not None')
         r = rc.rec
         d = rc.d
         typ, tag = row["type"], row["tag"]
@@ -1868,7 +1871,8 @@ class CsvImportService:
         Steuertool und Datenquelle verschieden benannt); Regeln in :mod:`app.csvimport.transfer_side`. Abgänge auch
         bei anders dargestellter Gebühr; verschiedene Blockchain-Transaktionen nie."""
         row = rc.row
-        assert row is not None
+        if not (row is not None):
+            raise RuntimeError('Interne Annahme verletzt: row is not None')
         p = TS.probe_of_row(row, rc.ts, normalize_hash(rc.rec.txhash or derive_tx_hash(rc.rec.ext_id)), ds_id)
         if p is None:
             return False
@@ -1966,11 +1970,13 @@ class CsvImportService:
             rc.pair_alts = []
             rc.counterpart = None
             if eligible(rc, "withdrawal"):
-                assert rc.row is not None
+                if not (rc.row is not None):
+                    raise RuntimeError('Interne Annahme verletzt: rc.row is not None')
                 outs.append(Side(f"b:{rc.idx}", rc.row["from_account"], rc.row["from_asset"],
                                  Decimal(rc.row["from_qty"]), rc.ts, rc.rec.txhash, rc, rc.rec.note or ""))
             elif eligible(rc, "deposit"):
-                assert rc.row is not None
+                if not (rc.row is not None):
+                    raise RuntimeError('Interne Annahme verletzt: rc.row is not None')
                 ins.append(Side(f"b:{rc.idx}", rc.row["to_account"], rc.row["to_asset"], Decimal(rc.row["to_qty"]),
                                 rc.ts, rc.rec.txhash, rc, rc.rec.note or ""))
             rc.pair_ok = prev[1] if prev[0] else None
@@ -2457,7 +2463,8 @@ class CsvImportService:
         txs: list[Tx] = []
         for i, rc in enumerate(rows):
             row = rc.row
-            assert row is not None
+            if not (row is not None):
+                raise RuntimeError('Interne Annahme verletzt: row is not None')
             try:
                 txs.append(Tx(seq=i, tx_id=f"Z{rc.idx}", ts=rc.ts, date=rc.d, date_only=False, type=row["type"],
                               tag=row["tag"] or None, from_account=row["from_account"] or None,

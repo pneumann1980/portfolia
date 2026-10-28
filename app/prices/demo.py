@@ -16,6 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 import numpy as np
 
 from app.prices.models import Bar, IntradayBar, Quote
+from app.util.timeutil import today_local
 
 CACHE_SERIES = 48  # kompakte Pfade (≈ 150 KB je Serie über 10 Jahre); ältere werden bei Bedarf neu erzeugt
 
@@ -59,7 +60,7 @@ class DemoProvider:
         crypto = series.startswith("demo:cg:") or series.startswith("cg:")
         vol = 0.024 if crypto else 0.011
         drift = 0.00025 if crypto else 0.00022
-        end = date.today()
+        end = today_local()
         n = (end - self.start).days + 1
         logp = [0.0]
         for _ in range(n - 1):
@@ -100,7 +101,7 @@ class DemoProvider:
         return path
 
     def history(self, series: str, start: date, end: date | None = None) -> list[Bar]:
-        end = end or date.today()
+        end = end or today_local()
         p = self._path(series)
         i0 = int(np.searchsorted(p.day, (start - self.start).days, side="left"))
         i1 = int(np.searchsorted(p.day, (end - self.start).days, side="right"))

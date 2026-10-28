@@ -109,7 +109,8 @@ class YouTubeClient:
         return self.quota.used()[1]
 
     def _api(self, path: str, params: dict[str, Any], units: int) -> dict[str, Any]:
-        assert self.api_key
+        if not (self.api_key):
+            raise RuntimeError('Interne Annahme verletzt: self.api_key')
         try:
             r = request_with_retry(self.client, "GET", f"{API}/{path}", params={**params, "key": self.api_key},
                                    limiter=self.limiter, retries=1)

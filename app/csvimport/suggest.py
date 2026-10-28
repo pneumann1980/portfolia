@@ -266,7 +266,8 @@ class Suggester:
         zuordnen, sonst ein eigenes Asset dafür anlegen. Ein vorhandenes Asset gleichen Symbols mit anderer
         Kursquelle bleibt unberührt (Warnhinweis)."""
         pa = identity(prov, sym)
-        assert pa is not None
+        if not (pa is not None):
+            raise RuntimeError('Interne Annahme verletzt: pa is not None')
         b = self.basis
         who = f"{PROVIDER_LABEL.get(prov, prov)} führt „{pa.symbol}“ für {pa.name} (CoinGecko {pa.coingecko})"
         users = b.by_cg.get(pa.coingecko or "", [])

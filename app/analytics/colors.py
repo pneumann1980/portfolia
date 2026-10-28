@@ -37,10 +37,6 @@ def tint_index(key: str) -> int:
     return _h(key) % 4
 
 
-def segment_color(segment: str, mode: str = "light") -> str:
-    return TINTS[mode].get(segment, TINTS[mode]["Sonstige"])[2]
-
-
 def asset_color(asset_id: str, segment: str, mode: str = "light") -> str:
     return TINTS[mode].get(segment, TINTS[mode]["Sonstige"])[tint_index(asset_id)]
 

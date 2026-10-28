@@ -119,11 +119,6 @@ def family_label(fam: str) -> str:
     return f"Import · {fam}"
 
 
-def _curated(fam: str) -> bool:
-    """Kuratierter Import (Steuertool, Broker-Export)."""
-    return not (fam.startswith(("sync:", "csv:", "doc:")) or fam in PRIMARY_EXCLUDE)
-
-
 # Rang einer Quelle, wenn zwei Quellen denselben Vorgang enthalten (kleiner = maßgeblich): Die Börsen- bzw.
 # Wallet-API ist die Originalquelle (genaue Zeit, Gebühr, Referenz) und geht Steuertool- und CSV-Importen vor.
 SOURCE_RANK = {"sync": 0, "csv": 1, "doc": 2, "import": 3}
@@ -214,10 +209,6 @@ def _eq(a: Decimal, b: Decimal) -> bool:
     """Gleiche Menge: relativ 1e-12 (Rundung der Quellen) – auch bei sehr kleinen Tokenmengen, ohne absolute
     Untergrenze."""
     return a == b or abs(a - b) <= max(abs(a), abs(b)) * Decimal("1e-12")
-
-
-def rating(score: int) -> str:
-    return next(label for lim, label in _RATING if score >= lim)
 
 
 def _signed(v: Decimal) -> str:

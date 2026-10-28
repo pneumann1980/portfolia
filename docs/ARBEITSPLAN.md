@@ -1,7 +1,11 @@
 # Arbeitsplan: Behebung der Befunde aus der Projektanalyse + besseres Logging
 
 Grundlage: [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md) (Befund-IDs H1, M1–M8, N1, L1–L8). Dieser Plan beschreibt **wie** jeder Befund
-gelöst wird, womit er geprüft wird und in welcher Reihenfolge. Es ist noch nichts umgesetzt.
+gelöst wird, womit er geprüft wird und in welcher Reihenfolge.
+
+> **Stand 28.10.2026:** umgesetzt in 0.60.0–0.65.0 (Entscheidungen E1–E5 des Auftraggebers: Format `text`, Zugriffsprotokoll `slow`, Log-Download
+> ja, kein Hinweisband für M8 – nur bei blockierten Benutzeraktionen –, alle Pakete). Abweichungen vom Plan stehen in den Einträgen von
+> `MILESTONES.md`; Reihenfolge der Veröffentlichung: A, B, C, D, E, F wie in Abschnitt 1.
 
 ## 0. Grundsätze
 

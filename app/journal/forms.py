@@ -294,7 +294,8 @@ def _buy_sell(f: _Form, d: Draft, when: str, note: str, price: PriceFn, fx: FxFn
     fee = f.num("fee", "Gebühr", required=False, allow_zero=True) or Decimal(0)
     if d.errors or None in (acc, asset, qty, ccy, amount):
         return
-    assert acc and asset and qty is not None and ccy and amount is not None
+    if not (acc and asset and (qty is not None) and ccy and (amount is not None)):
+        raise RuntimeError('Interne Annahme verletzt (Pflichtwerte fehlen)')
     override = f.num("value_eur", "Gegenwert in EUR", required=False)
     if override is not None:
         value, src = override, "Eingabe"
@@ -381,7 +382,8 @@ def _flow(f: _Form, d: Draft, when: str, note: str, price: PriceFn, fx: FxFn, ty
     value = f.num("value_eur", "Wert in EUR", required=False, allow_zero=True)
     if d.errors:
         return
-    assert acc and asset and qty is not None
+    if not (acc and asset and (qty is not None)):
+        raise RuntimeError('Interne Annahme verletzt: acc and asset and (qty is not None)')
     src = "Eingabe"
     if value is None:
         auto = _eur_of(asset, qty, d.local_date, f.assets, price, fx)

@@ -208,8 +208,6 @@ class Vault:
             raise VaultError("Entschlüsselung fehlgeschlagen (Datensatz beschädigt oder vertauscht) – "
                              "Schlüssel bitte neu eingeben.") from None
 
-    def needs_rotation(self, blob: bytes) -> bool:
-        return self._primary is not None and self.blob_key_id(blob) not in (None, self._primary.key_id)
 
     def __repr__(self) -> str:
         return f"Vault(available={self.available}, key_id={self.key_id}, old={self.old_key_id})"

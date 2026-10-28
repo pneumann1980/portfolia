@@ -115,14 +115,6 @@ def token_key(symbol: str | None, chain_tag: str, contract: str) -> str:
     return f"{clean_symbol(symbol)}@{chain_tag}:{contract}"
 
 
-def split_token_key(key: str) -> tuple[str, str, str] | None:
-    sym, at, rest = key.partition("@")
-    if not at or ":" not in rest:
-        return None
-    chain, _, contract = rest.partition(":")
-    return sym, chain, contract
-
-
 def spam_reason(symbol: str | None, name: str | None) -> str | None:
     """Hinweis auf einen möglichen Spam-/Betrugs-Token (Werbung im Namen, Links, nicht-ASCII-Zeichen)."""
     text = f"{symbol or ''} {name or ''}"

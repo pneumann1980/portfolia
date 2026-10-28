@@ -165,13 +165,15 @@ def plan(ctx: Any, finding_ids: list[str], *, include_review: bool = False, repo
 def _merged(bp: BulkPlan) -> A.Plan:
     ops: list[A.Op] = []
     for i, it in enumerate(bp.ready):
-        assert it.plan is not None
+        if not (it.plan is not None):
+            raise RuntimeError('Interne Annahme verletzt: it.plan is not None')
         for op in it.plan.ops:
             if op.kind == "create" and op.tx is not None:  # Platzhalter-Kennungen je Plan eindeutig machen
                 op = dataclasses.replace(op, tx=dataclasses.replace(op.tx, tx_id=f"{op.tx.tx_id}-{i}"))
             ops.append(op)
     first = bp.ready[0]
-    assert first.plan is not None
+    if not (first.plan is not None):
+        raise RuntimeError('Interne Annahme verletzt: first.plan is not None')
     return A.Plan(first.finding, first.plan.option, {}, ops=ops, version=bp.version)
 
 
@@ -234,7 +236,8 @@ def execute(ctx: Any, finding_ids: list[str], token: str, *, include_review: boo
             with ctx.db.transaction() as c:
                 A.assert_version(c, bp.version)
                 for it in bp.ready:
-                    assert it.plan is not None
+                    if not (it.plan is not None):
+                        raise RuntimeError('Interne Annahme verletzt: it.plan is not None')
                     created: dict[str, str] = {}
                     recs = [A._exec(c, ctx, js, op, stamp, created) for op in sorted(
                         it.plan.ops, key=lambda o: 0 if o.kind == "create" else 1)]

@@ -283,7 +283,8 @@ def preview(ctx: Any, alias: str, target: str) -> Preview:
         p.errors.append(f"„{p.target}“ ist nicht als Asset vorhanden.")
     if p.errors:
         return p
-    assert a is not None and t is not None
+    if not (a is not None and t is not None):
+        raise RuntimeError('Interne Annahme verletzt: a is not None and t is not None')
     if a.is_fiat or t.is_fiat:
         p.errors.append("Währungen lassen sich nicht zusammenführen.")
     if a.asset_class != t.asset_class:

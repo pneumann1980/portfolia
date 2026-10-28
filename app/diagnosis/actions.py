@@ -1270,7 +1270,8 @@ def _exec(c: Any, ctx: Any, js: Any, op: Op, stamp: str, created: dict[str, str]
     elif op.kind == "create":
         from app.importer.validate import validate_tx_rows
 
-        assert op.row is not None
+        if not (op.row is not None):
+            raise RuntimeError('Interne Annahme verletzt: op.row is not None')
         classes = {aid: {"asset_class": a.asset_class} for aid, a in ctx.recorded_portfolio().assets.items()}
         for code in C.ISO_CURRENCIES:
             classes.setdefault(code, {"asset_class": "fiat"})

@@ -18,6 +18,7 @@ from typing import Any
 
 from app.prices.models import Bar, IntradayBar, Quote, normalize_ccy
 from app.util.http import RateLimiter
+from app.util.timeutil import today_local
 
 log = logging.getLogger(__name__)
 
@@ -134,7 +135,7 @@ class YahooProvider:
     # -- Historie ----------------------------------------------------------------------------------
     def history(self, symbol: str, start: date, end: date | None = None) -> tuple[list[Bar], str | None]:
         """Tagesschlusskurse *wie gehandelt* (Split-Adjustierung von Yahoo wird rückgängig gemacht)."""
-        end = end or date.today()
+        end = end or today_local()
         self.limiter.wait()
         t = self.yf.Ticker(symbol)
         df = t.history(start=start.isoformat(), end=(end + timedelta(days=1)).isoformat(), interval="1d",

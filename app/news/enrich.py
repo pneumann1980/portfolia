@@ -62,13 +62,6 @@ class EnrichService:
         """Quellen ohne brauchbaren Volltext (Host -> letzter Abruf): nicht mehr abgerufen, nur wöchentlich geprüft."""
         return hosts.teaser_hosts(self.ctx, max_age=hosts.CACHE_S)
 
-    def done_count(self) -> int:
-        """Artikel im Abrufzeitraum mit abgeschlossenem Abruf (Text, Teiltext, gesperrt, endgültig fehlgeschlagen)."""
-        since = iso(datetime.now(UTC) - timedelta(days=int(self.ctx.settings.get("news.enrich_days", 3))))
-        return int(self.db.scalar(
-            """SELECT COUNT(*) FROM news_item n JOIN news_content c ON c.item_id=n.id
-               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at>=? AND c.status!='pending'""",
-            (since,), default=0) or 0)
 
     def retry_planned_count(self) -> int:
         """Artikel im Abrufzeitraum, deren Abruf fehlgeschlagen ist und später wiederholt wird (noch nicht fällig)."""

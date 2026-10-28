@@ -737,7 +737,8 @@ class PriceService:
         n = 0
         status = "ok"
         if series.startswith("demo:"):
-            assert self.demo is not None
+            if not (self.demo is not None):
+                raise RuntimeError('Interne Annahme verletzt: self.demo is not None')
             bars = self.demo.history(series, fetch_from, today)
             n = self.store.upsert_daily(series, bars, "demo", "EUR")
         elif series.startswith("yahoo:"):

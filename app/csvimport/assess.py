@@ -537,7 +537,8 @@ def _cmp_fee(acc: _Acc, new: Book, old: Book) -> bool:
     else:
         only_new = nf is not None
         f = nf or of
-        assert f is not None
+        if not (f is not None):
+            raise RuntimeError('Interne Annahme verletzt: f is not None')
         if nt is not None and ot is not None and _qty_same(nt, ot):
             acc.fee = {"state": "ok", "t": (
                 f"Gebühr {_q(f[1])} {f[0]} nur {'in der neuen Quelle' if only_new else 'in der vorhandenen Buchung'} "

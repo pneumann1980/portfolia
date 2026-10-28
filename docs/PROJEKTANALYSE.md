@@ -4,6 +4,29 @@ Prüfung des gesamten Projekts auf Fehler, nicht erreichbaren Code, Sicherheits-
 nichts am Code geändert**. Dieses Dokument hält Befunde, Auswirkungen und Verbesserungsvorschläge fest; die Umsetzung ist eine
 getrennte Entscheidung.
 
+## Behebungsstand (Stand 0.65.0)
+
+| ID | Status | Version |
+|---|---|---|
+| H1 Pillow | behoben (13.0.0, `pip-audit` sauber, in der CI geprüft) | 0.60.0 |
+| M1 `tab` → 500 | behoben (Standardreiter) | 0.60.0 |
+| M2 ID ≥ 2⁶³ → 500 | behoben (zentraler Handler → 404) | 0.60.0 |
+| M3 stille Fehler | behoben (75 → 25 geprüfte Stellen, Wächtertest; Schutzprüfungen brechen ab) | 0.62.0 |
+| M4 gemeinsamer Pool | behoben (Pool „news“, verpasste Läufe im Log) | 0.63.0 (0.61.0) |
+| M5 `async` + DB | behoben (Rest im Thread-Pool, Wächtertest) | 0.63.0 |
+| M6 Verbindungen | gemildert (Cache 8 → 4 MB, 24 statt 40 Handler-Threads, Messwerte stündlich im Log) – Wirkung im Betrieb zu prüfen | 0.63.0 |
+| M7 Bildproxy | behoben (SafeFetcher, Telegram-Bridge als ausdrückliche Ausnahme) | 0.64.0 |
+| M8 `AUTH_MODE=none` | Warnung im Log beim Start (kein Hinweisband – Entscheidung des Auftraggebers); rotes Band nur bei blockierten Benutzeraktionen | 0.61.0 |
+| N1 Teaser-Host | behoben (aufgelöster Host, Zwischenspeicher) | 0.60.0 |
+| L1 `preexec_fn` | behoben | 0.64.0 |
+| L2 `\|safe` | behoben (`\|tojson`) | 0.64.0 |
+| L3 toter Code | 20 Funktionen entfernt | 0.65.0 |
+| L4 Modul-Laden | behoben (Fehler im Log und Startbanner) | 0.61.0 |
+| L5 Doku | Kopf aktualisiert | 0.65.0 |
+| L6 `date.today()` | behoben, Regel in `ruff` | 0.65.0 |
+| L7 CI | `pip-audit` und `mypy` (melden), Abdeckungsgrenze nachts | 0.65.0 |
+| L8 `assert` | behoben (42 Stellen), Regel `S101` für `app/` | 0.65.0 |
+
 ## 1. Vorgehen und Grenzen
 
 | Prüfung | Werkzeug / Methode | Ergebnis in Kürze |

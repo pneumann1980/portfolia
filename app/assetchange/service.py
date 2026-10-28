@@ -132,10 +132,6 @@ def _date(raw: str) -> date | None:
         return None
 
 
-def series_of(prices: Any, a: AssetInfo) -> str | None:
-    return prices.series_for(a)
-
-
 class AssetChangeService:
     def __init__(self, ctx: Any) -> None:
         self.ctx = ctx
@@ -224,7 +220,8 @@ class AssetChangeService:
 
     def _plan_rename(self, p: Plan, g: Any) -> None:
         a = p.old
-        assert a is not None
+        if not (a is not None):
+            raise RuntimeError('Interne Annahme verletzt: a is not None')
         self._quote(p, g("quote_source"), g("quote_id"), a.asset_class)
         p.new_name = g("new_name")[:80] or None
         p.new_ticker = g("new_ticker").upper()[:40] or None
@@ -254,7 +251,8 @@ class AssetChangeService:
 
     def _plan_migration(self, p: Plan, g: Any, pf: Any) -> None:
         a = p.old
-        assert a is not None
+        if not (a is not None):
+            raise RuntimeError('Interne Annahme verletzt: a is not None')
         ratio = _dec(g("ratio") or "1")
         if ratio is None or ratio <= 0:
             p.errors.append("Verhältnis ungültig (neue Einheiten je bisheriger Einheit, z. B. 1 oder 1:1000).")
@@ -393,7 +391,8 @@ class AssetChangeService:
 
         js = journal_service(self.ctx)
         a = p.old
-        assert a is not None and p.new_asset is not None
+        if not (a is not None and p.new_asset is not None):
+            raise RuntimeError('Interne Annahme verletzt: a is not None and p.new_asset is not None')
         created = False
         if not p.new_exists:
             res = js.save_asset({"asset_id": p.new_asset, "name": p.new_name or p.new_asset,
@@ -429,7 +428,8 @@ class AssetChangeService:
     def _apply_rename(self, p: Plan, hint_key: str | None) -> int | None:
         """Innerhalb der Transaktion von :meth:`apply`."""
         a = p.old
-        assert a is not None
+        if not (a is not None):
+            raise RuntimeError('Interne Annahme verletzt: a is not None')
         old_series = self.ctx.prices.series_for(a)
         new_series = None
         if p.quote_source and p.quote_id:

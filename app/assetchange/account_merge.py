@@ -92,7 +92,8 @@ def map_portfolio(pf: Portfolio, m: dict[str, str]) -> Portfolio:
                 base = replace(base, broker=base.broker or info.broker,
                                depot_group=base.depot_group or info.depot_group,
                                extra={**info.extra, **base.extra})
-        assert base is not None
+        if not (base is not None):
+            raise RuntimeError('Interne Annahme verletzt: base is not None')
         accounts[tgt] = base
     # Soll-Bestände des kuratierten Imports: zwei Konten zu einem → Mengen je Asset addieren
     held: dict[tuple[Any, Any], dict[str, Any]] = {}

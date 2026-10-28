@@ -136,7 +136,8 @@ def journal_asset_infos(db: Any) -> dict[str, AssetInfo]:
 
 def row_to_tx(r: Any) -> Tx:
     ts = parse_iso(r["ts_utc"])
-    assert ts is not None
+    if not (ts is not None):
+        raise RuntimeError('Interne Annahme verletzt: ts is not None')
     return Tx(seq=SEQ_BASE + int(r["id"]), tx_id=r["tx_id"], ts=ts, date=to_local_date(ts),
               date_only=bool(r["date_only"]), type=r["type"], tag=r["tag"], from_account=r["from_account"],
               from_asset=r["from_asset"], from_qty=_d(r["from_qty"]), to_account=r["to_account"],

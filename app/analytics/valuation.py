@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -213,5 +213,3 @@ def latest_update_time(prices: dict[str, PriceInfo]) -> datetime | None:
     return max(ts) if ts else None
 
 
-def utc_now() -> datetime:
-    return datetime.now(UTC)

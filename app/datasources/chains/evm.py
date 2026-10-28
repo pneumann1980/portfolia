@@ -403,7 +403,8 @@ class EvmConnector(WalletConnector):
         Gebühren) und im Fortsetzungspunkt mitgeführt; vorgeschlagen wird die Umstellung genau einmal – nur bei
         lückenlosem Abruf ab Block 0, sonst mit ausdrücklichem Hinweis. Nie automatisch übernommen."""
         sw = self.native_switch
-        assert sw is not None
+        if not (sw is not None):
+            raise RuntimeError('Interne Annahme verletzt: sw is not None')
         block, old, when, why = sw
         if state.get("done") or start > block:
             state["done"] = True

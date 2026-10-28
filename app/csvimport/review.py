@@ -31,7 +31,7 @@ Vorschläge ist dafür kein Nachweis.
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -244,14 +244,6 @@ def source_summary(db: Any, sid: int) -> Summary:
 
 def active_summary(db: Any) -> Summary:
     return summarize(load(db, ACTIVE))
-
-
-def by_source(db: Any) -> dict[int, Summary]:
-    """Je Datenquelle die Zähler aller aktiven Stapel (eine Abfrage für die Übersicht)."""
-    groups: dict[int, list[Lite]] = defaultdict(list)
-    for r in load(db, f"b.datasource_id IS NOT NULL AND {ACTIVE}"):
-        groups[int(r.datasource_id)].append(r)  # type: ignore[arg-type]
-    return {sid: summarize(rows) for sid, rows in groups.items()}
 
 
 # ----------------------------------------------------------------------------------------------------

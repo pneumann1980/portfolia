@@ -391,7 +391,8 @@ def _fetch(ctx: Any, sid: int, rid: int, username: str, password: str, mfa: int,
     handle.proc = proc
 
     def drain() -> None:
-        assert proc.stderr is not None
+        if not (proc.stderr is not None):
+            raise RuntimeError('Interne Annahme verletzt: proc.stderr is not None')
         for line in proc.stderr:
             tail.append(line.rstrip()[:300])
 
@@ -400,7 +401,8 @@ def _fetch(ctx: Any, sid: int, rid: int, username: str, password: str, mfa: int,
     timer.daemon = True
     timer.start()
     try:
-        assert proc.stdin is not None and proc.stdout is not None
+        if not (proc.stdin is not None and proc.stdout is not None):
+            raise RuntimeError('Interne Annahme verletzt: proc.stdin is not None and proc.stdout is not None')
         try:
             proc.stdin.write(json.dumps({"user": username, "password": password, "mfa_device": mfa or None}) + "\n")
             proc.stdin.flush()

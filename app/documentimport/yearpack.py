@@ -63,7 +63,8 @@ class Pack:
     errors: list[str] = field(default_factory=list)
 
     def chunks(self, size: int = 1 << 20) -> Iterator[bytes]:
-        assert self.file is not None
+        if not (self.file is not None):
+            raise RuntimeError('Interne Annahme verletzt: self.file is not None')
         try:
             self.file.seek(0)
             while chunk := self.file.read(size):

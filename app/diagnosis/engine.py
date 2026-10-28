@@ -113,7 +113,8 @@ def _flags(t: Tx) -> list[str]:
 
 class _Index:
     def __init__(self, snap: Snapshot) -> None:
-        assert snap.pf is not None and snap.ledger is not None
+        if not (snap.pf is not None and snap.ledger is not None):
+            raise RuntimeError('Interne Annahme verletzt: snap.pf is not None and snap.ledger is not None')
         self.snap = snap
         self.pf = snap.pf
         self.led = snap.ledger
@@ -2098,7 +2099,8 @@ def _holdings(idx: _Index, stats: dict[str, int]) -> tuple[list[HoldingRow], lis
             why_tot[x][k] += n
 
     def internal(row: HoldingRow, raw_q: Decimal | None, changes: dict[str, int] | None) -> str:
-        assert row.expected is not None
+        if not (row.expected is not None):
+            raise RuntimeError('Interne Annahme verletzt: row.expected is not None')
         if _soll_eq(row.expected, row.computed):
             return "intern_ok"
         if raw_q is not None and changes and _soll_eq(row.expected, raw_q):

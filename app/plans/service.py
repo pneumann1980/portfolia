@@ -374,7 +374,8 @@ class PlanService:
                               "Import oder werden unter „Buchungen“ manuell erfasst.")
         if errors:
             return errors
-        assert d is not None and t_val is not None and price is not None and qty is not None
+        if not (d is not None and t_val is not None and (price is not None) and (qty is not None)):
+            raise RuntimeError('Interne Annahme verletzt (Pflichtwerte fehlen)')
         qty = qty.quantize(Decimal("1e-8")).normalize()
         value = (qty * price).quantize(CENT)
         when = datetime.combine(d, t_val, tzinfo=tz).astimezone(UTC)

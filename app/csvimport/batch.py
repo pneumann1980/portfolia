@@ -576,7 +576,8 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
                 rc = it.rc
                 prev = {"status": rc.status, "decision": orig.get(rc.idx), "tx_id": rc.tx_id}
                 if it.act == "link":
-                    assert it.target is not None
+                    if not (it.target is not None):
+                        raise RuntimeError('Interne Annahme verletzt: it.target is not None')
                     keys = [k for k in [line_key(source, rc.rec)] if k]
                     if _event_one_to_one(rc, rows, targets):
                         keys += sorted(identity_keys(rc.rec.event_key, rc.rec.aliases, rc.rec.ext_id))

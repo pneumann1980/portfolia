@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from datetime import UTC, date, datetime
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -16,7 +16,7 @@ from app.analytics.colors import asset_colors
 from app.ledger.engine import DUST, REALIZED_KINDS
 from app.prices.fallback import DEFAULT_MAX_AGE as FB_DEFAULT
 from app.prices.fallback import SETTING_KEYS as FB_KEYS
-from app.util.timeutil import local_tz, parse_iso, today_local
+from app.util.timeutil import today_local
 from app.web.deps import get_ctx, render
 from app.web.svg import sparkline
 
@@ -429,15 +429,6 @@ def settings_page(request: Request, saved: str = "", err: str = "") -> HTMLRespo
                   config=ctx.config, saved=saved, err=err[:400], backups=backups, exports=exports, archive=archive,
                   export_job=job, ds_summary=ds_summary, pp=price_plan, next_runs=next_runs,
                   restore=restore_status(ctx))
-
-
-def fmt_ts(ts: str | None) -> str:
-    d = parse_iso(ts) if ts else None
-    return d.astimezone(local_tz()).strftime("%d.%m.%Y %H:%M") if d else "–"
-
-
-def now_utc() -> datetime:
-    return datetime.now(UTC)
 
 
 def _gemini_models(ctx: Any) -> list[str]:

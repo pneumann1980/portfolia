@@ -193,7 +193,8 @@ def _apply_changes(ctx: Any, p: Proposal, doc: Any, selected: set[str]) -> A.Op 
     from app.util.timeutil import iso
 
     t = p.target
-    assert t is not None
+    if not (t is not None):
+        raise RuntimeError('Interne Annahme verletzt: t is not None')
     f = _fields(doc, p.n)
     chosen = [c for c in p.changes if c.field in selected]
     if not chosen:

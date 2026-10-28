@@ -75,11 +75,6 @@ def drawdown(index: np.ndarray) -> np.ndarray:
     return dd
 
 
-def xnpv(rate: float, flows: Sequence[tuple[date, float]]) -> float:
-    t0 = flows[0][0]
-    return sum(cf / (1.0 + rate) ** ((d - t0).days / 365.0) for d, cf in flows)
-
-
 R_MIN = -0.9999  # −99,99 % p. a.
 R_MAX = 1e6  # 100.000.000 % p. a. – darüber ist eine Jahresrendite nicht mehr aussagekräftig
 _MIN_WIDTH = 1e-10  # kleinste Intervallbreite in x = ln(1 + r)

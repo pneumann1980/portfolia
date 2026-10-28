@@ -706,10 +706,6 @@ class DataSourceService:
                 out[label] = s.events[st]
         return out  # Summe = offene Vorgänge (``Summary.open``)
 
-    def review_summary(self, sid: int) -> Any:
-        from app.csvimport import review as RV
-
-        return RV.source_summary(self.db, sid)
 
     def balances(self, sid: int) -> list[Any]:
         return self.db.q("SELECT asset_key, qty, name, note, observed_at FROM ds_balance WHERE source_id=? "
@@ -2010,7 +2006,8 @@ class DataSourceService:
             reason = ("deaktiviert – keine automatischen Läufe" if not enabled
                       else "nur manuell – keine automatischen Läufe")
         elif fast:
-            assert regular is not None
+            if not (regular is not None):
+                raise RuntimeError('Interne Annahme verletzt: regular is not None')
             nxt, kind = min(regular, finished + timedelta(seconds=BACKFILL_NEXT_S)), "catchup"
             reason = f"automatische Fortsetzung (Historie aufholen, {runs + 1}. von höchstens {CATCHUP_MAX_RUNS})"
         elif not resume:
@@ -2256,7 +2253,8 @@ class DataSourceService:
         secret = K.Secret(None)
         conn.catalog = Catalog(self.db, ds.provider)
         prog = self._prepare(ds, conn)
-        assert prog is not None
+        if not (prog is not None):
+            raise RuntimeError('Interne Annahme verletzt: prog is not None')
         try:
             secret = self._secret(ds, conn)
             cursor = json.loads(ds.cursor_json) if ds.cursor_json else None

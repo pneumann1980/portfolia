@@ -110,7 +110,8 @@ class TaxService:
         path = self.rulesets().path(slug) if slug else None
         pack = registry.resolve(self.ctx.settings.get("tax.rulepack", "auto"), self.ctx.config.tz,
                                 self.ctx.config.tax_rules_dir, path)
-        assert pack is not None
+        if not (pack is not None):
+            raise RuntimeError('Interne Annahme verletzt: pack is not None')
         return pack
 
     def options(self, pack: RulePack, year: int | None = None) -> dict[str, Any]:

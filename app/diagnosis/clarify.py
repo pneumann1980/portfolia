@@ -804,9 +804,6 @@ def evidence_fp(ctx: Any, items: list[Finding], positions: set[tuple[str, str]])
 # Entscheidung
 # ----------------------------------------------------------------------------------------------------
 
-def _equiv(a: Hyp, b: Hyp) -> bool:
-    return a.sig == b.sig
-
 
 def _source_rank(report: Report, tx_id: str) -> int:
     """Quellenpriorität (bestehende Regel): Börsen-/Wallet-API vor sonstiger App-Erfassung vor Datei-Import."""
@@ -989,11 +986,6 @@ def _rules(case: Case, h: Hyp, path: str) -> list[tuple[str, bool, str]]:
     return rules
 
 
-def _discriminating(hyps: list[Hyp]) -> bool:
-    """Gibt es eine Position, auf der zulässige Hypothesen (inkl. Ausgangslage) verschiedene Bestände ergeben?"""
-    return bool(discriminating_positions(hyps))
-
-
 def discriminating_positions(hyps: list[Hyp]) -> list[tuple[str, str]]:
     keys: set[tuple[str, str]] = set()
     for h in hyps:
@@ -1101,7 +1093,8 @@ def dims_text(dims: dict[str, Any]) -> str:
 
 def status_of(case: Case) -> str:
     dec = case.decision
-    assert dec is not None
+    if not (dec is not None):
+        raise RuntimeError('Interne Annahme verletzt: dec is not None')
     if dec.kind == "resolved":
         return "geloest"
     if dec.kind == "umfang":
@@ -1402,7 +1395,8 @@ def apply_hypothesis(ctx: Any, case_key: str, hyp_id: str, trigger: str = "manua
                     recs = [A._exec(c, ctx, js, op, stamp, created) for op in sorted(
                         cand.plan.ops, key=lambda o: 0 if o.kind == "create" else 1)]
                     f = cand.finding or report.by_id(cand.finding_id)
-                    assert f is not None
+                    if not (f is not None):
+                        raise RuntimeError('Interne Annahme verletzt: f is not None')
                     cur = c.execute(
                         "INSERT INTO diag_decision(finding_id, kind, title, action, option, option_label, "
                         "params_json, ops_json, fingerprint, note, status, created_at) VALUES "

@@ -110,11 +110,6 @@ class ExtPub:
     def pubkey(self) -> bytes:
         return compress(self.point)
 
-    def serialize(self, kind: str | None = None) -> str:
-        ver = next(v for v, (k, _) in VERSIONS.items() if k == (kind or self.kind))
-        return b58check_encode(ver + bytes([self.depth]) + self.parent_fp + struct.pack(">I", self.child)
-                               + self.chain_code + compress(self.point))
-
 
 def parse_xpub(s: str) -> ExtPub:
     """xpub/ypub/zpub prüfen und lesen – private und Testnet-Schlüssel werden abgelehnt."""

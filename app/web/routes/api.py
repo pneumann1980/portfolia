@@ -192,6 +192,7 @@ def asset_chart(request: Request, asset_id: str, range: str = "1J", kind: str = 
 
 @router.get("/asset/{asset_id:path}/position")
 def asset_position(request: Request, asset_id: str, range: str = "MAX") -> JSONResponse:
+    """Bestand und Wert eines Assets über die Zeit (für externe Auswertungen; die Oberfläche nutzt sie nicht)."""
     ctx = get_ctx(request)
     _asset_or_404(ctx, asset_id)
     hist = ctx.history_with_live()
