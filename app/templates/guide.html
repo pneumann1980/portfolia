@@ -12,6 +12,12 @@
     <form method="post" action="/quality/assistent/rueckgaengig"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% for k, v in undo.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}<button class="btn sm ghost" type="submit">↶ Rückgängig</button></form>
   </div>
   {% endif %}
+  {% if batch %}
+  <div class="alert info guide-done" role="note"><span class="icon">≡</span>
+    <div style="flex:1">Es gibt <b>{{ batch.n }} weitere Frage{{ 'n' if batch.n != 1 }} dieser Art</b> (gleiches Muster, gleiche Empfehlung). Alle gleich beantworten{% if batch.st %} mit „{{ batch.st }}“{% endif %}?</div>
+    <form method="post" action="/quality/assistent/alle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="sig" value="{{ batch.sig }}"><input type="hidden" name="a" value="{{ batch.sa }}"><button class="btn sm" type="submit" data-once>Alle {{ batch.n }} gleich beantworten</button></form>
+  </div>
+  {% endif %}
 
   {% if not task %}
   <section class="card guide-card">
@@ -26,6 +32,7 @@
     <div class="guide-head-row">
       <b>Aufgabe {{ step.position }} von {{ step.total }}</b>
       <span class="hint">ca. {{ step.minutes }} Min. übrig</span>
+      <a class="btn sm ghost" href="/quality/assistent/protokoll">Was ich geändert habe</a>
       <a class="btn sm ghost" href="/quality/assistent/ende" title="Fortschritt bleibt erhalten">Pause</a>
     </div>
     <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="{{ step.total }}" aria-valuenow="{{ step.position - 1 }}"><div style="width:{{ [((step.position - 1) / step.total * 100)|round|int, 2]|max }}%"></div></div>
@@ -56,6 +63,7 @@
           {% if a.caution %}<span class="hint caution">⚠ {{ a.caution }}</span>{% endif %}
           {% if a.params %}<span class="guide-params">{% for p in a.params %}{{ dm.param_field(p, values.get(p.name) or p.default) }}{% endfor %}<span class="hint">Diese Angaben gelten nur für diese Antwort; vor dem Speichern siehst du die Wirkung.</span></span>{% endif %}
         </span>
+        <input type="hidden" name="l_{{ a.id }}" value="{{ a.text }}">
         {% if a.token %}<input type="hidden" name="t_{{ a.id }}" value="{{ a.token }}">{% endif %}
         {% if a.params %}<input type="hidden" name="n_{{ a.id }}" value="1">{% endif %}
       </label>

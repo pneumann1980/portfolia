@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Was ich geändert habe{% endblock %}
+{% block heading %}{{ title }} · Was ich geändert habe{% endblock %}
+{% block content %}
+<div class="guide">
+  <p><a href="/quality/assistent">← Zurück zur Frage</a></p>
+  <section class="card">
+    <h2>Deine Antworten</h2>
+    <p class="hint">Korrekturen und Entscheidungen, neueste zuerst. Zurücknehmen stellt den vorherigen Stand her; die Frage erscheint dann wieder. Übernommene neue Vorgänge nimmst du im Verlauf ihres Prüfstapels zurück.</p>
+    {% if rows %}
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Wann</th><th>Frage</th><th>Antwort</th><th></th></tr></thead><tbody>
+    {% for d in rows %}<tr>
+      <td>{{ d.created_at|datetime_de }}</td>
+      <td class="wide" data-label="Frage">{{ d.title }}</td>
+      <td data-label="Antwort">{% if d.action == 'fix' %}korrigiert: {{ d.option_label or d.option }}{% else %}{{ mark_actions.get(d.action, d.action) }}{% endif %}</td>
+      <td>{% if d.status == 'active' %}<form method="post" action="/quality/assistent/rueckgaengig"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="d" value="{{ d.id }}"><input type="hidden" name="back" value="protokoll"><button class="btn sm ghost" type="submit">Zurücknehmen</button></form>{% else %}<span class="badge">zurückgenommen</span>{% endif %}</td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+    {% else %}<p>Noch keine Antworten.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

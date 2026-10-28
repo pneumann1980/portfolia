@@ -54,8 +54,9 @@ def _params(form: Any) -> dict[str, list[str]]:
 
 
 def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new: int = 0, hints: str = "",
-          done: int = 0, gone: int = 0, acts: str = "", kl: str = "", errors: list[str] | None = None,
-          chosen: str = "", values: dict[str, list[str]] | None = None) -> Response:
+          done: int = 0, gone: int = 0, acts: str = "", kl: str = "", dids: str = "",
+          same: dict[str, str] | None = None, errors: list[str] | None = None, chosen: str = "",
+          values: dict[str, list[str]] | None = None) -> Response:
     ctx = get_ctx(request)
     show_hints = hints == "1" if hints else (request.cookies.get("dq_hints") == "1" and not new)
     skipped = [] if new else G.parse_skip(request.cookies.get("dq_skip", ""))
@@ -72,9 +73,16 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
         undo = {"acts": acts}
     elif kl and kl.isalnum():
         undo = {"kl": kl}
+    elif dids and all(x.isdigit() for x in dids.split(",")):
+        undo = {"dids": dids}
+    batch = None
+    if same and same.get("sig") and same.get("sa"):  # „für alle gleich beantworten“ anbieten
+        n = len(G.similar(ctx, same["sig"], same["sa"]))
+        if n:
+            batch = {**same, "n": n}
     resp = render(request, "guide.html", active="quality", step=st, task=st.task, title=G.TITLE,
                   pos=G.theme_position(st), msg=msg, err=err, errors=errors or [], undo=undo, gone=gone,
-                  chosen=chosen, values=values or {}, hints=show_hints, **_common())
+                  chosen=chosen, values=values or {}, hints=show_hints, batch=batch, **_common())
     if st.task is None:
         _clear(resp)
     else:
@@ -87,9 +95,10 @@ def make_router() -> APIRouter:
 
     @router.get(BASE, response_class=HTMLResponse)
     def assistant(request: Request, msg: str = "", err: str = "", skip: str = "", new: int = 0, hints: str = "",
-                  done: int = 0, gone: int = 0, acts: str = "", kl: str = "") -> Response:
+                  done: int = 0, gone: int = 0, acts: str = "", kl: str = "", dids: str = "", sig: str = "",
+                  sa: str = "", st: str = "") -> Response:
         return _page(request, msg=msg, err=err, skip=skip, new=new, hints=hints, done=done, gone=gone, acts=acts,
-                     kl=kl)
+                     kl=kl, dids=dids, same={"sig": sig[:80], "sa": sa[:80], "st": st[:160]})
 
     @router.post(f"{BASE}/antwort")
     async def answer(request: Request) -> Response:
@@ -113,6 +122,18 @@ def make_router() -> APIRouter:
             return await _stack_answer(ctx, typ, fid, aid, form, gone)
         if typ == "fall":
             return await _case_answer(ctx, fid, aid, form, gone)
+        if typ == "vorrang":
+            if aid == "vr:yes" and fid.isdigit():
+                return RedirectResponse(f"/settings/datasources/{int(fid)}/uebernahme", status_code=303)
+            if aid == "vr:no" and fid.isdigit():
+                await run_in_threadpool(G.decline_takeover, ctx, int(fid))
+                return _go(msg="Gespeichert: der Import bleibt für dieses Konto maßgeblich.",
+                           gone=await run_in_threadpool(gone))
+            return _go(err="Unbekannte Antwort.")
+        if aid == "chain:scan":
+            return await run_in_threadpool(_chain_scan, ctx, fid, str(form.get("kid") or ""))
+        sig, _a = await run_in_threadpool(_signature, ctx, fid, aid)
+        text = str(form.get(f"l_{aid}") or "")[:160]
 
         if aid.startswith("mark:"):
             action = aid.split(":", 1)[1]
@@ -120,7 +141,7 @@ def make_router() -> APIRouter:
             if not res.ok:
                 return _go(err=" ".join(res.errors))
             return _go(msg=MARK_TEXT.get(action, "Gespeichert."), done=res.decision_id,
-                       gone=await run_in_threadpool(gone))
+                       gone=await run_in_threadpool(gone), sig=sig, sa=aid, st=text)
         if not aid.startswith("opt:"):
             return _go(err="Unbekannte Antwort.")
         key = aid.split(":", 1)[1]
@@ -132,7 +153,75 @@ def make_router() -> APIRouter:
         res = await run_in_threadpool(A.apply, ctx, fid, key, params, token)
         if not res.ok:
             return _go(err=" ".join(res.errors))
-        return _go(msg="Gespeichert und korrigiert.", done=res.decision_id, gone=await run_in_threadpool(gone))
+        return _go(msg="Gespeichert und korrigiert.", done=res.decision_id, gone=await run_in_threadpool(gone),
+                   sig=sig, sa=aid if not params else "", st=text)
+
+    def _signature(ctx: Any, fid: str, aid: str) -> tuple[str, str]:
+        """Muster des Befunds und Antworttext – vor dem Ausführen (danach gibt es den Befund nicht mehr)."""
+        from app.diagnosis.engine import report_for
+
+        f = report_for(ctx).by_id(fid)
+        return (G.signature(f), aid) if f is not None else ("", "")
+
+    def _chain_scan(ctx: Any, fid: str, kid: str) -> Response:
+        from app.diagnosis import chainscan as CS
+        from app.diagnosis.engine import report_for
+
+        f = report_for(ctx).by_id(fid)
+        d = (f.data or {}) if f is not None else {}
+        acc, asset = str(d.get("account") or ""), str(d.get("asset") or "")
+        if not acc or not asset:
+            return _go(err="Die Aufgabe besteht nicht mehr.")
+        if ctx.scheduler is not None and ctx.scheduler.trigger(CS.JOB, 0.2, account=acc, asset=asset):
+            return _go(msg="Die Suche auf der Blockchain läuft (1–5 Minuten). Die Frage kommt danach mit dem Ergebnis "
+                           "wieder – solange geht es mit der nächsten weiter.", skip=kid)
+        out = CS.job_run(ctx, acc, asset)  # ohne Scheduler (Tests, CLI): direkt
+        return _go(msg="Suche auf der Blockchain abgeschlossen." if out.get("ok") else "",
+                   err=out.get("error", "") if not out.get("ok") else "")
+
+    @router.post(f"{BASE}/alle")
+    async def answer_all(request: Request) -> Response:
+        """Dieselbe Antwort für alle offenen Fragen mit gleichem Muster (höchstens :data:`G.BATCH_LIMIT`)."""
+        from app.diagnosis.engine import report_for
+
+        ctx = get_ctx(request)
+        form = await request.form()
+        sig, aid = str(form.get("sig") or ""), str(form.get("a") or "")
+
+        def run() -> tuple[list[int], list[str]]:
+            ids, errs = [], []
+            for fid in G.similar(ctx, sig, aid):
+                if aid.startswith("mark:"):
+                    res = A.mark(ctx, fid, aid.split(":", 1)[1], "Im Assistenten: für alle gleich beantwortet")
+                else:
+                    report = report_for(ctx)
+                    f = report.by_id(fid)
+                    if f is None:
+                        continue
+                    key = aid.split(":", 1)[1]
+                    plan = A.build_plan(ctx, report, f, key, {}, given=False)
+                    if plan.errors:
+                        errs += plan.errors[:1]
+                        continue
+                    res = A.apply(ctx, fid, key, {}, plan.token)
+                if res.ok and res.decision_id:
+                    ids.append(int(res.decision_id))
+                else:
+                    errs += res.errors[:1]
+            return ids, errs
+
+        ids, errs = await run_in_threadpool(run)
+        if not ids:
+            return _go(err=" ".join(errs[:2]) or "Keine passenden Fragen mehr offen.")
+        return _go(msg=f"{len(ids)} Fragen gleich beantwortet." + (f" Nicht alle gingen: {errs[0]}" if errs else ""),
+                   dids=",".join(str(i) for i in ids))
+
+    @router.get(f"{BASE}/protokoll", response_class=HTMLResponse)
+    def log_page(request: Request) -> HTMLResponse:
+        """Was ich geändert habe: Antworten mit Korrektur oder Entscheidung, jeweils zurücknehmbar."""
+        ctx = get_ctx(request)
+        return render(request, "guide_log.html", active="quality", title=G.TITLE, rows=A.decisions(ctx.db, 100),
+                      mark_actions=A.MARK_ACTIONS)
 
     async def _stack_answer(ctx: Any, typ: str, ref: str, aid: str, form: Any, gone: Any) -> Response:
         import json
@@ -225,7 +314,17 @@ def make_router() -> APIRouter:
     async def undo(request: Request) -> Response:
         ctx = get_ctx(request)
         form = await request.form()
-        acts, kl = str(form.get("acts") or ""), str(form.get("kl") or "")
+        acts, kl, dids = str(form.get("acts") or ""), str(form.get("kl") or ""), str(form.get("dids") or "")
+        if dids:  # „für alle gleich“: alle Entscheidungen zurücknehmen
+            errs = []
+            for did in [int(x) for x in dids.split(",") if x.isdigit()]:
+                row = ctx.db.q1("SELECT action, status FROM diag_decision WHERE id=?", (did,))
+                if row is None or row["status"] != "active":
+                    continue
+                r = await run_in_threadpool(A.undo if row["action"] == "fix" else A.reopen, ctx, did)
+                errs += r.errors
+            return _go(err=" ".join(errs[:3])) if errs else _go(msg="Zurückgenommen – die Fragen sind wieder offen.",
+                                                                new=1)
         if acts:  # Prüfstapel: Stapelaktionen zurücknehmen
             from app.csvimport import batch as BA
             from app.csvimport.service import csv_service
@@ -250,6 +349,9 @@ def make_router() -> APIRouter:
             return _go(err="Diese Antwort ist schon zurückgenommen.")
         fn = A.undo if row["action"] == "fix" else A.reopen
         res = await run_in_threadpool(fn, ctx, did)
+        back = str(form.get("back") or "")
+        if back == "protokoll":
+            return RedirectResponse(f"{BASE}/protokoll", status_code=303)
         if res.errors:
             return _go(err=" ".join(res.errors))
         return _go(msg="Zurückgenommen – die Aufgabe ist wieder offen.", new=1)

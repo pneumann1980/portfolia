@@ -187,7 +187,108 @@ def tasks(ctx: Any, *, hints: bool = False) -> list[Task]:
                             weight=it.weight, item=it, ref=it.refs[0]))
         else:
             out.append(_page_task(it, theme))
-    out.sort(key=lambda t: (THEME_ORDER.get(t.theme, 99), t.kind != "stapel", -float(t.weight), t.key))
+    out += _takeover_tasks(ctx, report)
+    out.sort(key=lambda t: (THEME_ORDER.get(t.theme, 99), t.kind != "stapel", t.kind != "vorrang",
+                            -float(t.weight), t.key))
+    return out
+
+
+# ----------------------------------------------------------------------------------------------------
+# Quellenvorrang je Konto als eine Frage
+# ----------------------------------------------------------------------------------------------------
+
+DECLINED_KEY = "guide.takeover_declined"
+
+
+def _takeover_tasks(ctx: Any, report: Any) -> list[Task]:
+    """„Soll Bitpanda für dein Konto maßgeblich sein?“ – nur für Konten mit Abweichung bzw. mehreren Doppelungen, deren
+    Quelle die Übernahme unterstützt, die noch nicht übernommen und nicht abgelehnt ist."""
+    try:
+        from app.datasources import takeover as TK
+        from app.datasources.service import datasource_service
+    except ImportError:  # pragma: no cover - Modul optional
+        return []
+    declined = set(ctx.db.get_state(DECLINED_KEY) or [])
+    holdings = {f.data.get("account") for f in report.findings
+                if f.kind == "holdings" and (f.data or {}).get("status") == "extern_diff"}
+    dups: dict[str, int] = {}
+    for f in report.findings:
+        if f.kind == "duplicate" and f.parent is None:
+            for acc in f.accounts:
+                dups[acc] = dups.get(acc, 0) + 1
+    out = []
+    for ds in datasource_service(ctx).list():
+        sid = int(ds.id)
+        if sid in declined or not TK.supported(ds.provider):
+            continue
+        if ds.account not in holdings and dups.get(ds.account, 0) < 2:
+            continue
+        last = TK.latest(ctx.db, sid)
+        if last is not None and last["status"] == "applied":
+            continue
+        mode = TK.mode(ds.provider)
+        out.append(Task(
+            key=f"vorrang:{sid}", theme="doppelt", kind="vorrang", heading=f"{ds.account} · {ds.name}",
+            ref=str(sid),
+            question=f"Soll {ds.provider_label} für dein Konto „{ds.account}“ maßgeblich sein?",
+            context=("Für dieses Konto gibt es Abweichungen bzw. doppelte Buchungen zwischen dem kuratierten Import "
+                     f"und dem Abruf von {ds.provider_label}. Mit „Ja“ ersetzt Portfolia die Buchungen des Imports "
+                     "ab dem ersten Ereignis der Quelle durch die der Quelle – eine Entscheidung statt vieler "
+                     "Einzelfragen. "
+                     + ("Vorher wird alles abgerufen und am Bestand bewiesen."
+                        if mode == "proof" else "Vorher wird alles abgerufen; du bestätigst, dass die Historie "
+                                                "vollständig ist, und nichts darf schlechter werden.")),
+            href=f"/settings/datasources/{sid}/uebernahme", weight=Decimal(10_000),
+            answers=[Answer("vr:yes", "Ja – prüfen und übernehmen",
+                            "Öffnet die Übernahme mit Vorschau (Abruf dauert einige Minuten); rückgängig als Ganzes.",
+                            recommended=True),
+                     Answer("vr:no", "Nein, der Import ist für dieses Konto richtig",
+                            NO_CHANGE + " Portfolia schlägt das für dieses Konto nicht wieder vor."),
+                     Answer("skip", "Weiß ich nicht", NO_CHANGE)]))
+    return out
+
+
+def decline_takeover(ctx: Any, sid: int) -> None:
+    cur = set(ctx.db.get_state(DECLINED_KEY) or [])
+    cur.add(int(sid))
+    ctx.db.set_state(DECLINED_KEY, sorted(cur))
+
+
+# ----------------------------------------------------------------------------------------------------
+# „Für alle gleich beantworten“
+# ----------------------------------------------------------------------------------------------------
+
+BATCH_LIMIT = 50
+
+
+def signature(f: Any) -> str:
+    """Art des Befunds für „gleiche Fragen“: Befundart und Muster (z. B. ``duplicate:same_qty``)."""
+    return f"{f.kind}:{(f.data or {}).get('type', '')}"
+
+
+def similar(ctx: Any, sig: str, aid: str, limit: int = BATCH_LIMIT) -> list[str]:
+    """Offene Befund-Fragen mit gleichem Muster, auf die dieselbe Antwort passt. Korrekturen nur, wenn sie dort die
+    unbedingte Empfehlung ohne Eingaben sind; Entscheidungen ohne Datenänderung passen immer."""
+    from app.diagnosis.engine import report_for
+    from app.diagnosis.recommend import recommend
+
+    report = report_for(ctx)
+    out: list[str] = []
+    key = aid.split(":", 1)[1] if aid.startswith("opt:") else ""
+    for t in tasks(ctx):
+        if t.kind != "frage":
+            continue
+        f = report.by_id(t.finding_id)
+        if f is None or signature(f) != sig:
+            continue
+        if key:
+            rec = recommend(report, f)
+            prim = rec.primary
+            if prim is None or prim.key != key or prim.params or rec.conditional:
+                continue
+        out.append(f.id)
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -589,6 +690,16 @@ def _effect(ctx: Any, report: Any, f: Any, opt: Any) -> tuple[str, str]:
     return ("; ".join(parts) or opt.summary), plan.token
 
 
+def _chain_answer_useful(rec: Any, f: Any, report: Any) -> bool:
+    from app.diagnosis.recommend import facts_for
+
+    d = f.data or {}
+    if not str(d.get("status", "")).startswith("extern") or rec.option("chain_steps") is not None:
+        return False
+    facts = facts_for(report)
+    return facts.chain_capable(d.get("account", ""), d.get("asset", ""))
+
+
 def detail(ctx: Any, task: Task) -> Task:
     """Frage, Antworten und Wirkung der empfohlenen Antwort einer Aufgabe."""
     if task.kind == "stapel":
@@ -633,6 +744,12 @@ def detail(ctx: Any, task: Task) -> Task:
     answers.append(Answer("mark:defer", "Weiß ich nicht", NO_CHANGE + f" Die Frage kommt in {DEFER_DAYS} Tagen wieder "
                           "(oder früher, wenn sich die Buchungen ändern)."
                           + (f" Tipp: {tip}" if tip else "")))
+    if f.kind == "holdings" and _chain_answer_useful(rec, f, report):
+        answers.insert(0 if prim is None else 1, Answer(
+            "chain:scan", "Auf der Blockchain nachsehen lassen",
+            "Portfolia fragt den Bestand bei früheren Blöcken ab (ohne Schlüssel, 1–5 Minuten) und findet den Tag, an "
+            "dem er ohne Buchung gesprungen ist. Danach kommt diese Frage mit dem Ergebnis wieder.",
+            recommended=prim is None))
     used = {a.option for a in answers if a.option}
     for o in fixes:
         if o.key not in used:

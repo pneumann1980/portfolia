@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.10.2026 · Version 0.73.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.10.2026 · Version 0.74.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,19 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.74.0 – „Buchungen prüfen“: für alle gleich, Quellenvorrang und Blockchain-Suche als Antwort, Protokoll
+
+Schritt 3 von „Assistent 2.0“.
+
+* **Für alle gleich beantworten:** Nach einer Antwort zeigt die nächste Karte „Es gibt 5 weitere Fragen dieser Art … Alle 5 gleich beantworten“. Gleich heißt: dieselbe Befundart
+  und dasselbe Muster; eine Korrektur wird nur dort übernommen, wo sie die unbedingte Empfehlung ohne Eingaben ist (jede mit eigener Vorschau-Prüfsumme), Entscheidungen ohne
+  Datenänderung passen immer. Höchstens 50 auf einmal; „Rückgängig“ nimmt alle zurück.
+* **Quellenvorrang als eine Frage je Konto:** „Soll Bitpanda für dein Konto „Bitpanda“ maßgeblich sein?“ – nur bei Bestandsabweichung oder mehreren Doppelungen auf dem Konto,
+  wenn die Quelle die Übernahme unterstützt und sie noch nicht übernommen ist. „Ja“ öffnet die Übernahme mit Vorschau (Abruf dauert), „Nein“ merkt sich die Entscheidung.
+* **Blockchain-Suche als Antwort:** Bei Bestandsfragen zu peaq/Polkadot-Wallets gibt es „Auf der Blockchain nachsehen lassen“; die Suche läuft im Hintergrund, die Frage kommt
+  danach mit den gefundenen Sprüngen als Antwort wieder.
+* **„Was ich geändert habe“** (`/quality/assistent/protokoll`): alle Antworten mit Korrektur oder Entscheidung, je Zeile zurücknehmbar.
 
 ## 0.73.0 – „Buchungen prüfen“: neue Vorgänge und zusammenhängende Buchungen als Frage (keine Weiterleitung)
 
