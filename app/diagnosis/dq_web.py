@@ -14,6 +14,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+from app.diagnosis import assistant as AS
+from app.diagnosis import autocheck as AC
 from app.diagnosis import checkrun as CR
 from app.diagnosis import workplan as WP
 from app.diagnosis.engine import report_for
@@ -93,6 +95,8 @@ def banner(ctx: Any, since: str = "") -> dict[str, Any] | None:
 @extra_jobs
 def _register_jobs(s: Scheduler) -> None:
     s.register(CR.JOB, CR.job_run, None)  # nur auf Anforderung (kein Zeitplan)
+    s.register(AC.JOB, AC.job_run, None)  # verzögert nach Datenänderungen (Rückruf unten)
+    AC.install(s.ctx)
 
 
 def _finished_since(ctx: Any, since: datetime) -> bool:
@@ -116,8 +120,10 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         plan = WP.build(ctx)
         last = CR.previous(ctx.db)
+        n, minutes = AS.summary(ctx)
         return render(request, "partials/dq_plan.html", plan=plan, tiers=WP.TIERS, why_a=WP.WHY_A, last=last,
-                      kinds=KINDS)
+                      kinds=KINDS, assist_n=n, assist_min=minutes,
+                      auto_check=bool(ctx.settings.get(AC.SETTING, True)))
 
     @router.post("/quality/pruefen")
     async def start(request: Request) -> Response:
@@ -134,6 +140,15 @@ def make_router() -> APIRouter:
         except RuntimeError as e:
             return _redirect(back, err=str(e))
         return _redirect(back, msg="Prüflauf abgeschlossen." if out.get("ok") else out.get("error", "Fehler"))
+
+    @router.post("/quality/automatik/pruefung")
+    async def set_auto_check(request: Request) -> Response:
+        ctx = get_ctx(request)
+        form = await request.form()
+        on = form.get("auto") == "1"
+        ctx.settings.set(AC.SETTING, on)
+        state = "eingeschaltet." if on else "ausgeschaltet."
+        return _redirect("/quality/automatik", msg=f"Automatische Nachprüfung {state}")
 
     @router.get("/quality/pruefen/progress", response_class=HTMLResponse)
     def progress(request: Request, since: str = "", back: str = "/quality") -> Response:
@@ -177,7 +192,8 @@ def make_router() -> APIRouter:
         def _hub(request: Request, _tab: str = tab) -> HTMLResponse:
             title, intro = HUB[_tab]
             return render(request, "dq_hub.html", active="quality", tab=_tab, title=title, intro=intro,
-                          subs=[s for s in SUBS[_tab] if s[2]])
+                          subs=[s for s in SUBS[_tab] if s[2]],
+                          auto_check=bool(get_ctx(request).settings.get(AC.SETTING, True)))
 
         router.add_api_route(f"/quality/{tab}", _hub, methods=["GET"], response_class=HTMLResponse)
 

@@ -203,8 +203,9 @@ def _taxdata_export(db: Any, out: dict[str, bytes]) -> list[dict[str, Any]]:
 # ----------------------------------------------------------------------------------------------------
 
 def extras_for(db: Any, import_id: int) -> dict[str, bytes]:
-    return {r["name"]: bytes(r["data"]) for r in db.q("SELECT name, data FROM import_extra WHERE import_id=?",
-                                                       (import_id,))}
+    """Portfolia-Zusatzdaten des Imports (ohne die archivierten Prüfunterlagen des Kurators, ``audit/…``)."""
+    return {r["name"]: bytes(r["data"]) for r in db.q("SELECT name, data FROM import_extra WHERE import_id=? "
+                                                       "AND name NOT LIKE 'audit/%'", (import_id,))}
 
 
 def _state(extras: dict[str, bytes]) -> dict[str, Any] | None:

@@ -16,6 +16,7 @@ from app import APP_NAME, REVISION, __version__
 from app.context import AppContext
 from app.web import fmt
 from app.web.accesslog import AccessLogMiddleware
+from app.web.flow import FlowMiddleware
 from app.web.security import BasicAuthMiddleware, CsrfMiddleware, SecurityHeadersMiddleware
 
 log = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
                                  demo_mode=ctx.config.demo_mode)
     app.state.templates = templates
 
+    app.add_middleware(FlowMiddleware)  # innerste Schicht: schreibt nur Weiterleitungen um
     app.add_middleware(CsrfMiddleware)
     if ctx.config.auth_mode == "basic":
         app.add_middleware(BasicAuthMiddleware, user=ctx.config.auth_user, password_hash=ctx.config.auth_password_hash)

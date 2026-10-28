@@ -71,6 +71,7 @@
           </div>
         </div>
       {% endfor %}
+      {% if request.cookies.get('dq_flow') == '1' and request.url.path != '/quality/assistent' and (request.url.path.startswith('/quality') or request.url.path.startswith('/journal/pruefung') or request.url.path.startswith('/journal/csv')) %}{% include "partials/dq_flow.html" %}{% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>

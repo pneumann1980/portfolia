@@ -76,6 +76,13 @@
   {% endif %}{% endif %}
   {% else %}<p class="hint">Noch kein Import verarbeitet.</p>{% endif %}
 
+  {% if audit %}<details class="box" style="margin-top:12px"><summary>Prüfunterlagen des Kurators ({{ audit|length }}) <span class="hint">archiviert, nicht ausgewertet</span></summary>
+    <p class="hint">Dateien aus dem Ordner <code>kuration/</code> der Import-ZIP. Portfolia zeigt hier nur die ersten Zeilen; zur Auswertung bitte melden, welche Datei nützlich wäre.</p>
+    {% for a in audit %}<details class="box"><summary><code>{{ a.name }}</code> <span class="hint">{{ (a.size / 1024)|round(1) }} KB</span></summary>
+      {% if a.binary %}<p class="hint">Binärdatei – keine Vorschau.</p>{% else %}<pre class="mono small" style="white-space:pre-wrap;overflow-x:auto">{% for ln in a.head %}{{ ln }}
+{% endfor %}</pre>{% endif %}</details>{% endfor %}
+  </details>{% endif %}
+
   <details class="box" style="margin-top:12px"><summary>Importhistorie ({{ imports|length }})</summary><div class="table-wrap"><table>
     <thead><tr><th>#</th><th>Datei</th><th>Verarbeitet</th><th>Status</th><th class="num">Tx</th><th>Daten</th></tr></thead><tbody>
     {% for i in imports %}{% set c = (i.counts_json and i.counts_json|fromjson) or {} %}

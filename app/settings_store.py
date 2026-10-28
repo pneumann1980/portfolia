@@ -47,6 +47,7 @@ DEFAULTS: dict[str, Any] = {
     # übrige Krypto-Historie automatisch über Yahoo (SYMBOL-EUR/-USD) – nur nach bestandenem Abgleich mit CoinGecko
     "prices.crypto_history_auto": True,
     # Autopilot nach Importen (Bericht immer; Aktionen nur bei eingeschaltetem Autopilot, Standard aus)
+    "dq.auto_check": True,  # Prüflauf nach Datenänderungen von selbst nachführen (ohne Abrufe, ohne Übernahmen)
     "autopilot.enabled": False,
     "autopilot.rules": True,  # Entscheidungsregeln (Hinweise/Verdacht, ohne Datenänderung) anwenden
     "autopilot.fixes": False,  # beweisbare Korrekturen (Ausblenden/Verknüpfen/Transfer aus zwei vorhandenen Buchungen)

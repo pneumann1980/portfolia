@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 28.10.2026 · Version 0.65.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 28.10.2026 · Version 0.66.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,28 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.66.0 – Datenqualität einfach: Assistent, Flow-Modus, Nachprüfung, Prüfunterlagen des Kurators
+
+Paket G aus `docs/PLAN_DATENQUALITAET.md` (UX-Konzept „Datenqualität einfach“).
+
+* **Assistent** `/quality/assistent` (`app/diagnosis/assistant*.py`): zeigt immer die nächste offene Aufgabe (Arbeitsplan Stufe A vor B, Einzelbefunde
+  einzeln) mit „Aufgabe n von m“, Empfehlung, den berechneten Auswirkungen und – wenn die Lösung belegt, unbedingt und ohne Auswahlparameter ist – **einem**
+  Übernehmen-Knopf (Vorschau-Token wie im bisherigen Ablauf, daher gleiche Prüfung auf veraltete Daten). Alternativen, „Kein Handlungsbedarf“/„Später prüfen“
+  (ändern keine Buchung) und „Überspringen“ (nur in diesem Browser gemerkt) stehen daneben. Klärungsfälle, Prüfstapel und Prüfbericht öffnen ihre eigene
+  Seite. Der Einstieg „N Aufgaben · ca. M Min. – Weiter mit dem Assistenten“ steht in „Heute“.
+* **Flow-Modus** (`app/web/flow.py`, Cookie `dq_flow`): Solange er aktiv ist, enden die abschließenden Aktionen aller Teilsysteme (Diagnose-Übernehmen/-Markieren,
+  Sammelaktionen, Klärung, CSV-Prüfstapel, Prüfstapel-Ausführung) wieder **beim Assistenten**, Meldung bzw. Fehler bleiben erhalten. Zwischenschritte bleiben
+  unverändert; Ziele außerhalb der Datenqualität werden nie umgeschrieben. Eine Leiste „Assistent aktiv – zurück zur nächsten Aufgabe“ erscheint auf den
+  Seiten der Datenqualität; die Übersicht `/quality` beendet den Modus. Ohne Cookie ändert sich nichts.
+* **Selbstaktualisierung** (`app/diagnosis/autocheck.py`): Nach Datenänderungen läuft der Prüflauf nach 45 s (gebündelt) von selbst nach – lokal, ohne Abrufe,
+  ohne Klärung/Autopilot-Übernahmen, nicht während eines Imports oder Prüflaufs, höchstens alle 120 s. Einstellung `dq.auto_check` (Standard an), Schalter auf
+  `/quality/automatik`. Der Hinweis „Integritätsprüfung älter als die Daten“ nennt jetzt die automatische Aktualisierung.
+* **Prüfunterlagen des Kurators:** Dateien im Ordner `kuration/` der Import-ZIP lösen keine 14 Einzelwarnungen mehr aus. Sie werden als Prüfunterlagen
+  archiviert (je Datei ≤ 2 MiB, insgesamt ≤ 20 MiB, ≤ 200 Dateien), **nicht ausgewertet**, in `/quality` mit den ersten Zeilen angezeigt und gehören nicht zum
+  Portfolia-Voll-Export. Dateien in anderen Unterordnern werden zu **einer** Warnung gebündelt.
+* **Grenzen:** „Überspringen“ gilt nur für diesen Browser und endet mit dem Flow-Cookie (4 h). Die Aufwandsangabe (1,5 Min. je Aufgabe) ist eine Schätzung.
+  Die Auto-Nachprüfung ersetzt weder die Klärung noch Abrufe bei Börsen/Wallets.
 
 ## 0.65.0 – Aufräumen und Absicherung (L3, L6, L7, L8, Testlücken)
 

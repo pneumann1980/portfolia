@@ -22,6 +22,13 @@ ALL_FILES = ("manifest.json", *REQUIRED_FILES, *OPTIONAL_FILES)
 # Zusatzdaten eines Portfolia-Exports (Einstellungen, Zuordnungen, Kurshistorie) – nicht Teil des Datenvertrags,
 # andere Werkzeuge ignorieren den Ordner; Prüfsummen stehen im Manifest unter "extra_files".
 SIDECAR_DIR = "portfolia/"
+# Prüfunterlagen des Kurators (Korrekturlisten, Abdeckung, Quellenübersicht …): archiviert und angezeigt, nicht
+# ausgewertet. Grenzen gegen Zip-Bomben: je Datei, gesamt und Anzahl.
+AUDIT_DIR = "kuration/"
+MAX_AUDIT_MEMBER_BYTES = 2 * 1024 * 1024
+MAX_AUDIT_TOTAL_BYTES = 20 * 1024 * 1024
+MAX_AUDIT_FILES = 200
+AUDIT_PREFIX = "audit/"  # Namensraum in der Tabelle import_extra
 
 MAX_ZIP_BYTES = 200 * 1024 * 1024
 MAX_MEMBER_BYTES = 150 * 1024 * 1024

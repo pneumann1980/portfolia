@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app.db import Database
+from app.importer.contract import AUDIT_PREFIX
 from app.importer.validate import ParsedImport, Report, sha256_file, validate_zip
 from app.ledger.engine import DUST, EngineOptions, LedgerResult, run_ledger
 from app.ledger.models import AccountInfo, AssetInfo, Portfolio, Tx
@@ -249,6 +250,9 @@ def _store(db: Database, path: Path, parsed: ParsedImport, report: Report, diff:
         )
         c.executemany("INSERT INTO import_extra(import_id, name, data) VALUES (?,?,?)",
                       [(iid, name, data) for name, data in sorted(parsed.extras.items())])
+        # Prüfunterlagen des Kurators: gleiche Tabelle, Präfix „audit/“ (getrennt von den Portfolia-Zusatzdaten)
+        c.executemany("INSERT INTO import_extra(import_id, name, data) VALUES (?,?,?)",
+                      [(iid, AUDIT_PREFIX + name, data) for name, data in sorted(parsed.audit.items())])
         # Umschalten
         c.execute("UPDATE imports SET status='archived' WHERE status='active'")
         c.execute("UPDATE imports SET status='active' WHERE id=?", (iid,))

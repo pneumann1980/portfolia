@@ -95,6 +95,8 @@ class ParsedImport:
     manual_prices: list[dict[str, Any]]
     # Zusatzdaten eines Portfolia-Exports (Ordner portfolia/, Prüfsummen geprüft) – Name ohne Ordner → Inhalt
     extras: dict[str, bytes] = field(default_factory=dict)
+    # Prüfunterlagen des Kurators (Ordner kuration/): archiviert, nicht ausgewertet – Name mit Ordner → Inhalt
+    audit: dict[str, bytes] = field(default_factory=dict)
 
     @property
     def counts(self) -> dict[str, int]:
@@ -144,8 +146,8 @@ def _clean(v: str | None) -> str | None:
 # ZIP-Ebene
 # ----------------------------------------------------------------------------------------------
 
-def _read_members(zf: zipfile.ZipFile, rep: Report, extras: dict[str, bytes] | None = None
-                  ) -> dict[str, bytes] | None:
+def _read_members(zf: zipfile.ZipFile, rep: Report, extras: dict[str, bytes] | None = None,
+                  audit: dict[str, bytes] | None = None) -> dict[str, bytes] | None:
     infos = [i for i in zf.infolist() if not i.is_dir()]
     names = [i.filename for i in infos]
     # Unsichere Pfade
@@ -162,6 +164,9 @@ def _read_members(zf: zipfile.ZipFile, rep: Report, extras: dict[str, bytes] | N
         rep.warn("zip_folder", f"Dateien liegen im Unterordner '{prefix}' – wird toleriert.")
     total = 0
     members: dict[str, bytes] = {}
+    ignored: list[str] = []  # Dateien in fremden Unterordnern (gebündelt gemeldet)
+    audit_skipped = 0
+    audit_total = 0
     for info in infos:
         name = info.filename[len(prefix):] if prefix else info.filename
         if "/" in name and name.startswith(C.SIDECAR_DIR) and extras is not None:
@@ -177,8 +182,23 @@ def _read_members(zf: zipfile.ZipFile, rep: Report, extras: dict[str, bytes] | N
             with zf.open(info) as f:
                 extras[name[len(C.SIDECAR_DIR):]] = f.read(C.MAX_MEMBER_BYTES + 1)
             continue
+        if "/" in name and name.startswith(C.AUDIT_DIR) and audit is not None:
+            if (len(audit) >= C.MAX_AUDIT_FILES or info.file_size > C.MAX_AUDIT_MEMBER_BYTES
+                    or audit_total + info.file_size > C.MAX_AUDIT_TOTAL_BYTES
+                    or (info.compress_size and info.file_size / max(info.compress_size, 1) > C.MAX_COMPRESSION_RATIO
+                        and info.file_size > 1024 * 1024)):
+                audit_skipped += 1
+                continue
+            with zf.open(info) as f:
+                data = f.read(C.MAX_AUDIT_MEMBER_BYTES + 1)
+            if len(data) > C.MAX_AUDIT_MEMBER_BYTES:
+                audit_skipped += 1
+                continue
+            audit_total += len(data)
+            audit[name] = data
+            continue
         if "/" in name:
-            rep.warn("zip_extra", f"Unerwartete Datei im Unterordner ignoriert: {info.filename}")
+            ignored.append(info.filename)
             continue
         if name.startswith(".") or name.startswith("__MACOSX"):
             continue
@@ -202,6 +222,15 @@ def _read_members(zf: zipfile.ZipFile, rep: Report, extras: dict[str, bytes] | N
         with zf.open(info) as f:
             data = f.read(C.MAX_MEMBER_BYTES + 1)
         members[name] = data
+    if audit:
+        rep.info("zip_audit", f"{len(audit)} Prüfunterlagen des Kurators aus „{C.AUDIT_DIR}“ archiviert (werden nicht "
+                              "ausgewertet; Anzeige unter Datenqualität → Heute → Import)"
+                 + (f"; {audit_skipped} zu große bzw. überzählige Dateien ausgelassen" if audit_skipped else ""))
+    elif audit_skipped:
+        rep.warn("zip_extra", f"{audit_skipped} Dateien aus „{C.AUDIT_DIR}“ zu groß oder überzählig, ignoriert")
+    if ignored:
+        shown = ", ".join(ignored[:3]) + (f" … (+{len(ignored) - 3})" if len(ignored) > 3 else "")
+        rep.warn("zip_extra", f"{len(ignored)} Dateien in Unterordnern ignoriert: {shown}")
     return members
 
 
@@ -676,9 +705,10 @@ def validate_zip(path: Path) -> tuple[Report, ParsedImport | None]:
         return rep, None
     file_sha = sha256_file(path)
     extras: dict[str, bytes] = {}
+    audit: dict[str, bytes] = {}
     try:
         with zipfile.ZipFile(path) as zf:
-            members = _read_members(zf, rep, extras)
+            members = _read_members(zf, rep, extras, audit)
     except zipfile.BadZipFile as e:
         rep.error("zip_invalid", f"Keine gültige ZIP-Datei: {e}")
         return rep, None
@@ -740,4 +770,5 @@ def validate_zip(path: Path) -> tuple[Report, ParsedImport | None]:
         issues=issues,
         manual_prices=manual,
         extras=extras,
+        audit=audit,
     )

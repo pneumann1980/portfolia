@@ -14,5 +14,17 @@
     {% endfor %}
     </ul>
   </section>
+  {% if tab == 'automatik' %}
+  <section class="card">
+    <h2>Automatische Nachprüfung</h2>
+    <p>Nach einem Import oder einer Änderung führt Portfolia den Prüflauf nach etwa einer Minute von selbst nach, damit die Übersicht nie veraltet ist. Der Lauf arbeitet nur lokal: keine Abrufe, keine Übernahmen, keine Änderung an Buchungen.</p>
+    <form method="post" action="/quality/automatik/pruefung" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="auto" value="{{ '0' if auto_check else '1' }}">
+      <span class="badge {{ 'good' if auto_check else '' }}">{{ 'eingeschaltet' if auto_check else 'ausgeschaltet' }}</span>
+      <button class="btn sm" type="submit">{{ 'Ausschalten' if auto_check else 'Einschalten' }}</button>
+    </form>
+  </section>
+  {% endif %}
 </div>
 {% endblock %}

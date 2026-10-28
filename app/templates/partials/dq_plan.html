@@ -32,7 +32,15 @@
         <a class="btn primary sm" href="{{ n.href }}">{{ n.cta }}</a>
       </div>
     {% endif %}
-    {% if plan.stale %}<div class="alert warn"><span class="icon">!</span><div>Die letzte Integritätsprüfung ist älter als die Daten. „Alles prüfen“ aktualisiert sie.</div></div>{% endif %}
+    {% if assist_n %}
+      <div class="dq-next" role="region" aria-label="Assistent">
+        <b>{{ assist_n }} {{ 'Aufgabe' if assist_n == 1 else 'Aufgaben' }} · ca. {{ assist_min }} Min.</b>
+        <div class="hint">Der Assistent zeigt immer die nächste Aufgabe mit einer Empfehlung und führt danach von selbst zur übernächsten.</div>
+        <a class="btn primary sm" href="/quality/assistent?new=1">Weiter mit dem Assistenten</a>
+      </div>
+    {% endif %}
+    {% if plan.stale %}<div class="alert warn"><span class="icon">!</span><div>Die letzte Integritätsprüfung ist älter als die Daten.
+      {% if auto_check %}Sie wird automatisch aktualisiert; „Alles prüfen“ startet sie sofort.{% else %}„Alles prüfen“ aktualisiert sie (die automatische Nachprüfung ist ausgeschaltet).{% endif %}</div></div>{% endif %}
     {% if last and last.finished_at %}
       <p class="hint">Letzter Prüflauf: {{ last.finished_at|datetime_de }}{% if last.duration_s %} · {{ last.duration_s }} s{% endif %}
         {% if not last.first %}· seit dem Lauf davor: {{ last.new|length }} neu, {{ last.gone|length }} erledigt{% endif %}

@@ -1,6 +1,6 @@
 # Plan: Quelle vor kuratiertem Import, PEAQ-Lücke, Import-Warnungen, einfachere Datenqualität
 
-Stand 28.10.2026 · Version 0.65.0 · **nur Planung, nichts umgesetzt.** Grundlage: Code (0.65.0), `docs/SOURCE_TAKEOVER.md`,
+Stand 28.10.2026 · Version 0.66.0 (Paket G umgesetzt) · **Planung (Pakete H–K offen), nichts umgesetzt.** Grundlage: Code (0.65.0), `docs/SOURCE_TAKEOVER.md`,
 `docs/RECONCILIATION.md`, zwei Screenshots und drei Abfragen bei Subscan. Was ich geprüft habe und was Annahme ist, steht je Abschnitt.
 
 ## 0. Zusammenfassung

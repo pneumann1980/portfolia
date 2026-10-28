@@ -326,6 +326,23 @@ def quality_log() -> Response:
                     headers={"Content-Disposition": 'attachment; filename="portfolia-log.txt"'})
 
 
+def audit_files(db: Any, import_id: int | None, lines: int = 6) -> list[dict[str, Any]]:
+    """Archivierte Prüfunterlagen des Kurators (Ordner ``kuration/`` der Import-ZIP): Name, Größe, erste Zeilen."""
+    if not import_id:
+        return []
+    from app.importer.contract import AUDIT_PREFIX
+
+    out = []
+    for r in db.q("SELECT name, data FROM import_extra WHERE import_id=? AND name LIKE ? ORDER BY name",
+                  (import_id, AUDIT_PREFIX + "%")):
+        raw = bytes(r["data"])
+        text = raw[:8192].decode("utf-8", "replace")
+        head = [ln[:300] for ln in text.splitlines()[:lines]]
+        out.append({"name": r["name"][len(AUDIT_PREFIX):], "size": len(raw), "head": head,
+                    "binary": "\x00" in text})
+    return out
+
+
 @router.get("/quality", response_class=HTMLResponse)
 def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
     ctx = get_ctx(request)
@@ -366,7 +383,8 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
                    "dups": js.duplicates(), "log": js.log(15)}
     except Exception as e:  # Journal-Modul optional
         log.debug("Journal nicht verfügbar: %s", e)
-    return render(request, "quality.html", active="quality", imports=imports, cur=cur, journal=journal,
+    resp = render(request, "quality.html", active="quality", imports=imports, cur=cur, journal=journal,
+                  audit=audit_files(ctx.db, sel),
                   stale_ignored=set(ctx.settings.get("prices.stale_ignored") or []),
                   active_id=active,
                   report=report, diff=diff, check=check, issues=issues, val=val, ledger_issues=ledger_issues[:300],
@@ -377,6 +395,9 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
                   asset_name=lambda aid: pf.asset(aid).name if pf else aid,
                   src_suggested=ctx.db.scalar("SELECT COUNT(*) FROM asset_source WHERE status='suggested'", default=0),
                   s_age={k: _age_label(ctx.settings.get(FB_KEYS[k], FB_DEFAULT[k])) for k in FB_KEYS})
+    for c in ("dq_flow", "dq_cur", "dq_skip"):  # Übersicht erreicht = Flow-Modus des Assistenten endet
+        resp.delete_cookie(c, path="/")
+    return resp
 
 
 def _age_label(v: Any) -> str:
