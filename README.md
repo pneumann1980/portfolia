@@ -130,7 +130,7 @@ docker logs -f portfolia                                         # mitlesen
 | Zeile | Bedeutung |
 |---|---|
 | `ERROR app.web: 500 GET /news?[tab] 12 ms UndefinedError … @ datei.py:123` | unbehandelter Fehler: Methode, Pfad (Query nur als Schlüsselnamen, nie Werte), Fundstelle; Traceback bei `LOG_LEVEL=DEBUG` |
-| `WARNING app.web: GET /journal 200 2310 ms` | langsame Anfrage (≥ 1 s) bzw. Antwort ≥ 400 |
+| `WARNING app.web: GET /journal 200 2310 ms` | langsame Anfrage (≥ 1 s); Antworten 4xx erscheinen als `INFO`, 5xx als `ERROR` |
 | `INFO app.jobs.tasks: Job news_enrich ok in 41.2 s …` | Job-Ende (nur ab 5 s; sonst `DEBUG`); Fehler immer mit Traceback auf `ERROR` |
 | `WARNING app: Lauf von X verpasst …` | Der Pool war ausgelastet, ein geplanter Lauf wurde verworfen |
 | `WARNING app.db: Langsame Datenbankanweisung (… ms)` | Anweisung oder Wartezeit auf die Schreibsperre ≥ 0,5 s (nur Anfang des SQL, nie Parameter) |
@@ -193,7 +193,7 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 | `AUTH_USER`, `AUTH_PASSWORD_HASH` | – | Basic-Auth; Hash erzeugen: `docker exec -it portfolia python -m app hash-password` |
 | `LOG_LEVEL` | `INFO` | `DEBUG` … `ERROR` |
 | `LOG_FORMAT` | `text` | `text` (lesbar, `key=value`) oder `json` (maschinenlesbar) |
-| `LOG_ACCESS` | `slow` | Anfrage-Zeilen: `slow` = nur Fehler (≥ 400) und langsame (≥ 1 s), `all` = jede, `off` = keine |
+| `LOG_ACCESS` | `slow` | Anfrage-Zeilen: `slow` = nur Antworten ≥ 400 und langsame (≥ 1 s), `all` = jede, `off` = keine |
 | `LOG_LEVELS` | – | einzelne Bereiche anders einstellen, z. B. `app.news=DEBUG,app.http=DEBUG` |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | IPs eines Reverse-Proxys, dessen `X-Forwarded-*` vertraut wird |
 | `ROOT_PATH` | – | Betrieb unter Unterpfad hinter einem Proxy (z. B. `/portfolia`) |

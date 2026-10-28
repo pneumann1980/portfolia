@@ -89,11 +89,15 @@ def test_slow_and_failed_requests_are_logged_without_query_values(config, monkey
     assert slow and "WARNING" in slow[-1] and "?[token,days]" in slow[-1] and "NIEMALS" not in "".join(_lines(""))
 
 
-def test_404_is_info_not_an_alarm(config):
+def test_client_errors_are_info_not_alarms_and_stay_out_of_the_error_log(config):
     with _client(config) as c:
         c.get("/gibt-es-nicht-xyz")
-    nf = _lines("GET /gibt-es-nicht-xyz")
-    assert nf and "INFO" in nf[-1]
+        assert c.post("/settings/irgendwas", data={}).status_code == 403  # ohne CSRF-Token
+        rows = c.app.state.ctx.db.scalar("SELECT COUNT(*) FROM event_log WHERE message LIKE '%403%'", default=0)
+    for marker in ("GET /gibt-es-nicht-xyz", "POST /settings/irgendwas"):
+        lines = _lines(marker)
+        assert lines and "INFO" in lines[-1]
+    assert rows == 0
 
 
 def test_access_log_all_mode_skips_polling_endpoints(config):

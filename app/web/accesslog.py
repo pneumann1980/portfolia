@@ -1,7 +1,7 @@
 """Anfrage-Protokoll und Fehlerbehandlung für die Docker-Konsole.
 
 * Jede Anfrage bekommt eine kurze **Anfrage-ID** (Antwort-Header ``X-Request-ID``, Fehlerseite, jede Logzeile dazu).
-* ``LOG_ACCESS=slow`` (Standard): nur Antworten ab 400 und Anfragen ab :data:`SLOW_S` im Log; ``all``: jede
+* ``LOG_ACCESS=slow`` (Standard): 4xx (INFO), 5xx (ERROR), Anfragen ab :data:`SLOW_S` (WARNING); ``all``: jede
   Anfrage auf INFO (ohne Dauerabfragen wie ``/healthz`` und Fortschrittsanzeigen); ``off``: nichts.
 * Ein unbehandelter Fehler wird als **eine** Zeile mit Methode, Pfad, ID, Ausnahme und Fundstelle protokolliert; der
   vollständige Traceback nur bei ``LOG_LEVEL=DEBUG``.
@@ -109,10 +109,10 @@ class AccessLogMiddleware:
         line = f"{method} {target} {status} {extra['ms']} ms"
         if status >= 500:
             log.error(line, extra=extra)
-        elif (status >= 400 and status != 404) or secs >= SLOW_S:
+        elif secs >= SLOW_S:
             log.warning(line, extra=extra)
-        elif status == 404:
-            log.info(line, extra=extra)  # veraltete Links/Lesezeichen: sichtbar, aber kein Alarm
+        elif status >= 400:
+            log.info(line, extra=extra)  # Client-Fehler (403, 404, 422 …): Konsole, nicht das Fehlerprotokoll der DB
         elif self.mode == "all" and not _QUIET.match(scope.get("path", "")):
             log.info(line, extra=extra)
 

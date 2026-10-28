@@ -1436,8 +1436,8 @@ Paket B aus `docs/ARBEITSPLAN.md` (Befund: 500er ohne Pfad, keine Anfrage-/Job-Z
   Anfrage). Unbehandelte Fehler erscheinen als **eine** Zeile mit Methode, Pfad (Query nur als Schlüsselnamen), Ausnahme und
   Fundstelle statt ~110 Zeilen Framework-Traceback (der Uvicorn-Doppeleintrag ist unterdrückt; vollständig bei `LOG_LEVEL=DEBUG`).
   Fehlerseite (HTML) bzw. JSON (`/api/…`) nennt die ID.
-* **Zugriffsprotokoll** (`LOG_ACCESS`): `slow` (Standard) = Antworten ≥ 400 und Anfragen ≥ 1 s, `all` = jede (ohne Polling-Endpunkte),
-  `off`. Nie protokolliert: Query-Werte, Header, Formular-/Upload-Inhalte.
+* **Zugriffsprotokoll** (`LOG_ACCESS`): `slow` (Standard) = Antworten ≥ 400 (4xx INFO, 5xx ERROR) und Anfragen ≥ 1 s (WARNING), `all` = jede
+  (ohne Polling-Endpunkte), `off`. Nur Warnungen/Fehler landen im Fehlerprotokoll der Datenbank (4xx nicht). Nie protokolliert: Query-Werte, Header, Formular-/Upload-Inhalte.
 * **Jobs:** Ende mit Dauer und Kurzergebnis (INFO ab 5 s, sonst DEBUG – rund 1 400 Läufe/Tag); Fehler immer mit Traceback auf ERROR;
   jede Zeile eines Laufs trägt `job=<name>`. Verpasste/übersprungene Läufe (APScheduler) als WARNING mit Jobname und Verspätung.
 * **Startbanner** (Version, Python/SQLite, Daten, Anbieter nur ja/nein, Module, Scheduler mit Pool-Größen) und **stündliche
