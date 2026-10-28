@@ -153,6 +153,19 @@ class Facts:
     def tx(self, tx_id: str) -> Tx | None:
         return self.by_id.get(tx_id)
 
+    def chain_scan(self, account: str, asset: str) -> Any | None:
+        """Gespeichertes Ergebnis des Kettenbestand-Abgleichs (:mod:`app.diagnosis.chainscan`) oder ``None``."""
+        return (getattr(self.snap, "chain_scans", None) or {}).get((account, asset))
+
+    def chain_capable(self, account: str, asset: str) -> bool:
+        """Gibt es für das Konto eine Wallet-Quelle mit kostenlosem Archivweg für dieses native Asset?"""
+        from app.datasources.chainhistory import native_asset
+
+        return self.snap is not None and any(
+            s.kind == "wallet" and s.account == account and any(native_asset(s.provider, a) == asset
+                                                                 for a in s.addresses)
+            for s in self.snap.sources)
+
     def is_api(self, t: Tx) -> bool:
         """App-Buchung aus einer Börsen-/Wallet-Anbindung (Datenquelle) – Originalquelle, geht dem Import vor."""
         if t.origin != "journal" or self.snap is None:
@@ -770,6 +783,16 @@ def _holding(facts: Facts, f: Finding) -> Recommendation | None:
             caution="Ändert Bestand, Einstand und ggf. realisierte Ergebnisse – vorher die Ursache suchen."
             + (" Der externe Bestand ist nicht bestätigt (Abruf veraltet oder unvollständig)."
                if st == "extern_unsicher" else "")))
+    chain_text = ""
+    chain_stale = False
+    scan = facts.chain_scan(acc, aid) if st.startswith("extern") else None
+    if scan is not None and scan.ok:
+        steps = [x for x in scan.steps if x.kind == "chain" and x.delta]
+        if scan.ledger_total != comp:
+            chain_stale = True  # seit der Suche wurde gebucht – Ergebnis nicht mehr maßgeblich
+        elif steps:
+            opts.insert(0, _chain_option(aid, steps))
+            chain_text = _chain_text(aid, steps, scan)
     opts.append(_dismiss("Differenz ist erklärt – als geprüft markieren"))
     twin = _twin_asset(facts, acc, aid, target - comp) if target is not None else None
     if st == "extern_diff" and twin is not None:
@@ -779,9 +802,13 @@ def _holding(facts: Facts, f: Finding) -> Recommendation | None:
                 f"Empfehlung: {other} in {aid} zusammenführen (Vorschau mit Wirkung auf Bestände, FIFO und "
                 "Steuerjahre, Rückgängig möglich). Eine Ausgleichsbuchung wäre dann falsch – sie würde die Menge "
                 "doppelt zählen.")
+    elif st == "extern_diff" and chain_text:
+        text = chain_text
     elif st == "extern_diff":
         text = ("Ursache klären: fehlende Buchungen (Prüf-Stapel, nicht abgerufene Vorgänge), Netzwerkgebühren, "
-                "falsche Zuordnung. Erst wenn die Ursache nicht zu finden ist, als Notlösung eine Ausgleichsbuchung.")
+                "falsche Zuordnung. Erst wenn die Ursache nicht zu finden ist, als Notlösung eine Ausgleichsbuchung."
+                + (" Für diese Wallet lässt sich kostenlos auf der Blockchain nachsehen, wann der Bestand ohne "
+                   "Buchung gesprungen ist (Link unten)." if facts.chain_capable(acc, aid) else ""))
     elif st == "extern_unsicher":
         text = ("Datenquelle neu abrufen – erst ein aktueller, vollständiger Abruf bestätigt eine Differenz. Danach "
                 "wie bei einer Differenz vorgehen.")
@@ -793,8 +820,54 @@ def _holding(facts: Facts, f: Finding) -> Recommendation | None:
         links.insert(0, Link(f"{twin[0]} in {aid} zusammenführen (Vorschau)",
                              "/assets/merge?" + urlencode({"alias": twin[0], "target": aid})))
     if st.startswith("extern"):
+        if facts.chain_capable(acc, aid):
+            links.insert(0, Link("Kettenbestand prüfen – wann ist der Bestand ohne Buchung gesprungen?" if not
+                                 chain_stale else "Kettenbestand erneut prüfen (seit der Suche wurde gebucht)",
+                                 "/quality/kette?" + urlencode({"account": acc, "asset": aid})))
         links.append(Link("Datenquellen", "/settings/datasources"))
-    return Recommendation(text=text, conditional=True, options=opts, links=links)
+    return Recommendation(text=text, conditional=not chain_text, options=opts, links=links)
+
+
+def _chain_when(step: Any) -> str:
+    return step.at.astimezone(UTC).strftime("%d.%m.%Y %H:%M UTC")
+
+
+def _chain_line(aid: str, step: Any) -> str:
+    blk = ", ".join(f"Block {b:,}".replace(",", ".") for b in step.blocks.values())
+    return f"{'+' if step.delta > 0 else '−'}{_q(abs(step.delta))} {aid} am {_chain_when(step)} ({blk})"
+
+
+def _chain_text(aid: str, steps: list[Any], scan: Any) -> str:
+    lines = "; ".join(_chain_line(aid, x) for x in steps[:4]) + (f"; … (+{len(steps) - 4})" if len(steps) > 4 else "")
+    rest = scan.residual
+    return (f"Der Bestand der Blockchain (öffentlicher Archiv-Knoten, ohne Anbieter-Schlüssel) ist {len(steps)}-mal "
+            f"ohne passende Buchung gesprungen: {lines}. Empfehlung: jeden Sprung einzeln mit dem Datum des Blocks "
+            "buchen – das ist genauer als eine Ausgleichsbuchung über die Summe."
+            + (f" Danach bleibt eine Restdifferenz von {_q(rest)} {aid}." if rest else "")
+            + (" Die Suche ist nicht vollständig (Abfragebudget) – „Kettenbestand prüfen“ setzt sie fort."
+               if not scan.complete else ""))
+
+
+def _chain_option(aid: str, steps: list[Any]) -> Option:
+    params: list[Param] = []
+    if any(x.delta > 0 for x in steps):
+        params.append(Param("tag", "Art der Zugänge", "select", default=[DEPOSIT_TAGS[0][0]],
+                            choices=list(DEPOSIT_TAGS)))
+    if any(x.delta < 0 for x in steps):
+        params.append(Param("tag_out", "Art der Abgänge", "select", default=[WITHDRAWAL_TAGS[2][0]],
+                            choices=list(WITHDRAWAL_TAGS)))
+    for i, x in enumerate(steps):
+        params.append(Param(f"value{i}", f"EUR-Wert: {_chain_line(aid, x)}", "decimal", default=[""],
+                            hint="leer = Tageskurs des Blockdatums (ohne Kurs: Eingabe erforderlich)"))
+    total = sum((x.delta for x in steps), Decimal(0))
+    return Option(
+        "chain_steps", f"{len(steps)} Bestandssprung/-sprünge laut Blockchain einzeln buchen",
+        "Neue App-Buchungen mit dem Zeitpunkt des Blocks und der exakten Menge je Sprung (Quelle: Archiv-Knoten der "
+        f"Blockchain, Summe {'+' if total > 0 else '−'}{_q(abs(total))} {aid}). Herkunft, Hash und Gegenadresse sind "
+        "damit nicht bekannt – bei Bedarf in der Notiz am Explorer nachtragen.",
+        recommended=True, params=params,
+        caution="Ändert Bestand, Einstand und ggf. Erträge. Kommt später die echte Buchung (z. B. per Import), "
+                "erkennt die Dublettenprüfung sie anhand von Menge und Zeitpunkt.")
 
 
 def _twin_asset(facts: Facts, acc: str, aid: str, diff: Decimal) -> tuple[str, Decimal] | None:

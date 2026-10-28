@@ -1,0 +1,6 @@
+{# Fortschritt der Kettenbestand-Suche (htmx-Abfrage alle 3 s; fertig → Seite neu laden). #}
+{% from "partials/progress.html" import bar %}
+<section class="card" id="chain-progress" hx-get="/quality/kette/progress?account={{ account|urlencode }}&asset={{ asset|urlencode }}" hx-trigger="every 3s" hx-swap="outerHTML" aria-live="polite">
+  {{ bar(p) }}
+  <p class="hint">Die Suche fragt öffentliche Knoten der Blockchain ab (höchstens eine Anfrage pro Sekunde). Du kannst die Seite verlassen; sie läuft weiter.</p>
+</section>

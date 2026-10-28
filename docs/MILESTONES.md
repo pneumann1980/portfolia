@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 28.10.2026 · Version 0.66.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 28.10.2026 · Version 0.67.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,29 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.67.0 – Kettenbestand-Abgleich: Bestandssprünge ohne Buchung auf der Blockchain finden (peaq, Polkadot)
+
+Paket H aus `docs/PLAN_DATENQUALITAET.md`. Anlass: peaq-Zugänge ohne Buchung (interne EVM-Überweisungen, die der kostenlose Weg nicht liefert) und
+Polkadot-Verlauf vor der Rückblick-Grenze der kostenlosen Subscan-Route (Relay Chain vor Block 32.196.153, Asset Hub vor 18.459.746).
+
+* **Archiv-Leser** `app/datasources/chainhistory.py`: Bestand und Blockzeit zu einem Block über öffentliche Archiv-RPCs, **ohne Schlüssel und ohne Anbieter-Plan**.
+  EVM: `eth_getBalance` bei Block (peaq: OnFinality; weitere Knoten als Rückfall), Substrate: `System.Account` bei Blockhash + `Timestamp.Now`
+  (Polkadot Relay Chain und Asset Hub bei Parity; das Kontoformat wird von hinten gelesen, damit alte und neue Runtimes stimmen). Meldet ein Knoten
+  „State already discarded“ o. ä., kommt der nächste; hat keiner den Stand, steht der Grund im Ergebnis (`NoArchive`) – es wird nie geraten.
+* **Suche** `app/diagnosis/chainscan.py`: Differenz `r(t) = Kette(t) − Ledger(t)` an 13 Messpunkten, dann Halbierung des Zeitfensters mit der größten Änderung
+  zuerst, bis es nur noch einen Block je Netz umfasst → Sprung mit exaktem Block, Zeitpunkt und Menge. Mehrere Netze (DOT: Relay Chain + Asset Hub) werden als Summe
+  verglichen, weil der Ledger DOT beider Netze führt. Budget 400 Abfragen je Lauf (≈ 7 Min. bei 1 Anfrage/s), Fortsetzung über „Weiter prüfen“; nur **Kettenwerte**
+  werden zwischengespeichert, der Ledger wird stets frisch gerechnet – nach einer Buchung zeigt ein Neulauf ohne Abrufe, dass der Sprung erledigt ist.
+* **Seite** `/quality/kette` (Belege → Kettenbestand): Konten mit Archivweg, Ergebnis als Tabelle (Zeit, Block mit Explorer-Link, Differenz), Rest, Fortschritt als
+  Hintergrundjob `chain_scan`.
+* **Lösung „Bestandssprünge einzeln buchen“** (`chain_steps`) beim Befund der Bestandsabweichung: eine App-Buchung je Sprung mit **Zeitpunkt des Blocks** und
+  exakter Menge, EUR-Wert aus der Eingabe oder dem Tageskurs (ohne Kurs: Eingabe erforderlich), Art (Zugang ohne Ertrag, Airdrop, …) wählbar; Vorschau mit Wirkung
+  auf Bestände, FIFO und Steuerjahre, Rückgängig wie bei allen Lösungen. Angeboten nur, solange das Suchergebnis zum aktuellen Ledger-Bestand passt; die Ausgleichsbuchung
+  über die Summe bleibt als Notlösung.
+* **Grenzen:** gemessen wird der Bestand, nicht die Transaktion (kein Hash, keine Gegenadresse; mehrere Vorgänge im selben Block = ein Sprung); Sprünge unter 0,001 und
+  sich genau aufhebende Sprünge zwischen zwei Messpunkten werden nicht gefunden; Gebührenrauschen kann bei fehlenden Gas-Gebühren zu vielen kleinen Sprüngen führen (Rest
+  wird ausgewiesen); öffentliche Knoten können ausfallen oder drosseln. Unterstützt: peaq (0x-Adresse), Polkadot (SS58). Andere EVM-Ketten haben keinen kostenlosen Archivknoten.
 
 ## 0.66.0 – Datenqualität einfach: Assistent, Flow-Modus, Nachprüfung, Prüfunterlagen des Kurators
 

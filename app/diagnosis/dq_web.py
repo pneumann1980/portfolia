@@ -40,6 +40,7 @@ SUBS: dict[str, list[tuple[str, str, str]]] = {
                 "Ledger, Referenzbestand, externer Bestand je Position"),
                ("Abweichungsentwicklung", "/quality/diagnose/windows",
                 "Differenz über mehrere Nachweise im Zeitverlauf"),
+               ("Kettenbestand", "/quality/kette", "Wann ist der Bestand der Blockchain ohne Buchung gesprungen?"),
                ("Quellenabdeckung", "/quality/abdeckung", "Für welche Monate liegen Daten woher vor"),
                ("Anschaffungsdaten", "/quality/anschaffung", "Herkunft der Anschaffungsdaten je Lot"),
                ("Vollständigkeitscockpit", "/quality/cockpit", "Getrennte Qualitätsdimensionen je Position"),

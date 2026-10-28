@@ -649,6 +649,56 @@ def _adjust(st: _State, plan: Plan) -> None:
                      f"{'auf' if diff > 0 else 'von'} {acc} ({tags[tag]}, {eur(value)})", plan)
 
 
+def _chain_steps(st: _State, plan: Plan) -> None:
+    """Bestandssprünge laut Blockchain (Kettenbestand-Abgleich) einzeln buchen: Zeitpunkt des Blocks, exakte Menge,
+    EUR-Wert aus der Eingabe oder dem Tageskurs. Nur, solange das Suchergebnis zum aktuellen Ledger-Bestand passt."""
+    from app.diagnosis import chainscan
+    from app.diagnosis.recommend import DEPOSIT_TAGS, WITHDRAWAL_TAGS
+    from app.prices.lookup import price_eur_on
+
+    d = plan.finding.data
+    acc, aid = d["account"], d["asset"]
+    res = chainscan.stored(st.db, acc, aid)
+    if res is None or not res.ok or res.ledger_total != Decimal(d["computed"]):
+        plan.errors.append("Das Ergebnis des Kettenbestand-Abgleichs passt nicht mehr zum Ledger – bitte den "
+                           "Kettenbestand erneut prüfen.")
+        return
+    steps = [x for x in res.steps if x.kind == "chain" and x.delta]
+    if not steps:
+        plan.errors.append("Keine Bestandssprünge ohne Buchung gefunden.")
+        return
+    tag_in = (plan.params.get("tag") or [DEPOSIT_TAGS[0][0]])[0]
+    tag_out = (plan.params.get("tag_out") or [WITHDRAWAL_TAGS[2][0]])[0]
+    if tag_in not in dict(DEPOSIT_TAGS) or tag_out not in dict(WITHDRAWAL_TAGS):
+        plan.errors.append("Unbekannte Art der Buchung.")
+        return
+    today = today_local()
+    for i, x in enumerate(steps):
+        raw = (plan.params.get(f"value{i}") or [""])[0].strip()
+        when = x.at.astimezone(UTC)
+        if raw:
+            value = _dec_param(plan, f"value{i}", f"EUR-Wert {i + 1}")
+        else:
+            price = price_eur_on(st.ctx, st.pf, aid, when.date(), today)
+            if price is None:
+                plan.errors.append(f"Für {when:%d.%m.%Y} liegt kein Kurs vor – bitte den EUR-Wert {i + 1} eingeben.")
+                continue
+            value = (price[0] * abs(x.delta)).quantize(Decimal("0.01"))
+        if value is None:
+            continue
+        side = ("to", "deposit", tag_in) if x.delta > 0 else ("from", "withdrawal", tag_out)
+        blocks = ", ".join(f"{k} Block {b}" for k, b in x.blocks.items())
+        note = (f"Bestandssprung laut Blockchain ({blocks}): {qty_exact(abs(x.delta))} {aid}; Hash und Gegenadresse "
+                "unbekannt (Kettenbestand-Abgleich)")
+        row = {"datetime": when.strftime("%Y-%m-%dT%H:%M:%SZ"), "type": side[1], "tag": side[2], "from_account": "",
+               "from_asset": "", "from_qty": "", "to_account": "", "to_asset": "", "to_qty": "", "fee_asset": "",
+               "fee_qty": "", "fee_eur": "", "value_eur": _s(value), "orig_price": "", "orig_ccy": "",
+               "related_asset": "", "note": note}
+        row[f"{side[0]}_account"], row[f"{side[0]}_asset"], row[f"{side[0]}_qty"] = acc, aid, _s(abs(x.delta))
+        _create(st, row, f"{'Zugang' if x.delta > 0 else 'Abgang'} {qty_exact(abs(x.delta))} {aid} "
+                         f"{'auf' if x.delta > 0 else 'von'} {acc} am {when:%d.%m.%Y %H:%M} UTC ({eur(value)})", plan)
+
+
 def _hide_and_adjust_writeoff(st: _State, plan: Plan) -> None:
     """Doppelte Gutschrift ausblenden und die Ausbuchung, die ihre Menge mit enthielt, auf die tatsächliche Menge
     kürzen (alte Ausbuchung ausblenden, gekürzte neu buchen). Beides ist über die Entscheidung zurücknehmbar."""
@@ -812,6 +862,8 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
         _hide(st, st.tx(d.get("receipt") or ""), plan)
     elif key == "adjust":
         _adjust(st, plan)
+    elif key == "chain_steps":
+        _chain_steps(st, plan)
     elif key == "opening":
         _opening(st, plan)
     elif key == "stage":

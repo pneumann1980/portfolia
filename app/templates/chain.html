@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Kettenbestand{% endblock %}
+{% block heading %}Datenqualität · Kettenbestand{% endblock %}
+{% block content %}
+<div class="stack dq">
+  {% include "partials/dq_nav.html" %}
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert bad" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+
+  <section class="card">
+    <h2>Wann ist der Bestand ohne Buchung gesprungen?</h2>
+    <p>Anbieter liefern nicht immer den ganzen Verlauf (Rückblick-Grenze der kostenlosen Route, fehlende interne Überweisungen). Der <b>Bestand der Blockchain</b> ist davon unabhängig. Portfolia fragt ihn bei wenigen Blöcken ab, vergleicht ihn mit dem Ledger und halbiert das Zeitfenster, bis der Block gefunden ist, in dem ein Zugang oder Abgang <b>ohne passende Buchung</b> stattfand. Das geht ohne Schlüssel über öffentliche Archiv-Knoten.</p>
+    <p class="hint">Grenzen: Gemessen wird der Bestand, nicht die Transaktion – Hash und Gegenadresse bleiben unbekannt. Sprünge unter 0,001 und zwei sich genau aufhebende Sprünge zwischen zwei Messpunkten werden nicht gefunden. Ein Knoten ohne Archiv liefert keinen alten Stand; das wird dann gesagt, nie geraten. Es wird nichts gebucht: Die Sprünge erscheinen als Lösung beim Befund der Bestandsabweichung.</p>
+  </section>
+
+  {% if not items %}
+  <section class="card"><p>Für keine deiner Wallet-Quellen gibt es einen kostenlosen Archivweg. Unterstützt: <b>peaq</b> (0x-Adresse) und <b>Polkadot</b> (Relay Chain und Asset Hub).</p></section>
+  {% else %}
+  <section class="card">
+    <h3>Konten mit Archivweg</h3>
+    <ul class="plain-list">
+    {% for i in items %}
+      <li><a class="btn sm{{ ' primary' if sel and sel.account == i.account and sel.asset == i.asset }}" href="/quality/kette?account={{ i.account|urlencode }}&asset={{ i.asset|urlencode }}">{{ i.account }} · {{ i.asset }}</a> <span class="hint">{{ i.name }} · {{ i.nets }}</span></li>
+    {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if sel %}
+  {% if running %}{% set p = running %}{% set account = sel.account %}{% set asset = sel.asset %}{% include "partials/chain_progress.html" with context %}{% endif %}
+  <section class="card">
+    <div class="card-head"><h3>{{ sel.account }} · {{ sel.asset }}</h3></div>
+    {% if res is none %}
+      <p>Noch nicht geprüft.</p>
+    {% elif not res.ok %}
+      <div class="alert warn"><span class="icon">!</span><div><b>Nicht möglich:</b> {{ res.error }}</div></div>
+    {% else %}
+      <p>Geprüft von {{ res.start|datetime_de }} bis {{ res.end|datetime_de }} · {{ res.nets|join(' + ') }} · {{ res.calls }} Abfragen im letzten Lauf{% if res.checked_at %} · Stand {{ res.checked_at|datetime_de }}{% endif %}</p>
+      {% if fresh is false %}<div class="alert warn"><span class="icon">!</span><div>Seit der Suche wurde gebucht – das Ergebnis ist veraltet. Neu prüfen kostet nur wenige Abfragen, weil die Kettenwerte gespeichert sind.</div></div>{% endif %}
+      <p>Bestand laut Kette: <b>{{ res.chain_end|qty }} {{ res.asset }}</b> · Differenz zum Ledger am Ende: <b>{{ res.r_end|qty }} {{ res.asset }}</b></p>
+      {% if res.steps %}
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th>Zeitpunkt (UTC)</th><th>Block</th><th class="num">Differenz</th><th>Einordnung</th></tr></thead>
+        <tbody>
+        {% for s in res.steps %}
+          <tr>
+            <td>{{ s.at|datetime_de }}</td>
+            <td>{% for k, b in s.blocks.items() %}{% if s.links.get(k) %}<a href="{{ s.links[k] }}" target="_blank" rel="noopener noreferrer">{{ b }}</a>{% else %}{{ b }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+            <td class="num">{{ '+' if s.delta > 0 }}{{ s.delta|qty }} {{ res.asset }}</td>
+            <td>{% if s.kind == 'chain' %}Bestand der Kette stieg bzw. fiel ohne passende Buchung{% else %}Buchung ohne Bewegung auf der Kette{% if s.ledger_tx %} ({{ s.ledger_tx|join(', ') }}){% endif %}{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}
+        <p>Kein Bestandssprung ohne Buchung gefunden{% if res.complete %} – Kette und Ledger stimmen über den ganzen Zeitraum überein (Raster mit 12 Messpunkten, siehe Grenzen).{% endif %}</p>
+      {% endif %}
+      {% if res.residual %}<p class="hint">Rest, den kein gefundener Sprung erklärt: {{ res.residual|qty }} {{ res.asset }}{% if res.small %} (darunter {{ res.small }} Bereiche mit Änderungen unter {{ res.min_step|qty }}){% endif %}.</p>{% endif %}
+      {% if not res.complete %}<div class="alert info"><span class="icon">i</span><div>Die Suche ist nicht vollständig{% if res.pending %} ({{ res.pending }} Bereiche offen){% endif %} – Abfragebudget je Lauf: {{ max_calls }}. „Weiter prüfen“ setzt sie fort.</div></div>{% endif %}
+      {% if fid and fresh and res.steps %}<p><a class="btn primary" href="/quality/diagnose/plan?f={{ fid|urlencode }}&o=chain_steps">Sprünge einzeln buchen (Vorschau)</a></p>{% endif %}
+    {% endif %}
+    {% if not running %}
+    <form method="post" action="/quality/kette/pruefen" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="account" value="{{ sel.account }}"><input type="hidden" name="asset" value="{{ sel.asset }}">
+      <button class="btn{{ '' if res is not none and res.ok and res.complete else ' primary' }}" type="submit">{{ 'Jetzt prüfen' if res is none or not res.ok else ('Weiter prüfen' if not res.complete else 'Erneut prüfen') }}</button>
+      <span class="hint">fragt öffentliche Blockchain-Knoten ab (kein Schlüssel nötig)</span>
+    </form>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

@@ -4,7 +4,7 @@
 {% set _tabs = [('heute', 'Heute', '/quality'), ('faelle', 'Fälle', '/quality/faelle'), ('belege', 'Belege', '/quality/belege'), ('automatik', 'Automatik', '/quality/automatik')] %}
 {% set _subs = {
  'faelle': [('Alle Fälle', '/quality/faelle'), ('Der Reihe nach', '/quality/diagnose/liste'), ('Klärungsfälle', '/quality/klaerung'), ('Diagnose-Befunde', '/quality/diagnose'), ('Prüfstapel', '/journal/pruefung'), ('Sammelbearbeitung', '/quality/diagnose/bulk'), ('Hinweise', '/quality/diagnose/hints')],
- 'belege': [('Übersicht', '/quality/belege'), ('Bestände', '/quality/diagnose/stock'), ('Abweichungen', '/quality/diagnose/windows'), ('Quellenabdeckung', '/quality/abdeckung'), ('Anschaffung', '/quality/anschaffung'), ('Cockpit', '/quality/cockpit'), ('Prüfbericht', '/quality/integrity')],
+ 'belege': [('Übersicht', '/quality/belege'), ('Bestände', '/quality/diagnose/stock'), ('Abweichungen', '/quality/diagnose/windows'), ('Kettenbestand', '/quality/kette'), ('Quellenabdeckung', '/quality/abdeckung'), ('Anschaffung', '/quality/anschaffung'), ('Cockpit', '/quality/cockpit'), ('Prüfbericht', '/quality/integrity')],
  'automatik': [('Übersicht', '/quality/automatik'), ('Autopilot', '/quality/autopilot'), ('Regeln', '/quality/diagnose/regeln'), ('Klärung', '/quality/klaerung')]} %}
 <nav class="dq-nav" aria-label="Datenqualität">
   <div class="dq-tabs" role="tablist">{% for k, label, href in _tabs %}<a class="dq-tab{{ ' active' if k == dq_tab }}" href="{{ href }}" {% if k == dq_tab %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</div>

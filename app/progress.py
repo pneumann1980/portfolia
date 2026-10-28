@@ -54,6 +54,8 @@ EXTRA_PHASES: list[tuple[str, str, int]] = [
     ("chk_integrity", "Integritätsprüfung", 30),
     ("chk_clarify", "Fälle untersuchen", 40),
     ("chk_plan", "Arbeitsplan erstellen", 10),
+    # Kettenbestand-Abgleich (app.diagnosis.chainscan)
+    ("chain_scan", "Bestand der Blockchain abfragen", 100),
     # ZIP-Import der DKB-Wertpapierdokumente (app.datasources.dkb_run)
     ("zip_unpack", "ZIP entpacken und ablegen", 15),
     ("zip_eval", "Dokumente erkennen und auswerten", 70),

@@ -132,6 +132,7 @@ class Snapshot:
     token_keys: dict[str, list[str]] = field(default_factory=dict)  # Asset → SYMBOL@CHAIN:Contract
     import_ids: frozenset[str] = frozenset()
     max_age: dict[str, int | None] = field(default_factory=dict)  # crypto | security → Tage (None = unbegrenzt)
+    chain_scans: dict[tuple[str, str], Any] = field(default_factory=dict)  # (Konto, Asset) → Kettenbestand-Ergebnis
     journal_dups: dict[str, list[str]] = field(default_factory=dict)  # manuelle Buchung → ähnliche Import-Buchungen
     # App-Zu-/Abgang → Seite eines Import-Transfers (verzögert bzw. anderer Kontoname, app.csvimport.transfer_side)
     journal_sides: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
@@ -217,6 +218,12 @@ def collect(ctx: Any, now: datetime | None = None) -> Snapshot:
         log.warning("Evidenz für Rekonstruktionskandidaten nicht verfügbar: %s", e)
     snap.references = references(db)
     snap.combined = combined_references(db)
+    try:
+        from app.diagnosis import chainscan
+
+        snap.chain_scans = chainscan.all_stored(db)
+    except Exception as e:  # Kettenbestand ist Zusatz – die Diagnose läuft auch ohne
+        log.debug("Kettenbestand nicht verfügbar: %s", e)
     try:
         snap.marks = {r["finding_id"]: (r["action"], r["fingerprint"] or "") for r in db.q(
             "SELECT finding_id, action, fingerprint FROM diag_decision WHERE action IN ('dismiss', 'reject', 'defer') "
