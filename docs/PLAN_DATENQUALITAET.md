@@ -247,7 +247,9 @@ Reiter auf *Heute · Fälle · Belege* kürzen, Automatik unter Einstellungen; D
 
 ---
 
-## Assistent 2.0 – „Geführte Klärung“ (Planung 29.10.2026, noch nicht umgesetzt)
+## Assistent 2.0 – „Geführte Klärung“ (Planung 29.10.2026; Umsetzung ab 0.72.0)
+
+Beschlüsse: Hinweise nur auf Wunsch; Fortschritt im Browser; Bezeichnung „Buchungen prüfen“.
 
 Anlass: Rückmeldung zu 0.66–0.70 mit Screenshot. Der Assistent ist „aktiv“, aber auf der Seite steht nicht, **was jetzt zu tun ist**; darunter stehen die üblichen
 Korrekturvorschläge der Expertenseiten. Für jemanden ohne Vorwissen ist das weiterhin nicht bedienbar.

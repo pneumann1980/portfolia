@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block heading %}{{ title }}{% endblock %}
+{% block content %}
+<div class="guide">
+  <section class="card guide-card">
+    <div class="hint guide-where">Bitte bestätigen</div>
+    <h2 class="guide-q">Das ändert sich mit deiner Antwort</h2>
+    <ul class="plain-list">{% for op in plan.ops[:8] %}<li><span class="badge">{{ op.badge }}</span> {{ op.label }}</li>{% endfor %}{% if plan.ops|length > 8 %}<li class="hint">… und {{ plan.ops|length - 8 }} weitere</li>{% endif %}</ul>
+    {% for p in effects.positions[:4] %}<div class="hint">Bestand {{ p.asset }} auf {{ p.account }}: {{ p.bal[0]|qty_exact }} → <b>{{ p.bal[1]|qty_exact }}</b></div>{% endfor %}
+    {% for y in effects.years[:3] %}<div class="hint">Steuerjahr {{ y.year }}: realisiert {{ y.realized[0]|eur }} → {{ y.realized[1]|eur }}, Erträge {{ y.income[0]|eur }} → {{ y.income[1]|eur }}</div>{% endfor %}
+    {% for a, b in effects.negative_new %}<div class="hint caution">⚠ Danach negativer Bestand: {{ b }} auf {{ a }}</div>{% endfor %}
+    {% for w in plan.warnings %}<div class="hint caution">⚠ {{ w }}</div>{% endfor %}
+    <form method="post" action="/quality/assistent/antwort" class="row guide-actions">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ f.id }}"><input type="hidden" name="a" value="{{ aid }}"><input type="hidden" name="token" value="{{ plan.token }}"><input type="hidden" name="confirm" value="1">
+      {% for k, vs in params.items() %}{% for v in vs %}<input type="hidden" name="p_{{ k }}" value="{{ v }}">{% endfor %}{% endfor %}
+      <button class="btn primary" type="submit" data-once>So speichern und weiter</button>
+      <a class="btn ghost" href="/quality/assistent">Zurück zur Frage</a>
+    </form>
+    <p class="hint">Rückgängig ist danach mit einem Klick möglich.</p>
+  </section>
+</div>
+{% endblock %}

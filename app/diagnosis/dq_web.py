@@ -14,9 +14,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from app.diagnosis import assistant as AS
 from app.diagnosis import autocheck as AC
 from app.diagnosis import checkrun as CR
+from app.diagnosis import guide as G
 from app.diagnosis import workplan as WP
 from app.diagnosis.engine import report_for
 from app.diagnosis.model import KINDS
@@ -122,9 +122,10 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         plan = WP.build(ctx)
         last = CR.previous(ctx.db)
-        n, minutes = AS.summary(ctx)
+        n, themes, minutes = G.summary(ctx)
         return render(request, "partials/dq_plan.html", plan=plan, tiers=WP.TIERS, why_a=WP.WHY_A, last=last,
-                      kinds=KINDS, assist_n=n, assist_min=minutes,
+                      kinds=KINDS, assist_n=n, assist_min=minutes, assist_themes=themes,
+                      assist_title=G.TITLE,
                       auto_check=bool(ctx.settings.get(AC.SETTING, True)))
 
     @router.post("/quality/pruefen")

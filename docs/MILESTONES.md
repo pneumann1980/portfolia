@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.10.2026 · Version 0.71.1 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.10.2026 · Version 0.72.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,25 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.72.0 – „Buchungen prüfen“: Fragen in Alltagssprache statt Korrekturvorschlägen
+
+Schritt 1 von „Assistent 2.0 – Geführte Klärung“ (`docs/PLAN_DATENQUALITAET.md`).
+
+* **Eine Frage je Seite** (`app/diagnosis/guide.py`, `/quality/assistent`): z. B. „Ist das derselbe Vorgang – also nur einmal passiert?“, „Hast du am 12.03.2025 0,5 BTC von Bitpanda an
+  Ledger geschickt – also an dich selbst?“, „Wie viel PEAQ liegt wirklich auf …?“, „Hat TOKA heute noch einen Wert?“. Darunter die Antworten als große Auswahlflächen, jeweils mit
+  der **Wirkung** („→ Bestand TOKA auf Wallet K: 200.493,8 → 100.246,9“), die empfohlene markiert; „Weiß ich nicht“ ist immer möglich (nichts ändert sich, die Frage kommt nach 7 Tagen
+  oder bei geänderten Buchungen wieder) und nennt, wo man nachsehen kann. Technische Alternativen stehen eingeklappt unter „Andere Möglichkeiten“, Belege unter „Details“.
+* **Antworten führen vorhandene Aktionen aus** – keine neue Buchungslogik: Korrektur mit Vorschau-Token (wie in der Diagnose), „ist in Ordnung“/„zweimal passiert“ als Entscheidung ohne
+  Datenänderung. Antworten mit Eingaben (z. B. CoinGecko-ID) zeigen vor dem Speichern die Wirkung.
+* **Rückgängig auf der nächsten Karte** und die Meldung „N weitere Aufgaben dadurch erledigt“.
+* **Themen statt Stufen**, Ursachen vor Folgen: Neue Vorgänge → Doppelte Buchungen → Überweisungen → Bestände → Werte und Kurse → Rechenprüfung. Kopfzeile „Aufgabe n von m ·
+  Thema k von j“, „Pause“.
+* **Eine Zählung:** „Heute“ zeigt dieselbe Zahl wie der Assistent („N Aufgaben in K Themen · ca. M Min. – Buchungen prüfen“). Kritische Integritätsbefunde, die schon ein
+  Diagnose-Befund sind, zählen nicht mehr doppelt. Hinweise ohne Fehler erscheinen nur auf Wunsch.
+* Aufgaben mit eigener Seite (neue Vorgänge im Prüfstapel, zusammenhängende Buchungen, Rechenprüfung) sind in Alltagssprache erklärt; die Leiste dort nennt die Rückkehr („Zurück zur
+  Frage“). Ihre Frage-Fassung folgt in 0.73.0.
+* Entfernt: alter Assistent (`app/diagnosis/assistant.py`, `assistant.html`).
 
 ## 0.71.1 – Fortschritt der Synchronisierung: Zählung und Balken passen zusammen
 

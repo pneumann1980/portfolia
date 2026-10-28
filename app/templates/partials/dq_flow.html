@@ -1,8 +1,8 @@
-{# Leiste „Assistent aktiv“: auf allen Seiten der Datenqualität, solange das Cookie dq_flow gilt. #}
+{# Leiste während „Buchungen prüfen“: auf Seiten, die der Assistent für eine Aufgabe geöffnet hat (Flow-Modus). #}
 <div class="alert dq-flowbar" role="status" style="align-items:center;flex-wrap:wrap;gap:8px">
   <span class="icon">➜</span>
-  <div style="flex:1"><b>Assistent aktiv</b> – nach jeder Aktion geht es hier weiter.</div>
-  <a class="btn sm primary" href="/quality/assistent">Weiter mit der nächsten Aufgabe</a>
+  <div style="flex:1"><b>Du bearbeitest eine Aufgabe aus „Buchungen prüfen“.</b> Sobald du hier etwas übernimmst oder entscheidest, geht es automatisch mit der nächsten Frage weiter.</div>
+  <a class="btn sm" href="/quality/assistent">Zurück zur Frage</a>
   <a class="btn sm ghost" href="/quality/assistent?skip={{ request.cookies.get('dq_cur', '') }}">Diese überspringen</a>
   <a class="btn sm ghost" href="/quality/assistent/ende">Beenden</a>
 </div>

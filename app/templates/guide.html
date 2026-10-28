@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% import "partials/diag_macros.html" as dm with context %}
+{% block title %}{{ title }}{% endblock %}
+{% block heading %}{{ title }}{% endblock %}
+{% block content %}
+<div class="guide" id="guide">
+  {% if msg and not undo %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  {% if undo %}
+  <div class="alert good guide-done" role="status"><span class="icon">✓</span>
+    <div style="flex:1">{{ msg or 'Gespeichert.' }}{% if gone %} <b>{{ gone }} weitere Aufgabe{{ 'n' if gone != 1 }} dadurch erledigt.</b>{% endif %}</div>
+    <form method="post" action="/quality/assistent/rueckgaengig"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="d" value="{{ undo.id }}"><button class="btn sm ghost" type="submit">↶ Rückgängig</button></form>
+  </div>
+  {% endif %}
+
+  {% if not task %}
+  <section class="card guide-card">
+    <h2>Alles geprüft</h2>
+    <p>Es gibt nichts mehr, das du entscheiden musst. Neue Fragen erscheinen nach dem nächsten Import oder Abruf von selbst.</p>
+    {% if step.skipped %}<p class="hint">{{ step.skipped }} Aufgabe{{ 'n' if step.skipped != 1 }} hast du übersprungen – sie sind weiter offen.</p>{% endif %}
+    <div class="row"><a class="btn primary" href="/quality">Zur Übersicht</a>{% if step.skipped %}<a class="btn" href="/quality/assistent?new=1">Übersprungene ansehen</a>{% endif %}{% if not hints %}<a class="btn ghost" href="/quality/assistent?new=1&amp;hints=1">Auch Hinweise ohne Fehler ansehen</a>{% endif %}</div>
+  </section>
+  {% else %}
+  {% set ti, tn, kpos, kn = pos %}
+  <header class="guide-head">
+    <div class="guide-head-row">
+      <b>Aufgabe {{ step.position }} von {{ step.total }}</b>
+      <span class="hint">ca. {{ step.minutes }} Min. übrig</span>
+      <a class="btn sm ghost" href="/quality/assistent/ende" title="Fortschritt bleibt erhalten">Pause</a>
+    </div>
+    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="{{ step.total }}" aria-valuenow="{{ step.position - 1 }}"><div style="width:{{ [((step.position - 1) / step.total * 100)|round|int, 2]|max }}%"></div></div>
+    <div class="hint">Thema {{ ti }} von {{ tn }}: <b>{{ task.theme_label }}</b>{% if kn > 1 %} ({{ kpos }} von {{ kn }}){% endif %}</div>
+    <ol class="guide-themes" aria-label="Themen">{% for t in step.themes %}<li class="{{ 'cur' if t.key == task.theme else ('done' if t.open == 0 else '') }}">{{ t.label }} <span class="hint">{{ t.n - t.open }}/{{ t.n }}</span></li>{% endfor %}</ol>
+  </header>
+
+  <section class="card guide-card">
+    <div class="hint guide-where">{{ task.heading }}</div>
+    <h2 class="guide-q">{{ task.question }}</h2>
+    {% if task.context %}<p>{{ task.context }}</p>{% endif %}
+    {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+
+    {% if task.kind == 'frage' %}
+    {% set main = task.answers|rejectattr('advanced')|list %}
+    {% set more = task.answers|selectattr('advanced')|list %}
+    {% set pick = chosen or ((main|selectattr('recommended')|first) or {'id': ''}).id %}
+    <form method="post" action="/quality/assistent/antwort" class="guide-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ task.finding_id }}"><input type="hidden" name="before" value="{{ step.total }}">
+      {% macro answer(a) %}
+      <label class="guide-a{% if a.recommended %} is-rec{% endif %}">
+        <input type="radio" name="a" value="{{ a.id }}"{% if a.id == pick %} checked{% endif %} required>
+        <span class="guide-a-body">
+          <b>{{ a.text }}</b>{% if a.recommended %} <span class="badge good">empfohlen</span>{% endif %}
+          {% if a.effect %}<span class="hint guide-a-eff">→ {{ a.effect }}</span>{% endif %}
+          {% if a.caution %}<span class="hint caution">⚠ {{ a.caution }}</span>{% endif %}
+          {% if a.params %}<span class="guide-params">{% for p in a.params %}{{ dm.param_field(p, values.get(p.name) or p.default) }}{% endfor %}<span class="hint">Diese Angaben gelten nur für diese Antwort; vor dem Speichern siehst du die Wirkung.</span></span>{% endif %}
+        </span>
+        {% if a.token %}<input type="hidden" name="t_{{ a.id }}" value="{{ a.token }}">{% endif %}
+        {% if a.params %}<input type="hidden" name="n_{{ a.id }}" value="1">{% endif %}
+      </label>
+      {% endmacro %}
+      <div class="guide-answers" role="radiogroup" aria-label="Antwort">{% for a in main %}{{ answer(a) }}{% endfor %}</div>
+      {% if more %}<details class="box"><summary>Andere Möglichkeiten (für Fortgeschrittene)</summary><div class="guide-answers">{% for a in more %}{{ answer(a) }}{% endfor %}</div></details>{% endif %}
+      <div class="row guide-actions">
+        <button class="btn primary" type="submit" data-once>Antwort speichern und weiter</button>
+        <a class="btn ghost" href="/quality/assistent?skip={{ task.kid }}">Überspringen</a>
+      </div>
+    </form>
+    {% else %}
+    <div class="row guide-actions">
+      <a class="btn primary" href="{{ task.href }}">{{ task.cta }}</a>
+      <a class="btn ghost" href="/quality/assistent?skip={{ task.kid }}">Überspringen</a>
+    </div>
+    <p class="hint">Nach der Aktion dort kommst du automatisch hierher zurück.</p>
+    {% endif %}
+  </section>
+
+  {% if task.finding %}
+  <section class="card">
+    <details><summary><b>Belege und Details</b> <span class="hint">für Fortgeschrittene</span></summary>
+      {% set f = task.finding %}
+      {% if f %}
+      <p class="hint">{{ f.title }}</p>
+      {% if f.known %}<h4>Was Portfolia aus den Daten weiß</h4><ul>{% for x in f.known %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+      {% if f.suspected %}<h4>Was Portfolia nur vermutet</h4><ul>{% for x in f.suspected %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+      {% if f.pairs %}<h4>Gegenüberstellung</h4><div class="stack" style="gap:10px">{% for a, b, why in f.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">{{ why }}</div></div>{% endfor %}</div>
+      {% elif f.txs %}<h4>Betroffene Buchungen ({{ f.txs|length }})</h4><div class="tx-grid">{% for t in f.txs[:12] %}{{ dm.txref(t) }}{% endfor %}</div>{% endif %}
+      <p><a href="/quality/diagnose/case/{{ f.id }}">Expertenansicht dieses Falls</a></p>
+      {% endif %}
+    </details>
+  </section>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

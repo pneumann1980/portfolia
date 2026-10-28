@@ -1060,3 +1060,24 @@ details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
 .tax-all-progress { margin: 6px 0; }
 #rulesets code { overflow-wrap: anywhere; }
 .taxbar-reports { display: block; margin-top: 4px; overflow-wrap: anywhere; }
+
+/* Assistent „Buchungen prüfen“: eine Frage je Seite, Antworten als große Auswahlflächen */
+.guide { display: grid; gap: 14px; max-width: 860px; margin: 0 auto; }
+.guide-head { display: grid; gap: 6px; }
+.guide-head-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.guide-head-row .btn { margin-left: auto; }
+.guide-themes { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; margin: 0; padding: 0; font-size: .85em; color: var(--muted); }
+.guide-themes li.cur { color: var(--text); font-weight: 600; }
+.guide-themes li.done { text-decoration: line-through; }
+.guide-card .guide-q { font-size: 1.25em; line-height: 1.35; margin: 4px 0 8px; }
+.guide-where { text-transform: none; }
+.guide-answers { display: grid; gap: 8px; margin: 10px 0; }
+.guide-a { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+.guide-a:has(input:checked) { border-color: var(--accent, #2b6cb0); box-shadow: 0 0 0 1px var(--accent, #2b6cb0) inset; }
+.guide-a.is-rec { border-color: var(--good-ink); }
+.guide-a input[type=radio] { margin-top: 3px; flex: 0 0 auto; }
+.guide-a-body { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.guide-params { display: grid; gap: 6px; margin-top: 6px; }
+.guide-actions { gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.guide-done { align-items: center; flex-wrap: wrap; gap: 8px; }
+.guide-a:not(:has(input:checked)) .guide-params { display: none; }

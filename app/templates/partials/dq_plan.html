@@ -22,21 +22,11 @@
       <p><b>Noch nicht geprüft.</b> Starte „Alles prüfen“: Diagnose, Integritätsprüfung und Klärung laufen lokal in einem Durchgang, ohne Abrufe.</p>
     {% elif plan.state == 'fertig' %}
       <div class="alert good" role="status"><span class="icon">✓</span><div><b>Nichts mehr zu tun.</b> Alle offenen Punkte sind erklärt, zurückgestellt oder nur Hinweise.</div></div>
-    {% else %}
-      {% set n = plan.next %}
-      <div class="dq-next" role="region" aria-label="Nächster Schritt">
-        <div class="hint">Nächster Schritt</div>
-        <b>{{ n.title }}</b>
-        <div>{{ n.recommendation }}</div>
-        {% if n.why %}<div class="hint">Warum: {{ n.why }}</div>{% endif %}
-        <a class="btn primary sm" href="{{ n.href }}">{{ n.cta }}</a>
-      </div>
-    {% endif %}
-    {% if assist_n %}
-      <div class="dq-next" role="region" aria-label="Assistent">
-        <b>{{ assist_n }} {{ 'Aufgabe' if assist_n == 1 else 'Aufgaben' }} · ca. {{ assist_min }} Min.</b>
-        <div class="hint">Der Assistent zeigt immer die nächste Aufgabe mit einer Empfehlung und führt danach von selbst zur übernächsten.</div>
-        <a class="btn primary sm" href="/quality/assistent?new=1">Weiter mit dem Assistenten</a>
+    {% elif assist_n %}
+      <div class="dq-next" role="region" aria-label="{{ assist_title }}">
+        <b>{{ assist_n }} {{ 'Aufgabe' if assist_n == 1 else 'Aufgaben' }} in {{ assist_themes }} {{ 'Thema' if assist_themes == 1 else 'Themen' }} · ca. {{ assist_min }} Min.</b>
+        <div>Portfolia stellt dir eine Frage nach der anderen – zum Beispiel „Hast du das einmal oder zweimal erhalten?“. Du kannst jederzeit pausieren, und jede Antwort lässt sich mit einem Klick zurücknehmen.</div>
+        <a class="btn primary" href="/quality/assistent?new=1">{{ assist_title }}</a>
       </div>
     {% endif %}
     {% if plan.stale %}<div class="alert warn"><span class="icon">!</span><div>Die letzte Integritätsprüfung ist älter als die Daten.
