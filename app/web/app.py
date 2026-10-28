@@ -85,6 +85,13 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
                                                                   "active": None, "csrf_token": _csrf(request),
                                                                   "alerts": []}, status_code=404)
 
+    @app.exception_handler(OverflowError)
+    async def too_large(request: Request, exc: OverflowError) -> HTMLResponse:
+        """Eine ID jenseits des SQLite-Wertebereichs (≥ 2⁶³) kann nicht existieren → 404 statt Serverfehler."""
+        if "SQLite INTEGER" not in str(exc):
+            raise exc
+        return await not_found(request, exc)
+
     return app
 
 

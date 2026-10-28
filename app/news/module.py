@@ -317,6 +317,9 @@ def community_ids(svc: NewsService) -> list[str]:
     return [x.id for x in svc.cfg.sources() if x.type == "telegram"]
 
 
+TABS = ("articles", "videos", "community", "report", "suggestions", "sources", "status")
+
+
 def make_router() -> APIRouter:
     router = APIRouter()
 
@@ -326,6 +329,8 @@ def make_router() -> APIRouter:
                   page: int = 1, report_id: int = 0) -> HTMLResponse:
         ctx = get_ctx(request)
         svc = news_service(ctx)
+        if tab not in TABS:  # veraltetes Lesezeichen / manipulierte URL: Standardreiter statt Fehlerseite
+            tab = "articles"
         days = max(1, min(int(days), 90))
         params = {"tab": tab, "asset": asset, "source": source, "days": days, "status": status, "sort": sort,
                   "shorts": shorts, "hidden": hidden}

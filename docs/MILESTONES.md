@@ -1426,6 +1426,22 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.60.0 – Härtung: Pillow 13, Fehlerseiten statt Serverfehler, Google-News-Hosts
+
+Umsetzung von H1, M1, M2 und N1 aus `docs/PROJEKTANALYSE.md` (Plan: `docs/ARBEITSPLAN.md`, Paket A).
+
+* **H1 Pillow 12.3.0 → 13.0.0:** behebt 38 gemeldete Schwachstellen (`pip-audit -r requirements.txt`: keine bekannte Lücke). Das
+  Dockerfile entfernt weiterhin die AVIF-/Tk-Bibliotheken (`rm -f`, unabhängig vom Wheel-Layout).
+* **M1:** `/news?tab=<unbekannt>` zeigt den Standardreiter „Artikel“ statt einer Fehlerseite (veraltete Lesezeichen funktionieren weiter).
+* **M2:** Ein Ausnahmehandler macht aus `OverflowError: … SQLite INTEGER` (ID ≥ 2⁶³ in der URL) ein 404; wirkt für alle bestehenden und
+  künftigen Routen. Andere `OverflowError` bleiben Serverfehler (sichtbar, nicht maskiert).
+* **N1:** Die „Nur Teaser“-Erkennung bildet den Host aus der **aufgelösten** Adresse (`news_content.final_url`); Google-News-Meldungen
+  zählen nicht mehr unter `news.google.com`. Nicht aufgelöste Sammelseiten werden ignoriert. Die Analyse nutzt `final_url` ebenfalls.
+  Das Ergebnis wird 20 s zwischengespeichert (Statusseite fragt alle 3 s; Abfrage ≈ 80 ms bei 60 000 Zeilen) und bei neuen
+  Abrufergebnissen verworfen.
+* **Tests:** `tests/test_robustness.py` ruft **alle** GET-Routen mit Müll-Query und mit 10²⁰ als ID auf (nie 5xx); N1 mit Verlagen
+  hinter Google News; Zwischenspeicher.
+
 ## 0.59.0 – News: Karten für Artikel und Community, Bilder verkleinert
 
 * **Karten:** Artikel und Community nutzen dieselbe Karte wie Videos und Kanal-Vorschläge (`.vgrid`/`.vcard`, eine Vorlage in

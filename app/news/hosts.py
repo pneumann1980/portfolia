@@ -15,6 +15,8 @@ Eine Woche nach dem letzten Abruf ist ein Probeabruf fällig; gelingt er (und da
 
 from __future__ import annotations
 
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
@@ -26,6 +28,9 @@ MIN_SAMPLES = 8
 MAX_SUCCESS = 1
 LOOKBACK_DAYS = 14
 PROBE_EVERY = timedelta(days=7)
+CACHE_S = 20.0  # die Abfrage läuft sonst bei jedem Lauf und bei jeder Aktualisierung der Statusseite (alle 3 s)
+# Google News: die Meldungs-URL gehört immer news.google.com, der Verlag steht erst in final_url
+AGGREGATOR_HOSTS = {"news.google.com"}
 # Ergebnisse, die nichts über den Host sagen (vorübergehend); entspricht ``enrich.RETRYABLE``
 TRANSIENT = {"timeout", "network", "rate_limited", "http_error", "dns", "gnews_unresolved", "internal"}
 
@@ -62,18 +67,46 @@ def _verdict(status: str, reason: str | None) -> int | None:
     return None  # Teiltext „short“ u. Ä.
 
 
-def teaser_hosts(ctx: AppContext) -> dict[str, datetime | None]:
-    """Hosts ohne brauchbaren Volltext (Host -> Zeitpunkt des letzten Abrufs)."""
+_cache: dict[str, tuple[float, dict[str, datetime | None]]] = {}
+_cache_lock = threading.Lock()
+
+
+def invalidate() -> None:
+    """Zwischenspeicher verwerfen (nach neuen Abrufergebnissen)."""
+    with _cache_lock:
+        _cache.clear()
+
+
+def teaser_hosts(ctx: AppContext, *, max_age: float = 0.0) -> dict[str, datetime | None]:
+    """Hosts ohne brauchbaren Volltext (Host -> Zeitpunkt des letzten Abrufs).
+
+    ``max_age`` > 0 erlaubt ein Ergebnis aus dem Zwischenspeicher (höchstens so viele Sekunden alt).
+    """
+    key = str(ctx.db.path)
+    now = time.monotonic()
+    if max_age > 0:
+        with _cache_lock:
+            hit = _cache.get(key)
+        if hit is not None and now - hit[0] <= max_age:
+            return dict(hit[1])
+    out = _teaser_hosts(ctx)
+    with _cache_lock:
+        _cache[key] = (now, out)
+    return dict(out)
+
+
+def _teaser_hosts(ctx: AppContext) -> dict[str, datetime | None]:
     since = iso(datetime.now(UTC) - timedelta(days=LOOKBACK_DAYS))
     rows = ctx.db.q(
-        """SELECT n.url, c.status, c.reason, c.fetched_at FROM news_content c JOIN news_item n ON n.id=c.item_id
+        """SELECT COALESCE(NULLIF(c.final_url, ''), n.url) AS url, c.status, c.reason, c.fetched_at
+           FROM news_content c JOIN news_item n ON n.id=c.item_id
            WHERE c.status IN ('success','partial','blocked','failed') AND c.fetched_at >= ?
            ORDER BY c.fetched_at DESC LIMIT 6000""", (since,))
     votes: dict[str, list[int]] = {}
     last: dict[str, str] = {}
     for r in rows:
         host = host_of(r["url"])
-        if not host:
+        if not host or host in AGGREGATOR_HOSTS:  # nicht aufgelöste Sammelseite sagt nichts über einen Verlag
             continue
         last.setdefault(host, r["fetched_at"])  # absteigend sortiert: der erste ist der jüngste
         v = _verdict(r["status"], r["reason"])
@@ -96,4 +129,4 @@ def text_unlikely(host: str, paused: dict[str, datetime], teaser: dict[str, date
     return host in paused or host in teaser
 
 
-__all__ = ["host_of", "paused_hosts", "probe_due", "teaser_hosts", "text_unlikely"]
+__all__ = ["host_of", "invalidate", "paused_hosts", "probe_due", "teaser_hosts", "text_unlikely"]

@@ -2351,6 +2351,40 @@ def _teaser_host(ctx, host, *, blocked=8, success=0, transient=0, short=0):
         store_content(ctx, item(), status="failed", text="", reason="network")
     for _ in range(short):
         store_content(ctx, item(), status="partial", reason="short")
+    from app.news import hosts as H
+
+    H.invalidate()  # die Zeilen oben entstehen am Dienst vorbei
+
+
+def test_google_news_results_are_grouped_by_publisher_not_by_aggregator(ctx):
+    """Alle Google-News-Meldungen tragen news.google.com; der Verlag steht in final_url – ohne ihn zählt nichts (N1)."""
+    from app.news import hosts as H
+
+    for i in range(10):  # zehn gesperrte Abrufe, jedes Mal ein anderer Verlag → kein Verlag erreicht die Schwelle
+        iid = add_item(ctx, f"G{i}", f"https://news.google.com/rss/articles/{i}", hours=30 + i * 0.01)
+        store_content(ctx, iid, status="blocked", text="", reason="http_denied")
+        ctx.db.x("UPDATE news_content SET final_url=? WHERE item_id=?", (f"https://verlag{i}.example.com/x", iid))
+    for i in range(10):  # nicht aufgelöst: bleibt bei news.google.com und zählt nicht
+        iid = add_item(ctx, f"U{i}", f"https://news.google.com/rss/articles/u{i}", hours=40 + i * 0.01)
+        store_content(ctx, iid, status="blocked", text="", reason="http_denied")
+    for i in range(9):  # derselbe Verlag über Google News: erreicht die Schwelle
+        iid = add_item(ctx, f"P{i}", f"https://news.google.com/rss/articles/p{i}", hours=50 + i * 0.01)
+        store_content(ctx, iid, status="blocked", text="", reason="http_denied")
+        ctx.db.x("UPDATE news_content SET final_url=? WHERE item_id=?", ("https://www.bezahl.example.com/y", iid))
+    H.invalidate()
+    assert set(H.teaser_hosts(ctx)) == {"bezahl.example.com"}
+
+
+def test_teaser_hosts_result_is_cached_until_invalidated(ctx):
+    from app.news import hosts as H
+
+    _teaser_host(ctx, "denied.example.com", blocked=8)
+    assert "denied.example.com" in H.teaser_hosts(ctx, max_age=60)
+    ctx.db.x("DELETE FROM news_content")
+    assert "denied.example.com" in H.teaser_hosts(ctx, max_age=60)  # aus dem Zwischenspeicher
+    assert "denied.example.com" not in H.teaser_hosts(ctx)  # ohne max_age frisch gelesen
+    H.invalidate()
+    assert H.teaser_hosts(ctx, max_age=60) == {}
 
 
 def test_host_is_teaser_only_after_repeated_denial_but_not_from_outages_or_success(ctx):
@@ -2371,6 +2405,8 @@ def test_host_is_teaser_only_after_repeated_denial_but_not_from_outages_or_succe
 
 
 def test_enrich_skips_teaser_hosts_except_one_weekly_probe(ctx):
+    from app.news import hosts as hosts_module
+
     _teaser_host(ctx, "denied.example.com", blocked=8)
     fresh = [add_item(ctx, f"Neue Meldung {i}", f"https://denied.example.com/n{i}", hours=1 + i * 0.01)
              for i in range(3)]
@@ -2378,6 +2414,7 @@ def test_enrich_skips_teaser_hosts_except_one_weekly_probe(ctx):
     svc = EnrichService(ctx, _ok_fetcher())
     assert [c["id"] for c in svc.candidates(50)] == [other]  # letzter Abruf frisch: kein Probeabruf
     ctx.db.x("UPDATE news_content SET fetched_at=?", (iso(NOW - timedelta(days=8)),))
+    hosts_module.invalidate()  # Zeilen direkt geändert, am Dienst vorbei
     ids = [c["id"] for c in svc.candidates(50)]
     assert other in ids and len([i for i in ids if i in fresh]) == 1  # genau ein Probeabruf je Quelle
 

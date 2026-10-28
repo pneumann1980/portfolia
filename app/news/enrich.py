@@ -60,7 +60,7 @@ class EnrichService:
 
     def teaser_hosts(self) -> dict[str, datetime | None]:
         """Quellen ohne brauchbaren Volltext (Host -> letzter Abruf): nicht mehr abgerufen, nur wöchentlich geprüft."""
-        return hosts.teaser_hosts(self.ctx)
+        return hosts.teaser_hosts(self.ctx, max_age=hosts.CACHE_S)
 
     def done_count(self) -> int:
         """Artikel im Abrufzeitraum mit abgeschlossenem Abruf (Text, Teiltext, gesperrt, endgültig fehlgeschlagen)."""
@@ -176,6 +176,7 @@ class EnrichService:
     # -- Speichern -----------------------------------------------------------------------------------------
     def _store(self, it: dict[str, Any], status: str, *, reason: str = "", art: Any = None, quality: float = 0.0,
                status_code: int | None = None, final_url: str | None = None, mode: str = "full") -> str:
+        hosts.invalidate()  # Abrufergebnisse ändern die „nur Teaser“-Einstufung
         now = iso(datetime.now(UTC))
         text = art.text if art is not None and status in ("success", "partial") else ""
         keep = text if mode == "full" else excerpt(text, 1500)
@@ -208,6 +209,7 @@ class EnrichService:
 
     def _store_failure(self, it: dict[str, Any], code: str, *, retry: bool | None = None,
                        status_code: int | None = None, final_url: str | None = None) -> str:
+        hosts.invalidate()
         prev = self.db.q1("SELECT attempts FROM news_content WHERE item_id=?", (it["id"],))
         attempts = (prev["attempts"] if prev else 0) + 1
         can_retry = (code in RETRYABLE) if retry is None else retry

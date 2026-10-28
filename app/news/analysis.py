@@ -205,7 +205,7 @@ class AnalysisService:
         rows = self.db.q(
             """SELECT n.id, n.url, n.title, n.summary, n.source_name, n.published_at, n.relevance, n.dup_count,
                       n.source_weight, n.fetched_at,
-                      c.status AS cstatus, c.content, c.excerpt, c.content_hash, c.word_count,
+                      c.status AS cstatus, c.final_url, c.content, c.excerpt, c.content_hash, c.word_count,
                       a.input_hash AS ahash, a.analyzed_at, a.summary AS asummary
                FROM news_item n LEFT JOIN news_content c ON c.item_id=n.id
                     LEFT JOIN news_analysis a ON a.item_id=n.id
@@ -215,7 +215,7 @@ class AnalysisService:
         # Quelle pausiert oder „nur Teaser“ (kommt nie) oder die Wartezeit abgelaufen → sonst später (Teaser-Analyse)
         wait = timedelta(minutes=int(self.ctx.settings.get("news.analysis_wait_min", WAIT_MIN)))
         enrich_on = bool(self.ctx.settings.get("news.enrich", True))
-        paused, teaser = hosts.paused_hosts(self.ctx), hosts.teaser_hosts(self.ctx)
+        paused, teaser = hosts.paused_hosts(self.ctx), hosts.teaser_hosts(self.ctx, max_age=hosts.CACHE_S)
         ready_before = datetime.now(UTC) - wait
         now = datetime.now(UTC)
         out = []
@@ -223,7 +223,7 @@ class AnalysisService:
             r = dict(r)
             if (enrich_on and r["cstatus"] not in ("success", "partial", "blocked", "failed")
                     and (parse_iso(r["fetched_at"]) or now) > ready_before
-                    and not hosts.text_unlikely(hosts.host_of(r["url"]), paused, teaser)):
+                    and not hosts.text_unlikely(hosts.host_of(r["final_url"] or r["url"]), paused, teaser)):
                 continue  # Text wird noch erwartet
             h = input_hash(r["title"], r["content_hash"], r["summary"] or "")
             if r["ahash"] == h:
