@@ -17,7 +17,7 @@ Die Übernahme setzt voraus, dass der Abruf *belegt*, vollständig zu sein:
 | Bestand der Börse abrufbar | `/portfolio` | Spot ja, Earn/Futures/Margin/P2P/Unterkonten nicht |
 | Historie lückenlos belegbar | ja (Pagination bis zum Anfang) | nein (Connector beschreibt eigene Grenzen) |
 
-Für Binance und Wallets bleibt der CSV-Kontoauszug nötig; sie sind ausgeschlossen (`takeover.PILOT`).
+Seit 0.68.0 gibt es zwei Stufen: *belegt* (`takeover.PROOF`, Bitpanda) und *bestätigt* (`takeover.CONFIRM`: Binance, dazu alle Blockchain-Wallets) – dort erklärt der Nutzer die Historie für vollständig, und die Sicherung lautet „Bestand je Asset nicht schlechter als vorher“. Buchungen vor dem ersten Ereignis der Quelle bleiben; Steuerjahre werden vor/nach gemessen. Siehe `docs/MILESTONES.md` (0.68.0).
 
 ## Ablauf
 

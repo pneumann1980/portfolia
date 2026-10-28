@@ -165,6 +165,24 @@ def _qs(flt: Any, status: str) -> Any:
     return build
 
 
+def _takeover_hint(ctx: Any, b: Any, ov: dict[str, Any]) -> dict[str, Any] | None:
+    """Hinweis auf den Quellenvorrang: Trifft ein Abruf auf Buchungen des kuratierten Imports (Vorgänge vor dem Stichtag
+    bzw. Dubletten), ist die Entscheidung „Quelle maßgeblich“ für das Konto besser als viele Einzelentscheidungen."""
+    if b["kind"] != "sync" or not b["datasource_id"] or b["status"] not in ("preview", "partial"):
+        return None
+    from app.datasources import takeover as TK
+
+    row = ctx.db.q1("SELECT provider FROM data_source WHERE id=?", (b["datasource_id"],))
+    if row is None or not TK.supported(row["provider"]):
+        return None
+    latest = TK.latest(ctx.db, int(b["datasource_id"]))
+    if latest is not None and latest["status"] == "applied":
+        return None
+    counts = ov.get("counts") or {}
+    n = int(counts.get("before", 0)) + int(counts.get("duplicate", 0))
+    return {"n": n, "sid": int(b["datasource_id"]), "mode": TK.mode(row["provider"])} if n else None
+
+
 def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, errors: list[str] | None = None,
                 msg: str = "", filters: Any = None) -> HTMLResponse:
     from app.csvimport import assess as A
@@ -216,6 +234,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
     catalog: dict[str, Any] = {}
     if (ov["unknown"] or ov["unknown_old"]) and b["status"] in ("preview", "partial", "committed"):
         sugg, catalog = batch_suggestions(ctx, b, ov, known)
+    takeover_hint = _takeover_hint(ctx, b, ov)
     job = ctx.db.q1("SELECT running, progress_json, last_end, last_ok, last_error FROM job_status WHERE "
                     "job='csv_prices'")
     acc_rows = svc.saved_accounts()
@@ -239,6 +258,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
                                                               (b["datasource_id"],))),
         sugg=sugg, catalog=catalog, conf_badge=CONF_BADGE, acct=acct, outdated=outdated, compare=compare,
         funnel=funnel, review_states=RV.STATES, origin=json.loads(b["origin_json"] or "{}"),
+        takeover_hint=takeover_hint,
     )
 
 

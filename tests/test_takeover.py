@@ -264,7 +264,7 @@ def test_manual_bookings_stay_and_unsupported_provider_is_refused(config, master
         assert [t.tx_id for t, _w in a.kept] == [manual[0]["tx_id"]]  # manuelle Buchungen bleiben …
         assert not a.ok and any(b.key == "balance" for b in a.blockers)  # … und müssen durch die API gedeckt sein
         bsid = ctx(c).db.x("INSERT INTO data_source(kind, provider, name, account, status, created_at, updated_at) "
-                           "VALUES ('exchange', 'binance', 'Binance', 'Binance', 'created', 'x', 'x')").lastrowid
+                           "VALUES ('exchange', 'kraken', 'Kraken', 'Kraken', 'created', 'x', 'x')").lastrowid
         res = TK.start_fetch(ctx(c), int(bsid))
         assert res["errors"] and "keine Quellenübernahme" in res["errors"][0]
     finally:

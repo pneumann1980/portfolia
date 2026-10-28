@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 28.10.2026 · Version 0.67.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 28.10.2026 · Version 0.68.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,25 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.68.0 – Quellenvorrang für Binance und Wallets (mit Bestätigung), Zeitraum der Quelle, Steuerjahre gemessen
+
+Paket I aus `docs/PLAN_DATENQUALITAET.md`: „Börse bzw. Wallet hat Vorrang vor dem kuratierten Import“, soweit die Vollständigkeit belegt **oder bestätigt** ist.
+
+* **Zwei Stufen** (`app/datasources/takeover.py`, `mode()`): *belegt* – Bitpanda (Seitenende laut API + exakter Bestand je Asset, wie bisher); *bestätigt* – Binance und
+  alle Blockchain-Wallets: Du erklärst auf der Seite „Quellenübernahme“ die Historie der Quelle für das Konto für vollständig. Dann gilt statt „exakt“ die Sicherung
+  **„Bestand je Asset weicht danach nicht stärker vom beobachteten ab als vorher“** – vor dem Übernehmen als Prüfung, nach dem Buchen als Nachprüfung (sonst vollständige Rücknahme).
+  Das Token der Vorschau bindet Stufe und Bestätigung.
+* **Zeitraum:** Buchungen **vor dem ersten Ereignis der Quelle** bleiben (Import maßgeblich); sie zählen im erwarteten Bestand weiter. So ersetzt eine Wallet mit Rückblick-Grenze
+  (z. B. DOT) nur, was sie selbst kennt.
+* **Steuerjahre gemessen:** Realisierte Ergebnisse und Erträge je Jahr werden vor und nach der Übernahme aus dem Ledger gelesen und im Ergebnis gezeigt (nicht simuliert);
+  Rückgängig stellt den Vorzustand her.
+* **Prüfstapel:** Trifft ein Abruf auf Buchungen des kuratierten Imports (Zeilen „vor Stichtag“/„mögliche Dublette“), verweist ein Hinweis auf die Quellenübernahme des Kontos –
+  eine Entscheidung statt vieler Einzelfälle. Die Übernahme selbst bleibt Ganz-oder-gar-nicht mit Vorschau und Rückgängig; Manuelle Buchungen, Transfers mit anderen Konten und
+  Korrekturen der Diagnose bleiben.
+* **Grenzen:** Bei „bestätigt“ ist Vollständigkeit eine Aussage des Nutzers, kein Beleg; zwei sich aufhebende Fehler bleiben unsichtbar; EUR-Werte stammen nach der Übernahme aus
+  Quelle/Kursen (Spender übernimmt Werte des Imports nur, wo die Quelle keine liefert). Die Zuordnung künftiger Importversionen (neue Kennungen) wird nicht automatisch nachgezogen –
+  neue Import-Buchungen des Kontos erscheinen als Hinweis „ohne Gegenstück“ und lassen sich über eine erneute Übernahme ersetzen.
 
 ## 0.67.0 – Kettenbestand-Abgleich: Bestandssprünge ohne Buchung auf der Blockchain finden (peaq, Polkadot)
 

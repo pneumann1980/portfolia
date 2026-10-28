@@ -9,18 +9,22 @@
   {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 
   <section class="card">
-    <div class="card-head"><h2>API maßgeblich für das Konto „{{ ds.account }}“</h2></div>
+    <div class="card-head"><h2>Quelle maßgeblich für das Konto „{{ ds.account }}“</h2>{% if mode %}<span class="badge {{ 'good' if mode == 'proof' else 'info' }}">{{ 'Vollständigkeit belegbar' if mode == 'proof' else 'mit Bestätigung' }}</span>{% endif %}</div>
+    {% if mode == 'proof' %}
     <p>Die API von {{ ds.provider_label }} liefert die Historie seitenweise bis zum Ende und den aktuellen Bestand. Wenn die Vorgänge der API den Bestand <b>exakt</b> ergeben, ersetzt Portfolia die Buchungen des kuratierten Imports (z. B. Koinly) für dieses Konto durch die der API – <b>eine Entscheidung statt vieler Einzelkonflikte</b>.</p>
+    {% else %}
+    <p>Bei {{ ds.provider_label }} lässt sich die Vollständigkeit der Historie nicht aus dem Abruf belegen. Wenn <b>du</b> sie bestätigst, ersetzt Portfolia die Buchungen des kuratierten Imports (z. B. Koinly) <b>ab dem ersten Ereignis der Quelle</b> durch die der Quelle – <b>eine Entscheidung statt vieler Einzelkonflikte</b>. Davor bleibt der Import. Als Sicherung gilt: weicht der Bestand eines Assets danach stärker vom beobachteten ab als vorher, wird alles zurückgenommen.</p>
+    {% endif %}
     <ul class="hint">
       <li>Es wird nichts gelöscht: Import-Buchungen werden ausgeblendet, die Übernahme ist als Ganzes rückgängig zu machen.</li>
       <li>EUR-Werte und Einordnungen des ersetzten Imports bleiben erhalten, <b>wo die API sie nicht liefert</b>.</li>
-      <li>Stimmt der Bestand nach dem Buchen nicht exakt, wird alles automatisch zurückgenommen.</li>
-      <li>Grenzen: Der Beweis betrifft <b>Mengen</b>, nicht Werte. Realisierte Ergebnisse je Jahr werden vorab nicht simuliert – nach der Übernahme unter „Steuern“ prüfen. Manuelle Buchungen, Transfers mit anderen Konten und Korrekturen bleiben bestehen.</li>
+      <li>{% if mode == 'proof' %}Stimmt der Bestand nach dem Buchen nicht exakt, wird alles automatisch zurückgenommen.{% else %}Wird der Bestand nach dem Buchen schlechter als vorher, wird alles automatisch zurückgenommen.{% endif %}</li>
+      <li>Grenzen: Der Nachweis betrifft <b>Mengen</b>, nicht Werte. Realisierte Ergebnisse und Erträge je Steuerjahr werden vor und nach der Übernahme <b>gemessen</b> und im Ergebnis gezeigt (nicht vorab simuliert). Manuelle Buchungen, Transfers mit anderen Konten und Korrekturen bleiben bestehen.</li>
     </ul>
   </section>
 
   {% if not supported %}
-  <div class="alert warn"><span class="icon">!</span><div>Für {{ ds.provider_label }} ist keine Quellenübernahme vorgesehen: Der Abruf belegt dort nicht, dass die API-Historie vollständig ist (Pilot: Bitpanda).</div></div>
+  <div class="alert warn"><span class="icon">!</span><div>Für {{ ds.provider_label }} ist keine Quellenübernahme vorgesehen (belegt: Bitpanda; mit Bestätigung: Binance und Blockchain-Wallets).</div></div>
   {% else %}
 
   {% if not t or t.status in ('discarded', 'undone', 'failed') %}
@@ -46,10 +50,18 @@
       <div><dt>Ersetzte Buchungen (ausgeblendet)</dt><dd>{{ result.hidden }}</dd></div>
       <div><dt>Gebuchte API-Vorgänge</dt><dd>{{ result.booked }}</dd></div>
       <div><dt>Durch bleibende Transfers gedeckt</dt><dd>{{ result.covered }}</dd></div>
-      <div><dt>Bleibende Buchungen des Kontos</dt><dd>{{ result.kept }}</dd></div>
+      <div><dt>Bleibende Buchungen des Kontos</dt><dd>{{ result.kept }}{% if result.before %} <span class="hint">(davon {{ result.before }} vor dem ersten Ereignis der Quelle{% if result.window_from %}, {{ result.window_from|date_de }}{% endif %})</span>{% endif %}</dd></div>
       <div><dt>Werte/Einordnungen aus dem Import übernommen</dt><dd>{{ result.donors }}</dd></div>
+      <div><dt>Stufe</dt><dd>{{ result.tier or 'belegt' }}{% if result.check and not result.check.exact %} · Bestand nicht exakt, aber nicht schlechter{% endif %}</dd></div>
       <div><dt>Übernommen am</dt><dd>{{ t.applied_at|datetime_de }}</dd></div>
     </dl>
+    {% if result.years %}
+    <h3>Wirkung auf die Steuerjahre (gemessen)</h3>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Jahr</th><th class="num">Realisiert vorher</th><th class="num">Realisiert nachher</th><th class="num">Erträge vorher</th><th class="num">Erträge nachher</th></tr></thead><tbody>
+    {% for y in result.years %}<tr><td><b>{{ y.year }}</b></td><td class="num" data-label="Realisiert vorher">{{ y.realized[0]|eur }}</td><td class="num" data-label="Realisiert nachher">{{ y.realized[1]|eur }}</td><td class="num" data-label="Erträge vorher">{{ y.income[0]|eur }}</td><td class="num" data-label="Erträge nachher">{{ y.income[1]|eur }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    <p class="hint">Die Übernahme ändert EUR-Werte (Quelle statt Import, Kurse für fehlende Werte). Weichen die Jahre ab, unter „Steuern“ prüfen; „Zurücknehmen“ stellt den Vorzustand her.</p>
+    {% elif result.years is defined %}<p class="hint">Realisierte Ergebnisse und Erträge je Steuerjahr sind unverändert.</p>{% endif %}
     <p class="hint">Künftige Abrufe laufen wie gewohnt inkrementell; die API-Vorgänge sind bekannt und werden nicht doppelt gebucht.</p>
     <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zurueck" data-confirm="Übernahme zurücknehmen? Die gebuchten API-Vorgänge werden zurückgenommen, die ausgeblendeten Buchungen zählen wieder."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Übernahme zurücknehmen</button></form>
   </section>
@@ -67,7 +79,13 @@
 
   {% if a %}
   <section class="card" id="beweis">
-    <div class="card-head"><h2>2 · Beweis</h2> {% if a.ok %}<span class="badge good">erbracht</span>{% else %}<span class="badge crit">nicht erbracht</span>{% endif %}</div>
+    <div class="card-head"><h2>2 · {{ 'Beweis' if a.mode == 'proof' else 'Prüfung und Bestätigung' }}</h2> {% if a.ok %}<span class="badge good">{{ 'erbracht' if a.mode == 'proof' else 'bestätigt' }}</span>{% else %}<span class="badge crit">{{ 'nicht erbracht' if a.mode == 'proof' else 'offen' }}</span>{% endif %}</div>
+    {% if a.mode == 'confirm' %}
+    <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme" class="stack" style="gap:6px;margin-bottom:10px">
+      <label class="check"><input type="checkbox" name="confirm" value="1"{% if confirmed %} checked{% endif %}> Ich bestätige: {{ ds.provider_label }} kennt für das Konto „{{ ds.account }}“ die <b>vollständige Historie</b> (der kuratierte Import darf ab dem ersten Ereignis der Quelle zurücktreten).</label>
+      <div><button class="btn sm" type="submit">Mit dieser Angabe prüfen</button></div>
+    </form>
+    {% endif %}
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Prüfung</th><th>Ergebnis</th><th>Beleg</th></tr></thead><tbody>
     {% for c in a.checks %}<tr><td class="wide"><b>{{ c.label }}</b>{% if not c.blocking %} <span class="hint">(Hinweis)</span>{% endif %}</td><td data-label="Ergebnis">{% if c.ok %}<span class="badge good">✓ erfüllt</span>{% elif c.blocking %}<span class="badge crit">✗ nicht erfüllt</span>{% else %}<span class="badge warn">! Hinweis</span>{% endif %}</td><td class="wide" data-label="Beleg">{{ c.detail }}</td></tr>{% endfor %}
     </tbody></table></div>
@@ -76,9 +94,9 @@
 
   <section class="card" id="bestand">
     <div class="card-head"><h2>3 · Bestand</h2></div>
-    <p class="hint">„Jetzt“ = aktueller Bestand der Buchungen des Kontos; „nach Übernahme“ = Vorgänge der API plus bleibende Buchungen; „beobachtet“ = Bestand laut API.</p>
+    <p class="hint">„Jetzt“ = aktueller Bestand der Buchungen des Kontos; „nach Übernahme“ = Vorgänge der Quelle plus bleibende Buchungen; „beobachtet“ = Bestand laut Quelle.{% if a.window_from %} Buchungen vor dem {{ a.window_from|date_de }} (erstes Ereignis der Quelle) bleiben: {{ a.before|length }}.{% endif %}</p>
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th class="num">Jetzt</th><th class="num">Nach Übernahme</th><th class="num">Beobachtet</th><th>Stand</th></tr></thead><tbody>
-    {% for b in a.balances %}<tr><td><b>{{ b.name }}</b></td><td class="num" data-label="Jetzt">{{ b.now|qty_exact }}{% if not b.was_ok %} <span class="badge warn">weicht ab</span>{% endif %}</td><td class="num" data-label="Nach Übernahme">{{ b.after|qty_exact }}</td><td class="num" data-label="Beobachtet">{{ b.observed|qty_exact }}</td><td data-label="Stand">{% if b.ok %}<span class="badge good">exakt</span>{% else %}<span class="badge crit">Abweichung {{ (b.after - b.observed)|qty_exact }}</span>{% endif %}</td></tr>{% endfor %}
+    {% for b in a.balances %}<tr><td><b>{{ b.name }}</b></td><td class="num" data-label="Jetzt">{{ b.now|qty_exact }}{% if not b.was_ok %} <span class="badge warn">weicht ab</span>{% endif %}</td><td class="num" data-label="Nach Übernahme">{{ b.after|qty_exact }}</td><td class="num" data-label="Beobachtet">{{ b.observed|qty_exact }}</td><td data-label="Stand">{% if b.ok %}<span class="badge good">exakt</span>{% elif a.mode == 'confirm' and b.not_worse %}<span class="badge warn">Abweichung {{ (b.after - b.observed)|qty_exact }} (nicht schlechter)</span>{% else %}<span class="badge crit">Abweichung {{ (b.after - b.observed)|qty_exact }}</span>{% endif %}</td></tr>{% endfor %}
     </tbody></table></div>
   </section>
 
@@ -120,12 +138,12 @@
     <div class="card-head"><h2>5 · Übernehmen</h2></div>
     {% if a.ok %}
     <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/uebernehmen" class="stack" style="gap:8px">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="token" value="{{ a.token }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="token" value="{{ a.token }}">{% if a.confirm %}<input type="hidden" name="confirmed" value="1">{% endif %}
       <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe Beweis, Bestand und Wirkung geprüft. {{ a.hide|length }} Buchungen werden ausgeblendet, die Vorgänge der API gebucht; weicht der Bestand danach ab, wird alles zurückgenommen.</label>
       <div><button class="btn primary" type="submit">API maßgeblich machen</button></div>
     </form>
     {% else %}
-    <div class="alert warn"><span class="icon">!</span><div>Der Beweis ist nicht erbracht – die Übernahme ist gesperrt:<ul>{% for c in a.blockers %}<li><b>{{ c.label }}</b>: {{ c.detail }}</li>{% endfor %}</ul></div></div>
+    <div class="alert warn"><span class="icon">!</span><div>{{ 'Der Beweis ist nicht erbracht' if a.mode == 'proof' else 'Die Voraussetzungen sind nicht erfüllt' }} – die Übernahme ist gesperrt:<ul>{% for c in a.blockers %}<li><b>{{ c.label }}</b>: {{ c.detail }}</li>{% endfor %}</ul></div></div>
     {% endif %}
   </section>
   {% else %}

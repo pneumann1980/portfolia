@@ -23,6 +23,7 @@ from app.datasources.chainhttp import ENDPOINTS
 from app.datasources.connector import CREDENTIAL_RE, connector_for, supported
 from app.datasources.providers import EXCHANGE, INTERVALS, KIND_LABEL, WALLET, contains_secret, providers
 from app.datasources.service import CHAIN_TICKER, PROVIDER_KEYS, RUN_STATUS_LABEL, STATUS_LABEL, datasource_service
+from app.datasources.takeover import mode as takeover_mode
 from app.datasources.wallet import GAP_DEFAULT, SCRIPT_TYPES
 from app.jobs.scheduler import Scheduler, extra_jobs
 from app.web.app import register_router
@@ -102,6 +103,7 @@ def _form_page(request: Request, data: dict[str, Any], errors: list[str], sid: i
     return render(request, "datasource_form.html", status_code=status_code, active="settings", ds=ds, data=data,
                   errors=errors, kind=kind, kind_label=KIND_LABEL, providers=provs, intervals=INTERVALS,
                   supported_ids={p.id for p in provs if supported(p.id)},
+                  takeover_supported=bool(ds is not None and takeover_mode(ds.provider)),
                   accounts=svc.accounts(), runs=svc.runs(sid) if sid else [], run_status=RUN_STATUS_LABEL,
                   pending=svc.pending_batches(sid) if sid else [], open_counts=svc.open_counts(sid) if sid else {},
                   vault=svc.vault().status(), keys=svc.key_stats(), msg=msg, error=error, chain_info=chain_info,
@@ -486,7 +488,7 @@ def make_router() -> APIRouter:
         return ds
 
     @router.get("/settings/datasources/{sid}/uebernahme", response_class=HTMLResponse)
-    async def takeover_page(request: Request, sid: int, msg: str = "", error: str = "") -> Response:
+    async def takeover_page(request: Request, sid: int, msg: str = "", error: str = "", confirm: str = "") -> Response:
         from app.datasources import takeover as TK
 
         ds = _takeover_ds(request, sid)
@@ -494,10 +496,11 @@ def make_router() -> APIRouter:
         row = TK.view(ctx.db, sid)
         a = None
         if row is not None and row["status"] == "staged" and TK.supported(ds.provider):
-            a = await run_in_threadpool(TK.assess, ctx, sid)
+            a = await run_in_threadpool(lambda: TK.assess(ctx, sid, confirm=confirm == "1"))
         result = json.loads(row["result_json"] or "{}") if row is not None else {}
         return render(request, "datasource_takeover.html", active="settings", ds=ds, t=row, a=a, result=result,
-                      supported=TK.supported(ds.provider), msg=msg, error=error)
+                      supported=TK.supported(ds.provider), mode=TK.mode(ds.provider), confirmed=confirm == "1",
+                      msg=msg, error=error)
 
     @router.post("/settings/datasources/{sid}/uebernahme/abruf")
     async def takeover_fetch(request: Request, sid: int) -> Response:
@@ -517,7 +520,8 @@ def make_router() -> APIRouter:
         if str(f.get("confirm") or "") != "1":
             return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode(
                 {"error": "Bitte die Vorschau bestätigen."}))
-        res = await run_in_threadpool(TK.start_apply, get_ctx(request), sid, str(f.get("token") or ""))
+        res = await run_in_threadpool(TK.start_apply, get_ctx(request), sid, str(f.get("token") or ""),
+                                      str(f.get("confirmed") or "") == "1")
         key, text = ("error", " ".join(res["errors"])) if res.get("errors") else ("msg", "Übernahme gestartet.")
         return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode({key: text}))
 

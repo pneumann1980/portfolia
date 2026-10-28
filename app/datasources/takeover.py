@@ -29,7 +29,13 @@ Grenzen (bewusst, in der Vorschau sichtbar)
       Übernahme ausgewertet) – nach der Übernahme unter „Steuern“ prüfen; Rückgängig stellt den Vorzustand her.
     * Ein Bestand, der exakt stimmt, schließt eine vollständige Gegenbuchung (z. B. zwei Fehler, die sich aufheben)
       nicht aus; die Zeilen ohne Gegenstück sind deshalb als Stichprobe aufgeführt.
-    * Nur Anbieter mit nachweislich vollständigem Seitenende (``PILOT``); Binance und Wallets sind ausgeschlossen.
+    * Zwei Stufen: **belegt** (``PROOF``: Bitpanda – Seitenende laut API und exakter Bestand) und **bestätigt**
+      (``CONFIRM`` und Blockchain-Wallets: Der Nutzer erklärt die Historie der Quelle für vollständig; die Übernahme
+      gilt nur, wenn der Bestand je Asset danach **nicht schlechter** vom beobachteten abweicht als vorher – sonst
+      vollständige Rücknahme). Ohne Bestätigung bleibt es bei Verknüpfen im Prüfstapel.
+    * Zeitraum: Buchungen **vor dem ersten Ereignis der Quelle** bleiben (die Quelle belegt nur, was sie selbst kennt).
+    * Steuerjahre: Realisierte Ergebnisse und Erträge je Jahr werden vor und nach der Übernahme **gemessen** und im
+      Ergebnis gezeigt (nicht vorab simuliert); Rückgängig stellt den Vorzustand her.
 """
 
 from __future__ import annotations
@@ -48,7 +54,9 @@ from app.util.timeutil import iso, parse_iso
 
 log = logging.getLogger(__name__)
 
-PILOT = ("bitpanda",)
+PROOF = ("bitpanda",)  # Vollständigkeit belegt: Seitenende laut API + exakter Bestand je Asset
+CONFIRM = ("binance",)  # Vollständigkeit ohne Beleg: der Nutzer bestätigt sie; der Bestand darf nicht schlechter werden
+PILOT = PROOF  # Name bis 0.67
 MAX_AGE = timedelta(hours=24)  # der Abruf darf nicht älter sein: der beobachtete Bestand ist ein Zeitpunkt
 WINDOW = timedelta(hours=36)  # Zuordnung ohne gemeinsame Kennung: Zeitabstand (Zeitzonen, Buchungszeitpunkt)
 SAMPLE = 40  # Beispiele je Liste in der Vorschau
@@ -80,8 +88,22 @@ def _msg(db: Any, rid: int, text: str, status: str | None = None) -> None:
         db.x("UPDATE ds_takeover SET message=?, status=? WHERE id=?", (text[:500], status, rid))
 
 
+def mode(provider: str) -> str:
+    """``proof`` (Anbieter belegt die Vollständigkeit), ``confirm`` (Nutzer bestätigt; Börsen mit Lücken im Abruf und
+    alle Blockchain-Wallets) oder leer (keine Übernahme vorgesehen)."""
+    from app.datasources import connector as conn_mod
+    from app.datasources.wallet import WalletConnector
+
+    if provider in PROOF:
+        return "proof"
+    if provider in CONFIRM:
+        return "confirm"
+    conn = conn_mod.connector_for(provider)
+    return "confirm" if isinstance(conn, WalletConnector) else ""
+
+
 def supported(provider: str) -> bool:
-    return provider in PILOT
+    return bool(mode(provider))
 
 
 def busy(sid: int) -> bool:
@@ -251,6 +273,15 @@ class Assessment:
     lines_by_ext: dict[str, Line] = field(default_factory=dict)
     observed: dict[str, Decimal] = field(default_factory=dict)
     ready: bool = False
+    mode: str = ""  # proof | confirm
+    confirm: bool = False  # Vollständigkeit vom Nutzer bestätigt (nur bei mode=confirm wirksam)
+    window_from: str | None = None  # Beginn der Quelle: davor bleibt der Import maßgeblich
+    before: list[Any] = field(default_factory=list)  # Buchungen vor dem Beginn der Quelle (bleiben)
+
+    @property
+    def tier(self) -> str:
+        """belegt = Beweis erbracht · bestätigt = vom Nutzer bestätigt, Bestand wird nicht schlechter."""
+        return "belegt" if self.mode == "proof" else "bestätigt"
 
     @property
     def ok(self) -> bool:
@@ -340,7 +371,7 @@ def _observed(meta: dict[str, Any], resolver: Any, provider: str) -> tuple[dict[
     return {a: q for a, q in obs.items() if q}, unmapped
 
 
-def assess(ctx: Any, sid: int, *, plan: bool = True) -> Assessment | None:
+def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> Assessment | None:
     """Beweis und Vorschau aus dem abgelegten Vollabruf (rein lesend). ``None``: kein abgelegter Abruf."""
     from app.csvimport.events import identity_keys, source_ref_keys
     from app.csvimport.identity import note_identity_keys
@@ -358,6 +389,7 @@ def assess(ctx: Any, sid: int, *, plan: bool = True) -> Assessment | None:
     account, prov = ds.account, ds.provider
     fetched = parse_iso(row["created_at"]) or datetime.now(UTC)
     a = Assessment(sid, account, prov, int(row["id"]), row["created_at"], datetime.now(UTC) - fetched)
+    a.mode, a.confirm = mode(prov), bool(confirm)
     cov = meta.get("coverage") or {}
     a.skipped = dict(meta.get("skipped") or {})
 
@@ -366,6 +398,9 @@ def assess(ctx: Any, sid: int, *, plan: bool = True) -> Assessment | None:
     a.events = len({ln.rec.event_key or ln.rec.ext_id for ln in lines})
     times = sorted(ln.rec.ts for ln in lines if not ln.rec.ts_missing)
     a.first, a.last = (iso(times[0]), iso(times[-1])) if times else (None, None)
+    # Zeitraum der Quelle: Buchungen davor (Import, Dateien) bleiben – die Quelle belegt nur, was sie selbst kennt
+    cut = times[0] - WINDOW if times else None
+    a.window_from = iso(cut) if cut is not None else None
     observed, unmapped = _observed(meta, resolver, prov)
     a.observed = observed
 
@@ -383,6 +418,9 @@ def assess(ctx: Any, sid: int, *, plan: bool = True) -> Assessment | None:
             a.kept.append((t, "Transfer mit anderem Konto – die Gegenseite liegt dort"))
         elif t.origin == "journal" and not str(t.source or "").startswith(SOURCE_OWN):
             a.kept.append((t, "in der App erfasst (manuell, Transfer oder Korrektur) – bleibt"))
+        elif cut is not None and t.ts < cut - (timedelta(hours=24) if t.date_only else timedelta(0)):
+            a.kept.append((t, "vor dem ersten Ereignis der Quelle – der Import bleibt maßgeblich"))
+            a.before.append(t)
         else:
             cand.append(t)
 
@@ -520,7 +558,8 @@ def assess(ctx: Any, sid: int, *, plan: bool = True) -> Assessment | None:
             continue
         name = getattr(assets.get(aid), "symbol", None) or aid
         a.balances.append({"asset": aid, "name": name, "now": n, "after": e, "observed": o,
-                           "ok": abs(e - o) <= DUST, "was_ok": abs(n - o) <= DUST})
+                           "ok": abs(e - o) <= DUST, "was_ok": abs(n - o) <= DUST,
+                           "not_worse": abs(e - o) <= abs(n - o) + DUST})
     a.ready = True
 
     # -- Prüfungen ------------------------------------------------------------------------------------------
@@ -528,15 +567,22 @@ def assess(ctx: Any, sid: int, *, plan: bool = True) -> Assessment | None:
     pag = (cov.get("pagination") or {})
     stale = a.age > MAX_AGE
     bad = [ln for ln in lines if ln.errors]
+    proof = a.mode == "proof"
+    reported = ("; ".join(meta["gaps"][:3]) or "keine gemeldet") if meta.get("gaps") else "keine gemeldet"
     a.checks = [
         Check("pilot", "Anbieter für die Übernahme zugelassen", supported(prov),
-              "Nur Anbieter mit nachweislich vollständigem Seitenende (Pilot: Bitpanda)."),
+              "Belegt (Seitenende laut API): Bitpanda. Mit Bestätigung des Nutzers: Binance und Blockchain-Wallets."),
         Check("fetch", "Abruf vollständig (Seitenende laut API, keine Lücke)",
               bool(meta.get("complete")) and not meta.get("gaps") and cov.get("mode") == "vollständig"
               and pag.get("end") == "has_next_page=false",
               f"{cov.get('pages', '?')} Seiten, {cov.get('operations', '?')} Vorgänge, Seitenende: "
               f"{pag.get('end') or 'nicht belegt'}" + (f"; Lücken: {'; '.join(meta['gaps'][:3])}" if meta.get("gaps")
-                                                       else "")),
+                                                       else ""))
+        if proof else
+        Check("fetch", "Vollständigkeit der Historie bestätigt", a.confirm and not meta.get("error"),
+              f"Die Quelle belegt sie nicht selbst (gemeldete Lücken: {reported}; Abruf "
+              f"{'vollständig' if meta.get('complete') else 'nicht als vollständig gemeldet'}). Mit der Bestätigung "
+              "erklärst du, dass diese Quelle für das Konto die vollständige Historie kennt."),
         Check("parser", "Auswertung der Quelle aktuell", conn is not None and cov.get("parser") == conn.parser_version,
               f"Auswertung v{cov.get('parser')} (aktuell v{getattr(conn, 'parser_version', '?')})"),
         Check("fresh", "Abruf nicht älter als 24 Stunden", not stale,
@@ -553,7 +599,14 @@ def assess(ctx: Any, sid: int, *, plan: bool = True) -> Assessment | None:
         Check("balance", "Vorgänge der API ergeben den beobachteten Bestand exakt je Asset",
               all(b["ok"] for b in a.balances),
               "; ".join(f"{b['name']}: erklärt {_fmt(b['after'])}, beobachtet {_fmt(b['observed'])}"
-                         for b in a.balances if not b["ok"])[:400] or f"{len(a.balances)} Assets stimmen"),
+                         for b in a.balances if not b["ok"])[:400] or f"{len(a.balances)} Assets stimmen")
+        if proof else
+        Check("balance", "Der Bestand weicht danach je Asset nicht stärker vom beobachteten ab als jetzt",
+              all(b["not_worse"] for b in a.balances),
+              "; ".join(f"{b['name']}: jetzt {_fmt(b['now'])}, danach {_fmt(b['after'])}, beobachtet "
+                         f"{_fmt(b['observed'])}" for b in a.balances if not b["not_worse"])[:400]
+              or (f"{len(a.balances)} Assets: {sum(1 for b in a.balances if b['ok'])} exakt, "
+                  f"{sum(1 for b in a.balances if not b['ok'])} mit unveränderter oder kleinerer Abweichung")),
         Check("connector", "Eigene Bestandsprüfung der Quelle (Vorgänge ↔ /portfolio)",
               bool((cov.get("balances") or {}).get("checked")) and not (cov.get("balances") or {}).get("differences"),
               "; ".join((cov.get("balances") or {}).get("examples") or [])[:300]
@@ -563,17 +616,41 @@ def assess(ctx: Any, sid: int, *, plan: bool = True) -> Assessment | None:
         a.checks.append(Check("plan", "Alle ersetzten Buchungen lassen sich ausblenden",
                               not (a.plan and a.plan.errors), "; ".join(a.plan.errors[:3]) if a.plan else ""))
     fp = json.dumps({"s": sid, "r": a.rid, "h": sorted(hide_ids), "b": {k: _fmt(v) for k, v in sorted(
-        expected.items())}, "p": a.plan.token if a.plan else "", "d": sorted(a.donors)}, sort_keys=True)
+        expected.items())}, "p": a.plan.token if a.plan else "", "d": sorted(a.donors), "m": a.mode,
+        "c": a.confirm}, sort_keys=True)
     a.token = hashlib.sha256(fp.encode()).hexdigest()[:32]
     a.lines_by_ext = {ln.rec.ext_id: ln for ln in lines if ln.rec.ext_id}
     return a
 
 
 # ----------------------------------------------------------------------------------------------------
+# Wirkung auf realisierte Ergebnisse und Erträge je Steuerjahr (gemessen, nicht simuliert)
+# ----------------------------------------------------------------------------------------------------
+
+def _years(ctx: Any) -> dict[int, tuple[Decimal, Decimal]]:
+    from app.diagnosis.actions import _per_year
+
+    led = ctx.ledger()
+    return _per_year(led) if led is not None else {}
+
+
+def _year_diff(before: dict[int, tuple[Decimal, Decimal]], after: dict[int, tuple[Decimal, Decimal]]
+               ) -> list[dict[str, Any]]:
+    out = []
+    cent = Decimal("0.01")
+    for y in sorted(set(before) | set(after)):
+        b, a = before.get(y, (ZERO, ZERO)), after.get(y, (ZERO, ZERO))
+        if abs(a[0] - b[0]) >= cent or abs(a[1] - b[1]) >= cent:
+            out.append({"year": y, "realized": [format(b[0].quantize(cent), "f"), format(a[0].quantize(cent), "f")],
+                        "income": [format(b[1].quantize(cent), "f"), format(a[1].quantize(cent), "f")]})
+    return out
+
+
+# ----------------------------------------------------------------------------------------------------
 # Übernehmen
 # ----------------------------------------------------------------------------------------------------
 
-def start_apply(ctx: Any, sid: int, token: str) -> dict[str, Any]:
+def start_apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, Any]:
     """Übernahme im Hintergrund: Beweis erneut prüfen, dann übernehmen (Fortschritt in ``ds_takeover.message``)."""
     with _LOCK:
         if busy(sid):
@@ -582,7 +659,7 @@ def start_apply(ctx: Any, sid: int, token: str) -> dict[str, Any]:
 
     def work() -> None:
         try:
-            apply(ctx, sid, token)
+            apply(ctx, sid, token, confirm)
         except Exception as e:  # pragma: no cover - Absicherung
             log.exception("Quellenübernahme von %s fehlgeschlagen", sid)
             r = latest(ctx.db, sid)
@@ -597,7 +674,7 @@ def start_apply(ctx: Any, sid: int, token: str) -> dict[str, Any]:
     return {"errors": []}
 
 
-def apply(ctx: Any, sid: int, token: str) -> dict[str, Any]:
+def apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, Any]:
     """Quelle übernehmen – nur wenn der Beweis hält und die Vorschau noch gilt; danach Nachprüfung am Bestand, sonst
     vollständige Rücknahme. Rückgabe: ``errors`` (leer bei Erfolg), ``result``."""
     from app.datasources import service as S
@@ -608,12 +685,12 @@ def apply(ctx: Any, sid: int, token: str) -> dict[str, Any]:
             return {"errors": [S.BUSY_TEXT]}
         try:
             with S._INGEST_LOCK:
-                return _apply(ctx, sid, token)
+                return _apply(ctx, sid, token, confirm)
         finally:
             S._release(sid)
 
 
-def _apply(ctx: Any, sid: int, token: str) -> dict[str, Any]:
+def _apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, Any]:
     from app.csvimport import batch as B
     from app.csvimport.service import csv_service, rec_to_json
     from app.diagnosis import actions as A
@@ -621,7 +698,7 @@ def _apply(ctx: Any, sid: int, token: str) -> dict[str, Any]:
 
     db = ctx.db
     csv = csv_service(ctx)
-    a = assess(ctx, sid)
+    a = assess(ctx, sid, confirm=confirm)
     if a is None or db.q1("SELECT status FROM ds_takeover WHERE id=?", (a.rid,))["status"] != "staged":
         return {"errors": ["Kein abgelegter Vollabruf – bitte zuerst abrufen."]}
     def refuse(text: str) -> dict[str, Any]:
@@ -634,6 +711,7 @@ def _apply(ctx: Any, sid: int, token: str) -> dict[str, Any]:
     if a.token != token:
         return refuse("Die Vorschau ist nicht mehr aktuell (Daten haben sich geändert) – bitte neu öffnen.")
     rid = a.rid
+    years_before = _years(ctx)
     ds_name = (db.q1("SELECT name FROM data_source WHERE id=?", (sid,)) or {"name": "Quelle"})["name"]
     db.x("UPDATE ds_takeover SET status='running', donors_json=?, message=? WHERE id=?",
          (json.dumps(a.donors, ensure_ascii=False), "Buchungen werden ausgeblendet …", rid))
@@ -720,23 +798,33 @@ def _apply(ctx: Any, sid: int, token: str) -> dict[str, Any]:
     led = ctx.ledger()
     now = led.holdings_by_account(a.account) if led is not None else {}
     diffs = []
+    before = {b["asset"]: b["now"] for b in a.balances}
     for aid in sorted(set(now) | set(a.observed)):
         n, o = now.get(aid, ZERO), a.observed.get(aid, ZERO)
-        if abs(n - o) > DUST:
-            diffs.append(f"{aid}: gebucht {_fmt(n)}, beobachtet {_fmt(o)}")
+        limit = DUST if a.mode == "proof" else abs(before.get(aid, ZERO) - o) + DUST  # bestätigt: nicht schlechter
+        if abs(n - o) > limit:
+            diffs.append(f"{aid}: gebucht {_fmt(n)}, beobachtet {_fmt(o)}"
+                         + ("" if a.mode == "proof" else f" (vorher {_fmt(before.get(aid, ZERO))})"))
     stuck = [rc for rc in csv.rows(bid) if rc.open and (rc.rec.ext_id or "") not in cover_ext
              and rc.status not in ("known", "ignored")]
     if diffs:
         detail = diffs[:12] + [f"Zeile {rc.line}: {rc.status} {'; '.join((rc.errors or rc.warnings)[:1])[:120]}"
                                for rc in stuck[:12]]
-        return rollback("Nachprüfung fehlgeschlagen: Der Bestand des Kontos weicht vom beobachteten ab.", detail)
+        return rollback("Nachprüfung fehlgeschlagen: Der Bestand des Kontos weicht "
+                        + ("vom beobachteten ab." if a.mode == "proof" else "stärker vom beobachteten ab als vorher."),
+                        detail)
     csv.refresh_status(bid)
+    exact = all(abs(now.get(aid, ZERO) - a.observed.get(aid, ZERO)) <= DUST for aid in set(now) | set(a.observed))
     result = {"hidden": len(a.hide), "kept": len(a.kept), "booked": len(book), "covered": len(cover_ext),
-              "matched": a.matched, "donors": len(a.donors), "left": len(stuck),
-              "check": {"assets": len(a.balances), "exact": True}}
+              "matched": a.matched, "donors": len(a.donors), "left": len(stuck), "tier": a.tier,
+              "before": len(a.before), "window_from": a.window_from,
+              "check": {"assets": len(a.balances), "exact": exact},
+              "years": _year_diff(years_before, _years(ctx))}
     db.x("UPDATE ds_takeover SET status='applied', applied_at=?, message=?, result_json=? WHERE id=?",
-         (_now(), f"Übernommen: {len(a.hide)} Buchungen ersetzt, {len(book)} API-Vorgänge gebucht, Bestand exakt "
-                  f"bestätigt ({len(a.balances)} Assets).", json.dumps(result, ensure_ascii=False), rid))
+         (_now(), f"Übernommen ({a.tier}): {len(a.hide)} Buchungen ersetzt, {len(book)} API-Vorgänge gebucht, "
+                  + (f"Bestand exakt bestätigt ({len(a.balances)} Assets)." if exact else
+                     "Bestand nicht schlechter als vorher (nicht exakt – Abweichung bleibt als Befund sichtbar)."),
+          json.dumps(result, ensure_ascii=False), rid))
     log.info("Quellenübernahme %s: %s", sid, result)
     return {"errors": [], "result": result, "unresolved": len(rest)}
 
