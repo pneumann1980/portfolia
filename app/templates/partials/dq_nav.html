@@ -3,11 +3,11 @@
 {% from "partials/progress.html" import bar %}
 {% set _tabs = [('heute', 'Heute', '/quality'), ('faelle', 'Fälle', '/quality/faelle'), ('belege', 'Belege', '/quality/belege'), ('automatik', 'Automatik', '/quality/automatik')] %}
 {% set _subs = {
- 'faelle': [('Alle Fälle', '/quality/faelle'), ('Der Reihe nach', '/quality/diagnose/liste'), ('Klärungsfälle', '/quality/klaerung'), ('Diagnose-Befunde', '/quality/diagnose'), ('Prüfstapel', '/journal/pruefung'), ('Sammelbearbeitung', '/quality/diagnose/bulk'), ('Hinweise', '/quality/diagnose/hints')],
+ 'faelle': [('Alle Fälle', '/quality/faelle'), ('Der Reihe nach', '/quality/diagnose/liste'), ('Klärungsfälle', '/quality/klaerung'), ('Diagnose-Befunde', '/quality/diagnose'), ('Prüfstapel', '/journal/pruefung'), ('Sammelbearbeitung', '/quality/diagnose/bulk'), ('Hinweise', '/quality/diagnose/hints'), ('Erneut prüfen', '/quality/erneut')],
  'belege': [('Übersicht', '/quality/belege'), ('Bestände', '/quality/diagnose/stock'), ('Abweichungen', '/quality/diagnose/windows'), ('Kettenbestand', '/quality/kette'), ('Quellenabdeckung', '/quality/abdeckung'), ('Anschaffung', '/quality/anschaffung'), ('Cockpit', '/quality/cockpit'), ('Prüfbericht', '/quality/integrity')],
  'automatik': [('Übersicht', '/quality/automatik'), ('Autopilot', '/quality/autopilot'), ('Regeln', '/quality/diagnose/regeln'), ('Klärung', '/quality/klaerung')]} %}
 <nav class="dq-nav" aria-label="Datenqualität">
-  <div class="dq-tabs" role="tablist">{% for k, label, href in _tabs %}<a class="dq-tab{{ ' active' if k == dq_tab }}" href="{{ href }}" {% if k == dq_tab %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</div>
+  <div class="dq-tabs" role="tablist">{% for k, label, href in _tabs %}<a class="dq-tab{{ ' active' if k == dq_tab }}" href="{{ href }}" {% if k == dq_tab %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}<a class="btn sm primary dq-assist" href="/quality/assistent?new=1" title="Immer die nächste Aufgabe mit einer Empfehlung">Assistent</a></div>
   {% if dq_tab in _subs %}<div class="dq-subs">{% for label, href in _subs[dq_tab] %}<a class="dq-sub{{ ' active' if request.url.path == href.split('#')[0] }}" href="{{ href }}">{{ label }}</a>{% endfor %}</div>{% endif %}
 </nav>
 {% set _chk = dq_check() if dq_check is defined else none %}

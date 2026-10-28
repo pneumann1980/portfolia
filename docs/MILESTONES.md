@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 28.10.2026 · Version 0.69.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 28.10.2026 · Version 0.70.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,13 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.70.0 – Navigation der Datenqualität straffen (Teil von D2)
+
+* Der **Assistent** ist als Knopf in der Navigation jeder Seite der Datenqualität erreichbar; „Erneut prüfen“ und „Kettenbestand“ stehen in den Unterseiten von Fälle bzw. Belege.
+* **Bewusst nicht umgesetzt:** die Zusammenführung von Diagnose-Befund, Klärungsfall und Prüfstapel-Zeile zu *einer* Fallansicht und das Verschieben der Expertenseiten hinter „Technik“. Der Assistent
+  führt bereits durch alle drei Arten (Befund-Karte, Weiterleitung zu Klärungsfall/Prüfstapel, Rückkehr nach jeder Aktion); eine echte Vereinheitlichung der Ansichten würde alle drei
+  Teilsysteme gleichzeitig umbauen und ist ohne Erfahrung mit dem Assistenten im Alltag ein unnötiges Risiko für funktionierenden Code. Offen als eigener Schritt.
 
 ## 0.69.0 – Übernommene Buchungen erneut prüfen
 

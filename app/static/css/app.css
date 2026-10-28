@@ -966,6 +966,7 @@ label.check > input[type=checkbox] { flex: 0 0 auto; margin-top: 3px; }
 /* Datenqualität: Reiter, Arbeitsplan (Stufe A/B/C), Warte-Balken */
 .dq-nav { margin: 0 0 12px; }
 .dq-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.dq-tabs .dq-assist { margin-left: auto; align-self: center; white-space: nowrap; }
 .dq-tab { padding: 10px 14px; text-decoration: none; color: var(--ink-2); border-bottom: 3px solid transparent; white-space: nowrap; font-weight: 600; }
 .dq-tab:hover { color: var(--ink); text-decoration: none; }
 .dq-tab.active { color: var(--ink); border-bottom-color: var(--accent); }
