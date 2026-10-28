@@ -90,6 +90,48 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
     return resp
 
 
+def _undo_decision(ctx: Any, did: int) -> list[str] | None:
+    """Antwort zurücknehmen (Korrektur bzw. Entscheidung); ``None``, wenn sie nicht mehr aktiv ist."""
+    row = ctx.db.q1("SELECT action, status FROM diag_decision WHERE id=?", (did,))
+    if row is None or row["status"] != "active":
+        return None
+    return (A.undo if row["action"] == "fix" else A.reopen)(ctx, did).errors
+
+
+def _undo(ctx: Any, v: dict[str, str]) -> Response:
+    """Rückgängig auf der nächsten Karte bzw. im Protokoll (synchron, im Threadpool)."""
+    if v["dids"]:  # „für alle gleich“: alle Entscheidungen zurücknehmen
+        errs: list[str] = []
+        for did in [int(x) for x in v["dids"].split(",") if x.isdigit()]:
+            errs += _undo_decision(ctx, did) or []
+        return _go(err=" ".join(errs[:3])) if errs else _go(msg="Zurückgenommen – die Fragen sind wieder offen.", new=1)
+    if v["acts"]:  # Prüfstapel: Stapelaktionen zurücknehmen
+        from app.csvimport import batch as BA
+        from app.csvimport.service import csv_service
+
+        svc = csv_service(ctx)
+        errs = []
+        for a in [int(x) for x in v["acts"].split(",") if x.isdigit()]:
+            errs += BA.undo(svc, a).get("errors") or []
+        return _go(err=" ".join(errs[:3])) if errs else _go(msg="Zurückgenommen – die Vorgänge sind wieder offen.",
+                                                            new=1)
+    if v["kl"]:  # Klärungsfall
+        from app.diagnosis import clarify as K
+
+        r = K.undo_run(ctx, v["kl"])
+        return _go(msg="Zurückgenommen." if r.ok else "", err=" ".join(r.errors), new=1)
+    if not v["d"].isdigit():
+        return _go(err="Ungültige Angabe.")
+    errs2 = _undo_decision(ctx, int(v["d"]))
+    if v["back"] == "protokoll":
+        return RedirectResponse(f"{BASE}/protokoll", status_code=303)
+    if errs2 is None:
+        return _go(err="Diese Antwort ist schon zurückgenommen.")
+    if errs2:
+        return _go(err=" ".join(errs2))
+    return _go(msg="Zurückgenommen – die Aufgabe ist wieder offen.", new=1)
+
+
 def make_router() -> APIRouter:
     router = APIRouter()
 
@@ -314,47 +356,8 @@ def make_router() -> APIRouter:
     async def undo(request: Request) -> Response:
         ctx = get_ctx(request)
         form = await request.form()
-        acts, kl, dids = str(form.get("acts") or ""), str(form.get("kl") or ""), str(form.get("dids") or "")
-        if dids:  # „für alle gleich“: alle Entscheidungen zurücknehmen
-            errs = []
-            for did in [int(x) for x in dids.split(",") if x.isdigit()]:
-                row = ctx.db.q1("SELECT action, status FROM diag_decision WHERE id=?", (did,))
-                if row is None or row["status"] != "active":
-                    continue
-                r = await run_in_threadpool(A.undo if row["action"] == "fix" else A.reopen, ctx, did)
-                errs += r.errors
-            return _go(err=" ".join(errs[:3])) if errs else _go(msg="Zurückgenommen – die Fragen sind wieder offen.",
-                                                                new=1)
-        if acts:  # Prüfstapel: Stapelaktionen zurücknehmen
-            from app.csvimport import batch as BA
-            from app.csvimport.service import csv_service
-
-            svc = csv_service(ctx)
-            errs = []
-            for a in [int(x) for x in acts.split(",") if x.isdigit()]:
-                errs += (await run_in_threadpool(BA.undo, svc, a)).get("errors") or []
-            return _go(err=" ".join(errs[:3])) if errs else _go(msg="Zurückgenommen – die Vorgänge sind wieder offen.",
-                                                                new=1)
-        if kl:  # Klärungsfall
-            from app.diagnosis import clarify as K
-
-            r = await run_in_threadpool(K.undo_run, ctx, kl)
-            return _go(msg="Zurückgenommen." if r.ok else "", err=" ".join(r.errors), new=1)
-        try:
-            did = int(str(form.get("d") or "0"))
-        except ValueError:
-            return _go(err="Ungültige Angabe.")
-        row = ctx.db.q1("SELECT action, status FROM diag_decision WHERE id=?", (did,))
-        if row is None or row["status"] != "active":
-            return _go(err="Diese Antwort ist schon zurückgenommen.")
-        fn = A.undo if row["action"] == "fix" else A.reopen
-        res = await run_in_threadpool(fn, ctx, did)
-        back = str(form.get("back") or "")
-        if back == "protokoll":
-            return RedirectResponse(f"{BASE}/protokoll", status_code=303)
-        if res.errors:
-            return _go(err=" ".join(res.errors))
-        return _go(msg="Zurückgenommen – die Aufgabe ist wieder offen.", new=1)
+        vals = {k: str(form.get(k) or "") for k in ("acts", "kl", "dids", "d", "back")}
+        return await run_in_threadpool(_undo, ctx, vals)
 
     @router.get(f"{BASE}/ende")
     def finish(request: Request) -> Response:
