@@ -1081,3 +1081,5 @@ details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
 .guide-actions { gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .guide-done { align-items: center; flex-wrap: wrap; gap: 8px; }
 .guide-a:not(:has(input:checked)) .guide-params { display: none; }
+.guide-facts { margin: 4px 0 8px; padding-left: 1.2em; }
+.guide-facts li { margin: 2px 0; }

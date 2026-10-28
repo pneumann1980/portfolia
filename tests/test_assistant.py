@@ -74,15 +74,27 @@ def test_integrity_findings_that_are_diagnosis_findings_are_not_counted_twice(cl
 
 # ---- Seiten-Aufgaben (eigene Seite, Rückkehr über den Flow-Modus) -----------------------------------------
 
-def test_page_task_explains_what_to_do_and_starts_the_flow(client):
-    ts = G.tasks(client.app.state.ctx)
-    assert ts[0].kind == "seite" and ts[0].href.startswith("/quality/klaerung/")
+def test_case_with_prepared_solution_is_asked_directly_and_can_be_undone(client):
+    """Klärungsfall mit belegter Lösung: keine Weiterleitung, sondern die Frage des wichtigsten Befunds."""
+    ctx = client.app.state.ctx
+    ts = G.tasks(ctx)
+    assert ts[0].kind == "fall"
     r = client.get("/quality/assistent?new=1")
     assert r.status_code == 200 and client.cookies.get("dq_flow") == "1"
     page = text_of(r.text)
-    assert "Diese Buchungen gehören vermutlich zusammen" in page and "Danach geht es hier weiter" in page
-    assert "Befund" not in page.split("Belege und Details")[0]  # keine Fachbegriffe in der Frage
-    assert f'href="{ts[0].href}"' in r.text
+    assert "Ist das derselbe Vorgang" in page and "Befund" not in page.split("Belege und Details")[0]
+    assert 'href="/quality/klaerung/' not in r.text.split("Belege und Details")[0]  # keine Weiterleitung
+    fields = dict(re.findall(r'name="(x_[a-z]+|ref|typ)" value="([^"]*)"', r.text))
+    assert fields["typ"] == "fall" and fields["x_hyp"] and fields["x_version"]
+    form = {"csrf_token": client.token, "a": "case:apply", **{k: v.replace("&#34;", '"') for k, v in fields.items()}}
+    r = client.post("/quality/assistent/antwort", data=form, follow_redirects=False)
+    q = parse_qs(urlsplit(r.headers["location"]).query)
+    assert "kl" in q, r.headers["location"]
+    assert ts[0].key not in {t.key for t in G.tasks(ctx)}
+    assert "Rückgängig" in client.get(r.headers["location"]).text
+    r = client.post("/quality/assistent/rueckgaengig", data={"csrf_token": client.token, "kl": q["kl"][0]},
+                    follow_redirects=False)
+    assert "err=" not in r.headers["location"]
 
 
 def test_flowbar_on_expert_pages_names_the_return_and_not_on_overview(client):

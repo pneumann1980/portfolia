@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -100,7 +101,7 @@ class Answer:
 class Task:
     key: str
     theme: str
-    kind: str  # frage (Diagnose-Befund) | seite (eigene Seite, Rückkehr hierher)
+    kind: str  # frage (Diagnose-Befund) | zeile (Prüfstapel) | stapel (sichere Vorgänge) | fall | seite
     heading: str  # kurze Einordnung: Konto · Datum bzw. Thema
     question: str = ""
     context: str = ""
@@ -112,6 +113,9 @@ class Task:
     weight: Decimal = Decimal(0)
     item: Any = None  # WorkItem
     finding: Any = None  # Diagnose-Befund (Belege unter „Details“)
+    ref: str = ""  # Bezug der Antwort: Befund-ID, „<Stapel>:<Vorgang>“, Fallschlüssel, „sicher“
+    payload: dict[str, str] = field(default_factory=dict)  # versteckte Felder der Antwort (Prüfsummen, Token)
+    facts: list[str] = field(default_factory=list)  # Wirkung bzw. Inhalt als Stichpunkte (unter der Frage)
 
     @property
     def kid(self) -> str:
@@ -168,16 +172,217 @@ def tasks(ctx: Any, *, hints: bool = False) -> list[Task]:
         if it.key == "integritaet":  # kritische Integritätsbefunde: nur die, die kein Diagnose-Befund sind
             out += _integrity_tasks(ctx, report)
             continue
+        if it.kind == "pruefstapel":  # neue Vorgänge: sichere gesammelt, übrige einzeln als Frage
+            out += _stack_tasks(ctx)
+            continue
+        if it.kind == "fall" and it.cta == "Lösung prüfen":  # Klärungsfall mit vorbereiteter Lösung → Frage
+            out.append(Task(key=it.key, theme=_theme_of(it, report), kind="fall", heading="Zusammenhängende Buchungen",
+                            ref=it.key.split(":", 1)[1], weight=it.weight, item=it, href=it.href))
+            continue
         theme = _theme_of(it, report)
         if it.kind == "befund" and it.refs:
             if it.refs[0] in later:
                 continue  # „Weiß ich nicht“: kommt nach DEFER_DAYS wieder
             out.append(Task(key=it.key, theme=theme, kind="frage", heading=it.title, finding_id=it.refs[0],
-                            weight=it.weight, item=it))
+                            weight=it.weight, item=it, ref=it.refs[0]))
         else:
             out.append(_page_task(it, theme))
-    out.sort(key=lambda t: (THEME_ORDER.get(t.theme, 99), -float(t.weight), t.key))
+    out.sort(key=lambda t: (THEME_ORDER.get(t.theme, 99), t.kind != "stapel", -float(t.weight), t.key))
     return out
+
+
+# ----------------------------------------------------------------------------------------------------
+# Prüfstapel: sichere Vorgänge als eine Frage, übrige einzeln
+# ----------------------------------------------------------------------------------------------------
+
+LINK_CATS = ("dublette", "ergaenzung", "widerspruch", "komplex")
+
+
+def _stack_tasks(ctx: Any) -> list[Task]:
+    from app.csvimport import queue as Q
+
+    out: list[Task] = []
+    safe = Q.build(ctx.db, "sicher", page=0).all_items
+    if safe:
+        out.append(Task(key="stapel:sicher", theme="import", kind="stapel", heading="Neue Vorgänge", ref="sicher",
+                        weight=Decimal(len(safe))))
+    for it in Q.build(ctx.db, "offen", page=0).all_items:
+        if it.state == "zurueckgestellt":
+            continue  # „Weiß ich nicht“ bzw. bewusst zurückgestellt
+        key = f"zeile:{it.batch_id}:{it.event}"
+        if it.status in ("invalid", "unclear"):  # fehlende Angabe bzw. Deutung – braucht die Stapelseite
+            out.append(Task(key=key, theme="import", kind="seite", heading="Neuer Vorgang",
+                            question=("Bei diesem Vorgang fehlt eine Angabe (Asset, Konto oder EUR-Wert)."
+                                      if it.status == "invalid" else
+                                      "Diesen Vorgang kann Portfolia nicht eindeutig deuten."),
+                            context=(it.reason or "") + " Auf der nächsten Seite ergänzt bzw. ordnest du ihn ein; "
+                                                        "danach geht es hier weiter.",
+                            href=f"/journal/csv/{it.batch_id}", cta="Vorgang ansehen", ref=f"{it.batch_id}:{it.event}"))
+            continue
+        out.append(Task(key=key, theme="import", kind="zeile", heading="Neuer Vorgang",
+                        ref=f"{it.batch_id}:{it.event}", item=it))
+    return out
+
+
+def _date_of(iso_ts: str) -> str:
+    try:
+        return datetime.fromisoformat(iso_ts.replace("Z", "+00:00")).strftime("%d.%m.%Y")
+    except ValueError:
+        return ""
+
+
+def _stack_detail(ctx: Any, task: Task) -> Task:
+    from app.csvimport import bulk as BU
+    from app.csvimport import queue as Q
+    from app.csvimport.service import csv_service
+
+    items = Q.build(ctx.db, "sicher", page=0).all_items
+    sel = {}
+    for it in items:
+        sel.setdefault(it.batch_id, set()).update(it.safe_idxs)
+    mp = BU.preview(csv_service(ctx), sel)
+    links = sum(1 for it in items if not it.books)
+    news = len(items) - links
+    n = len(items)
+    task.question = (f"{n} neue Vorgänge sind eindeutig zugeordnet. Übernehmen?" if n != 1 else
+                     "1 neuer Vorgang ist eindeutig zugeordnet. Übernehmen?")
+    task.context = ("Sie kommen aus deinen Abrufen und Importen. "
+                    + (f"{links} {'ist' if links == 1 else 'sind'} schon gebucht und "
+                       f"{'wird' if links == 1 else 'werden'} nur verknüpft (am Bestand ändert sich nichts). "
+                       if links else "")
+                    + (f"{news} {'ist' if news == 1 else 'sind'} neu und {'wird' if news == 1 else 'werden'} gebucht."
+                       if news else ""))
+    facts = [f"Bestand {x['asset']} auf {x['account']}: {_q(x['now'])} → {_q(x['after'])}" if x["now"] is not None
+             else f"{x['asset']} auf {x['account']}: {'+' if x['delta'] > 0 else ''}{_q(x['delta'])}"
+             for x in mp.impact[:4]]
+    if len(mp.impact) > 4:
+        facts.append(f"… und {len(mp.impact) - 4} weitere Bestände")
+    for x in mp.fifo:
+        if x.get("retro"):
+            facts.append(f"⚠ wirkt rückwirkend auf Steuerjahr(e) {', '.join(str(y) for y in x['retro'])} "
+                         f"({x['asset']} auf {x['account']})")
+    if any(x["negative"] for x in mp.impact):
+        facts.append("⚠ danach wäre ein Bestand negativ – bitte „Einzeln ansehen“")
+    if mp.excluded:
+        facts.append(f"{mp.excluded} Zeile(n) sind inzwischen nicht mehr sicher und bleiben offen")
+    task.facts = facts
+    parts = [{"batch_id": int(p.batch["id"]), "token": p.token, "fingerprint": p.fingerprint, "idxs": p.idxs}
+             for p in mp.parts]
+    import json
+
+    task.payload = {"parts": json.dumps(parts)}
+    ok = bool(parts) and not any(x["negative"] for x in mp.impact)
+    task.answers = [
+        Answer("stk:all", "Ja, alle übernehmen", "Je Stapel in einem Schritt, danach mit einem Klick rückgängig.",
+               recommended=ok),
+        Answer("stk:look", "Einzeln ansehen", "Öffnet die Liste der sicheren Vorgänge; danach geht es hier weiter."),
+        Answer("skip", "Später", NO_CHANGE)]
+    return task
+
+
+def _fmt_leg(text: str) -> str:
+    """„+50123.45 TOKA“ → „+50.123,45 TOKA“ (Zahlen der Prüfzeile im deutschen Format)."""
+    m = re.match(r"^(Gebühr |[+−-]?)([0-9.]+)(\s.*)$", text)
+    return f"{m.group(1)}{_q(m.group(2))}{m.group(3)}" if m else text
+
+
+def _tx_text(ctx: Any, tx_id: str) -> str:
+    """Vorhandene Buchung in Worten: „Kauf am 12.03.2025: −250 EUR, +0,0055 BTC (Import)“."""
+    from app.journal.forms import TYPE_LABEL
+
+    pf = ctx.recorded_portfolio()
+    t = next((x for x in pf.txs if x.tx_id == tx_id), None) if pf is not None else None
+    if t is None:
+        return tx_id
+    legs = [f"−{_q(t.from_qty)} {t.from_asset}" if t.from_qty and t.from_asset else "",
+            f"+{_q(t.to_qty)} {t.to_asset}" if t.to_qty and t.to_asset else ""]
+    src = {"import": "Import", "journal": "in der App"}.get(t.origin, "")
+    return (f"{TYPE_LABEL.get(t.type, t.type)} am {_d(t)}: " + ", ".join(x for x in legs if x)
+            + (f" ({src})" if src else ""))
+
+
+def _row_detail(ctx: Any, task: Task) -> Task:
+    from app.csvimport import model as M
+    from app.csvimport import queue as Q
+    from app.csvimport.service import csv_service
+
+    it = task.item
+    Q._details(ctx.db, [it])
+    it.legs = [_fmt_leg(x) for x in it.legs]
+    when = _date_of(it.ts)
+    what = (f"{M.KIND_LABEL.get(it.label, it.label) or 'Vorgang'}" + (f" am {when}" if when else "")
+            + (f" auf {it.account}" if it.account else ""))
+    task.heading = f"Neuer Vorgang · {it.account or 'Konto'}" + (f" · {when}" if when else "")
+    task.facts = list(it.legs)
+    rows = [rc for rc in csv_service(ctx).rows(it.batch_id) if rc.idx in set(it.idxs)]
+    target = next((str(t) for rc in rows for t in [(rc.match or {}).get("target"), *rc.dup_of] if t), "")
+    target = _tx_text(ctx, target) if target else ""
+    link_like = (it.cat or "") in LINK_CATS or it.status == "duplicate"
+    if link_like:
+        task.question = "Ist dieser Vorgang schon gebucht?"
+        task.context = (f"{what}. Portfolia hat eine ähnliche vorhandene Buchung gefunden"
+                        + (f": {target}" if target else "") + ". Ist es derselbe Vorgang, wird er nur verknüpft – "
+                        "dann zählt er nicht doppelt.")
+        task.answers = [
+            Answer("row:link", "Ja, ist schon gebucht – nur verknüpfen", "Bestand ändert sich nicht; die Angaben der "
+                   "Quelle hängen an der vorhandenen Buchung.", recommended=it.action == "link"),
+            Answer("row:include", "Nein, das ist ein eigener Vorgang – zusätzlich buchen",
+                   "Wird gebucht: " + (", ".join(it.legs) or what) + ".", recommended=it.action == "include")]
+    else:
+        task.question = "Soll dieser Vorgang gebucht werden?"
+        task.context = f"{what}. Ein Gegenstück in deinen Buchungen gibt es nicht."
+        task.answers = [Answer("row:include", "Ja, buchen", "Wird gebucht: " + (", ".join(it.legs) or what) + ".",
+                               recommended=True)]
+    task.answers += [
+        Answer("row:skip", "Nicht buchen (gehört nicht in mein Depot)",
+               "Wird nicht gebucht; Portfolia fragt bei diesem Vorgang nicht wieder."),
+        Answer("row:defer", "Weiß ich nicht", NO_CHANGE + " Der Vorgang bleibt zurückgestellt im Prüfstapel.")]
+    return task
+
+
+# ----------------------------------------------------------------------------------------------------
+# Klärungsfall mit vorbereiteter Lösung
+# ----------------------------------------------------------------------------------------------------
+
+def _case_detail(ctx: Any, task: Task) -> Task:
+    import json
+
+    from app.diagnosis import clarify as K
+
+    case = next(iter(K.analyse(ctx, only=task.ref)), None)
+    dec = case.decision if case is not None else None
+    hyp = dec.hyp if dec is not None else None
+    if case is None or hyp is None or dec is None or dec.kind != "apply":
+        return _page_task(task.item, task.theme) if task.item is not None else task
+    from app.diagnosis.engine import report_for
+    from app.diagnosis.recommend import recommend
+
+    report = report_for(ctx)
+    f0 = case.findings[0] if case.findings else None
+    yes, no, tip = "Ja, so übernehmen", "Nein, das passt nicht", ""
+    task.heading = "Zusammenhängende Buchungen · " + ", ".join(case.accounts[:2])
+    if f0 is not None:  # die Frage des wichtigsten Befunds – die Lösung des Falls beantwortet sie für alle
+        heading, q, context, tip, texts = question_for(f0, recommend(report, f0), report)
+        task.heading, task.question, task.context = heading, q, context
+        yes, no = texts.get("yes") or yes, texts.get("no") or no
+    else:
+        task.question = "Passt diese Erklärung?"
+        task.context = f"{case.title}. {dec.reason}".rstrip(". ") + "."
+    task.tip = tip
+    facts = [f"Bestand {asset} auf {acc} danach: {_q(q)}" for (acc, asset), q in list(hyp.balances.items())[:3]]
+    if len(case.findings) > 1:
+        facts.append(f"Die Antwort klärt {len(case.findings)} zusammenhängende Fragen auf einmal")
+    if hyp.resolved:
+        facts.append(f"danach erledigt: {len(hyp.resolved)} Frage(n)")
+    task.facts = facts
+    task.payload = {"hyp": hyp.id, "version": case.version,
+                    "tokens": json.dumps({c.key: c.plan.token for c in hyp.cands})}
+    task.answers = [
+        Answer("case:apply", yes, "Portfolia korrigiert alles Zusammengehörige in einem Schritt (Belege: "
+               f"{dec.reason.rstrip('.')}); rückgängig mit einem Klick.", recommended=True),
+        Answer("case:defer", no, NO_CHANGE + " Portfolia fragt erst wieder, wenn neue Belege vorliegen."),
+        Answer("skip", "Weiß ich nicht", NO_CHANGE + (f" Tipp: {tip}" if tip else ""))]
+    return task
 
 
 def _deferred(ctx: Any, report: Any) -> set[str]:
@@ -385,7 +590,13 @@ def _effect(ctx: Any, report: Any, f: Any, opt: Any) -> tuple[str, str]:
 
 
 def detail(ctx: Any, task: Task) -> Task:
-    """Frage, Antworten und Wirkung der empfohlenen Antwort für eine Befund-Aufgabe."""
+    """Frage, Antworten und Wirkung der empfohlenen Antwort einer Aufgabe."""
+    if task.kind == "stapel":
+        return _stack_detail(ctx, task)
+    if task.kind == "zeile":
+        return _row_detail(ctx, task)
+    if task.kind == "fall":
+        return _case_detail(ctx, task)
     if task.kind != "frage":
         return task
     from app.diagnosis.engine import report_for

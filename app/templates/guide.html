@@ -9,7 +9,7 @@
   {% if undo %}
   <div class="alert good guide-done" role="status"><span class="icon">✓</span>
     <div style="flex:1">{{ msg or 'Gespeichert.' }}{% if gone %} <b>{{ gone }} weitere Aufgabe{{ 'n' if gone != 1 }} dadurch erledigt.</b>{% endif %}</div>
-    <form method="post" action="/quality/assistent/rueckgaengig"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="d" value="{{ undo.id }}"><button class="btn sm ghost" type="submit">↶ Rückgängig</button></form>
+    <form method="post" action="/quality/assistent/rueckgaengig"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% for k, v in undo.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}<button class="btn sm ghost" type="submit">↶ Rückgängig</button></form>
   </div>
   {% endif %}
 
@@ -37,14 +37,16 @@
     <div class="hint guide-where">{{ task.heading }}</div>
     <h2 class="guide-q">{{ task.question }}</h2>
     {% if task.context %}<p>{{ task.context }}</p>{% endif %}
+    {% if task.facts %}<ul class="guide-facts">{% for x in task.facts %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
     {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
 
-    {% if task.kind == 'frage' %}
+    {% if task.kind != 'seite' %}
     {% set main = task.answers|rejectattr('advanced')|list %}
     {% set more = task.answers|selectattr('advanced')|list %}
     {% set pick = chosen or ((main|selectattr('recommended')|first) or {'id': ''}).id %}
     <form method="post" action="/quality/assistent/antwort" class="guide-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ task.finding_id }}"><input type="hidden" name="before" value="{{ step.total }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="typ" value="{{ task.kind }}"><input type="hidden" name="ref" value="{{ task.ref }}"><input type="hidden" name="kid" value="{{ task.kid }}"><input type="hidden" name="before" value="{{ step.total }}">
+      {% for k, v in task.payload.items() %}<input type="hidden" name="x_{{ k }}" value="{{ v }}">{% endfor %}
       {% macro answer(a) %}
       <label class="guide-a{% if a.recommended %} is-rec{% endif %}">
         <input type="radio" name="a" value="{{ a.id }}"{% if a.id == pick %} checked{% endif %} required>

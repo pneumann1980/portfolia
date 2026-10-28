@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.10.2026 · Version 0.72.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.10.2026 · Version 0.73.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,22 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.73.0 – „Buchungen prüfen“: neue Vorgänge und zusammenhängende Buchungen als Frage (keine Weiterleitung)
+
+Schritt 2 von „Assistent 2.0“.
+
+* **Neue Vorgänge** (Prüfstapel) sind jetzt Fragen im Assistenten und stehen am Anfang (Thema „Neue Vorgänge übernehmen“):
+  * alle **eindeutig zugeordneten** Vorgänge als *eine* Frage („3 neue Vorgänge sind eindeutig zugeordnet. Übernehmen?“) mit der Wirkung auf die Bestände und einem Hinweis auf
+    rückwirkend betroffene Steuerjahre; „Ja, alle übernehmen“ führt die vorhandene Sammelfreigabe aus (je Stapel atomar, Prüfsumme der Vorschau);
+  * jeder **unklare** Vorgang einzeln: „Ist dieser Vorgang schon gebucht?“ mit der gefundenen Buchung in Worten („Übertrag am 10.03.2025: −50.123,46 TOKA … (Import)“) →
+    *nur verknüpfen* / *zusätzlich buchen* / *nicht buchen* / *weiß ich nicht* (zurückstellen). Ohne Gegenstück: „Soll dieser Vorgang gebucht werden?“;
+  * Vorgänge mit fehlender Angabe (Asset, Konto, EUR-Wert) oder unklarer Deutung bleiben auf der Stapelseite (erklärt, Rückkehr hierher).
+* **Zusammenhängende Buchungen** (Klärungsfall mit belegter Lösung) werden mit der Frage ihres wichtigsten Befunds gestellt („Ist das derselbe Vorgang …?“); die Antwort „Ja“
+  übernimmt die gemeinsame Lösung des Falls, „Nein“ stellt ihn bis zu neuen Belegen zurück. Fälle, die einen Kontostand oder Beleg brauchen, bleiben auf ihrer Seite.
+* **Rückgängig auf der nächsten Karte** auch hier: Stapelaktionen (`import_action`) bzw. die Klärung als Ganzes.
+* Eine ausdrückliche Antwort „schon gebucht“ verknüpft auch bei abweichenden Angaben (wie „auch abweichende Fälle verknüpfen“ auf der Stapelseite); die vorhandene Buchung bleibt
+  unverändert.
 
 ## 0.72.0 – „Buchungen prüfen“: Fragen in Alltagssprache statt Korrekturvorschlägen
 

@@ -54,8 +54,8 @@ def _params(form: Any) -> dict[str, list[str]]:
 
 
 def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new: int = 0, hints: str = "",
-          done: int = 0, gone: int = 0, errors: list[str] | None = None, chosen: str = "",
-          values: dict[str, list[str]] | None = None) -> Response:
+          done: int = 0, gone: int = 0, acts: str = "", kl: str = "", errors: list[str] | None = None,
+          chosen: str = "", values: dict[str, list[str]] | None = None) -> Response:
     ctx = get_ctx(request)
     show_hints = hints == "1" if hints else (request.cookies.get("dq_hints") == "1" and not new)
     skipped = [] if new else G.parse_skip(request.cookies.get("dq_skip", ""))
@@ -67,7 +67,11 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
     if done:
         row = ctx.db.q1("SELECT id, action, status, title FROM diag_decision WHERE id=?", (done,))
         if row is not None and row["status"] == "active":
-            undo = dict(row)
+            undo = {"d": row["id"]}
+    elif acts and all(x.isdigit() for x in acts.split(",")):
+        undo = {"acts": acts}
+    elif kl and kl.isalnum():
+        undo = {"kl": kl}
     resp = render(request, "guide.html", active="quality", step=st, task=st.task, title=G.TITLE,
                   pos=G.theme_position(st), msg=msg, err=err, errors=errors or [], undo=undo, gone=gone,
                   chosen=chosen, values=values or {}, hints=show_hints, **_common())
@@ -83,14 +87,16 @@ def make_router() -> APIRouter:
 
     @router.get(BASE, response_class=HTMLResponse)
     def assistant(request: Request, msg: str = "", err: str = "", skip: str = "", new: int = 0, hints: str = "",
-                  done: int = 0, gone: int = 0) -> Response:
-        return _page(request, msg=msg, err=err, skip=skip, new=new, hints=hints, done=done, gone=gone)
+                  done: int = 0, gone: int = 0, acts: str = "", kl: str = "") -> Response:
+        return _page(request, msg=msg, err=err, skip=skip, new=new, hints=hints, done=done, gone=gone, acts=acts,
+                     kl=kl)
 
     @router.post(f"{BASE}/antwort")
     async def answer(request: Request) -> Response:
         ctx = get_ctx(request)
         form = await request.form()
-        fid, aid = str(form.get("f") or ""), str(form.get("a") or "")
+        fid, aid = str(form.get("f") or form.get("ref") or ""), str(form.get("a") or "")
+        typ = str(form.get("typ") or "frage")
         try:
             before = int(str(form.get("before") or "0"))
         except ValueError:
@@ -100,6 +106,13 @@ def make_router() -> APIRouter:
 
         def gone() -> int:
             return max(0, before - len(G.tasks(ctx)) - 1) if before else 0
+
+        if aid == "skip":
+            return _go(skip=str(form.get("kid") or ""))
+        if typ in ("stapel", "zeile"):
+            return await _stack_answer(ctx, typ, fid, aid, form, gone)
+        if typ == "fall":
+            return await _case_answer(ctx, fid, aid, form, gone)
 
         if aid.startswith("mark:"):
             action = aid.split(":", 1)[1]
@@ -121,6 +134,78 @@ def make_router() -> APIRouter:
             return _go(err=" ".join(res.errors))
         return _go(msg="Gespeichert und korrigiert.", done=res.decision_id, gone=await run_in_threadpool(gone))
 
+    async def _stack_answer(ctx: Any, typ: str, ref: str, aid: str, form: Any, gone: Any) -> Response:
+        import json
+
+        from app.csvimport import batch as BA
+        from app.csvimport import bulk as BU
+        from app.csvimport.service import csv_service
+
+        svc = csv_service(ctx)
+        if aid == "stk:look":
+            return RedirectResponse("/journal/pruefung?tab=sicher", status_code=303)
+        if typ == "stapel" and aid == "stk:all":
+            try:
+                parts = json.loads(str(form.get("x_parts") or "[]"))
+            except ValueError:
+                parts = []
+            if not parts:
+                return _go(err="Nichts mehr zu übernehmen – die Vorgänge haben sich inzwischen geändert.")
+            res = await run_in_threadpool(BU.run, svc, parts)
+            errs = [e for r in res for e in r.get("errors") or []]
+            acts = ",".join(str(r["action_id"]) for r in res if r.get("action_id"))
+            if errs and not acts:
+                return _go(err=" ".join(errs[:3]))
+            return _go(msg="Übernommen." + (f" Nicht alles ging: {errs[0]}" if errs else ""), acts=acts,
+                       gone=await run_in_threadpool(gone))
+        bid_s, _, event = ref.partition(":")
+        op = aid.split(":", 1)[1] if aid.startswith("row:") else ""
+        if not bid_s.isdigit() or op not in ("link", "include", "skip", "defer"):
+            return _go(err="Unbekannte Antwort.")
+        bid = int(bid_s)
+
+        def run() -> dict[str, Any]:
+            svc.evaluate(bid)
+            rows = svc.rows(bid)
+            idxs = [rc.idx for rc in rows if (rc.rec.event_key or f"#{rc.idx}") == event and rc.open]
+            if not idxs:
+                return {"errors": ["Der Vorgang ist schon entschieden oder hat sich geändert."]}
+            if op in ("skip", "defer"):
+                return BU.decide(svc, bid, idxs, op)
+            p = BA.plan(svc, bid, op, idxs, True, rows)  # ausdrückliche Antwort: auch bei abweichenden Angaben
+            if not p.todo:
+                return {"errors": [p.items[0].note if p.items else "Nichts auszuführen."]}
+            return BA.execute(svc, bid, op, idxs, token=BA.new_token(), fingerprint=p.fingerprint(), force=True)
+
+        res = await run_in_threadpool(run)
+        if res.get("errors"):
+            return _go(err=" ".join(res["errors"][:3]))
+        text = {"link": "Verknüpft – zählt nicht doppelt.", "include": "Gebucht.", "skip": "Wird nicht gebucht.",
+                "defer": "Zurückgestellt – nichts geändert."}[op]
+        return _go(msg=text, acts=str(res.get("action_id") or ""), gone=await run_in_threadpool(gone))
+
+    async def _case_answer(ctx: Any, key: str, aid: str, form: Any, gone: Any) -> Response:
+        import json
+
+        from app.diagnosis import clarify as K
+
+        if aid == "case:defer":
+            res = await run_in_threadpool(K.defer, ctx, key, "Im Assistenten: passt nicht")
+            return _go(msg="Gespeichert: passt nicht – der Fall ruht bis zu neuen Belegen." if res.ok else "",
+                       err=" ".join(res.errors), gone=await run_in_threadpool(gone))
+        if aid != "case:apply":
+            return _go(err="Unbekannte Antwort.")
+        try:
+            tokens = json.loads(str(form.get("x_tokens") or "{}"))
+        except ValueError:
+            tokens = None
+        res = await run_in_threadpool(lambda: K.apply_hypothesis(
+            ctx, key, str(form.get("x_hyp") or ""), "manual", authorization="user",
+            expect_version=str(form.get("x_version") or "") or None, expect_tokens=tokens))
+        if not res.ok:
+            return _go(err=" ".join(res.errors))
+        return _go(msg="Übernommen.", kl=res.token, gone=await run_in_threadpool(gone))
+
     def _confirm(request: Request, fid: str, key: str, aid: str, params: dict[str, list[str]]) -> Response:
         from app.diagnosis.engine import report_for
 
@@ -140,6 +225,22 @@ def make_router() -> APIRouter:
     async def undo(request: Request) -> Response:
         ctx = get_ctx(request)
         form = await request.form()
+        acts, kl = str(form.get("acts") or ""), str(form.get("kl") or "")
+        if acts:  # Prüfstapel: Stapelaktionen zurücknehmen
+            from app.csvimport import batch as BA
+            from app.csvimport.service import csv_service
+
+            svc = csv_service(ctx)
+            errs = []
+            for a in [int(x) for x in acts.split(",") if x.isdigit()]:
+                errs += (await run_in_threadpool(BA.undo, svc, a)).get("errors") or []
+            return _go(err=" ".join(errs[:3])) if errs else _go(msg="Zurückgenommen – die Vorgänge sind wieder offen.",
+                                                                new=1)
+        if kl:  # Klärungsfall
+            from app.diagnosis import clarify as K
+
+            r = await run_in_threadpool(K.undo_run, ctx, kl)
+            return _go(msg="Zurückgenommen." if r.ok else "", err=" ".join(r.errors), new=1)
         try:
             did = int(str(form.get("d") or "0"))
         except ValueError:
