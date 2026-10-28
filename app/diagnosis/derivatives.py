@@ -28,12 +28,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
+from app.db import fallback
 from app.importer import contract as C
 
 ZERO = Decimal(0)
@@ -161,7 +163,8 @@ def unsupported(db: Any) -> list[Unsupported]:
     out: list[Unsupported] = []
     try:
         rows = db.q("SELECT id, filename, summary_json, status FROM csv_batch WHERE status!='deleted' ORDER BY id")
-    except Exception:  # Datenbank ohne CSV-Modul
+    except sqlite3.Error as e:  # Datenbank ohne CSV-Modul
+        fallback("unsupported", e)
         return out
     for r in rows:
         try:

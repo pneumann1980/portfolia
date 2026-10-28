@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,8 @@ from app.context import AppContext
 from app.web import fmt
 from app.web.accesslog import AccessLogMiddleware
 from app.web.security import BasicAuthMiddleware, CsrfMiddleware, SecurityHeadersMiddleware
+
+log = logging.getLogger(__name__)
 
 BASE = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE / "templates"
@@ -73,7 +76,8 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
         try:
             ctx.db.scalar("SELECT 1")
             ok = True
-        except Exception:
+        except Exception as e:
+            log.error("Healthcheck: Datenbank nicht erreichbar: %s: %s", type(e).__name__, e)
             ok = False
         return JSONResponse({"status": "ok" if ok else "degraded", "version": __version__,
                              "revision": REVISION or None},
@@ -103,7 +107,8 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
                 "code": 500, "message": "Es ist ein Fehler aufgetreten. Die Daten wurden nicht verändert, wenn die "
                 "Aktion nicht bestätigt wurde.", "rid": rid, "active": None, "csrf_token": _csrf(request),
                 "alerts": []}, status_code=500, headers={"X-Request-ID": rid})
-        except Exception:  # die Fehlerseite selbst darf nie den Fehler verdecken
+        except Exception as e:  # die Fehlerseite selbst darf nie den Fehler verdecken
+            log.error("Fehlerseite konnte nicht erzeugt werden (ID %s): %s: %s", rid, type(e).__name__, e)
             return PlainTextResponse(f"Interner Fehler (ID {rid})", status_code=500)
 
     @app.exception_handler(OverflowError)

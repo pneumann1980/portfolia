@@ -19,12 +19,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 from typing import Any
 
+from app.db import fallback
 from app.ledger.engine import run_ledger
 from app.ledger.models import AssetInfo, Portfolio, Tx
 from app.util.timeutil import iso, utcnow
@@ -40,10 +42,7 @@ SHORT_HOLD_DAYS = 365  # grobe Anzeige „Haltefrist ≤ 1 Jahr“ – maßgebli
 
 def active_map(db: Any) -> dict[str, str]:
     """Zwillingskennung → endgültiges Haupt-Asset (Ketten werden aufgelöst, Zyklen ignoriert)."""
-    try:
-        rows = db.q("SELECT alias_asset, target_asset FROM asset_merge WHERE status='active' ORDER BY id")
-    except Exception:  # Tabelle fehlt (DB vor Migration 23)
-        return {}
+    rows = db.q("SELECT alias_asset, target_asset FROM asset_merge WHERE status='active' ORDER BY id")
     direct = {r["alias_asset"]: r["target_asset"] for r in rows}
     out: dict[str, str] = {}
     for alias in direct:
@@ -148,10 +147,7 @@ def _tx_counts(pf: Portfolio) -> Counter[str]:
 
 
 def _linked_by_change(db: Any) -> set[frozenset[str]]:
-    try:
-        rows = db.q("SELECT old_asset, new_asset FROM asset_change WHERE kind='migration' AND status='applied'")
-    except Exception:
-        return set()
+    rows = db.q("SELECT old_asset, new_asset FROM asset_change WHERE kind='migration' AND status='applied'")
     return {frozenset((r["old_asset"], r["new_asset"])) for r in rows if r["old_asset"] and r["new_asset"]}
 
 
@@ -406,5 +402,6 @@ def revert(ctx: Any, mid: int) -> list[str]:
 def history(db: Any, limit: int = 50) -> list[Any]:
     try:
         return db.q("SELECT * FROM asset_merge ORDER BY id DESC LIMIT ?", (limit,))
-    except Exception:
+    except sqlite3.Error as e:
+        fallback("history", e)
         return []

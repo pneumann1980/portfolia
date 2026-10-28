@@ -1426,6 +1426,31 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.62.0 – Keine stillen Datenbankfehler mehr (M3)
+
+Paket C aus `docs/ARBEITSPLAN.md`. Die Analyse fand 53 `except Exception` ohne Logeintrag und ohne erneutes Werfen (die genauere
+Prüfung `scripts/silent_excepts.py` zählt 75, davon 25 geprüft/gerechtfertigt). Viele fingen „Tabelle fehlt (DB vor Migration N)“ ab –
+unmöglich, weil `Database.migrate()` beim Start immer auf den neuesten Stand bringt – und lieferten bei einem *echten* Fehler leere Ergebnisse.
+
+* **Schutzprüfungen brechen ab:** `diagnosis.actions.assert_version` (Datenstand seit der Vorschau geändert?) kehrte bei jedem Fehler still
+  zurück, die Korrektur wäre ohne Prüfung übernommen worden; `data_version` lieferte bei Fehler `""` und schaltete die Prüfung damit ab.
+  Beide werfen jetzt den Datenbankfehler (Transaktion wird zurückgerollt).
+* **Daten-Helfer ohne Ersatzwert** (Fehler wird sichtbar statt falscher Zahlen): `merge.active_map`, `account_merge.active_map`,
+  `account_remove.hidden_ids`, `merge._linked_by_change`, `assetchange.apply_changes`, `prices.sources` (Quellenzuordnung), Entscheidungen der
+  Diagnose (`decisions`, `active_dismissals`, `active_marks`, `active_fixes`, `_by_token`), `watch_ids`, `managed_accounts` und der Export
+  der Steuerdateien in der ZIP-Sicherung (fehlte bei einem Fehler still *in der Sicherung*).
+* **Reine Anzeige-Abfragen** (Verlaufslisten, Zähler offener Stapel, Konten-Stammdaten, Fortschritt, Steuerdateien-Prüfung …) fangen nur noch
+  `sqlite3.Error` ab und melden es mit `app.db.fallback(...)` als WARNING; ebenso Zusatzinformationen, die eine Seite nicht blockieren
+  dürfen (Bestand für die Stapel-Vorschau, Kurse in der Datenquellen-Übersicht, Ticker-Hinweise, Schriftdateien der PDFs).
+  Erwartbare, folgenlose Fälle (optionaler Katalog, ungültige Zeitzone in Diagnose-Hilfen) auf DEBUG.
+* **Wächter:** `tests/test_no_silent_except.py` zählt stille Handler je Datei per AST (Obergrenze = geprüfter Bestand, darf nur sinken);
+  Tests: Schutzprüfung bricht bei Lesefehler ab, Daten-Helfer werfen bei fehlender Tabelle, Anzeige-Abfragen loggen.
+* **Healthcheck/Fehlerseite:** `/healthz` loggt, warum die Datenbank „degraded“ meldet; scheitert die Fehlerseite selbst, wird das gemeldet.
+* **Geprüft und unverändert:** Handler, die den Fehler in Status/Ergebnis festhalten (Kursabrufe mit `guard.failure`, Anbieter-Abrufe,
+  Regelwerk-Syntaxfehler, `describe_error`) und die Protokollierung selbst (darf nie werfen).
+* **Risiko:** Wo früher ein leeres Ergebnis erschien, erscheint bei einem *echten* Datenbankfehler jetzt die Fehlerseite (mit Fehler-ID, 0.61.0).
+  Das ist beabsichtigt; im Normalbetrieb ändert sich nichts.
+
 ## 0.61.0 – Logging für die Docker-Konsole, Hinweis bei blockierten Benutzeraktionen
 
 Paket B aus `docs/ARBEITSPLAN.md` (Befund: 500er ohne Pfad, keine Anfrage-/Job-Zeilen, Traceback nur auf DEBUG).

@@ -471,11 +471,8 @@ class PriceService:
 
     def watch_ids(self, source: str) -> list[str]:
         """Kennungen der Watchlist-Einträge eines Anbieters (für gebündelte Kursabrufe)."""
-        try:
-            return [r["quote_id"] for r in self.db.q("SELECT DISTINCT quote_id FROM watchlist_item WHERE "
-                                                     "quote_source=?", (source,))]
-        except Exception:  # Datenbank vor Migration 15
-            return []
+        return [r["quote_id"] for r in self.db.q("SELECT DISTINCT quote_id FROM watchlist_item WHERE "
+                                                 "quote_source=?", (source,))]
 
     def fx_currencies(self, pf: Portfolio, ledger: LedgerResult | None = None) -> set[str]:
         ccys = {a.asset_id.upper() for a in pf.assets.values() if a.is_fiat and a.asset_id.upper() != "EUR"}

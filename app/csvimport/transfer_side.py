@@ -314,10 +314,7 @@ def hash_lookup(db: Any) -> Callable[[Tx], set[str]]:
 def managed_accounts(db: Any) -> dict[str, set[int]]:
     """Konten, die eine Datenquelle führt (dort kommen deren Vorgänge an) → IDs der Datenquellen."""
     out: dict[str, set[int]] = defaultdict(set)
-    try:
-        rows = db.q("SELECT id, account FROM data_source")
-    except Exception:  # ältere Datenbank ohne Datenquellen
-        return {}
+    rows = db.q("SELECT id, account FROM data_source")
     for r in rows:
         if r["account"]:
             out[r["account"]].add(int(r["id"]))

@@ -18,9 +18,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.db import fallback
 from app.documentimport.profiles import isin_ok
 from app.tax.classify import classify_asset
 from app.util.http import HttpError, RateLimiter, request_with_retry
@@ -117,7 +119,8 @@ class IsinService:
         out: dict[str, set[str]] = {}
         try:
             rows = self.ctx.db.q("SELECT meta FROM bank_doc WHERE meta IS NOT NULL AND meta LIKE '%isin%'")
-        except Exception:  # Tabelle fehlt (sehr alte DB)
+        except sqlite3.Error as e:  # Tabelle fehlt (sehr alte DB)
+            fallback("_local_pairs", e)
             return {}
         for r in rows:
             try:

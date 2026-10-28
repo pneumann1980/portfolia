@@ -22,6 +22,7 @@ import hashlib
 import io
 import json
 import logging
+import sqlite3
 import threading
 import time
 from collections import defaultdict
@@ -31,6 +32,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
+from app.db import fallback
 from app.diagnosis import actions as A
 from app.diagnosis.model import Finding, Report
 from app.ledger.engine import DUST, ZERO
@@ -314,7 +316,8 @@ def check_migrations(ctx: Any, report: Report, checks: dict[str, int]) -> list[I
         rows = ctx.db.q("SELECT id, old_asset, new_asset, tx_ids_json, created_at FROM asset_change WHERE "
                         "kind='migration' "
                         "AND status='applied'")
-    except Exception:  # Tabelle fehlt (ältere Datenbank)
+    except sqlite3.Error as e:  # Tabelle fehlt (ältere Datenbank)
+        fallback("check_migrations", e)
         return out
     checks["migrations"] = len(rows)
     active = {t.tx_id for t in snap.pf.txs} if snap.pf is not None else set()
@@ -392,7 +395,8 @@ def check_tax(ctx: Any, report: Report, checks: dict[str, int]) -> list[Item]:
     try:
         files = ctx.db.q("SELECT id, tax_year, filename, records, matched, unmatched, conflicts FROM tax_file "
                          "WHERE status='active'")
-    except Exception:
+    except sqlite3.Error as e:
+        fallback("check_tax", e)
         files = []
     checks["tax_files"] = len(files)
     for f in files:
@@ -421,7 +425,8 @@ def check_prices(ctx: Any, report: Report, checks: dict[str, int]) -> list[Item]
     for aid, a in pf.assets.items():
         try:
             key = ctx.prices.series_for(a)
-        except Exception:
+        except Exception as e:
+            fallback("check_prices", e, quiet=True)
             key = None
         if key:
             series[key] = aid

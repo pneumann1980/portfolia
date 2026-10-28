@@ -18,12 +18,14 @@ import hashlib
 import json
 import logging
 import re
+import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any
 
 from app.assetchange.merge import YearRow, _issue_counts, _year_stats
+from app.db import fallback
 from app.ledger.engine import run_ledger
 from app.ledger.models import Portfolio, Tx
 from app.util.timeutil import iso, utcnow
@@ -38,10 +40,7 @@ ZERO = Decimal(0)
 
 def active_map(db: Any) -> dict[str, str]:
     """Alias-Konto → endgültiges Ziel-Konto (Ketten werden aufgelöst, Zyklen ignoriert)."""
-    try:
-        rows = db.q("SELECT alias_account, target_account FROM account_merge WHERE status='active' ORDER BY id")
-    except Exception:  # Tabelle fehlt (DB vor Migration 25)
-        return {}
+    rows = db.q("SELECT alias_account, target_account FROM account_merge WHERE status='active' ORDER BY id")
     direct = {r["alias_account"]: r["target_account"] for r in rows}
     out: dict[str, str] = {}
     for alias in direct:
@@ -347,7 +346,8 @@ def _datasources(ctx: Any, account: str) -> list[str]:
     try:
         return [f"{r['name']} ({r['provider']})" for r in ctx.db.q(
             "SELECT name, provider FROM data_source WHERE account=? COLLATE NOCASE ORDER BY name", (account,))]
-    except Exception:
+    except sqlite3.Error as e:
+        fallback("_datasources", e)
         return []
 
 
@@ -412,7 +412,8 @@ def preview(ctx: Any, alias: str, target: str) -> Preview:
     try:
         n_batches = ctx.db.scalar("SELECT COUNT(*) FROM csv_batch WHERE account=? AND status IN ('preview','partial')",
                                   (p.alias,)) or 0
-    except Exception:
+    except sqlite3.Error as e:
+        fallback("preview", e)
         n_batches = 0
     if n_batches:
         p.warnings.append(f"{n_batches} offene(r) Prüf-Stapel für „{p.alias}“ – sie werden weiter unter diesem Namen "
@@ -506,5 +507,6 @@ def revert(ctx: Any, mid: int) -> list[str]:
 def history(db: Any, limit: int = 50) -> list[Any]:
     try:
         return db.q("SELECT * FROM account_merge ORDER BY id DESC LIMIT ?", (limit,))
-    except Exception:
+    except sqlite3.Error as e:
+        fallback("history", e)
         return []

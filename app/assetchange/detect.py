@@ -26,6 +26,7 @@ from urllib.parse import urlencode
 
 from app.assetchange.known import BY_OLD_CG
 from app.assetchange.service import DUST, _s, asset_change_service, version
+from app.db import fallback
 from app.util.timeutil import today_local
 
 log = logging.getLogger(__name__)
@@ -91,7 +92,8 @@ def detect(ctx: Any) -> list[Hint]:
         from app.prices.sources import cached_catalog, catalog_path
 
         cat = cached_catalog(catalog_path(ctx))
-    except Exception:
+    except Exception as e:
+        fallback("detect", e, quiet=True)
         cat = None
     for aid, qty in held.items():
         a = pf.assets.get(aid)

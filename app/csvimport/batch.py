@@ -30,6 +30,7 @@ from app.csvimport import assess as A
 from app.csvimport import review as RV
 from app.csvimport.events import derive_tx_hash, identity_keys, normalize_hash
 from app.csvimport.service import _LOCK, STATUS_LABEL, RowCtx, line_key, pair_accepted
+from app.db import fallback
 from app.util.timeutil import iso, to_local_date
 
 log = logging.getLogger(__name__)
@@ -470,7 +471,8 @@ def _impact(svc: Any, p: Plan) -> None:
     if inc:
         try:
             led = svc.ctx.ledger()
-        except Exception:  # Vorschau ohne Bestand ist besser als keine
+        except Exception as e:  # Vorschau ohne Bestand ist besser als keine
+            fallback("_impact", e)
             led = None
     for (acc, asset), d in sorted(inc.items()):
         if not d:

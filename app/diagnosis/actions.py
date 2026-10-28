@@ -22,6 +22,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import sqlite3
 import threading
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -30,6 +31,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from app.db import fallback
 from app.diagnosis.collect import JournalMeta
 from app.diagnosis.engine import diagnose, report_for
 from app.diagnosis.model import HOLDING_STATUS, Finding, Report, TxRef
@@ -153,19 +155,14 @@ _VERSION_SQL = (
 
 def data_version(db: Any) -> str:
     """Datenstand, auf dem Vorschau und Übernehmen beruhen (ändert sich nur bei echten Datenänderungen)."""
-    try:
-        return "|".join(str(v) for v in tuple(db.q1(_VERSION_SQL)))
-    except Exception:  # Tabellen fehlen (sehr alte DB) – dann zählen nur die Objekte selbst
-        return ""
+    return "|".join(str(v) for v in tuple(db.q1(_VERSION_SQL)))
 
 
 def assert_version(c: Any, version: str) -> None:
     """Als Erstes in der Schreibtransaktion: hat sich der Datenstand seit der Vorschau geändert (auch durch einen
-    gleichzeitigen Import oder Abruf), bricht die Übernahme vor jeder Änderung ab."""
-    try:
-        now = "|".join(str(v) for v in tuple(c.execute(_VERSION_SQL).fetchone()))
-    except Exception:  # sehr alte DB ohne alle Tabellen: dann gilt die Prüfung über den Plan-Token
-        return
+    gleichzeitigen Import oder Abruf), bricht die Übernahme vor jeder Änderung ab. Ein Fehler beim Lesen des Datenstands
+    bricht ebenfalls ab (die Schutzprüfung darf nie stillschweigend entfallen)."""
+    now = "|".join(str(v) for v in tuple(c.execute(_VERSION_SQL).fetchone()))
     if version and now != version:
         raise Conflict("Die Daten haben sich seit der Vorschau geändert (z. B. durch einen Import, Abruf oder "
                        "Nachweis).")
@@ -228,7 +225,8 @@ class _State:
             try:
                 last = max(int(last), int(self.db.scalar("SELECT seq FROM sqlite_sequence WHERE name='journal_tx'",
                                                          default=0)))
-            except Exception:  # sqlite_sequence fehlt (keine AUTOINCREMENT-Tabelle beschrieben)
+            except sqlite3.Error as e:  # sqlite_sequence fehlt (keine AUTOINCREMENT-Tabelle beschrieben)
+                fallback("next_seq", e)
                 last = int(last)
             self._seq = SEQ_BASE + last
         self._seq += 1
@@ -1426,10 +1424,7 @@ def apply_plan(ctx: Any, f: Finding, plan: Plan, token: str, rebuild: Any) -> Re
 
 
 def _by_token(db: Any, token: str) -> Any:
-    try:
-        return db.q1("SELECT id, status FROM diag_decision WHERE token=?", (token,))
-    except Exception:  # Datenbank vor Migration 20
-        return None
+    return db.q1("SELECT id, status FROM diag_decision WHERE token=?", (token,))
 
 
 def _effects_summary(ctx: Any, report: Report, plan: Plan) -> dict[str, Any]:
@@ -1812,38 +1807,26 @@ def _decision(r: Any) -> Decision:
 
 
 def decisions(db: Any, limit: int = 60) -> list[Decision]:
-    try:
-        rows = db.q("SELECT * FROM diag_decision ORDER BY (status='active') DESC, id DESC LIMIT ?", (limit,))
-    except Exception:  # Tabelle fehlt (DB vor Migration 12)
-        return []
+    rows = db.q("SELECT * FROM diag_decision ORDER BY (status='active') DESC, id DESC LIMIT ?", (limit,))
     return [_decision(r) for r in rows]
 
 
 def active_dismissals(db: Any) -> dict[str, Decision]:
     """Abschließende Entscheidungen ohne Datenänderung: geprüft/ungeklärt und abgelehnt."""
-    try:
-        rows = db.q("SELECT * FROM diag_decision WHERE action IN ('dismiss', 'reject') AND status='active' ORDER BY id")
-    except Exception:
-        return {}
+    rows = db.q("SELECT * FROM diag_decision WHERE action IN ('dismiss', 'reject') AND status='active' ORDER BY id")
     return {r["finding_id"]: _decision(r) for r in rows}
 
 
 def active_marks(db: Any) -> dict[str, Decision]:
     """Alle aktiven Entscheidungen ohne Datenänderung (geprüft, abgelehnt, später prüfen)."""
-    try:
-        rows = db.q("SELECT * FROM diag_decision WHERE action IN ('dismiss', 'reject', 'defer') AND status='active' "
-                    "ORDER BY id")
-    except Exception:
-        return {}
+    rows = db.q("SELECT * FROM diag_decision WHERE action IN ('dismiss', 'reject', 'defer') AND status='active' "
+                "ORDER BY id")
     return {r["finding_id"]: _decision(r) for r in rows}
 
 
 def active_fixes(db: Any) -> dict[str, list[Decision]]:
     out: dict[str, list[Decision]] = defaultdict(list)
-    try:
-        rows = db.q("SELECT * FROM diag_decision WHERE action='fix' AND status='active' ORDER BY id")
-    except Exception:
-        return {}
+    rows = db.q("SELECT * FROM diag_decision WHERE action='fix' AND status='active' ORDER BY id")
     for r in rows:
         out[r["finding_id"]].append(_decision(r))
     return out

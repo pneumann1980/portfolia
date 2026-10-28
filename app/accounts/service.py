@@ -14,10 +14,12 @@ from __future__ import annotations
 import dataclasses
 import logging
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from app.db import fallback
 from app.ledger.models import AccountInfo, Portfolio
 from app.util.timeutil import iso, utcnow
 
@@ -31,7 +33,8 @@ _CTRL = re.compile(r"[\x00-\x1f\x7f]")
 def meta_rows(db: Any) -> dict[str, Any]:
     try:
         return {r["account"]: r for r in db.q("SELECT * FROM account_meta ORDER BY account COLLATE NOCASE")}
-    except Exception:  # Tabelle fehlt (DB vor Migration 28)
+    except sqlite3.Error as e:  # Tabelle fehlt (DB vor Migration 28)
+        fallback("meta_rows", e)
         return {}
 
 

@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
+
+from app.db import fallback
 
 log = logging.getLogger(__name__)
 
@@ -445,7 +448,8 @@ def _supported(ds: Any) -> bool:
 def last_run(db: Any, sid: int) -> Any:
     try:
         return db.q1("SELECT * FROM diag_research WHERE source_id=? ORDER BY id DESC LIMIT 1", (sid,))
-    except Exception:  # Datenbank vor Migration 21
+    except sqlite3.Error as e:  # Datenbank vor Migration 21
+        fallback("last_run", e)
         return None
 
 
@@ -456,7 +460,8 @@ def stale_ids(db: Any) -> list[int]:
 
     try:
         rows = db.q("SELECT id, source_id FROM diag_research WHERE status='running'")
-    except Exception:  # Datenbank vor Migration 21
+    except sqlite3.Error as e:  # Datenbank vor Migration 21
+        fallback("stale_ids", e)
         return []
     return [int(r["id"]) for r in rows if not is_busy(int(r["source_id"]))]
 
@@ -466,7 +471,8 @@ def runs(db: Any, limit: int = 20, *, live: bool = False) -> list[Any]:
     für Seitenaufrufe)."""
     try:
         rows = db.q("SELECT * FROM diag_research ORDER BY id DESC LIMIT ?", (limit,))
-    except Exception:
+    except sqlite3.Error as e:
+        fallback("runs", e)
         return []
     if not live:
         return rows

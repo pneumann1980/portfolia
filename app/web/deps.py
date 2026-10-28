@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 
 from app import health
 from app.context import AppContext
+from app.db import fallback
 from app.progress import view as progress_view
 
 log = logging.getLogger(__name__)
@@ -77,7 +78,8 @@ def _ticker_hint(ctx: AppContext, asset_id: str) -> Any:
         from app.assetchange.detect import hints
 
         return next((h for h in hints(ctx) if h.old_asset == asset_id), None)
-    except Exception:
+    except Exception as e:
+        fallback("_ticker_hint", e)
         return None
 
 
@@ -86,7 +88,8 @@ def _estimated_assets(ctx: AppContext) -> set[str]:
         from app.plans.service import estimated_assets
 
         return estimated_assets(ctx.db)
-    except Exception:
+    except Exception as e:
+        fallback("_estimated_assets", e)
         return set()
 
 

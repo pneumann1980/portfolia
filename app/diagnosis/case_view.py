@@ -23,12 +23,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from urllib.parse import quote
 
+from app.db import fallback
 from app.diagnosis import clarify as K
 from app.diagnosis.model import Finding, Report, TxRef
 from app.util.timeutil import fmt_de_datetime, local_tz
@@ -695,7 +697,8 @@ def _revisions(ctx: Any, case: K.Case) -> list[dict[str, str]]:
     try:
         rows = ctx.db.q("SELECT r.batch_id, r.idx, r.messages FROM csv_row r JOIN csv_batch b ON b.id=r.batch_id WHERE "
                         "r.status='revision' AND b.status IN ('preview','partial')")
-    except Exception:  # sehr alte Datenbank
+    except sqlite3.Error as e:  # sehr alte Datenbank
+        fallback("_revisions", e)
         return []
     wanted = set(case.tx_ids)
     for r in rows:

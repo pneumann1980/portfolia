@@ -6,6 +6,8 @@ import re
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from app.db import fallback
+
 _TZ = ZoneInfo("Europe/Berlin")
 
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -15,7 +17,8 @@ def set_local_tz(name: str) -> None:
     global _TZ
     try:
         _TZ = ZoneInfo(name)
-    except Exception:  # pragma: no cover - ungültige TZ -> Berlin
+    except Exception as e:  # pragma: no cover - ungültige TZ -> Berlin
+        fallback("set_local_tz", e)
         _TZ = ZoneInfo("Europe/Berlin")
 
 

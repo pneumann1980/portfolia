@@ -39,6 +39,7 @@ from reportlab.platypus import PageBreak as RLPageBreak
 from reportlab.platypus import Spacer as RLSpacer
 from reportlab.platypus import Table as RLTable
 
+from app.db import fallback
 from app.tax import document as D
 from app.tax.base import Column, Table, fmt_date, fmt_eur, fmt_num, fmt_qty, fmt_value  # noqa: F401
 
@@ -101,7 +102,8 @@ def fonts() -> dict[str, str]:
             pdfmetrics.registerFontFamily("Vera", normal="Vera", bold="Vera-Bold", italic="Vera-Italic",
                                           boldItalic="Vera-BoldItalic")
             _FONTS = {"regular": "Vera", "bold": "Vera-Bold", "italic": "Vera-Italic"}
-        except Exception:  # pragma: no cover - nur wenn die Schriftdateien fehlen
+        except Exception as e:  # pragma: no cover - nur wenn die Schriftdateien fehlen
+            fallback("fonts", e)
             _FONTS = {"regular": "Helvetica", "bold": "Helvetica-Bold", "italic": "Helvetica-Oblique"}
         return _FONTS
 

@@ -30,6 +30,7 @@ from typing import Any
 
 from app.csvimport.events import identity_keys, normalize_hash, source_ref_keys
 from app.csvimport.identity import note_identity_keys
+from app.db import fallback
 from app.documentimport.evidence import FieldEvidence
 from app.documentimport.profiles import CENT, DocTx, _money, parse_date, parse_time
 
@@ -232,7 +233,8 @@ def _catalog_candidates(c: Context, sym: str) -> list[dict[str, Any]]:
 
         cat = cached_catalog(catalog_path(c.ctx))
         return list(cat.candidates(sym))[:10] if cat is not None else []
-    except Exception:
+    except Exception as e:
+        fallback("_catalog_candidates", e)
         return []
 
 

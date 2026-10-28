@@ -25,6 +25,7 @@ from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from typing import Any
 
+from app.db import fallback
 from app.util.timeutil import parse_iso
 
 SORTS = {"name": "Name", "value": "Wert", "created": "Hinzugefügt", "synced": "Letzte erfolgreiche Synchronisierung"}
@@ -187,7 +188,8 @@ def account_values(ctx: Any, wallets: list[Any]) -> dict[int, AccountValue]:
     if wanted:
         try:
             prices = ctx.prices.latest_eur_many([pf.asset(a) for a in sorted(wanted)], pf)
-        except Exception:  # Kurse sind Zusatzinformation – die Übersicht muss immer laden
+        except Exception as e:  # Kurse sind Zusatzinformation – die Übersicht muss immer laden
+            fallback("account_values", e)
             prices = {}
     for w in wallets:
         lst = resolved[int(w.id)]

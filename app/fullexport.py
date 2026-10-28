@@ -181,10 +181,7 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
 
 def _taxdata_export(db: Any, out: dict[str, bytes]) -> list[dict[str, Any]]:
     """Steuerdateien (alle Status – Verlauf bleibt nachvollziehbar) mit Datensätzen; Originaldatei, sofern lesbar."""
-    try:
-        files = db.q("SELECT * FROM tax_file ORDER BY id")
-    except Exception:  # Tabelle fehlt (DB vor Migration 16)
-        return []
+    files = db.q("SELECT * FROM tax_file ORDER BY id")
     by_id = {int(f["id"]): f["sha256"] for f in files}
     res = []
     for f in files:

@@ -20,12 +20,14 @@ from __future__ import annotations
 import json
 import logging
 import math
+import sqlite3
 import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from app.db import fallback
 from app.util.timeutil import iso, parse_iso
 
 # (Schlüssel, Anzeige, Gewicht)
@@ -391,7 +393,8 @@ def active(ctx: Any) -> list[dict[str, Any]]:
     try:
         rows = ctx.db.q("SELECT id, name, progress_json FROM data_source "
                         "WHERE progress_json LIKE '%\"running\": true%'")
-    except Exception:  # Tabelle fehlt (sehr alte Datenbank)
+    except sqlite3.Error as e:  # Tabelle fehlt (sehr alte Datenbank)
+        fallback("active", e)
         rows = []
     for r in rows:
         try:

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+from app.db import fallback
 from app.diagnosis import actions as A
 from app.diagnosis import research as RS
 from app.diagnosis import stock as ST
@@ -57,7 +58,8 @@ def _rows(ctx: Any, report: Any, only_dev: bool, acc: str, asset: str) -> list[d
         value = idx.value(tr.asset, abs(last.diff)) if idx is not None and last is not None and last.diff else None
         try:
             fiat = bool(idx.asset(tr.asset).is_fiat)
-        except Exception:
+        except Exception as e:
+            fallback("_rows", e, quiet=True)
             fiat = False
         refs = {tx_id for s in tr.segments for tx_id in s.tx_ids}
         txs = {i: idx.ref(idx.by_id[i]) for i in refs if i in idx.by_id}

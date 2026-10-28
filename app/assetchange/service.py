@@ -549,10 +549,7 @@ class AssetChangeService:
 
 def apply_changes(db: Any, assets: dict[str, AssetInfo]) -> dict[str, AssetInfo]:
     """Übernommene Umbenennungen auf die Assets anwenden (gleiches Objekt, wenn nichts zu tun ist)."""
-    try:
-        rows = db.q("SELECT * FROM asset_change WHERE kind='rename' AND status='applied' ORDER BY id")
-    except Exception:  # Tabelle fehlt (DB vor Migration 17)
-        return assets
+    rows = db.q("SELECT * FROM asset_change WHERE kind='rename' AND status='applied' ORDER BY id")
     out = None
     for r in rows:
         a = assets.get(r["old_asset"])

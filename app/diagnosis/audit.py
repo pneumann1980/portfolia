@@ -35,6 +35,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from app.db import fallback
 from app.diagnosis.model import LOSS_CLASS, Finding, HoldingRow, Scenario
 from app.ledger.models import Tx
 from app.web.fmt import eur
@@ -1661,7 +1662,8 @@ def reference_instant(ref: Any) -> datetime | None:
 
     try:
         zone = ZoneInfo(tz)
-    except Exception:
+    except Exception as e:
+        fallback("reference_instant", e, quiet=True)
         return None
     return datetime.combine(ref.as_of, time(23, 59, 59, 999999), tzinfo=zone).astimezone(UTC)
 

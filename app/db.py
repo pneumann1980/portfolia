@@ -14,6 +14,15 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+def fallback(what: str, exc: BaseException, *, quiet: bool = False) -> None:
+    """Ein Fehler wird bewusst durch einen Ersatzwert abgefangen: sichtbar machen statt still verschlucken.
+
+    ``quiet`` (DEBUG) nur für erwartbare, folgenlose Fälle (z. B. optionale Zusatzinformation).
+    """
+    log.log(logging.DEBUG if quiet else logging.WARNING, "%s nicht verfügbar, Ersatzwert wird verwendet: %s: %s", what,
+            type(exc).__name__, exc)
+
+
 SLOW_SQL_S = 0.5  # länger dauernde Anweisungen (oder Wartezeit auf die Schreibsperre) werden als Warnung protokolliert
 _WRITE_ERRORS = ("readonly", "read-only", "disk i/o", "disk is full", "database or disk is full", "unable to open",
                  "locked", "malformed")

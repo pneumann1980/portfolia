@@ -661,11 +661,8 @@ def apply_sources(db: Any, assets: dict[str, AssetInfo]) -> dict[str, AssetInfo]
 
     Herkunft ``override`` (ausdrückliche Korrektur des Nutzers, z. B. aus der Diagnose) ersetzt auch eine Kursquelle
     des Imports – etwa wenn der Import ein Anbieter-Kürzel einem anderen Coin zuordnet."""
-    try:
-        rows = db.q("SELECT asset_id, quote_source, quote_id, origin FROM asset_source "
-                    "WHERE status='active' AND quote_id IS NOT NULL")
-    except Exception:  # Tabelle fehlt (sehr alte DB vor der Migration)
-        return assets
+    rows = db.q("SELECT asset_id, quote_source, quote_id, origin FROM asset_source "
+                "WHERE status='active' AND quote_id IS NOT NULL")
     out = None
     for r in rows:
         a = assets.get(r["asset_id"])

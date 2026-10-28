@@ -26,6 +26,7 @@ from typing import Any
 from app.csvimport import batch as BA
 from app.csvimport import queue as Q
 from app.csvimport import review as RV
+from app.db import fallback
 
 LINK_GROUPS = ("dublette", "ergaenzung")
 
@@ -165,7 +166,8 @@ def preview(svc: Any, sel: Mapping[int, set[int]]) -> MultiPlan:
     if inc:
         try:
             led = svc.ctx.ledger()
-        except Exception:  # Vorschau ohne Bestand ist besser als keine
+        except Exception as e:  # Vorschau ohne Bestand ist besser als keine
+            fallback("preview", e)
             led = None
         for (acc, asset), d in sorted(inc.items()):
             if not d:

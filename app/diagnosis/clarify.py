@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from app.db import fallback
 from app.diagnosis import actions as A
 from app.diagnosis import bulk as B
 from app.diagnosis import derivatives as DV
@@ -240,7 +241,8 @@ def _positions(f: Finding) -> set[tuple[str, str]]:
 def _setting(ctx: Any, key: str, default: Any) -> Any:
     try:
         return ctx.settings.get(key, default)
-    except Exception:  # pragma: no cover - Einstellungen nie kritisch
+    except Exception as e:  # pragma: no cover - Einstellungen nie kritisch
+        fallback("_setting", e, quiet=True)
         return default
 
 
@@ -1598,7 +1600,8 @@ def request_evidence(ctx: Any, case: Case, budget: list[int] | None = None) -> l
     notes: list[str] = []
     try:
         sources = [s for s in _ds_list(ctx) if getattr(s, "account", None) in set(case.accounts)]
-    except Exception:  # pragma: no cover
+    except Exception as e:  # pragma: no cover
+        fallback("request_evidence", e, quiet=True)
         return notes
     for ds in sources:
         label = f"{getattr(ds, 'provider_label', ds.provider)} ({ds.name})"

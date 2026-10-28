@@ -17,12 +17,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any
 
 from app.assetchange.merge import YearRow, _issue_counts, _year_stats
+from app.db import fallback
 from app.ledger.engine import run_ledger
 from app.ledger.models import Portfolio, Tx
 from app.util.timeutil import iso, utcnow
@@ -38,10 +40,7 @@ ZERO = Decimal(0)
 def hidden_ids(db: Any) -> dict[str, set[str]]:
     """Konto → ausgeblendete Buchungskennungen (aktive Überlagerungen)."""
     out: dict[str, set[str]] = defaultdict(set)
-    try:
-        rows = db.q("SELECT account, tx_ids_json FROM account_remove WHERE status='active' ORDER BY id")
-    except Exception:  # Tabelle fehlt (DB vor Migration 27)
-        return {}
+    rows = db.q("SELECT account, tx_ids_json FROM account_remove WHERE status='active' ORDER BY id")
     for r in rows:
         try:
             out[r["account"]].update(str(x) for x in json.loads(r["tx_ids_json"] or "[]"))
@@ -168,7 +167,8 @@ def preview(ctx: Any, account: str) -> Preview:
     try:
         n_batches = ctx.db.scalar("SELECT COUNT(*) FROM csv_batch WHERE account=? AND status IN ('preview','partial')",
                                   (p.account,)) or 0
-    except Exception:
+    except sqlite3.Error as e:
+        fallback("preview", e)
         n_batches = 0
     if n_batches:
         p.warnings.append(f"{n_batches} offene(r) Prüf-Stapel für „{p.account}“ – bitte zuerst abschließen oder "
@@ -252,5 +252,6 @@ def history(db: Any, limit: int = 50) -> list[Any]:
     try:
         return db.q("SELECT id, account, status, note, created_at, reverted_at, summary_json FROM account_remove "
                     "ORDER BY id DESC LIMIT ?", (limit,))
-    except Exception:
+    except sqlite3.Error as e:
+        fallback("history", e)
         return []

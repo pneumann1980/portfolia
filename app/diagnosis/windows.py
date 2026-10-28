@@ -21,6 +21,7 @@ from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Any
 
+from app.db import fallback
 from app.diagnosis.model import Finding
 from app.util.timeutil import local_tz
 
@@ -222,7 +223,8 @@ class _Series:
 def _is_fiat(idx: Any, asset: str) -> bool:
     try:
         return bool(idx.asset(asset).is_fiat)
-    except Exception:
+    except Exception as e:
+        fallback("_is_fiat", e, quiet=True)
         return False
 
 
