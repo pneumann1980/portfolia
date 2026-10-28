@@ -1426,6 +1426,27 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.63.0 – Betrieb: eigener News-Pool, keine blockierende Datenbankarbeit im Ereignisschleifen-Thread, weniger Speicher je Verbindung
+
+Paket D aus `docs/ARBEITSPLAN.md` (M4, M5, M6).
+
+* **M4 Eigener Pool „news“ (2 Threads):** `news_fetch`, `news_rematch`, `youtube_discovery`, `llm_digest`, `news_enrich`, `news_analyze`,
+  `news_group` laufen nicht mehr im Pool „default“ (3 Threads) der Kurs-, Import-, Datenquellen- und Sicherungsjobs. Vorher konnten die langen
+  News-Läufe (Analyse bis 8 Min., Textabruf mit Wartezeiten) Kern-Jobs länger als `misfire_grace_time` (10 Min.) verzögern – der Lauf wurde
+  dann verworfen. Weiterhin getrennt: „interactive“ (Tagesbericht) und „wave“ (manuelle Welle). Verpasste/übersprungene Läufe stehen seit 0.61.0 im Log.
+* **M5 Keine DB-Arbeit in `async`-Handlern:** `news` (gelesen, alle gelesen, Kanal-/Quellenaktionen), Watchlist („Position erstellen“),
+  Einstellungen speichern und die CSV-Handler „Prüfwarteschlange ausführen“/„Aktion rückgängig“ lesen weiterhin das Formular im
+  Ereignisschleifen-Thread, führen den Rest aber im Thread-Pool aus. Hielt ein anderer Thread die Schreibsperre (Import, Quellenübernahme), blockierte
+  der Handler bis zu 30 s (`busy_timeout`) *die gesamte Anwendung*. Der Zusatzabschnitt „Export“ der Einstellungen ist dafür synchron.
+  Wächtertest: kein direkter DB-Zugriff in einer `async def` (verschachtelte `def` zählen nicht).
+* **M6 Speicher je Verbindung:** SQLite-Seitencache je Verbindung 8 → 4 MB (`db.CACHE_KB`), gleichzeitige synchrone Handler 40 → 24
+  (`main.THREADPOOL_TOKENS`). Zusammen im Ungünstigsten ≈ 32 statt ≈ 46 Verbindungen à 4 statt 8 MB (≈ 130 statt ≈ 370 MB, rechnerisch,
+  nicht gemessen); die Zustandszeile (stündlich) und das Startbanner nennen Threads/Verbindungen/Speicher zum Nachmessen.
+* **Grenzen:** Der kleinere Seitencache kann sehr große Auswertungen minimal verlangsamen (das Betriebssystem puffert die Datei). Reichen
+  24 gleichzeitige Handler nicht (viele parallele Langläufer), steigt die Wartezeit statt der Speicherbedarf. Beides ist je eine Konstante.
+* **Tests:** `tests/test_ops.py` (Pool-Zuordnung, blockierte News-Jobs verzögern Kern-Jobs nicht, kein DB-Zugriff in `async def`, umgebaute
+  Handler funktionieren, Cache/Threadpool, Verbindungszähler über Threads).
+
 ## 0.62.0 – Keine stillen Datenbankfehler mehr (M3)
 
 Paket C aus `docs/ARBEITSPLAN.md`. Die Analyse fand 53 `except Exception` ohne Logeintrag und ohne erneutes Werfen (die genauere

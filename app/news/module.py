@@ -151,13 +151,14 @@ def job_digest(ctx: AppContext) -> dict[str, Any]:
 def _register_jobs(s: Scheduler) -> None:
     svc = news_service(s.ctx)
     minutes = int(svc.cfg.settings.get("fetch_interval_minutes", 30) or 30)
-    s.register("news_fetch", job_fetch, IntervalTrigger(minutes=max(10, minutes)))
-    s.register("news_rematch", job_rematch, None)
-    s.register("youtube_discovery", job_discovery, CronTrigger(hour=7, minute=5))
-    s.register("llm_digest", job_digest, CronTrigger(hour=7, minute=40))
-    s.register("news_enrich", job_enrich, IntervalTrigger(minutes=15))
-    s.register("news_analyze", job_analyze, IntervalTrigger(minutes=10))
-    s.register("news_group", job_group, IntervalTrigger(minutes=20))
+    # Eigener Pool „news“: die langen News-Läufe (Abruf, Textabruf, KI-Analyse) verdrängen keine Kurs-/Import-Jobs
+    s.register("news_fetch", job_fetch, IntervalTrigger(minutes=max(10, minutes)), executor="news")
+    s.register("news_rematch", job_rematch, None, executor="news")
+    s.register("youtube_discovery", job_discovery, CronTrigger(hour=7, minute=5), executor="news")
+    s.register("llm_digest", job_digest, CronTrigger(hour=7, minute=40), executor="news")
+    s.register("news_enrich", job_enrich, IntervalTrigger(minutes=15), executor="news")
+    s.register("news_analyze", job_analyze, IntervalTrigger(minutes=10), executor="news")
+    s.register("news_group", job_group, IntervalTrigger(minutes=20), executor="news")
     s.register("news_report", job_report, IntervalTrigger(minutes=15), executor="interactive")
     s.register("news_wave", job_wave, None, executor="wave")
 
@@ -466,30 +467,38 @@ def make_router() -> APIRouter:
     async def mark_read(request: Request, item_id: int) -> Response:
         ctx = get_ctx(request)
         form = await request.form()
-        val = 0 if form.get("unread") == "1" else 1
-        ctx.db.x("UPDATE news_item SET is_read=? WHERE id=?", (val, item_id))
-        if request.headers.get("hx-request") == "true" and form.get("fragment") == "1":
-            row = ctx.db.q1("SELECT * FROM news_item WHERE id=?", (item_id,))
-            if row is None:
-                raise HTTPException(404)
-            return render(request, "partials/news_read_button.html", alerts=[], n=row)
-        return Response(status_code=204)
+
+        def work() -> Response:
+            val = 0 if form.get("unread") == "1" else 1
+            ctx.db.x("UPDATE news_item SET is_read=? WHERE id=?", (val, item_id))
+            if request.headers.get("hx-request") == "true" and form.get("fragment") == "1":
+                row = ctx.db.q1("SELECT * FROM news_item WHERE id=?", (item_id,))
+                if row is None:
+                    raise HTTPException(404)
+                return render(request, "partials/news_read_button.html", alerts=[], n=row)
+            return Response(status_code=204)
+
+        return await run_in_threadpool(work)
 
     @router.post("/news/read-all")
     async def read_all(request: Request) -> Response:
         ctx = get_ctx(request)
         form = await request.form()
-        kind = "video" if form.get("tab") == "videos" else "article"
-        days = int(form.get("days") or 7)
-        since = iso(datetime.now(UTC) - timedelta(days=days))
-        if form.get("tab") == "community":  # nur die Community-Quellen
-            ids = community_ids(news_service(ctx))
-            if ids:
-                ctx.db.x(f"UPDATE news_item SET is_read=1 WHERE kind='article' AND published_at>=? "
-                         f"AND source_id IN ({','.join('?' * len(ids))})", (since, *ids))
+
+        def work() -> Response:
+            kind = "video" if form.get("tab") == "videos" else "article"
+            days = int(form.get("days") or 7)
+            since = iso(datetime.now(UTC) - timedelta(days=days))
+            if form.get("tab") == "community":  # nur die Community-Quellen
+                ids = community_ids(news_service(ctx))
+                if ids:
+                    ctx.db.x(f"UPDATE news_item SET is_read=1 WHERE kind='article' AND published_at>=? "
+                             f"AND source_id IN ({','.join('?' * len(ids))})", (since, *ids))
+                return Response(status_code=204, headers={"HX-Refresh": "true"})
+            ctx.db.x("UPDATE news_item SET is_read=1 WHERE kind=? AND published_at>=?", (kind, since))
             return Response(status_code=204, headers={"HX-Refresh": "true"})
-        ctx.db.x("UPDATE news_item SET is_read=1 WHERE kind=? AND published_at>=?", (kind, since))
-        return Response(status_code=204, headers={"HX-Refresh": "true"})
+
+        return await run_in_threadpool(work)
 
     @router.post("/news/refresh", response_class=HTMLResponse)
     def refresh(request: Request) -> HTMLResponse:
@@ -529,48 +538,57 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         svc = news_service(ctx)
         form = await request.form()
-        key = str(form.get("key") or "")
-        action = form.get("action")
-        if action == "confirm":
-            row = ctx.db.q1("SELECT * FROM yt_channel WHERE handle=?", (key,))
-            if row is None or not row["channel_id"]:
-                raise HTTPException(400, "Kanal ist nicht aufgelöst")
-            svc.cfg.set_channel(key, channel_id=row["channel_id"], title=row["title"], confirmed=True)
-        elif action in ("activate", "deactivate"):
-            svc.cfg.set_channel(key, active=action == "activate")
-        elif action == "resolve":
-            if ctx.scheduler is not None:
-                ctx.scheduler.trigger("news_fetch", 0.5)
-            row = ctx.db.q1("SELECT handle FROM yt_channel WHERE handle=?", (key,))
-            if row:
-                ctx.db.x("UPDATE yt_channel SET resolved_at=NULL WHERE handle=?", (key,))
-        return Response(status_code=204, headers={"HX-Refresh": "true"})
+
+        def work() -> Response:
+            key = str(form.get("key") or "")
+            action = form.get("action")
+            if action == "confirm":
+                row = ctx.db.q1("SELECT * FROM yt_channel WHERE handle=?", (key,))
+                if row is None or not row["channel_id"]:
+                    raise HTTPException(400, "Kanal ist nicht aufgelöst")
+                svc.cfg.set_channel(key, channel_id=row["channel_id"], title=row["title"], confirmed=True)
+            elif action in ("activate", "deactivate"):
+                svc.cfg.set_channel(key, active=action == "activate")
+            elif action == "resolve":
+                if ctx.scheduler is not None:
+                    ctx.scheduler.trigger("news_fetch", 0.5)
+                row = ctx.db.q1("SELECT handle FROM yt_channel WHERE handle=?", (key,))
+                if row:
+                    ctx.db.x("UPDATE yt_channel SET resolved_at=NULL WHERE handle=?", (key,))
+            return Response(status_code=204, headers={"HX-Refresh": "true"})
+
+        return await run_in_threadpool(work)
 
     @router.post("/news/source")
     async def source_action(request: Request) -> Response:
         ctx = get_ctx(request)
         svc = news_service(ctx)
         form = await request.form()
-        sid = str(form.get("id") or "")
-        action = form.get("action")
-        if action in ("activate", "deactivate"):
-            svc.cfg.set_source(sid, active=action == "activate")
-            if action == "activate":
-                ctx.db.x("UPDATE source_status SET consecutive_failures=0, next_allowed=NULL WHERE source_id=?", (sid,))
-        elif action == "weight":
-            try:
-                w = max(0.0, min(1.0, float(str(form.get("weight")).replace(",", "."))))
-            except ValueError:
-                raise HTTPException(400, "Gewicht ungültig") from None
-            svc.cfg.set_source(sid, weight=w)
-        elif action in ("ai_on", "ai_off"):
-            svc.cfg.set_source(sid, ai=action == "ai_on")
-        elif action == "remove":
-            src = next((x for x in svc.cfg.sources() if x.id == sid), None)
-            if src is None or src.type != "telegram":  # nur selbst hinzugefügte Telegram-Kanäle sind löschbar
-                raise HTTPException(400, "Nur Telegram-Kanäle können entfernt werden (andere: deaktivieren).")
-            svc.cfg.remove_source(sid)
-        return Response(status_code=204, headers={"HX-Refresh": "true"})
+
+        def work() -> Response:
+            sid = str(form.get("id") or "")
+            action = form.get("action")
+            if action in ("activate", "deactivate"):
+                svc.cfg.set_source(sid, active=action == "activate")
+                if action == "activate":
+                    ctx.db.x("UPDATE source_status SET consecutive_failures=0, next_allowed=NULL WHERE source_id=?",
+                             (sid,))
+            elif action == "weight":
+                try:
+                    w = max(0.0, min(1.0, float(str(form.get("weight")).replace(",", "."))))
+                except ValueError:
+                    raise HTTPException(400, "Gewicht ungültig") from None
+                svc.cfg.set_source(sid, weight=w)
+            elif action in ("ai_on", "ai_off"):
+                svc.cfg.set_source(sid, ai=action == "ai_on")
+            elif action == "remove":
+                src = next((x for x in svc.cfg.sources() if x.id == sid), None)
+                if src is None or src.type != "telegram":  # nur selbst hinzugefügte Telegram-Kanäle sind löschbar
+                    raise HTTPException(400, "Nur Telegram-Kanäle können entfernt werden (andere: deaktivieren).")
+                svc.cfg.remove_source(sid)
+            return Response(status_code=204, headers={"HX-Refresh": "true"})
+
+        return await run_in_threadpool(work)
 
     @router.post("/news/source/telegram")
     async def add_telegram(request: Request) -> Response:

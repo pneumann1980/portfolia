@@ -443,23 +443,27 @@ def make_router() -> APIRouter:
 
         ctx = get_ctx(request)
         f = await request.form(max_fields=20_000)
-        flt = _queue_filter(f)
-        if str(f.get("confirm") or "") != "1":
-            return _back(request, "/journal/pruefung/vorschau?" + urlencode({**flt.params(), "err": "confirm"}))
-        parts = []
-        for bid in f.getlist("part"):
-            b = str(bid)
-            if not b.isdigit():
-                continue
-            parts.append({"batch_id": int(b), "token": str(f.get(f"token_{b}") or ""),
-                          "fingerprint": str(f.get(f"fp_{b}") or ""),
-                          "idxs": [int(i) for i in str(f.get(f"idx_{b}") or "").split(",") if i.isdigit()]})
-        res = await run_in_threadpool(BU.run, csv_service(ctx), parts)
-        names = {int(r["id"]): r for r in ctx.db.q(
-            f"SELECT id, filename, kind, source FROM csv_batch WHERE id IN ({','.join('?' * len(res)) or 'NULL'})",
-            tuple(r["batch_id"] for r in res))}
-        return render(request, "review_bulk_result.html", active="journal", results=res, names=names,
-                      source_label=source_label, params=flt.params())
+
+        def work() -> Response:
+            flt = _queue_filter(f)
+            if str(f.get("confirm") or "") != "1":
+                return _back(request, "/journal/pruefung/vorschau?" + urlencode({**flt.params(), "err": "confirm"}))
+            parts = []
+            for bid in f.getlist("part"):
+                b = str(bid)
+                if not b.isdigit():
+                    continue
+                parts.append({"batch_id": int(b), "token": str(f.get(f"token_{b}") or ""),
+                              "fingerprint": str(f.get(f"fp_{b}") or ""),
+                              "idxs": [int(i) for i in str(f.get(f"idx_{b}") or "").split(",") if i.isdigit()]})
+            res = BU.run(csv_service(ctx), parts)
+            names = {int(r["id"]): r for r in ctx.db.q(
+                f"SELECT id, filename, kind, source FROM csv_batch WHERE id IN ({','.join('?' * len(res)) or 'NULL'})",
+                tuple(r["batch_id"] for r in res))}
+            return render(request, "review_bulk_result.html", active="journal", results=res, names=names,
+                          source_label=source_label, params=flt.params())
+
+        return await run_in_threadpool(work)
 
     @router.post("/journal/pruefung/entscheiden")
     async def review_decide(request: Request) -> Response:
@@ -852,17 +856,21 @@ def make_router() -> APIRouter:
 
     @router.post("/journal/csv/{bid}/actions/{aid}/undo")
     async def undo_action(request: Request, bid: int, aid: int) -> Response:
-        from app.csvimport import batch as BA
 
-        svc = csv_service(get_ctx(request))
-        a = svc.db.q1("SELECT batch_id FROM import_action WHERE id=?", (aid,))
-        if a is None or int(a["batch_id"]) != bid:
-            raise HTTPException(404)
-        res = await run_in_threadpool(BA.undo, svc, aid)
-        if res.get("errors"):
-            return _batch_page(request, bid, errors=res["errors"])
-        q = {"msg": "undo", "r": res["restored"], "c": res["changed"], "t": res["reverted"]}
-        return _back(request, f"/journal/csv/{bid}?{urlencode(q)}#verlauf")
+        def work() -> Response:
+            from app.csvimport import batch as BA
+
+            svc = csv_service(get_ctx(request))
+            a = svc.db.q1("SELECT batch_id FROM import_action WHERE id=?", (aid,))
+            if a is None or int(a["batch_id"]) != bid:
+                raise HTTPException(404)
+            res = BA.undo(svc, aid)
+            if res.get("errors"):
+                return _batch_page(request, bid, errors=res["errors"])
+            q = {"msg": "undo", "r": res["restored"], "c": res["changed"], "t": res["reverted"]}
+            return _back(request, f"/journal/csv/{bid}?{urlencode(q)}#verlauf")
+
+        return await run_in_threadpool(work)
 
     @router.post("/journal/csv/{bid}/commit")
     async def commit(request: Request, bid: int) -> Response:

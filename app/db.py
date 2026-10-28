@@ -23,6 +23,7 @@ def fallback(what: str, exc: BaseException, *, quiet: bool = False) -> None:
             type(exc).__name__, exc)
 
 
+CACHE_KB = 4000  # SQLite-Seitencache je Verbindung (vorher 8 000): bei bis zu ~30 Threads sonst > 200 MB (Analyse M6)
 SLOW_SQL_S = 0.5  # länger dauernde Anweisungen (oder Wartezeit auf die Schreibsperre) werden als Warnung protokolliert
 _WRITE_ERRORS = ("readonly", "read-only", "disk i/o", "disk is full", "database or disk is full", "unable to open",
                  "locked", "malformed")
@@ -1093,7 +1094,7 @@ class Database:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA temp_store=MEMORY")
-        conn.execute("PRAGMA cache_size=-8000")  # ~8 MB pro Verbindung
+        conn.execute(f"PRAGMA cache_size=-{CACHE_KB}")  # je Verbindung (eine je Thread)
         with self._count_lock:
             self._conn_count += 1
         return conn

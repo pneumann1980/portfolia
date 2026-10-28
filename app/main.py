@@ -6,6 +6,7 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 
+import anyio.to_thread
 from fastapi import FastAPI
 
 from app import health
@@ -16,6 +17,8 @@ from app.util.timeutil import set_local_tz
 from app.web.app import create_app
 
 log = logging.getLogger("app")
+# gleichzeitig laufende synchrone Handler: Einzelnutzer im LAN; begrenzt Threads und damit DB-Verbindungen
+THREADPOOL_TOKENS = 24
 
 
 MODULES = (
@@ -64,6 +67,8 @@ def build_app(config: Config | None = None, start_scheduler: bool | None = None)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # synchrone Handler laufen in einem Thread-Pool (Standard 40); jeder Thread hält eine SQLite-Verbindung
+        anyio.to_thread.current_default_thread_limiter().total_tokens = THREADPOOL_TOKENS
         ctx.startup()
         health.log_startup(ctx)
         attach_db_handler(config.db_path)

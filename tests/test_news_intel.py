@@ -1802,7 +1802,7 @@ def test_scheduler_has_interactive_pool_for_report(config):
     sched = Scheduler(c)
     sched.setup_default_jobs()
     assert "interactive" in sched.sched._executors and sched.sched.get_job("news_report").executor == "interactive"
-    assert sched.sched.get_job("news_enrich").executor == "default"
+    assert sched.sched.get_job("news_enrich").executor == "news"  # lange News-Läufe verdrängen keine Kurs-/Import-Jobs
     assert sched.trigger("news_report", 5, manual=True)
     once = [j for j in sched.sched.get_jobs() if j.id.startswith("news_report-once-")]
     assert once and once[0].executor == "interactive"  # manueller Bericht wartet nicht hinter Import/Analyse

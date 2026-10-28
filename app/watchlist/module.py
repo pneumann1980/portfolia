@@ -178,32 +178,35 @@ def make_router() -> APIRouter:
     @router.post("/watchlist/item/{item_id}/position")
     async def create_position(request: Request, item_id: int) -> Response:
         """„Position erstellen“: Asset anlegen (falls neu) und in die normale Buchungserfassung (Kauf) wechseln."""
-        ctx = get_ctx(request)
-        svc = watchlist_service(ctx)
-        it = svc.get(item_id)
-        if it is None:
-            raise HTTPException(404)
-        if it.is_index:
-            return _page(request, it.list_id, errors=[f"{it.sym} ist ein Index – nur beobachten, nicht kaufbar (dafür "
-                                                      "einen ETF auf den Index hinzufügen)."], status_code=400)
-        aid = it.asset_id
-        if not aid:
-            from app.journal.service import journal_service
 
-            js = journal_service(ctx)
-            aid = (it.sym if it.asset_class == "crypto" else it.quote_id)[:40]
-            known = js.known_assets()
-            if aid in known and (known[aid].quote_source, known[aid].quote_id) != (it.quote_source, it.quote_id):
-                aid = f"{aid}#{it.quote_id}"[:60]
-            if aid not in known:
-                res = await run_in_threadpool(js.save_asset, {"asset_id": aid, "name": it.label,
-                                                              "asset_class": it.asset_class,
-                                                              "quote_source": it.quote_source,
-                                                              "quote_id": it.quote_id})
-                if res.errors:
-                    return _page(request, it.list_id, errors=res.errors, status_code=400)
-            ctx.db.x("UPDATE watchlist_item SET asset_id=? WHERE id=?", (aid, item_id))
-        return _back(request, "/journal/quick?" + urlencode({"asset": aid, "side": "buy"}))
+        def work() -> Response:
+            ctx = get_ctx(request)
+            svc = watchlist_service(ctx)
+            it = svc.get(item_id)
+            if it is None:
+                raise HTTPException(404)
+            if it.is_index:
+                msg = (f"{it.sym} ist ein Index – nur beobachten, nicht kaufbar (dafür "
+                       "einen ETF auf den Index hinzufügen).")
+                return _page(request, it.list_id, errors=[msg], status_code=400)
+            aid = it.asset_id
+            if not aid:
+                from app.journal.service import journal_service
+
+                js = journal_service(ctx)
+                aid = (it.sym if it.asset_class == "crypto" else it.quote_id)[:40]
+                known = js.known_assets()
+                if aid in known and (known[aid].quote_source, known[aid].quote_id) != (it.quote_source, it.quote_id):
+                    aid = f"{aid}#{it.quote_id}"[:60]
+                if aid not in known:
+                    res = js.save_asset({"asset_id": aid, "name": it.label, "asset_class": it.asset_class,
+                                         "quote_source": it.quote_source, "quote_id": it.quote_id})
+                    if res.errors:
+                        return _page(request, it.list_id, errors=res.errors, status_code=400)
+                ctx.db.x("UPDATE watchlist_item SET asset_id=? WHERE id=?", (aid, item_id))
+            return _back(request, "/journal/quick?" + urlencode({"asset": aid, "side": "buy"}))
+
+        return await run_in_threadpool(work)
 
     return router
 

@@ -24,9 +24,10 @@ class Scheduler:
     def __init__(self, ctx: AppContext) -> None:
         self.ctx = ctx
         tz = ctx.config.tz
-        # „interactive“: kurze, vom Nutzer ausgelöste Jobs (z. B. Tagesbericht) warten nicht hinter dem Import;
-        # „wave“: manuelle News-Welle, lange und einzeln
-        self.pool_sizes = {"default": 3, "interactive": 2, "wave": 1}
+        # „news“: die langen News-Jobs (Abruf, Textabruf, KI-Analyse) – sonst verdrängen sie Kurse/Import im Pool
+        # „default“ (verspätete Läufe werden nach ``misfire_grace_time`` verworfen); „interactive“: kurze, vom Nutzer
+        # ausgelöste Jobs (z. B. Tagesbericht) warten nicht hinter dem Import; „wave“: manuelle News-Welle, einzeln
+        self.pool_sizes = {"default": 3, "news": 2, "interactive": 2, "wave": 1}
         self.missed: dict[str, int] = {}  # verpasste/übersprungene Läufe seit Start (je Job)
         self.sched = BackgroundScheduler(
             timezone=tz,

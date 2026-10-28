@@ -192,7 +192,7 @@ startup_job("auto_export", 90)  # nach einem Update/Neustart einmal prüfen (unv
 
 
 @settings_section("export")
-async def _save_settings(ctx: AppContext, f: Any) -> None:
+def _save_settings(ctx: AppContext, f: Any) -> None:
     from app.web.routes.actions import _int
 
     ctx.settings.set("export.auto", f.get("auto") == "1")

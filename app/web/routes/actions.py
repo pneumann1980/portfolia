@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from app.jobs import tasks
 from app.prices.budget import CRYPTO_PRESETS, SECURITY_PRESETS, THROTTLED_PRESETS, snap
@@ -24,8 +25,6 @@ async def import_check(request: Request) -> HTMLResponse:
     ctx = get_ctx(request)
     form = await request.form()
     force = form.get("force") == "1"
-    from starlette.concurrency import run_in_threadpool
-
     out = await run_in_threadpool(tasks.import_check, ctx, "manual", force)
     return render(request, "partials/import_result.html", alerts=[], out=out)
 
@@ -100,115 +99,119 @@ async def save_settings(request: Request) -> Response:
     ctx = get_ctx(request)
     s = ctx.settings
     f = await request.form()
-    section = f.get("section", "general")
-    if section == "general":
-        s.set("allocation.other_threshold_pct", _float(f.get("other_threshold_pct"), 1.0, 0.0, 20.0))
-        rng = str(f.get("default_range") or "1J").upper()
-        s.set("ui.default_range", rng if rng in ("1M", "3M", "6M", "YTD", "1J", "3J", "5J", "MAX") else "1J")
-    elif section == "ledger":
-        scope = f.get("scope")
-        s.set("ledger.scope", scope if scope in ("global", "account") else "global")
-        s.set("ledger.unmatched_transfers_as_flows", f.get("unmatched_flows") == "1")
-        overrides = {}
-        pf = ctx.portfolio()
-        for acc in (pf.all_accounts() if pf else []):
-            v = f.get(f"cash__{acc}")
-            if v in ("yes", "no"):
-                overrides[acc] = v == "yes"
-        s.set("ledger.cash_overrides", overrides)
-        ctx.invalidate_data()
-    elif section == "prices":
-        crypto = snap(f.get("crypto_interval_min"), CRYPTO_PRESETS, 10)
-        s.set("prices.crypto_interval_min", crypto)
-        throttled = snap(f.get("crypto_throttled_interval_min"), THROTTLED_PRESETS, 30)
-        s.set("prices.crypto_throttled_interval_min", max(throttled, crypto))  # gedrosselt nie häufiger
-        s.set("prices.stock_interval_min", snap(f.get("stock_interval_min"), SECURITY_PRESETS, 15))
-        s.set("prices.stale_crypto_minutes", _int(f.get("stale_crypto_minutes"), 60, 5, 1440))
-        s.set("prices.stale_crypto_market_hours", _int(f.get("stale_crypto_market_hours"), 24, 1, 720))
-        s.set("prices.stale_security_hours", _int(f.get("stale_security_hours"), 24, 1, 240))
-        s.set("prices.coingecko_monthly_limit", _int(f.get("coingecko_monthly_limit"), 10000, 100, 10_000_000))
-        s.set("prices.coingecko_throttle_pct", _int(f.get("coingecko_throttle_pct"), 80, 10, 100))
-        s.set("prices.fallback_max_age_crypto_days", _int(f.get("fallback_max_age_crypto_days"), 30, 0, 3650))
-        s.set("prices.fallback_max_age_security_days", _int(f.get("fallback_max_age_security_days"), 365, 0, 3650))
-        am = str(f.get("auto_map") or "hoch")
-        s.set("prices.auto_map", am if am in ("hoch", "mittel", "aus") else "hoch")
-        mapping = {}
-        for line in str(f.get("crypto_history_fallback") or "").splitlines():
-            if "=" in line:
-                k, _, v = line.partition("=")
-                if k.strip() and v.strip():
-                    mapping[k.strip().upper()] = v.strip()
-        auto_hist = f.get("crypto_history_auto") == "1"
-        if mapping != (s.get("prices.crypto_history_fallback") or {}) \
-                or auto_hist != bool(s.get("prices.crypto_history_auto", True)):
-            # geänderte Zuordnung: Ersatzhistorie beim nächsten Backfill neu prüfen (statt erst nach 7 Tagen)
-            ctx.db.x("UPDATE series_meta SET alt_checked_at=NULL WHERE alt_checked_at IS NOT NULL")
-        s.set("prices.crypto_history_fallback", mapping)
-        s.set("prices.crypto_history_auto", auto_hist)
-        benches = []
-        for i, line in enumerate(str(f.get("benchmarks") or "").splitlines()):
-            if "|" in line:
-                name, _, series = line.partition("|")
-                series = series.strip()
-                if series and ":" in series:
-                    benches.append({"id": f"b{i}", "name": name.strip() or series, "series": series})
-        s.set("performance.benchmarks", benches or DEFAULTS["performance.benchmarks"])
-        if ctx.prices.cg is not None:
-            ctx.prices.cg.monthly_limit = int(s.get("prices.coingecko_monthly_limit", 10000))
-        if ctx.scheduler is not None:
-            ctx.scheduler.reschedule_prices()
-            ctx.scheduler.trigger("history_backfill", 1)
-    elif section == "news":
-        s.set("news.min_relevance", _float(f.get("min_relevance"), 0.2, 0.0, 5.0))
-        s.set("news.dashboard_count", _int(f.get("dashboard_count"), 5, 1, 20))
-        s.set("llm.enabled", f.get("llm_enabled") == "1")
-        s.set("llm.daily_token_budget", _int(f.get("llm_budget"), 60000, 0, 5_000_000))
-        model = str(f.get("llm_model") or "").strip()
-        if model:
-            s.set("llm.model", model[:80])
-        from app.news.ai import GEMINI_DEFAULT, model_allowed
 
-        s.set("llm.provider", "gemini" if f.get("llm_provider") == "gemini" else "claude")
-        gm = str(f.get("gemini_model") or "").strip().lower()
-        s.set("llm.gemini_model", gm if gm and model_allowed(gm) else GEMINI_DEFAULT)
-        s.set("llm.gemini_rpm", _int(f.get("gemini_rpm"), 5, 1, 1000))
-        s.set("llm.gemini_tpm", _int(f.get("gemini_tpm"), 100000, 1000, 10_000_000))
-        s.set("llm.gemini_rpd", _int(f.get("gemini_rpd"), 100, 1, 100000))
-        s.set("llm.gemini_daily_token_budget", _int(f.get("gemini_budget"), 200000, 1000, 50_000_000))
-        s.set("llm.gemini_tokens_unlimited", f.get("gemini_unlimited") == "1")
-        s.set("news.enrich", f.get("news_enrich") == "1")
-        s.set("news.content_mode", "excerpt" if f.get("content_mode") == "excerpt" else "full")
-        s.set("news.analysis", f.get("news_analysis") == "1")
-        s.set("news.group", f.get("news_group") == "1")
-        s.set("news.group_llm", f.get("news_group_llm") == "1")
-        s.set("news.report", f.get("news_report") == "1")
-        s.set("news.report_hour", _int(f.get("report_hour"), 7, 0, 23))
-        s.set("news.report_minute", _int(f.get("report_minute"), 30, 0, 59))
-    elif section == "backup":
-        s.set("backup.keep", _int(f.get("keep"), 14, 1, 365))
-        s.set("backup.hour", _int(f.get("hour"), 3, 0, 23))
-        try:
-            from app.jobs.maintenance import prune_backups, reschedule_backup
+    def work() -> Response:
+        section = f.get("section", "general")
+        if section == "general":
+            s.set("allocation.other_threshold_pct", _float(f.get("other_threshold_pct"), 1.0, 0.0, 20.0))
+            rng = str(f.get("default_range") or "1J").upper()
+            s.set("ui.default_range", rng if rng in ("1M", "3M", "6M", "YTD", "1J", "3J", "5J", "MAX") else "1J")
+        elif section == "ledger":
+            scope = f.get("scope")
+            s.set("ledger.scope", scope if scope in ("global", "account") else "global")
+            s.set("ledger.unmatched_transfers_as_flows", f.get("unmatched_flows") == "1")
+            overrides = {}
+            pf = ctx.portfolio()
+            for acc in (pf.all_accounts() if pf else []):
+                v = f.get(f"cash__{acc}")
+                if v in ("yes", "no"):
+                    overrides[acc] = v == "yes"
+            s.set("ledger.cash_overrides", overrides)
+            ctx.invalidate_data()
+        elif section == "prices":
+            crypto = snap(f.get("crypto_interval_min"), CRYPTO_PRESETS, 10)
+            s.set("prices.crypto_interval_min", crypto)
+            throttled = snap(f.get("crypto_throttled_interval_min"), THROTTLED_PRESETS, 30)
+            s.set("prices.crypto_throttled_interval_min", max(throttled, crypto))  # gedrosselt nie häufiger
+            s.set("prices.stock_interval_min", snap(f.get("stock_interval_min"), SECURITY_PRESETS, 15))
+            s.set("prices.stale_crypto_minutes", _int(f.get("stale_crypto_minutes"), 60, 5, 1440))
+            s.set("prices.stale_crypto_market_hours", _int(f.get("stale_crypto_market_hours"), 24, 1, 720))
+            s.set("prices.stale_security_hours", _int(f.get("stale_security_hours"), 24, 1, 240))
+            s.set("prices.coingecko_monthly_limit", _int(f.get("coingecko_monthly_limit"), 10000, 100, 10_000_000))
+            s.set("prices.coingecko_throttle_pct", _int(f.get("coingecko_throttle_pct"), 80, 10, 100))
+            s.set("prices.fallback_max_age_crypto_days", _int(f.get("fallback_max_age_crypto_days"), 30, 0, 3650))
+            s.set("prices.fallback_max_age_security_days", _int(f.get("fallback_max_age_security_days"), 365, 0, 3650))
+            am = str(f.get("auto_map") or "hoch")
+            s.set("prices.auto_map", am if am in ("hoch", "mittel", "aus") else "hoch")
+            mapping = {}
+            for line in str(f.get("crypto_history_fallback") or "").splitlines():
+                if "=" in line:
+                    k, _, v = line.partition("=")
+                    if k.strip() and v.strip():
+                        mapping[k.strip().upper()] = v.strip()
+            auto_hist = f.get("crypto_history_auto") == "1"
+            if mapping != (s.get("prices.crypto_history_fallback") or {}) \
+                    or auto_hist != bool(s.get("prices.crypto_history_auto", True)):
+                # geänderte Zuordnung: Ersatzhistorie beim nächsten Backfill neu prüfen (statt erst nach 7 Tagen)
+                ctx.db.x("UPDATE series_meta SET alt_checked_at=NULL WHERE alt_checked_at IS NOT NULL")
+            s.set("prices.crypto_history_fallback", mapping)
+            s.set("prices.crypto_history_auto", auto_hist)
+            benches = []
+            for i, line in enumerate(str(f.get("benchmarks") or "").splitlines()):
+                if "|" in line:
+                    name, _, series = line.partition("|")
+                    series = series.strip()
+                    if series and ":" in series:
+                        benches.append({"id": f"b{i}", "name": name.strip() or series, "series": series})
+            s.set("performance.benchmarks", benches or DEFAULTS["performance.benchmarks"])
+            if ctx.prices.cg is not None:
+                ctx.prices.cg.monthly_limit = int(s.get("prices.coingecko_monthly_limit", 10000))
+            if ctx.scheduler is not None:
+                ctx.scheduler.reschedule_prices()
+                ctx.scheduler.trigger("history_backfill", 1)
+        elif section == "news":
+            s.set("news.min_relevance", _float(f.get("min_relevance"), 0.2, 0.0, 5.0))
+            s.set("news.dashboard_count", _int(f.get("dashboard_count"), 5, 1, 20))
+            s.set("llm.enabled", f.get("llm_enabled") == "1")
+            s.set("llm.daily_token_budget", _int(f.get("llm_budget"), 60000, 0, 5_000_000))
+            model = str(f.get("llm_model") or "").strip()
+            if model:
+                s.set("llm.model", model[:80])
+            from app.news.ai import GEMINI_DEFAULT, model_allowed
 
-            reschedule_backup(ctx)
-            prune_backups(ctx, int(s.get("backup.keep", 14)))
-        except ImportError:  # pragma: no cover
-            pass
-    else:
-        handler = _EXTRA_SECTIONS.get(str(section))
-        if handler is not None:
-            await handler(ctx, f)
-    log.info("Einstellungen gespeichert (%s)", section)
-    try:  # Einstellungen gehören zum Gesamtexport → datierte Sicherung wie nach Buchungsänderungen
-        from app.jobs.exports import schedule as schedule_export
+            s.set("llm.provider", "gemini" if f.get("llm_provider") == "gemini" else "claude")
+            gm = str(f.get("gemini_model") or "").strip().lower()
+            s.set("llm.gemini_model", gm if gm and model_allowed(gm) else GEMINI_DEFAULT)
+            s.set("llm.gemini_rpm", _int(f.get("gemini_rpm"), 5, 1, 1000))
+            s.set("llm.gemini_tpm", _int(f.get("gemini_tpm"), 100000, 1000, 10_000_000))
+            s.set("llm.gemini_rpd", _int(f.get("gemini_rpd"), 100, 1, 100000))
+            s.set("llm.gemini_daily_token_budget", _int(f.get("gemini_budget"), 200000, 1000, 50_000_000))
+            s.set("llm.gemini_tokens_unlimited", f.get("gemini_unlimited") == "1")
+            s.set("news.enrich", f.get("news_enrich") == "1")
+            s.set("news.content_mode", "excerpt" if f.get("content_mode") == "excerpt" else "full")
+            s.set("news.analysis", f.get("news_analysis") == "1")
+            s.set("news.group", f.get("news_group") == "1")
+            s.set("news.group_llm", f.get("news_group_llm") == "1")
+            s.set("news.report", f.get("news_report") == "1")
+            s.set("news.report_hour", _int(f.get("report_hour"), 7, 0, 23))
+            s.set("news.report_minute", _int(f.get("report_minute"), 30, 0, 59))
+        elif section == "backup":
+            s.set("backup.keep", _int(f.get("keep"), 14, 1, 365))
+            s.set("backup.hour", _int(f.get("hour"), 3, 0, 23))
+            try:
+                from app.jobs.maintenance import prune_backups, reschedule_backup
 
-        schedule_export(ctx)
-    except Exception as e:  # pragma: no cover – Sicherung darf das Speichern nie verhindern
-        log.debug("Sicherung nicht eingeplant: %s", e)
-    target = f"/settings?saved={section}#{section}"
-    if request.headers.get("hx-request") == "true":
-        return Response(status_code=204, headers={"HX-Redirect": target})
-    return Response(status_code=303, headers={"Location": target})
+                reschedule_backup(ctx)
+                prune_backups(ctx, int(s.get("backup.keep", 14)))
+            except ImportError:  # pragma: no cover
+                pass
+        else:
+            handler = _EXTRA_SECTIONS.get(str(section))
+            if handler is not None:
+                handler(ctx, f)
+        log.info("Einstellungen gespeichert (%s)", section)
+        try:  # Einstellungen gehören zum Gesamtexport → datierte Sicherung wie nach Buchungsänderungen
+            from app.jobs.exports import schedule as schedule_export
+
+            schedule_export(ctx)
+        except Exception as e:  # pragma: no cover – Sicherung darf das Speichern nie verhindern
+            log.debug("Sicherung nicht eingeplant: %s", e)
+        target = f"/settings?saved={section}#{section}"
+        if request.headers.get("hx-request") == "true":
+            return Response(status_code=204, headers={"HX-Redirect": target})
+        return Response(status_code=303, headers={"Location": target})
+
+    return await run_in_threadpool(work)
 
 
 _EXTRA_SECTIONS: dict[str, Any] = {}
