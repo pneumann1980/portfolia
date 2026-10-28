@@ -15,6 +15,7 @@ Schutzmaßnahmen – alle im selben Modul, damit sie nicht umgangen werden könn
 from __future__ import annotations
 
 import ipaddress
+import logging
 import socket
 import time
 from collections.abc import Callable
@@ -22,6 +23,8 @@ from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+
+call_log = logging.getLogger("app.http")  # Host, Pfad, Status, Dauer – nie Query oder Inhalt
 
 MAX_BYTES = 2_500_000
 MAX_REDIRECTS = 5
@@ -148,6 +151,7 @@ class SafeFetcher:
         current = url
         limit = self.max_redirects if max_redirects is None else max_redirects
         deadline = time.monotonic() + self.timeout_s * 2
+        started = time.perf_counter()
         for hop in range(limit + 1):
             scheme, host, port = check_url(current)
             ip = resolve_public(host, port, self.resolver)
@@ -178,6 +182,10 @@ class SafeFetcher:
                             raise FetchError("too_large", r.status_code)
                         if time.monotonic() > deadline:
                             raise FetchError("timeout", r.status_code)
+                    parts = urlsplit(current)
+                    call_log.debug("%s %s%s -> %s in %d ms (%d Weiterleitungen)", "POST" if data is not None else "GET",
+                                   parts.hostname, parts.path[:80], r.status_code,
+                                   round((time.perf_counter() - started) * 1000), hop)
                     return Fetched(url=current, status=r.status_code, content_type=ctype, body=bytes(buf),
                                    headers={k.lower(): v for k, v in r.headers.items()}, redirects=hop)
             except FetchError:

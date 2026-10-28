@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from app.analytics import periods as P
 from app.analytics.colors import asset_colors
@@ -314,6 +314,17 @@ def performance(request: Request, period: str = "1J", scope: str = "total", star
 
 
 # -- Datenqualität ------------------------------------------------------------------------------------
+
+@router.get("/quality/log.txt", include_in_schema=False)
+def quality_log() -> Response:
+    """Die letzten Logzeilen seit dem Start (ab INFO, Geheimnisse entfernt) – falls ``docker logs`` unbequem ist."""
+    from app.logging_setup import recent_lines
+
+    lines = recent_lines()
+    body = "\n".join(lines) + "\n" if lines else "Noch keine Einträge.\n"
+    return Response(body, media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="portfolia-log.txt"'})
+
 
 @router.get("/quality", response_class=HTMLResponse)
 def quality(request: Request, import_id: int | None = None) -> HTMLResponse:

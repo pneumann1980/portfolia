@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
@@ -14,6 +14,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from app import APP_NAME, REVISION, __version__
 from app.context import AppContext
 from app.web import fmt
+from app.web.accesslog import AccessLogMiddleware
 from app.web.security import BasicAuthMiddleware, CsrfMiddleware, SecurityHeadersMiddleware
 
 BASE = Path(__file__).resolve().parent.parent
@@ -50,6 +51,7 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
         app.add_middleware(BasicAuthMiddleware, user=ctx.config.auth_user, password_hash=ctx.config.auth_password_hash)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+    app.add_middleware(AccessLogMiddleware, mode=ctx.config.log_access)  # äußerste Schicht: sieht jede Anfrage
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     from app.web.routes import actions, api, pages
@@ -84,6 +86,25 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
         return templates.TemplateResponse(request, "error.html", {"code": 404, "message": "Seite nicht gefunden",
                                                                   "active": None, "csrf_token": _csrf(request),
                                                                   "alerts": []}, status_code=404)
+
+    @app.exception_handler(Exception)
+    async def server_error(request: Request, exc: Exception) -> Response:
+        """Unbehandelter Fehler: verständliche Seite mit Fehler-ID statt nacktem „Internal Server Error“.
+
+        Protokolliert wird in :class:`AccessLogMiddleware` (eine Zeile mit Pfad und Fundstelle); Starlette gibt die
+        Ausnahme danach weiter, damit Testclient und Server sie sehen.
+        """
+        rid = getattr(request.state, "rid", "")
+        if request.url.path.startswith("/api/"):
+            return JSONResponse({"error": "internal error", "rid": rid}, status_code=500,
+                                headers={"X-Request-ID": rid})
+        try:
+            return templates.TemplateResponse(request, "error.html", {
+                "code": 500, "message": "Es ist ein Fehler aufgetreten. Die Daten wurden nicht verändert, wenn die "
+                "Aktion nicht bestätigt wurde.", "rid": rid, "active": None, "csrf_token": _csrf(request),
+                "alerts": []}, status_code=500, headers={"X-Request-ID": rid})
+        except Exception:  # die Fehlerseite selbst darf nie den Fehler verdecken
+            return PlainTextResponse(f"Interner Fehler (ID {rid})", status_code=500)
 
     @app.exception_handler(OverflowError)
     async def too_large(request: Request, exc: OverflowError) -> HTMLResponse:

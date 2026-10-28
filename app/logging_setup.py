@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import contextvars
 import json
 import logging
 import re
 import sqlite3
 import sys
 import threading
+import time
 import traceback
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -81,6 +83,66 @@ class SecretRedactor(logging.Filter):
 
 _RESERVED = set(vars(logging.LogRecord("", 0, "", 0, "", (), None)).keys()) | {"message", "asctime"}
 
+# Kontext der laufenden Anfrage bzw. des laufenden Jobs: wird jeder Logzeile angehängt, damit sich alles zu einem
+# Vorgang mit ``docker logs | grep <rid>`` finden lässt.
+request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
+job_name: contextvars.ContextVar[str] = contextvars.ContextVar("job_name", default="")
+
+
+class ContextFilter(logging.Filter):
+    """Hängt ``rid`` (Anfrage) und ``job`` an jeden Datensatz, sofern gesetzt und nicht schon explizit angegeben."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        rid, job = request_id.get(), job_name.get()
+        if rid and not hasattr(record, "rid"):
+            record.rid = rid
+        if job and not hasattr(record, "job"):
+            record.job = job
+        return True
+
+
+def _extras(record: logging.LogRecord) -> dict[str, object]:
+    # color_message: Uvicorn-Duplikat der Meldung mit ANSI-Farben
+    return {k: v for k, v in record.__dict__.items() if k not in _RESERVED and not k.startswith("_")
+            and k != "color_message"}
+
+
+class FloodFilter(logging.Filter):
+    """Begrenzt gleiche Warnungen/Fehler (gleicher Logger, gleiche Meldungsvorlage) auf ``limit`` je ``window_s``.
+
+    Der Textabruf erzeugte an einem Tag 82 gleichartige Netzwerkfehler – einzeln ist das Rauschen, das die eigentlichen
+    Fehler verdeckt. Die nächste Meldung nach dem Fenster nennt, wie viele unterdrückt wurden. Nur WARNING und höher;
+    das Fehlerprotokoll in der Datenbank sieht weiterhin alles (eigener Handler ohne diesen Filter).
+    """
+
+    def __init__(self, limit: int = 5, window_s: float = 60.0) -> None:
+        super().__init__()
+        self.limit = limit
+        self.window_s = window_s
+        self._seen: dict[tuple[str, int, str], list[float]] = {}  # Schlüssel -> [Fensterbeginn, Anzahl, unterdrückt]
+        self._lock = threading.Lock()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno < logging.WARNING:
+            return True
+        key = (record.name, record.levelno, str(record.msg)[:200])
+        now = time.monotonic()
+        with self._lock:
+            st = self._seen.get(key)
+            if st is None or now - st[0] >= self.window_s:
+                dropped = int(st[2]) if st else 0
+                if len(self._seen) > 2000:
+                    self._seen.clear()
+                self._seen[key] = [now, 1, 0]
+                if dropped:
+                    record.suppressed = dropped
+                return True
+            st[1] += 1
+            if st[1] <= self.limit:
+                return True
+            st[2] += 1
+            return False
+
 
 class JsonFormatter(logging.Formatter):
     def __init__(self, redactor: SecretRedactor) -> None:
@@ -107,12 +169,27 @@ class JsonFormatter(logging.Formatter):
 
 
 class TextFormatter(logging.Formatter):
+    """Lesbares Format für ``docker logs``: ``Zeit LEVEL logger: Meldung key=value``; Ausnahmen mehrzeilig darunter."""
+
     def __init__(self, redactor: SecretRedactor) -> None:
-        super().__init__("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+        super().__init__("%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S")
         self.redactor = redactor
 
     def format(self, record: logging.LogRecord) -> str:
-        return self.redactor.redact(super().format(record))
+        record.message = record.getMessage()
+        line = self.formatTime(record, self.datefmt) + f" {record.levelname:<7} {record.name}: {record.message}"
+        extras = " ".join(f"{k}={_short(v)}" for k, v in _extras(record).items())
+        if extras:
+            line += "  " + extras
+        if record.exc_info and record.exc_info[1] is not None:
+            line += "\n" + "".join(traceback.format_exception(*record.exc_info)).rstrip()
+        return self.redactor.redact(line)
+
+
+def _short(v: object) -> str:
+    text = str(v)
+    text = text if len(text) <= 120 else text[:117] + "…"
+    return f'"{text}"' if " " in text else text
 
 
 class DbEventHandler(logging.Handler):
@@ -190,14 +267,64 @@ class DbEventHandler(logging.Handler):
         super().close()
 
 
+class _DropAsgiTraceback(logging.Filter):
+    """Uvicorn meldet unbehandelte Fehler zusätzlich mit ~100 Zeilen Framework-Traceback und ohne Pfad. Die App
+    protokolliert denselben Fehler bereits kompakt (``app.web``, mit Methode, Pfad, Anfrage-ID und Fundstelle)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith("Exception in ASGI application")
+
+
+class RingBufferHandler(logging.Handler):
+    """Hält die letzten ``capacity`` Zeilen (ab INFO, redigiert) im Speicher: Download auf der Diagnose-Seite, falls der
+    Zugriff auf ``docker logs`` unbequem ist (z. B. Unraid). Geht beim Neustart verloren."""
+
+    def __init__(self, redactor: SecretRedactor, capacity: int = 2000) -> None:
+        super().__init__(level=logging.INFO)
+        self.setFormatter(TextFormatter(redactor))
+        self._buf: collections.deque[str] = collections.deque(maxlen=capacity)
+        self._lock = threading.Lock()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            line = self.format(record)
+            with self._lock:
+                self._buf.append(line)
+        except Exception:  # noqa: S110 - Logging darf niemals Exceptions werfen
+            pass
+
+    def lines(self) -> list[str]:
+        with self._lock:
+            return list(self._buf)
+
+
 _redactor = SecretRedactor()
+_ring: RingBufferHandler | None = None
+
+
+def recent_lines() -> list[str]:
+    """Die letzten Logzeilen seit dem Start (leer, solange das Logging nicht eingerichtet ist)."""
+    return _ring.lines() if _ring is not None else []
+
+
+def parse_levels(spec: str) -> dict[str, int]:
+    """``"app.news=DEBUG,app.db=WARNING"`` -> {Logger: Level}; ungültige Einträge werden übergangen."""
+    out: dict[str, int] = {}
+    for part in (spec or "").split(","):
+        name, _, lvl = part.strip().partition("=")
+        level = getattr(logging, lvl.strip().upper(), None)
+        if name.strip() and isinstance(level, int):
+            out[name.strip()] = level
+    return out
 
 
 def get_redactor() -> SecretRedactor:
     return _redactor
 
 
-def setup_logging(level: str = "INFO", fmt: str = "json", secrets: list[str] | None = None) -> SecretRedactor:
+def setup_logging(level: str = "INFO", fmt: str = "text", secrets: list[str] | None = None,
+                  levels: str = "") -> SecretRedactor:
+    global _ring
     _redactor.set_secrets(secrets or [])
     root = logging.getLogger()
     for h in list(root.handlers):
@@ -205,8 +332,15 @@ def setup_logging(level: str = "INFO", fmt: str = "json", secrets: list[str] | N
             root.removeHandler(h)
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter(_redactor) if fmt == "json" else TextFormatter(_redactor))
+    # Reihenfolge: Kontext ergänzen, Flut begrenzen (sieht noch die Meldungsvorlage), zuletzt Geheimnisse entfernen
+    handler.addFilter(ContextFilter())
+    handler.addFilter(FloodFilter())
     handler.addFilter(_redactor)
     root.addHandler(handler)
+    _ring = RingBufferHandler(_redactor)
+    _ring.addFilter(ContextFilter())
+    _ring.addFilter(_redactor)
+    root.addHandler(_ring)
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
     # Drittbibliotheken leiser stellen – httpx loggt sonst jede URL (inkl. Query-Parametern).
     for noisy in ("httpx", "httpcore", "urllib3", "yfinance", "peewee", "apscheduler.executors.default",
@@ -216,6 +350,11 @@ def setup_logging(level: str = "INFO", fmt: str = "json", secrets: list[str] | N
     # yfinance loggt jeden fehlgeschlagenen Ticker einzeln – Fehler fassen wir selbst je Quelle zusammen
     logging.getLogger("yfinance").setLevel(logging.CRITICAL)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    uv_err = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, _DropAsgiTraceback) for f in uv_err.filters):
+        uv_err.addFilter(_DropAsgiTraceback())
+    for name, lvl in parse_levels(levels).items():  # gezielt einzelne Bereiche anheben/absenken (LOG_LEVELS)
+        logging.getLogger(name).setLevel(lvl)
     return _redactor
 
 

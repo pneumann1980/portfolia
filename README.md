@@ -113,7 +113,34 @@ entspricht (GitHub → Actions → Lauf → Schritt „Veröffentlichte Tags“)
 '{{ index .Config.Labels "org.opencontainers.image.revision" }}'`.
 
 Das Image läuft als Nicht-Root-Benutzer mit `PUID`/`PGID` (Unraid-Standard 99/100), hat einen
-`HEALTHCHECK` (`/healthz`) und schreibt strukturierte Logs (JSON) auf stdout.
+`HEALTHCHECK` (`/healthz`) und schreibt Logs (lesbarer Text, auf Wunsch JSON) auf stdout – siehe [Fehler finden](#fehler-finden-logs).
+
+### Fehler finden (Logs)
+
+`docker logs portfolia` zeigt beim Start Version, Daten, Anbieter (nur ja/nein), Scheduler und Module; danach nur, was
+auffällt. Jede Anfrage hat eine **Fehler-ID** (Kopfzeile `X-Request-ID`, auf der Fehlerseite sichtbar, in jeder Logzeile
+`rid=…`):
+
+```bash
+docker logs --since 30m portfolia | grep -E 'ERROR|WARNING'     # Auffälligkeiten
+docker logs portfolia 2>&1 | grep a3f9c2                        # alles zu einer Fehler-ID
+docker logs -f portfolia                                         # mitlesen
+```
+
+| Zeile | Bedeutung |
+|---|---|
+| `ERROR app.web: 500 GET /news?[tab] 12 ms UndefinedError … @ datei.py:123` | unbehandelter Fehler: Methode, Pfad (Query nur als Schlüsselnamen, nie Werte), Fundstelle; Traceback bei `LOG_LEVEL=DEBUG` |
+| `WARNING app.web: GET /journal 200 2310 ms` | langsame Anfrage (≥ 1 s) bzw. Antwort ≥ 400 |
+| `INFO app.jobs.tasks: Job news_enrich ok in 41.2 s …` | Job-Ende (nur ab 5 s; sonst `DEBUG`); Fehler immer mit Traceback auf `ERROR` |
+| `WARNING app: Lauf von X verpasst …` | Der Pool war ausgelastet, ein geplanter Lauf wurde verworfen |
+| `WARNING app.db: Langsame Datenbankanweisung (… ms)` | Anweisung oder Wartezeit auf die Schreibsperre ≥ 0,5 s (nur Anfang des SQL, nie Parameter) |
+| `INFO app.health: Betriebszustand: Threads … Speicher …` | stündlich: Threads, DB-Verbindungen, Speicher |
+| `app.http: GET host/pfad -> 200 in 340 ms` | ausgehende Abrufe, ab `app.http=DEBUG` (`LOG_LEVELS`); Warnung bei ≥ 500, 429 oder ≥ 5 s |
+
+Gleichartige Warnungen werden auf 5 je Minute begrenzt (die nächste nennt die Zahl der unterdrückten). Geheimnisse
+(API-Schlüssel, Token) werden aus jeder Zeile entfernt. Ohne Zugriff auf `docker logs`: **Datenqualität → Fehlerprotokoll →
+„Protokoll herunterladen“** (letzte 2 000 Zeilen seit dem Start). Damit das Containerlog nicht unbegrenzt wächst, begrenzt die
+Compose-Datei die Größe (`logging: max-size: 10m, max-file: 3`); bei `docker run`: `--log-opt max-size=10m --log-opt max-file=3`.
 
 ### Docker Compose / docker run
 
@@ -165,6 +192,9 @@ Zertifizierungsstelle kann die CA als Build-Secret übergeben werden:
 | `AUTH_MODE` | `none` | `none` oder `basic` |
 | `AUTH_USER`, `AUTH_PASSWORD_HASH` | – | Basic-Auth; Hash erzeugen: `docker exec -it portfolia python -m app hash-password` |
 | `LOG_LEVEL` | `INFO` | `DEBUG` … `ERROR` |
+| `LOG_FORMAT` | `text` | `text` (lesbar, `key=value`) oder `json` (maschinenlesbar) |
+| `LOG_ACCESS` | `slow` | Anfrage-Zeilen: `slow` = nur Fehler (≥ 400) und langsame (≥ 1 s), `all` = jede, `off` = keine |
+| `LOG_LEVELS` | – | einzelne Bereiche anders einstellen, z. B. `app.news=DEBUG,app.http=DEBUG` |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | IPs eines Reverse-Proxys, dessen `X-Forwarded-*` vertraut wird |
 | `ROOT_PATH` | – | Betrieb unter Unterpfad hinter einem Proxy (z. B. `/portfolia`) |
 | `DEMO_MODE` | `false` | synthetische Kurse ohne Internetzugriff (zum Ausprobieren) |

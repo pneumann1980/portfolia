@@ -9,6 +9,7 @@ from urllib.parse import quote
 from fastapi import Request
 from fastapi.responses import HTMLResponse
 
+from app import health
 from app.context import AppContext
 from app.progress import view as progress_view
 
@@ -32,7 +33,8 @@ def panel_url(asset_id: str) -> str:
 
 
 def global_alerts(ctx: AppContext) -> list[dict[str, str]]:
-    alerts: list[dict[str, str]] = []
+    # zuerst: Zustände, in denen Benutzeraktionen nicht ausgeführt werden können (Speicher voll, nicht beschreibbar …)
+    alerts: list[dict[str, str]] = health.critical_alerts(ctx)
     last = ctx.db.q1("SELECT id, filename, status, processed_at FROM imports ORDER BY id DESC LIMIT 1")
     active = ctx.active_import_id()
     if last is not None and last["status"] == "failed" and last["id"] != active:

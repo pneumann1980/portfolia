@@ -1426,6 +1426,37 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
 
+## 0.61.0 – Logging für die Docker-Konsole, Hinweis bei blockierten Benutzeraktionen
+
+Paket B aus `docs/ARBEITSPLAN.md` (Befund: 500er ohne Pfad, keine Anfrage-/Job-Zeilen, Traceback nur auf DEBUG).
+
+* **Standardformat `text`** (vorher `json`; `LOG_FORMAT=json` bleibt wählbar). Zusatzfelder erscheinen als `key=value`
+  (bisher nur im JSON-Format); `LOG_LEVELS="app.news=DEBUG,app.http=DEBUG"` hebt einzelne Bereiche an.
+* **Fehler-ID:** jede Anfrage bekommt eine 6-stellige ID (Header `X-Request-ID`, Fehlerseite, `rid=` in jeder Logzeile der
+  Anfrage). Unbehandelte Fehler erscheinen als **eine** Zeile mit Methode, Pfad (Query nur als Schlüsselnamen), Ausnahme und
+  Fundstelle statt ~110 Zeilen Framework-Traceback (der Uvicorn-Doppeleintrag ist unterdrückt; vollständig bei `LOG_LEVEL=DEBUG`).
+  Fehlerseite (HTML) bzw. JSON (`/api/…`) nennt die ID.
+* **Zugriffsprotokoll** (`LOG_ACCESS`): `slow` (Standard) = Antworten ≥ 400 und Anfragen ≥ 1 s, `all` = jede (ohne Polling-Endpunkte),
+  `off`. Nie protokolliert: Query-Werte, Header, Formular-/Upload-Inhalte.
+* **Jobs:** Ende mit Dauer und Kurzergebnis (INFO ab 5 s, sonst DEBUG – rund 1 400 Läufe/Tag); Fehler immer mit Traceback auf ERROR;
+  jede Zeile eines Laufs trägt `job=<name>`. Verpasste/übersprungene Läufe (APScheduler) als WARNING mit Jobname und Verspätung.
+* **Startbanner** (Version, Python/SQLite, Daten, Anbieter nur ja/nein, Module, Scheduler mit Pool-Größen) und **stündliche
+  Zustandszeile** (Threads, DB-Verbindungen, Speicher, laufende Jobs, verpasste Läufe) – Messwerte für M4/M6 der Analyse.
+  `AUTH_MODE=none` ist eine Logwarnung beim Start; **kein** Hinweisband in der Oberfläche (Entscheidung des Auftraggebers).
+* **Ausgehende Abrufe** (`app.http`, ab DEBUG): Host, Pfad, Status, Dauer (nie Query); WARNING bei ≥ 500, 429 oder ≥ 5 s;
+  Netzwerkfehler je Versuch. **Datenbank:** Anweisungen/Sperrwartezeiten ≥ 0,5 s als WARNING (nur Anfang des SQL).
+* **Flutschutz:** gleiche Warnungen/Fehler höchstens 5 je Minute auf der Konsole (die nächste nennt `suppressed`); das Fehlerprotokoll in
+  der Datenbank bleibt vollständig.
+* **Hinweis nur bei blockierten Benutzeraktionen** (rotes Band): Datenverzeichnis/Datenbank nicht beschreibbar, < 100 MB frei, Schreibzugriff in den
+  letzten 10 Minuten gescheitert (Datei schreibgeschützt, Datenträger voll, gesperrt), Hintergrunddienst gestoppt. Alle 30 s geprüft.
+* **Protokoll-Download:** Datenqualität → Fehlerprotokoll → „Protokoll herunterladen“ (letzte 2 000 Zeilen seit dem Start, ohne Geheimnisse).
+* **Module (L4):** fehlt eine Abhängigkeit *in* einem Modul, wird das als ERROR gemeldet (bisher still: Routen 404).
+* **Docker:** Compose begrenzt das Containerlog (`max-size 10m`, `max-file 3`); README „Fehler finden (Logs)“.
+* **Grenzen:** Ringpuffer und Flutzähler gehen beim Neustart verloren; Anzahl der unterdrückten Meldungen erscheint erst bei der nächsten
+  gleichen Meldung. Logvolumen im Leerlauf nicht langfristig gemessen (Ziel ≤ 500 Zeilen/Tag).
+* **Tests:** `tests/test_logging.py` (Fehlerzeile mit ID/Fundstelle, keine Query-Werte, Zugriffsmodi, Job-Logs, Flutschutz, Banner ohne
+  Schlüssel, Zustandszeile, Hinweise, Scheduler-Ereignisse, Abruf-Hooks, Modulbericht).
+
 ## 0.60.0 – Härtung: Pillow 13, Fehlerseiten statt Serverfehler, Google-News-Hosts
 
 Umsetzung von H1, M1, M2 und N1 aus `docs/PROJEKTANALYSE.md` (Plan: `docs/ARBEITSPLAN.md`, Paket A).

@@ -3,32 +3,54 @@
 from __future__ import annotations
 
 import logging
-import traceback
+import time
 from collections.abc import Callable
 from typing import Any
 
 from app.context import AppContext
 from app.importer.loader import ImportOutcome, check_import_dir
+from app.logging_setup import job_name
 from app.plans.service import plan_service
 from app.progress import Progress, job_progress
 
 log = logging.getLogger(__name__)
+SLOW_JOB_S = 5.0
+
+
+def _summary(result: Any) -> str:
+    """Kurzfassung des Jobergebnisses für die Logzeile (nur einfache Werte, begrenzt)."""
+    if not isinstance(result, dict):
+        return ""
+    parts = [f"{k}={v}" for k, v in result.items() if isinstance(v, (int, float, str, bool)) and v not in ("", None)]
+    text = " ".join(parts[:8])
+    return text if len(text) <= 160 else text[:157] + "…"
 
 
 def run_job(ctx: AppContext, name: str, fn: Callable[[], dict[str, Any] | None]) -> dict[str, Any] | None:
-    """Einheitlicher Rahmen: Status in job_status, Fehler protokollieren, nie Exceptions nach außen."""
+    """Einheitlicher Rahmen: Status in job_status, Fehler protokollieren, nie Exceptions nach außen.
+
+    Protokoll: Start auf DEBUG; Ende mit Dauer auf INFO (ab ``SLOW_JOB_S``, sonst DEBUG – die Jobs laufen rund 1 400-mal
+    am Tag); ein Fehler immer mit vollständigem Traceback auf ERROR. Alle Zeilen des Laufs tragen ``job=<name>``.
+    """
+    token = job_name.set(name)
     ctx.job_start(name)
+    t0 = time.perf_counter()
+    log.debug("Job %s gestartet", name)
     try:
         result = fn()
         ctx.job_end(name, True, result=result)
+        secs = time.perf_counter() - t0
+        log.log(logging.INFO if secs >= SLOW_JOB_S else logging.DEBUG, "Job %s ok in %.1f s %s", name, secs,
+                _summary(result))
         return result
     except Exception as e:
-        log.error("Job %s fehlgeschlagen: %s", name, e, extra={"job": name})
-        log.debug("%s", traceback.format_exc())
+        log.error("Job %s fehlgeschlagen nach %.1f s: %s: %s", name, time.perf_counter() - t0, type(e).__name__, e,
+                  exc_info=True)
         ctx.job_end(name, False, error=f"{type(e).__name__}: {e}")
         return None
     finally:
         ctx.db.close_thread_conn()
+        job_name.reset(token)
 
 
 def import_check(ctx: AppContext, trigger: str = "poll", force: bool = False) -> ImportOutcome:

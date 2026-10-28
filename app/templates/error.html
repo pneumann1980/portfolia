@@ -4,6 +4,8 @@
 {% block content %}
 <section class="card empty-state">
   <h1>{{ message }}</h1>
+  {% if rid %}<p class="hint">Fehler-ID <code>{{ rid }}</code> – damit lässt sich der Vorgang im Protokoll finden
+    (<code>docker logs portfolia | grep {{ rid }}</code>).</p>{% endif %}
   <p><a href="/">Zur Übersicht</a></p>
 </section>
 {% endblock %}

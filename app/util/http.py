@@ -16,8 +16,31 @@ from app.db import Database
 from app.util.timeutil import iso, parse_iso
 
 log = logging.getLogger(__name__)
+call_log = logging.getLogger("app.http")  # ausgehende Abrufe (Host, Pfad, Status, Dauer – nie Query/Header/Inhalt)
 
 RETRY_STATUS = {429, 500, 502, 503, 504}
+SLOW_CALL_S = 5.0
+
+
+def _stamp(request: httpx.Request) -> None:
+    request.extensions["t0"] = time.perf_counter()
+
+
+def _report(response: httpx.Response) -> None:
+    """Protokolliert die Antwort: DEBUG im Normalfall, WARNING bei Serverfehler, Rate-Limit oder langsamer Antwort."""
+    try:
+        req = response.request
+        t0 = req.extensions.get("t0")
+        secs = time.perf_counter() - t0 if isinstance(t0, float) else 0.0
+        target = f"{req.url.host}{req.url.path[:80]}"  # ohne Query: sie kann Schlüssel enthalten
+        status = response.status_code
+        level = logging.WARNING if status >= 500 or status == 429 or secs >= SLOW_CALL_S else logging.DEBUG
+        call_log.log(level, "%s %s -> %s in %d ms", req.method, target, status, round(secs * 1000))
+    except Exception:  # noqa: S110 - Protokollierung darf einen Abruf nie stören
+        pass
+
+
+CALL_HOOKS: dict[str, list[Callable[..., None]]] = {"request": [_stamp], "response": [_report]}
 
 
 class RateLimiter:
@@ -50,6 +73,7 @@ def make_client(user_agent: str, timeout: float = 20.0) -> httpx.Client:
         follow_redirects=True,
         headers={"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"},
         limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        event_hooks=CALL_HOOKS,
     )
 
 
@@ -65,6 +89,8 @@ def request_with_retry(client: httpx.Client, method: str, url: str, *, retries: 
             resp = client.request(method, url, **kwargs)
         except (httpx.TimeoutException, httpx.TransportError) as e:
             last_exc = e
+            call_log.warning("%s %s%s: %s (Versuch %d/%d)", method, httpx.URL(url).host, httpx.URL(url).path[:80],
+                             type(e).__name__, attempt + 1, retries + 1)
             if attempt >= retries:
                 break
             sleep(min(30.0, (2 ** attempt) * 0.8 + random.uniform(0, 0.5)))

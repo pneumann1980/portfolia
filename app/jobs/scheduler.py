@@ -7,11 +7,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from apscheduler.events import EVENT_JOB_MAX_INSTANCES, EVENT_JOB_MISSED, JobEvent
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from app import health
 from app.context import AppContext
 from app.jobs import tasks
 
@@ -22,11 +24,13 @@ class Scheduler:
     def __init__(self, ctx: AppContext) -> None:
         self.ctx = ctx
         tz = ctx.config.tz
+        # „interactive“: kurze, vom Nutzer ausgelöste Jobs (z. B. Tagesbericht) warten nicht hinter dem Import;
+        # „wave“: manuelle News-Welle, lange und einzeln
+        self.pool_sizes = {"default": 3, "interactive": 2, "wave": 1}
+        self.missed: dict[str, int] = {}  # verpasste/übersprungene Läufe seit Start (je Job)
         self.sched = BackgroundScheduler(
             timezone=tz,
-            # „interactive“: kurze, vom Nutzer ausgelöste Jobs (z. B. Tagesbericht) warten nicht hinter dem Import
-            executors={"default": ThreadPoolExecutor(max_workers=3), "interactive": ThreadPoolExecutor(max_workers=2),
-                       "wave": ThreadPoolExecutor(max_workers=1)},  # manuelle News-Welle: lange, einzeln
+            executors={n: ThreadPoolExecutor(max_workers=w) for n, w in self.pool_sizes.items()},
             job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 600},
         )
         self.jobs: dict[str, Callable[..., Any]] = {}
@@ -82,8 +86,25 @@ class Scheduler:
             if name in self.jobs and self.sched.get_job(name) is not None:
                 self.sched.reschedule_job(name, trigger=price_trigger(self.ctx.settings, kind))
 
+    def _on_missed(self, event: JobEvent) -> None:
+        """Verpasste Läufe (zu spät gestartet → verworfen) und übersprungene (Vorlauf läuft noch) sichtbar machen."""
+        job = str(event.job_id).split("-once-")[0].removesuffix("-debounce")
+        self.missed[job] = self.missed.get(job, 0) + 1
+        if event.code == EVENT_JOB_MISSED:
+            planned = getattr(event, "scheduled_run_time", None)
+            late = f", {round((datetime.now(UTC) - planned).total_seconds())} s zu spät" if planned else ""
+            log.warning("Lauf von %s verpasst (Pool ausgelastet%s) – der nächste planmäßige Lauf folgt", job, late,
+                        extra={"job": job})
+        else:
+            log.warning("Lauf von %s übersprungen: der vorherige Lauf ist noch nicht beendet", job, extra={"job": job})
+
     def start(self, run_startup: bool = True) -> None:
+        self.sched.add_listener(self._on_missed, EVENT_JOB_MISSED | EVENT_JOB_MAX_INSTANCES)
+        self.sched.add_job(lambda: health.log_state(self.ctx), IntervalTrigger(hours=1), id="health_log",
+                           name="health_log", replace_existing=True, executor="interactive",
+                           next_run_time=datetime.now(UTC) + timedelta(seconds=90))
         self.sched.start()
+        health.log_scheduler(self.ctx)
         if run_startup:
             self.trigger("import_poll", 2)
             self.trigger("prices_crypto", 8, force=True)

@@ -236,7 +236,7 @@
 </section>
 
 <section class="card" id="log">
-  <div class="card-head"><h2>Fehlerprotokoll</h2><span class="hint">letzte {{ events|length }} Warnungen/Fehler</span></div>
+  <div class="card-head"><h2>Fehlerprotokoll</h2><span class="hint">letzte {{ events|length }} Warnungen/Fehler · <a href="/quality/log.txt" download="portfolia-log.txt">Protokoll herunterladen</a> (letzte 2000 Zeilen seit Start)</span></div>
   <div class="table-wrap"><table><thead><tr><th>Zeit</th><th>Stufe</th><th>Komponente</th><th>Meldung</th></tr></thead><tbody>
     {% for e in events %}<tr><td class="nowrap">{{ e.ts|datetime_de }}</td><td><span class="badge {{ 'crit' if e.level in ('ERROR', 'CRITICAL') else 'warn' }}">{{ e.level }}</span></td><td class="mono small">{{ e.logger }}</td><td class="small">{{ e.message }}</td></tr>
     {% else %}<tr><td colspan="4" class="hint">Keine Einträge.</td></tr>{% endfor %}

@@ -75,7 +75,9 @@ class Config:
     tz: str = "Europe/Berlin"
     base_currency: str = "EUR"
     log_level: str = "INFO"
-    log_format: str = "json"
+    log_format: str = "text"  # text | json
+    log_access: str = "slow"  # slow (nur Fehler/langsame Anfragen) | all | off
+    log_levels: str = ""  # z. B. "app.news=DEBUG,app.db=WARNING"
     auth_mode: str = "none"  # none | basic
     auth_user: str | None = None
     auth_password_hash: str | None = None
@@ -158,7 +160,9 @@ class Config:
             tz=_env("TZ", "Europe/Berlin") or "Europe/Berlin",
             base_currency="EUR",
             log_level=(_env("LOG_LEVEL", "INFO") or "INFO").upper(),
-            log_format=(_env("LOG_FORMAT", "json") or "json").lower(),
+            log_format=(_env("LOG_FORMAT", "text") or "text").lower(),
+            log_access=(_env("LOG_ACCESS", "slow") or "slow").lower(),
+            log_levels=_env("LOG_LEVELS", "") or "",
             auth_mode=auth_mode,
             auth_user=_env("AUTH_USER"),
             auth_password_hash=_env("AUTH_PASSWORD_HASH"),

@@ -7,11 +7,16 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+SLOW_SQL_S = 0.5  # länger dauernde Anweisungen (oder Wartezeit auf die Schreibsperre) werden als Warnung protokolliert
+_WRITE_ERRORS = ("readonly", "read-only", "disk i/o", "disk is full", "database or disk is full", "unable to open",
+                 "locked", "malformed")
 
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 
@@ -1065,6 +1070,10 @@ class Database:
         self.path = Path(path)
         self._local = threading.local()
         self._write_lock = threading.RLock()
+        self._count_lock = threading.Lock()
+        self._conn_count = 0  # offene Verbindungen (je Thread eine) – Messwert für die Zustandszeile
+        # (monotonic, Kurztext) des letzten fehlgeschlagenen Schreibzugriffs (Hinweis „Speichern nicht möglich“)
+        self.last_write_error: tuple[float, str] | None = None
 
     # -- Verbindungen --------------------------------------------------------------------------
     def _connect(self) -> sqlite3.Connection:
@@ -1076,7 +1085,13 @@ class Database:
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA temp_store=MEMORY")
         conn.execute("PRAGMA cache_size=-8000")  # ~8 MB pro Verbindung
+        with self._count_lock:
+            self._conn_count += 1
         return conn
+
+    @property
+    def conn_count(self) -> int:
+        return self._conn_count
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -1091,6 +1106,8 @@ class Database:
         if c is not None:
             with contextlib.suppress(Exception):
                 c.close()
+            with self._count_lock:
+                self._conn_count = max(0, self._conn_count - 1)
             self._local.conn = None
 
     # -- Migration ---------------------------------------------------------------------------
@@ -1109,19 +1126,46 @@ class Database:
         c.execute("UPDATE job_status SET running=0 WHERE running=1")
 
     # -- Helfer -----------------------------------------------------------------------------
+    def _slow(self, sql: str, t0: float) -> None:
+        dt = time.perf_counter() - t0
+        if dt >= SLOW_SQL_S:
+            # nur die ersten Zeichen der Anweisung, nie die Parameter (können Eingaben enthalten)
+            log.warning("Langsame Datenbankanweisung (%d ms, Thread %s): %s", round(dt * 1000),
+                        threading.current_thread().name, " ".join(sql.split())[:120])
+
+    def _write_failed(self, e: sqlite3.Error) -> None:
+        text = str(e).lower()
+        if any(k in text for k in _WRITE_ERRORS):
+            self.last_write_error = (time.monotonic(), str(e)[:80])
+
     def q(self, sql: str, params: Iterable[Any] | dict = ()) -> list[sqlite3.Row]:
-        return self.conn.execute(sql, params).fetchall()
+        t0 = time.perf_counter()
+        rows = self.conn.execute(sql, params).fetchall()
+        self._slow(sql, t0)
+        return rows
 
     def q1(self, sql: str, params: Iterable[Any] | dict = ()) -> sqlite3.Row | None:
-        return self.conn.execute(sql, params).fetchone()
+        t0 = time.perf_counter()
+        row = self.conn.execute(sql, params).fetchone()
+        self._slow(sql, t0)
+        return row
 
     def scalar(self, sql: str, params: Iterable[Any] | dict = (), default: Any = None) -> Any:
+        t0 = time.perf_counter()
         row = self.conn.execute(sql, params).fetchone()
+        self._slow(sql, t0)
         return default if row is None or row[0] is None else row[0]
 
     def x(self, sql: str, params: Iterable[Any] | dict = ()) -> sqlite3.Cursor:
-        with self._write_lock:
-            return self.conn.execute(sql, params)
+        t0 = time.perf_counter()
+        try:
+            with self._write_lock:
+                return self.conn.execute(sql, params)
+        except sqlite3.OperationalError as e:
+            self._write_failed(e)
+            raise
+        finally:
+            self._slow(sql, t0)
 
     def xmany(self, sql: str, rows: Iterable[Iterable[Any]]) -> None:
         with self._write_lock, self.transaction() as c:
@@ -1134,15 +1178,26 @@ class Database:
         if c.in_transaction:
             yield c
             return
+        t0 = time.perf_counter()
         with self._write_lock:
-            c.execute("BEGIN IMMEDIATE")
+            try:
+                c.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as e:
+                self._write_failed(e)
+                raise
+            finally:
+                self._slow("BEGIN IMMEDIATE (Wartezeit auf die Schreibsperre)", t0)
             try:
                 yield c
             except BaseException:
                 c.execute("ROLLBACK")
                 raise
             else:
-                c.execute("COMMIT")
+                try:
+                    c.execute("COMMIT")
+                except sqlite3.OperationalError as e:
+                    self._write_failed(e)
+                    raise
 
     # -- app_state ---------------------------------------------------------------------------
     def get_state(self, key: str, default: Any = None) -> Any:
