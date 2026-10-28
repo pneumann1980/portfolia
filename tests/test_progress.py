@@ -199,3 +199,28 @@ def test_extra_is_part_of_the_very_first_state():
     seen: list[dict] = []
     Progress(seen.append, "Test", extra={"href": "/x", "rid": 7})
     assert seen and seen[0]["href"] == "/x" and seen[0]["rid"] == 7
+
+
+def test_sections_within_a_phase_keep_the_bar_moving_and_name_their_unit():
+    """Binance: erst Vorgänge (ohne Gesamtzahl), dann 107 Handelspaare. Früher stand der Balken bei 55 %, während die
+    Zählung „0 / 107 Vorgänge verarbeitet“ zeigte – jetzt läuft er weiter und nennt die richtige Einheit."""
+    out, p = collect()
+    p.phase("prepare")
+    p.phase("fetch")
+    p.update(1500, None, "Abruf: Einzahlungen", sub="Abruf", unit="Vorgänge", verb="abgerufen")
+    first = out[-1]["pct"]
+    p.update(0, 107, "Trades: BTCUSDT", sub="Trades", unit="Handelspaare", verb="geprüft")
+    start = out[-1]
+    assert start["pct"] >= first and start["done"] == 0 and start["total"] == 107
+    v = view(start)
+    assert v["count"] == "0 / 107 Handelspaare" and v["count_verb"] == "geprüft"
+    p.update(53, 107, "Trades: ETHUSDT", sub="Trades")
+    mid = out[-1]["pct"]
+    assert mid > start["pct"]
+    p.update(107, 107, sub="Trades")
+    assert out[-1]["pct"] < 5.6 + 50  # Abschnitte füllen die Phase nie ganz – Platz für weitere Abschnitte
+    p.update(1600, None, "Abruf: Auszahlungen", sub="Abruf", unit="Vorgänge", verb="abgerufen")
+    assert out[-1]["pct"] >= mid and out[-1]["total"] is None
+    p.phase("process", 1600)
+    assert out[-1]["unit"] == "Datensätze" and out[-1]["verb"] == ""  # Einheit des Abschnitts gilt nicht weiter
+    assert view(out[-1])["count_verb"] == "verarbeitet"

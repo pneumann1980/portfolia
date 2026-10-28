@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 28.10.2026 · Version 0.71.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.10.2026 · Version 0.71.1 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,15 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.71.1 – Fortschritt der Synchronisierung: Zählung und Balken passen zusammen
+
+* Abschnitte innerhalb des Abrufs (Binance: erst Vorgänge ohne Gesamtzahl, dann **Handelspaare**; Bitpanda: Seiten) zählen jetzt mit eigener Einheit und eigenem Verb
+  („12 / 107 Handelspaare geprüft“ statt „0 / 107 Vorgänge verarbeitet“). Beginnt ein neuer Abschnitt, läuft der Balken vom erreichten Stand weiter, statt stehen zu bleiben.
+  Die Einheit eines Abschnitts gilt nur bis zum nächsten Phasenwechsel.
+* Bitpanda meldet den Abruf je Seite (vorher kein Lebenszeichen bis zum Ende des Abrufs).
+* Die Leiste „Assistent aktiv“ erscheint nicht mehr auf der Übersicht `/quality` (dort endet der Modus).
+* Planung „Assistent 2.0 – Geführte Klärung“ in `docs/PLAN_DATENQUALITAET.md` (noch nicht umgesetzt).
 
 ## 0.71.0 – Methode „Kettenbestand“ für peaq und Polkadot wählbar
 

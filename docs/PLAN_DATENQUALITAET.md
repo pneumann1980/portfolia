@@ -244,3 +244,129 @@ die Relay Chain ohne Anbieter-Schlüssel möglich; der Asset Hub ist ungeprüft 
 
 ### D2 (später, nach Erfahrung)
 Reiter auf *Heute · Fälle · Belege* kürzen, Automatik unter Einstellungen; Diagnose-Befund, Klärungsfall und Prüfstapel-Zeile als **eine** Fallansicht; Expertenseiten hinter „Technik“.
+
+---
+
+## Assistent 2.0 – „Geführte Klärung“ (Planung 29.10.2026, noch nicht umgesetzt)
+
+Anlass: Rückmeldung zu 0.66–0.70 mit Screenshot. Der Assistent ist „aktiv“, aber auf der Seite steht nicht, **was jetzt zu tun ist**; darunter stehen die üblichen
+Korrekturvorschläge der Expertenseiten. Für jemanden ohne Vorwissen ist das weiterhin nicht bedienbar.
+
+### 1. Ursachen (aus dem Code, nicht vermutet)
+
+| # | Ursache | Wo |
+|---|---|---|
+| U1 | Der Assistent zeigt nur **Einzelbefunde der Diagnose** selbst. Klärungsfälle, Prüfstapel und Integritätsbefunde **leitet er auf die Expertenseiten um** (`assistant_web.py`: `item.kind != "befund"` → 303 auf `item.href`). Dort fehlt jeder Hinweis, welche Aufgabe gemeint ist und was man tun soll. | `app/diagnosis/assistant_web.py` |
+| U2 | **Doppelt gezählt:** „14 kritische Befunde der Integritätsprüfung“ sind überwiegend **dieselben** Diagnose-Befunde (`integrity.from_findings`), die zusätzlich als Einzelaufgaben im Plan stehen. „Heute“ zeigt A 14 / B 36, der Assistent „37 Aufgaben“ – zwei verschiedene Zählungen derselben Sache. | `workplan.py` (Gruppe `integritaet`), `integrity.py` |
+| U3 | Die Leiste „Assistent aktiv“ erschien auch auf der Übersicht, obwohl der Modus dort endet (behoben in 0.71.1). Sie nennt die laufende Aufgabe nicht. | `base.html`, `partials/dq_flow.html` |
+| U4 | **Lösungen statt Fragen:** Die Karte zeigt technische Lösungen („M1 ausblenden“, „Ausgleichsbuchung“, „als im Import enthalten markieren“). Ein Laie kann nicht beurteilen, welche richtig ist – er weiß aber, ob er *eine* oder *zwei* Einzahlungen gemacht hat. | `recommend.py` (Option-Texte) |
+| U5 | **Sechs Begriffe für dieselbe Sache:** Befund, Fall, Klärungsfall, Prüfstapel-Zeile, Integritätsbefund, Hinweis. Dazu Stufen A/B/C, „belegt/wahrscheinlich/Verdacht“. | gesamte Datenqualität |
+| U6 | **Reihenfolge nach Schwere, nicht nach Logik:** Ein offener Prüfstapel (fehlende Buchungen) verursacht Bestands- und Steuerbefunde; wer diese zuerst bearbeitet, arbeitet doppelt oder falsch. | `workplan.py` (Sortierung A → B) |
+| U7 | Nach einer Antwort sieht man nicht, **was sie bewirkt hat** (wie viele Aufgaben dadurch verschwunden sind) und kann sie nicht direkt zurücknehmen. | Assistent |
+
+### 2. Ziel und Messgrößen
+
+* Ein Mensch **ohne Fachwissen** kommt von „37 offene Punkte“ bis „fertig“, ohne eine andere Seite als den Assistenten zu sehen.
+* Je Aufgabe **eine verständliche Frage**, die er aus eigener Erinnerung oder einem genannten Beleg beantworten kann; „Weiß ich nicht“ ist immer eine gültige Antwort.
+* **Messbar (Abnahme):** (a) keine Weiterleitung aus dem Assistenten auf eine Expertenseite; (b) Standardaufgabe ≤ 2 Klicks; (c) jede Seite des Assistenten zeigt Aufgabe *n von m*,
+  Thema und Frage im sichtbaren Bereich ohne Scrollen (Mobil: 390 px Breite); (d) eine Zählung überall (Heute = Assistent); (e) jede Antwort ist auf der nächsten Karte rückgängig zu machen;
+  (f) Begriffe auf den Assistent-Seiten nur: *Aufgabe, Buchung, Konto, Bestand* (Fachbegriffe ausschließlich unter „Details“).
+
+### 3. Bildschirm (eine Vorlage für alle Aufgaben)
+
+```
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ Datenqualität prüfen        Aufgabe 4 von 31 · ca. 25 Min. · [Pause]          │
+│ ███████████░░░░░░░░░░░  Thema 2 von 5: Doppelte Buchungen (2 von 6)           │
+├───────────────────────────────────────────────────────────────────────────────┤
+│ ✓ Gespeichert: „Zwei Einzahlungen“ – 2 weitere Aufgaben dadurch erledigt [↶]  │  ← nach jeder Antwort
+├───────────────────────────────────────────────────────────────────────────────┤
+│ Bitpanda · 12.03.2025                                                         │
+│ Hast du am 12.03.2025 einmal oder zweimal 0,5 BTC auf Bitpanda erhalten?      │  ← DIE Frage (Alltagssprache)
+│                                                                               │
+│ Portfolia sieht diese Gutschrift zweimal: im Koinly-Import und im Abruf von   │  ← Was ist los (1–2 Sätze, Zahlen)
+│ Bitpanda. Zählt sie doppelt, ist dein Bestand um 0,5 BTC (≈ 31.000 €) zu hoch.│
+│                                                                               │
+│ (●) Einmal – eine ist doppelt            Empfohlen: gleiche Menge, 2 Min.     │  ← Antworten statt Lösungen,
+│     → Bestand BTC 1,5 → 1,0 (passt dann zu Bitpanda)                          │    Wirkung direkt darunter
+│ ( ) Zweimal – beide sind echt                                                 │
+│     → nichts wird geändert, die Aufgabe ist erledigt                          │
+│ ( ) Weiß ich nicht                                                            │
+│     → später; Tipp: Bitpanda-App → Verlauf → 12.03.2025                       │
+│                                                                               │
+│ [ Antwort speichern und weiter ]                       Überspringen           │
+│ ▸ Belege und Details (für Fortgeschrittene)                                   │  ← eingeklappt: Buchungen, Hashes,
+└───────────────────────────────────────────────────────────────────────────────┘    Expertenseite als Link
+```
+
+* Kein Kopf der Expertenseiten, keine Reiter, keine Navigation der Datenqualität auf dieser Seite (Fokus); oben links „Pause“ = zurück zur Übersicht, Fortschritt bleibt.
+* Eingaben (EUR-Wert, Datum) erscheinen nur, wenn die gewählte Antwort sie braucht, mit Vorschlag („Tageskurs am 12.03.2025: 31.240 € – übernehmen?“).
+* Mehrere gleiche Fälle: nach der Antwort „Es gibt 5 weitere Fälle dieser Art (gleiche Quelle, gleiches Muster). [Für alle gleich beantworten] [Einzeln]“ – mit Vorschau der Anzahl.
+
+### 4. Ein Aufgabenmodell für alles (Adapter statt Weiterleitung)
+
+`Task` (neu, `app/diagnosis/guide.py`): `id`, `theme`, `question`, `context` (1–2 Sätze), `answers[]` (je Antwort: Text, Wirkung als Satz, `action` = vorhandene Aktion mit Parametern,
+`needs` = nötige Eingaben, `recommended`, `why`), `evidence` (eingeklappt), `similar` (Schlüssel für „für alle gleich“), `source` (Befund/Fall/Stapelzeile/Prüfung).
+Jede Quelle bekommt einen **Adapter**, der ihre vorhandene Aktion aufruft – es wird **keine** neue Buchungslogik geschrieben:
+
+| Quelle heute | Adapter → Aufgabe | Aktion (vorhanden) |
+|---|---|---|
+| Diagnose-Befund (je Art) | Frage je Befundart (Katalog unten) | `actions.build_plan` + `apply_plan`, `mark`/`dismiss` |
+| Klärungsfall | Frage zum Fall („Gehören diese 3 Buchungen zu einer Überweisung von Binance zu Ledger?“) | `clarify` übernehmen/zurückstellen/Bestand |
+| Prüfstapel | **zwei** Aufgabentypen: „N sichere Vorgänge übernehmen?“ (ein Klick, Vorschau als Satz) und je unklarer Zeile eine Frage | `csvimport.batch.plan/execute` (include/skip/link) |
+| Integritätsprüfung | nur Befunde **ohne** Diagnose-Befund (Invarianten, Steuer, Kurse, Historie) werden eigene Aufgaben; die übrigen sind bereits Befund-Aufgaben → **keine Doppelzählung** | Diagnose-Aktion bzw. Hinweis |
+| Bestandsabweichung mit Kettenbestand | „Laut Blockchain kamen am 27.04.2025 1.052,5 PEAQ an, die nicht gebucht sind. Kennst du diesen Zugang?“ → Airdrop/Belohnung/Einzahlung/weiß nicht | `chain_steps` |
+| Vorgemerkte Buchungen | „Stimmt diese übernommene Buchung?“ → behalten / zurück in den Prüfstapel | `recheck` |
+
+Die Expertenseiten bleiben unverändert (für Fortgeschrittene, über „Details“ und die Reiter erreichbar). Der Flow-Modus (Cookie, Umschreiben der Weiterleitungen) wird für den
+Assistenten **nicht mehr gebraucht** und nur noch für den Absprung aus „Details“ behalten (Leiste dann mit Titel der Aufgabe und „Zurück zu Aufgabe 4“).
+
+### 5. Reihenfolge: Themen, die Ursachen vor Folgen behandeln
+
+1. **Neue Vorgänge übernehmen** (Prüfstapel) – fehlende Buchungen erzeugen sonst Scheinfehler in allen folgenden Themen.
+2. **Doppelte Buchungen** (Dubletten, Import ↔ Abruf, Quellenvorrang je Konto als *eine* Frage: „Soll Bitpanda für dein Bitpanda-Konto maßgeblich sein?“).
+3. **Überweisungen zwischen eigenen Konten** (Transfers, Klärungsfälle).
+4. **Bestände abgleichen** (Bestandsabweichungen, Kettenbestand, fehlende Zugänge/Abgänge, Verluste).
+5. **Werte und Kurse** (fehlende Kurse, Asset-Zuordnung, Migrationen).
+6. **Hinweise** (optional, gesammelt bestätigen).
+
+Nach jeder Antwort wird neu geplant (der Prüflauf läuft schon automatisch nach, 0.66); erledigte Folgeaufgaben verschwinden, die Meldung nennt ihre Zahl (U7). Innerhalb eines
+Themas: größte Wirkung (EUR) zuerst. Stufen A/B/C bleiben nur auf den Expertenseiten.
+
+### 6. Fragenkatalog (Beispiele je Befundart; Texte werden mit Zahlen/Namen gefüllt)
+
+| Art | Frage | Antworten (→ vorhandene Aktion) |
+|---|---|---|
+| Dublette | „Hast du am {Datum} einmal oder zweimal {Menge} {Asset} auf {Konto} erhalten/gesendet?“ | einmal → schwächere Buchung ausblenden · zweimal → als geprüft · weiß nicht → später |
+| Möglicher Transfer | „Hast du am {Datum} {Menge} {Asset} von {Konto A} an {Konto B} geschickt?“ | ja → Transfer verknüpfen · nein, an jemand anderen → als Abgang belassen · weiß nicht |
+| Bestandsabweichung | „{Konto} zeigt {beobachtet} {Asset}, Portfolia rechnet {berechnet}. Was stimmt?“ | Kettenbestand/Quelle stimmt → Sprünge buchen bzw. Quellenvorrang · Portfolia stimmt (z. B. noch nicht abgerufen) → später · ich weiß nicht → Tipp |
+| Ungeklärter Abgang | „{Menge} {Asset} sind am {Datum} von {Konto} abgegangen, ohne Ziel. Was war das?“ | an eigenes Konto (Auswahl) · verkauft/bezahlt · verloren/gestohlen · weiß nicht |
+| Fehlender Kurs | „Für {Asset} gibt es keinen Kurs. Ist der Token noch etwas wert?“ | ja, CoinGecko-Suche mit Vorschlägen · nein, wertlos/Spam → als geprüft · weiß nicht |
+| Migration | „Wurde {alt} in {neu} umgetauscht (gleiches Projekt, neuer Name)?“ | ja → Migration · nein, eigener Kauf → als geprüft |
+| Prüfstapel sicher | „{N} neue Vorgänge von {Quelle} sind eindeutig. Übernehmen?“ | ja (Vorschau: Bestände danach) · einzeln ansehen |
+| Prüfstapel unklar | „Ist {Vorgang} dasselbe wie die Buchung vom {Datum}?“ | ja → verknüpfen · nein → übernehmen · nicht buchen |
+
+Der Katalog liegt als Daten neben `recommend.py` (Frage, Antworttexte, Zuordnung Antwort → Option); fehlt für eine Art ein Eintrag, nutzt der Adapter die heutige Empfehlung
+als Antwort „Empfehlung übernehmen“ plus „Weiß ich nicht“ (nie eine Sackgasse).
+
+### 7. Sicherheit und Nachvollziehbarkeit (bleibt wie heute, sichtbarer)
+
+* Jede Antwort mit Wirkung läuft über die vorhandene Vorschau/Übernahme mit Prüfsummen-Token; „Rückgängig“ auf der nächsten Karte und im Protokoll „Was ich geändert habe“.
+* „Für alle gleich beantworten“ nur bei identischem Muster (gleiche Befundart, Quelle, Empfehlung, Belegstufe) und mit Anzahl-Vorschau; einzeln rücknehmbar.
+* „Weiß ich nicht“ ändert nie Daten; die Aufgabe kommt nach 7 Tagen oder bei neuen Belegen wieder.
+
+### 8. Umsetzung in Schritten (je Schritt ein Release, Test zuerst, Volltest)
+
+| Release | Inhalt | Aufwand |
+|---|---|---|
+| 0.72.0 | `Task`-Modell und Adapter für Diagnose-Befunde inkl. Fragenkatalog für die 6 häufigsten Arten; neue Assistent-Seite (Vorlage oben), Themen-Reihenfolge, eine Zählung (Heute = Assistent), Integritäts-Doppelzählung entfernt, Meldung „N weitere erledigt“ + Rückgängig | L |
+| 0.73.0 | Adapter Prüfstapel (sichere Vorgänge als eine Frage, unklare Zeilen einzeln) und Klärungsfälle – keine Weiterleitung mehr aus dem Assistenten | L |
+| 0.74.0 | „Für alle gleich beantworten“, Quellenvorrang als Frage je Konto, Kettenbestand als Frage, Protokoll „Was ich geändert habe“; Flow-Modus nur noch für „Details“ | M |
+| 0.75.0 | Feinschliff nach deiner Rückmeldung (Texte, Reihenfolge), Mobil-Ansicht, Bedientest (Abnahmekriterien 2a–f als automatische Tests) | M |
+
+### 9. Annahmen, Grenzen, offene Punkte
+
+* Fragen in Alltagssprache setzen voraus, dass sich jede Befundart auf eine Erinnerungsfrage abbilden lässt; für seltene Arten bleibt „Empfehlung übernehmen / Weiß ich nicht“.
+* Die Logik der Korrekturen ändert sich nicht – nur die Bedienung. Damit bleibt das Risiko für funktionierenden Code gering; die Expertenseiten bleiben unverändert.
+* Zu klären vor 0.72.0: (1) Sollen „Hinweise“ (Stufe C) im Assistenten überhaupt erscheinen oder nur auf Wunsch? (2) Pause/Fortsetzen über Geräte hinweg (Fortschritt in der
+  Datenbank statt im Browser) – nötig? (3) Wortwahl „Datenqualität prüfen“ vs. „Buchungen prüfen“.

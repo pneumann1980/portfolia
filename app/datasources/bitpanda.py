@@ -996,6 +996,7 @@ class BitpandaConnector(K.Connector):
                     seen_ids.add(oid)
                 fresh.append(o)
             items.extend(fresh)
+            self.report("Abruf", len(items), None, f"Seite {pages}")
             pg = _paging(body)
             info["next_cursor_on_last_page"] = isinstance(body.get("next_cursor"), str) and bool(body["next_cursor"])
             if pg.end:

@@ -89,6 +89,10 @@ class Progress:
         self.label = label
         self.source = source
         self.unit = unit
+        self._base_unit = unit  # Einheit der Phasen; die eines Abschnitts (z. B. „Handelspaare“) gilt bis zum Wechsel
+        self.verb = ""  # „abgerufen“, „geprüft“ … (leer: Anzeige wählt nach Phase)
+        self._sub: str | None = None  # Abschnitt innerhalb der Phase (eigene Zählung, z. B. je Endpunkt)
+        self._sub_base = 0.0  # Anteil der Phase, der beim Beginn des Abschnitts schon erreicht war
         keys = phases or [k for k, _l, _w in PHASES]
         table = {k: w for k, _l, w in PHASES + EXTRA_PHASES}
         self.phases = [(k, PHASE_LABEL[k], table[k]) for k in keys if k in table] if phases else \
@@ -146,8 +150,8 @@ class Progress:
                 self._close_phase(now)
             self.phase_key = key
             self.done, self.total, self.text = 0, total, text
-            if unit:
-                self.unit = unit
+            self.unit = unit or self._base_unit
+            self.verb, self._sub, self._sub_base = "", None, 0.0
             self._work, self._sample_w, self._sample_t, self._phase_t = 0.0, 0.0, now, now
             self._work_total = work_total if work_total is not None else self._expect.get(key, total)
             self._recompute()
@@ -161,9 +165,22 @@ class Progress:
             self._avg[key] = self._work / span
         self._items_before += self.done
 
-    def update(self, done: int, total: int | None = None, text: str | None = None, work: float | None = None) -> None:
-        """``work``: erledigte Arbeit in den Einheiten von :meth:`expect` (Standard: ``done``) – für die Restzeit."""
+    def update(self, done: int, total: int | None = None, text: str | None = None, work: float | None = None, *,
+               sub: str | None = None, unit: str | None = None, verb: str | None = None) -> None:
+        """``work``: erledigte Arbeit in den Einheiten von :meth:`expect` (Standard: ``done``) – für die Restzeit.
+
+        ``sub``: Abschnitt innerhalb der Phase mit eigener Zählung (z. B. erst Vorgänge, dann Handelspaare). Beginnt
+        ein neuer Abschnitt, zählt der Balken vom erreichten Stand weiter, statt stehen zu bleiben, während die Zählung
+        wieder bei 0 beginnt."""
         with self._lock:
+            if sub is not None and sub != self._sub:
+                self._sub_base = self._phase_frac() if self._sub is not None or self.done else 0.0
+                self._sub = sub
+                self.total = None
+            if unit:
+                self.unit = unit
+            if verb is not None:
+                self.verb = verb
             self.done = max(0, int(done))
             if total is not None:
                 self.total = max(int(total), self.done)
@@ -225,7 +242,19 @@ class Progress:
             frac = min(1.0, self.done / self.total)
         else:
             frac = min(0.9, self.done / (self.done + 200.0)) if self.done else 0.0
+        if self._sub is not None:  # Abschnitt: vom erreichten Stand aus weiter, nie ganz bis zum Phasenende
+            frac = self._sub_base + (0.95 - self._sub_base) * frac if self._sub_base < 0.95 else self._sub_base
         self.pct = max(self.pct, min(99.0, base + w * frac))  # monoton, 100 % erst mit finish()
+
+    def _phase_frac(self) -> float:
+        """Erreichter Anteil der laufenden Phase laut Balken (0 … 1)."""
+        base = 0.0
+        for k, _l, _w in self.phases:
+            if k == self.phase_key:
+                break
+            base += self._weights[k]
+        w = self._weights.get(self.phase_key or "", 0.0)
+        return min(max((self.pct - base) / w, 0.0), 0.95) if w else 0.0
 
     def payload(self) -> dict[str, Any]:
         keys = [k for k, _l, _w in self.phases]
@@ -238,8 +267,8 @@ class Progress:
         return {**eta, "v": 2, "running": not self.finished, "label": self.label, "source": self.source,
                 "phase": self.phase_key, "phase_label": label, "phase_no": max(cur, 0) + 1 if cur >= 0 else 0,
                 "phase_count": len(keys), "pct": round(self.pct, 1), "done": self.done, "total": self.total,
-                "unit": self.unit, "text": self.text, "stage": label, "steps": steps, "started_at": self.started_at,
-                "updated_at": iso(datetime.now(UTC)), **self.extra}
+                "unit": self.unit, "verb": self.verb, "text": self.text, "stage": label, "steps": steps,
+                "started_at": self.started_at, "updated_at": iso(datetime.now(UTC)), **self.extra}
 
     def measured_rates(self) -> dict[str, float]:
         """Gemessene Durchschnittsgeschwindigkeit je abgeschlossener Phase (Einheiten je Sekunde) – als Startschätzung
@@ -358,6 +387,7 @@ def view(p: dict[str, Any] | None) -> dict[str, Any]:
     elif done:
         count = f"{_n(done)} {p.get('unit') or ''}".strip()
     p["count"] = count
+    p["count_verb"] = p.get("verb") or ("abgerufen" if p.get("phase") == "fetch" else "verarbeitet")
     p["pct_int"] = int(p.get("pct") or 0)
     seen = parse_iso(p.get("updated_at"))
     p["stale"] = bool(p.get("running") and seen is not None

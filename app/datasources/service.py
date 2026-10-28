@@ -210,6 +210,10 @@ def sanitize_error(msg: str, secrets: Iterable[str] = ()) -> str:
     return text[:400] + ("…" if len(text) > 400 else "")
 
 
+# Einheit und Verb je Abschnitt eines Abrufs (Anzeige „12 / 107 Handelspaare geprüft“ statt „… Vorgänge verarbeitet“)
+STAGE_UNITS: dict[str, tuple[str, str]] = {"Trades": ("Handelspaare", "geprüft"), "Abruf": ("Vorgänge", "abgerufen"),
+                                           "Stammdaten": ("Assets", "nachgeschlagen")}
+
 class ProviderKeyMissing(K.ConnectorError):
     """Für den gewählten Wallet-Anbieter fehlt der Schlüssel (Art ``config``). Die Prüfung lässt den Connector trotzdem
     laufen: Er meldet das Problem selbst und kann einen schlüssellosen Ausweichweg (öffentlicher RPC) anbieten."""
@@ -1899,7 +1903,8 @@ class DataSourceService:
         def progress(stage: str, done: int, total: int | None, text: str) -> None:
             if prog.phase_key != "fetch":
                 prog.phase("fetch")
-            prog.update(done, total, f"{stage}: {text}" if text else stage)
+            unit, verb = STAGE_UNITS.get(stage, ("Vorgänge", "abgerufen"))
+            prog.update(done, total, f"{stage}: {text}" if text else stage, sub=stage, unit=unit, verb=verb)
 
         conn.progress = progress
         self._bind_usage(ds, conn)
