@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 28.10.2026 · Version 0.68.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 28.10.2026 · Version 0.69.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,21 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.69.0 – Übernommene Buchungen erneut prüfen
+
+Paket J aus `docs/PLAN_DATENQUALITAET.md` (Abschnitt E).
+
+* **Herkunft** (`app/diagnosis/recheck.py`): Bei jeder Buchung eines Befunds steht, aus welchem Prüfstapel und welcher Zeile sie stammt (Datei, Übernahmezeitpunkt, Link).
+* **Vormerken** (Standard): Die Buchung bleibt unverändert, erscheint als Aufgabe „N Buchung(en) zur erneuten Prüfung vorgemerkt“ (Stufe B) und unter `/quality/erneut`;
+  die Markierung ist jederzeit entfernbar.
+* **Zurück in den Prüfstapel:** Die Buchung wird zurückgenommen (Status „rückgängig gemacht“, nicht gelöscht; Transfers werden sauber aufgelöst), ihre Zeile ist im Stapel wieder
+  offen und ohne Entscheidung. Der Vorzustand ist protokolliert; **Rückholen** setzt Buchung und Zeile wieder ein – verweigert, wenn die Zeile inzwischen neu entschieden oder gebucht
+  wurde (sonst Doppelbuchung).
+* **Schutz:** nie automatisch; nur für Buchungen, die ein aktueller Befund (belegt, wahrscheinlich, Verdacht) nennt; nur für App-Buchungen aus dem Prüfstapel, deren Ursprungszeile
+  noch existiert (sonst Hinweis, stattdessen vormerken oder bearbeiten); Protokoll auf 200 Einträge begrenzt. Im Flow-Modus enden die Aktionen beim Assistenten.
+* **Grenzen:** Wurde der Stapel inzwischen verworfen, gibt es keine Ursprungszeile zum Zurücklegen; die Herkunft zeigt das. Entscheidungen, die du bestätigt hast, werden nicht
+  automatisch erneut hochgestuft (kein Automatismus).
 
 ## 0.68.0 – Quellenvorrang für Binance und Wallets (mit Bestätigung), Zeitraum der Quelle, Steuerjahre gemessen
 

@@ -21,7 +21,8 @@ _DONE = re.compile(
     r"^/(?:quality/diagnose/(?:apply|mark|dismiss|bulk/apply|hints/apply|regeln/neu)"
     r"|quality/klaerung/[^/]+/(?:uebernehmen|zurueckstellen|bestand)"
     r"|journal/csv/\d+/(?:commit|execute|discard|ignore)"
-    r"|journal/pruefung/(?:ausfuehren|entscheiden))$")
+    r"|journal/pruefung/(?:ausfuehren|entscheiden)"
+    r"|quality/erneut/(?:vormerken|entfernen|zurueck|rueckgaengig))$")
 _TARGET = re.compile(r"^/(?:quality|journal/pruefung|journal/csv)(?:/|$)")
 
 

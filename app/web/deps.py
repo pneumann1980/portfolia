@@ -104,6 +104,24 @@ def _dq_check(ctx: AppContext, since: str) -> Any:
         return None
 
 
+def _recheck_lookup(ctx: AppContext) -> Any:
+    """Herkunft einer übernommenen Buchung für „Erneut prüfen“ (Markierungen werden einmal je Seite gelesen)."""
+    cache: dict[str, Any] = {}
+
+    def lookup(tx_id: str) -> Any:
+        try:
+            from app.diagnosis import recheck
+
+            if "m" not in cache:
+                cache["m"] = recheck.marks(ctx.db)
+            return recheck.info(ctx, tx_id, cache["m"])
+        except Exception as e:
+            fallback("tx_recheck", e)
+            return None
+
+    return lookup
+
+
 def render(request: Request, template: str, status_code: int = 200, **kw: Any) -> HTMLResponse:
     ctx = get_ctx(request)
     tpl = request.app.state.templates
@@ -119,6 +137,7 @@ def render(request: Request, template: str, status_code: int = 200, **kw: Any) -
         "progress_view": progress_view,
         "ticker_hint": lambda aid: _ticker_hint(ctx, aid),
         "dq_check": lambda: _dq_check(ctx, request.query_params.get("since", "")),
+        "tx_recheck": _recheck_lookup(ctx),
     }
     base.update(kw)
     return tpl.TemplateResponse(request, template, base, status_code=status_code)

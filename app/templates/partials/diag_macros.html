@@ -14,7 +14,14 @@
   {% endif %}
   {% if t.flags %}<div class="row">{% for fl in t.flags %}<span class="badge">{{ fl }}</span>{% endfor %}</div>{% endif %}
   {% if t.note %}<div class="hint">Notiz: {{ t.note }}</div>{% endif %}
-  {% if not new %}<div class="hint"><a href="/journal?q={{ t.tx_id|urlencode }}">in den Buchungen anzeigen</a>{% if t.edit_url %} · <a href="{{ t.edit_url }}">bearbeiten</a>{% endif %}</div>{% endif %}
+  {% if not new %}<div class="hint"><a href="/journal?q={{ t.tx_id|urlencode }}">in den Buchungen anzeigen</a>{% if t.edit_url %} · <a href="{{ t.edit_url }}">bearbeiten</a>{% endif %}</div>
+  {% set _rc = tx_recheck(t.tx_id) if tx_recheck is defined else none %}
+  {% if _rc %}<div class="hint txref-origin">Herkunft: <a href="{{ _rc.url }}">{{ _rc.text }}</a>{% if _rc.at %} · übernommen {{ _rc.at|datetime_de }}{% endif %}
+    {% if _rc.marked %}<span class="badge warn">vorgemerkt</span>{% endif %}
+    <form method="post" action="/quality/erneut/vormerken" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="tx" value="{{ t.tx_id }}"><input type="hidden" name="back" value="{{ request.url.path }}{{ '?' ~ request.url.query if request.url.query }}"><button class="btn sm ghost" type="submit"{% if _rc.marked %} disabled{% endif %}>Erneut prüfen: vormerken</button></form>
+    {% if _rc.can_reopen %}<form method="post" action="/quality/erneut/zurueck" class="inline" data-confirm="Buchung zurücknehmen und die Zeile wieder in den Prüfstapel legen? Im Protokoll unter „Erneut prüfen“ rückholbar."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="tx" value="{{ t.tx_id }}"><input type="hidden" name="back" value="{{ request.url.path }}{{ '?' ~ request.url.query if request.url.query }}"><button class="btn sm ghost" type="submit">Zurück in den Prüfstapel</button></form>{% endif %}
+  </div>{% endif %}
+  {% endif %}
 </div>
 {% endmacro %}
 

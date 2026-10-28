@@ -34,7 +34,7 @@ MODULES = (
     "app.assetchange.module",
     "app.assetchange.merge_web", "app.diagnosis.auto_web", "app.assetchange.account_merge_web",
     "app.diagnosis.clarify_web", "app.accounts.web", "app.diagnosis.dq_web", "app.diagnosis.assistant_web",
-    "app.diagnosis.chain_web",
+    "app.diagnosis.chain_web", "app.diagnosis.recheck_web",
 )
 
 

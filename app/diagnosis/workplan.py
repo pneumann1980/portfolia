@@ -229,6 +229,19 @@ def build(ctx: Any, report: Report | None = None, *, granular: bool = False) -> 
     except Exception as e:  # Prüfstapel nicht verfügbar (sehr alte Datenbank)
         log.debug("Prüfstapel nicht lesbar: %s", e)
 
+    try:
+        from app.diagnosis import recheck as RC
+
+        n_mark = len(RC.marks(ctx.db))
+        if n_mark:
+            items.append(WorkItem(key="erneut", tier="B", kind="gruppe",
+                                  title=f"{n_mark} Buchung(en) zur erneuten Prüfung vorgemerkt",
+                                  recommendation="Herkunft ansehen, dann behalten oder zurück in den Prüfstapel legen",
+                                  why="Du hast sie bei einem Befund selbst vorgemerkt.", n=n_mark,
+                                  href="/quality/erneut", cta="Ansehen"))
+    except Exception as e:  # Markierungen nicht lesbar
+        log.debug("Markierungen nicht lesbar: %s", e)
+
     run = I.load(ctx.db)
     integ: dict[str, Any] = {}
     stale = False

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Erneut prüfen{% endblock %}
+{% block heading %}Datenqualität · Erneut prüfen{% endblock %}
+{% block content %}
+<div class="stack dq">
+  {% include "partials/dq_nav.html" %}
+  {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  <section class="card">
+    <h2>Übernommene Buchungen erneut prüfen</h2>
+    <p>Eine Abweichung stammt oft von einer Buchung, die früher im Prüfstapel mit „übernehmen“ bestätigt wurde. Bei jeder Buchung eines Befunds steht ihre <b>Herkunft</b>; dort lässt sie sich <b>vormerken</b> (bleibt unverändert) oder <b>zurück in den Prüfstapel</b> legen (Buchung wird zurückgenommen, die Zeile ist wieder offen; im Protokoll unten rückholbar). Nie automatisch, nur bei Buchungen, die ein aktueller Befund nennt.</p>
+  </section>
+  <section class="card">
+    <h3>Vorgemerkt ({{ rows|length }})</h3>
+    {% if rows %}
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Buchung</th><th>Herkunft</th><th>Grund</th><th></th></tr></thead><tbody>
+    {% for r in rows %}<tr>
+      <td><a href="/journal?q={{ r.tx_id|urlencode }}"><span class="mono">{{ r.tx_id }}</span></a></td>
+      <td data-label="Herkunft"><a href="{{ r.url }}">{{ r.text }}</a>{% if r.file %}<div class="hint">{{ r.file }}</div>{% endif %}</td>
+      <td class="wide" data-label="Grund">{{ r.reason }}</td>
+      <td><div class="row" style="gap:6px;flex-wrap:wrap">
+        {% if r.can_reopen %}<form method="post" action="/quality/erneut/zurueck"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="tx" value="{{ r.tx_id }}"><button class="btn sm" type="submit">Zurück in den Prüfstapel</button></form>{% endif %}
+        <form method="post" action="/quality/erneut/entfernen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="tx" value="{{ r.tx_id }}"><button class="btn sm ghost" type="submit">Markierung entfernen</button></form>
+      </div></td></tr>{% endfor %}
+    </tbody></table></div>
+    {% else %}<p class="hint">Nichts vorgemerkt.</p>{% endif %}
+  </section>
+  <section class="card">
+    <h3>Protokoll</h3>
+    {% if log %}
+    <ul class="plain-list">{% for e in log %}<li>{{ e.at|datetime_de }} · <span class="mono">{{ e.tx_id }}</span> zurück in Prüfstapel {{ e.batch_id }} <span class="hint">({{ e.title }})</span>
+      {% if e.undone %}<span class="badge">zurückgeholt</span>{% else %}<form method="post" action="/quality/erneut/rueckgaengig" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="id" value="{{ e.id }}"><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endif %}</li>{% endfor %}</ul>
+    {% else %}<p class="hint">Noch nichts zurückgelegt.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}
