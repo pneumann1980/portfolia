@@ -484,3 +484,19 @@ def test_lookback_search_survives_a_budget_stop_and_resumes_in_the_next_run(clie
     rows = all_rows(client, sid)
     assert k("rc", "110-1", "tr:3") in rows and k("rc", "100-2", "tr:5") not in rows
     assert json.loads(source(client, sid)["cursor_json"])["nets"]["polkadot"]["from"] == 105
+
+
+def test_archive_method_chosen_in_the_settings_skips_the_indexer_entirely(client, scan, monkeypatch):
+    """Methode „Kettenbestand“ (Einstellung der Quelle): kein Schlüssel nötig, kein einziger Aufruf von PubFi/Subscan –
+    Bestand per RPC, Verlauf als Lücke mit Verweis auf den Kettenbestand."""
+    asked = _with_rpc(scan, monkeypatch, free=350_000_000_000, reserved=10_000_000_000)
+    sid = create_wallet(client, "polkadot", ME, name="Ledger DOT", chain_provider="archive_rpc")  # kein Schlüssel
+    page = client.get("/settings/datasources/new?kind=wallet&provider=polkadot")
+    assert page.status_code == 200 and "Kettenbestand (öffentliche Archiv-RPCs" in page.text
+    ok, msg = datasource_service(ctx(client)).check(sid)
+    assert ok and "Kettenbestand lesbar" in msg and balances(client, sid) == {"DOT": "36"}
+    res = sync(client, sid)
+    assert res.get("error") in (None, "") and not scan.calls
+    assert all_rows(client, sid) == {} and {a["host"] for a in asked} <= {"rpc.polkadot.io",
+                                                                          "polkadot-asset-hub-rpc.polkadot.io"}
+    assert "Kettenbestand" in str(source(client, sid)["coverage_json"])

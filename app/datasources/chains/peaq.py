@@ -41,7 +41,7 @@ from app.datasources.chainhttp import ENDPOINTS, ChainHttp, Endpoint, Stop
 from app.datasources.chains.addresses import PEAQ_SS58
 from app.datasources.chains.codec import evm_account_id, ss58_decode, ss58_encode
 from app.datasources.chains.evm import PeaqEvmConnector
-from app.datasources.chains.polkadot import PolkadotConnector
+from app.datasources.chains.polkadot import ARCHIVE, ARCHIVE_NOTE, PolkadotConnector
 from app.datasources.wallet import WalletConnector, units
 
 RPC_ENDPOINTS = ("peaq_rpc", "peaq_rpc_2", "peaq_rpc_3")
@@ -100,7 +100,7 @@ class PeaqConnector(WalletConnector):
     label = "peaq (Subscan)"
     chain_label = "peaq"
     native = "PEAQ"
-    endpoints = ("pubfi", "subscan")
+    endpoints = ("pubfi", "subscan", ARCHIVE)
     explorer_tx = PeaqSubstrateConnector.explorer_tx
     explorer_addr = PeaqSubstrateConnector.explorer_addr
     limits = PeaqSubstrateConnector.limits
@@ -219,7 +219,24 @@ class PeaqConnector(WalletConnector):
                              balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")],
                              coverage={"mode": "nur Bestand laut Kette", "operations": 0, "provider": "peaq-RPC"})
 
+    def _archive_state(self, cfg: K.SourceConfig) -> Decimal:
+        if not self.is_evm(cfg):
+            raise K.ConnectorError("config", "Die Methode „Kettenbestand“ gibt es bei peaq nur für 0x-Adressen – "
+                                             "bei SS58-Adressen bitte Subscan (PubFi bzw. direkt) wählen.")
+        state = self._chain_state((cfg.address or "").lower())
+        if state is None:
+            raise K.ConnectorError("unavailable", "Kein öffentlicher peaq-RPC erreichbar – der nächste Lauf "
+                                                  "versucht es erneut.")
+        return state[0]
+
     def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
+        if PolkadotConnector.archive_mode(cfg):  # kein Subscan/PubFi-Aufruf
+            qty = self._archive_state(cfg)
+            text = f"Bestand {qty.normalize():f} PEAQ"
+            return K.CheckResult(True, f"peaq: Kettenbestand lesbar – {text}.",
+                                 {"balance": {"ok": True, "text": text + " laut öffentlichem EVM-RPC"},
+                                  "method": {"ok": True, "text": ARCHIVE_NOTE}},
+                                 balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")])
         impl = self._impl(cfg)
         if isinstance(impl, PeaqSubstrateConnector):
             try:
@@ -245,6 +262,12 @@ class PeaqConnector(WalletConnector):
         return impl.check(cfg, secret)
 
     def fetch(self, cfg: K.SourceConfig, secret: K.Secret, cursor: dict[str, Any] | None) -> K.FetchResult:
+        if PolkadotConnector.archive_mode(cfg):  # kein Subscan/PubFi-Aufruf
+            qty = self._archive_state(cfg)
+            return K.FetchResult(complete=False, cursor=cursor, gaps=[ARCHIVE_NOTE],
+                                 balances=[K.Balance("PEAQ", qty, "peaq", "laut öffentlichem EVM-RPC")],
+                                 coverage={"mode": "Kettenbestand (Archiv-RPC)", "operations": 0,
+                                           "provider": "peaq-RPC"})
         impl = self._impl(cfg)
         if isinstance(impl, PeaqSubstrateConnector):
             try:

@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 28.10.2026 · Version 0.70.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 28.10.2026 · Version 0.71.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,14 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.71.0 – Methode „Kettenbestand“ für peaq und Polkadot wählbar
+
+* In den Einstellungen der Wallet-Quelle (peaq, Polkadot) gibt es neben „PubFi“ und „Subscan direkt“ die Methode **„Kettenbestand (öffentliche Archiv-RPCs, ohne Schlüssel)“**
+  (`archive_rpc`). Mit ihr wird **Subscan/PubFi gar nicht erst aufgerufen**: Prüfen und Abrufen lesen nur den Bestand der Kette (Polkadot: Relay Chain + Asset Hub; peaq: 0x-Adresse
+  per EVM-RPC). Der Verlauf wird nicht abgerufen und steht als Lücke mit Verweis auf „Datenqualität → Belege → Kettenbestand“, das Bestandssprünge findet und einzeln bucht.
+* Kein Schlüssel nötig, keine Fehlversuche mit der kostenlosen Route (Rückblick-Grenze, Fenstersuche). Standard bleibt PubFi; peaq mit SS58-Adresse unterstützt die Methode nicht
+  (klare Meldung). Wer Subscan nutzen kann, bekommt dort weiterhin den vollständigen Verlauf; die Methode eignet sich für Konten, bei denen der Indexer nichts oder zu wenig liefert.
 
 ## 0.70.0 – Navigation der Datenqualität straffen (Teil von D2)
 

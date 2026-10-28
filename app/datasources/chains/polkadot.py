@@ -68,6 +68,9 @@ MIN_WINDOW = 2_000  # Blöcke (rund 3,5 h): ein Fensterlimit darunter ist keine 
 _WINDOW_CAP: dict[str, int] = {}  # Endpunkt:Netz → zuletzt zulässige Fensterbreite in Blöcken (je Prozess)
 NETS = (("polkadot", "rc", "Relay Chain"), ("assethub-polkadot", "ah", "Asset Hub"))
 ASSET_HUB_TAG = "DOTAH"
+ARCHIVE = "archive_rpc"  # Methode „Kettenbestand“: kein Indexer, nur Bestand der Kette (Archiv-RPC)
+ARCHIVE_NOTE = ("Methode „Kettenbestand“: Der Verlauf wird nicht abgerufen. Der Bestand kommt von öffentlichen "
+                "Archiv-Knoten; Zugänge ohne Buchung findet und bucht Datenqualität → Belege → Kettenbestand.")
 _IDX = re.compile(r"^\d{1,12}-\d{1,6}$")
 _INT = re.compile(r"^-?\d{1,40}$")
 _PLAIN_CALLS = {"balances"}
@@ -116,7 +119,7 @@ class PolkadotConnector(WalletConnector):
     label = "Polkadot (Subscan via PubFi bzw. direkt)"
     chain_label = "Polkadot"
     native = "DOT"
-    endpoints = ("pubfi", "subscan")
+    endpoints = ("pubfi", "subscan", ARCHIVE)
     # öffentliche RPCs (Endpunkt, Anzeige) für den Bestand, wenn der Anbieter nichts liefert (peaq: eigener Weg)
     rpc_nets: ClassVar[tuple[tuple[str, str], ...]] = (("polkadot_rpc", "Relay Chain"),
                                                        ("polkadot_assethub_rpc", "Asset Hub"))
@@ -253,10 +256,40 @@ class PolkadotConnector(WalletConnector):
                 parts.append(f"{label} {qty.normalize():f}")
         return total, parts
 
+    @staticmethod
+    def archive_mode(cfg: K.SourceConfig) -> bool:
+        return (cfg.watch or {}).get("provider") == ARCHIVE
+
+    def _archive_balance(self, cfg: K.SourceConfig) -> tuple[Decimal, list[str]]:
+        if not self.rpc_nets:
+            raise K.ConnectorError("config", f"Die Methode „Kettenbestand“ gibt es für {self.chain_label} bei dieser "
+                                             "Adressart nicht – bitte Subscan (PubFi bzw. direkt) wählen.")
+        got = self._rpc_balance(self._addr(cfg))
+        if got is None:
+            raise K.ConnectorError("unavailable", "Kein öffentlicher Archiv-RPC erreichbar – der nächste Lauf "
+                                                  "versucht es erneut.")
+        return got
+
+    def _archive_check(self, cfg: K.SourceConfig) -> K.CheckResult:
+        qty, parts = self._archive_balance(cfg)
+        text = f"Bestand {qty.normalize():f} {self.native}" + (f" ({' + '.join(parts)})" if len(parts) > 1 else "")
+        return K.CheckResult(True, f"{self.chain_label}: Kettenbestand lesbar – {text}.",
+                             {"balance": {"ok": True, "text": text + " laut öffentlichem RPC"},
+                              "method": {"ok": True, "text": ARCHIVE_NOTE}},
+                             balances=[K.Balance(self.native, qty, self.chain_label, "laut öffentlichem RPC")])
+
+    def _archive_fetch(self, cfg: K.SourceConfig, cursor: dict[str, Any] | None) -> K.FetchResult:
+        qty, _parts = self._archive_balance(cfg)
+        return K.FetchResult(complete=False, cursor=cursor, gaps=[ARCHIVE_NOTE],
+                             balances=[K.Balance(self.native, qty, self.chain_label, "laut öffentlichem RPC")],
+                             coverage={"mode": "Kettenbestand (Archiv-RPC)", "operations": 0, "provider": "RPC"})
+
     def check(self, cfg: K.SourceConfig, secret: K.Secret) -> K.CheckResult:
         """Verbindung prüfen. Scheitert der Anbieter (Schlüssel/Tarif/Ausfall), liefert ein öffentlicher RPC wenigstens
         den aktuellen Bestand als Ist-Bestand für den Abgleich (nur Bestand, keine Historie); der Fehler des Anbieters
-        bleibt sichtbar."""
+        bleibt sichtbar. Methode „Kettenbestand“: gar kein Indexer-Aufruf."""
+        if self.archive_mode(cfg):
+            return self._archive_check(cfg)
         try:
             return self._check_api(cfg, secret)
         except (K.ConnectorError, Stop) as e:
@@ -489,7 +522,10 @@ class PolkadotConnector(WalletConnector):
     def fetch(self, cfg: K.SourceConfig, secret: K.Secret, cursor: dict[str, Any] | None) -> K.FetchResult:
         """Abruf über den Anbieter. Lässt die kostenlose Route selbst das kleinste Fenster nicht zu (Rückblick-Grenze,
         ``history_window_exceeded``), bleibt wenigstens der Bestand laut öffentlichem RPC als Ist-Bestand – die
-        Historie fehlt dann als Lücke (kein Fehler, nichts wird erfunden)."""
+        Historie fehlt dann als Lücke (kein Fehler, nichts wird erfunden). Methode „Kettenbestand“: gar kein
+        Indexer-Aufruf, nur der Bestand."""
+        if self.archive_mode(cfg):
+            return self._archive_fetch(cfg, cursor)
         try:
             return self._fetch_api(cfg, secret, cursor)
         except K.ConnectorError as e:

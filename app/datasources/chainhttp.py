@@ -191,6 +191,11 @@ ENDPOINTS: dict[str, Endpoint] = {e.id: e for e in (
              "https://polkadot-asset-hub-rpc.polkadot.io", rps=1.0,
              docs="https://wiki.polkadot.network/docs/maintain-endpoints",
              terms="ohne Key; nur Bestandsabfrage (state_getStorage System.Account) als Ausweichweg"),
+    Endpoint("archive_rpc", "Kettenbestand (öffentliche Archiv-RPCs, ohne Schlüssel)", "https://rpc.polkadot.io",
+             rps=1.0, docs="https://wiki.polkadot.network/docs/maintain-endpoints",
+             terms="ohne Key und ohne Subscan: Bestand laut Kette (aktuell und bei früheren Blöcken); der Verlauf wird "
+                   "nicht abgerufen – Zugänge ohne Buchung findet „Datenqualität → Belege → Kettenbestand“ und bucht "
+                   "sie einzeln. Genau eine Anfrage je Sekunde an öffentliche Knoten"),
     Endpoint("pubfi", "PubFi-Gateway für Subscan (kostenloser Key)",
              "https://api.pubfi.ai/v1/gateway/subscan/{network}", rps=1.5, auth="bearer", key_provider="pubfi",
              key_required=True, docs="https://support.subscan.io/doc-360177",
