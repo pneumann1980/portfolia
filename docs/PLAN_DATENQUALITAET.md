@@ -1,0 +1,186 @@
+# Plan: Quelle vor kuratiertem Import, PEAQ-Lücke, Import-Warnungen, einfachere Datenqualität
+
+Stand 28.10.2026 · Version 0.65.0 · **nur Planung, nichts umgesetzt.** Grundlage: Code (0.65.0), `docs/SOURCE_TAKEOVER.md`,
+`docs/RECONCILIATION.md`, zwei Screenshots und drei Abfragen bei Subscan. Was ich geprüft habe und was Annahme ist, steht je Abschnitt.
+
+## 0. Zusammenfassung
+
+| # | Anliegen | Befund (geprüft) | Empfehlung | Aufwand |
+|---|---|---|---|---|
+| A | PEAQ: „EVM Internal Tx“ fehlen (z. B. 10 718,83 und 1 052,5 PEAQ) | Der kostenlose Weg (PubFi) liefert nur Substrate-Bewegungen; interne EVM-Überweisungen gibt es nur über Subscans Etherscan-Route mit **bezahltem** Schlüssel. Die Subscan-Weboberfläche sperrt Programme ausdrücklich (HTTP 403). | Reihenfolge: Spike „gibt es eine kostenlose PubFi-Route?“ → CSV-Profil für den Subscan-Export → bezahlter Schlüssel (Code ist vorhanden). Scraper nur als letzte, riskante Stufe. | S + M |
+| B | Börse/Wallet soll **immer** Vorrang vor dem kuratierten Import haben | Vorrang gibt es nur als Pilot **Bitpanda**, nur mit exaktem Bestandsbeweis, nur als Ganz-oder-gar-nicht je Konto; Wallets sind ausgeschlossen. Im Prüfstapel bleibt der Import maßgeblich. | Vorrang als **Regel je Konto und Zeitraum** (überlebt neue Importversionen), mit Vorschau, Schutz für manuelle Buchungen/Korrekturen und Rückgängig. Vorher ein reiner **Überlappungsbericht**, der die Wirkung auf die Bestandsabweichungen zeigt. | L |
+| C | 14 Warnungen beim kuratierten Import | Alle 14 sind „Unerwartete Datei im Unterordner ignoriert: `kuration/…`“ – Prüfunterlagen des Kurators, kein Fehler. | Zu **einem** Hinweis bündeln, Ordner als Prüfunterlagen erkennen und archivieren. | S |
+| D | Datenqualität zu umständlich, kein Weg zurück zur Übersicht | 4 Reiter, ~20 Unterseiten, **sechs** Teilsysteme (Diagnose, Klärung, Prüfstapel, Autopilot/Regeln, Sammelbearbeitung, Integrität); jedes leitet nach einer Aktion auf **seine eigene** Seite. | Ein durchgehender **Arbeitsmodus** („Der Reihe nach“): jede Aktion endet beim nächsten Fall bzw. wieder auf „Heute“. | M, später L |
+| E | Manuell übernommene Buchungen erneut prüfen? | **Ja, sinnvoll**, aber nur mit Beleg (Befund nennt die Buchung) und nie automatisch. Heute kann man nur ganze Stapel (`reopen`) oder einzelne Stapelaktionen zurücknehmen, keine einzelne Buchung zurück in den Prüfstapel legen. | „Erneut prüfen“ je Buchung/Befund; Entscheidung bleibt beim Nutzer; Schutz gegen Schleifen. | M |
+
+Reihenfolge der Umsetzung: **C → D1 → B1 → A-Spike** (alles klein bzw. nur lesend), dann **B2**, **A-Umsetzung**, **B3 (Wallets)**, **E**, **D2**.
+Begründung: zuerst das, was sofort Ärger nimmt und nichts riskiert; dann messen, bevor der Vorrang Buchungen ausblendet.
+
+---
+
+## A. PEAQ: fehlende interne EVM-Überweisungen (Subscan)
+
+**Ausgangslage (Code):** `app/datasources/chains/peaq.py` hat zwei Wege. *PubFi* (kostenloser Schlüssel): Subscan löst die 0x-Adresse in das Substrate-Konto
+auf, abgerufen werden native Bewegungen – „EVM-Gasgebühren und ERC-20-Tokens fehlen“, die Bestandsprüfung zeigt die Differenz. *Subscan direkt*:
+Etherscan-kompatible Route mit `txlist`, `txlistinternal`, `tokentx` (Adapter `PeaqEvmConnector`, vollständig inkl. interner Bewegungen).
+Genau diese Lücke zeigt dein Screenshot (Reiter „EVM Internal Tx (2)“).
+
+**Geprüft heute (Abfragen von hier, ohne Schlüssel):**
+* `peaq.webapi.subscan.io/…` (die Schnittstelle der Weboberfläche): **HTTP 403** – „Your request has been blocked. If you want to use a program to access
+  the API …“. Programmzugriff auf die Weboberfläche ist von Subscan **ausdrücklich nicht gewollt**.
+* `peaq.api.subscan.io/…`: „Subscan API strictly requires an API key. Unauthenticated access is disabled.“
+* Subscan-Dokumentation ([Pläne](https://support.subscan.io/doc-360177)): „no longer issues new free API keys“; kostenlos nur über PubFi mit Routen im
+  `:free`-Variant. Ob es dort eine **EVM-Internal-Route** gibt, steht in der Dokumentation nicht; die Doku-Navigation führt einen Eintrag „EVM internal Tx“
+  (Endpunkt nicht geprüft).
+
+**Optionen**
+
+| Stufe | Weg | Vollständig? | Kosten/Risiko | Aufwand |
+|---|---|---|---|---|
+| 1 | **Spike:** in Portfolia (mit deinem PubFi-Schlüssel) die Fähigkeiten-/OpenAPI-Liste von PubFi lesen und die Subscan-Routen mit `free_rate_limit` auf eine EVM-Internal-Route prüfen; bei Treffer Antwortschema aufzeichnen | ja, falls vorhanden | keine; ungewiss, ob es die Route gibt | S (½ Tag) |
+| 2 | **CSV-Profil „Subscan-Export“** (Transfers, EVM-Transaktionen, EVM Internal Tx): Export aus der Weboberfläche bzw. kopierte Tabelle → vorhandener CSV-Import (Prüfstapel, Dubletten-Erkennung, Hash als Kennung) | ja für die exportierten Zeiträume, manuell | kostenlos, ToS-sicher; manueller Schritt je Aktualisierung | S–M |
+| 3 | **Bezahlter Subscan-Plan** (Developer): Anbieter „Subscan direkt“ ist fertig verdrahtet, vollständig und automatisch | ja | laufende Kosten (Preis nicht geprüft) | 0 Code, nur Konfiguration |
+| 4 | **Bestandssprung-Rekonstruktion über öffentlichen RPC:** `eth_getBalance` je Block (nur wenn der RPC historische Stände liefert), Sprünge ohne eigene Transaktion als „interne Überweisung in Block N“ buchen | nur Zugänge/Abgänge als Summe, ohne Gegenadresse/Parent-Hash | kostenlos; **ungeprüft**, ob die öffentlichen peaq-RPCs historische Stände liefern; viele Abfragen | M–L |
+| 5 | **Scraper** (kopfloser Browser als Plugin im eigenen venv, Muster `plugins.py`/DKB-Fetcher) | grundsätzlich ja | Subscan **blockiert Programme** (403) – wahrscheinlich Verstoß gegen die Nutzungsbedingungen; bricht bei jeder Änderung/Cloudflare-Prüfung; Chromium im Plugin ≈ 150 MB, Systembibliotheken im Slim-Image ungeprüft | L, dauerhaft Pflege |
+
+**Empfehlung:** 1 → 2 sofort (zusammen ≈ 1–2 Tage), 3 als Entscheidung für dich (Kosten), 4 nur wenn 1–3 ausscheiden. **Zum Scraper:** Du hast ihn ausdrücklich
+gewünscht; ich plane ihn als Stufe 5 mit, empfehle ihn aber nicht als Erstes, weil Subscan Programmzugriff aktiv sperrt und er fragil und rechtlich
+heikel ist. Entscheidung dazu bitte bewusst (siehe Fragen).
+
+**Sofortlösung ohne Code:** Die beiden Buchungen als „Eigene Buchung“ erfassen (Typ Einzahlung, Konto der 0x-Adresse, Datum/Menge aus dem Screenshot,
+Notiz mit Parent-Hash). Dann stimmt der Bestand bis zur Umsetzung.
+
+**Abnahme:** Bestandsabweichung PEAQ der Adresse 0x1E27…D856 = 0; Dubletten-Erkennung verknüpft eine später per Abruf gelieferte Buchung mit der manuellen
+(kein Doppelzählen); Test mit aufgezeichneter Antwort (Mock).
+
+---
+
+## B. Börse/Wallet hat immer Vorrang vor dem kuratierten Import
+
+**Ausgangslage (Code/Doku):**
+* **Quellenübernahme** (`app/datasources/takeover.py`, `docs/SOURCE_TAKEOVER.md`) ist der vorhandene Mechanismus: Import- und Dateibuchungen eines Kontos werden
+  ausgeblendet (`tx_override`/Diagnose-Entscheidung „Quellenübernahme“), die API-Vorgänge gebucht, EUR-Werte/Gebührenwerte des Imports übernimmt ein „Spender“.
+* **Einschränkungen:** (1) nur `PILOT = ("bitpanda",)`; (2) Bedingung ist der **exakte Bestandsbeweis** je Asset – scheitert er an einem Wert, ist die ganze
+  Übernahme gesperrt; (3) Ganz-oder-gar-nicht je Konto, ab Beginn der Historie; (4) Wallets und Binance ausgeschlossen („Abruf belegt keine Vollständigkeit“);
+  (5) im **Prüfstapel** bleibt die vorhandene Buchung maßgeblich (`docs/RECONCILIATION.md`: „Verknüpfen statt Zusammenführen: vorhandene Buchung bleibt unverändert“; Neues wird verknüpft oder ausgelassen).
+* **Beobachtung (Annahme, noch nicht an deinen Daten belegt):** Deine Abweichungen bei Bitpanda stammen vermutlich aus Doppel-/Abweichungsfällen zwischen Import und API
+  (Gebührenart, Rundung, Zeitpunkt). Warum die Übernahme bei dir nicht greift, sehe ich erst im Prüfbericht („Blocker“ der Vorschau) – das ist Schritt B1.
+* **Risiko Importversionen:** Überlagerungen hängen an `tx_id`. Der Kurator liefert neue Versionen (v3 …, im ZIP liegt `txid_mapping_prev.csv`). Eine Regel
+  „Konto X, Zeitraum Y“ ist dagegen unabhängig von der Kennung. Ob bestehende Ausblendungen eine neue Importversion überstehen, ist **zu testen** (B1).
+* **Korrekturen des Kurators:** Der Import nennt „Korrekturen: 133 (davon Klasse A 73)“. Ersetzt man Import-Buchungen durch Quellbuchungen, gehen solche Korrekturen
+  verloren (z. B. rekonstruierte Zugänge, umklassifizierte Erträge). Das braucht Schutz bzw. Sichtbarkeit.
+
+**Zielbild – „Quellen-Vorrang“ als Regel je Konto:**
+1. **Regel** = Konto + Quelle (Datenquelle des Kontos) + Zeitraum **ab dem ersten Ereignis der Quelle** (davor bleibt der Import). Gilt dauerhaft, auch für künftige Importversionen,
+   und wird beim Aufbau des Ledgers ausgewertet (Überlagerung), nicht als Einzelentscheidungen je `tx_id`.
+2. **Was ersetzt wird:** Import-/Dateibuchungen des Kontos im Zeitraum. **Was bleibt:** manuelle Buchungen, Transfers mit anderen Konten, Korrekturen der Diagnose,
+   Buchungen mit Kurator-Markierung (`flag`/`tag` „reconstructed“, `opening_balance`, korrigiert) – jeweils in der Vorschau sichtbar.
+3. **Spender** wie bisher: EUR-Werte/Gebührenwerte/Einordnung des ersetzten Imports gehen auf die Quellbuchung über, wo die Quelle sie nicht liefert.
+4. **Belegstufen statt Alles-oder-nichts:**
+   * *belegt* (Bestand der Quelle stimmt exakt): sofort anwendbar (wie heute);
+   * *plausibel* (Abweichung klein, vollständige Seitenfolge/Blockhöhe): anwendbar mit ausdrücklicher Bestätigung und Liste „Import ohne Gegenstück“;
+   * *unbelegt* (Quelle bekannt lückenhaft, z. B. Binance Earn/Futures, PEAQ ohne Internal Tx): nur Zuordnung/Verknüpfung, **kein** Ausblenden.
+   Das beantwortet „immer Vorrang“ so weit, wie es Daten nicht beschädigt: ohne Vollständigkeitsbeleg würde das Ausblenden Zugänge streichen, die nur der Import kennt.
+5. **Prüfstapel:** Trifft eine Quellzeile auf eine Import-Buchung des Kontos, ist die Standardentscheidung „Quelle übernehmen, Import ersetzen (Spender)“ statt
+   „auslassen“; weiterhin mit Vorschau und Rückgängig je Aktion.
+6. **Vorschau/Beweis/Rückgängig/Nachprüfung** wie bei der Quellenübernahme (alles-oder-nichts-Rücknahme bleibt).
+
+**Schritte**
+* **B1 (lesend, S–M): Überlappungsbericht.** Je Konto mit Datenquelle: Zeitraum der Quelle, Import-Buchungen im Zeitraum, davon mit/ohne Gegenstück, vorhergesagte Wirkung auf die
+  Bestandsabweichung je Asset, Blocker der Quellenübernahme im Klartext. Zeigt, ob der Vorrang bei Bitpanda die Abweichungen wirklich beseitigt, bevor etwas ausgeblendet wird.
+  Dazu der Test „Ausblendungen überstehen eine neue Importversion?“.
+* **B2 (M–L): Vorrang-Regel** für Bitpanda und alle Börsen mit belegter Vollständigkeit (Belegstufen, Regel statt Einzelentscheidungen, Schutz der Kurator-Korrekturen, Prüfstapel-Standard).
+* **B3 (M): Wallets** (Ketten mit Bestandsprüfung gegen RPC): Beleg = Ketten-Bestand stimmt mit den Vorgängen überein; PEAQ erst, wenn A die Internal Tx liefert.
+* **Abnahme:** Bitpanda: Bestandsabweichungen je Asset 0 bzw. begründet; Rückgängig stellt den Vorzustand bit-genau her (Prüfsumme wie bei Sammelkorrekturen); neue Importversion
+  ändert das Ergebnis nicht; Steuerjahre vor/nach der Anwendung als Vergleich (die Übernahme simuliert realisierte Ergebnisse heute **nicht** vorab – das gehört in die Vorschau, sonst ist
+  der Vorrang steuerlich ein Blindflug).
+
+**Risiken:** EUR-Werte stammen nach der Übernahme aus der Quelle/Kursen statt aus dem Import (steuerlich relevant, Mengen sind bewiesen, Werte nicht); zwei sich aufhebende Fehler bleiben unsichtbar;
+Regeln müssen sichtbar und widerrufbar sein (eigene Liste „Aktive Vorrang-Regeln“).
+
+---
+
+## C. Warnungen beim kuratierten Import (14)
+
+**Ursache (geprüft):** `app/importer/validate.py:181` meldet jede Datei in einem Unterordner einzeln (`zip_extra`). Der Kurator legt Prüfunterlagen unter `kuration/` ab
+(`build.py`, `corrections.csv`, `checks_summary.csv`, `data_coverage.csv`, `holdings_reference_history.csv`, `source_inventory.csv`, `txid_mapping_prev.csv`, `inputs/user_statements.json` …).
+Nur der Ordner `portfolia/` (Portfolia-eigene Zusatzdaten) ist bekannt. Das ist keine Fehlbedienung – nur Rauschen.
+
+**Maßnahme:**
+1. Dateien in Unterordnern **eines** Ordners zu **einem Hinweis** bündeln („14 Dateien in `kuration/` – Prüfunterlagen des Kurators, nicht ausgewertet“), als *Hinweis*, nicht als *Warnung*;
+   nur wirklich Unerwartetes (z. B. ausführbare Dateien, zu große Dateien) bleibt Warnung.
+2. Prüfunterlagen **archiviert** mitführen (wie `portfolia/`-Zusatzdaten, mit Größen-/Verhältnisgrenzen, ohne sie auszuführen) und in der Importhistorie einsehbar machen.
+3. **Optional (Entscheidung):** `holdings_reference_history.csv` und `corrections.csv` auswerten – Erstere kann die **Bestandsreferenzen** der Diagnose speisen, Letztere die Kurator-Korrekturen
+   kennzeichnen (nützlich für B: Schutz der Korrekturen). Nur mit Format-Beispiel; sonst nicht.
+* **Abnahme:** Import der vorliegenden Datei zeigt 0 Warnungen und 1 Hinweis; Zip-Bomben-/Größenprüfungen unverändert; Test mit `kuration/`-Ordner und mit fremdem Unterordner.
+
+---
+
+## D. Datenqualität: einfacher bedienen
+
+**Befund (Code):** Navigation `partials/dq_nav.html`: Reiter *Heute · Fälle · Belege · Automatik*, darunter ~20 Unterseiten (Alle Fälle, Der Reihe nach, Klärungsfälle, Diagnose-Befunde, Prüfstapel,
+Sammelbearbeitung, Hinweise, Bestände, Abweichungen, Quellenabdeckung, Anschaffung, Cockpit, Prüfbericht, Autopilot, Regeln, Klärung …). Sechs Teilsysteme (Diagnose `web.py`, Klärung `clarify_web.py`,
+Prüfstapel `csvimport/module.py`, Autopilot/Regeln `auto_web.py`, Bulk, Integrität) haben **je eigene Redirects** (`_back(...)` zeigt nach jeder Aktion auf die eigene Seite). Der „Arbeitsplan“ auf *Heute*
+(`workplan.py`) ordnet nur A/B/C, führt aber nicht durch.
+**Ursache für „komme nie wieder zur Übersicht“:** Es gibt keinen gemeinsamen Zustand „ich arbeite gerade die Liste ab“; jede Aktion springt in ihren Kontext.
+
+**D1 – Schnelle Verbesserung (M):** *Arbeitsmodus*
+* Einstieg „Jetzt klären“ auf *Heute* startet die Reihenfolge der Stufe A (vorhandene `queue.py`/„Der Reihe nach“).
+* **Ein** Rücksprung-Zustand (serverseitig je Sitzung, kein Fehler bei abgelaufenem Zustand): nach *jeder* Aktion – egal in welchem Teilsystem – folgt **der nächste Fall der Liste**; ist sie leer, **Heute** mit
+  Zusammenfassung („7 erledigt, 2 zurückgestellt, Bestand jetzt …“). Statt `_back(<eigene Seite>)` ein gemeinsamer `next_url(ctx)`.
+* Immer sichtbar: Fortschritt („3 von 17“), „Zurück zur Übersicht“, „Überspringen“, „Rückgängig“ (letzte Aktion).
+* Prüfstapel-Aktionen (`/journal/pruefung/*`, `/journal/csv/{bid}/…`) bekommen denselben Rücksprung; ihre Zeilen erscheinen als Aufgaben in der Liste, nicht als Sonderwelt.
+* **Abnahme:** höchstens 3 Klicks je Fall; kein Pfad endet auf einer „fremden“ Seite; Test über alle `_back`-Ziele (jede Aktion landet auf Fall/Heute).
+
+**D2 – Größere Vereinfachung (L, nach B/E):** ein Fallbegriff statt sechs: Diagnose-Befund, Klärungsfall und Prüfstapel-Zeile als **„Fall“ mit Lösungsaktionen**; Unterseiten für Experten
+hinter „Technik“ (die Seite `/quality` versteckt Technisches schon), Reiter auf *Heute · Fälle · Belege* reduzieren, Autopilot/Regeln unter Einstellungen. Erst nach Erfahrung mit D1 festlegen.
+
+---
+
+## E. Manuell übernommene Buchungen erneut prüfen
+
+**Frage:** Sollen sie bei einem erkannten Problem wieder auf den Prüfstapel? **Ja – mit Bedingungen.**
+* **Warum sinnvoll:** Häufig wird eine Abweichung durch genau die Buchung verursacht, die man früher mit „übernehmen“ bestätigt hat (Dublette, falscher Betrag). Heute muss man dafür den ganzen Stapel zurücknehmen.
+* **Heute (Code):** `CsvImportService.reopen` öffnet nur einen **rückgängig gemachten ganzen Stapel**; `import_action` erlaubt Rücknahme je **Stapelaktion**; Diagnose-Entscheidungen haben `reopen`/`undo`. Eine
+  **einzelne** Buchung zurück in den Prüfstapel gibt es nicht.
+* **Vorschlag:** In Befund/Fall bei jeder beteiligten Buchung deren **Herkunft** anzeigen („übernommen am … aus Stapel …, Zeile …“) und „**Erneut prüfen**“ anbieten:
+  Variante 1 *markieren* (Buchung bleibt, Zeile erscheint wieder als offene Aufgabe), Variante 2 *zurücknehmen* (Buchung entfernt, Zeile wieder im Prüfstapel; Vorher-Zustand protokolliert, rückgängig).
+* **Schutz:** nie automatisch; nur wenn ein Befund die Buchung **belegt** nennt; Entscheidungen, die der Nutzer bestätigt hat, werden nicht erneut hochgestuft, solange sich die Belege nicht
+  ändern (Fingerabdruck wie bei „überholt“ in `rules.py`); Obergrenze je Lauf, Protokoll.
+* **Offen/zu prüfen:** Ob jede übernommene Buchung ihre Ursprungszeile eindeutig kennt (Verknüpfung Buchung ↔ `csv_row`/`import_action`) – Schritt 1 der Umsetzung ist diese Abdeckungsprüfung an
+  deinen Daten; fehlt sie, zuerst nachtragen.
+* **Abnahme:** Befund → „Erneut prüfen“ → Zeile im Prüfstapel → Entscheidung → Befund aktualisiert; Rückgängig stellt die Prüfsumme wieder her.
+
+---
+
+## Reihenfolge und Releases (Vorschlag)
+
+| Release | Inhalt | Warum jetzt | Aufwand |
+|---|---|---|---|
+| 0.66.0 | **C** Import-Hinweise · **D1** Arbeitsmodus mit Rücksprung | sofort spürbar, kein Datenrisiko | M |
+| 0.67.0 | **B1** Überlappungsbericht (lesend) · **A-Spike** PubFi-Route · **A2** CSV-Profil Subscan | misst, bevor etwas ausgeblendet wird; schließt PEAQ manuell ab | M |
+| 0.68.0 | **B2** Vorrang-Regel (Börsen), Prüfstapel-Standard | Kern deiner Anforderung | L |
+| 0.69.0 | **A** gewählter Weg (Plan/Schlüssel/Scraper) · **B3** Wallet-Vorrang | braucht Entscheidung zu A | M |
+| 0.70.0 | **E** „Erneut prüfen“ | setzt Herkunftsabdeckung voraus | M |
+| 0.71.0 | **D2** Fälle vereinheitlichen | nach Erfahrung mit D1/E | L |
+
+Vorgehen wie bisher: Test zuerst, ein Commit je Punkt, Volltest grün vor Push, Eintrag in `MILESTONES.md`. B2/B3 und E ändern Buchungen: dort **Sicherung vor Anwendung** (ZIP-Export bzw.
+Datenbank-Sicherung), Vorschau mit Wirkung auf Bestand **und** Steuerjahre, Rückgängig mit Prüfsumme.
+
+## Fragen an dich (Entscheidungen)
+
+1. **Vorrang-Reichweite (B):** Reicht „immer Vorrang, wo die Vollständigkeit belegt oder bestätigt ist; sonst nur verknüpfen“? Alternativ „immer ausblenden“ – dann können Zugänge verschwinden,
+   die nur der Import kennt (z. B. Binance Earn).
+2. **PEAQ (A):** Hast du einen **PubFi-Schlüssel** in Portfolia (für den Spike)? Wäre ein **bezahlter Subscan-Plan** akzeptabel? Soll der **Scraper** trotz 403/Nutzungsbedingungen als
+   Stufe 5 vorbereitet werden – oder reicht dir CSV-Export (Stufe 2)? Kannst du einen echten **Subscan-Export** (CSV) der Adresse bereitstellen (anonymisiert reicht)?
+3. **Kurator-Dateien (C):** Nur archivieren, oder `holdings_reference_history.csv` und `corrections.csv` auswerten (Bestandsreferenzen, Schutz der Korrekturen)? Ein kleines Beispiel je Datei würde
+   die Auswertung absichern.
+4. **Erneut prüfen (E):** Bevorzugst du *markieren* (Buchung bleibt) oder *zurücknehmen* (Buchung weg, Zeile wieder offen) als Standard?
+5. **Importversionen:** Wie oft kommt ein neuer kuratierter Import (v4 …), und bleiben `tx_id`s stabil? Das entscheidet, ob Ausblendungen je Kennung genügen oder Regeln nötig sind (ich plane Regeln).
+
+## Annahmen und Grenzen
+
+* Subscan-Abfragen oben wurden von dieser Umgebung aus mit **zwei** POST-Anfragen gemacht (ohne Schlüssel, nur Lesen, je eine an Web- und API-Adresse); Preise der Subscan-Pläne und die PubFi-Routenliste sind **nicht** geprüft.
+* Die Wirkung des Vorrangs auf deine Bestandsabweichungen (Bitpanda) ist eine **Annahme** bis zum Überlappungsbericht (B1).
+* Aufwände sind Schätzungen (S = Stunden, M = Tage, L = Wochen-Bruchteile) und hängen an den Antworten zu 2 und 3.
+* Keine Steuerberatung: Beim Vorrang ändern sich EUR-Werte und damit realisierte Ergebnisse; die Simulation je Steuerjahr gehört in die Vorschau.
