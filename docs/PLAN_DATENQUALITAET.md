@@ -184,3 +184,63 @@ Datenbank-Sicherung), Vorschau mit Wirkung auf Bestand **und** Steuerjahre, Rüc
 * Die Wirkung des Vorrangs auf deine Bestandsabweichungen (Bitpanda) ist eine **Annahme** bis zum Überlappungsbericht (B1).
 * Aufwände sind Schätzungen (S = Stunden, M = Tage, L = Wochen-Bruchteile) und hängen an den Antworten zu 2 und 3.
 * Keine Steuerberatung: Beim Vorrang ändern sich EUR-Werte und damit realisierte Ergebnisse; die Simulation je Steuerjahr gehört in die Vorschau.
+
+---
+
+## Beschlüsse vom 28.10.2026 und Konkretisierung
+
+**Entscheidungen des Auftraggebers:** Vorrang „wo Vollständigkeit belegt **oder bestätigt** ist, sonst nur verknüpfen“ (Ja) · kein PubFi-Schlüssel, kein bezahlter Subscan-Plan, kein Scraper,
+kein CSV-Export möglich · Kurator-Dateien: Empfehlung (archivieren + erste Zeilen anzeigen) · „Erneut prüfen“: Standard **markieren** · Importversionen: Regeln statt Kennungen.
+Zusätzlich: **Bitpanda und Binance haben eine vollständige Historie und sollen immer Vorrang haben; Wallets in der Regel auch.** Für Wallets mit Abruf-Grenze (z. B. DOT über PubFi: Relay Chain vor Block
+32.196.153, Asset Hub vor Block 18.459.746) ist die Lücke **kostenlos** zu schließen.
+
+**Neu geprüft (öffentliche RPCs, nur lesend):** peaq/OnFinality liefert historische Stände (Sprünge **+1 052,5** und **+10 718,83** PEAQ exakt wie im Subscan-Screenshot). Polkadot-Relay-Chain:
+`rpc.polkadot.io` (Parity) und OnFinality liefern den Zustand bei Block 20 000 000, PublicNode nicht. Damit ist der **Kettenbestand-Abgleich** (Bestand je Block, Halbierung bis zum Sprung) für EVM-Ketten und
+die Relay Chain ohne Anbieter-Schlüssel möglich; der Asset Hub ist ungeprüft (Probe im Programm, Fallback „nicht möglich“ mit Hinweis).
+
+### Umsetzungsfolge (angepasst)
+
+| Release | Inhalt |
+|---|---|
+| 0.66.0 | **C** Import-Hinweise (`kuration/` archivieren, erste Zeilen anzeigen) · **D1** Assistent (siehe UX-Konzept) |
+| 0.67.0 | **A** Kettenbestand-Abgleich: Bestandssprünge ohne Buchung finden und als Aufgabe anbieten (EVM, DOT Relay Chain; Grenzen sichtbar) |
+| 0.68.0 | **B** Quellen-Vorrang mit Bestätigung (Bitpanda, Binance; Wallets ab Abdeckungsbeginn), Prüfstapel-Standard „Quelle ersetzt Import“ |
+| 0.69.0 | **E** „Erneut prüfen“ (markieren, optional zurücknehmen) |
+| 0.70.0 | **D2** Fälle vereinheitlichen, Navigation straffen |
+
+---
+
+## UX-Konzept „Datenqualität einfach“ (verbindlich für D1/D2)
+
+### Was heute schwer ist (aus dem Code, nicht vermutet)
+1. **Kein durchgehender Weg:** Sechs Teilsysteme (Diagnose, Klärung, Prüfstapel, Autopilot/Regeln, Sammelbearbeitung, Integrität) leiten nach einer Aktion jeweils auf **ihre eigene Seite** zurück
+   (`back`-Parameter mit unterschiedlichen Werten, 40+ eigene Redirects).
+2. **Veraltete Ergebnisse verlangen Handarbeit:** Nach Änderungen meldet der Plan „Integritätsprüfung älter als die Daten“ und der Nutzer muss „Alles prüfen“ drücken – das ist das „neu starten“.
+3. **Zu viele Begriffe und Orte:** 4 Reiter, ~20 Unterseiten, Fachwörter (Klärungsfall, Befund, Stapel, Autopilot, Regel) für dieselbe Sache: *etwas ist unklar, bitte entscheiden*.
+4. **Zu viele Klicks je Fall:** Fall öffnen → „Vorschau“ → prüfen → „Übernehmen“ → zurück zur Liste suchen.
+
+### Leitregeln
+* **Eine Aufgabe auf einmal, ein Hauptknopf, immer ein Weg zurück.** Der Nutzer entscheidet; Portfolia schlägt vor und führt.
+* **Nach jeder Aktion kommt die nächste Aufgabe** – nie eine fremde Seite. Ist nichts mehr offen: „Alles erledigt“ mit Zusammenfassung, dann Übersicht.
+* **Nichts manuell neu starten:** Ergebnisse aktualisieren sich nach Änderungen von selbst.
+* **Klare Sprache:** eine Bezeichnung („Aufgabe“) statt sechs; Fachbegriffe nur in „Details“.
+* **Nichts passiert ohne Bestätigung, alles ist rückgängig** (bleibt wie bisher); Vorschau zeigt die Wirkung auf Bestand direkt in der Aufgabe.
+
+### Bausteine (D1)
+1. **Assistent** `GET /quality/assistent`: zeigt die nächste Aufgabe (Reihenfolge: Muss ich tun → Kann ich tun), kompakt: *Was ist los* (ein Satz) · *Empfehlung* mit **einem Hauptknopf**
+   („Empfehlung ansehen und übernehmen“) · *Anders lösen* · *Kein Handlungsbedarf* · *Später* · *Überspringen* · *Details* (Belege eingeklappt). Kopfzeile: „Aufgabe 3 von 17“, Fortschrittsbalken,
+   „Zur Übersicht“. Aufgabenquellen: Diagnose (Entscheidungsliste), Klärungsfälle, Prüfstapel (Stapel mit offenen Zeilen), Integritätsbefunde – vereinheitlicht als **Aufgabe**
+   (Titel, Kurztext, Hauptaktion, Alternativen, Quelle).
+2. **Flow-Modus ohne Umbau aller Routen:** Beim Start setzt der Assistent ein Cookie `dq_flow`. Eine Antwort-Schicht schreibt **erfolgreiche** POST-Weiterleitungen (303 bzw. `HX-Redirect`) innerhalb der
+   Datenqualität (`/quality/*`, `/journal/pruefung*`, `/journal/csv/*`) auf `/quality/assistent` um und reicht `msg` weiter. Fehler (`err`, 4xx) bleiben auf der Seite, wo man sie beheben kann.
+   Die Übersicht („Heute“) und „Zur Übersicht“ löschen das Cookie. Fehlt das Cookie, verhält sich alles wie bisher.
+3. **Sichtbarer Modus:** Solange `dq_flow` gilt, zeigt die Navigation der Datenqualität eine Leiste „Assistent aktiv · Weiter · Beenden“ – man verliert den Weg nie.
+4. **Ein Klick statt drei:** Die Aufgabenkarte rechnet die Vorschau der empfohlenen Lösung **für diese eine Aufgabe** (wie `diagnosis_plan`) und zeigt „Wirkung: …“ sowie den Knopf „Übernehmen und weiter“
+   mit dem Prüfsummen-Token; ohne Empfehlung bleibt der Weg über die Vorschau.
+5. **Selbstaktualisierend:** Nach Datenänderungen läuft der Prüflauf (Diagnose, Integrität, Klärung) automatisch nach (entprellt, nicht öfter als alle 2 Minuten, nicht während eines Imports);
+   „Alles prüfen“ bleibt als Handknopf, ist aber nie nötig. Der Plan zeigt statt der Aufforderung „… älter als die Daten“ „wird aktualisiert …“.
+6. **Heute:** oben ein Block „**N Aufgaben · ca. M Minuten** – Weiter“ (Assistent) statt Listenansicht; die A/B/C-Liste bleibt darunter als Überblick.
+7. **Messbar:** ≤ 2 Klicks je Standardaufgabe; jede Aktion im Assistenten endet in der nächsten Aufgabe oder „Alles erledigt“; Test über alle Redirect-Ziele im Flow-Modus.
+
+### D2 (später, nach Erfahrung)
+Reiter auf *Heute · Fälle · Belege* kürzen, Automatik unter Einstellungen; Diagnose-Befund, Klärungsfall und Prüfstapel-Zeile als **eine** Fallansicht; Expertenseiten hinter „Technik“.
