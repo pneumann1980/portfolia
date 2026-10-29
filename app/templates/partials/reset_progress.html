@@ -1,0 +1,6 @@
+{# Fortschritt „Von vorn beginnen“ (htmx-Abfrage alle 2 s; fertig → Seite neu laden). Erwartet: reset_running. #}
+{% from "partials/progress.html" import bar %}
+<div id="reset-progress" hx-get="/quality/assistent/neustart/status" hx-trigger="every 2s" hx-swap="outerHTML" aria-live="polite">
+  {{ bar(reset_running) }}
+  <p class="hint">Portfolia nimmt die Änderungen nacheinander zurück. Du kannst die Seite verlassen; es läuft weiter.</p>
+</div>

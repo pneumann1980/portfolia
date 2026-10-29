@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.10.2026 · Version 0.76.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.10.2026 · Version 0.77.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,34 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.77.0 – „Von vorn beginnen“ und „Sicherung wiederherstellen“ in der App
+
+Beides steht unter *Datenqualität → Was ich geändert habe*, unter der Liste der Antworten.
+
+* **Von vorn beginnen** (`/quality/assistent/neustart`, `app/diagnosis/reset.py`): nimmt alle Korrekturen und Antworten auf einmal zurück.
+  * **Keine eigene Rücknahmelogik:** jede Änderung über ihre vorhandene Rückgängig-Funktion (Korrektur, Sammelkorrektur, Klärung, Autopilot-Lauf,
+    Entscheidung, Regel-Markierungen, Stapelaktion, Quellenübernahme, zurückgelegte Buchung), über alle Protokolle hinweg **neueste zuerst**; danach
+    Vormerkungen, zurückgestellte Klärungsfälle und Antworten im Assistenten („zur Kenntnis genommen“, „Quelle nicht maßgeblich“).
+  * **Umfang:** *Korrekturen und Antworten* immer; wählbar *Entscheidungen zu neuen Vorgängen*, *Quellenübernahmen*, *Korrekturen des Autopiloten*,
+    *Dauerhafte Regeln* (werden ausgeschaltet). Nie berührt: Import, Abrufe, eigene Buchungen, Kontostände/Nachweise, manuelle Kurse, Einstellungen.
+  * **Vorschau mit Prüfsumme** (Anzahl je Art, einzeln aufklappbar) → **doppelte Bestätigung** (Häkchen + „ZURÜCKSETZEN“ eintippen); ausgeführt wird nur,
+    wenn der Stand noch der Vorschau entspricht.
+  * **Vorher Sicherung** (mit Anlass „vor Von vorn beginnen“), **Autopilot wird ausgeschaltet** (sonst korrigiert er sofort wieder; Hinweis im Ergebnis),
+    Lauf im Hintergrund mit Fortschrittsbalken, danach ein Prüflauf. Schlägt eine Rücknahme fehl, hält der Lauf an und nennt sie; jede Rücknahme ist für
+    sich atomar, der Zwischenstand stimmig.
+* **Sicherung wiederherstellen** (`app/dbrestore.py`): Sicherung wählen (Datum, Anlass, Größe), doppelt bestätigen („WIEDERHERSTELLEN“) → vorgemerkt,
+  Portfolia beendet sich geordnet, Docker startet neu. **Beim Start, vor dem Öffnen der Datenbank:** Sicherung entpacken und prüfen (`integrity_check`,
+  Portfolia-Tabellen), aktuellen Stand (inklusive WAL) selbst als Sicherung „vor Wiederherstellung“ ablegen, alte `-wal`/`-shm` entfernen, Datei atomar
+  einsetzen. Fehler vor dem Einsetzen → Stand unverändert. Ergebnis und vorheriger Stand stehen danach auf derselben Seite; vorgemerkte Wiederherstellung
+  lässt sich verwerfen. Sicherungen tragen jetzt ihren Anlass (täglich, von Hand, vor Zurücksetzen, vor Wiederherstellung; Datei `labels.json` im
+  Sicherungsordner, damit er die Wiederherstellung überlebt). Mit echtem Neustart geprüft (Prozess beendet sich, Start setzt die Sicherung ein).
+* Tests: Rundreise (neue Vorgänge übernehmen, Klärung, Entscheidung → zurücksetzen → Buchungen und Bestände wie vorher, Assistent zählt wieder gleich),
+  Umfang, falsche Prüfsumme, Anhalten beim ersten Fehler, doppelte Bestätigung; Wiederherstellung mit Neustart, Umkehrung, defekte Sicherung, Verwerfen,
+  Schutz vor fremden Pfaden.
+
+**Grenzen:** Ohne automatischen Neustart (kein Docker mit Neustart-Regel) muss Portfolia nach „Wiederherstellen“ von Hand gestartet werden; die
+Wiederherstellung ist bis dahin vorgemerkt. Das Zurücksetzen als Ganzes ist nicht atomar – dafür gibt es die Sicherung von vorher.
 
 ## 0.76.0 – Datenqualität: Reiter Prüfen · Experten · Nachweise · Automatik, Startseite mit einer Zahl
 

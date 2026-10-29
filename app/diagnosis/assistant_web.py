@@ -14,13 +14,15 @@ import re
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.diagnosis import actions as A
 from app.diagnosis import guide as G
+from app.diagnosis import reset as RS
 from app.diagnosis.web import _common
+from app.jobs.scheduler import Scheduler, extra_jobs
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -92,6 +94,16 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
     else:
         _set(resp, st.task.kid, skipped, show_hints)
     return resp
+
+
+def _go_log(**q: str) -> Response:
+    qs = urlencode({k: v for k, v in q.items() if v})
+    return RedirectResponse(f"{BASE}/protokoll" + (f"?{qs}" if qs else "") + "#sicherung", status_code=303)
+
+
+@extra_jobs
+def _register_jobs(s: Scheduler) -> None:
+    s.register(RS.JOB, RS.job_run, None)  # nur auf Anforderung („Von vorn beginnen“)
 
 
 def _undo_decision(ctx: Any, did: int) -> list[str] | None:
@@ -307,10 +319,84 @@ def make_router() -> APIRouter:
 
     @router.get(f"{BASE}/protokoll", response_class=HTMLResponse)
     def log_page(request: Request) -> HTMLResponse:
-        """Was ich geändert habe: Antworten mit Korrektur oder Entscheidung, jeweils zurücknehmbar."""
+        """Was ich geändert habe: Antworten mit Korrektur oder Entscheidung, jeweils zurücknehmbar; darunter „Von vorn
+        beginnen“ (alles zurücknehmen) und „Sicherung wiederherstellen“."""
+        from app import dbrestore as DR
+        from app.jobs.maintenance import list_backups
+
         ctx = get_ctx(request)
         return render(request, "guide_log.html", active="quality", title=G.TITLE, rows=A.decisions(ctx.db, 100),
-                      mark_actions=A.MARK_ACTIONS)
+                      mark_actions=A.MARK_ACTIONS, reset_last=RS.last(ctx.db), reset_running=RS.running(ctx),
+                      backups=list_backups(ctx), restore_pending=DR.pending(ctx.config),
+                      restore_result=DR.result(ctx.config), restore_word=DR.CONFIRM_WORD)
+
+    @router.get(f"{BASE}/neustart", response_class=HTMLResponse)
+    def reset_page(request: Request, s: list[str] = Query(default=[]), err: str = "") -> HTMLResponse:
+        """Von vorn beginnen: Umfang wählen, Vorschau mit Prüfsumme, doppelte Bestätigung."""
+        ctx = get_ctx(request)
+        return render(request, "guide_reset.html", active="quality", title=G.TITLE, plan=RS.plan(ctx, s),
+                      scopes=RS.SCOPES, word=RS.CONFIRM_WORD, kind_label=RS.KIND_LABEL, state_label=RS.STATE_LABEL,
+                      err=err[:300])
+
+    def _reset_start(ctx: Any, scopes: list[str], token: str) -> Response:
+        back = f"{BASE}/neustart?" + urlencode([("s", x) for x in scopes])
+        if RS.running(ctx) is not None:
+            return RedirectResponse(back + "&" + urlencode({"err": "Das Zurücksetzen läuft bereits."}), 303)
+        if RS.plan(ctx, scopes).token != token:
+            return RedirectResponse(back + "&" + urlencode({"err": "Seit der Vorschau hat sich etwas geändert – bitte "
+                                                                   "die Vorschau prüfen und erneut bestätigen."}), 303)
+        if ctx.scheduler is None or not ctx.scheduler.trigger(RS.JOB, 0.2, scopes=scopes, token=token):
+            RS.run(ctx, scopes, token)  # ohne Scheduler (Tests, CLI): direkt
+        return RedirectResponse(f"{BASE}/protokoll#neustart", status_code=303)
+
+    @router.post(f"{BASE}/neustart")
+    async def reset_start(request: Request) -> Response:
+        ctx = get_ctx(request)
+        form = await request.form()
+        scopes = RS.normalize([str(x) for x in form.getlist("s")])
+        if str(form.get("word") or "").strip() != RS.CONFIRM_WORD or form.get("ok") != "1":
+            return RedirectResponse(f"{BASE}/neustart?" + urlencode(
+                [("s", x) for x in scopes] + [("err", f"Bitte das Häkchen setzen und {RS.CONFIRM_WORD} eintippen – "
+                                                      "es wurde nichts geändert.")]), status_code=303)
+        return await run_in_threadpool(_reset_start, ctx, scopes, str(form.get("token") or ""))
+
+    @router.get(f"{BASE}/neustart/status", response_class=HTMLResponse)
+    def reset_status(request: Request) -> Response:
+        p = RS.running(get_ctx(request))
+        if p is None:  # fertig → Seite neu laden (zeigt das Ergebnis)
+            return Response(status_code=204, headers={"HX-Refresh": "true"})
+        return render(request, "partials/reset_progress.html", reset_running=p)
+
+    @router.post(f"{BASE}/sicherung")
+    async def restore(request: Request) -> Response:
+        """Sicherung für den nächsten Start vormerken und Portfolia geordnet neu starten."""
+        from app import dbrestore as DR
+
+        ctx = get_ctx(request)
+        form = await request.form()
+        name = str(form.get("name") or "")
+        if str(form.get("word") or "").strip() != DR.CONFIRM_WORD or form.get("ok") != "1":
+            return _go_log(err=f"Bitte das Häkchen setzen und {DR.CONFIRM_WORD} eintippen – es wurde nichts "
+                               "geändert.")
+        errs = DR.request(ctx, name)
+        if errs:
+            return _go_log(err=" ".join(errs))
+        DR.restart_process()
+        return render(request, "guide_restart.html", active="quality", name=name)
+
+    @router.post(f"{BASE}/sicherung/abbrechen")
+    async def restore_cancel(request: Request) -> Response:
+        from app import dbrestore as DR
+
+        DR.cancel(get_ctx(request).config)
+        return _go_log(msg="Vorgemerkte Wiederherstellung verworfen.")
+
+    @router.post(f"{BASE}/sicherung/ok")
+    async def restore_ok(request: Request) -> Response:
+        from app import dbrestore as DR
+
+        DR.dismiss_result(get_ctx(request).config)
+        return _go_log()
 
     async def _stack_answer(ctx: Any, typ: str, ref: str, aid: str, form: Any, gone: Any) -> Response:
         import json

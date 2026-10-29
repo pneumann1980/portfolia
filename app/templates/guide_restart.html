@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Portfolia startet neu{% endblock %}
+{% block heading %}Portfolia startet neu{% endblock %}
+{% block content %}
+<div class="guide">
+  <section class="card" role="status" aria-live="polite" data-restart-wait="/quality/assistent/protokoll#sicherung">
+    <h2>Sicherung wird wiederhergestellt</h2>
+    <p>Portfolia beendet sich jetzt, stellt beim Start <span class="mono">{{ name }}</span> wieder her und ist in etwa einer Minute wieder da. Diese Seite lädt sich dann von selbst.</p>
+    <div class="progress indeterminate" role="progressbar" aria-label="Neustart"><div></div></div>
+    <p class="hint">Läuft Portfolia ohne automatischen Neustart (z. B. nicht in Docker mit <code>restart: unless-stopped</code>), starte es jetzt selbst – die Wiederherstellung ist vorgemerkt und läuft beim nächsten Start.</p>
+  </section>
+</div>
+{% endblock %}

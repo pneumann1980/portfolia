@@ -4,6 +4,8 @@
 {% block content %}
 <div class="guide">
   <p><a href="/quality/assistent">← Zurück zur Frage</a></p>
+  {% if request.query_params.get('msg') %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ request.query_params.get('msg') }}</div></div>{% endif %}
+  {% if request.query_params.get('err') %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ request.query_params.get('err') }}</div></div>{% endif %}
   <section class="card">
     <h2>Deine Antworten</h2>
     <p class="hint">Korrekturen und Entscheidungen, neueste zuerst. Zurücknehmen stellt den vorherigen Stand her; die Frage erscheint dann wieder. Übernommene neue Vorgänge nimmst du im Verlauf ihres Prüfstapels zurück.</p>
@@ -17,6 +19,48 @@
     </tr>{% endfor %}
     </tbody></table></div>
     {% else %}<p>Noch keine Antworten.</p>{% endif %}
+  </section>
+
+  <section class="card guide-danger" id="neustart">
+    <h2>Von vorn beginnen</h2>
+    <p>Nimmt alle Korrekturen und Antworten auf einmal zurück – über dieselben Rückgängig-Wege wie oben, neueste zuerst. Danach stellt „Buchungen prüfen“ alle Fragen neu. Vorher legt Portfolia eine Sicherung an, die du unten wiederherstellen kannst.</p>
+    {% if reset_running %}{% include "partials/reset_progress.html" %}
+    {% else %}<a class="btn danger" href="/quality/assistent/neustart">Von vorn beginnen …</a>{% endif %}
+    {% if reset_last and reset_last.finished_at and not reset_running %}
+      <div class="alert {{ 'good' if reset_last.ok else 'warn' }}" role="status"><span class="icon">{{ '✓' if reset_last.ok else '!' }}</span><div>
+        Zuletzt am {{ reset_last.finished_at|datetime_de }}: {{ reset_last.done }} von {{ reset_last.total }} Änderungen zurückgenommen{% if reset_last.ok %}, Vormerkungen und Antworten zurückgesetzt{% endif %}.
+        {% if reset_last.errors %}<br>Angehalten: {{ reset_last.errors|join(' ') }} Der Stand ist stimmig (jede Rücknahme ist für sich vollständig); alles Ältere ist noch aktiv.{% endif %}
+        {% if reset_last.autopilot_was_on %}<br>Der Autopilot wurde dabei ausgeschaltet – unter <a href="/quality/autopilot">Automatik → Autopilot</a> wieder einschalten.{% endif %}
+        {% if reset_last.backup %}<br>Sicherung von vorher: <span class="mono">{{ reset_last.backup }}</span>{% endif %}
+      </div></div>
+    {% endif %}
+  </section>
+
+  <section class="card guide-danger" id="sicherung">
+    <h2>Sicherung wiederherstellen</h2>
+    {% if restore_result %}
+    <div class="alert {{ 'good' if restore_result.ok else 'crit' }}" role="status"><span class="icon">{{ '✓' if restore_result.ok else '!' }}</span><div>
+      {% if restore_result.ok %}Wiederhergestellt aus <span class="mono">{{ restore_result.file }}</span> ({{ restore_result.at[:16]|replace('T', ' ') }}). Der Stand davor liegt als Sicherung <span class="mono">{{ restore_result.before }}</span> bereit.
+      {% else %}Wiederherstellung aus <span class="mono">{{ restore_result.file }}</span> fehlgeschlagen: {{ restore_result.error }} – dein Stand ist unverändert.{% endif %}
+      <form method="post" action="/quality/assistent/sicherung/ok" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Ausblenden</button></form>
+    </div></div>
+    {% endif %}
+    {% if restore_pending %}
+    <div class="alert warn" role="status"><span class="icon">!</span><div>Wiederherstellung von <span class="mono">{{ restore_pending.file }}</span> ist vorgemerkt und läuft beim nächsten Start von Portfolia.
+      <form method="post" action="/quality/assistent/sicherung/abbrechen" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Verwerfen</button></form></div></div>
+    {% endif %}
+    <p>Setzt die <b>ganze Datenbank</b> auf den Stand einer Sicherung zurück – auch Abrufe, Importe und Einstellungen, die danach dazugekommen sind. Portfolia startet dafür neu (etwa eine Minute). Der aktuelle Stand wird vorher selbst als Sicherung abgelegt; die Wiederherstellung ist also ebenfalls umkehrbar.</p>
+    {% if backups %}
+    <form method="post" action="/quality/assistent/sicherung" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="guide-answers" role="radiogroup" aria-label="Sicherung">
+      {% for b in backups[:15] %}<label class="guide-a"><input type="radio" name="name" value="{{ b.name }}" required{% if loop.first %} checked{% endif %}><span class="guide-a-body"><b>{{ b.created|datetime_de }}</b><span class="hint">{{ b.label or 'tägliche bzw. manuelle Sicherung' }} · {{ (b.bytes / 1024)|round|int }} KB</span></span></label>{% endfor %}
+      </div>
+      <label class="check"><input type="checkbox" name="ok" value="1" required> Ich habe verstanden: alles nach dem gewählten Zeitpunkt geht verloren, Portfolia startet neu.</label>
+      <label class="field">Zur Bestätigung <b>{{ restore_word }}</b> eintippen<input name="word" autocomplete="off" required pattern="{{ restore_word }}"></label>
+      <div><button class="btn danger" type="submit" data-once>Wiederherstellen und neu starten</button></div>
+    </form>
+    {% else %}<p class="hint">Noch keine Sicherung vorhanden (Einstellungen → Sicherung → „Jetzt sichern“).</p>{% endif %}
   </section>
 </div>
 {% endblock %}

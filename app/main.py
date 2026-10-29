@@ -64,6 +64,9 @@ def build_app(config: Config | None = None, start_scheduler: bool | None = None)
     setup_logging(config.log_level, config.log_format, config.secrets.values(), config.log_levels)
     set_local_tz(config.tz)
     load_report = _load_modules()
+    from app import dbrestore
+
+    dbrestore.apply_pending(config)  # vorgemerkte Wiederherstellung – vor dem Öffnen der Datenbank
     ctx = AppContext(config)
 
     @contextlib.asynccontextmanager

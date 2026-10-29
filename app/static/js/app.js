@@ -533,3 +533,20 @@
   window.addEventListener("hashchange", openTarget);
   document.addEventListener("DOMContentLoaded", openTarget);
 })();
+
+/* Neustart nach „Sicherung wiederherstellen“: warten, bis Portfolia weg und wieder da ist, dann weiterleiten */
+(function () {
+  var el = document.querySelector("[data-restart-wait]");
+  if (!el) return;
+  var target = el.getAttribute("data-restart-wait"), down = false, tries = 0;
+  function poll() {
+    tries += 1;
+    if (tries > 150) { location.href = target; return; }
+    fetch("/healthz", {cache: "no-store"}).then(function (r) {
+      if (r.ok && down) { location.href = target; return; }
+      if (!r.ok) down = true;
+      setTimeout(poll, 2000);
+    }).catch(function () { down = true; setTimeout(poll, 2000); });
+  }
+  setTimeout(poll, 2500);
+})();

@@ -2031,8 +2031,11 @@ eigene Aufstellungen je Steuerjahr – **ohne** eigene Steuerberechnung und **oh
 * **Backups:** täglich (Uhrzeit einstellbar, Standard 03:15) über die SQLite-Online-Backup-API mit
   Integritätsprüfung, gzip-komprimiert nach `/data/backups`, Aufbewahrung 14 Stück (einstellbar); manuell
   unter *Einstellungen → Backups* oder per `docker exec -u 99:100 portfolia python -m app backup`.
-  **Wiederherstellen:** Container stoppen, Sicherung entpacken (`gunzip`), als `/data/app.sqlite` ablegen,
-  `app.sqlite-wal`/`-shm` entfernen, Container starten. Gespeicherte API-Keys sind darin nur verschlüsselt
+  **Wiederherstellen in der App:** *Datenqualität → Was ich geändert habe → Sicherung wiederherstellen* (doppelt
+  bestätigt). Portfolia beendet sich geordnet, Docker startet es neu (`restart: unless-stopped`); beim Start wird die
+  Sicherung vor dem Öffnen der Datenbank geprüft und eingesetzt, der bisherige Stand vorher selbst als Sicherung
+  abgelegt (umkehrbar). **Von Hand:** Container stoppen, Sicherung entpacken (`gunzip`), als `/data/app.sqlite`
+  ablegen, `app.sqlite-wal`/`-shm` entfernen, Container starten. Gespeicherte API-Keys sind darin nur verschlüsselt
   enthalten und brauchen nach einem Restore denselben Master-Key. **Wichtig:** In Portfolia erfasste und per CSV
   importierte Buchungen und Assets existieren nur in der App-Datenbank – deshalb zusätzlich:
 * **ZIP-Sicherungen im Import-Format:** Nach jeder Änderung an Buchungen oder Einstellungen (manuell, CSV-Import,

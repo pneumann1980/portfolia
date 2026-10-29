@@ -1088,6 +1088,7 @@ details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
 .guide-a:not(:has(input:checked)) .guide-params { display: none; }
 .guide-facts { margin: 4px 0 8px; padding-left: 1.2em; }
 .guide-facts li { margin: 2px 0; }
+.guide-danger { border-color: var(--crit-ink, #b42318); }
 /* Mobil (Abnahme c: Aufgabe n von m, Thema und Frage ohne Scrollen bei 390 px) */
 @media (max-width: 600px) {
   .guide { gap: 10px; }

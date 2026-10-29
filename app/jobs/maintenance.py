@@ -56,6 +56,10 @@ def backup_now(ctx: AppContext, reason: str = "daily") -> dict[str, Any]:
         for p in (raw, gz_tmp):
             with contextlib.suppress(FileNotFoundError):
                 p.unlink()
+    with contextlib.suppress(OSError):  # Anlass für „Sicherung wiederherstellen“
+        from app.dbrestore import set_label
+
+        set_label(d, target.name, {"daily": "tägliche Sicherung", "manual": "von Hand gesichert"}.get(reason, reason))
     removed = prune_backups(ctx, int(ctx.settings.get("backup.keep", 14) or 14))
     size = target.stat().st_size
     log.info("Sicherung erstellt: %s (%d KB, %s)", target.name, size // 1024, reason)
@@ -63,15 +67,18 @@ def backup_now(ctx: AppContext, reason: str = "daily") -> dict[str, Any]:
 
 
 def list_backups(ctx: AppContext) -> list[dict[str, Any]]:
+    from app.dbrestore import labels
+
     d = ctx.config.backup_dir
     out = []
     if not d.is_dir():
         return out
+    names = labels(d)
     for p in d.iterdir():
         m = BACKUP_RE.match(p.name)
         if m and p.is_file():
             ts = datetime.strptime(m.group(1), "%Y%m%d-%H%M%S").replace(tzinfo=local_tz())
-            out.append({"name": p.name, "bytes": p.stat().st_size, "created": ts})
+            out.append({"name": p.name, "bytes": p.stat().st_size, "created": ts, "label": names.get(p.name, "")})
     out.sort(key=lambda b: b["name"], reverse=True)
     return out
 

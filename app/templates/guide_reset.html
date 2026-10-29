@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Von vorn beginnen{% endblock %}
+{% block heading %}{{ title }} · Von vorn beginnen{% endblock %}
+{% block content %}
+<div class="guide">
+  <p><a href="/quality/assistent/protokoll#neustart">← Was ich geändert habe</a></p>
+  {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+  <section class="card">
+    <h2>1 · Was soll zurückgenommen werden?</h2>
+    <form method="get" action="/quality/assistent/neustart" class="stack" style="gap:8px">
+      {% for key, (label, text, fixed) in scopes.items() %}
+      <label class="check"><input type="checkbox" name="s" value="{{ key }}"{% if fixed or key in plan.scopes %} checked{% endif %}{% if fixed %} disabled{% endif %}>
+        <span><b>{{ label }}</b> <span class="badge">{{ plan.available.get(key, 0) }}</span><br><span class="hint">{{ text }}</span></span></label>
+      {% endfor %}
+      <div><button class="btn sm" type="submit">Auswahl übernehmen</button></div>
+    </form>
+    <p class="hint">Nie berührt: der Import selbst, Abrufe, deine eigenen Buchungen im Journal, eingetragene Kontostände, manuelle Kurse und Einstellungen.</p>
+  </section>
+
+  <section class="card">
+    <h2>2 · Vorschau</h2>
+    {% if not plan.total %}
+    <div class="alert good" role="status"><span class="icon">✓</span><div>Mit dieser Auswahl gibt es nichts zurückzunehmen.</div></div>
+    {% else %}
+    <p><b>{{ plan.total }}</b> {{ 'Änderung' if plan.total == 1 else 'Änderungen' }} werden zurückgenommen, neueste zuerst:</p>
+    <ul>{% for kind, n in plan.by_kind() %}<li>{{ kind_label.get(kind, kind) }}: {{ n }}</li>{% endfor %}
+      {% for k, n in plan.states.items() %}<li>{{ state_label.get(k, k) }}: {{ n }}</li>{% endfor %}
+      {% if plan.rules %}<li>Regeln, die ausgeschaltet werden: {{ plan.rules|length }}</li>{% endif %}</ul>
+    {% if plan.units %}<details><summary class="hint">Einzeln ansehen ({{ plan.units|length }})</summary><ol class="small">{% for u in plan.units[:200] %}<li>{{ u.at|datetime_de }} · {{ kind_label.get(u.kind, u.kind) }}: {{ u.label }}{% if u.n > 1 %} ({{ u.n }}){% endif %}</li>{% endfor %}</ol>{% if plan.units|length > 200 %}<p class="hint">… und {{ plan.units|length - 200 }} weitere.</p>{% endif %}</details>{% endif %}
+    <p class="hint">Der Autopilot wird dabei ausgeschaltet, sonst würde er sofort wieder korrigieren. Bricht eine Rücknahme ab, hält Portfolia an: Der Stand bleibt stimmig, die Sicherung von vorher lässt sich wiederherstellen.</p>
+    {% endif %}
+  </section>
+
+  {% if plan.total %}
+  <section class="card guide-danger">
+    <h2>3 · Bestätigen</h2>
+    <form method="post" action="/quality/assistent/neustart" class="stack" style="gap:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="token" value="{{ plan.token }}">
+      {% for s in plan.scopes %}<input type="hidden" name="s" value="{{ s }}">{% endfor %}
+      <label class="check"><input type="checkbox" name="ok" value="1" required> Ich habe verstanden: {{ plan.total }} Änderungen werden zurückgenommen; Portfolia legt vorher eine Sicherung an.</label>
+      <label class="field">Zur Bestätigung <b>{{ word }}</b> eintippen<input name="word" autocomplete="off" required pattern="{{ word }}"></label>
+      <div><button class="btn danger" type="submit" data-once>Alles zurücknehmen</button></div>
+    </form>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}
