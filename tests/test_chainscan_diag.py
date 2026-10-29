@@ -140,7 +140,7 @@ def test_page_without_capable_wallet_explains_support(cfg):
     try:
         page = c.get("/quality/kette").text
         assert "keinen kostenlosen Archivweg" in page or "Für keine deiner Wallet-Quellen" in page
-        assert "Belege" in c.get("/quality/belege").text
+        assert "Nachweise" in (hub := c.get("/quality/belege").text) and "/quality/kette" in hub
     finally:
         c.__exit__(None, None, None)
 
