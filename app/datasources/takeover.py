@@ -51,6 +51,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.util.timeutil import iso, parse_iso
+from app.web.fmt import asset_label, qty_exact
 
 log = logging.getLogger(__name__)
 
@@ -556,10 +557,14 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
         e, o, n = expected.get(aid, ZERO), observed.get(aid, ZERO), now.get(aid, ZERO)
         if not (e or o or n):
             continue
-        name = getattr(assets.get(aid), "symbol", None) or aid
-        a.balances.append({"asset": aid, "name": name, "now": n, "after": e, "observed": o,
+        name = getattr(assets.get(aid), "symbol", None) or asset_label(aid)
+        a.balances.append({"asset": aid, "name": name, "now": n, "after": e, "observed": o, "negative": e < -DUST,
                            "ok": abs(e - o) <= DUST, "was_ok": abs(n - o) <= DUST,
                            "not_worse": abs(e - o) <= abs(n - o) + DUST})
+    names = [b["name"] for b in a.balances]
+    for b in a.balances:  # gleiches Kürzel, verschiedene Assets (z. B. PEAQ und PEAQ-Token auf Ethereum)
+        if names.count(b["name"]) > 1 and b["name"] != b["asset"]:
+            b["name"] = f"{b['name']} ({asset_label(b['asset'])})"
     a.ready = True
 
     # -- Prüfungen ------------------------------------------------------------------------------------------
@@ -590,7 +595,8 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
         Check("observed", "Beobachteter Bestand vollständig und zugeordnet",
               meta.get("balances") is not None and bool(meta.get("balances_complete", True)) and not unmapped,
               ("Bestand der API fehlt (Leserecht „Balances“?)" if meta.get("balances") is None else
-               "nicht zugeordnet: " + ", ".join(unmapped[:8]) if unmapped else
+               "Portfolia kennt diese Tokens der Quelle nicht (noch keinem Asset zugeordnet): "
+               + ", ".join(asset_label(k) for k in unmapped[:8]) if unmapped else
                f"{len(observed)} Bestände mit Menge")),
         Check("lines", "Alle Vorgänge sind eindeutig und buchbar", not bad,
               f"{len(bad)} nicht buchbar: " + "; ".join(
@@ -598,13 +604,14 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
               if bad else f"{a.lines} Zeilen in {a.events} Vorgängen"),
         Check("balance", "Vorgänge der API ergeben den beobachteten Bestand exakt je Asset",
               all(b["ok"] for b in a.balances),
-              "; ".join(f"{b['name']}: erklärt {_fmt(b['after'])}, beobachtet {_fmt(b['observed'])}"
+              "; ".join(f"{b['name']}: erklärt {qty_exact(b['after'])}, laut Quelle {qty_exact(b['observed'])}"
                          for b in a.balances if not b["ok"])[:400] or f"{len(a.balances)} Assets stimmen")
         if proof else
         Check("balance", "Der Bestand weicht danach je Asset nicht stärker vom beobachteten ab als jetzt",
               all(b["not_worse"] for b in a.balances),
-              "; ".join(f"{b['name']}: jetzt {_fmt(b['now'])}, danach {_fmt(b['after'])}, beobachtet "
-                         f"{_fmt(b['observed'])}" for b in a.balances if not b["not_worse"])[:400]
+              "; ".join(f"{b['name']}: jetzt {qty_exact(b['now'])}, danach {qty_exact(b['after'])}, laut Quelle "
+                         f"{qty_exact(b['observed'])}" + (" – würde negativ" if b["negative"] else "")
+                         for b in a.balances if not b["not_worse"])[:600]
               or (f"{len(a.balances)} Assets: {sum(1 for b in a.balances if b['ok'])} exakt, "
                   f"{sum(1 for b in a.balances if not b['ok'])} mit unveränderter oder kleinerer Abweichung")),
         Check("connector", "Eigene Bestandsprüfung der Quelle (Vorgänge ↔ /portfolio)",
@@ -803,8 +810,8 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, A
         n, o = now.get(aid, ZERO), a.observed.get(aid, ZERO)
         limit = DUST if a.mode == "proof" else abs(before.get(aid, ZERO) - o) + DUST  # bestätigt: nicht schlechter
         if abs(n - o) > limit:
-            diffs.append(f"{aid}: gebucht {_fmt(n)}, beobachtet {_fmt(o)}"
-                         + ("" if a.mode == "proof" else f" (vorher {_fmt(before.get(aid, ZERO))})"))
+            diffs.append(f"{asset_label(aid)}: gebucht {qty_exact(n)}, laut Quelle {qty_exact(o)}"
+                         + ("" if a.mode == "proof" else f" (vorher {qty_exact(before.get(aid, ZERO))})"))
     stuck = [rc for rc in csv.rows(bid) if rc.open and (rc.rec.ext_id or "") not in cover_ext
              and rc.status not in ("known", "ignored")]
     if diffs:

@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.10.2026 · Version 0.75.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.10.2026 · Version 0.75.1 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,17 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.75.1 – Überlauf in Hinweiskästen, lesbare Sperrgründe der Quellenübernahme, Layoutprüfung
+
+* **Überlauf behoben (alle Seiten):** Hinweiskästen sind Flex-Container; ihr Textteil konnte nicht schmaler werden als das längste Wort, lange Kennungen
+  (`SEND@ETH:0x91d6…`) und Zahlen liefen über den Kasten hinaus und wurden von der Karte abgeschnitten (390 px: 468 px Text in 324 px Kasten). Jetzt brechen sie um
+  (`.alert > div { min-width: 0; overflow-wrap: anywhere }`).
+* **Quellenübernahme – Sperrgründe lesbar:** Mengen im deutschen Format, Token-Kennungen gekürzt (`SEND · ETH 0x91d6cf…e5f6`), gleiche Kürzel verschiedener Assets unterscheidbar
+  („PEAQ (PEAQ · ETH 0x…)“), „würde negativ“ in Tabelle und Sperrgrund; die fehlende eigene Bestätigung erscheint als Aufforderung mit Sprung zu Schritt 2 statt als Fehler,
+  Bestandsabweichungen als Liste je Asset mit Sprung zur Tabelle in Schritt 3.
+* **Layoutprüfung** `scripts/layout_check.js` (Node + Playwright, nicht in der CI): je Seite waagrechtes Scrollen, abgeschnittene Inhalte und ein Belastungstest mit langer
+  Token-Kennung in Hinweiskasten und Tabelle. Ohne die Korrektur oben meldet er den Fehler auf jeder Seite, mit ihr nicht mehr.
 
 ## 0.75.0 – „Buchungen prüfen“: jede Aufgabe im Assistenten beantwortbar, Mobil-Ansicht, Abnahmetests
 

@@ -172,7 +172,7 @@ def test_balance_mismatch_blocks_and_changes_nothing(config, master, api):
     try:
         a = staged(c, sid)
         assert not a.ok and any(b.key == "balance" for b in a.blockers)
-        assert "BTC: erklärt 0.00445, beobachtet 0.00446" in a.blockers[0].detail
+        assert "BTC: erklärt 0,00445, laut Quelle 0,00446" in a.blockers[0].detail
         before, n = holdings(c), ctx(c).db.scalar("SELECT COUNT(*) FROM journal_tx")
         res = TK.apply(ctx(c), sid, a.token)
         assert res["errors"] and "Beweis ist nicht erbracht" in res["errors"][0]

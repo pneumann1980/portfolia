@@ -96,7 +96,7 @@
     <div class="card-head"><h2>3 · Bestand</h2></div>
     <p class="hint">„Jetzt“ = aktueller Bestand der Buchungen des Kontos; „nach Übernahme“ = Vorgänge der Quelle plus bleibende Buchungen; „beobachtet“ = Bestand laut Quelle.{% if a.window_from %} Buchungen vor dem {{ a.window_from|date_de }} (erstes Ereignis der Quelle) bleiben: {{ a.before|length }}.{% endif %}</p>
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th class="num">Jetzt</th><th class="num">Nach Übernahme</th><th class="num">Beobachtet</th><th>Stand</th></tr></thead><tbody>
-    {% for b in a.balances %}<tr><td><b>{{ b.name }}</b></td><td class="num" data-label="Jetzt">{{ b.now|qty_exact }}{% if not b.was_ok %} <span class="badge warn">weicht ab</span>{% endif %}</td><td class="num" data-label="Nach Übernahme">{{ b.after|qty_exact }}</td><td class="num" data-label="Beobachtet">{{ b.observed|qty_exact }}</td><td data-label="Stand">{% if b.ok %}<span class="badge good">exakt</span>{% elif a.mode == 'confirm' and b.not_worse %}<span class="badge warn">Abweichung {{ (b.after - b.observed)|qty_exact }} (nicht schlechter)</span>{% else %}<span class="badge crit">Abweichung {{ (b.after - b.observed)|qty_exact }}</span>{% endif %}</td></tr>{% endfor %}
+    {% for b in a.balances %}<tr><td><b>{{ b.name }}</b></td><td class="num" data-label="Jetzt">{{ b.now|qty_exact }}{% if not b.was_ok %} <span class="badge warn">weicht ab</span>{% endif %}</td><td class="num" data-label="Nach Übernahme">{{ b.after|qty_exact }}{% if b.negative %} <span class="badge crit">würde negativ</span>{% endif %}</td><td class="num" data-label="Beobachtet">{{ b.observed|qty_exact }}</td><td data-label="Stand">{% if b.ok %}<span class="badge good">exakt</span>{% elif a.mode == 'confirm' and b.not_worse %}<span class="badge warn">Abweichung {{ (b.after - b.observed)|qty_exact }} (nicht schlechter)</span>{% else %}<span class="badge crit">Abweichung {{ (b.after - b.observed)|qty_exact }}</span>{% endif %}</td></tr>{% endfor %}
     </tbody></table></div>
   </section>
 
@@ -143,7 +143,13 @@
       <div><button class="btn primary" type="submit">API maßgeblich machen</button></div>
     </form>
     {% else %}
-    <div class="alert warn"><span class="icon">!</span><div>{{ 'Der Beweis ist nicht erbracht' if a.mode == 'proof' else 'Die Voraussetzungen sind nicht erfüllt' }} – die Übernahme ist gesperrt:<ul>{% for c in a.blockers %}<li><b>{{ c.label }}</b>: {{ c.detail }}</li>{% endfor %}</ul></div></div>
+    <div class="alert warn"><span class="icon">!</span><div>{{ 'Der Beweis ist nicht erbracht' if a.mode == 'proof' else 'Die Voraussetzungen sind nicht erfüllt' }} – die Übernahme ist gesperrt. Was fehlt:
+      <ul class="takeover-blockers">{% for c in a.blockers %}<li>
+        {% if c.key == 'fetch' and a.mode == 'confirm' and not a.confirm %}<b>Deine Bestätigung</b>: setze oben in <a href="#beweis">Schritt 2</a> das Häkchen, wenn {{ ds.provider_label }} die vollständige Historie des Kontos kennt.
+        {% elif c.key == 'balance' %}{% set bad = a.balances|rejectattr('ok' if a.mode == 'proof' else 'not_worse')|list %}<b>Bestand</b>: bei {{ bad|length }} Asset{{ 's' if bad|length != 1 }} passt es danach nicht (Tabelle in <a href="#bestand">Schritt 3</a>):
+          <ul>{% for b in bad[:8] %}<li>{{ b.name }}: jetzt {{ b.now|qty_exact }}, danach {{ b.after|qty_exact }}, laut Quelle {{ b.observed|qty_exact }}{% if b.negative %} – <b>würde negativ</b>{% endif %}</li>{% endfor %}</ul>
+        {% else %}<b>{{ c.label }}</b>: {{ c.detail }}{% endif %}
+      </li>{% endfor %}</ul></div></div>
     {% endif %}
   </section>
   {% else %}

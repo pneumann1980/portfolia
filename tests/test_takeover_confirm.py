@@ -85,7 +85,7 @@ def test_confirmed_takeover_is_blocked_when_the_balance_would_get_worse(config, 
         staged(c, sid)
         a = TK.assess(ctx(c), sid, confirm=True)
         assert not a.ok and [b.key for b in a.blockers] == ["balance"]
-        assert "BTC: jetzt 0.0045, danach 0.00445" in a.blockers[0].detail
+        assert "BTC: jetzt 0,0045, danach 0,00445" in a.blockers[0].detail
         before = holdings(c)
         res = TK.apply(ctx(c), sid, a.token, confirm=True)
         assert res["errors"] and holdings(c) == before and not sync_txs(c)

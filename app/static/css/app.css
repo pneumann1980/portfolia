@@ -288,6 +288,7 @@ html.hide-total .sens-mask { display: inline; letter-spacing: 0.06em; }
   background: var(--info-bg); color: var(--info-ink); font-size: 0.9rem;
 }
 .alert .icon { font-weight: 700; flex: 0 0 auto; }
+.alert > div { min-width: 0; overflow-wrap: anywhere; }  /* lange Kennungen/Zahlen brechen um statt überzulaufen */
 .alert.warn { background: var(--warn-bg); color: var(--warn-ink); }
 .alert.crit { background: var(--crit-bg); color: var(--crit-ink); }
 .alert.good { background: var(--good-bg); color: var(--good-ink); }
