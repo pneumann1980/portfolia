@@ -344,7 +344,17 @@ def audit_files(db: Any, import_id: int | None, lines: int = 6) -> list[dict[str
 
 
 @router.get("/quality", response_class=HTMLResponse)
-def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
+def quality(request: Request) -> HTMLResponse:
+    """Startseite „Prüfen“: Aufgaben des Assistenten je Thema (nachgeladen), Knöpfe – ohne Fachbegriffe."""
+    resp = render(request, "quality.html", active="quality")
+    for c in ("dq_flow", "dq_cur", "dq_skip"):  # Übersicht erreicht = Flow-Modus des Assistenten endet
+        resp.delete_cookie(c, path="/")
+    return resp
+
+
+@router.get("/quality/technik", response_class=HTMLResponse)
+def quality_tech(request: Request, import_id: int | None = None) -> HTMLResponse:
+    """Nachweise → Import und Kurse: Import, Kursqualität, Datenquellen, Ledger- und Steuerhinweise, Jobs, Protokoll."""
     ctx = get_ctx(request)
     imports = ctx.db.q("SELECT * FROM imports ORDER BY id DESC LIMIT 25")
     active = ctx.active_import_id()
@@ -383,7 +393,7 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
                    "dups": js.duplicates(), "log": js.log(15)}
     except Exception as e:  # Journal-Modul optional
         log.debug("Journal nicht verfügbar: %s", e)
-    resp = render(request, "quality.html", active="quality", imports=imports, cur=cur, journal=journal,
+    return render(request, "quality_tech.html", active="quality", imports=imports, cur=cur, journal=journal,
                   audit=audit_files(ctx.db, sel),
                   stale_ignored=set(ctx.settings.get("prices.stale_ignored") or []),
                   active_id=active,
@@ -395,9 +405,6 @@ def quality(request: Request, import_id: int | None = None) -> HTMLResponse:
                   asset_name=lambda aid: pf.asset(aid).name if pf else aid,
                   src_suggested=ctx.db.scalar("SELECT COUNT(*) FROM asset_source WHERE status='suggested'", default=0),
                   s_age={k: _age_label(ctx.settings.get(FB_KEYS[k], FB_DEFAULT[k])) for k in FB_KEYS})
-    for c in ("dq_flow", "dq_cur", "dq_skip"):  # Übersicht erreicht = Flow-Modus des Assistenten endet
-        resp.delete_cookie(c, path="/")
-    return resp
 
 
 def _age_label(v: Any) -> str:

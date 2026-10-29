@@ -402,7 +402,7 @@ def test_diagnosis_page_and_rescan_change_nothing(cfg):
         assert "Empfehlung" in body and "/quality/diagnose/plan?f=" in body
         assert "Szenario (hypothetisch)" in body and "intern konsistent" in body
         assert "zuerst ansehen" in body
-        assert "/quality/diagnose" in c.get("/quality").text
+        assert "/quality/diagnose" in c.get("/quality/faelle").text
 
 
 # ----------------------------------------------------------------------------------------------------

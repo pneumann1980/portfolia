@@ -235,3 +235,32 @@ def test_marked_booking_reopen_and_undo_restore_the_balance(marked):
     ro = parse_qs(urlsplit(loc).query)["ro"][0]
     r = c.post(f"{BASE}/rueckgaengig", data={"csrf_token": c.token, "ro": ro}, follow_redirects=False)
     assert "err=" not in r.headers["location"] and eur(ctx) == Decimal(35)
+
+
+# ---- Startseite „Prüfen“ und Hinweis auf der Übersicht (0.76.0) ------------------------------------------------
+
+def test_start_page_has_one_count_theme_bars_and_no_jargon(client):
+    ctx = client.app.state.ctx
+    n, themes, _m = G.overview(ctx)
+    page = client.get("/quality").text
+    tabs = re.findall(r'class="dq-tab[^"]*" href="[^"]+"[^>]*>([^<]+)</a>', page)
+    assert tabs == ["Prüfen", "Experten", "Nachweise", "Automatik"]
+    plan = client.get("/quality/plan").text
+    assert f"{n} Aufgaben in {len(themes)} Themen" in plan and plan.count('role="meter"') == len(themes)
+    assert all(t["label"] in plan for t in themes) and "Muss ich tun" not in plan
+    text = visible(plan.split("Für Fortgeschrittene")[0])
+    assert not [w for w in JARGON if w in text], text[:300]
+    assert 'href="/quality/assistent?new=1"' in plan and "Neu berechnen" in plan
+
+
+def test_dashboard_hint_shows_the_same_count_and_disappears_when_done(client, monkeypatch):
+    from app.diagnosis import dq_web
+
+    dq_web._SUMMARY.clear()
+    n = G.summary(client.app.state.ctx)[0]
+    r = client.get("/quality/hinweis")
+    assert r.status_code == 200 and f"{n} Aufgaben zu deinen Buchungen offen" in r.text and "Buchungen prüfen" in r.text
+    assert 'hx-get="/quality/hinweis"' in client.get("/").text
+    dq_web._SUMMARY.clear()
+    monkeypatch.setattr(G, "summary", lambda ctx: (0, 0, 0))
+    assert client.get("/quality/hinweis").text == ""

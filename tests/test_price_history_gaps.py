@@ -268,7 +268,7 @@ def test_diagnosis_and_quality_page_show_estimated_periods(tmp_path):
     assert "keine Kursquelle zugeordnet" in f.evidence[0]
     app = build_app(cfg, start_scheduler=False)
     with TestClient(app) as c:
-        page = c.get("/quality").text
+        page = c.get("/quality/technik").text
         assert "Kursqualität der Historie" in page and "Transaktionskurs als Schätzung" in page
         assert "Ohne Kurs" in page
 

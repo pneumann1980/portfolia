@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.10.2026 · Version 0.75.1 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 29.10.2026 · Version 0.76.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,22 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.76.0 – Datenqualität: Reiter Prüfen · Experten · Nachweise · Automatik, Startseite mit einer Zahl
+
+* **Reiter neu:** *Prüfen* (Start, ohne Fachbegriffe) · *Experten* (bisher „Fälle“) · *Nachweise* (bisher „Belege“) · *Automatik*. Alle bisherigen Seiten bleiben unter ihrer
+  Adresse erreichbar; auf dem Handy passen die vier Reiter ohne Abschneiden (360–390 px) – der bisherige Knopf am Ende der Leiste war dort nicht zu sehen.
+* **Startseite „Prüfen“:** nur noch die Zahl des Assistenten („46 Aufgaben in 5 Themen · ca. 69 Min.“), darunter je Thema ein Balken mit den offenen Aufgaben und einem Satz
+  Erklärung; Knöpfe *Buchungen prüfen*, *Was ich geändert habe*, *Neu berechnen* (bisher „Alles prüfen“); letzter Lauf in einer Zeile. Die zweite Zählung (Stufen A/B/C) und
+  der Hinweis „Integritätsprüfung älter als die Daten“ (nur noch bei ausgeschalteter Nachprüfung) sind weg von der Startseite.
+* **Experten → Alle Fälle** zeigt jetzt die Stufen A/B/C mit Anzahl (anklickbar als Filter) und „Wie wird eingestuft?“ – der Inhalt der bisherigen Startseite.
+* **Nachweise → Import und Kurse** (`/quality/technik`): Import, Kursqualität (`#prices`, `#price-quality`), Datenquellen, Ledger- und Steuerhinweise, Jobs, Fehlerprotokoll –
+  unverändert, nur verschoben; alle Verweise (Übersicht, Kursquellen, Einstellungen, Performance, Asset-Detail, Importmeldung, „Hinweis ignorieren“) zeigen dorthin.
+  Abweichungsentwicklung, Kettenbestand und Vollständigkeitscockpit sind von *Bestände* aus verlinkt (Unterleiste kürzer).
+* **„Der Reihe nach“ entfällt** in der Navigation (ersetzt durch *Buchungen prüfen*); die Seite selbst bleibt als Rücksprungziel bestehender Aktionen erreichbar.
+* **Übersicht:** kleine Karte „N Aufgaben zu deinen Buchungen offen · Buchungen prüfen“, nachgeladen (blockiert die Übersicht nicht), je Datenstand höchstens einmal pro
+  Minute berechnet; ohne offene Aufgaben erscheint nichts.
+* Tests: Reiterfolge, eine Zählung und keine Fachbegriffe auf der Startseite, Karte auf der Übersicht.
 
 ## 0.75.1 – Überlauf in Hinweiskästen, lesbare Sperrgründe der Quellenübernahme, Layoutprüfung
 

@@ -119,7 +119,7 @@ def test_asset_detail_uses_tax_pack_lots(client):
 
 
 def test_quality_page_loads_tax_fragment(client):
-    r = client.get("/quality")
+    r = client.get("/quality/technik")
     assert r.status_code == 200 and 'hx-get="/tax/quality"' in r.text
     r = client.get("/tax/quality")
     assert r.status_code == 200 and "Regelwerk" in r.text

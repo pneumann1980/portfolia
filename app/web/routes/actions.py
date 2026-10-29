@@ -66,10 +66,10 @@ async def stale_ignore(request: Request) -> Response:
         ignored = [a for a in ignored if a != aid] + ([] if show else [aid])
         ctx.settings.set("prices.stale_ignored", sorted(set(ignored)))
     back = str(form.get("back") or "")
-    target = back if back in ("/", "/quality") else "/quality"
+    target = back if back in ("/", "/quality/technik") else "/quality/technik"
     row = str(form.get("row") or "")
     anchor = f"#stale-{row}" if row.isdigit() and len(row) <= 4 else "#prices"
-    return Response(status_code=303, headers={"Location": target + (anchor if target == "/quality" else "")})
+    return Response(status_code=303, headers={"Location": target + (anchor if target == "/quality/technik" else "")})
 
 
 @router.post("/actions/backfill", response_class=HTMLResponse)

@@ -40,7 +40,7 @@ def global_alerts(ctx: AppContext) -> list[dict[str, str]]:
     active = ctx.active_import_id()
     if last is not None and last["status"] == "failed" and last["id"] != active:
         alerts.append({"level": "crit", "text": f"Import von „{last['filename']}“ wurde abgelehnt – aktiver Stand "
-                                                "bleibt unverändert.", "href": "/quality#import"})
+                                                "bleibt unverändert.", "href": "/quality/technik#import"})
     try:
         from app.plans.service import missing_confirmed_count, pending_count
 

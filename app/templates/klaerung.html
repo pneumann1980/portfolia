@@ -4,7 +4,7 @@
 {% block content %}
 {% set dq_tab = 'faelle' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">
-  <p class="hint"><a href="/quality/diagnose">← Diagnose</a> · <a href="/quality/autopilot">Autopilot</a> · <a href="/quality/diagnose/liste">Entscheidungsliste</a></p>
+  <p class="hint"><a href="/quality/diagnose">← Diagnose</a> · <a href="/quality/autopilot">Autopilot</a> · <a href="/quality/assistent?new=1">Buchungen prüfen</a></p>
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
   {% if followup %}<div class="alert"><span class="icon">i</span><div>Ein Folgelauf ist vorgemerkt (neue Daten trafen während eines Durchgangs ein).</div></div>{% endif %}

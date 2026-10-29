@@ -906,6 +906,14 @@ def step(ctx: Any, skip: list[str], *, hints: bool = False) -> Step:
     return Step(detail(ctx, cur) if cur is not None else None, pos, len(ts), len(ts) - len(todo), themes)
 
 
+def overview(ctx: Any) -> tuple[int, list[dict[str, Any]], int]:
+    """(Aufgaben, offene Aufgaben je Thema in Bearbeitungsreihenfolge, geschätzte Minuten) – für die Startseite."""
+    ts = tasks(ctx)
+    themes = [{"key": k, "label": label, "text": text, "n": n} for k, label, text in THEMES
+              if (n := sum(1 for t in ts if t.theme == k))]
+    return len(ts), themes, (max(1, round(len(ts) * MIN_PER_TASK)) if ts else 0)
+
+
 def summary(ctx: Any) -> tuple[int, int, int]:
     """(Aufgaben, Themen, geschätzte Minuten) – dieselbe Zählung wie im Assistenten."""
     ts = tasks(ctx)

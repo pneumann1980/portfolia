@@ -11,7 +11,7 @@
       {% set errs = out.report.messages|selectattr('severity', 'equalto', 'error')|list %}
       {% set warns = out.report.messages|selectattr('severity', 'equalto', 'warning')|list %}
       {% if errs %}<ul class="small">{% for m in errs[:15] %}<li>{% if m.file %}<span class="mono">{{ m.file }}{% if m.line %}:{{ m.line }}{% endif %}</span> {% endif %}{{ m.message }}</li>{% endfor %}{% if errs|length > 15 %}<li>… {{ errs|length - 15 }} weitere</li>{% endif %}</ul>{% endif %}
-      {% if warns %}<div class="small">{{ warns|length }} Warnung{{ 'en' if warns|length != 1 }} – siehe <a href="/quality#import">Datenqualität</a>.</div>{% endif %}
+      {% if warns %}<div class="small">{{ warns|length }} Warnung{{ 'en' if warns|length != 1 }} – siehe <a href="/quality/technik#import">Datenqualität</a>.</div>{% endif %}
     {% endif %}
     {% if out.status == 'imported' %}<div class="small"><a href="/">Zur Übersicht</a> (Kurse und Historie werden im Hintergrund geladen)</div>{% endif %}
   </div>

@@ -101,12 +101,15 @@ def test_web_structure_tabs_plan_check_and_progress(cfg):
         page = c.get("/quality")
         assert page.status_code == 200
         t = page.text
-        assert 'class="dq-tabs"' in t and "Heute" in t and "Fälle" in t and "Belege" in t and "Automatik" in t
-        assert 'hx-get="/quality/plan"' in t and "Alles prüfen" in t and "Technische Einzelheiten" in t
-        assert "Finanzielle Integritätsprüfung" in t and 'href="/quality/diagnose"' in t
+        assert 'class="dq-tabs"' in t and all(w in t for w in (">Prüfen<", ">Experten<", ">Nachweise<", ">Automatik<"))
+        assert 'hx-get="/quality/plan"' in t and "Technische Einzelheiten" not in t  # Technik: Nachweise → Import
         plan = c.get("/quality/plan")
-        assert plan.status_code == 200 and "Muss ich tun" in plan.text and "Kann ich tun" in plan.text
-        assert "Nichts zu tun" in plan.text and "Wie wird eingestuft?" in plan.text
+        assert plan.status_code == 200 and "Neu berechnen" in plan.text and "Was ich geändert habe" in plan.text
+        assert "Muss ich tun" not in plan.text and "Befund" not in plan.text  # eine Zählung, ohne Fachbegriffe
+        cases = c.get("/quality/faelle").text
+        assert "Muss ich tun" in cases and "Kann ich tun" in cases and "Wie wird eingestuft?" in cases
+        tech = c.get("/quality/technik").text
+        assert "Technische Einzelheiten" in tech and 'id="prices"' in tech and 'id="import"' in tech
         for url, word in (("/quality/faelle", "Alle Fälle"), ("/quality/belege", "Bestände und Nachweise"),
                           ("/quality/automatik", "Autopilot")):
             r = c.get(url)
@@ -116,12 +119,12 @@ def test_web_structure_tabs_plan_check_and_progress(cfg):
                     "/quality/autopilot", "/quality/abdeckung"):
             assert 'class="dq-tabs"' in c.get(url).text, url
         # Prüflauf: ohne Scheduler inline; danach Bericht
-        token = c.get("/quality").text.split('name="csrf_token" value="')[1].split('"')[0]
+        token = c.get("/quality/plan").text.split('name="csrf_token" value="')[1].split('"')[0]
         c.headers["X-CSRF-Token"] = token
         r = c.post("/quality/pruefen", data={"csrf_token": token, "back": "/quality"}, follow_redirects=False)
         assert r.status_code == 303 and r.headers["location"].startswith("/quality")
         assert CR.previous(ctx.db).get("finished_at")
-        assert "Letzter Prüflauf" in c.get("/quality/plan").text
+        assert "Zuletzt berechnet" in c.get("/quality/plan").text
         # Fremde Rücksprungziele werden nicht übernommen
         r = c.post("/quality/pruefen", data={"csrf_token": token, "back": "https://evil.example/x"},
                    follow_redirects=False)

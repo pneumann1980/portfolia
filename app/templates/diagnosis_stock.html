@@ -6,7 +6,7 @@
 <div class="stack diag">
 <section class="card">
   <div class="card-head"><h2>{{ 'Bestätigte Bestandssicht (alternativ)' if view else 'Bestandsklärung je Position' }}</h2>
-    <div class="row"><a class="btn sm{% if not view %} primary{% endif %}" href="/quality/diagnose/stock">Bestandsklärung</a><a class="btn sm{% if view %} primary{% endif %}" href="/quality/diagnose/stock?view=confirmed">Bestätigte Bestandssicht</a><a class="btn sm" href="/quality/diagnose/windows">Abweichungsentwicklung</a></div></div>
+    <div class="row"><a class="btn sm{% if not view %} primary{% endif %}" href="/quality/diagnose/stock">Bestandsklärung</a><a class="btn sm{% if view %} primary{% endif %}" href="/quality/diagnose/stock?view=confirmed">Bestätigte Bestandssicht</a><a class="btn sm" href="/quality/diagnose/windows">Abweichungsentwicklung</a><a class="btn sm" href="/quality/kette">Kettenbestand</a><a class="btn sm" href="/quality/cockpit">Vollständigkeitscockpit</a></div></div>
   <div class="alert"><span class="icon">i</span><div>
     <strong>Drei Größen, strikt getrennt.</strong>
     <b>A · buchhalterisch</b>: Bestand laut Buchungen (Ledger). <b>B · bestätigter Bestand</b>: dein letzter Kontostand-Nachweis (Referenzbestand) bzw. – ohne Referenz – der aktuelle, vollständige Abruf der Datenquelle, mit den Buchungen <em>danach</em> fortgeschrieben – mit späteren Buchungen heißt er „fortgeschrieben“, nie „verifiziert“.

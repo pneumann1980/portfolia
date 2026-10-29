@@ -6,6 +6,7 @@ Hintergrundjob; die Seite zeigt den Fortschritt (Abfrage alle 2 s) und lädt nac
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -25,11 +26,10 @@ from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
 # Reiter und Unterseiten (alte Adressen bleiben als Unterseiten erreichbar)
-TABS = [("heute", "Heute", "/quality"), ("faelle", "Fälle", "/quality/faelle"), ("belege", "Belege", "/quality/belege"),
-        ("automatik", "Automatik", "/quality/automatik")]
+TABS = [("heute", "Prüfen", "/quality"), ("faelle", "Experten", "/quality/faelle"),
+        ("belege", "Nachweise", "/quality/belege"), ("automatik", "Automatik", "/quality/automatik")]
 SUBS: dict[str, list[tuple[str, str, str]]] = {
     "faelle": [("Alle Fälle", "/quality/faelle", "Eine Liste für alles, was zu entscheiden ist"),
-               ("Der Reihe nach entscheiden", "/quality/diagnose/liste", "Fall für Fall mit Belegen und Empfehlung"),
                ("Klärungsfälle", "/quality/klaerung", "Zusammengehörige Befunde mit Geldweg und Simulation"),
                ("Diagnose-Befunde", "/quality/diagnose", "Alle Befunde nach Art, mit Empfehlung je Befund"),
                ("Prüfstapel (Importe)", "/journal/pruefung", "Importierte Vorgänge prüfen und freigeben"),
@@ -46,14 +46,16 @@ SUBS: dict[str, list[tuple[str, str, str]]] = {
                ("Anschaffungsdaten", "/quality/anschaffung", "Herkunft der Anschaffungsdaten je Lot"),
                ("Vollständigkeitscockpit", "/quality/cockpit", "Getrennte Qualitätsdimensionen je Position"),
                ("Prüfbericht", "/quality/integrity",
-                "Finanzielle Integritätsprüfung: Befunde mit Ursache und Lösung")],
+                "Finanzielle Integritätsprüfung: Befunde mit Ursache und Lösung"),
+               ("Import und Kurse", "/quality/technik",
+                "Import, Kursqualität, Datenquellen, Ledger- und Steuerhinweise, Jobs, Fehlerprotokoll")],
     "automatik": [("Übersicht", "/quality/automatik", ""),
                   ("Autopilot", "/quality/autopilot", "Was von selbst erledigt wird, mit Bericht und Rückgängig"),
                   ("Regeln", "/quality/diagnose/regeln", "Dauerhafte Entscheidungsregeln"),
                   ("Einstellungen der Klärung", "/quality/klaerung#einstellungen", "Klärung nach Importen, Nachladen")],
 }
 HUB = {
-    "belege": ("Belege und Bestände", "Hier prüfst du, **woher** Zahlen stammen und ob sie zu externen Nachweisen "
+    "belege": ("Nachweise", "Hier prüfst du, **woher** Zahlen stammen und ob sie zu externen Nachweisen "
                "passen. Nichts davon musst du regelmäßig tun – die Fälle zeigen dir, wann ein Beleg fehlt."),
     "automatik": ("Automatik", "Was Portfolia von selbst erledigt, und wie du es steuerst. Der Autopilot übernimmt "
                   "nur beweisbare Fälle und nur, wenn du ihn eingeschaltet hast; alles ist rückgängig zu machen."),
@@ -108,6 +110,25 @@ def _finished_since(ctx: Any, since: datetime) -> bool:
     return t is not None and t >= since
 
 
+_SUMMARY: dict[str, Any] = {}
+SUMMARY_TTL_S = 60
+
+
+def _summary_cached(ctx: Any) -> tuple[int, int, int]:
+    """:func:`G.summary` für die Übersicht, je Datenstand höchstens einmal pro Minute berechnet (die Startseite der
+    Datenqualität und der Assistent zählen immer frisch; hier darf die Zahl nach einer Antwort kurz nachlaufen)."""
+    from app.diagnosis import actions as A
+
+    key = A.data_version(ctx.db)
+    now = time.monotonic()
+    hit = _SUMMARY.get("v")
+    if hit is not None and hit[0] == key and now - hit[1] < SUMMARY_TTL_S:
+        return hit[2]
+    val = G.summary(ctx)
+    _SUMMARY["v"] = (key, now, val)
+    return val
+
+
 def _safe_back(raw: str) -> str:
     """Rücksprungziel nur innerhalb der Datenqualität."""
     return raw if raw.startswith("/quality") and "//" not in raw and "\n" not in raw else "/quality"
@@ -118,15 +139,23 @@ def make_router() -> APIRouter:
 
     @router.get("/quality/plan", response_class=HTMLResponse)
     def plan_partial(request: Request) -> HTMLResponse:
-        """Arbeitsplan (Stufe A/B/C) – wird auf der Startseite nachgeladen, damit die Seite sofort steht."""
+        """Startseite „Prüfen“: offene Aufgaben des Assistenten je Thema (eine Zählung), letzter Prüflauf, Knöpfe –
+        wird nachgeladen, damit die Seite sofort steht. Die Stufen A/B/C stehen unter Experten → Alle Fälle."""
         ctx = get_ctx(request)
         plan = WP.build(ctx)
         last = CR.previous(ctx.db)
-        n, themes, minutes = G.summary(ctx)
-        return render(request, "partials/dq_plan.html", plan=plan, tiers=WP.TIERS, why_a=WP.WHY_A, last=last,
-                      kinds=KINDS, assist_n=n, assist_min=minutes, assist_themes=themes,
-                      assist_title=G.TITLE,
+        n, themes, minutes = G.overview(ctx)
+        return render(request, "partials/dq_plan.html", plan=plan, last=last, assist_n=n, assist_min=minutes,
+                      themes=themes, top=max([t["n"] for t in themes] or [1]), assist_title=G.TITLE,
                       auto_check=bool(ctx.settings.get(AC.SETTING, True)))
+
+    @router.get("/quality/hinweis", response_class=HTMLResponse)
+    def dashboard_hint(request: Request) -> HTMLResponse:
+        """Kleine Karte auf der Übersicht „N Aufgaben offen · Buchungen prüfen“ – leer, wenn nichts offen ist."""
+        n = _summary_cached(get_ctx(request))[0]
+        if not n:
+            return HTMLResponse("")
+        return render(request, "partials/dq_hint.html", n=n, title=G.TITLE)
 
     @router.post("/quality/pruefen")
     async def start(request: Request) -> Response:

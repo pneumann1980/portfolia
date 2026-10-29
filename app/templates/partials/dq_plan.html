@@ -1,59 +1,35 @@
-{# Arbeitsplan: was ist zu tun (A), was kann ich tun (B), was ist erledigt bzw. nichts zu tun (C). #}
-{% macro item(i) %}
-<li class="dq-item dq-{{ i.tier }}">
-  <div class="dq-item-main">
-    <div class="dq-item-title"><b>{{ i.title }}</b>{% if i.n > 1 and i.kind != 'gruppe' and i.kind != 'hinweise' %} <span class="hint">({{ i.n }})</span>{% endif %}</div>
-    <div class="dq-rec">{{ i.recommendation }}</div>
-    {% set _meta = [('Warum: ' ~ i.why) if i.why else '', ('Wirkung: ' ~ i.effect) if i.effect else '', ('Aufwand: ' ~ i.effort) if i.effort else '']|select|list %}
-    {% if _meta %}<details class="dq-meta"><summary class="hint">Warum, Wirkung, Aufwand</summary><ul class="plain-list hint">{% for m in _meta %}<li>{{ m }}</li>{% endfor %}</ul></details>{% endif %}
-  </div>
-  {% if i.href %}<a class="btn sm {{ 'primary' if i.tier == 'A' else '' }}" href="{{ i.href }}">{{ i.cta }}</a>{% endif %}
-</li>
-{% endmacro %}
+{# Startseite „Prüfen“: eine Zählung (Aufgaben des Assistenten), offene Aufgaben je Thema als Balken, letzter Prüflauf,
+   Knöpfe. Ohne Fachbegriffe – die Stufen A/B/C und alle Einzelfälle stehen unter Experten → Alle Fälle. #}
 <div id="dq-plan" class="stack">
-  {% set c = plan.counts %}
-  <section class="card dq-summary" aria-label="Zusammenfassung">
-    <div class="dq-chips">
-      <span class="badge crit">A · Muss ich tun: {{ c.A }}</span>
-      <span class="badge warn">B · Kann ich tun: {{ c.B }}</span>
-      <span class="badge">C · Nichts zu tun: {{ c.C }}</span>
-    </div>
+  <section class="card dq-start" aria-labelledby="dq-start-h">
     {% if plan.state == 'ungeprueft' %}
-      <p><b>Noch nicht geprüft.</b> Starte „Alles prüfen“: Diagnose, Integritätsprüfung und Klärung laufen lokal in einem Durchgang, ohne Abrufe.</p>
-    {% elif plan.state == 'fertig' %}
-      <div class="alert good" role="status"><span class="icon">✓</span><div><b>Nichts mehr zu tun.</b> Alle offenen Punkte sind erklärt, zurückgestellt oder nur Hinweise.</div></div>
-    {% elif assist_n %}
-      <div class="dq-next" role="region" aria-label="{{ assist_title }}">
-        <b>{{ assist_n }} {{ 'Aufgabe' if assist_n == 1 else 'Aufgaben' }} in {{ assist_themes }} {{ 'Thema' if assist_themes == 1 else 'Themen' }} · ca. {{ assist_min }} Min.</b>
-        <div>Portfolia stellt dir eine Frage nach der anderen – zum Beispiel „Hast du das einmal oder zweimal erhalten?“. Du kannst jederzeit pausieren, und jede Antwort lässt sich mit einem Klick zurücknehmen.</div>
-        <a class="btn primary" href="/quality/assistent?new=1">{{ assist_title }}</a>
-      </div>
+      <h2 id="dq-start-h">Noch nicht geprüft</h2>
+      <p>Portfolia rechnet deine Buchungen einmal durch (nur auf diesem Gerät, ohne Abrufe) und stellt dir danach Fragen zu allem, was nicht zusammenpasst.</p>
+    {% elif not assist_n %}
+      <h2 id="dq-start-h">Alles geprüft</h2>
+      <div class="alert good" role="status"><span class="icon">✓</span><div>Es gibt nichts, das du entscheiden musst. Neue Fragen erscheinen nach dem nächsten Import oder Abruf von selbst.</div></div>
+    {% else %}
+      <h2 id="dq-start-h">{{ assist_n }} {{ 'Aufgabe' if assist_n == 1 else 'Aufgaben' }} in {{ themes|length }} {{ 'Thema' if themes|length == 1 else 'Themen' }} · ca. {{ assist_min }} Min.</h2>
+      <p>Portfolia stellt dir eine Frage nach der anderen – zum Beispiel „Hast du das einmal oder zweimal erhalten?“. Du kannst jederzeit pausieren, und jede Antwort lässt sich mit einem Klick zurücknehmen.</p>
+      <div class="row dq-start-actions"><a class="btn primary" href="/quality/assistent?new=1">{{ assist_title }}</a><a class="btn" href="/quality/assistent/protokoll">Was ich geändert habe</a></div>
+      <ol class="dq-themes" aria-label="Offene Aufgaben je Thema">
+      {% for t in themes %}
+        <li><div class="dq-theme-row"><span>{{ t.label }}</span><b>{{ t.n }}</b></div>
+          <div class="progress" role="meter" aria-label="{{ t.label }}" aria-valuemin="0" aria-valuemax="{{ top }}" aria-valuenow="{{ t.n }}"><div style="width:{{ [((t.n / top) * 100)|round|int, 3]|max }}%"></div></div>
+          <div class="hint">{{ t.text }}</div></li>
+      {% endfor %}
+      </ol>
     {% endif %}
-    {% if plan.stale %}<div class="alert warn"><span class="icon">!</span><div>Die letzte Integritätsprüfung ist älter als die Daten.
-      {% if auto_check %}Sie wird automatisch aktualisiert; „Alles prüfen“ startet sie sofort.{% else %}„Alles prüfen“ aktualisiert sie (die automatische Nachprüfung ist ausgeschaltet).{% endif %}</div></div>{% endif %}
+    <div class="row dq-start-actions">
+      {% if not assist_n %}<a class="btn" href="/quality/assistent/protokoll">Was ich geändert habe</a>{% endif %}
+      <form method="post" action="/quality/pruefen" class="inline" data-wait><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/quality"><button class="btn {{ 'primary' if plan.state == 'ungeprueft' else 'ghost' }}" type="submit" title="Alles neu durchrechnen – lokal, ohne Abrufe">Neu berechnen</button></form>
+    </div>
+    {% if plan.stale and not auto_check %}<div class="alert warn"><span class="icon">!</span><div>Seit der letzten Berechnung haben sich deine Daten geändert, und die automatische Nachprüfung ist aus. „Neu berechnen“ bringt alles auf den aktuellen Stand.</div></div>{% endif %}
     {% if last and last.finished_at %}
-      <p class="hint">Letzter Prüflauf: {{ last.finished_at|datetime_de }}{% if last.duration_s %} · {{ last.duration_s }} s{% endif %}
-        {% if not last.first %}· seit dem Lauf davor: {{ last.new|length }} neu, {{ last.gone|length }} erledigt{% endif %}
-        {% if last.applied %}· automatisch übernommen: {{ last.applied }}{% endif %}
-        {% if last.stapel and last.stapel.batches %}· Prüfstapel neu abgeglichen: {{ last.stapel.before }} → {{ last.stapel.after }} offene Vorgänge{% if last.stapel.failed %} ({{ last.stapel.failed }} Stapel nicht auswertbar){% endif %}{% endif %}</p>
+      <p class="hint">Zuletzt berechnet: {{ last.finished_at|datetime_de }}{% if not last.first %} · seitdem {{ last.new|length }} neu, {{ last.gone|length }} erledigt{% endif %}{% if last.applied %} · automatisch korrigiert: {{ last.applied }}{% endif %}</p>
       {% if last.new or last.gone %}<details class="vk-table"><summary class="hint">Was hat sich geändert?</summary>
         <ul class="plain-list">{% for t in last.new %}<li>neu: {{ t }}</li>{% endfor %}{% for t in last.gone %}<li>erledigt: {{ t }}</li>{% endfor %}</ul></details>{% endif %}
     {% endif %}
-    <details class="vk-table"><summary class="hint">Wie wird eingestuft?</summary><p class="hint">{{ why_a }}</p></details>
-  </section>
-
-  {% for t in ('A', 'B') %}{% set xs = plan.tier(t) %}
-  <section class="card" id="stufe-{{ t }}" aria-labelledby="h-{{ t }}">
-    <div class="card-head"><h2 id="h-{{ t }}">{{ 'A · Muss ich tun' if t == 'A' else 'B · Kann ich tun' }}</h2><span class="badge {{ tiers[t][1] }}">{{ xs|length }}</span></div>
-    <p class="hint">{{ tiers[t][2] }}</p>
-    {% if xs %}<ul class="dq-items">{% for i in xs %}{{ item(i) }}{% endfor %}</ul>{% else %}<p class="hint">Nichts in dieser Stufe.</p>{% endif %}
-  </section>
-  {% endfor %}
-
-  {% set cs = plan.tier('C') %}
-  <section class="card" id="stufe-C">
-    <details><summary><b>C · Nichts zu tun</b> <span class="badge">{{ cs|length }}</span> <span class="hint">{{ tiers['C'][2] }}</span></summary>
-      {% if cs %}<ul class="dq-items" style="margin-top:8px">{% for i in cs %}{{ item(i) }}{% endfor %}</ul>{% else %}<p class="hint">Nichts in dieser Stufe.</p>{% endif %}
-    </details>
+    <p class="hint">Für Fortgeschrittene: alle Einzelfälle mit Stufen unter <a href="/quality/faelle">Experten</a>, Belege und Kursqualität unter <a href="/quality/belege">Nachweise</a>.</p>
   </section>
 </div>

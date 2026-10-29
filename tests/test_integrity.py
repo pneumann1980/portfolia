@@ -167,7 +167,7 @@ def test_web_run_page_filters_and_export(cfg):  # noqa: F811
         assert csv_body.splitlines()[0].startswith("id;category;severity;status") and "dublette" in csv_body
         js = json.loads(c.get("/quality/integrity/export.json").content)
         assert js["run"]["ok"] and js["counts"]["total"] == len(js["items"]) and js["items"][0]["id"]
-        assert "Finanzielle Integritätsprüfung" in c.get("/quality").text
+        assert "Finanzielle Integritätsprüfung" in c.get("/quality/belege").text
 
 
 def test_identical_bookings_without_identifier_are_suspected_duplicates(cfg):  # noqa: F811

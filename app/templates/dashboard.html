@@ -12,10 +12,12 @@
 {% if stale_n %}{% set reasons = stale|map(attribute='price.note')|select|unique|list %}
 <div class="alert warn"><span class="icon">!</span><div>{{ stale_n }} Kurs{{ 'e' if stale_n != 1 }} veraltet – es wird der letzte bekannte Wert verwendet{% if reasons|length == 1 %}: {{ reasons[0] }}{% elif reasons %} ({{ reasons|length }} Gründe){% endif %}.
   {% if stale_n <= 4 %}<span class="hint">{% for p in stale %}{{ p.asset.name }}{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}
-  <a href="/quality#prices">Details &amp; einzeln ignorieren</a></div></div>{% endif %}
+  <a href="/quality/technik#prices">Details &amp; einzeln ignorieren</a></div></div>{% endif %}
 {% if unval_n %}<div class="alert"><span class="icon">i</span><div>{{ unval_n }} Position{{ 'en' if unval_n != 1 }} ohne gültigen Kurs (mit 0 € angesetzt):
   {% for p in val.unvalued[:6] %}{{ p.asset.name }}{{ ', ' if not loop.last }}{% endfor %}{% if unval_n > 6 %} …{% endif %}
-  · <a href="/quality#prices">Gründe</a> · <a href="/journal/writeoff">als Verlust ausbuchen</a></div></div>{% endif %}
+  · <a href="/quality/technik#prices">Gründe</a> · <a href="/journal/writeoff">als Verlust ausbuchen</a></div></div>{% endif %}
+
+<div hx-get="/quality/hinweis" hx-trigger="load" hx-swap="outerHTML"></div>{# offene Fragen „Buchungen prüfen“ (nachgeladen) #}
 
 {# Datenschutz-Modus (Augen-Symbol): alle Beträge des Dashboards maskierbar, Prozentwerte bleiben sichtbar #}
 {% macro sens(v) %}<span class="sens-real">{{ v }}</span><span class="sens-mask" aria-label="Betrag verborgen">•••</span>{% endmacro %}

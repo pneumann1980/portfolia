@@ -72,7 +72,7 @@ def test_audit_files_are_stored_shown_and_kept_out_of_portfolia_extras(config):
         from app.fullexport import extras_for
 
         assert extras_for(ctx.db, iid) == {}  # Prüfunterlagen sind keine Portfolia-Zusatzdaten
-        page = c.get("/quality").text
+        page = c.get("/quality/technik").text
         assert "Prüfunterlagen des Kurators (15)" in page and "datei3.csv" in page and "zeile3,1" in page
         assert "Binärdatei" in page
         # Importmeldungen: ein Hinweis, keine Warnung

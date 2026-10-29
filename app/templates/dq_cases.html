@@ -7,8 +7,10 @@
   {% include "partials/dq_nav.html" %}
   <section class="card">
     <div class="card-head"><h2>Alle Fälle</h2>
-      <form method="post" action="/quality/pruefen" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/quality/faelle"><button class="btn sm" type="submit">Alles prüfen</button></form></div>
-    <p class="hint">Eine Liste für alles, was zu entscheiden ist: Klärungsfälle, Diagnose-Befunde und der Prüfstapel. Jede Zeile führt in die passende Prüfansicht; geändert wird erst dort, nach Vorschau und Bestätigung.</p>
+      <form method="post" action="/quality/pruefen" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/quality/faelle"><button class="btn sm" type="submit">Neu berechnen</button></form></div>
+    <p class="hint">Eine Liste für alles, was zu entscheiden ist: Klärungsfälle, Diagnose-Befunde und der Prüfstapel. Jede Zeile führt in die passende Prüfansicht; geändert wird erst dort, nach Vorschau und Bestätigung. Ohne Fachbegriffe, eine Frage nach der anderen: <a href="/quality/assistent?new=1">Buchungen prüfen</a>.</p>
+    <div class="dq-chips">{% for k, v in tiers.items() %}<a class="badge {{ v[1] }}" href="?tier={{ k }}">{{ k }} · {{ v[0] }}: {{ counts[k] }}</a> {% endfor %}</div>
+    <details class="vk-table"><summary class="hint">Wie wird eingestuft?</summary><p class="hint">{{ why_a }}</p></details>
     <form method="get" class="row" style="gap:8px;flex-wrap:wrap" role="search">
       <label class="field">Stufe<select name="tier" data-autosubmit><option value="">alle</option>{% for k, v in tiers.items() %}<option value="{{ k }}" {{ 'selected' if f_tier == k }}>{{ k }} · {{ v[0] }} ({{ counts[k] }})</option>{% endfor %}</select></label>
       <label class="field">Art<select name="kind" data-autosubmit><option value="">alle</option>{% for k in kinds %}<option value="{{ k }}" {{ 'selected' if f_kind == k }}>{{ kind_label.get(k, k) }}</option>{% endfor %}</select></label>

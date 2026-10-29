@@ -77,7 +77,7 @@ def test_queue_page_flow_decides_and_advances(cfg):
         assert "Nichts mehr zu entscheiden" in c.get("/quality/diagnose/liste").text
         # Plan-Seite mit Rückweg
         plan_page = c.get("/quality/diagnose")
-        assert plan_page.status_code == 200 and "/quality/diagnose/liste" in plan_page.text
+        assert plan_page.status_code == 200 and "Der Reihe nach" not in plan_page.text  # ersetzt durch den Assistenten
 
 
 def test_plan_page_keeps_back_to_queue(cfg):
