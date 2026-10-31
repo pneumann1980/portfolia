@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 29.10.2026 · Version 0.77.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 31.10.2026 · Version 0.77.1 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,11 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.77.1 – Abstand der Karte „Aufgaben offen“ auf der Übersicht
+
+* Die Karte „N Aufgaben zu deinen Buchungen offen“ klebte ohne Abstand an der Kennzahlenkarte „Depotwert“. Jetzt 12 px wie zwischen den Kennzahlkarten
+  und unter Hinweisen (im Browser bei 390 px gemessen).
 
 ## 0.77.0 – „Von vorn beginnen“ und „Sicherung wiederherstellen“ in der App
 

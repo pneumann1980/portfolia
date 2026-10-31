@@ -974,6 +974,7 @@ label.check > input[type=checkbox] { flex: 0 0 auto; margin-top: 3px; }
 .dq-themes { list-style: none; margin: 12px 0; padding: 0; display: grid; gap: 12px; }
 .dq-theme-row { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .dq-start-actions { flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.dq-hint-card { margin-bottom: 12px; }  /* Abstand zur Kennzahlenkarte darunter (wie .kpis-Raster und .alert) */
 @media (max-width: 480px) { .dq-tab { padding: 10px 9px; font-size: .95rem; } }  /* vier Reiter passen auf 360–390 px */
 @media (max-width: 380px) { .dq-tab { padding: 10px 6px; font-size: .9rem; } }
 .dq-sub { padding: 4px 10px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); text-decoration: none; font-size: 0.85rem; border: 1px solid var(--border); }
