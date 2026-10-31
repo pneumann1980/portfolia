@@ -126,7 +126,8 @@ class YahooProvider:
             if price is None:
                 errors.append(f"{sym}: kein Kurs")
                 return None
-            return Quote(series=f"yahoo:{sym}", price=price, ccy=ccy, market_time=datetime.now(UTC), source="yahoo",
+            # fast_info kennt die Handelszeit nicht – None statt „jetzt“ (sonst gälte der Kurs als heute gehandelt)
+            return Quote(series=f"yahoo:{sym}", price=price, ccy=ccy, market_time=None, source="yahoo",
                          prev_close=prev)
         except Exception as e:
             errors.append(f"{sym}: {type(e).__name__}: {e}"[:300])

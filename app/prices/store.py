@@ -117,6 +117,17 @@ class PriceStore:
                 self.db.q("SELECT ts, price FROM quote_intraday WHERE series=? AND ts>=? ORDER BY ts",
                           (series, iso(since)))]
 
+    def last_intraday_before(self, series: list[str], before: datetime, since: datetime) -> dict[str, float]:
+        """Je Reihe der letzte gespeicherte Kurs in [``since``, ``before``) – z. B. der Kurs vor Mitternacht."""
+        out: dict[str, float] = {}
+        for i in range(0, len(series), 400):
+            chunk = series[i:i + 400]
+            ph = ",".join("?" * len(chunk))
+            for r in self.db.q(f"SELECT series, price, MAX(ts) AS ts FROM quote_intraday WHERE series IN ({ph}) "
+                               "AND ts>=? AND ts<? GROUP BY series", (*chunk, iso(since), iso(before))):
+                out[r["series"]] = float(r["price"])
+        return out
+
     def prune_intraday(self, keep_days: int = 8) -> int:
         cutoff = iso(datetime.now(UTC) - timedelta(days=keep_days))
         return self.db.x("DELETE FROM quote_intraday WHERE ts<?", (cutoff,)).rowcount

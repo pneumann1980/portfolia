@@ -81,6 +81,14 @@ def dashboard(request: Request) -> HTMLResponse:
     # absolut: tatsächliche Wertänderung der Position (Menge × Kursänderung), nicht die Kursänderung je Stück
     gainers_eur = sorted([p for p in movers if (p.day_change or 0) > 0], key=lambda p: -(p.day_change or 0))[:5]
     losers_eur = sorted([p for p in movers if (p.day_change or 0) < 0], key=lambda p: p.day_change or 0)[:5]
+    # Wertpapiere ohne Handel heute (Wochenende, Feiertag, vor Börsenbeginn): Bewegung am letzten Handelstag
+    sm = [p for p in val.positions if p.session_change_pct is not None and p.value > 0]
+    sess = {"s_gainers": sorted([p for p in sm if p.session_change_pct > 0], key=lambda p: -p.session_change_pct)[:5],
+            "s_losers": sorted([p for p in sm if p.session_change_pct < 0], key=lambda p: p.session_change_pct)[:5],
+            "s_gainers_eur": sorted([p for p in sm if (p.session_change or 0) > 0],
+                                    key=lambda p: -(p.session_change or 0))[:5],
+            "s_losers_eur": sorted([p for p in sm if (p.session_change or 0) < 0],
+                                   key=lambda p: p.session_change or 0)[:5]}
     n_news = int(ctx.settings.get("news.dashboard_count", 5))
     news = _latest_news(ctx, n_news)
     try:  # Top-News mit KI-Auswertung (Rückfall: bisherige Liste); Fehler dort dürfen die Startseite nie stören
@@ -96,7 +104,7 @@ def dashboard(request: Request) -> HTMLResponse:
     stale = [p for p in val.stale if p.asset_id not in ignored]  # ausgeblendete Hinweise (Datenqualität) nicht melden
     return render(request, "dashboard.html", active="dashboard", val=val, kpi=_kpis(ctx, val, hist), gainers=gainers,
                   stale=stale,
-                  losers=losers, gainers_eur=gainers_eur, losers_eur=losers_eur, news=news, top=top,
+                  losers=losers, gainers_eur=gainers_eur, losers_eur=losers_eur, news=news, top=top, **sess,
                   threshold=ctx.settings.get("allocation.other_threshold_pct", 1.0),
                   default_range=ctx.settings.get("ui.default_range", "1J"), restore=restore_status(ctx))
 

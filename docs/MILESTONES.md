@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 31.10.2026 · Version 0.77.1 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 31.10.2026 · Version 0.78.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,31 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.78.0 – „Heute“ als Kalendertag: kein Freitagsgewinn mehr am Wochenende
+
+**Fehler:** Die Tagesveränderung war je Position „Kurs − Vortagesschluss der Quelle“. Bei Wertpapieren ist das die Bewegung der *letzten Handelssitzung* –
+am Wochenende stand die Freitagsbewegung als „heute“ da, ebenso montags vor Börsenbeginn, an Feiertagen und bei US-Werten werktags bis 15:30 Uhr. Krypto
+dagegen lief über gleitende 24 h; die Summe mischte beides. Heutige Käufe zählten mit der ganzen Tagesbewegung, der Prozentwert bezog sich auf
+„Gesamtwert − Veränderung“ (falsch bei Ein- und Auszahlungen am selben Tag).
+
+* **Eine Definition für alle Anlageklassen:** „heute“ = seit 0:00 Uhr (Europe/Berlin), passend zur Wertentwicklung, die je Kalendertag rechnet.
+  * **Wertpapiere:** Liegt die Handelszeit des Kurses (Yahoo `regularMarketTime`) auf heute, ist der Bezug der Vortagesschluss, sonst der Kurs selbst (±0).
+    Keine Börse handelt über Mitternacht Berliner Zeit hinweg (USA bis 22:00 Uhr, Tokio bis 7:30 Uhr), nachbörslicher Handel ist nicht im regulären Kurs.
+    Der Ersatzabruf über `fast_info` kennt die Handelszeit nicht und setzte bisher „jetzt“ – jetzt ohne Zeit, gilt also nicht als heute gehandelt.
+  * **Krypto:** letzter gespeicherter Kurs vor Mitternacht (höchstens 3 h alt; Kursabruf alle 10 Min., Aufbewahrung 8 Tage), sonst wie bisher 24 h –
+    in der Übersicht mit * gekennzeichnet.
+  * **Manuelle Kurse:** nur eine heute eingetragene Änderung zählt (gestern eingetragen galt bisher als „heute“).
+* **Käufe und Verkäufe von heute** zählen ab ihrem Kurs: Veränderung = Wert jetzt − Wert um 0:00 − Saldo der heutigen Zu-/Abgänge (zu ihrem EUR-Wert;
+  ohne Wert zum Bezugskurs). **Prozentwert der Summe** bezieht sich auf den Depotwert um 0:00 Uhr (heutige Einzahlungen sind kein Gewinn).
+* **„Wertpapiere am letzten Handelstag (Fr., 30.10.)“:** Zusatzzeile unter „heute“ und eigener Abschnitt in den Top-Bewegungen, solange Wertpapiere
+  heute noch nicht gehandelt haben – die Freitagsbewegung bleibt sichtbar, steht aber nicht mehr als „heute“ da.
+* Tests: Wochenende, Montag vor Börsenbeginn, US-Wert vor/nach 15:30 Uhr, Kurs ohne Handelszeit, Krypto mit/ohne Kurs vor Mitternacht, manueller Kurs
+  heute/gestern, Kauf/Verkauf/Gebühr am selben Tag, Prozentbezug bei Einzahlung und Kauf heute, Übersicht mit „letzter Handelstag“.
+
+**Grenzen:** Der Devisenkurs bleibt für Kurs und Bezug der aktuelle (EZB-Kurse ändern sich nur werktags gegen 16 Uhr; eine Umrechnung des Bezugs mit dem
+Vortageskurs würde eine zeitlich unpassende Wechselkursbewegung zeigen). Positionen, die heute vollständig verkauft wurden, fehlen in „heute“ (für sie
+liegt kein aktueller Kurs vor); ihr Erlös steht im Bargeld. Die Kursübersicht der News bleibt bei der Definition der Quelle.
 
 ## 0.77.1 – Abstand der Karte „Aufgaben offen“ auf der Übersicht
 

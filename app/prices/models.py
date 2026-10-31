@@ -59,9 +59,15 @@ class PriceInfo:
     source: str  # yahoo | coingecko | manual | tx | daily | fiat | demo | none
     kind: str  # quote | daily | manual | tx (Transaktionskurs) | fiat | unvalued
     stale: bool
-    prev_close_eur: float | None = None
+    prev_close_eur: float | None = None  # Schluss der Sitzung vor der des Kurses (Wertpapiere: „letzter Handelstag“)
     fx_rate: float | None = None
     note: str | None = None
+    # Bezugskurs für „heute“ (Kalendertag Europe/Berlin): Wertpapiere – Vortagesschluss, wenn heute gehandelt wurde,
+    # sonst der Kurs selbst (±0); Krypto – letzter Kurs vor Mitternacht, ersatzweise 24 h (day_basis „24h“)
+    day_ref_eur: float | None = None
+    day_basis: str = ""  # sitzung | mitternacht | 24h | manuell
+    session_date: date | None = None  # Handelstag des Kurses (Wertpapiere; None = unbekannt)
+    traded_today: bool = False  # Wertpapier: heute (Kalendertag) gehandelt
 
     @property
     def valued(self) -> bool:

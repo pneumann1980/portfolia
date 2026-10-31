@@ -161,6 +161,13 @@ def date_de(v: date | datetime | str | None) -> str:
     return fmt_de_date(v)
 
 
+def trading_day(v: date | None) -> str:
+    """Handelstag kurz: „Fr., 30.10.“."""
+    if v is None:
+        return ""
+    return f"{('Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So')[v.weekday()]}., {v.day:02d}.{v.month:02d}."
+
+
 def datetime_de(v: datetime | str | None) -> str:
     return fmt_de_datetime(v)
 
@@ -216,5 +223,6 @@ def register(env: Any) -> None:
         "num": num, "eur": eur, "eur_kpi": eur_kpi, "eur_compact": eur_compact, "pct": pct, "qty": qty, "price": price,
         "qty_exact": qty_exact, "asset_label": asset_label, "token_link": token_link,
         "tone": tone, "arrow": arrow, "date_de": date_de, "datetime_de": datetime_de, "rel_time": rel_time,
+        "trading_day": trading_day,
         "rel_time_iso": rel_time_iso, "duration": duration, "plain": plain_de,
     })

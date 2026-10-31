@@ -230,6 +230,12 @@ Ausprobieren ohne Internet: `DEMO_MODE=true` (deutlich gekennzeichnete synthetis
   aus (`•••••• €`; die Veränderung in % bleibt). Die Wahl gilt je Gerät/Browser und wird vor dem ersten Zeichnen
   angewendet – der Betrag blitzt beim Laden nicht auf. Weitere Beträge (Kennzahlen, Positionen, Diagramme) bleiben
   sichtbar.
+* **„Heute“ = Kalendertag (seit 0:00 Uhr, Europe/Berlin):** Wertpapiere zählen ab dem Vortagesschluss, sobald sie
+  heute gehandelt wurden – am Wochenende, an Feiertagen und vor Börsenbeginn ±0; Krypto ab dem Kurs um Mitternacht
+  (ohne gespeicherten Kurs vor Mitternacht ersatzweise über 24 h, mit * gekennzeichnet). Heutige Käufe und Verkäufe
+  zählen ab ihrem Kurs, der Prozentwert bezieht sich auf den Depotwert um 0:00 Uhr (heutige Einzahlungen zählen nicht
+  als Gewinn). Haben Wertpapiere heute noch nicht gehandelt, zeigt die Übersicht zusätzlich **„Wertpapiere am letzten
+  Handelstag (Fr., 30.10.)“** und die Top-Bewegungen dieses Handelstags.
 * **Top-Bewegungen** mit Umschalter **% | €**: nach prozentualer oder absoluter Tagesänderung sortiert, beide Werte
   sichtbar; die Wahl bleibt im Browser gespeichert.
 * **Allokation als Treemap** (neben Ring/Liste): Fläche = Positionswert, Farbe = Tages- oder Gesamtperformance;

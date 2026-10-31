@@ -35,9 +35,10 @@ from app.prices.store import PriceStore
 from app.prices.yahoo import YahooProvider
 from app.settings_store import Settings
 from app.util.http import Quota, SourceGuard
-from app.util.timeutil import iso, local_tz, parse_iso, today_local
+from app.util.timeutil import iso, local_tz, parse_iso, to_local_date, today_local
 
 log = logging.getLogger(__name__)
+MIDNIGHT_TOLERANCE = timedelta(hours=3)  # Krypto: Kurs vor Mitternacht höchstens so alt, sonst 24 h
 
 # Ersatzhistorie (alternativer Anbieter) für die Zeit vor dem Fenster des Hauptanbieters
 ALT_RETRY = timedelta(days=7)  # abgelehnte bzw. fehlende Ersatzhistorie höchstens so oft erneut prüfen
@@ -231,6 +232,11 @@ class PriceService:
         out: dict[str, PriceInfo] = {}
         pending: list[AssetInfo] = []  # ohne Marktkurs → Ersatzkurs
         today = today_local()
+        day = to_local_date(now)  # „heute“ = Kalendertag (Europe/Berlin)
+        midnight = datetime.combine(day, datetime.min.time(), tzinfo=local_tz())
+        at_midnight = self.store.last_intraday_before(  # Krypto: letzter Kurs vor Mitternacht
+            [s for a in assets if a.is_crypto and (s := series_map.get(a.asset_id))], midnight,
+            midnight - MIDNIGHT_TOLERANCE)
         reason_cache: list[str] = []
 
         def reason() -> str:
@@ -264,13 +270,25 @@ class PriceService:
                         prev = q["prev_close"] * f if q["prev_close"] else None
                         if prev is None:
                             prev = self._prev_close_eur(s, today, f)
+                        price_eur = q["price"] * f
+                        session: date | None = None
+                        traded = False
                         if a.is_crypto:
                             stale, note = self._crypto_quote_state(parse_iso(q["market_time"]),
                                                                    parse_iso(q["fetched_at"]), now, reason)
+                            ref = at_midnight.get(s)
+                            ref, basis = (ref * f, "mitternacht") if ref is not None else (prev, "24h")
                         else:
                             stale, note = self.is_stale(a, ts, now), None
-                        out[a.asset_id] = PriceInfo(q["price"] * f, q["price"], q["ccy"], ts, q["source"], "quote",
-                                                    stale, prev, fx_rate=f, note=note)
+                            # Wertpapiere: heute gehandelt → Vortagesschluss, sonst ±0 (Wochenende, Feiertag, vor
+                            # Börsenbeginn). Ohne verlässliche Handelszeit gilt „nicht heute gehandelt“.
+                            mt = parse_iso(q["market_time"])
+                            session = to_local_date(mt) if mt is not None else None
+                            traded = session == day
+                            ref, basis = (prev if traded else price_eur), "sitzung"
+                        out[a.asset_id] = PriceInfo(price_eur, q["price"], q["ccy"], ts, q["source"], "quote",
+                                                    stale, prev, fx_rate=f, note=note, day_ref_eur=ref,
+                                                    day_basis=basis, session_date=session, traded_today=traded)
                         continue
                 row = self.store.last_daily(s)
                 if row is not None:
@@ -286,11 +304,13 @@ class PriceService:
             return out
         fb = FallbackPrices(pf, self.settings, only={a.asset_id for a in pending})
         for a in pending:
-            out[a.asset_id] = self._fallback_info(a, pf, fb, today, has_series=bool(series_map.get(a.asset_id)))
+            out[a.asset_id] = self._fallback_info(a, pf, fb, today, has_series=bool(series_map.get(a.asset_id)),
+                                                  day=day)
         return out
 
     @staticmethod
-    def _fallback_info(a: AssetInfo, pf: Portfolio, fb: FallbackPrices, today: date, has_series: bool) -> PriceInfo:
+    def _fallback_info(a: AssetInfo, pf: Portfolio, fb: FallbackPrices, today: date, has_series: bool,
+                       day: date | None = None) -> PriceInfo:
         """Ersatzkurs (manuell/Transaktion) innerhalb seiner Gültigkeit, sonst „unbewertet“ mit Begründung."""
         res = fb.latest(a, today)
         p = res.point
@@ -302,7 +322,10 @@ class PriceService:
                 prev = [x for x in pf.manual_prices.get(a.asset_id, []) if x[0] < p.date]
                 prev_close = prev[-1][1] if prev and (p.date - prev[-1][0]).days <= 3 \
                     and p.date >= today - timedelta(days=1) else None
-                return PriceInfo(p.price, p.price, "EUR", ts, "manual", "manual", False, prev_close, note=label)
+                # „heute“: nur eine heute eingetragene Änderung zählt (gestern eingetragen → ±0)
+                ref = prev_close if p.date == (day or today) else p.price
+                return PriceInfo(p.price, p.price, "EUR", ts, "manual", "manual", False, prev_close, note=label,
+                                 day_ref_eur=ref, day_basis="manuell")
             return PriceInfo(p.price, p.price, "EUR", ts, "tx", "tx", False, None,
                              note=f"{label} (keine Marktkurse)")
         if res.expired is not None:

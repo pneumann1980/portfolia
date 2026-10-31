@@ -1,4 +1,11 @@
-"""Aktuelle Bewertung: Positionen je Asset (optional je Konto) mit Kursen, Einstand, G/V und Gewichten."""
+"""Aktuelle Bewertung: Positionen je Asset (optional je Konto) mit Kursen, Einstand, G/V und Gewichten.
+
+„Heute“ ist der Kalendertag (Europe/Berlin): Bezugskurs je Position ist ``PriceInfo.day_ref_eur`` (Wertpapiere:
+Vortagesschluss, wenn heute gehandelt wurde, sonst ±0; Krypto: Kurs vor Mitternacht bzw. 24 h). Heutige Käufe und
+Verkäufe zählen ab ihrem Kurs (nicht mit der ganzen Tagesbewegung), der Prozentwert der Summe bezieht sich auf den
+Wert um 0:00 Uhr. Zusätzlich: Wertpapiere ohne Handel heute mit ihrer Bewegung am letzten Handelstag
+(:attr:`Valuation.session`).
+"""
 
 from __future__ import annotations
 
@@ -31,6 +38,8 @@ class Position:
     income: float = 0.0
     weight: float = 0.0
     accounts: list[str] = field(default_factory=list)
+    session_change: float | None = None  # Wertpapier ohne Handel heute: Bewegung am letzten Handelstag
+    session_change_pct: float | None = None
 
     @property
     def asset_id(self) -> str:
@@ -67,6 +76,8 @@ class Valuation:
     invested: float
     last_update: datetime | None
     account: str | None = None
+    session: dict[str, Any] | None = None  # Wertpapiere ohne Handel heute: Bewegung am letzten Handelstag
+    day_basis_24h: bool = False  # mindestens ein Krypto-Kurs ohne Wert von Mitternacht (Veränderung über 24 h)
 
     @property
     def total_gain(self) -> float:
@@ -127,9 +138,52 @@ class FlowValuer:
         return q * p if p is not None else 0.0
 
 
+def _today_flows(pf: Portfolio, accounts: frozenset[str] | None, today: date) -> dict[str, list[tuple[float,
+                                                                                                    float | None]]]:
+    """Heutige Zu- und Abgänge je Asset: (Menge mit Vorzeichen, EUR-Wert oder ``None``) – Kauf, Verkauf, Gebühr,
+    Ein-/Auszahlung, Transfer (zwischen zwei eigenen Konten im Umfang heben sich beide Seiten auf)."""
+    out: dict[str, list[tuple[float, float | None]]] = defaultdict(list)
+
+    def inside(acc: str | None) -> bool:
+        return acc is not None and (accounts is None or acc in accounts)
+
+    for t in pf.txs:
+        if t.date != today:
+            continue
+        v = float(t.value_eur) if t.value_eur is not None else None
+        if t.to_asset and t.to_qty and inside(t.to_account):
+            out[t.to_asset].append((float(t.to_qty), v))
+        if t.from_asset and t.from_qty and inside(t.from_account):
+            out[t.from_asset].append((-float(t.from_qty), v))
+        if t.fee_asset and t.fee_qty and inside(t.from_account or t.to_account):
+            out[t.fee_asset].append((-float(t.fee_qty), float(t.fee_eur) if t.fee_eur is not None else None))
+    return out
+
+
+def _day(qty: float, now: float, ref: float, flows: list[tuple[float, float | None]]) -> tuple[float, float]:
+    """(Veränderung heute, Wert um 0:00 Uhr) einer Position: Wert jetzt − Wert um 0:00 − Saldo der heutigen Zu- und
+    Abgänge (zu ihrem EUR-Wert; ohne Wert zum Bezugskurs, d. h. ohne eigenen Beitrag)."""
+    net_qty = sum(q for q, _v in flows)
+    flow_value = sum((v if v is not None else abs(q) * ref) * (1 if q > 0 else -1) for q, v in flows)
+    qty0 = qty - net_qty
+    return qty * now - qty0 * ref - flow_value, qty0 * ref
+
+
+def _session(positions: list[Position]) -> dict[str, Any] | None:
+    """Wertpapiere ohne Handel heute (Wochenende, Feiertag, vor Börsenbeginn): Bewegung am letzten Handelstag."""
+    rows = [p for p in positions if p.session_change is not None]
+    if not rows:
+        return None
+    base = sum(p.value - (p.session_change or 0.0) for p in rows)
+    change = sum(p.session_change or 0.0 for p in rows)
+    dates = {p.price.session_date for p in rows if p.price.session_date is not None}
+    return {"change": change, "pct": change / base if base else None, "n": len(rows),
+            "date": max(dates) if dates else None, "same_date": len(dates) == 1}
+
+
 def value_positions(pf: Portfolio, ledger: LedgerResult, prices: dict[str, PriceInfo], invested: float,
                     accounts: frozenset[str] | None = None, last_update: datetime | None = None,
-                    label: str | None = None) -> Valuation:
+                    label: str | None = None, today: date | None = None) -> Valuation:
     """Bewertung aller Positionen; ``accounts`` schränkt auf Konten (z. B. ein Depot) ein."""
     holdings: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
     accounts_by_asset: dict[str, list[str]] = defaultdict(list)
@@ -153,6 +207,10 @@ def value_positions(pf: Portfolio, ledger: LedgerResult, prices: dict[str, Price
             key = e.related_asset if (e.fiat and e.related_asset) else e.asset
             income[key] += float(e.value_eur)
 
+    from app.util.timeutil import today_local
+
+    flows = _today_flows(pf, accounts, today or today_local())
+    ref_total = 0.0  # Wert um 0:00 Uhr (Bezug des Prozentwerts)
     positions: list[Position] = []
     for aid, qd in holdings.items():
         if abs(qd) <= DUST:
@@ -166,19 +224,28 @@ def value_positions(pf: Portfolio, ledger: LedgerResult, prices: dict[str, Price
         unreal_pct = (unreal / cost) if (cost and not a.is_fiat and pi.valued) else None
         day = None
         day_pct = None
-        if pi.valued and pi.prev_close_eur and not a.is_fiat:
-            day = qty * (pi.price_eur - pi.prev_close_eur)
-            day_pct = pi.price_eur / pi.prev_close_eur - 1 if pi.prev_close_eur else None
+        if a.is_fiat:  # Bargeld: keine Kursbewegung; heutige Ein-/Auszahlungen gehören nicht zum Wert um 0:00
+            ref_total += (qty - sum(q for q, _v in flows.get(aid, []))) * pi.price_eur
+        elif pi.valued and pi.day_ref_eur:
+            day, base = _day(qty, pi.price_eur, pi.day_ref_eur, flows.get(aid, []))
+            ref_total += base
+            day_pct = pi.price_eur / pi.day_ref_eur - 1
+        else:
+            ref_total += value
+        sess = sess_pct = None
+        if pi.kind == "quote" and not a.is_crypto and not a.is_fiat and not pi.traded_today and pi.prev_close_eur:
+            sess = qty * (pi.price_eur - pi.prev_close_eur)
+            sess_pct = pi.price_eur / pi.prev_close_eur - 1
         positions.append(Position(a, qty, pi, value, cost, unreal if pi.valued else 0.0, unreal_pct, day, day_pct,
                                   realized.get(aid, 0.0), income.get(aid, 0.0),
-                                  accounts=sorted(accounts_by_asset.get(aid, []))))
+                                  accounts=sorted(accounts_by_asset.get(aid, [])), session_change=sess,
+                                  session_change_pct=sess_pct))
     # geschlossene Positionen mit realisiertem G/V/Erträgen nicht als Position, aber in Summen
     total_value = sum(p.value for p in positions)
     for p in positions:
         p.weight = p.value / total_value if total_value else 0.0
     positions.sort(key=lambda p: p.value, reverse=True)
     day_change = sum(p.day_change or 0.0 for p in positions)
-    prev_total = total_value - day_change
     fees = sum(float(f.eur) for f in ledger.fees if accounts is None or f.account in accounts)
     return Valuation(
         positions=positions,
@@ -186,13 +253,15 @@ def value_positions(pf: Portfolio, ledger: LedgerResult, prices: dict[str, Price
         total_cost=sum(p.cost for p in positions),
         unrealized=sum(p.unrealized for p in positions if not p.asset.is_fiat),
         day_change=day_change,
-        day_change_pct=(day_change / prev_total) if prev_total else None,
+        day_change_pct=(day_change / ref_total) if ref_total > 0 else None,
         realized=sum(realized.values()),
         income=sum(income.values()),
         fees=fees,
         invested=invested,
         last_update=last_update,
         account=label,
+        session=_session(positions),
+        day_basis_24h=any(p.price.day_basis == "24h" and p.day_change is not None for p in positions),
     )
 
 
