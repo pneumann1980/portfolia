@@ -105,6 +105,7 @@ enthält curl-impersonate (libcurl mit BoringSSL), dessen Lizenzhinweise die Pro
 | uvicorn | 0.54.0 | BSD-3-Clause |
 | websockets | 17.1 | BSD-3-Clause |
 | yfinance | 1.7.0 | Apache-2.0 |
+| youtube-transcript-api | 1.2.4 | MIT |
 
 ## Texterkennung (Belegimport, M25)
 

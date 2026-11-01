@@ -2,10 +2,12 @@
 {# Eine Karte für Videos, Artikel und Community: Bild oben (nur wenn vorhanden – kein Platzhalter), darunter Titel, Angaben,
    Badges und Text (Artikel 3 Zeilen, Community voll). Videos öffnen über /news/<id> in neuem Tab (markiert gelesen, leitet zu
    YouTube weiter) – kein hx-post am Link (blockiert das Öffnen). #}
-{% set href = '/news/' ~ n.id if video else '/news/' ~ n.id ~ '?back=' ~ urlq(back_url) %}
+{% set has_tr = video and x.cstatus == 'success' %}{# Video mit Transkript: Leseansicht (Kernaussagen, Transkript) #}
+{% set href = '/news/' ~ n.id ~ '?back=' ~ urlq(back_url) if (has_tr or not video) else '/news/' ~ n.id %}
+{% set newtab = video and not has_tr %}
 <article class="vcard news-item {{ 'read' if n.is_read }}" id="news-{{ n.id }}">
   {% if video or n.image_url %}
-  <a class="vthumb" href="{{ href }}"{% if video %} target="_blank" rel="noopener"{% endif %} tabindex="-1" aria-hidden="true">
+  <a class="vthumb" href="{{ href }}"{% if newtab %} target="_blank" rel="noopener"{% endif %} tabindex="-1" aria-hidden="true">
     {% if video %}
       {% if n.video_id %}<img src="https://i.ytimg.com/vi/{{ n.video_id }}/hqdefault.jpg" alt="" loading="lazy">{% endif %}
       {% if n.is_live %}<span class="vchip live">LIVE</span>{% elif n.duration_s %}<span class="vchip">{{ n.duration_s|duration }}</span>{% endif %}
@@ -14,14 +16,14 @@
   </a>
   {% endif %}
   <div class="vbody">
-    <a class="title" href="{{ href }}"{% if video %} target="_blank" rel="noopener"{% endif %}>{{ n.title }}</a>
+    <a class="title" href="{{ href }}"{% if newtab %} target="_blank" rel="noopener"{% endif %}>{{ n.title }}</a>
     <div class="vmeta"><span>{{ n.channel_name or n.source_name if video else n.source_name }}</span><span>{{ n.published_at|rel_time_iso }}</span>{% if video and n.views %}<span>{{ n.views|num(0) }} Aufrufe</span>{% endif %}</div>
     {% if x.assets or n.dup_count or x.sentiment or x.event or x.cstatus in ('success', 'blocked') or n.hidden_reason %}<div class="vtags">
       {% for aid, name in x.assets[:4] %}<a class="badge info" href="/news?tab={{ 'videos' if video else params.tab }}&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
       {% if n.dup_count %}<span class="badge" title="Weitere Quellen berichten ebenfalls">+{{ n.dup_count }}</span>{% endif %}
       {% if x.sentiment %}<span class="badge {{ {'positiv': 'good', 'negativ': 'crit', 'gemischt': 'warn'}.get(x.sentiment, '') }}" title="KI-Einschätzung der Stimmung der Meldung">{{ x.sentiment }}</span>{% endif %}
       {% if x.event %}<a class="badge info" href="/news/event/{{ x.event.event_id }}" title="Mehrere Berichte zum selben Ereignis">Ereignis · {{ x.event.n_items }} Berichte</a>{% endif %}
-      {% if x.cstatus == 'success' %}<span class="badge good" title="Volltext lokal verfügbar">Volltext</span>{% elif x.cstatus == 'blocked' %}<span class="badge" title="Verlag sperrt den Text (Bezahl-/Zustimmungsschranke)">gesperrt</span>{% endif %}
+      {% if has_tr %}<span class="badge good" title="Untertitel geladen – Kernaussagen und Transkript in der Leseansicht">Transkript</span>{% elif x.cstatus == 'success' %}<span class="badge good" title="Volltext lokal verfügbar">Volltext</span>{% elif x.cstatus == 'blocked' %}<span class="badge" title="Verlag sperrt den Text (Bezahl-/Zustimmungsschranke)">gesperrt</span>{% endif %}
       {% if n.hidden_reason %}<span class="badge warn">ausgeblendet: {{ n.hidden_reason }}</span>{% endif %}
     </div>{% endif %}
     {% if n.llm_summary %}<div class="summary"><span class="badge info">KI</span> {{ n.llm_summary }}</div>

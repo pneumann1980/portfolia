@@ -1888,6 +1888,17 @@ Speichern aus der Oberfläche erhalten).
   Abonnenten zur Bestätigung; nicht auflösbare Handles werden deaktiviert (nie geraten). Discovery (mit
   `YOUTUBE_API_KEY`): täglich Vorschläge ab 100.000 Abonnenten, Aktionen *abonnieren/ignorieren/blockieren*
   werden in `sources.yaml` gespeichert. Shorts ausgeblendet, Livestreams markiert.
+* **YouTube-Transkripte und Kernaussagen:** Für neue Videos der eigenen Kanäle (ohne Shorts und Livestreams) und für
+  Videos mit Bezug zu einer Position lädt Portfolia die Untertitel (Bibliothek `youtube-transcript-api`, wie der
+  Untertitel-Knopf im Player; nur die Video-Kennung geht an YouTube) und lässt daraus **5–10 Kernaussagen** und die
+  **genannten Werte mit Aussage (kaufen/halten/verkaufen/beobachten/meiden) und Begründung** erstellen – ausdrücklich
+  als Aussagen des Videos, nicht als Empfehlung von Portfolia. Bis etwa 60 Minuten wird das ganze Transkript
+  ausgewertet, darüber gleichmäßig verteilte Abschnitte. Videos mit Transkript öffnen die Leseansicht: Kernaussagen,
+  Werte (mit Sprung zur Stelle im Video) und das vollständige Transkript mit Zeitmarken. Der Abruf ist inoffiziell; sperrt
+  YouTube ihn (typisch bei Cloud-/Rechenzentrums-IPs), ruht er 24 h. Unter *News → Quellen → YouTube-Transkripte*:
+  ein/aus, Stand, und **„Bibliothek aktualisieren“** – lädt die neueste Version derselben Hauptversion von PyPI (nur als
+  fertiges Wheel, ohne Installationscode, ohne Abhängigkeiten) nach `/data/pylib`, prüft sie in einem eigenen Prozess und
+  schaltet erst dann um; „Mitgelieferte Version verwenden“ kehrt zurück.
 * **Relevanz:** Aliase mit Wortgrenzen, mehrdeutige Ticker (z. B. SUI, TAP, PI, NIGHT) nur mit Kontextwort,
   Gewichtung nach Quelle (Primär 1,0 · Agenturen/Portale 0,8 · Krypto-Portale 0,7 · YouTube 0,6 ·
   entdeckt 0,4) und Positionsgröße, Aktualität (Halbwertszeit 48 h). Dubletten über URL und Titelähnlichkeit;

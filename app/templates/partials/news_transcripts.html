@@ -1,0 +1,29 @@
+{# YouTube-Transkripte: an/aus, Stand der letzten 7 Tage, Sperre/Fehler, Version der Bibliothek mit Update-Knopf.
+   Erwartet: tr (module.transcripts_view), tr_result (Ergebnis einer Aktion oder None). #}
+<section class="card" id="yt-transcripts" style="margin-top:16px">
+  <div class="card-head"><h2>YouTube-Transkripte</h2>
+    <form hx-post="/news/transcripts/toggle" hx-target="#yt-transcripts" hx-swap="outerHTML" class="inline">
+      <input type="hidden" name="on" value="{{ '0' if tr.on else '1' }}">
+      <span class="badge {{ 'good' if tr.on else '' }}">{{ 'eingeschaltet' if tr.on else 'ausgeschaltet' }}</span>
+      <button class="btn sm" type="submit">{{ 'Ausschalten' if tr.on else 'Einschalten' }}</button>
+    </form></div>
+  <p class="hint">Für neue Videos deiner Kanäle (ohne Shorts und Livestreams) und für Videos mit Bezug zu deinen Werten lädt Portfolia die Untertitel und lässt daraus 5–10 Kernaussagen und die genannten Werte mit Begründung erstellen. Übertragen wird nur die Video-Kennung an YouTube. Der Abruf ist inoffiziell (wie der Untertitel-Knopf im Player) und kann ausfallen, wenn YouTube etwas ändert – dann hilft meist „Bibliothek aktualisieren“.</p>
+  <dl class="kv">
+    <dt>Letzte 7 Tage</dt><dd>{{ tr.stats.success }} Transkripte geladen · {{ tr.stats.failed }} ohne Untertitel bzw. nicht verfügbar · {{ tr.stats.pending }} warten auf einen neuen Versuch</dd>
+    <dt>Bibliothek</dt><dd>youtube-transcript-api {{ tr.lib.version or '–' }} {% if tr.lib.updated %}<span class="badge info">in der App aktualisiert</span>{% if tr.lib.updated_at %} <span class="hint">{{ tr.lib.updated_at|datetime_de }}</span>{% endif %}{% else %}<span class="badge">mitgeliefert</span>{% endif %}{% if not tr.lib.available %} <span class="badge crit">nicht installiert</span>{% endif %}</dd>
+  </dl>
+  {% if tr.paused_until %}<div class="alert warn" role="status"><span class="icon">!</span><div>YouTube hat den Abruf als automatisiert erkannt und gesperrt. Portfolia pausiert bis {{ tr.paused_until|datetime_de }} und versucht es dann erneut.</div></div>{% endif %}
+  {% if tr.last_error and tr.last_error.kind == 'broken' %}<div class="alert warn" role="status"><span class="icon">!</span><div>Die Bibliothek konnte zuletzt keine Untertitel lesen ({{ tr.last_error.detail }}). Wahrscheinlich hat YouTube etwas geändert – bitte „Bibliothek aktualisieren“.</div></div>{% endif %}
+  {% if tr_result %}
+    {% if tr_result.reset %}<div class="alert good" role="status"><span class="icon">✓</span><div>Wieder die mitgelieferte Version.</div></div>
+    {% elif tr_result.ok and tr_result.unchanged %}<div class="alert good" role="status"><span class="icon">✓</span><div>Bereits die neueste Version ({{ tr_result.version }}).</div></div>
+    {% elif tr_result.ok %}<div class="alert good" role="status"><span class="icon">✓</span><div>Aktualisiert auf {{ tr_result.version }} – geprüft und aktiv.</div></div>
+    {% else %}<div class="alert crit" role="alert"><span class="icon">!</span><div>Nicht aktualisiert{% if tr_result.version %} ({{ tr_result.version }}){% endif %}: {{ tr_result.error }} Die bisherige Version bleibt aktiv.</div></div>{% endif %}
+  {% endif %}
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    <button class="btn sm" hx-post="/news/transcripts/update" hx-target="#yt-transcripts" hx-swap="outerHTML" hx-indicator="#tr-spin" data-once>Bibliothek aktualisieren</button>
+    {% if tr.lib.updated %}<button class="btn sm ghost" hx-post="/news/transcripts/reset" hx-target="#yt-transcripts" hx-swap="outerHTML" hx-confirm="Zur mitgelieferten Version {{ tr.lib.bundled }} zurückkehren?">Mitgelieferte Version verwenden</button>{% endif %}
+    <span id="tr-spin" class="htmx-indicator spinner"></span>
+  </div>
+  <p class="hint">„Bibliothek aktualisieren“ lädt die neueste Version derselben Hauptversion von PyPI – nur als fertiges Paket, ohne dabei Installationscode auszuführen –, prüft sie in einem eigenen Prozess und schaltet erst danach um. Eine neue Hauptversion kommt erst mit einem geprüften Portfolia-Release.</p>
+</section>

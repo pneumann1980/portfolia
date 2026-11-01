@@ -15,10 +15,20 @@
       <span>· veröffentlicht {{ n.published_at|datetime_de }}</span>
       {% if content and content.author %}<span>· {{ content.author }}</span>{% endif %}
       {% for aid, name in assets[:6] %}<a class="badge info" href="/news?tab=articles&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
-      {% if cs == 'success' %}<span class="badge good" title="Volltext wurde lokal geladen">Volltext</span>
+      {% if cs == 'success' and transcript is none %}<span class="badge good" title="Volltext wurde lokal geladen">Volltext</span>
       {% elif cs == 'partial' %}<span class="badge warn">Teiltext</span>
       {% elif cs == 'blocked' %}<span class="badge warn">gesperrt</span>{% endif %}
     </div>
+    {% if transcript is not none %}
+    {% set auto = ':auto:' in (content.reason or '') %}
+    <p class="meta meta-row">{% if n.duration_s %}<span class="badge">{{ n.duration_s|duration }}</span>{% endif %}<span class="badge good" title="Untertitel des Videos wurden lokal geladen">Transkript</span><span class="badge {{ 'warn' if auto else '' }}" title="{{ 'Automatisch erzeugte Untertitel – Namen, Ticker und Zahlen können falsch erkannt sein' if auto else 'Vom Kanal erstellte Untertitel' }}">{{ 'automatische Untertitel' if auto else 'Untertitel vom Kanal' }}</span></p>
+    {% if n.video_id %}<a href="{{ video_url }}" target="_blank" rel="noopener noreferrer"><img class="reader-img" src="https://i.ytimg.com/vi/{{ n.video_id }}/hqdefault.jpg" alt="Vorschaubild – Video auf YouTube öffnen" loading="lazy"></a>{% endif %}
+    <p class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+      <a class="btn" href="{{ video_url }}" target="_blank" rel="noopener noreferrer">Video auf YouTube ansehen ↗</a>
+      <a class="btn ghost" href="#transkript">Transkript lesen</a>
+    </p>
+  </section>
+  {% else %}
     {% if n.image_url %}<img class="reader-img" src="/img/news/{{ n.id }}" alt="" loading="lazy">{% endif %}
 
     {% if cs == 'blocked' %}
@@ -43,12 +53,28 @@
     </p>
     <p class="hint">Quelle: {{ n.source_name }} – © beim jeweiligen Verlag. Der Text wurde zur privaten Lektüre lokal zwischengespeichert, nicht verändert und nicht weitergegeben.</p>
   </section>
+  {% endif %}
 
   {% if analysis %}
   <section class="card ai-box" aria-label="KI-Analyse">
-    <div class="card-head"><h2>KI-Zusammenfassung <span class="badge info">KI</span></h2>
-      <span class="hint">{{ analysis.provider }} · {{ analysis.model }} · {{ analysis.analyzed_at|datetime_de }} · Basis: {{ {'fulltext': 'Volltext', 'excerpt': 'Teiltext', 'teaser': 'nur Anreißer'}.get(analysis.basis, analysis.basis) }}</span></div>
+    <div class="card-head"><h2>{{ 'Kernaussagen des Videos' if analysis.video else 'KI-Zusammenfassung' }} <span class="badge info">KI</span></h2>
+      <span class="hint">{{ analysis.provider }} · {{ analysis.model }} · {{ analysis.analyzed_at|datetime_de }} · Basis: {{ {'fulltext': 'Volltext', 'excerpt': 'Teiltext', 'teaser': 'nur Anreißer', 'transcript': 'Transkript'}.get(analysis.basis, analysis.basis) }}{% if analysis.gekuerzt %} (über ~60 Min.: verteilte Abschnitte){% endif %}</span></div>
+    {% if analysis.video %}
+    <ol class="reader-list">{% for k in analysis.kernaussagen %}<li>{{ k }}</li>{% endfor %}</ol>
+    {% if analysis.empfehlungen %}
+    <h3 class="reader-sub">Genannte Werte <span class="badge warn">Aussagen des Videos, keine Empfehlung von Portfolia</span></h3>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Wert</th><th>Aussage</th><th>Begründung laut Video</th><th>Stelle</th></tr></thead><tbody>
+    {% for e in analysis.empfehlungen %}<tr>
+      <td><b>{{ e.name }}</b> <span class="hint">{{ e.art }}</span></td>
+      <td data-label="Aussage"><span class="badge {{ {'kaufen': 'good', 'verkaufen': 'crit', 'meiden': 'crit', 'halten': 'info', 'beobachten': 'warn'}.get(e.aussage, '') }}">{{ e.aussage }}</span>{% if e.kursziel %}<div class="hint">Kursziel: {{ e.kursziel }}</div>{% endif %}</td>
+      <td class="wide" data-label="Begründung">{{ e.begruendung or '–' }}</td>
+      <td data-label="Stelle">{% if e.stelle and video_at(video_url, e.stelle) %}<a href="{{ video_at(video_url, e.stelle) }}" target="_blank" rel="noopener noreferrer">{{ e.stelle }} ↗</a>{% else %}–{% endif %}</td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+    {% else %}<p class="hint">Das Video nennt keine einzelnen Werte mit Einschätzung.</p>{% endif %}
+    {% else %}
     <p>{{ analysis.zusammenfassung }}</p>
+    {% endif %}
     <div class="meta meta-row" style="margin:6px 0">
       <span class="badge">{{ analysis.kategorie }}</span>
       <span class="badge {{ {'positiv': 'good', 'negativ': 'crit', 'gemischt': 'warn'}.get(analysis.stimmung, '') }}">Stimmung: {{ analysis.stimmung }}</span>
@@ -77,10 +103,22 @@
     <h3 class="reader-sub">Unsicherheiten</h3>
     <ul class="reader-list">{% for u in analysis.unsicherheiten %}<li>{{ u }}</li>{% endfor %}</ul>
     {% endif %}
-    <p class="hint">Automatisch aus dem öffentlichen Artikeltext erstellt – es wurden keine Bestände, Beträge oder Konten übermittelt. Keine Anlageberatung.</p>
+    <p class="hint">Automatisch aus dem öffentlichen {{ 'Transkript' if analysis.video else 'Artikeltext' }} erstellt – es wurden keine Bestände, Beträge oder Konten übermittelt. Keine Anlageberatung.</p>
   </section>
   {% elif ai.enabled() %}
-  <section class="card"><p class="hint">Die KI-Analyse dieser Meldung steht noch aus (nach dem Laden des Artikeltextes, Bearbeitung in Stapeln).</p></section>
+  <section class="card"><p class="hint">Die KI-Analyse {{ 'dieses Videos steht noch aus (Kernaussagen nach dem Laden des Transkripts).' if transcript is not none else 'dieser Meldung steht noch aus (nach dem Laden des Artikeltextes, Bearbeitung in Stapeln).' }}</p></section>
+  {% endif %}
+
+  {% if transcript is not none %}
+  <section class="card" id="transkript">
+    <details>
+      <summary><b>Transkript lesen</b> <span class="hint">{{ content.word_count or 0 }} Wörter{% if content.lang %} · Sprache {{ content.lang }}{% endif %} · Zeitmarke öffnet das Video an dieser Stelle</span></summary>
+      <div class="reader-body transcript">
+        {% for p in transcript %}<p>{% if p.ts %}<a class="ts" href="{{ p.href }}" target="_blank" rel="noopener noreferrer">{{ p.ts }}</a> {% endif %}{{ p.text }}</p>{% endfor %}
+      </div>
+    </details>
+    <p class="hint">Untertitel von YouTube ({{ n.channel_name or n.source_name }}) – zur privaten Lektüre lokal gespeichert, nicht verändert und nicht weitergegeben.</p>
+  </section>
   {% endif %}
 
   {% if event %}

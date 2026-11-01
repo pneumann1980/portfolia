@@ -190,6 +190,7 @@
     <p class="hint">Handles werden beim Start zur Channel-ID aufgelöst (Kanalseite bzw. YouTube Data API). Nicht auflösbare Handles werden nicht abgerufen und nie geraten oder ersetzt.
       Entdeckung: täglich Top {{ discovery.top_n_positions }} Positionen, ab {{ discovery.min_subscribers|num(0) }} Abonnenten, Tagesbudget {{ discovery.daily_unit_budget|num(0) }} Einheiten.</p>
   </section>
+  {% include "partials/news_transcripts.html" %}
   <section class="card" style="margin-top:16px">
     <div class="card-head"><h2>Filter</h2></div>
     <dl class="kv">

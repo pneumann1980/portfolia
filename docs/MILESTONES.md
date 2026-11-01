@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 31.10.2026 · Version 0.78.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 01.11.2026 · Version 0.79.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,37 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.79.0 – YouTube-Transkripte: Kernaussagen, genannte Werte, Transkript lesen, Bibliothek per Knopf aktualisieren
+
+Bisher wertete Portfolia Videos nur über Titel und Feed-Beschreibung aus (YouTube war vom Textabruf ausgenommen).
+
+* **Transkript-Abruf** (`app/news/transcripts.py`, Job `news_transcripts` alle 30 Min. und nach jedem Feed-Abruf): neue Videos der abonnierten Kanäle sowie
+  Videos mit Bezug zu einer Position, ohne Shorts und Livestreams, bis 3 Tage alt, höchstens 8 je Lauf mit Pause dazwischen. Spurwahl: je Wunschsprache
+  (Kanalsprache, Deutsch, Englisch) erst vom Kanal erstellte, dann automatische Untertitel. Gespeichert wie ein Artikeltext – Absätze je Minute mit Zeitmarke.
+  Keine Untertitel/Video nicht verfügbar → kein weiterer Versuch; Netz/Bibliothek unlesbar → bis zu 3 Versuche; **Bot-Sperre durch YouTube → 24 h Pause**
+  (Anzeige in den Einstellungen).
+* **Wrapper** (`app/news/ytlib.py`): nur die öffentliche API der Bibliothek, Fehler nach Klassennamen eingeordnet (stabil über Versionen), eigene Verbindung
+  mit 20 s Zeitlimit (die Bibliothek selbst hat keins).
+* **„Bibliothek aktualisieren“** (News → Quellen → YouTube-Transkripte): neueste Version derselben Hauptversion laut PyPI, `pip install --no-deps
+  --only-binary=:all:` (fertiges Wheel, kein Installationscode, keine Abhängigkeiten) nach `/data/pylib/youtube_transcript_api/<Version>`, Selbsttest in
+  einem eigenen Prozess, erst dann Umschalten (ohne Neustart); „Mitgelieferte Version verwenden“ kehrt zurück. Eine neue Hauptversion wird nicht übernommen.
+* **Video-Analyse** (eigener Prompt, ein Video je Anfrage, Videos vor den Artikeln, höchstens 10 je Lauf): **5–10 Kernaussagen** in der Reihenfolge des
+  Videos und **genannte Werte** mit Aussage (kaufen/halten/verkaufen/beobachten/meiden/unklar), Begründung laut Video, Kursziel nur wenn genannt und Stelle
+  im Video – als Aussagen des Videos, nicht als Empfehlung; dazu Einordnung der Aussagekraft (Belege, Interessenkonflikte). Strenge Prüfung der Antwort
+  (mindestens 3 Kernaussagen, Aufzählungen, Längen). Bis ~60 Min. (60.000 Zeichen) das ganze Transkript, darüber 12 gleichmäßig verteilte Abschnitte;
+  automatische Untertitel oder gekürzt → Konfidenz höchstens 70 %. Unverändertes Transkript wird nie erneut analysiert.
+* **Leseansicht für Videos mit Transkript:** Kernaussagen, Tabelle der genannten Werte (Stelle springt ins Video), Einordnung und das **vollständige
+  Transkript** mit Zeitmarken zum Aufklappen; „Video auf YouTube ansehen“. Videos ohne Transkript öffnen wie bisher direkt YouTube. In der Liste trägt die
+  Karte die Kennzeichnung „Transkript“ und zeigt die Kernaussagen als KI-Zusammenfassung.
+* Neue Abhängigkeit `youtube-transcript-api==1.2.4` (MIT; `requests` und `defusedxml` waren schon vorhanden).
+* Tests: Spurwahl, Fehlerarten, echtes Update mit Selbsttest und Rückfall (pip ersetzt, Selbsttest echt), neue Hauptversion abgelehnt, Auswahl und
+  Speicherung, Sperre/Wiederholung/Aufgeben, Kürzung langer Transkripte, Video-Analyse, Leseansicht, Einstellungen. Geprüft: echter pip-Befehl und
+  Selbsttest, echter PyPI-Abruf („bereits die neueste Version“).
+
+**Grenzen:** Der Abruf ist inoffiziell und von Cloud-/Rechenzentrums-IPs aus gesperrt (in der Entwicklungsumgebung so beobachtet – dort greift die
+24-h-Pause); auf einem Heimanschluss funktioniert er in der Regel. Automatische Untertitel enthalten Erkennungsfehler (Ticker, Namen, Zahlen). Jedes Video
+kostet einen KI-Aufruf, lange Videos entsprechend mehr Eingabe-Tokens.
 
 ## 0.78.0 – „Heute“ als Kalendertag: kein Freitagsgewinn mehr am Wochenende
 

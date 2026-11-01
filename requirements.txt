@@ -10,6 +10,7 @@ reportlab==5.0.1
 ruamel.yaml==0.19.1
 feedparser==6.0.14
 defusedxml==0.7.1
+youtube-transcript-api==1.2.4  # mitgeliefert; neuere 1.x per Knopf unter News → Quellen (/data/pylib)
 bcrypt==5.0.0
 cryptography==50.0.1
 tzdata==2026.4

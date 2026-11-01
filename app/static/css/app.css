@@ -1100,3 +1100,7 @@ details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
   .guide-a { padding: 10px; }
   .guide-actions .btn { flex: 1 1 100%; justify-content: center; text-align: center; }
 }
+
+/* Transkript in der Leseansicht: Zeitmarke als Link ins Video */
+.transcript .ts { font-variant-numeric: tabular-nums; font-size: .85em; color: var(--ink-2); text-decoration: none; margin-right: 4px; }
+.transcript .ts:hover { text-decoration: underline; }

@@ -16,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.context import AppContext
 from app.jobs.scheduler import Scheduler, extra_jobs, startup_job
-from app.news import queue, wave
+from app.news import queue, wave, ytlib
 from app.news.ai import AiGateway
 from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
@@ -29,6 +29,7 @@ from app.news.report import ReportService
 from app.news.service import NewsService
 from app.news.status import pipeline_status
 from app.news.telegram import TelegramInputError, add_telegram_source
+from app.news.transcripts import TranscriptService, is_transcript
 from app.news.wave import WaveRunner
 from app.progress import Progress, job_progress
 from app.util.timeutil import iso, parse_iso
@@ -74,7 +75,19 @@ def job_fetch(ctx: AppContext) -> dict[str, Any]:
     _observe(ctx)  # neue Meldungen öffnen den Zyklus der Artikeltexte sofort
     if ctx.scheduler is not None:  # Stufe B getrennt: Fehler dort blockieren den Import nie
         ctx.scheduler.trigger("news_enrich", 5)
+        ctx.scheduler.trigger("news_transcripts", 15)
         ctx.scheduler.trigger("news_group", 20)
+    return res
+
+
+def job_transcripts(ctx: AppContext) -> dict[str, Any]:
+    """YouTube-Transkripte neuer Videos laden; danach die Analyse anstoßen (Kernaussagen)."""
+    with exclusive(ctx, "transcripts") as got:
+        if not got:
+            return {"skipped": "läuft bereits"}
+        res = TranscriptService(ctx).run()
+    if ctx.scheduler is not None and res.get("loaded"):
+        ctx.scheduler.trigger("news_analyze", 10)
     return res
 
 
@@ -158,6 +171,7 @@ def _register_jobs(s: Scheduler) -> None:
     s.register("llm_digest", job_digest, CronTrigger(hour=7, minute=40), executor="news")
     s.register("news_enrich", job_enrich, IntervalTrigger(minutes=15), executor="news")
     s.register("news_analyze", job_analyze, IntervalTrigger(minutes=10), executor="news")
+    s.register("news_transcripts", job_transcripts, IntervalTrigger(minutes=30), executor="news")
     s.register("news_group", job_group, IntervalTrigger(minutes=20), executor="news")
     s.register("news_report", job_report, IntervalTrigger(minutes=15), executor="interactive")
     s.register("news_wave", job_wave, None, executor="wave")
@@ -309,8 +323,54 @@ def reader_context(ctx: AppContext, row: Any, back: str = "") -> dict[str, Any]:
     assets = [(r["asset_id"], pf.asset(r["asset_id"]).name if pf else r["asset_id"]) for r in ctx.db.q(
         "SELECT asset_id FROM news_asset WHERE item_id=? ORDER BY score DESC", (iid,))]
     paragraphs = [p for p in (content["content"] or "").split("\n\n") if p.strip()] if content else []
+    transcript = [_ts_paragraph(p, row["url"]) for p in paragraphs] if is_transcript(content) else None
     return {"n": row, "content": content, "paragraphs": paragraphs, "analysis": analysis, "event": ev,
-            "others": others, "assets": assets, "back": _safe_back(back), "ai": AiGateway(ctx)}
+            "others": others, "assets": assets, "back": _safe_back(back), "ai": AiGateway(ctx),
+            "transcript": transcript, "video_url": row["url"], "video_at": video_at}
+
+
+def video_at(url: str, stelle: str) -> str:
+    """YouTube-Link an eine Zeitmarke („m:ss“ bzw. „h:mm:ss“) – leer, wenn sie nicht lesbar ist."""
+    try:
+        sec = 0
+        for part in stelle.split(":"):
+            sec = sec * 60 + int(part)
+    except ValueError:
+        return ""
+    return f"{url}{'&' if '?' in url else '?'}t={sec}s"
+
+
+def _ts_paragraph(p: str, url: str) -> dict[str, str]:
+    """Absatz eines Transkripts: Zeitmarke (mit Link ins Video) und Text."""
+    if p.startswith("[") and "] " in p[:12]:
+        ts, text = p[1:].split("] ", 1)
+        return {"ts": ts, "href": video_at(url, ts), "text": text}
+    return {"ts": "", "href": "", "text": p}
+
+
+def transcripts_view(ctx: AppContext) -> dict[str, Any]:
+    svc = TranscriptService(ctx)
+    return {"on": svc.enabled(), "paused_until": svc.paused_until(), "stats": svc.stats(),
+            "last_error": ctx.db.get_state("news.transcripts.last_error"), "lib": ytlib.info(ctx.config)}
+
+
+def _transcripts_card(request: Request, ctx: AppContext, result: dict[str, Any] | None) -> HTMLResponse:
+    return render(request, "partials/news_transcripts.html", tr=transcripts_view(ctx), tr_result=result)
+
+
+def _transcripts_update(request: Request, ctx: AppContext) -> HTMLResponse:
+    res = ytlib.update(ctx.config, ctx.http)
+    if res.get("ok") and not res.get("unchanged"):  # neue Version: Sperre/Fehler neu bewerten
+        ctx.db.set_state("news.transcripts.last_error", None)
+        ctx.db.set_state("news.transcripts.paused_until", None)
+    return _transcripts_card(request, ctx, res)
+
+
+def _transcripts_toggle(request: Request, ctx: AppContext, on: bool) -> HTMLResponse:
+    ctx.settings.set("news.transcripts", on)
+    if on:
+        ctx.db.set_state("news.transcripts.paused_until", None)
+    return _transcripts_card(request, ctx, None)
 
 
 def community_ids(svc: NewsService) -> list[str]:
@@ -371,7 +431,8 @@ def make_router() -> APIRouter:
                         channels=svc.channel_state(), discovery=svc.cfg.discovery(),
                         yt_units=svc.yt.units_used(), has_yt_key=bool(ctx.config.secrets.youtube_api_key),
                         settings=svc.cfg.settings, sources_path=str(ctx.config.sources_path),
-                        tg_bridge=str(ctx.settings.get("news.telegram_bridge", "")))
+                        tg_bridge=str(ctx.settings.get("news.telegram_bridge", "")), tr=transcripts_view(ctx),
+                        tr_result=None)
         elif tab == "report":
             base.update(report_ctx(ctx, report_id))
         elif tab == "status":
@@ -390,9 +451,12 @@ def make_router() -> APIRouter:
         row = ctx.db.q1("SELECT * FROM news_item WHERE id=?", (item_id,))
         if row is None:
             raise HTTPException(404, "Meldung nicht gefunden")
-        if row["kind"] == "video":  # Videos laufen beim Anbieter
+        if row["kind"] == "video":  # ohne Transkript: Video beim Anbieter; mit Transkript: Leseansicht
             ctx.db.x("UPDATE news_item SET is_read=1 WHERE id=?", (item_id,))
-            return RedirectResponse(row["url"], status_code=303)
+            content = ctx.db.q1("SELECT status, reason FROM news_content WHERE item_id=?", (item_id,))
+            if not is_transcript(content) or request.query_params.get("watch") == "1":
+                return RedirectResponse(row["url"], status_code=303)
+            row = ctx.db.q1("SELECT * FROM news_item WHERE id=?", (item_id,))
         if not keep and not row["is_read"]:
             ctx.db.x("UPDATE news_item SET is_read=1 WHERE id=?", (item_id,))
             row = ctx.db.q1("SELECT * FROM news_item WHERE id=?", (item_id,))
@@ -425,6 +489,24 @@ def make_router() -> APIRouter:
         if ctx.scheduler is not None:
             ctx.scheduler.trigger("news_enrich", 1)
         return Response(status_code=204, headers={"HX-Redirect": f"/news/{item_id}?keep=1"})
+
+    @router.post("/news/transcripts/update", response_class=HTMLResponse)
+    async def transcripts_update(request: Request) -> HTMLResponse:
+        """Neueste Version der Transkript-Bibliothek laden, prüfen und aktivieren (Wheel, Selbsttest)."""
+        ctx = get_ctx(request)
+        return await run_in_threadpool(_transcripts_update, request, ctx)
+
+    @router.post("/news/transcripts/reset", response_class=HTMLResponse)
+    def transcripts_reset(request: Request) -> HTMLResponse:
+        ctx = get_ctx(request)
+        ytlib.reset(ctx.config)
+        return _transcripts_card(request, ctx, {"ok": True, "reset": True})
+
+    @router.post("/news/transcripts/toggle", response_class=HTMLResponse)
+    async def transcripts_toggle(request: Request) -> HTMLResponse:
+        ctx = get_ctx(request)
+        form = await request.form()
+        return await run_in_threadpool(_transcripts_toggle, request, ctx, form.get("on") == "1")
 
     @router.post("/news/report/regenerate", response_class=HTMLResponse)
     def report_regenerate(request: Request) -> HTMLResponse:
