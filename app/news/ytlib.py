@@ -220,6 +220,7 @@ def update(config: Any, http: Any, version: str | None = None) -> dict[str, Any]
     try:
         target = version or latest(http)
     except Exception as e:
+        log.warning("Transkript-Bibliothek: PyPI nicht erreichbar (%s: %s)", type(e).__name__, e)
         return {"ok": False, "error": f"PyPI nicht erreichbar: {type(e).__name__}"}
     if not _VERSION.match(target):
         return {"ok": False, "error": "Ungültige Versionsangabe."}
