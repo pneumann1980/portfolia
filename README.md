@@ -1359,8 +1359,9 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > ausdrücklicher Zustimmung je Asset als gekennzeichnete Ausgleichsbuchung gebucht (zur Lücke bzw. zum Abruf) – danach
 > exakter Bestand, rückgängig als Ganzes.
 > **Ab 0.84.0** beantwortet *Lücken der API prüfen* (Link auf der Übernahmeseite, nur Bitpanda), ob und wo die API
-> Bewegungen auslässt: Lücken laut Saldoverlauf, Import-Buchungen ohne Gegenstück nach Art und Jahr und – bis
-> 31.01.2027 – eine Gegenprüfung mit der alten API (`api.bitpanda.com`); nur lesend, Bericht als CSV.
+> Bewegungen auslässt: Urteil aus dem Saldoverlauf, Zeitraum von API und Import, Buchungen ohne Gegenstück nach Art
+> und Jahr; nur lesend, Bericht als CSV mit Einzelzeilen. **Ab 0.85.0** ordnet die Übernahme Sparplan-Einzahlungen
+> zu, die die API mit dem späteren Datum der Gutschrift führt (gleicher Betrag, bis 7 Tage, eindeutig).
 
 > **DKB-Dokumente (ab 0.36.0):** An einem DKB-Konto (*Einstellungen → Datenquellen*) richtet *DKB-Abruf einrichten* ein
 > Abrufprogramm ein (eigene Python-Umgebung im Datenordner, kein zweiter Container). Per Knopfdruck werden – nach Freigabe in

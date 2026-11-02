@@ -2,22 +2,22 @@
 {% block title %}Lückenprüfung {{ ds.name }}{% endblock %}
 {% block heading %}Hat die API Lücken? {{ ds.name }}{% endblock %}
 {% block content %}
-<div class="stack" id="gapcheck"{% if leg and leg.status == 'running' %} hx-get="/settings/datasources/{{ ds.id }}/luecken" hx-trigger="every 3s" hx-select="#gapcheck" hx-swap="outerHTML"{% endif %}>
+<div class="stack" id="gapcheck">
   <p class="hint row" style="gap:12px;flex-wrap:wrap"><a href="/settings/datasources/{{ ds.id }}">← {{ ds.name }}</a><a href="/settings/datasources/{{ ds.id }}/uebernahme">Quellenübernahme</a>{% if rep %}<a href="/settings/datasources/{{ ds.id }}/luecken.csv">Bericht als CSV</a>{% endif %}</p>
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 
-  <section class="card">
-    <p>Die Prüfung liest nur und bucht nichts. Sie stützt sich auf den gespeicherten <b>Vollabruf</b> der Quellenübernahme und auf zwei unabhängige Belege: den <b>Saldoverlauf</b>, den Bitpanda zu jedem Vorgang mitliefert, und – optional – die <b>alte API</b>, die Bitpanda bis {{ legacy_until.strftime('%d.%m.%Y') }} weiter betreibt.</p>
-  </section>
-
   {% if not rep %}
+  <section class="card"><p>Die Prüfung liest nur und bucht nichts. Sie stützt sich auf den gespeicherten <b>Vollabruf</b> der Quellenübernahme und auf den <b>Saldoverlauf</b>, den Bitpanda zu jedem Vorgang mitliefert.</p></section>
   <div class="alert warn"><span class="icon">!</span><div>Kein gespeicherter Vollabruf. Auf der <a href="/settings/datasources/{{ ds.id }}/uebernahme">Übernahmeseite</a> „Vollabruf starten“, danach hierher zurück.</div></div>
   {% else %}
+  <div class="alert {{ rep.verdict[0] }}" role="status"><span class="icon">{{ '✓' if rep.verdict[0] == 'good' else '!' }}</span><div><b>{{ rep.verdict[1] }}</b>
+    <br><span class="hint">API: {{ rep.events }} Vorgänge vom {{ rep.first|date_de }} bis {{ rep.last|date_de }}{% if rep.import_last %} · Import vom {{ rep.import_first|date_de }} bis {{ rep.import_last|date_de }}{% if rep.after_import %} – danach {{ rep.after_import }} Vorg{{ 'ä' if rep.after_import != 1 else 'a' }}ng{{ 'e' if rep.after_import != 1 }} nur in der API{% endif %}{% endif %}{% if rep.lagged %} · {{ rep.lagged|length }} Sparplan-Einzahlungen mit späterem Datum der API ({{ rep.lag_range }}){% endif %}.</span></div></div>
+
   <section class="card">
     <div class="card-head"><h2>1 · Saldoverlauf der API</h2>
       {% if rep.gap_count %}<span class="badge crit">Lücken belegt: {{ rep.gap_count }}</span>{% else %}<span class="badge good">keine Lücke laut Saldo</span>{% endif %}</div>
-    <p class="hint">Vollabruf vom {{ rep.fetched_at|datetime_de }} · {{ rep.events }} Vorgänge von {{ rep.first|date_de }} bis {{ rep.last|date_de }}.{% if rep.before %} Der Import hat <b>{{ rep.before }} Buchungen vor dem ersten Vorgang der API</b>{% if rep.before_first %} (ab {{ rep.before_first|date_de }}){% endif %} – dort beginnt die Historie der API später.{% endif %}</p>
+    <p class="hint">Vollabruf vom {{ rep.fetched_at|datetime_de }}.{% if rep.before %} Der Import hat <b>{{ rep.before }} Buchungen vor dem ersten Vorgang der API</b>{% if rep.before_first %} (ab {{ rep.before_first|date_de }}){% endif %} – dort beginnt die Historie der API später.{% endif %}</p>
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th>Befund</th><th class="num">Fehlt laut Saldo</th><th class="num">davon durch Import gefüllt</th><th class="num">Rest ohne Beleg</th></tr></thead><tbody>
     {% for x in rep.assets if x.gaps or x.rest %}
       <tr><td>{{ x.asset }}</td><td data-label="Befund"><span class="badge {{ 'warn' if x.gaps else 'crit' }}">{{ x.state }}</span></td>
@@ -32,71 +32,39 @@
     <p class="hint">„Fehlt laut Saldo“: Der von Bitpanda gemeldete Saldo springt stärker, als die gelieferten Vorgänge erklären – dazwischen fehlt eine Bewegung (Betrag und Zeitraum belegt, Art unbekannt).</p>
   </section>
 
+  {% if rep.lagged %}
   <section class="card">
-    <div class="card-head"><h2>2 · Import ohne Gegenstück in der API</h2><span class="badge {{ 'warn' if rep.import_only_n else 'good' }}">{{ rep.import_only_n }} Buchung{{ 'en' if rep.import_only_n != 1 }}</span></div>
+    <div class="card-head"><h2>2 · Sparplan-Einzahlungen mit Versatz</h2><span class="badge good">{{ rep.lagged|length }} zugeordnet</span></div>
+    <p class="hint">Import (Datum des Einzugs) und API (Datum der Gutschrift) führen dieselbe Sparplan-Einzahlung an verschiedenen Tagen. Zugeordnet wird nur bei gleichem Betrag, höchstens 7 Tage Versatz und eindeutigem Gegenstück.</p>
+    <details><summary>Einzelne Einzahlungen</summary>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Import</th><th>API</th><th class="num">Betrag</th><th class="num">Versatz</th></tr></thead><tbody>
+    {% for p in rep.lagged %}<tr><td>{{ p.import_ts|date_de }}</td><td data-label="API">{{ p.api_ts|date_de }}</td><td class="num" data-label="Betrag">{{ p.qty|qty_exact }} {{ p.asset }}</td><td class="num" data-label="Versatz">{{ p.lag }} Tage</td></tr>{% endfor %}
+    </tbody></table></div></details>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>{{ 3 if rep.lagged else 2 }} · Import ohne Gegenstück in der API</h2><span class="badge {{ 'warn' if rep.import_only_n else 'good' }}">{{ rep.import_only_n }} Buchung{{ 'en' if rep.import_only_n != 1 }}</span></div>
     {% if rep.import_only %}
-    <p class="hint">Gruppiert nach Asset, Art und Jahr. Häufen sich hier bestimmte Arten (z. B. Auszahlungen oder Kartenzahlungen) in bestimmten Jahren, liefert die API diese Art bzw. diesen Zeitraum nicht.</p>
+    <p class="hint">Gruppiert nach Asset, Art und Jahr. Häufen sich hier bestimmte Arten in bestimmten Jahren, liefert die API diese Art bzw. diesen Zeitraum nicht – oder der Import führt sie anders.</p>
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th>Art</th><th>Jahr</th><th class="num">Anzahl</th><th class="num">Summe</th><th class="num">füllen Lücke</th></tr></thead><tbody>
     {% for g in rep.import_only %}<tr><td>{{ g.asset }}</td><td data-label="Art">{{ g.kind }}</td><td data-label="Jahr">{{ g.year }}</td><td class="num" data-label="Anzahl">{{ g.count }}</td><td class="num" data-label="Summe">{{ g.sum|qty_exact }}</td><td class="num" data-label="füllen Lücke">{{ g.fillers or '–' }}</td></tr>{% endfor %}
     </tbody></table></div>
     {% else %}<p>Jede Import-Buchung des Kontos hat ein Gegenstück in der API.</p>{% endif %}
     {% if rep.api_only %}
-    <details><summary><b>API-Vorgänge ohne Gegenstück im Import</b> <span class="hint">({{ rep.api_only_n }})</span></summary>
+    <details><summary><b>API-Vorgänge ohne Gegenstück im Import</b> <span class="hint">({{ rep.api_only_n }}{% if rep.after_import %}, davon {{ rep.after_import }} nach dem Ende des Imports{% endif %})</span></summary>
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th>Art</th><th>Jahr</th><th class="num">Anzahl</th><th class="num">Summe</th></tr></thead><tbody>
     {% for g in rep.api_only %}<tr><td>{{ g.asset }}</td><td data-label="Art">{{ g.kind }}</td><td data-label="Jahr">{{ g.year }}</td><td class="num" data-label="Anzahl">{{ g.count }}</td><td class="num" data-label="Summe">{{ g.sum|qty_exact }}</td></tr>{% endfor %}
     </tbody></table></div></details>{% endif %}
-  </section>
-
-  <section class="card">
-    <div class="card-head"><h2>3 · Gegenprüfung mit der alten API</h2>
-      {% if leg and leg.status == 'done' %}<span class="badge {{ 'crit' if leg.missing_n else 'good' }}">{{ leg.missing_n }} nur in der alten API</span>{% elif leg and leg.status == 'running' %}<span class="badge info">läuft …</span>{% endif %}</div>
-    <p class="hint">Liest die Fiat- und Krypto-Transaktionen der alten Schnittstelle (<code>api.bitpanda.com</code>) und legt sie gegen die Vorgänge der neuen API (Asset, Richtung, Betrag mit/ohne Gebühr, Zeit ±36 h). Was nur die alte API kennt, fehlt in der neuen. Interne Umbuchungen zwischen eigenen Wallets heben sich auf und zählen nicht.</p>
-    {% if leg and leg.status == 'running' %}
-      <div class="alert compact" role="status"><span class="icon">…</span><div>{{ leg.message }}</div></div>
-    {% elif leg and leg.status == 'failed' %}
-      <div class="alert crit" role="alert"><span class="icon">!</span><div>{{ leg.message }}</div></div>
-    {% elif leg and leg.status == 'done' %}
-      <dl class="kv">
-        <div><dt>Einträge der alten API</dt><dd>{{ leg.entries }} (abgeschlossen {{ leg.finished }}{% if leg.other_status %}, andere Status {{ leg.other_status }}{% endif %})</dd></div>
-        <div><dt>Vollständig gelesen</dt><dd>Fiat {{ '✓' if leg.meta.fiat.complete else '✗' }} ({{ leg.meta.fiat.count }}{% if leg.meta.fiat.total %} von {{ leg.meta.fiat.total }}{% endif %}) · Krypto {{ '✓' if leg.meta.crypto.complete else '✗' }} ({{ leg.meta.crypto.count }}{% if leg.meta.crypto.total %} von {{ leg.meta.crypto.total }}{% endif %})</dd></div>
-        <div><dt>In der neuen API gefunden</dt><dd>{{ leg.matched }}</dd></div>
-        <div><dt>Interne Umbuchungen (zählen nicht)</dt><dd>{{ leg.internal }}</dd></div>
-        <div><dt><b>Nur in der alten API</b></dt><dd><b>{{ leg.missing_n }}</b>{% if leg.before_api %} · davon {{ leg.before_api }} vor dem ersten Vorgang der neuen API{% endif %}</dd></div>
-        <div><dt>Nur in der neuen API</dt><dd>{{ leg.api_extra }} <span class="hint">(z. B. Produkte, die die alte API nicht führt)</span></dd></div>
-        <div><dt>Geprüft am</dt><dd>{{ leg.at|datetime_de }}{% if leg.meta.fetched_at != rep.fetched_at %} <span class="badge warn">älterer Vollabruf – erneut prüfen</span>{% endif %}</dd></div>
-      </dl>
-      {% if leg.per_asset %}
-      <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th class="num">nur alte API (Summe)</th><th class="num">Lücke laut Saldo</th><th>erklärt die Lücke</th></tr></thead><tbody>
-      {% for x in leg.per_asset %}<tr><td>{{ x.asset }}</td><td class="num" data-label="nur alte API">{{ x.missing_sum|qty_exact }}</td><td class="num" data-label="Lücke laut Saldo">{{ x.gap_total|qty_exact }}</td><td data-label="erklärt"><span class="badge {{ 'good' if x.explains == 'vollständig' else 'warn' }}">{{ x.explains }}</span></td></tr>{% endfor %}
-      </tbody></table></div>{% endif %}
-      {% if leg.groups %}
-      <details open><summary><b>Nur in der alten API</b> – nach Asset, Art und Jahr</summary>
-      <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th>Art</th><th>Jahr</th><th class="num">Anzahl</th><th class="num">Summe</th></tr></thead><tbody>
-      {% for g in leg.groups %}<tr><td>{{ g.asset }}</td><td data-label="Art">{{ g.kind }}</td><td data-label="Jahr">{{ g.year }}</td><td class="num" data-label="Anzahl">{{ g.count }}</td><td class="num" data-label="Summe">{{ g.sum|qty_exact }}</td></tr>{% endfor %}
-      </tbody></table></div></details>
-      <details><summary>Einzelne Einträge ({{ leg.missing|length }}{% if leg.truncated %} von {{ leg.missing_n }}{% endif %})</summary>
-      <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Datum</th><th>Asset</th><th>Art</th><th class="num">Menge</th><th class="num">Gebühr</th></tr></thead><tbody>
-      {% for r in leg.missing %}<tr><td>{{ r.ts|datetime_de }}{% if r.before_api %} <span class="badge info">vor API-Beginn</span>{% endif %}</td><td data-label="Asset">{{ r.asset }}</td><td data-label="Art">{{ r.src }} · {{ r.type }}</td><td class="num" data-label="Menge">{{ r.qty|qty_exact }}</td><td class="num" data-label="Gebühr">{{ r.fee|qty_exact }}</td></tr>{% endfor %}
-      </tbody></table></div></details>
-      {% endif %}
-    {% endif %}
-    {% if legacy_ok and not (leg and leg.status == 'running') %}
-    <form method="post" action="/settings/datasources/{{ ds.id }}/luecken/alt" class="stack" style="gap:8px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <details><summary class="hint">Anderen Schlüssel für die alte API verwenden (optional)</summary>
-        <label>Schlüssel der alten API <input type="password" name="legacy_key" autocomplete="off" maxlength="400"></label>
-        <p class="hint">Nur nötig, wenn die alte API den hinterlegten Schlüssel ablehnt. Wird für diesen einen Lauf verwendet und nicht gespeichert.</p>
-      </details>
-      <button class="btn primary" type="submit" style="align-self:flex-start">{{ 'Erneut gegenprüfen' if leg else 'Gegenprüfung starten' }}</button>
-    </form>
-    {% elif not legacy_ok %}<p class="hint">Die alte API ist nicht mehr verfügbar.</p>{% endif %}
+    <p class="hint">Einzelzeilen mit Datum stehen im <a href="/settings/datasources/{{ ds.id }}/luecken.csv">CSV-Bericht</a>.</p>
   </section>
 
   <section class="card">
     <h2>Was folgt daraus?</h2>
     <ul class="hint">
-      <li><b>Lücken belegt und vom Import gefüllt:</b> Die Quellenübernahme lässt diese Import-Buchungen stehen – nichts weiter zu tun.</li>
-      <li><b>Nur in der alten API, erklärt die Lücke vollständig:</b> Die neue API lässt diese Arten aus; die alte liefert sie (bis {{ legacy_until.strftime('%d.%m.%Y') }}). Den Bericht als CSV weitergeben – daraus lässt sich ableiten, ob die Übernahme diese Einträge bis dahin aus der alten API ergänzen soll.</li>
-      <li><b>Rest ohne Beleg:</b> weder Import noch alte API erklären ihn – nur mit Ausgleich (Zustimmung je Asset) auf der Übernahmeseite.</li>
+      <li><b>API vollständig:</b> Die Quellenübernahme kann die API ohne Ausgleich maßgeblich machen; Vorgänge nach dem Ende des Imports kommen dabei hinzu.</li>
+      <li><b>Lücken belegt und vom Import gefüllt:</b> Die Übernahme lässt diese Import-Buchungen stehen – nichts weiter zu tun.</li>
+      <li><b>Rest ohne Beleg:</b> nur mit Ausgleich (Zustimmung je Asset) auf der Übernahmeseite.</li>
     </ul>
   </section>
   {% endif %}

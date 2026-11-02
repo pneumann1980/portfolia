@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 02.11.2026 · Version 0.84.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 02.11.2026 · Version 0.85.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,31 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.85.0 – Sparplan-Einzahlungen mit Zeitversatz zuordnen, Lückenprüfung mit Urteil, alte API entfernt
+
+**Befund aus 0.84.0 (echtes Konto):** Der Saldoverlauf der neuen API ist lückenlos, ihre Historie reicht vor den
+Import zurück. Alle 19 Einträge, die nur die alte API kannte, sind erklärt: 15 Sparplan-Einzahlungen à 50 € (alte API
+und Import führen das Datum des Einzugs, die neue API `credited_at` der Gutschrift – mehr als 36 h später), 3 Käufe
+unter abweichendem Kürzel (TH = T) und 1 Umbuchung ins Staking (bucht der Connector bewusst nicht). Der Import endet
+Ende September 2026; danach und bei einigen älteren Vorgängen ist die API vollständiger.
+
+**Änderungen**
+
+* **Zuordnung mit Zeitversatz** (`takeover.lag_pairs`): Einzahlung im Import ↔ Sparplan-Einzahlung der API bei
+  gleichem Asset und exakt gleichem Betrag, Datum der API 0–7 Tage später, nur wenn beide gegenseitig nächste freie
+  Kandidaten sind (keine Überkreuzung, Mehrdeutiges bleibt offen). Wirkung: keine falschen „ohne Gegenstück“ mehr,
+  EUR-Wert und Einordnung des Imports gehen an die API-Zeile; der Bestand ändert sich nicht. Vorschau: „… davon
+  Sparplan-Einzahlungen mit späterem Datum der API (Gutschrift x Tage nach dem Datum des Imports)“.
+* **Lückenprüfung mit Urteil:** „API vollständig“ bzw. „Lücken vom Import gefüllt“ bzw. „Rest ohne Beleg“; Zeitraum von
+  API und Import, Vorgänge nach dem Ende des Imports, zugeordnete Sparplan-Einzahlungen mit Versatz.
+* **CSV-Bericht mit Einzelzeilen** (Datum, Asset, Art, Menge; Sparplan-Paare mit Datum beider Seiten und Versatz).
+* **Gegenprüfung mit der alten API entfernt** (Route, Hintergrundlauf, Schlüsselfeld, Tests): Sie hat ihren Zweck
+  erfüllt; der Saldoverlauf bleibt der dauerhafte Beleg, die alte API wird am 31.01.2027 abgeschaltet.
+
+**Grenzen:** Die Regel gilt nur für Sparplan-Einzahlungen der API (Vorgangsart `savings_plan`) und Einzahlungen im
+Import; andere Zeitversätze bleiben „ohne Gegenstück“. Bis Januar 2027 gibt es keine zweite unabhängige Gegenprüfung
+mehr – bei einer erneuten Lücke laut Saldo ist nur der Import Vergleichsmaßstab.
 
 ## 0.84.0 – Bitpanda: Hat die API Lücken? (Prüfseite, nur lesend)
 

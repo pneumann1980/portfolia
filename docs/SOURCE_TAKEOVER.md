@@ -70,10 +70,15 @@ Betrag). Der Rest zwischen letztem Saldo und gemeldetem Bestand ist eine Lücke 
 3. Zustimmung und Füller gehen in den Beweis-Token ein; Nachprüfung exakt; Rückgängig nimmt den Ausgleich mit zurück.
 
 **Lücken der API prüfen (ab 0.84.0, `app/datasources/bitpanda_gaps.py`):** eigene Seite mit dem Befund aus dem
-gespeicherten Vollabruf (Lücken je Asset, Import/API ohne Gegenstück nach Art und Jahr) und einer optionalen
-Gegenprüfung mit der alten API (`/fiatwallets/transactions`, `/wallets/transactions`; laut Bitpanda bis 31.01.2027).
-Nur lesend; das Ergebnis liegt in `app_state` (`bp_gapcheck:<id>`), ein einmalig eingegebener Schlüssel wird nicht
-gespeichert.
+gespeicherten Vollabruf: Urteil aus dem Saldoverlauf, Lücken je Asset, Zeitraum von API und Import, Import/API ohne
+Gegenstück nach Art und Jahr, Bericht als CSV mit Einzelzeilen. Nur lesend. (Die Gegenprüfung mit der alten API aus
+0.84.0 wurde in 0.85.0 entfernt.)
+
+**Sparplan-Einzahlungen mit Zeitversatz (ab 0.85.0, `takeover.lag_pairs`):** Der Import führt das Datum des Einzugs,
+die API das Datum der Gutschrift (`credited_at`, Tage später). Nach der normalen Zuordnung (±36 h) werden verbliebene
+Einzahlungen des Imports mit Sparplan-Einzahlungen der API verbunden: gleiches Asset, exakt gleicher Betrag, API 0–7
+Tage später, beide gegenseitig nächste freie Kandidaten (ohne Überkreuzung; Mehrdeutiges bleibt offen). Der Bestand
+ändert sich dadurch nicht; die Vorschau zeigt den Versatz, Spenderwerte gehen an die API-Zeile.
 
 **Spender:** Wo die API einen Wert nicht liefert, übernehmen die API-Zeilen EUR-Wert, Gebührenwert und Einordnung (Tag, nur bei
 gleicher Buchungsart) aus der zugeordneten Import-Buchung (`CsvImportService._donate`). Wo die API selbst einen Wert liefert

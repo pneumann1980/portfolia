@@ -677,29 +677,13 @@ def make_router() -> APIRouter:
 
     @router.get("/settings/datasources/{sid}/luecken", response_class=HTMLResponse)
     async def gaps_page(request: Request, sid: int, msg: str = "", error: str = "") -> Response:
-        """Bitpanda: Hat die API Lücken? Saldoverlauf, Import ohne Gegenstück, Gegenprüfung mit der alten API."""
+        """Bitpanda: Hat die API Lücken? Saldoverlauf, Zeitraum und Gegenstücke von Import und API, Urteil."""
         from app.datasources import bitpanda_gaps as G
 
         ds = _gaps_ds(request, sid)
         ctx = get_ctx(request)
         rep = await run_in_threadpool(G.analyse, ctx, sid)
-        return render(request, "datasource_gaps.html", active="settings", ds=ds, rep=rep,
-                      leg=G.legacy_state(ctx.db, sid), legacy_ok=G.legacy_available(),
-                      legacy_until=G.LEGACY_UNTIL, msg=msg, error=error)
-
-    @router.post("/settings/datasources/{sid}/luecken/alt")
-    async def gaps_legacy(request: Request, sid: int) -> Response:
-        from app.datasources import bitpanda_gaps as G
-
-        _gaps_ds(request, sid)
-        f = await request.form()
-        key = str(f.get("legacy_key") or "").strip() or None  # nur für diesen Lauf, nie gespeichert
-        if key is not None and (len(key) > 400 or not key.isprintable()):
-            return _back(request, f"/settings/datasources/{sid}/luecken?"
-                         + urlencode({"error": "Ungültiger Schlüssel."}))
-        res = await run_in_threadpool(G.start_legacy, get_ctx(request), sid, key)
-        q = {"error": " ".join(res["errors"])} if res["errors"] else {"msg": "Gegenprüfung gestartet."}
-        return _back(request, f"/settings/datasources/{sid}/luecken?" + urlencode(q))
+        return render(request, "datasource_gaps.html", active="settings", ds=ds, rep=rep, msg=msg, error=error)
 
     @router.get("/settings/datasources/{sid}/luecken.csv")
     async def gaps_csv(request: Request, sid: int) -> Response:
@@ -712,7 +696,7 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         rep = await run_in_threadpool(G.analyse, ctx, sid)
         buf = io.StringIO()
-        _csv.writer(buf, delimiter=";").writerows(G.csv_rows(rep, G.legacy_state(ctx.db, sid)))
+        _csv.writer(buf, delimiter=";").writerows(G.csv_rows(rep))
         return Response(buf.getvalue().encode("utf-8-sig"), media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="bitpanda-luecken-{sid}.csv"'})
 

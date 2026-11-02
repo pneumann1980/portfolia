@@ -61,6 +61,7 @@ CONFIRM = ("binance",)  # Vollständigkeit ohne Beleg: der Nutzer bestätigt sie
 PILOT = PROOF  # Name bis 0.67
 MAX_AGE = timedelta(hours=24)  # der Abruf darf nicht älter sein: der beobachtete Bestand ist ein Zeitpunkt
 WINDOW = timedelta(hours=36)  # Zuordnung ohne gemeinsame Kennung: Zeitabstand (Zeitzonen, Buchungszeitpunkt)
+LAG_MAX = timedelta(days=7)  # Sparplan-Einzahlung: Gutschrift der API bis zu 7 Tage nach dem Datum des Imports
 SAMPLE = 40  # Beispiele je Liste in der Vorschau
 ZERO = Decimal(0)
 DUST = Decimal("1e-12")  # wie der Bestand des Ledgers
@@ -289,6 +290,7 @@ class Assessment:
     adjust: frozenset[str] = frozenset()  # Assets, für die der Nutzer den Ausgleich bestätigt hat
     adjustable: dict[str, dict[str, Any]] = field(default_factory=dict)  # möglicher Ausgleich je Asset
     adjustments: list[dict[str, Any]] = field(default_factory=list)  # zu buchende Ausgleichsbuchungen (bestätigt)
+    lagged: list[tuple[Any, Any, timedelta]] = field(default_factory=list)  # Sparplan-Einzahlung mit Versatz
 
     @property
     def tier(self) -> str:
@@ -296,6 +298,11 @@ class Assessment:
         Restabweichung mit Zustimmung als gekennzeichnete Ausgleichsbuchung."""
         base = "belegt" if self.mode == "proof" else "bestätigt"
         return base + (" mit Ausgleich" if self.adjustments else "")
+
+    @property
+    def lag_range(self) -> str:
+        """Versatz der zugeordneten Sparplan-Einzahlungen, z. B. „3–5 Tage“."""
+        return lag_text([lag for _t, _ln, lag in self.lagged])
 
     @property
     def ok(self) -> bool:
@@ -473,6 +480,79 @@ def _fill(gaps: dict[str, list[dict[str, Any]]], unmatched: list[Any], account: 
                     used.add(t.tx_id)
                     rest -= q
             g["left"] = rest if abs(rest) > _tol(aid, g["amount"]) else ZERO
+    return out
+
+
+def _donate(donors: dict[str, dict[str, Any]], t: Any, ln: Line, account: str) -> None:
+    """EUR-Wert, Gebührenwert und Einordnung der Import-Buchung für die API-Zeile, wo die API sie nicht liefert."""
+    legs = _tx_legs(t, account)
+    shares = any(x in ln.legs for x in legs)
+    d: dict[str, Any] = {"type": t.type, "tx": t.tx_id}
+    if shares and t.value_eur is not None and t.value_eur > 0:
+        d["value_eur"] = format(t.value_eur, "f")
+    if t.fee_eur is not None and t.fee_eur > 0 and ln.row and ln.row.get("fee_asset") == t.fee_asset:
+        d["fee_eur"] = format(t.fee_eur, "f")
+    if shares and t.tag:
+        d["tag"] = t.tag
+    if ln.rec.ext_id and len(d) > 2:
+        donors.setdefault(ln.rec.ext_id, d)
+
+
+def _plain_deposit(t: Any, account: str) -> bool:
+    legs = _tx_legs(t, account)
+    return t.type == "deposit" and len(legs) == 1 and next(iter(legs.values())) > 0
+
+
+def _plan_deposit(ln: Line) -> bool:
+    """Sparplan-Einzahlung der API (Zugang ohne Gegenbuchung, Vorgangsart Sparplan)."""
+    from app.csvimport import model as M
+
+    plan = "saving" in str(ln.rec.label or "").lower() or "sparplan" in str(ln.rec.note or "").lower()
+    return (plan and ln.rec.kind == M.DEPOSIT and not ln.errors and not ln.rec.ts_missing and len(ln.legs) == 1
+            and next(iter(ln.legs.values())) > 0)
+
+
+def _days(td: timedelta) -> str:
+    d = td.total_seconds() / 86400
+    return f"{d:.1f}".replace(".", ",").removesuffix(",0")
+
+
+def lag_text(lags: list[timedelta]) -> str:
+    if not lags:
+        return ""
+    lo, hi = _days(min(lags)), _days(max(lags))
+    return (lo if lo == hi else f"{lo}–{hi}") + (" Tag" if lo == hi == "1" else " Tage")
+
+
+_Cand = tuple[datetime, tuple[str, Decimal], Any]  # Zeit, (Asset, Menge), Bezug
+
+
+def lag_pairs(olds: list[_Cand], news: list[_Cand], max_lag: timedelta = LAG_MAX) -> list[tuple[Any, Any, timedelta]]:
+    """Zuordnung mit Zeitversatz (nur vorwärts: Datum der Quelle ≥ Datum des Imports): gleiches Asset, exakt gleicher
+    Betrag; ein Paar nur, wenn beide gegenseitig nächste freie Kandidaten sind – die früheste freie API-Zeile nach der
+    Import-Buchung und keine weitere freie Import-Buchung bis zu ihr. Mehrdeutiges bleibt ohne Zuordnung."""
+    def key(x: tuple[str, Decimal]) -> tuple[str, str]:
+        return x[0], format(x[1].normalize(), "f")
+
+    groups_new: dict[tuple[str, str], list[tuple[datetime, Any]]] = defaultdict(list)
+    for ts, k, ref in news:
+        groups_new[key(k)].append((ts, ref))
+    groups_old: dict[tuple[str, str], list[tuple[datetime, Any]]] = defaultdict(list)
+    for ts, k, ref in olds:
+        groups_old[key(k)].append((ts, ref))
+    out = []
+    for g, olist in groups_old.items():
+        nlist = sorted(groups_new.get(g, []), key=lambda x: x[0])
+        olist = sorted(olist, key=lambda x: x[0])
+        taken: set[int] = set()
+        for j, (ots, oref) in enumerate(olist):
+            n = next((k for k, (nts, _r) in enumerate(nlist) if k not in taken and nts >= ots), None)
+            if n is None or nlist[n][0] - ots > max_lag:
+                continue
+            if any(ots < o2 <= nlist[n][0] for o2, _r in olist[j + 1:]):
+                continue  # eine spätere Import-Buchung liegt näher – mehrdeutig
+            taken.add(n)
+            out.append((oref, nlist[n][1], nlist[n][0] - ots))
     return out
 
 
@@ -693,19 +773,20 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
         a.matched += 1
         used.update(hit)
         matched_new.update(hit)
-        legs = _tx_legs(t, account)
         for i in hit:
-            ln = lines[i]
-            shares = any(x in ln.legs for x in legs)
-            d: dict[str, Any] = {"type": t.type, "tx": t.tx_id}
-            if shares and t.value_eur is not None and t.value_eur > 0:
-                d["value_eur"] = format(t.value_eur, "f")
-            if t.fee_eur is not None and t.fee_eur > 0 and ln.row and ln.row.get("fee_asset") == t.fee_asset:
-                d["fee_eur"] = format(t.fee_eur, "f")
-            if shares and t.tag:
-                d["tag"] = t.tag
-            if ln.rec.ext_id and len(d) > 2:
-                donors.setdefault(ln.rec.ext_id, d)
+            _donate(donors, t, lines[i], account)
+    # Sparplan-Einzahlungen: Import (Datum des Einzugs) ↔ API (Gutschrift, Tage später) – eindeutig, ohne Überkreuzung
+    olds = [(t.ts, t) for t in a.unmatched_old if _plain_deposit(t, account)]
+    news = [(lines[i].rec.ts, i) for i in range(len(lines))
+            if i not in used and lines[i].covered_by is None and _plan_deposit(lines[i])]
+    for t, i, lag in lag_pairs([(ts, next(iter(_tx_legs(t, account).items())), t) for ts, t in olds],
+                               [(ts, next(iter(lines[i].legs.items())), i) for ts, i in news]):
+        a.unmatched_old.remove(t)
+        a.matched += 1
+        used.add(i)
+        matched_new.add(i)
+        a.lagged.append((t, lines[i], lag))
+        _donate(donors, t, lines[i], account)
     a.donors = donors
     a.unmatched_new = [ln for i, ln in enumerate(lines) if i not in matched_new and ln.covered_by is None
                        and ln.legs and (ln.rec.ext_id or "") not in own_ids]

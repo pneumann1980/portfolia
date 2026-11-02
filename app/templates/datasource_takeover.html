@@ -194,6 +194,7 @@
     <dl class="kv">
       <div><dt>Buchungen, die ausgeblendet werden</dt><dd>{{ a.hide|length }}</dd></div>
       <div><dt>… davon mit Gegenstück in der API</dt><dd>{{ a.matched }}</dd></div>
+      {% if a.lagged %}<div><dt>… davon Sparplan-Einzahlungen mit späterem Datum der API</dt><dd>{{ a.lagged|length }} <span class="hint">(Gutschrift {{ a.lag_range }} nach dem Datum des Imports)</span></dd></div>{% endif %}
       <div><dt>… ohne Gegenstück in der API</dt><dd>{{ a.unmatched_old|length }}</dd></div>
       <div><dt>API-Vorgänge ohne Gegenstück im Import</dt><dd>{{ a.unmatched_new|length }}</dd></div>
       <div><dt>Bleibende Buchungen des Kontos</dt><dd>{{ a.kept|length }}</dd></div>
