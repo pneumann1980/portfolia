@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import urlencode
 
@@ -42,6 +43,76 @@ CHECK_LABELS = {"transaction": "Vorgänge", "balances": "Bestände", "assets": "
                 "chain_polkadot": "Relay Chain", "chain_assethub-polkadot": "Asset Hub",
                 "history_polkadot": "Historie Relay Chain", "history_assethub-polkadot": "Historie Asset Hub",
                 "chain_peaq": "Chain", "history_peaq": "Historie"}
+
+
+_KID = re.compile(r"[A-Za-z0-9_:.\-]{1,120}")  # Aufgabenbezug aus „Buchungen prüfen“ (wie im Assistenten)
+
+
+def _takeover_extra(ctx: Any, ds: Any, a: Any) -> dict[str, Any]:
+    """Zusatzangaben der Übernahmeseite: offener Prüfstapel der Quelle (Einzelprüfung), bekannte Assets für „Asset
+    zuordnen“, gespeicherte Zuordnungen nur für diesen Anbieter (einzeln entfernbar), Stammdaten der Assets, die unter
+    gleichem Kürzel getrennt geführt werden (Identität prüfen)."""
+    from app.csvimport.service import csv_service
+
+    csv = csv_service(ctx)
+    out: dict[str, Any] = {"pending": datasource_service(ctx).pending_batch(ds.id), "known": [], "scoped": [],
+                           "ident": {}}
+    suffix = "@" + ds.provider.upper()
+    out["scoped"] = sorted((k, v) for k, v in csv.saved_symbols().items() if k.endswith(suffix))
+    if a is not None and a.problems:
+        assets = csv.known_assets()
+        if any(p["kind"] == "map" for p in a.problems):
+            out["known"] = sorted(((aid, x.name, x.symbol) for aid, x in assets.items()), key=lambda t: t[1].lower())
+        for p in a.problems:
+            if p["kind"] != "ident":
+                continue
+            rows = []
+            for aid in p["assets"]:
+                x = assets.get(aid)
+                rows.append({"id": aid, "name": getattr(x, "name", aid), "koinly": getattr(x, "koinly_id", None),
+                             "quote": f"{x.quote_source}:{x.quote_id}" if x is not None else "unbekannt"})
+            out["ident"][p["id"]] = rows
+    return out
+
+
+def _takeover_map(ctx: Any, ds: Any, form: dict[str, Any]) -> tuple[bool, str]:
+    from app.csvimport.identity import provider_key
+    from app.csvimport.service import csv_service
+    from app.datasources import takeover as TK
+    from app.journal.service import journal_service
+
+    symbol = str(form.get("symbol") or "").strip()
+    a = TK.assess(ctx, ds.id, plan=False)
+    open_maps = {p["symbol"]: p for p in (a.problems if a is not None else []) if p["kind"] == "map"}
+    if symbol not in open_maps:
+        return False, f"„{symbol}“ ist im gespeicherten Abruf nicht (mehr) ohne Zuordnung – nichts geändert."
+    js = journal_service(ctx)
+    known = js.known_assets()
+    action = str(form.get("action") or "map")
+    if action == "new":
+        aid_in = str(form.get("new_id") or symbol).strip()[:40]
+        cls = str(form.get("new_class") or "crypto")
+        res = js.save_asset({"asset_id": aid_in, "name": str(form.get("new_name") or aid_in).strip()[:120],
+                             "asset_class": cls if cls in ("crypto", "security", "fiat", "other") else "crypto",
+                             "quote_source": "none", "quote_id": "", "category": "",
+                             "note": f"angelegt bei der Quellenübernahme {ds.name} (Kennung {symbol})"})
+        if res.errors:
+            return False, "Asset nicht angelegt: " + " ".join(res.errors)
+        aid = res.asset_id
+    else:
+        aid = str(form.get("asset") or "").strip()
+        if " — " in aid:  # Auswahl „ID — Name“ aus der Liste
+            aid = aid.split(" — ", 1)[0].strip()
+        if aid not in known:
+            return False, f"Asset „{aid}“ nicht gefunden – bitte aus der Liste wählen oder neu anlegen. Nichts " \
+                          "geändert."
+    key = provider_key(symbol, ds.provider)
+    csv_service(ctx).set_symbol(key, aid, origin="uebernahme")
+    log.info("Quellenübernahme %s: Zuordnung %s → %s", ds.id, key, aid)
+    n = len(open_maps[symbol]["events"])
+    return True, (f"Zuordnung gespeichert: {symbol} → {aid} (gilt nur für {ds.provider_label}, Kennung {key}). "
+                  f"{n} Vorgang{'' if n == 1 else 'e'} neu bewertet – es wurde nichts gebucht. Weitere Probleme "
+                  "bleiben unten sichtbar.")
 
 
 @extra_jobs
@@ -487,8 +558,20 @@ def make_router() -> APIRouter:
             raise HTTPException(404)
         return ds
 
+    def _tk_url(sid: int, kid: str, frag: str = "", **params: str) -> str:
+        """Übernahmeseite mit Meldung und – falls aus „Buchungen prüfen“ geöffnet – dem Aufgabenbezug ``kid``."""
+        q = {k: v for k, v in params.items() if v}
+        if kid:
+            q["kid"] = kid
+        return f"/settings/datasources/{sid}/uebernahme" + (f"?{urlencode(q)}" if q else "") + frag
+
+    def _kid(v: Any) -> str:
+        k = str(v or "")[:120]
+        return k if _KID.fullmatch(k) else ""
+
     @router.get("/settings/datasources/{sid}/uebernahme", response_class=HTMLResponse)
-    async def takeover_page(request: Request, sid: int, msg: str = "", error: str = "", confirm: str = "") -> Response:
+    async def takeover_page(request: Request, sid: int, msg: str = "", error: str = "", confirm: str = "",
+                            kid: str = "") -> Response:
         from app.datasources import takeover as TK
 
         ds = _takeover_ds(request, sid)
@@ -498,18 +581,21 @@ def make_router() -> APIRouter:
         if row is not None and row["status"] == "staged" and TK.supported(ds.provider):
             a = await run_in_threadpool(lambda: TK.assess(ctx, sid, confirm=confirm == "1"))
         result = json.loads(row["result_json"] or "{}") if row is not None else {}
+        extra = await run_in_threadpool(_takeover_extra, ctx, ds, a)
         return render(request, "datasource_takeover.html", active="settings", ds=ds, t=row, a=a, result=result,
                       supported=TK.supported(ds.provider), mode=TK.mode(ds.provider), confirmed=confirm == "1",
-                      msg=msg, error=error)
+                      msg=msg, error=error, kid=_kid(kid), **extra)
 
     @router.post("/settings/datasources/{sid}/uebernahme/abruf")
     async def takeover_fetch(request: Request, sid: int) -> Response:
         from app.datasources import takeover as TK
 
         _takeover_ds(request, sid)
+        f = await request.form()
         res = await run_in_threadpool(TK.start_fetch, get_ctx(request), sid)
-        key, text = ("error", " ".join(res["errors"])) if res.get("errors") else ("msg", "Vollabruf gestartet.")
-        return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode({key: text}))
+        key, text = ("error", " ".join(res["errors"])) if res.get("errors") else (
+            "msg", "Vollabruf gestartet – das Ergebnis erscheint hier, sobald er fertig ist.")
+        return _back(request, _tk_url(sid, _kid(f.get("kid")), **{key: text}))
 
     @router.post("/settings/datasources/{sid}/uebernahme/uebernehmen")
     async def takeover_apply(request: Request, sid: int) -> Response:
@@ -517,32 +603,61 @@ def make_router() -> APIRouter:
 
         _takeover_ds(request, sid)
         f = await request.form()
+        kid = _kid(f.get("kid"))
         if str(f.get("confirm") or "") != "1":
-            return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode(
-                {"error": "Bitte die Vorschau bestätigen."}))
+            return _back(request, _tk_url(sid, kid, "#uebernehmen", error="Bitte die Vorschau bestätigen."))
         res = await run_in_threadpool(TK.start_apply, get_ctx(request), sid, str(f.get("token") or ""),
                                       str(f.get("confirmed") or "") == "1")
-        key, text = ("error", " ".join(res["errors"])) if res.get("errors") else ("msg", "Übernahme gestartet.")
-        return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode({key: text}))
+        # „gestartet“ ist kein Erfolg: die Seite zeigt das Ergebnis, sobald der Hintergrundlauf fertig ist
+        key, text = ("error", " ".join(res["errors"])) if res.get("errors") else (
+            "msg", "Übernahme gestartet – noch nicht abgeschlossen; das Ergebnis erscheint hier.")
+        return _back(request, _tk_url(sid, kid, **{key: text}))
 
     @router.post("/settings/datasources/{sid}/uebernahme/zurueck")
     async def takeover_undo(request: Request, sid: int) -> Response:
         from app.datasources import takeover as TK
 
         _takeover_ds(request, sid)
+        f = await request.form()
         res = await run_in_threadpool(TK.undo, get_ctx(request), sid)
         key, text = ("error", " ".join(res["errors"])) if res["errors"] else (
             "msg", "Übernahme zurückgenommen – die ausgeblendeten Buchungen zählen wieder." + (
                 " " + " ".join(res.get("notes") or []) if res.get("notes") else ""))
-        return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode({key: text}))
+        return _back(request, _tk_url(sid, _kid(f.get("kid")), **{key: text}))
 
     @router.post("/settings/datasources/{sid}/uebernahme/verwerfen")
     async def takeover_discard(request: Request, sid: int) -> Response:
         from app.datasources import takeover as TK
 
         _takeover_ds(request, sid)
+        f = await request.form()
         await run_in_threadpool(TK.discard, get_ctx(request), sid)
-        return _back(request, f"/settings/datasources/{sid}/uebernahme?" + urlencode({"msg": "Abruf verworfen."}))
+        return _back(request, _tk_url(sid, _kid(f.get("kid")),
+                                      msg="Gespeicherter Vollabruf verworfen. Zuordnungen bleiben erhalten."))
+
+    @router.post("/settings/datasources/{sid}/uebernahme/zuordnen")
+    async def takeover_map(request: Request, sid: int) -> Response:
+        """Fehlende Asset-Zuordnung einer Anbieter-Kennung beheben – gilt nur für diesen Anbieter, bucht nichts; die
+        Bewertung des gespeicherten Vollabrufs wird danach neu aufgebaut (kein erneuter Abruf)."""
+        ds = _takeover_ds(request, sid)
+        f = await request.form()
+        kid = _kid(f.get("kid"))
+        ok, text = await run_in_threadpool(_takeover_map, get_ctx(request), ds, dict(f))
+        return _back(request, _tk_url(sid, kid, "#probleme", **({"msg": text} if ok else {"error": text})))
+
+    @router.post("/settings/datasources/{sid}/uebernahme/zuordnung-entfernen")
+    async def takeover_unmap(request: Request, sid: int) -> Response:
+        from app.csvimport.identity import provider_key
+        from app.csvimport.service import csv_service
+
+        ds = _takeover_ds(request, sid)
+        f = await request.form()
+        key = str(f.get("key") or "")
+        if not key.endswith("@" + ds.provider.upper()) or provider_key(key.split("@", 1)[0], ds.provider) != key:
+            return _back(request, _tk_url(sid, _kid(f.get("kid")), "#probleme", error="Unbekannte Zuordnung."))
+        await run_in_threadpool(csv_service(get_ctx(request)).delete_symbol, key)
+        return _back(request, _tk_url(sid, _kid(f.get("kid")), "#probleme",
+                                      msg=f"Zuordnung {key} entfernt – es wurde nichts gebucht."))
 
     @router.post("/settings/datasources/{sid}/check")
     async def check(request: Request, sid: int) -> Response:

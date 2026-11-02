@@ -1120,3 +1120,10 @@ details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
 /* Transkript in der Leseansicht: Zeitmarke als Link ins Video */
 .transcript .ts { font-variant-numeric: tabular-nums; font-size: .85em; color: var(--ink-2); text-decoration: none; margin-right: 4px; }
 .transcript .ts:hover { text-decoration: underline; }
+/* Quellenübernahme: einzeln bearbeitbare Probleme */
+.tk-problems { display: flex; flex-direction: column; gap: 12px; padding-left: 1.2em; margin: 0; }
+.tk-problems > li { overflow-wrap: anywhere; }
+.tk-problems .tk-actions { margin-top: 6px; }
+.tk-problems details > summary { cursor: pointer; }
+.tk-skip { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.tk-skip .btn, .tk-problems .btn { white-space: normal; text-align: left; max-width: 100%; }

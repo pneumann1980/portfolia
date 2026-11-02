@@ -21,9 +21,13 @@
 
   {% if not task %}
   <section class="card guide-card">
+    {% if step.skipped %}
+    <h2>Für diesen Durchgang fertig</h2>
+    <p><b>{{ step.skipped }} Aufgabe{{ 'n' if step.skipped != 1 }} übersprungen – {{ 'sie ist' if step.skipped == 1 else 'sie sind' }} weiter offen</b> und {{ 'zählt' if step.skipped == 1 else 'zählen' }} nicht als gelöst. Du kannst sie jederzeit erneut ansehen.</p>
+    {% else %}
     <h2>Alles geprüft</h2>
     <p>Es gibt nichts mehr, das du entscheiden musst. Neue Fragen erscheinen nach dem nächsten Import oder Abruf von selbst.</p>
-    {% if step.skipped %}<p class="hint">{{ step.skipped }} Aufgabe{{ 'n' if step.skipped != 1 }} hast du übersprungen – sie sind weiter offen.</p>{% endif %}
+    {% endif %}
     <div class="row"><a class="btn primary" href="/quality">Zur Übersicht</a>{% if step.skipped %}<a class="btn" href="/quality/assistent?new=1">Übersprungene ansehen</a>{% endif %}{% if not hints %}<a class="btn ghost" href="/quality/assistent?new=1&amp;hints=1">Auch Hinweise ohne Fehler ansehen</a>{% endif %}</div>
   </section>
   {% else %}

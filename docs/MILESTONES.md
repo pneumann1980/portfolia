@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 02.11.2026 · Version 0.81.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 02.11.2026 · Version 0.82.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,61 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.82.0 – Prüfablauf repariert: Quellenübernahme mit Einzelproblemen, Rückweg/Überspringen, Nachprüfung der Klärung
+
+**Bestätigte Ursachen (Code, durch Tests nachgestellt)**
+
+1. *Übernahme springt zurück, obwohl alle Kriterien erfüllt sind* (SOL1: „Keine API-Zeile ist buchbar. Zurückgenommen.“):
+   Die Vorschau (`takeover.assess`) prüft nur Abbildung und Bestand; erst beim Buchen entscheidet der Prüfstapel
+   (`batch._decide`), ob eine Zeile ohne Einzelentscheidung übernommen werden darf (möglicher Transfer, Dublette/
+   Ergänzung, „komplexe Zuordnung“, prüfbedürftig). Abgelehnte Zeilen wurden still ausgelassen (Folge: Nachprüfung
+   scheitert) bzw. bei null buchbaren Zeilen ohne Grund zurückgenommen – angezeigt wurden nur `rc.errors`, die hier leer
+   sind. Nachgestellt mit einer API-Auszahlung, deren Gegenstück als Einzahlung auf einem anderen Konto im Import liegt.
+2. *Klärung: korrekte Korrektur wird zurückgenommen*: `ensure_rep` (Vorschau) vergleicht neue Befunde mit dem
+   vollständigen Bericht, `verify` (Nachprüfung) nur mit den Befunden der Gruppe – ein unveränderter Altbefund an einer
+   betroffenen Position galt danach als „neu“ → Rücknahme. Nach Erfolg wurde der Fall pauschal „gelöst“.
+3. *Rückweg/Überspringen*: Die Leiste fehlte auf der Übernahmeseite, der Aufgabenbezug kam nur aus einem Cookie (falsche
+   Aufgabe bei mehreren Tabs, nichts ohne Cookie), Fehlerweiterleitungen und „Nachweis speichern“ sprangen zum Assistenten
+   (Auswahl und Bezug verloren).
+4. *Bitpanda*: `_observed` verlor die Unterscheidung „nicht geliefert“ vs. „0 gemeldet“; keine Reparaturaktion für
+   fehlende Zuordnungen; Bestandsabweichungen ohne Zusammensetzung; die Zählung 317/315/323 war nicht erklärt.
+
+**Offen/Vermutung (konkrete Instanzen nicht reproduziert):** Für SOL1 ist nicht belegt, welcher Prüfstapel-Grund die drei
+Vorgänge betraf – die Seite zeigt ihn ab jetzt je Zeile. Für ACN ist eine Aufspaltung derselben Position unter zwei
+Kennungen wahrscheinlich (Summe 1.134,26738992), aber nicht bewiesen; für EUR/USD ist die Ursache offen (Rohsumme der
+Vorgänge ≠ letzter Saldo laut Vorgängen = /portfolio 0).
+
+**Änderungen**
+
+* Übernahme: Zeilen, die nur mit Einzelentscheidung buchbar sind, brechen **vor jeder Buchung** ab – Grund je Zeile mit
+  stabiler Kennung und Datenstand im Ergebnis; solange sich der Datenstand nicht ändert, sperrt die Vorschau einen
+  sinnlosen neuen Versuch (Check „Alle Vorgänge ohne Einzelentscheidung buchbar“). Meldung unterscheidet „nichts
+  gebucht“, „zurückgenommen“ und „Rücknahme unvollständig“. „Gestartet“ heißt nicht „erfolgreich“.
+* Übernahmeseite: **Probleme einzeln bearbeiten** – Asset zuordnen (vorhandenes Asset oder neu anlegen; gespeichert als
+  `SYMBOL@ANBIETER`, gilt nur für diesen Anbieter, bucht nichts, Bewertung aus dem gespeicherten Abruf neu, kein
+  erneuter API-Abruf; gespeicherte Zuordnungen einzeln entfernbar), Bestand „Abweichung untersuchen“ (Zusammensetzung nach
+  Buchungsart, Gebühren, gedeckte/nicht buchbare/bleibende Buchungen getrennt; Rohdaten der Quelle je Asset-ID: Summe der
+  Vorgänge, Gebühren, Staking, letzter Saldo, /portfolio oder „nicht geliefert“), gleiche Kürzel unter mehreren
+  Kennungen (Stammdaten, Zusammenführung nur über die vorhandene Vorschau, keine Summenbildung), Weg in den Prüfstapel.
+  Zählung „API-Vorgänge = ausgewertet + bewusst ohne Buchung → Zeilen“. „Übernahme vorerst überspringen“ (Abruf,
+  Zuordnungen und Quelle bleiben). `SymbolResolver.resolve_for` beachtet anbieterbezogene Zuordnungen zuerst.
+* Bitpanda: Bestandsprüfung liefert die Bestandteile strukturiert (`coverage.balances.detail`).
+* Navigation: Leiste „Zurück zu Buchungen prüfen · Dieses Problem überspringen · Datenqualität · Beenden“ auch auf der
+  Übernahmeseite; Aufgabenbezug `kid` aus der Adresse (je Tab, auch ohne Cookie; serverseitig geprüft), vom Assistenten
+  bei „ansehen“ und `vr:yes` mitgegeben, über alle Formulare und die Fortschrittsabfrage erhalten. Flow: Fehler (`err`/
+  `error`) und Teilfortschritt (`stay=1`) bleiben beim Problem; „Nachweis speichern“ ist ein Zwischenschritt.
+* Klärung: Nachprüfung unter der Sperre mit dem vollständigen Bericht vor der Übernahme als Basis; neue **und**
+  verschlechterte Befunde (gleiche Kennung, höhere Einstufung) blockieren weiter; nicht gezielte Befunde des Falls bleiben
+  offen → Status „teilweise“ statt „gelöst“, Meldung „n Korrekturen gespeichert – m Probleme bleiben offen“, Rückkehr zum
+  Fall. Assistent: mit übersprungenen Aufgaben „Für diesen Durchgang fertig“ statt „Alles geprüft“.
+* Tests (`tests/test_review_repair.py`, angepasst: `test_assistant.py`, `test_assistant_accept.py`).
+
+**Grenzen:** Die Einzelentscheidungen des Prüfstapels werden nicht vorab simuliert (das bräuchte eine schreibende
+Auswertung); die Vorschau erfährt sie aus dem ersten Versuch, der vor jeder Buchung abbricht. Die Nachprüfung der Klärung
+läuft unter der Sperre der Diagnose; ein gleichzeitiger Import nimmt diese Sperre nicht – ein dadurch geänderter Bericht
+kann die Nachprüfung beeinflussen (Rücknahme bleibt vollständig). Bei mehr als einer Bitpanda-Asset-ID mit gleichem Kürzel
+zeigt die Rohdatenprüfung beide Zeilen; welche Identität stimmt, entscheidet der Nutzer.
 
 ## 0.81.0 – Kernaussagen auf Wunsch: Knopf je Video, Lieblingskanäle mit Tagesgrenze, Transkript selbst einfügen
 

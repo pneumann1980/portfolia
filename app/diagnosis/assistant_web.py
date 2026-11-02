@@ -48,6 +48,15 @@ def _clear(resp: Response) -> None:
         resp.delete_cookie(c, path="/")
 
 
+def with_kid(href: str, kid: str) -> str:
+    """Aufgabenbezug an eine interne Adresse hängen (vor einem Anker): Rückweg und gezieltes Überspringen funktionieren
+    dann je Tab und auch ohne Cookie."""
+    if not kid or not _SAFE.fullmatch(kid):
+        return href
+    path, hash_, frag = href.partition("#")
+    return f"{path}{'&' if '?' in path else '?'}{urlencode({'kid': kid})}" + (hash_ + frag)
+
+
 def _go(**q: Any) -> Response:
     qs = urlencode({k: v for k, v in q.items() if v not in (None, "", 0)})
     return RedirectResponse(BASE + (f"?{qs}" if qs else ""), status_code=303)
@@ -191,8 +200,10 @@ def make_router() -> APIRouter:
         if aid == "skip":
             return _go(skip=str(form.get("kid") or ""))
         if aid == "go:open":  # ausdrücklich gewählt: Seite öffnen (Ziel aus der Aufgabe, nie aus dem Formular)
-            href = await run_in_threadpool(_href_of, ctx, str(form.get("kid") or ""))
-            return RedirectResponse(href, status_code=303) if href else _go(err="Die Aufgabe besteht nicht mehr.")
+            kid = str(form.get("kid") or "")
+            href = await run_in_threadpool(_href_of, ctx, kid)
+            return RedirectResponse(with_kid(href, kid), status_code=303) if href else \
+                _go(err="Die Aufgabe besteht nicht mehr.")
         if typ in ("erneut", "rechnung"):
             return await run_in_threadpool(_simple_answer, ctx, typ, fid, aid, gone)
         if typ in ("stapel", "zeile"):
@@ -200,8 +211,9 @@ def make_router() -> APIRouter:
         if typ == "fall":
             return await _case_answer(ctx, fid, aid, form, gone)
         if typ == "vorrang":
-            if aid == "vr:yes" and fid.isdigit():
-                return RedirectResponse(f"/settings/datasources/{int(fid)}/uebernahme", status_code=303)
+            if aid == "vr:yes" and fid.isdigit():  # mit Aufgabenbezug: Rückweg und gezieltes Überspringen dort
+                return RedirectResponse(with_kid(f"/settings/datasources/{int(fid)}/uebernahme",
+                                                 str(form.get("kid") or "")), status_code=303)
             if aid == "vr:no" and fid.isdigit():
                 await run_in_threadpool(G.decline_takeover, ctx, int(fid))
                 return _go(msg="Gespeichert: der Import bleibt für dieses Konto maßgeblich.",

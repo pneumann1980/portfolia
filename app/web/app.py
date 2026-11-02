@@ -16,7 +16,7 @@ from app import APP_NAME, REVISION, __version__
 from app.context import AppContext
 from app.web import fmt
 from app.web.accesslog import AccessLogMiddleware
-from app.web.flow import FlowMiddleware
+from app.web.flow import FlowMiddleware, flow_kid
 from app.web.security import BasicAuthMiddleware, CsrfMiddleware, SecurityHeadersMiddleware
 
 log = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     fmt.register(templates.env)
     templates.env.globals.update(app_name=APP_NAME, version=__version__, revision=REVISION, nav=NAV,
-                                 demo_mode=ctx.config.demo_mode)
+                                 demo_mode=ctx.config.demo_mode, flow_kid=flow_kid)
     app.state.templates = templates
 
     app.add_middleware(FlowMiddleware)  # innerste Schicht: schreibt nur Weiterleitungen um

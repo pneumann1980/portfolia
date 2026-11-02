@@ -1347,6 +1347,13 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > Quellenübernahme*): Vorschau mit Beweis, Import-Buchungen des Kontos werden ausgeblendet, API-Vorgänge gebucht, EUR-Werte
 > und Einordnungen des Imports bleiben, wo die API sie nicht liefert; bei abweichendem Bestand wird alles zurückgenommen;
 > rückgängig als Ganzes. Einzelheiten: [`docs/SOURCE_TAKEOVER.md`](docs/SOURCE_TAKEOVER.md).
+> **Ab 0.82.0** zeigt die Seite die Blockaden als **einzeln bearbeitbare Probleme** (stabile Kennung): fehlende
+> Asset-Zuordnung direkt zuordnen bzw. anlegen (gilt nur für diesen Anbieter, bucht nichts, kein erneuter Abruf),
+> Bestandsabweichung untersuchen (Zusammensetzung nach Buchungsart, Rohdaten der Quelle getrennt, „nicht geliefert“ ≠ 0),
+> gleiche Kürzel unter mehreren Kennungen (Identität prüfen, Zusammenführung nur mit Vorschau), Vorgänge, die nur mit
+> Einzelentscheidung buchbar sind (Grund je Zeile, Weg in den Prüfstapel), und die Zählung API-Vorgänge → ausgewertete
+> Vorgänge → Zeilen. Die Übernahme bleibt bis zum vollständigen Nachweis gesperrt; „vorerst überspringen“ führt zurück
+> zu „Buchungen prüfen“ bzw. in den Prüfstapel, ohne den Abruf oder Zuordnungen zu verlieren.
 
 > **DKB-Dokumente (ab 0.36.0):** An einem DKB-Konto (*Einstellungen → Datenquellen*) richtet *DKB-Abruf einrichten* ein
 > Abrufprogramm ein (eigene Python-Umgebung im Datenordner, kein zweiter Container). Per Knopfdruck werden – nach Freigabe in

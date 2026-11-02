@@ -1321,6 +1321,7 @@ class Result:
     decision_ids: list[int] = field(default_factory=list)
     verified: bool = False
     undone: bool = False
+    remaining: int = 0  # Befunde des Falls, die nach einer erfolgreichen Korrektur offen bleiben (Teilfortschritt)
 
 
 def _run_token(case_key: str, hyp: Hyp, version: str, fp: str) -> str:
@@ -1411,9 +1412,11 @@ def apply_hypothesis(ctx: Any, case_key: str, hyp_id: str, trigger: str = "manua
         except A.Conflict as e:
             return Result(errors=[f"{e} Es wurde nichts geändert."])
         A._after(ctx, any(c.plan.touches_quotes for c in hyp.cands))
-    # Nachprüfung außerhalb der Sperre (B.undo nimmt sie selbst)
-    ok, effect = verify(ctx, case, hyp)
-    if not ok:
+        # Nachprüfung noch unter der Sperre: geprüft wird genau der eigene Stand, kein paralleler Eingriff der
+        # Diagnose dazwischen. Vergleichsbasis ist – wie in der Vorschau (ensure_rep) – der vollständige Bericht vor
+        # der Übernahme, nicht nur die Befunde dieser Gruppe.
+        ok, effect = verify(ctx, case, hyp, report)
+    if not ok:  # Rücknahme nach der Sperre (B.undo nimmt sie selbst – keine Verklemmung)
         res = B.undo(ctx, bulk_id)
         log_run(ctx, case, trigger, "fehlgeschlagen", bulk_id=bulk_id, ids=ids, hyp=hyp, token=token + "-v",
                 effect={**effect, "zurückgenommen": res.ok})
@@ -1425,30 +1428,54 @@ def apply_hypothesis(ctx: Any, case_key: str, hyp_id: str, trigger: str = "manua
                       token=token, bulk_id=bulk_id, undone=res.ok)
     after = dimensions(report_for(ctx), case, resolved=True)
     effect = {**effect, "dims_nach": {k: list(v) for k, v in after.items()}, "zusammenfassung": dims_text(after)}
+    rest = list(effect.get("offen") or [])
+    # „gelöst“ nur, wenn kein Befund des Falls mehr besteht; sonst Teilfortschritt (Korrektur bleibt, Rest offen)
+    status = "teilweise" if rest else "geloest"
     log_run(ctx, case, trigger, "geloest", bulk_id=bulk_id, ids=ids, hyp=hyp, effect=effect, token=token)
-    ctx.db.x("UPDATE clarify_case SET status='geloest', resolved_at=?, updated_at=?, dims_json=? WHERE case_key=?",
-             (_now(), _now(), json.dumps({k: list(v) for k, v in after.items()}, ensure_ascii=False), case.key))
-    log.info("Klärung %s übernommen (%s, %d Entscheidungen)", case.key, authorization, len(ids))
-    return Result(ok=True, token=token, bulk_id=bulk_id, decision_ids=ids, verified=True,
-                  message=f"Übernommen und nachgeprüft: {len(ids)} Korrektur(en), gemeinsam rückgängig zu machen.")
+    ctx.db.x("UPDATE clarify_case SET status=?, resolved_at=?, updated_at=?, dims_json=? WHERE case_key=?",
+             (status, _now() if not rest else None, _now(),
+              json.dumps({k: list(v) for k, v in after.items()}, ensure_ascii=False), case.key))
+    log.info("Klärung %s übernommen (%s, %d Entscheidungen, %d offen)", case.key, authorization, len(ids), len(rest))
+    n = len(ids)
+    if rest:
+        msg = (f"{n} Korrektur{'en' if n != 1 else ''} gespeichert und nachgeprüft – {len(rest)} Problem"
+               f"{'e' if len(rest) != 1 else ''} dieses Falls bleib{'en' if len(rest) != 1 else 't'} offen.")
+    else:
+        msg = f"Übernommen und nachgeprüft: {n} Korrektur(en), gemeinsam rückgängig zu machen. Der Fall ist gelöst."
+    return Result(ok=True, token=token, bulk_id=bulk_id, decision_ids=ids, verified=True, message=msg,
+                  remaining=len(rest))
 
 
-def verify(ctx: Any, case: Case, hyp: Hyp) -> tuple[bool, dict[str, Any]]:
-    """Nachprüfung nach der Übernahme: Befunde der Gruppe behoben, nichts Neues, kein Nachweis verschlechtert."""
+_SEVERITY = {"hinweis": 0, "verdacht": 1, "wahrscheinlich": 2, "belegt": 3}
+
+
+def verify(ctx: Any, case: Case, hyp: Hyp, before: Report | None = None) -> tuple[bool, dict[str, Any]]:
+    """Nachprüfung nach der Übernahme: gezielte Befunde behoben, nichts Neues, nichts verschlechtert, kein Nachweis
+    verschlechtert.
+
+    Vergleichsbasis ist – wie in der Vorschau (:func:`ensure_rep`) – der **vollständige** Bericht vor der Übernahme
+    (``before``): ein unveränderter Altbefund außerhalb dieser Gruppe ist kein neuer Befund und darf eine korrekte
+    Korrektur nicht zurücknehmen. Unter derselben Kennung zählt eine höhere Einstufung als Verschlechterung. Befunde des
+    Falls, die nicht Ziel dieser Lösung waren, bleiben offen (``offen``) – kein Grund zur Rücknahme, aber auch kein
+    „gelöst“."""
     rep = report_for(ctx)
-    before_ids = {f.id for f in case.findings}
-    still = [f for f in rep.findings if f.id in before_ids]
+    case_ids = {f.id for f in case.findings}
+    still = [f for f in rep.findings if f.id in case_ids]
     pos = set(case.positions)
     problems: list[str] = []
     targeted = {c.finding_id for c in hyp.cands}
     left = [f for f in still if f.id in targeted]
     if left:
         problems.append(f"{len(left)} Befund(e) bestehen weiter: {left[0].title[:80]}")
-    base_ids = {f.id for f in case.findings}
+    prior = {f.id: f for f in (before.findings if before is not None else case.findings)}
     new = [f for f in rep.findings if f.kind in CLARIFY_KINDS and f.kind not in ("duplicate", "transfer")
-           and f.id not in base_ids and f.status != "hinweis" and _positions(f) & pos]
+           and f.id not in prior and f.status != "hinweis" and _positions(f) & pos]
     if new:
         problems.append(f"neuer Befund: {new[0].title[:80]}")
+    worse = [f for f in rep.findings if f.id in prior and f.id not in targeted and _positions(f) & pos
+             and _SEVERITY.get(f.status, 0) > _SEVERITY.get(prior[f.id].status, 0)]
+    if worse:
+        problems.append(f"verschlechtert: {worse[0].title[:80]}")
     idx = rep.index
     if idx is not None:
         gone = [op.target for c in hyp.cands for op in c.plan.ops if op.kind in ("hide", "cover")
@@ -1462,7 +1489,8 @@ def verify(ctx: Any, case: Case, hyp: Hyp) -> tuple[bool, dict[str, Any]]:
             if i < len(base_pts.get(k, [])) and abs(d) > abs(base_pts[k][i]):
                 problems.append(f"Bestandsnachweis verschlechtert: {k}")
                 break
-    return not problems, {"probleme": problems, "behoben": len(targeted) - len(left),
+    rest = [f.title[:100] for f in still if f.id not in targeted]
+    return not problems, {"probleme": problems, "behoben": len(targeted) - len(left), "offen": rest,
                           "bestand": {k: [_q(d) for d in v] for k, v in pts.items()}}
 
 

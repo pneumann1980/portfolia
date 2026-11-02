@@ -1170,7 +1170,8 @@ class BitpandaConnector(K.Connector):
             m = cat.get(ref)
             return ((m.get("symbol") or "").upper() if m else "") or f"{PREFIX}:{ref}"
 
-        rows = self._reconcile(ops, held, sym) if full_history else {}
+        detail: dict[str, list[dict[str, str]]] = {}
+        rows = self._reconcile(ops, held, sym, detail) if full_history else {}
         by_key: dict[str, list[str]] = defaultdict(list)
         for ref in held:
             by_key[sym(ref)].append(ref)
@@ -1188,7 +1189,7 @@ class BitpandaConnector(K.Connector):
         diffs = [t for t in rows.values() if not t.startswith("Vorgänge stimmen")]
         coverage["balances"] = {"checked": True, "assets": len(held), "unparsed": unparsed,
                                 "compared": len(rows) if full_history else 0, "differences": len(diffs),
-                                "examples": diffs[:6],
+                                "examples": diffs[:6], "detail": detail,
                                 **({} if full_history else {"note": "Vergleich mit der Summe der Vorgänge nur nach "
                                                                     "vollständigem Abruf der Historie"})}
         if diffs:
@@ -1197,9 +1198,12 @@ class BitpandaConnector(K.Connector):
         return out
 
     @staticmethod
-    def _reconcile(ops: list[_Op], held: dict[str, Decimal], sym: Callable[[str], str]) -> dict[str, str]:
+    def _reconcile(ops: list[_Op], held: dict[str, Decimal], sym: Callable[[str], str],
+                   detail: dict[str, list[dict[str, str]]] | None = None) -> dict[str, str]:
         """Bestand laut ``/portfolio`` gegen die Vorgänge, je Asset-ID beider Seiten. Gebühren und Staking sind nicht
-        dokumentiert – geprüft wird, welche Lesart den Bestand erklärt (nur Hinweis)."""
+        dokumentiert – geprüft wird, welche Lesart den Bestand erklärt (nur Hinweis). ``detail`` erhält je Kürzel die
+        Bestandteile getrennt (Rohsumme der Vorgänge, Gebühren, Staking-Umbuchungen, letzter gemeldeter Saldo,
+        /portfolio-Wert oder „nicht geliefert“) – Grundlage für „Abweichung untersuchen“."""
         net: dict[str, Decimal] = defaultdict(Decimal)
         stake: dict[str, Decimal] = defaultdict(Decimal)
         fees: dict[str, Decimal] = defaultdict(Decimal)
@@ -1238,6 +1242,11 @@ class BitpandaConnector(K.Connector):
                              list(variants)]
             hit = next((t for t, v in variants if abs(v - api_qty) <= tol), None)
             where = "" if ref in held else " (nicht in /portfolio)"
+            if detail is not None:  # je Kürzel eine Zeile je Bitpanda-Asset-ID (gleiche Kürzel bleiben getrennt)
+                detail.setdefault(sym(ref), []).append({
+                    "ref": ref, "portfolio": _q(api_qty) if ref in held else "nicht geliefert", "ops": _q(net[ref]),
+                    "fees": _q(fees[ref]), "trade_fees": _q(tfees[ref]), "staking": _q(stake[ref]),
+                    "last": _q(latest[ref]) if ref in latest else "nicht gemeldet"})
             if hit is not None:
                 out[ref] = "Vorgänge stimmen mit /portfolio überein" + (f" – Lesart: {hit}" if hit else "")
                 continue

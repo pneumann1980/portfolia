@@ -43,6 +43,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -278,6 +279,11 @@ class Assessment:
     confirm: bool = False  # Vollständigkeit vom Nutzer bestätigt (nur bei mode=confirm wirksam)
     window_from: str | None = None  # Beginn der Quelle: davor bleibt der Import maßgeblich
     before: list[Any] = field(default_factory=list)  # Buchungen vor dem Beginn der Quelle (bleiben)
+    delivered: set[str] = field(default_factory=set)  # Assets, für die die Quelle einen Bestand meldet (auch 0)
+    counts: dict[str, Any] = field(default_factory=dict)  # API-Vorgänge → ausgewertete Vorgänge → Zeilen
+    problems: list[dict[str, Any]] = field(default_factory=list)  # einzeln bearbeitbare Probleme (stabile Kennung)
+    breakdown: dict[str, list[tuple[str, Decimal]]] = field(default_factory=dict)  # Zusammensetzung je Asset
+    raw_check: dict[str, list[dict[str, str]]] = field(default_factory=dict)  # Bestandsprüfung der Quelle je Kürzel
 
     @property
     def tier(self) -> str:
@@ -358,9 +364,13 @@ def _lines(ctx: Any, recs: list[Any], account: str, provider: str) -> tuple[list
     return out, resolver
 
 
-def _observed(meta: dict[str, Any], resolver: Any, provider: str) -> tuple[dict[str, Decimal], list[str]]:
+def _observed(meta: dict[str, Any], resolver: Any, provider: str
+              ) -> tuple[dict[str, Decimal], list[str], set[str]]:
+    """Beobachteter Bestand je Asset, nicht zugeordnete Kennungen und – getrennt davon – die Assets, für die die Quelle
+    überhaupt eine Position meldet (auch mit 0). „Nicht geliefert“ ist nicht dasselbe wie „0 gemeldet“."""
     obs: dict[str, Decimal] = defaultdict(Decimal)
     unmapped: list[str] = []
+    delivered: set[str] = set()
     for b in meta.get("balances") or []:
         q = _dec(b.get("qty"))
         aid, _how, _key = resolver.resolve_for(str(b["key"]), provider)
@@ -369,7 +379,104 @@ def _observed(meta: dict[str, Any], resolver: Any, provider: str) -> tuple[dict[
                 unmapped.append(str(b["key"]))
             continue
         obs[aid] += q
-    return {a: q for a, q in obs.items() if q}, unmapped
+        delivered.add(aid)
+    return {a: q for a, q in obs.items() if q}, unmapped, delivered
+
+
+def _obs(b: dict[str, Any]) -> str:
+    """Beobachteter Bestand für die Anzeige: gemeldete Menge (auch 0) oder „nicht geliefert“."""
+    return qty_exact(b["observed"]) if b.get("known", True) else "nicht geliefert"
+
+
+def _last_refusal(db: Any, row: Any) -> dict[str, Any] | None:
+    """Gründe des letzten abgelehnten Übernahmeversuchs je Zeile (``result_json.rows``) samt Datenstand ``dv``."""
+    try:
+        res = json.loads(row["result_json"] or "{}")
+    except ValueError:
+        return None
+    return res if isinstance(res, dict) and res.get("rows") else None
+
+
+def _counts(cov: dict[str, Any], a: Any) -> dict[str, Any]:
+    """API-Vorgänge → ausgewertete Vorgänge → Buchungszeilen, mit den bewusst nicht gebuchten dazwischen."""
+    ops = cov.get("operations")
+    skipped = sum(int(v or 0) for v in (a.skipped or {}).values())
+    out: dict[str, Any] = {"api": ops, "events": a.events, "lines": a.lines, "skipped": skipped}
+    if isinstance(ops, int):
+        out["explained"] = ops == a.events + skipped
+        out["gap"] = ops - a.events - skipped
+    return out
+
+
+_MAP = re.compile(r"Asset für „([^“]+)“ zuordnen|„([^“]+)“ bei .+ Asset zuordnen")
+
+
+def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
+              refusal: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Einzeln bearbeitbare Probleme mit stabiler Kennung (nie gekürzter Meldungstext): fehlende Asset-Zuordnung je
+    Anbieter-Kennung, übrige nicht buchbare Vorgänge, Bestandsabweichung je Asset, gleiche Kürzel mit getrennter
+    Identität, im letzten Versuch nur mit Einzelentscheidung buchbare Vorgänge, fehlende Bestätigung."""
+    from app.csvimport.identity import provider_key
+
+    out: list[dict[str, Any]] = []
+    maps: dict[str, dict[str, Any]] = {}
+    other: list[Line] = []
+    for ln in lines:
+        if not ln.errors:
+            continue
+        m = _MAP.search(ln.errors[0])
+        if m is None:
+            other.append(ln)
+            continue
+        raw = (m.group(1) or m.group(2) or "").strip()
+        p = maps.setdefault(raw.upper(), {"id": "map:" + provider_key(raw, provider), "kind": "map", "symbol": raw,
+                                          "key": provider_key(raw, provider), "events": []})
+        p["events"].append({"event": ln.rec.event_key or "", "ext": ln.rec.ext_id or "", "ts": ln.rec.ts,
+                            "what": str(ln.rec.label or ln.rec.kind or ""), "line": ln.rec.line})
+    for key in unmapped:  # Bestand der Quelle ohne Zuordnung (gleiche Kennung wie bei den Vorgängen)
+        raw = key.split(";", 1)[0]
+        maps.setdefault(raw.upper(), {"id": "map:" + provider_key(raw, provider), "kind": "map", "symbol": raw,
+                                      "key": provider_key(raw, provider), "events": []})["in_balance"] = True
+    for p in maps.values():
+        n = len(p["events"])
+        p["title"] = f"Asset für „{p['symbol']}“ zuordnen"
+        p["detail"] = (f"{n} Vorgang{'' if n == 1 else 'e'} der Quelle" if n else "") + (
+            " und der gemeldete Bestand" if p.get("in_balance") else "") + " – Portfolia kennt dieses Asset noch nicht."
+        out.append(p)
+    for ln in other:
+        ident = ln.rec.ext_id or ln.rec.event_key or f"zeile:{ln.rec.line}"
+        out.append({"id": f"line:{ident}", "kind": "line", "title": "Vorgang nicht buchbar",
+                    "detail": ln.errors[0][:200], "events": [{"event": ln.rec.event_key or "", "ext": ln.rec.ext_id
+                                                              or "", "ts": ln.rec.ts, "line": ln.rec.line,
+                                                              "what": str(ln.rec.label or ln.rec.kind or "")}]})
+    by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for b in a.balances:
+        by_name[str(b["name"]).split(" (", 1)[0].upper()].append(b)
+    split = {sym: bs for sym, bs in by_name.items() if len(bs) > 1 and any(not b["ok"] for b in bs)}
+    for sym, bs in sorted(split.items()):
+        total = sum((b["after"] for b in bs), ZERO)
+        out.append({"id": f"ident:{sym}", "kind": "ident", "title": f"„{sym}“ unter {len(bs)} Asset-Kennungen",
+                    "detail": "Nach der Übernahme zusammen " + qty_exact(total) + " " + sym + " (" + ", ".join(
+                        f"{b['asset']}: {qty_exact(b['after'])}" for b in bs) + "). Möglicherweise dieselbe Position "
+                    "unter zwei Kennungen – nur bei belegter gleicher Identität zusammenführen.",
+                    "assets": [b["asset"] for b in bs]})
+    for b in a.balances:
+        if b["ok"] or (a.mode == "confirm" and b["not_worse"]):
+            continue
+        out.append({"id": f"bal:{b['asset']}", "kind": "balance", "asset": b["asset"],
+                    "symbol": str(b["name"]).split(" (", 1)[0],
+                    "title": f"Bestand {b['name']} passt nicht",
+                    "detail": f"jetzt {qty_exact(b['now'])}, nach Übernahme {qty_exact(b['after'])}, laut Quelle "
+                              f"{_obs(b)}" + (" – würde negativ" if b["negative"] else ""),
+                    "parts": a.breakdown.get(b["asset"], []) if a.breakdown else []})
+    for x in (refusal or {}).get("rows") or []:
+        out.append({"id": f"row:{x.get('key')}", "kind": "row", "title": "Vorgang braucht eine Einzelentscheidung",
+                    "detail": f"{x.get('when', '')} {x.get('what', '')}: {x.get('why', '')}".strip(),
+                    "events": [{"event": x.get("event", ""), "ext": x.get("key", ""), "line": x.get("line")}]})
+    if a.mode == "confirm" and not a.confirm:
+        out.append({"id": "confirm", "kind": "confirm", "title": "Deine Bestätigung fehlt",
+                    "detail": "Bestätige in Schritt 2, dass die Quelle die vollständige Historie des Kontos kennt."})
+    return out
 
 
 def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> Assessment | None:
@@ -402,7 +509,7 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
     # Zeitraum der Quelle: Buchungen davor (Import, Dateien) bleiben – die Quelle belegt nur, was sie selbst kennt
     cut = times[0] - WINDOW if times else None
     a.window_from = iso(cut) if cut is not None else None
-    observed, unmapped = _observed(meta, resolver, prov)
+    observed, unmapped, a.delivered = _observed(meta, resolver, prov)
     a.observed = observed
 
     # -- Bestehende Buchungen des Kontos einteilen ------------------------------------------------------
@@ -542,14 +649,25 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
 
     # -- Bestand: Vorgänge der Quelle + bleibende Buchungen = beobachtet --------------------------------------
     expected: dict[str, Decimal] = defaultdict(Decimal)
+    parts: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
     for ln in lines:
-        if ln.covered_by is None and not ln.errors:
-            for aid, q in ln.legs.items():
+        what = str(ln.rec.label or ln.rec.kind or "Vorgang")
+        for aid, q in ln.legs.items():
+            fee = q - ln.base.get(aid, ZERO)
+            if ln.errors:
+                parts[aid][f"nicht buchbar (zählt nicht): {what}"] += q
+            elif ln.covered_by is not None:
+                parts[aid][f"durch bleibenden Transfer gedeckt (zählt nicht): {what}"] += q
+            else:
                 expected[aid] += q
-    for t, _why in a.kept:
+                parts[aid][f"API: {what}" + (" (ohne Gebühr)" if fee else "")] += q - fee
+                if fee:
+                    parts[aid]["API: Gebühren"] += fee
+    for t, why in a.kept:
         if t.tx_id not in own_ids:
             for aid, q in _tx_legs(t, account).items():
                 expected[aid] += q
+                parts[aid][f"bleibt: {why.split(' – ')[0]}"] += q
     led = ctx.ledger()
     now = led.holdings_by_account(account) if led is not None else {}
     assets = pf.assets if pf is not None else {}
@@ -558,9 +676,12 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
         if not (e or o or n):
             continue
         name = getattr(assets.get(aid), "symbol", None) or asset_label(aid)
+        known = aid in a.delivered or bool(o)
+        # Bestätigt: ohne gemeldete Position ist „nicht schlechter“ nur belegt, wenn sich nichts ändert
+        not_worse = abs(e - o) <= abs(n - o) + DUST if known or a.mode == "proof" else abs(e - n) <= DUST
         a.balances.append({"asset": aid, "name": name, "now": n, "after": e, "observed": o, "negative": e < -DUST,
-                           "ok": abs(e - o) <= DUST, "was_ok": abs(n - o) <= DUST,
-                           "not_worse": abs(e - o) <= abs(n - o) + DUST})
+                           "ok": abs(e - o) <= DUST, "was_ok": abs(n - o) <= DUST, "known": known,
+                           "not_worse": not_worse})
     names = [b["name"] for b in a.balances]
     for b in a.balances:  # gleiches Kürzel, verschiedene Assets (z. B. PEAQ und PEAQ-Token auf Ethereum)
         if names.count(b["name"]) > 1 and b["name"] != b["asset"]:
@@ -604,13 +725,13 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
               if bad else f"{a.lines} Zeilen in {a.events} Vorgängen"),
         Check("balance", "Vorgänge der API ergeben den beobachteten Bestand exakt je Asset",
               all(b["ok"] for b in a.balances),
-              "; ".join(f"{b['name']}: erklärt {qty_exact(b['after'])}, laut Quelle {qty_exact(b['observed'])}"
+              "; ".join(f"{b['name']}: erklärt {qty_exact(b['after'])}, laut Quelle {_obs(b)}"
                          for b in a.balances if not b["ok"])[:400] or f"{len(a.balances)} Assets stimmen")
         if proof else
         Check("balance", "Der Bestand weicht danach je Asset nicht stärker vom beobachteten ab als jetzt",
               all(b["not_worse"] for b in a.balances),
               "; ".join(f"{b['name']}: jetzt {qty_exact(b['now'])}, danach {qty_exact(b['after'])}, laut Quelle "
-                         f"{qty_exact(b['observed'])}" + (" – würde negativ" if b["negative"] else "")
+                         f"{_obs(b)}" + (" – würde negativ" if b["negative"] else "")
                          for b in a.balances if not b["not_worse"])[:600]
               or (f"{len(a.balances)} Assets: {sum(1 for b in a.balances if b['ok'])} exakt, "
                   f"{sum(1 for b in a.balances if not b['ok'])} mit unveränderter oder kleinerer Abweichung")),
@@ -622,6 +743,22 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
     if plan:
         a.checks.append(Check("plan", "Alle ersetzten Buchungen lassen sich ausblenden",
                               not (a.plan and a.plan.errors), "; ".join(a.plan.errors[:3]) if a.plan else ""))
+    # Letzter Übernahmeversuch: Vorgänge, die nur mit Einzelentscheidung buchbar sind. Solange sich der Datenstand nicht
+    # geändert hat, scheitert ein neuer Versuch genauso – erst entscheiden (Prüfstapel), dann erneut übernehmen.
+    last = _last_refusal(db, row)
+    same = False
+    if last is not None and plan:
+        from app.diagnosis.actions import data_version
+
+        same = last.get("dv") == data_version(db)
+        if same:
+            why = "; ".join(f"{x.get('when', '')} {x.get('what', '')}: {x['why']}" for x in last["rows"][:4])
+            a.checks.append(Check("rows", "Alle Vorgänge ohne Einzelentscheidung buchbar", False,
+                                  f"{len(last['rows'])} Vorgänge brauchen eine Entscheidung im Prüfstapel: {why}"))
+    a.counts = _counts(cov, a)
+    a.raw_check = dict((cov.get("balances") or {}).get("detail") or {})
+    a.breakdown = {aid: sorted(((k, v) for k, v in d.items() if v), key=lambda x: x[0]) for aid, d in parts.items()}
+    a.problems = _problems(a, lines, unmapped, prov, last if same else None)
     fp = json.dumps({"s": sid, "r": a.rid, "h": sorted(hide_ids), "b": {k: _fmt(v) for k, v in sorted(
         expected.items())}, "p": a.plan.token if a.plan else "", "d": sorted(a.donors), "m": a.mode,
         "c": a.confirm}, sort_keys=True)
@@ -727,7 +864,7 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, A
     action_id: int | None = None
     bid: int | None = None
 
-    def rollback(why: str, detail: list[str]) -> dict[str, Any]:
+    def rollback(why: str, detail: list[str], rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         notes: list[str] = []
         if action_id is not None:
             r = B.undo(csv, action_id)
@@ -737,11 +874,18 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, A
         if decision_id is not None:
             r2 = A.undo(ctx, decision_id)
             notes += r2.errors
-        text = why + (" Zurückgenommen." if not notes else " Rücknahme unvollständig: " + "; ".join(notes))
-        db.x("UPDATE ds_takeover SET status='staged', message=?, result_json=?, donors_json=NULL, decision_id=NULL, "
-             "action_id=NULL, batch_id=NULL WHERE id=?",
-             (text[:500], json.dumps({"detail": detail[:40], "rollback_errors": notes}, ensure_ascii=False), rid))
+        written = decision_id is not None or action_id is not None
+        text = why + ((" Zurückgenommen – es bleibt nichts davon." if written else " Es wurde nichts gebucht.")
+                      if not notes else " Rücknahme unvollständig – bitte unter Datenqualität → Entscheidungen prüfen: "
+                      + "; ".join(notes))
         journal_service(ctx).after_change()
+        res_doc: dict[str, Any] = {"detail": detail[:40], "rollback_errors": notes,
+                                   "rolled_back": written and not notes}
+        if rows:  # Gründe je Zeile + Datenstand: bei unverändertem Stand sperrt die Vorschau einen neuen Versuch
+            res_doc["rows"] = rows[:200]
+            res_doc["dv"] = A.data_version(db)
+        db.x("UPDATE ds_takeover SET status='staged', message=?, result_json=?, donors_json=NULL, decision_id=NULL, "
+             "action_id=NULL, batch_id=NULL WHERE id=?", (text[:500], json.dumps(res_doc, ensure_ascii=False), rid))
         return {"errors": [text, *detail[:12]]}
 
     # 1. ausblenden -----------------------------------------------------------------------------------------
@@ -777,13 +921,24 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, A
     rest = [rc for rc in rows if rc not in book and rc.open and (rc.rec.ext_id or "") not in cover_ext]
 
     # 3. buchen -------------------------------------------------------------------------------------------------
+    # Die Übernahme ist eine Entscheidung für alle Vorgänge: Zeilen, die der Prüfstapel nur mit Einzelentscheidung bucht
+    # (möglicher Transfer, Dublette/Ergänzung, prüfbedürftig …), werden nicht still ausgelassen – vor jeder Buchung
+    # abbrechen, mit Grund je Zeile (stabile Kennung), damit sie einzeln entschieden werden können.
     _msg(db, rid, f"{len(book)} Vorgänge werden gebucht …")
     if book:
         idxs = {rc.idx for rc in book}
         p = B.plan(csv, bid, "include", idxs)
-        if not p.todo:
-            return rollback("Keine API-Zeile ist buchbar.", [f"{rc.line}: {'; '.join(rc.errors[:1])}" for rc in rows
-                                                              if rc.errors][:12])
+        refused = [it for it in p.items if not it.act]
+        if refused or not p.todo:
+            info = [{"key": it.rc.rec.ext_id or it.rc.rec.event_key or f"zeile:{it.rc.line}",
+                     "event": it.rc.rec.event_key or "", "line": it.rc.line,
+                     "when": it.rc.rec.ts.astimezone(UTC).strftime("%d.%m.%Y") if not it.rc.rec.ts_missing else "",
+                     "what": str(it.rc.rec.label or it.rc.rec.kind or ""), "why": it.note or "nicht buchbar"}
+                    for it in refused]
+            head = ("Keine API-Zeile ist ohne Einzelentscheidung buchbar" if not p.todo else
+                    f"{len(refused)} von {len(book)} API-Vorgängen sind nur mit Einzelentscheidung buchbar")
+            return rollback(f"{head} – bitte zuerst im Prüfstapel entscheiden.",
+                            [f"Zeile {x['line']} ({x['when']} {x['what']}): {x['why']}" for x in info][:12], info)
         out = B.execute(csv, bid, "include", {i.rc.idx for i in p.todo}, token=B.new_token(),
                         fingerprint=p.fingerprint(), params={"takeover": rid})
         if out.get("errors"):

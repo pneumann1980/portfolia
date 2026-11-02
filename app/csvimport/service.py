@@ -196,6 +196,11 @@ class SymbolResolver:
         Kursquelle den Anbieter-Coin bestätigt – sonst „mehrdeutig“, nie still über das Symbol.
         Rückgabe: (Asset, Art, Schlüssel der Zuordnung)."""
         pa = identity(provider, raw)
+        if provider:  # ausdrücklich nur für diesen Anbieter gespeichert (z. B. Quellenübernahme): hat Vorrang
+            own = provider_key(raw, provider)
+            if own in self.saved:
+                aid = self.saved[own]
+                return (aid, "saved", own) if aid else (None, "ignored", own)
         if pa is None or provider is None:
             aid, how = self.resolve(raw)
             return aid, how, raw.strip().upper()

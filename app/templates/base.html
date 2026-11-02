@@ -71,7 +71,7 @@
           </div>
         </div>
       {% endfor %}
-      {% if request.cookies.get('dq_flow') == '1' and request.url.path not in ('/quality/assistent', '/quality') and (request.url.path.startswith('/quality') or request.url.path.startswith('/journal/pruefung') or request.url.path.startswith('/journal/csv')) %}{% include "partials/dq_flow.html" %}{% endif %}
+      {% set _p = request.url.path %}{% if (request.cookies.get('dq_flow') == '1' or request.query_params.get('kid')) and _p not in ('/quality/assistent', '/quality') and (_p.startswith('/quality') or _p.startswith('/journal/pruefung') or _p.startswith('/journal/csv') or (_p.startswith('/settings/datasources/') and '/uebernahme' in _p)) %}{% include "partials/dq_flow.html" %}{% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>

@@ -136,7 +136,8 @@ def test_open_answer_uses_the_target_of_the_task_only(client):
     form = {"csrf_token": client.token, "typ": "zeile", "ref": t.ref, "kid": t.kid, "a": "go:open",
             "x_href": "https://example.org/"}
     r = client.post(f"{BASE}/antwort", data=form, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == t.href and t.href.startswith("/journal/csv/")
+    assert r.status_code == 303 and t.href.startswith("/journal/csv/")
+    assert r.headers["location"] == f"{t.href}?kid={t.kid}"  # Aufgabenbezug für Rückweg/Überspringen (je Tab)
     form["kid"] = "00000000"
     r = client.post(f"{BASE}/antwort", data=form, follow_redirects=False)
     assert r.headers["location"].startswith(BASE + "?err=")

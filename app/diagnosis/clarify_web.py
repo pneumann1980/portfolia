@@ -140,7 +140,10 @@ def make_router() -> APIRouter:
         res = await run_in_threadpool(K.apply_hypothesis, ctx, key, str(f.get("hyp") or ""), "manual",
                                       authorization="user", expect_version=str(f.get("version") or "") or None,
                                       expect_tokens=tokens)
-        return _back(_url(f"/quality/klaerung/{key}", res.message if res.ok else "", "; ".join(res.errors)))
+        target = _url(f"/quality/klaerung/{key}", res.message if res.ok else "", "; ".join(res.errors))
+        if res.ok and res.remaining:  # Teilfortschritt: beim Fall bleiben, Restprobleme direkt weiterbearbeiten
+            target += ("&" if "?" in target else "?") + "stay=1"
+        return _back(target)
 
     @router.post("/quality/klaerung/{key}/zurueckstellen")
     async def defer(request: Request, key: str) -> Response:

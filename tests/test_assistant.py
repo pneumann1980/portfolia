@@ -99,8 +99,8 @@ def test_case_with_prepared_solution_is_asked_directly_and_can_be_undone(client)
 
 def test_flowbar_on_expert_pages_names_the_return_and_not_on_overview(client):
     client.get("/quality/assistent?new=1")
-    assert "Zurück zur Frage" in client.get("/quality/faelle").text
-    assert "Zurück zur Frage" not in client.get("/quality").text
+    assert "Zurück zu Buchungen prüfen" in client.get("/quality/faelle").text
+    assert "Zurück zu Buchungen prüfen" not in client.get("/quality").text
     assert client.cookies.get("dq_flow") is None  # Übersicht beendet den Modus
 
 
@@ -196,7 +196,9 @@ def test_skip_moves_on(client):
 
 def test_rewrite_only_quality_targets_and_keeps_messages():
     assert flow.rewrite("/quality/diagnose?msg=Fertig&f=3") == "/quality/assistent?msg=Fertig"
-    assert flow.rewrite("/journal/pruefung?err=Nein") == "/quality/assistent?err=Nein"
+    # Fehler und Teilfortschritt bleiben beim betroffenen Problem (Auswahl und Bezug gehen nicht verloren)
+    assert flow.rewrite("/journal/pruefung?err=Nein") is None
+    assert flow.rewrite("/quality/klaerung/k1?msg=Teil&stay=1") is None
     assert flow.rewrite("/quality/assistent?msg=x") is None
     assert flow.rewrite("/portfolio") is None and flow.rewrite("https://evil.example/quality") is None
     assert flow.wants_flow(Headers({"cookie": "a=b; dq_flow=1"}))

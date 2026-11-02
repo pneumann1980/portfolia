@@ -3,8 +3,10 @@
 {% block heading %}Quellenübernahme: {{ ds.name }}{% endblock %}
 {% macro mark(ok) %}<span class="badge {{ 'good' if ok else 'crit' }}">{{ '✓ erfüllt' if ok else '✗ nicht erfüllt' }}</span>{% endmacro %}
 {% block content %}
-<div class="stack" id="takeover"{% if t and t.status in ('fetching', 'running') %} hx-get="/settings/datasources/{{ ds.id }}/uebernahme" hx-trigger="every 3s" hx-select="#takeover" hx-swap="outerHTML"{% endif %}>
-  <p class="hint"><a href="/settings/datasources/{{ ds.id }}">← {{ ds.name }}</a></p>
+{% set kidq = ('?kid=' ~ kid|urlencode) if kid else '' %}
+{% macro kidf() %}{% if kid %}<input type="hidden" name="kid" value="{{ kid }}">{% endif %}{% endmacro %}
+<div class="stack" id="takeover"{% if t and t.status in ('fetching', 'running') %} hx-get="/settings/datasources/{{ ds.id }}/uebernahme{{ kidq }}" hx-trigger="every 3s" hx-select="#takeover" hx-swap="outerHTML"{% endif %}>
+  <p class="hint row" style="gap:12px;flex-wrap:wrap"><a href="/settings/datasources/{{ ds.id }}">← {{ ds.name }}</a><a href="/quality/assistent">Buchungen prüfen</a><a href="/quality">Datenqualität</a></p>
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 
@@ -32,7 +34,7 @@
     <div class="card-head"><h2>1 · Vollabruf</h2></div>
     {% if t and t.message %}<p class="hint">Letzter Stand: {{ t.message }}</p>{% endif %}
     <p>Ruft alle Vorgänge und den aktuellen Bestand <b>nur lesend</b> ab (kein Abrufstand, keine Buchung, kein Prüf-Stapel). Bei langer Historie dauert das einige Minuten.</p>
-    <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/abruf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit"{% if ds.needs_key and not ds.key_mode %} disabled{% endif %}>Vollabruf starten</button></form>
+    <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/abruf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<button class="btn primary" type="submit"{% if ds.needs_key and not ds.key_mode %} disabled{% endif %}>Vollabruf starten</button></form>
   </section>
 
   {% elif t.status in ('fetching', 'running') %}
@@ -63,25 +65,99 @@
     <p class="hint">Die Übernahme ändert EUR-Werte (Quelle statt Import, Kurse für fehlende Werte). Weichen die Jahre ab, unter „Steuern“ prüfen; „Zurücknehmen“ stellt den Vorzustand her.</p>
     {% elif result.years is defined %}<p class="hint">Realisierte Ergebnisse und Erträge je Steuerjahr sind unverändert.</p>{% endif %}
     <p class="hint">Künftige Abrufe laufen wie gewohnt inkrementell; die API-Vorgänge sind bekannt und werden nicht doppelt gebucht.</p>
-    <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zurueck" data-confirm="Übernahme zurücknehmen? Die gebuchten API-Vorgänge werden zurückgenommen, die ausgeblendeten Buchungen zählen wieder."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Übernahme zurücknehmen</button></form>
+    <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zurueck" data-confirm="Übernahme zurücknehmen? Die gebuchten API-Vorgänge werden zurückgenommen, die ausgeblendeten Buchungen zählen wieder."><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<button class="btn" type="submit">Übernahme zurücknehmen</button></form>
   </section>
 
   {% elif t.status == 'staged' %}
   <section class="card">
     <div class="card-head"><h2>1 · Vollabruf</h2></div>
     <p>Abgerufen {{ t.created_at|datetime_de }}{% if a %}: {{ a.events }} Vorgänge ({{ a.lines }} Zeilen){% if a.first %}, {{ a.first|date_de }} bis {{ a.last|date_de }}{% endif %}{% endif %}.</p>
-    {% if t.message and result.detail is defined %}<div class="alert warn"><span class="icon">!</span><div><b>Letzter Übernahmeversuch:</b> {{ t.message }}{% if result.detail %}<ul>{% for d in result.detail[:12] %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}</div></div>{% endif %}
+    {% if a and a.counts.api is not none %}{% set ct = a.counts %}
+    <p class="hint">Zählung: <b>{{ ct.api }}</b> API-Vorgänge = <b>{{ ct.events }}</b> ausgewertete Vorgänge{% if ct.skipped %} + <b>{{ ct.skipped }}</b> bewusst ohne Buchung ({% for k, n in a.skipped.items() %}{{ n }}× {{ k }}{{ '; ' if not loop.last }}{% endfor %}){% endif %}{% if ct.explained %} <span class="badge good">vollständig erklärt</span>{% else %} <span class="badge warn">{{ ct.gap }} ohne Erklärung</span>{% endif %}. Die {{ ct.events }} Vorgänge ergeben {{ ct.lines }} Buchungszeilen (z. B. Handel mit Gebühr oder mehreren Teilen).</p>{% endif %}
+    {% if t.message and result.detail is defined %}<div class="alert warn"><span class="icon">!</span><div><b>Letzter Übernahmeversuch:</b> {{ t.message }}{% if result.detail %}<details><summary>Einzelheiten ({{ result.detail|length }})</summary><ul>{% for d in result.detail[:12] %}<li>{{ d }}</li>{% endfor %}</ul></details>{% endif %}</div></div>{% endif %}
     <div class="row" style="gap:8px;flex-wrap:wrap">
-      <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/abruf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Erneut abrufen</button></form>
-      <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/verwerfen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Verwerfen</button></form>
+      <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/abruf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<button class="btn" type="submit">Erneut abrufen</button></form>
+      <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/verwerfen" data-confirm="Gespeicherten Vollabruf verwerfen? Gebucht ist nichts; gespeicherte Zuordnungen bleiben."><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<button class="btn ghost" type="submit">Gespeicherten Abruf verwerfen</button></form>
     </div>
   </section>
+
+  {% if a and a.problems %}
+  <section class="card" id="probleme">
+    <div class="card-head"><h2>Probleme einzeln bearbeiten</h2><span class="badge warn">{{ a.problems|length }} offen</span></div>
+    <p class="hint">Jedes Problem lässt sich für sich beheben. Gespeicherte Korrekturen (z. B. eine Zuordnung) bleiben erhalten, auch wenn andere Probleme noch offen sind – sie buchen nichts. Die Übernahme selbst bleibt gesperrt, bis alle Nachweise erbracht sind.</p>
+    <ol class="tk-problems">
+    {% for p in a.problems %}
+      <li id="p-{{ loop.index }}" data-problem="{{ p.id }}">
+        <div><b>{{ p.title }}</b> <span class="hint">{{ p.detail }}</span></div>
+        {% if p.events %}<details><summary>Betroffene Vorgänge ({{ p.events|length }})</summary>
+          <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Datum</th><th>Art</th><th>Kennung der Quelle</th></tr></thead><tbody>
+          {% for e in p.events %}<tr><td>{{ e.ts|date_de if e.ts else '–' }}</td><td data-label="Art">{{ e.what or '–' }}</td><td class="wide mono small" data-label="Kennung">{{ e.event or e.ext }}{% if e.ext and e.ext != e.event %}<br>{{ e.ext }}{% endif %}</td></tr>{% endfor %}
+          </tbody></table></div></details>{% endif %}
+        {% if p.kind == 'map' %}
+          <div class="tk-actions">
+            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnen" class="row" style="gap:6px;flex-wrap:wrap;align-items:flex-end">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="symbol" value="{{ p.symbol }}"><input type="hidden" name="action" value="map">
+              <label class="field grow">Vorhandenem Asset zuordnen<input type="text" name="asset" list="tk-assets" required placeholder="Asset wählen (ID — Name)" autocomplete="off"></label>
+              <button class="btn sm" type="submit">Zuordnen</button>
+            </form>
+            <details><summary>Neues Asset anlegen</summary>
+            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnen" class="row" style="gap:6px;flex-wrap:wrap;align-items:flex-end">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="symbol" value="{{ p.symbol }}"><input type="hidden" name="action" value="new">
+              <label class="field">Kennung<input type="text" name="new_id" value="{{ p.symbol }}" maxlength="40" required></label>
+              <label class="field grow">Name<input type="text" name="new_name" maxlength="120" placeholder="z. B. Terra Classic"></label>
+              <label class="field">Art<select name="new_class"><option value="crypto">Krypto</option><option value="security">Wertpapier</option><option value="other">Sonstiges</option></select></label>
+              <button class="btn sm" type="submit">Anlegen und zuordnen</button>
+            </form></details>
+            <p class="hint">Die Zuordnung gilt nur für {{ ds.provider_label }} (Kennung <span class="mono">{{ p.key }}</span>), ändert keine anderen Quellen und bucht nichts. Bitte nach Name und Anbieterkennung wählen, nicht nur nach Kürzel (z. B. ist LUNC nicht LUNA).</p>
+          </div>
+        {% elif p.kind == 'row' or p.kind == 'line' %}
+          <div class="tk-actions row" style="gap:8px;flex-wrap:wrap">
+            {% if pending %}<a class="btn sm" href="/journal/csv/{{ pending.id }}">Im Prüfstapel entscheiden</a>
+            {% else %}<form method="post" action="/settings/datasources/{{ ds.id }}/sync"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit" title="Normaler Abruf in den Prüfstapel – dort einzeln entscheiden (z. B. Transfer bestätigen)">In den Prüfstapel abrufen</button></form>{% endif %}
+            <span class="hint">Danach hier erneut übernehmen – geänderte Daten werden neu geprüft.</span>
+          </div>
+        {% elif p.kind == 'balance' %}
+          <details class="tk-actions"><summary>Abweichung untersuchen</summary>
+            <p class="hint">„Nach Übernahme“ setzt sich so zusammen (gebuchte Wirkung je Buchungsart; nicht buchbare und gedeckte Vorgänge zählen nicht):</p>
+            <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Bestandteil</th><th class="num">Menge</th></tr></thead><tbody>
+            {% for k, v in p.parts %}<tr><td class="wide">{{ k }}</td><td class="num" data-label="Menge">{{ v|qty_exact }}</td></tr>{% endfor %}
+            </tbody></table></div>
+            {% set raw = a.raw_check.get(p.symbol) or a.raw_check.get(p.asset) %}
+            {% if raw %}<p class="hint">Bestandsprüfung der Quelle (Rohdaten, je Bitpanda-Asset-ID – andere Berechnungsebene als die Buchungswirkung oben):</p>
+            <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset-ID</th><th class="num">Summe der Vorgänge</th><th class="num">Gebühren</th><th class="num">Staking-Umbuchungen</th><th class="num">Letzter Saldo laut Vorgängen</th><th class="num">/portfolio</th></tr></thead><tbody>
+            {% for r in raw %}<tr><td class="mono small">{{ r.ref }}</td><td class="num" data-label="Summe">{{ r.ops }}</td><td class="num" data-label="Gebühren">{{ r.fees }}{% if r.trade_fees != '0' %} + {{ r.trade_fees }}{% endif %}</td><td class="num" data-label="Staking">{{ r.staking }}</td><td class="num" data-label="Letzter Saldo">{{ r.last }}</td><td class="num" data-label="/portfolio">{{ r.portfolio }}</td></tr>{% endfor %}
+            </tbody></table></div>{% endif %}
+            <p class="hint">Zu prüfen (keine festgestellten Ursachen): Vorzeichen, vollständige Gegenbuchungen, Kartenzahlungen bzw. Zahlungen von außen, Gebühren, interne Umbuchungen und Buchungen vor dem ersten Ereignis der Quelle. Ein EUR-Bewertungsbetrag ist kein Kontozugang; Portfolia erzeugt keine Ausgleichsbuchung.</p>
+          </details>
+        {% elif p.kind == 'ident' %}
+          <details class="tk-actions"><summary>Identität prüfen</summary>
+            <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset-Kennung</th><th>Name</th><th>Koinly-Kennung</th><th>Kursquelle</th></tr></thead><tbody>
+            {% for x in ident.get(p.id, []) %}<tr><td class="mono">{{ x.id }}</td><td data-label="Name">{{ x.name }}</td><td data-label="Koinly">{{ x.koinly or '–' }}</td><td data-label="Kursquelle" class="mono small">{{ x.quote }}</td></tr>{% endfor %}
+            </tbody></table></div>
+            <p class="hint">Gleiches Kürzel und passende Summen allein belegen keine gleiche Identität. Nur wenn es nachweislich dasselbe Asset ist (Name, Anbieter- und Koinly-Kennung, Kursquelle): {% if p.assets|length == 2 %}<a href="/assets/merge?alias={{ p.assets[1]|urlencode }}&amp;target={{ p.assets[0]|urlencode }}">Zusammenführung mit Vorschau prüfen</a>{% else %}<a href="/assets/merge">Assets zusammenführen (mit Vorschau)</a>{% endif %}. Sonst bleiben sie getrennt und der Bestand ist ein eigenes Problem.</p>
+          </details>
+        {% elif p.kind == 'confirm' %}
+          <div class="tk-actions"><a class="btn sm" href="#beweis">Zur Bestätigung (Schritt 2)</a></div>
+        {% endif %}
+      </li>
+    {% endfor %}
+    </ol>
+    {% if known %}<datalist id="tk-assets">{% for aid, name, sym in known %}<option value="{{ aid }} — {{ name }}">{{ sym }}</option>{% endfor %}</datalist>{% endif %}
+  </section>
+  {% endif %}
+  {% if scoped %}
+  <section class="card">
+    <div class="card-head"><h2>Zuordnungen nur für {{ ds.provider_label }}</h2></div>
+    <ul class="hint">{% for k, v in scoped %}<li><span class="mono">{{ k }}</span> → {{ v or 'ignoriert' }}
+      <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnung-entfernen" class="inline" data-confirm="Zuordnung {{ k }} entfernen? Es wird nichts gebucht."><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="key" value="{{ k }}"><button class="btn sm ghost" type="submit">Entfernen</button></form></li>{% endfor %}</ul>
+  </section>
+  {% endif %}
 
   {% if a %}
   <section class="card" id="beweis">
     <div class="card-head"><h2>2 · {{ 'Beweis' if a.mode == 'proof' else 'Prüfung und Bestätigung' }}</h2> {% if a.ok %}<span class="badge good">{{ 'erbracht' if a.mode == 'proof' else 'bestätigt' }}</span>{% else %}<span class="badge crit">{{ 'nicht erbracht' if a.mode == 'proof' else 'offen' }}</span>{% endif %}</div>
     {% if a.mode == 'confirm' %}
-    <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme" class="stack" style="gap:6px;margin-bottom:10px">
+    <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme" class="stack" style="gap:6px;margin-bottom:10px">{{ kidf() }}
       <label class="check"><input type="checkbox" name="confirm" value="1"{% if confirmed %} checked{% endif %}> Ich bestätige: {{ ds.provider_label }} kennt für das Konto „{{ ds.account }}“ die <b>vollständige Historie</b> (der kuratierte Import darf ab dem ersten Ereignis der Quelle zurücktreten).</label>
       <div><button class="btn sm" type="submit">Mit dieser Angabe prüfen</button></div>
     </form>
@@ -96,7 +172,7 @@
     <div class="card-head"><h2>3 · Bestand</h2></div>
     <p class="hint">„Jetzt“ = aktueller Bestand der Buchungen des Kontos; „nach Übernahme“ = Vorgänge der Quelle plus bleibende Buchungen; „beobachtet“ = Bestand laut Quelle.{% if a.window_from %} Buchungen vor dem {{ a.window_from|date_de }} (erstes Ereignis der Quelle) bleiben: {{ a.before|length }}.{% endif %}</p>
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th class="num">Jetzt</th><th class="num">Nach Übernahme</th><th class="num">Beobachtet</th><th>Stand</th></tr></thead><tbody>
-    {% for b in a.balances %}<tr><td><b>{{ b.name }}</b></td><td class="num" data-label="Jetzt">{{ b.now|qty_exact }}{% if not b.was_ok %} <span class="badge warn">weicht ab</span>{% endif %}</td><td class="num" data-label="Nach Übernahme">{{ b.after|qty_exact }}{% if b.negative %} <span class="badge crit">würde negativ</span>{% endif %}</td><td class="num" data-label="Beobachtet">{{ b.observed|qty_exact }}</td><td data-label="Stand">{% if b.ok %}<span class="badge good">exakt</span>{% elif a.mode == 'confirm' and b.not_worse %}<span class="badge warn">Abweichung {{ (b.after - b.observed)|qty_exact }} (nicht schlechter)</span>{% else %}<span class="badge crit">Abweichung {{ (b.after - b.observed)|qty_exact }}</span>{% endif %}</td></tr>{% endfor %}
+    {% for b in a.balances %}<tr><td><b>{{ b.name }}</b></td><td class="num" data-label="Jetzt">{{ b.now|qty_exact }}{% if not b.was_ok %} <span class="badge warn">weicht ab</span>{% endif %}</td><td class="num" data-label="Nach Übernahme">{{ b.after|qty_exact }}{% if b.negative %} <span class="badge crit">würde negativ</span>{% endif %}</td><td class="num" data-label="Beobachtet">{% if b.known %}{{ b.observed|qty_exact }}{% else %}<span class="badge warn" title="Die Quelle meldet für dieses Asset keine Position – nicht dasselbe wie 0">nicht geliefert</span>{% endif %}</td><td data-label="Stand">{% if b.ok %}<span class="badge good">exakt</span>{% elif a.mode == 'confirm' and b.not_worse %}<span class="badge warn">Abweichung {{ (b.after - b.observed)|qty_exact }} (nicht schlechter)</span>{% else %}<span class="badge crit">Abweichung {{ (b.after - b.observed)|qty_exact }}</span>{% endif %}</td></tr>{% endfor %}
     </tbody></table></div>
   </section>
 
@@ -138,7 +214,7 @@
     <div class="card-head"><h2>5 · Übernehmen</h2></div>
     {% if a.ok %}
     <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/uebernehmen" class="stack" style="gap:8px">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="token" value="{{ a.token }}">{% if a.confirm %}<input type="hidden" name="confirmed" value="1">{% endif %}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="token" value="{{ a.token }}">{% if a.confirm %}<input type="hidden" name="confirmed" value="1">{% endif %}
       <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe Beweis, Bestand und Wirkung geprüft. {{ a.hide|length }} Buchungen werden ausgeblendet, die Vorgänge der API gebucht; weicht der Bestand danach ab, wird alles zurückgenommen.</label>
       <div><button class="btn primary" type="submit">API maßgeblich machen</button></div>
     </form>
@@ -146,10 +222,19 @@
     <div class="alert warn"><span class="icon">!</span><div>{{ 'Der Beweis ist nicht erbracht' if a.mode == 'proof' else 'Die Voraussetzungen sind nicht erfüllt' }} – die Übernahme ist gesperrt. Was fehlt:
       <ul class="takeover-blockers">{% for c in a.blockers %}<li>
         {% if c.key == 'fetch' and a.mode == 'confirm' and not a.confirm %}<b>Deine Bestätigung</b>: setze oben in <a href="#beweis">Schritt 2</a> das Häkchen, wenn {{ ds.provider_label }} die vollständige Historie des Kontos kennt.
-        {% elif c.key == 'balance' %}{% set bad = a.balances|rejectattr('ok' if a.mode == 'proof' else 'not_worse')|list %}<b>Bestand</b>: bei {{ bad|length }} Asset{{ 's' if bad|length != 1 }} passt es danach nicht (Tabelle in <a href="#bestand">Schritt 3</a>):
-          <ul>{% for b in bad[:8] %}<li>{{ b.name }}: jetzt {{ b.now|qty_exact }}, danach {{ b.after|qty_exact }}, laut Quelle {{ b.observed|qty_exact }}{% if b.negative %} – <b>würde negativ</b>{% endif %}</li>{% endfor %}</ul>
+        {% elif c.key == 'balance' %}{% set bad = a.balances|rejectattr('ok' if a.mode == 'proof' else 'not_worse')|list %}<b>Bestand</b>: bei {{ bad|length }} Asset{{ 's' if bad|length != 1 }} passt es danach nicht (Tabelle in <a href="#bestand">Schritt 3</a>, Untersuchung unter <a href="#probleme">Probleme</a>):
+          <ul>{% for b in bad[:8] %}<li>{{ b.name }}: jetzt {{ b.now|qty_exact }}, danach {{ b.after|qty_exact }}, laut Quelle {% if b.known %}{{ b.observed|qty_exact }}{% else %}nicht geliefert{% endif %}{% if b.negative %} – <b>würde negativ</b>{% endif %}</li>{% endfor %}</ul>
         {% else %}<b>{{ c.label }}</b>: {{ c.detail }}{% endif %}
       </li>{% endfor %}</ul></div></div>
+    <div class="tk-skip">
+      <p><b>Übernahme vorerst überspringen?</b> Der gespeicherte Abruf und deine Zuordnungen bleiben erhalten; die Quelle wird nicht abgelehnt.</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        {% if kid %}<a class="btn" href="/quality/assistent?skip={{ kid|urlencode }}">Überspringen – weiter mit der nächsten Frage</a>{% endif %}
+        {% if pending %}<a class="btn ghost" href="/journal/csv/{{ pending.id }}">Einzelne Buchungen im Prüfstapel prüfen</a>
+        {% else %}<form method="post" action="/settings/datasources/{{ ds.id }}/sync"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Einzelne Buchungen prüfen (Abruf in den Prüfstapel)</button></form>{% endif %}
+        <a class="btn ghost" href="/quality/assistent">Zurück zu Buchungen prüfen</a>
+      </div>
+    </div>
     {% endif %}
   </section>
   {% else %}
