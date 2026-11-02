@@ -154,6 +154,31 @@ class TranscriptService:
             (item_id, status, reason, url, lang, content, words, chash, attempts, iso(next_at) if next_at else None,
              now, now))
 
+    def pipeline(self) -> dict[str, Any]:
+        """Statusseite: wartend (jetzt abrufbar), spätere Wiederholungen, letzte 24 h geladen/ohne Untertitel, Sperre
+        und Bibliotheksfehler (``broken`` = „Bibliothek aktualisieren“)."""
+        now = datetime.now(UTC)
+        days = int(self.ctx.settings.get("news.transcripts_days", 3))
+        since24 = iso(now - timedelta(hours=24))
+        by = {r["k"]: int(r["n"]) for r in self.db.q(
+            """SELECT CASE WHEN c.status='success' THEN 'loaded'
+                           WHEN c.status='failed' AND c.reason IN ('no_transcript','unavailable') THEN 'none'
+                           WHEN c.status='failed' THEN 'failed' ELSE 'other' END AS k, COUNT(*) AS n
+               FROM news_content c JOIN news_item n ON n.id=c.item_id
+               WHERE n.kind='video' AND c.fetched_at>=? AND (c.reason LIKE 'transcript:%' OR c.status!='success')
+               GROUP BY k""", (since24,))}
+        retry = int(self.db.scalar(
+            """SELECT COUNT(*) FROM news_content c JOIN news_item n ON n.id=c.item_id
+               WHERE n.kind='video' AND c.status='pending' AND c.next_attempt > ? AND n.published_at >= ?""",
+            (iso(now), iso(now - timedelta(days=days))), default=0) or 0)
+        err = self.db.get_state(ERROR_KEY)
+        err = err if isinstance(err, dict) else None
+        paused = self.paused_until()
+        return {"enabled": self.enabled(), "waiting": len(self.candidates(100_000)), "retry": retry,
+                "loaded": by.get("loaded", 0), "none": by.get("none", 0), "failed": by.get("failed", 0),
+                "paused_until": iso(paused) if paused else None, "last_error": err,
+                "broken": bool(err and err.get("kind") == ytlib.KIND_BROKEN), "per_run": PER_RUN, "days": days}
+
     def stats(self) -> dict[str, int]:
         since = iso(datetime.now(UTC) - timedelta(days=7))
         out = {"success": 0, "failed": 0, "pending": 0}

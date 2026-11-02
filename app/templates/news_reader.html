@@ -7,6 +7,7 @@
 <article class="stack reader">
   <p class="row" style="gap:10px;flex-wrap:wrap"><a href="{{ back }}">← Zurück zur Übersicht</a>
     <span id="rb-{{ n.id }}">{% include "partials/news_read_button.html" %}</span></p>
+  {% include "partials/news_save_reader.html" %}
 
   <section class="card">
     <h2 class="reader-title">{{ n.title }}</h2>

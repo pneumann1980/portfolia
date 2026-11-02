@@ -546,8 +546,9 @@ class NewsService:
     def retention(self) -> int:
         days = int(self.cfg.settings.get("retention_days", 90))
         cutoff = iso(datetime.now(UTC) - timedelta(days=days))
+        # gemerkte Meldungen (★) bleiben – samt Text, Analyse, Transkript und Zuordnung (ON DELETE CASCADE greift nicht)
         with self.db.transaction() as c:
-            c.execute("DELETE FROM news_asset WHERE item_id IN (SELECT id FROM news_item WHERE published_at<?)",
-                      (cutoff,))
-            n = c.execute("DELETE FROM news_item WHERE published_at<?", (cutoff,)).rowcount
+            c.execute("DELETE FROM news_asset WHERE item_id IN (SELECT id FROM news_item WHERE published_at<? "
+                      "AND saved_at IS NULL)", (cutoff,))
+            n = c.execute("DELETE FROM news_item WHERE published_at<? AND saved_at IS NULL", (cutoff,)).rowcount
         return n

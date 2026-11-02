@@ -1,4 +1,5 @@
-"""Manueller Pipeline-Lauf („Jetzt abarbeiten“): Import → Artikeltexte → KI-Analyse → Gruppierung, sofort, nacheinander.
+"""Manueller Pipeline-Lauf („Jetzt abarbeiten“): Import → Transkripte → Artikeltexte → KI-Analyse (Videos zuerst, dann
+Artikel) → Gruppierung, sofort, nacheinander.
 
 Der Lauf arbeitet dieselbe Warteschlange ab wie die Intervall-Jobs (gleiche Fenster: Artikeltexte ``news.enrich_days``,
 Analyse ``news.analysis_hours``); der Fortschritt steht deshalb in denselben Balken (``app.news.queue``). Hier wird nur
@@ -8,7 +9,9 @@ manueller Lauf nie gleichzeitig dieselben Daten bearbeiten.
 
 Annahmen/Grenzen: Hält der Anbieter an (Minuten-/Tageslimit, Pause), endet die Analyse-Stufe als „wartet auf
 Anbieter“; der Intervall-Job arbeitet danach weiter, der manuelle Lauf startet nicht erneut. Obergrenze je Stufe
-``STAGE_MAX_S``. Ein Lauf ohne Lebenszeichen (Neustart, Absturz) gilt nach ``STALE_AFTER_S`` als abgebrochen.
+``STAGE_MAX_S`` (Transkripte ``TRANSCRIPT_MAX_S`` – mit Pause je Video, damit YouTube nicht sperrt; eine Sperre
+beendet die Stufe als „wartet“). Ein Lauf ohne Lebenszeichen (Neustart, Absturz) gilt nach ``STALE_AFTER_S`` als
+abgebrochen.
 """
 
 from __future__ import annotations
@@ -25,7 +28,8 @@ from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
 from app.news.events import EventService
 from app.news.locks import exclusive, is_busy
-from app.util.timeutil import iso, parse_iso
+from app.news.transcripts import TranscriptService
+from app.util.timeutil import iso, local_tz, parse_iso
 
 log = logging.getLogger(__name__)
 
@@ -33,8 +37,10 @@ STATE_KEY = "news.wave"
 STALE_AFTER_S = 20 * 60  # so lange darf ein laufender Lauf ohne Lebenszeichen bleiben (ein Import kann dauern)
 LOCK_WAIT_S = 15 * 60  # so lange wartet der Lauf auf einen laufenden Intervall-Lauf derselben Stufe
 STAGE_MAX_S = 45 * 60  # Obergrenze je Stufe (Artikeltexte/Analyse); danach übernimmt der Intervall-Job
+TRANSCRIPT_MAX_S = 10 * 60  # Transkripte: höchstens so lange (Pause je Video), der Rest folgt im Intervall-Job
 MAX_ROUNDS = 40
-STAGES = (("fetch", "Import"), ("enrich", "Artikeltexte"), ("analyze", "KI-Analyse"), ("group", "Gruppierung"))
+STAGES = (("fetch", "Import"), ("transcripts", "Transkripte"), ("enrich", "Artikeltexte"), ("analyze", "KI-Analyse"),
+          ("group", "Gruppierung"))
 ACTIVE = ("waiting", "running")
 
 
@@ -92,13 +98,17 @@ class WaveRunner:
 
     def __init__(self, ctx: AppContext, fetch_fn: Callable[[], dict[str, Any]] | None,
                  enrich: EnrichService | None = None, analysis: AnalysisService | None = None,
-                 events: EventService | None = None, state: dict[str, Any] | None = None) -> None:
+                 events: EventService | None = None, state: dict[str, Any] | None = None,
+                 transcripts: TranscriptService | None = None) -> None:
         self.ctx = ctx
         self.fetch_fn = fetch_fn
         self.enrich = enrich or EnrichService(ctx)
         self.analysis = analysis or AnalysisService(ctx)
         self.events = events or EventService(ctx)
+        self.transcripts = transcripts or TranscriptService(ctx)
         self.state = state if state is not None else _new_state(fetch_fn is not None)
+        for key, _label in STAGES:  # Zustand eines älteren Laufs (vor einer neuen Stufe) ergänzen
+            self.state["stages"].setdefault(key, {"status": "waiting", "note": ""})
         if fetch_fn is None:
             self.state["stages"]["fetch"] = {"status": "skipped", "note": "ohne Import"}
         self._last_write = 0.0
@@ -140,6 +150,46 @@ class WaveRunner:
         errs = len(res.get("errors") or [])
         self._set("fetch", "done", f"{new} neue Meldungen" + (f", {errs} Quellenfehler" if errs else ""))
 
+    def _transcripts(self) -> None:
+        svc = self.transcripts
+        if not svc.enabled():
+            self._set("transcripts", "skipped", "ausgeschaltet")
+            return
+        until = svc.paused_until()
+        if until is not None:
+            when = until.astimezone(local_tz()).strftime("%d.%m. %H:%M")
+            self._set("transcripts", "blocked", f"YouTube-Sperre – Abruf ruht bis {when} Uhr")
+            return
+        self._set("transcripts", "running")
+        deadline = time.monotonic() + TRANSCRIPT_MAX_S
+        total = {"loaded": 0, "none": 0}
+        stopped = ""
+        with exclusive(self.ctx, "transcripts", LOCK_WAIT_S) as got:
+            if not got:
+                self._set("transcripts", "error", "Transkript-Abruf läuft bereits sehr lange – übersprungen")
+                return
+            for _ in range(MAX_ROUNDS):
+                if time.monotonic() > deadline:
+                    break
+                res = svc.run()
+                self._alive()
+                for k in total:
+                    total[k] += int(res.get(k, 0) or 0)
+                if res.get("skipped") or res.get("stopped"):
+                    stopped = str(res.get("stopped") or res.get("skipped"))
+                    break
+                if not sum(int(res.get(k, 0) or 0) for k in ("loaded", "none", "failed", "retry")):
+                    break
+        note = f"{total['loaded']} geladen, {total['none']} ohne Untertitel"
+        left = len(svc.candidates(100_000))
+        if stopped:
+            self._set("transcripts", "blocked", f"{note} – {stopped}")
+        elif left:
+            self._set("transcripts", "blocked", f"{note}; {left} warten noch (Zeitlimit) – der Intervall-Job "
+                                                "arbeitet weiter")
+        else:
+            self._set("transcripts", "done", note)
+
     def _enrich(self) -> None:
         if not self.enrich.enabled():
             self._set("enrich", "skipped", "Artikelinhalte deaktiviert")
@@ -178,9 +228,11 @@ class WaveRunner:
             if res.get("stopped") or res.get("error"):
                 note = str(res.get("stopped") or res.get("error"))
                 break
-            if not res.get("backlog_left") or not (res.get("analyzed") or res.get("rejected")):
+            if not (res.get("analyzed") or res.get("rejected") or res.get("videos")):
+                break  # kein Fortschritt
+            if not res.get("backlog_left") and not self.analysis.video_backlog():
                 break
-        left = self.analysis.backlog()
+        left = self.analysis.backlog() + self.analysis.video_backlog()
         if left:
             self._set("analyze", "blocked", f"{left} warten – {note or 'kein Fortschritt'}; der Intervall-Job "
                                             "arbeitet weiter")
@@ -201,8 +253,8 @@ class WaveRunner:
         self.state["claimed"] = True
         self._save(force=True)
         self._observe()
-        for key, fn in (("fetch", self._fetch), ("enrich", self._enrich), ("analyze", self._analyze),
-                        ("group", self._group)):
+        for key, fn in (("fetch", self._fetch), ("transcripts", self._transcripts), ("enrich", self._enrich),
+                        ("analyze", self._analyze), ("group", self._group)):
             if self.state["stages"][key]["status"] == "skipped":
                 continue
             try:

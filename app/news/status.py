@@ -1,6 +1,7 @@
-"""Überwachung der News-Pipeline: eine Zeile je Stufe (Import, Artikeltexte, KI-Analyse, Gruppierung, Tagesbericht),
-Balken nur für die beiden Stufen mit Warteschlange (``app.news.queue``), dazu wer gerade läuft (automatisch/manuell),
-Tageszahlen und was fehlschlug."""
+"""Überwachung der News-Pipeline: eine Zeile je Stufe (Import, Transkripte, Artikeltexte, KI-Analyse, Gruppierung,
+Tagesbericht), Balken nur für die beiden Stufen mit Warteschlange (``app.news.queue``), dazu wer gerade läuft
+(automatisch/manuell), Tageszahlen und was fehlschlug. Videos, die auf ihre Kernaussagen warten, stehen als Zusatz bei
+der KI-Analyse (nicht im Balken: dessen Zyklus zählt Artikel)."""
 
 from __future__ import annotations
 
@@ -13,11 +14,12 @@ from app.news.ai import AiGateway
 from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
 from app.news.eta import enrich_eta
-from app.util.timeutil import iso, now_local
+from app.news.transcripts import TranscriptService
+from app.util.timeutil import iso, local_tz, now_local, parse_iso
 
-JOBS = ("news_fetch", "news_enrich", "news_analyze", "news_group", "news_report")
-STAGE_JOB = {"fetch": "news_fetch", "enrich": "news_enrich", "analyze": "news_analyze", "group": "news_group",
-             "report": "news_report"}
+JOBS = ("news_fetch", "news_transcripts", "news_enrich", "news_analyze", "news_group", "news_report")
+STAGE_JOB = {"fetch": "news_fetch", "transcripts": "news_transcripts", "enrich": "news_enrich",
+             "analyze": "news_analyze", "group": "news_group", "report": "news_report"}
 _MANUAL_BADGE = {"blocked": ("warn", "wartet auf Anbieter/Limit"), "error": ("crit", "Fehler (manuell)")}
 
 
@@ -73,6 +75,8 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
     analysis = AnalysisService(ctx, gw)
     guard = analysis.pressure()  # Rückstau-Lage der Analyse (frisch/älter, Schutz aktiv?)
     analyze_backlog = guard["total"]
+    video_waiting = analysis.video_backlog()  # Videos mit Transkript ohne Kernaussagen
+    tr = TranscriptService(ctx).pipeline()
     per_run = int(ctx.settings.get("news.enrich_per_run", 40))
     since3 = iso(datetime.now(UTC) - timedelta(hours=3))
     inflow = n("SELECT COUNT(*) FROM news_item WHERE kind='article' AND hidden_reason IS NULL AND fetched_at>=?",
@@ -85,14 +89,24 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
     }
     if guard["active"]:
         bottleneck = f"KI-Analyse: {guard['reason']}"
-    elif analyze_backlog and ai.get("paused_until"):
+    elif (analyze_backlog or video_waiting) and ai.get("paused_until"):
         bottleneck = "KI-Kontingent (Anbieter pausiert, Analyse wartet)"
-    elif analyze_backlog and not ai.get("enabled"):
+    elif (analyze_backlog or video_waiting) and not ai.get("enabled"):
         bottleneck = "KI ausgeschaltet – Analysen warten"
+    elif tr["enabled"] and tr["paused_until"]:
+        until = parse_iso(tr["paused_until"])
+        when = until.astimezone(local_tz()).strftime("%d.%m. %H:%M") if until else "?"
+        bottleneck = (f"YouTube sperrt den Transkript-Abruf – Pause bis {when} Uhr; hält die Sperre an: "
+                      "Quellen → Transkripte → „Bibliothek aktualisieren“")
+    elif tr["enabled"] and tr["broken"]:
+        bottleneck = ("Transkript-Bibliothek kann Videos nicht lesen – Quellen → Transkripte → "
+                      "„Bibliothek aktualisieren“")
     elif enrich_ready:
         bottleneck = f"Abruf-Takt: {per_run} Artikeltexte je Lauf, alle 15 min (Wartezeit je Quelle 2 s)"
-    elif analyze_backlog:
+    elif analyze_backlog or video_waiting:
         bottleneck = "Analyse-Takt: läuft in Runden, alle 10 min"
+    elif tr["enabled"] and tr["waiting"]:
+        bottleneck = f"Transkript-Takt: {tr['per_run']} Videos je Lauf, alle 30 min (Pause je Video 3 s)"
     elif enrich_paused or enrich_retry:
         bottleneck = (f"keiner – alles Abrufbare abgearbeitet ({enrich_paused} Artikel pausierter Quellen und "
                       f"{enrich_retry} Wiederholungen später)")
@@ -130,6 +144,9 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
                     "days": int(ctx.settings.get("news.enrich_days", 3)), "per_run": per_run, "bottleneck": bottleneck,
                     "paused_hosts": sorted(((h, u) for h, u in paused.items()), key=lambda x: x[1]),
                     "teaser_hosts": sorted(((h, teaser_n.get(h, 0)) for h in teaser), key=lambda x: (-x[1], x[0]))},
+        "transcripts": dict(tr, last_end=(jobs.get("news_transcripts") or {}).get("last_end"),
+                            next=next_runs.get("news_transcripts")),
+        "video_waiting": video_waiting,
         "analysis_failed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NULL AND analyzed_at>=?", day),
         "events": n("SELECT COUNT(*) FROM news_event WHERE last_seen>=?", since24),
         "events_multi": n("SELECT COUNT(*) FROM news_event WHERE last_seen>=? AND n_sources>=2", since24),

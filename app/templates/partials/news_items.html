@@ -19,7 +19,7 @@
     <a class="title" href="{{ href }}"{% if newtab %} target="_blank" rel="noopener"{% endif %}>{{ n.title }}</a>
     <div class="vmeta"><span>{{ n.channel_name or n.source_name if video else n.source_name }}</span><span>{{ n.published_at|rel_time_iso }}</span>{% if video and n.views %}<span>{{ n.views|num(0) }} Aufrufe</span>{% endif %}</div>
     {% if x.assets or n.dup_count or x.sentiment or x.event or x.cstatus in ('success', 'blocked') or n.hidden_reason %}<div class="vtags">
-      {% for aid, name in x.assets[:4] %}<a class="badge info" href="/news?tab={{ 'videos' if video else params.tab }}&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
+      {% for aid, name in x.assets[:4] %}<a class="badge info" href="/news?tab={{ 'videos' if video else ('articles' if params.tab == 'saved' else params.tab) }}&asset={{ urlq(aid) }}">{{ name }}</a>{% endfor %}
       {% if n.dup_count %}<span class="badge" title="Weitere Quellen berichten ebenfalls">+{{ n.dup_count }}</span>{% endif %}
       {% if x.sentiment %}<span class="badge {{ {'positiv': 'good', 'negativ': 'crit', 'gemischt': 'warn'}.get(x.sentiment, '') }}" title="KI-Einschätzung der Stimmung der Meldung">{{ x.sentiment }}</span>{% endif %}
       {% if x.event %}<a class="badge info" href="/news/event/{{ x.event.event_id }}" title="Mehrere Berichte zum selben Ereignis">Ereignis · {{ x.event.n_items }} Berichte</a>{% endif %}
@@ -28,14 +28,18 @@
     </div>{% endif %}
     {% if n.llm_summary %}<div class="summary"><span class="badge info">KI</span> {{ n.llm_summary }}</div>
     {% elif n.summary %}<div class="summary">{{ n.summary }}</div>{% endif %}
+    {% if params.tab == 'saved' and n.note %}<div class="note-text" title="Ihre Notiz">✎ {{ n.note }}</div>{% endif %}
   </div>
   <div class="vfoot">
-    {% if params.tab == 'community' %}<a class="badge info" href="{{ n.url }}" target="_blank" rel="noopener noreferrer" title="Beitrag in Telegram öffnen">Telegram ↗</a>
+    {% if params.tab == 'community' or (params.tab == 'saved' and n.source_id and n.source_id.startswith('tg_')) %}<a class="badge info" href="{{ n.url }}" target="_blank" rel="noopener noreferrer" title="Beitrag in Telegram öffnen">Telegram ↗</a>
+    {% elif params.tab == 'saved' %}<span class="badge" title="Gemerkt am">★ {{ n.saved_at|datetime_de }}</span>
     {% else %}<span class="badge" title="Relevanz inkl. Aktualität">Relevanz {{ x.score|num(2) }}</span>{% endif %}
-    <div id="rb-{{ n.id }}">{% include "partials/news_read_button.html" %}</div></div>
+    <div class="vfoot-btns"><div id="sb-{{ n.id }}">{% include "partials/news_save_button.html" %}</div><div id="rb-{{ n.id }}">{% include "partials/news_read_button.html" %}</div></div></div>
 </article>
 {% else %}
-{% if params.tab == 'community' %}<p class="hint">Noch keine Community-Beiträge. Telegram-Kanäle fügen Sie unter <a href="/news?tab=sources">Quellen</a> hinzu; Beiträge erscheinen nach dem nächsten Abruf (alle 30 Minuten) – nur mit Bezug zu Ihren Positionen, solange „nur Beiträge mit Bezug“ aktiv ist.</p>
+{% if params.tab == 'saved' %}<p class="hint">Noch nichts gemerkt. Mit ☆ auf einer Karte oder in der Leseansicht merken Sie Artikel, Videos und Beiträge – gemerkte bleiben dauerhaft erhalten (samt Text, KI-Analyse und Transkript), auch nach Ablauf der Aufbewahrungsfrist.</p>
+{% elif all_read %}<p class="hint">Alles gelesen – keine ungelesenen Meldungen für diese Auswahl. Gelesene zeigt der Status „Alle“ oder „Gelesen“.</p>
+{% elif params.tab == 'community' %}<p class="hint">Noch keine Community-Beiträge. Telegram-Kanäle fügen Sie unter <a href="/news?tab=sources">Quellen</a> hinzu; Beiträge erscheinen nach dem nächsten Abruf (alle 30 Minuten) – nur mit Bezug zu Ihren Positionen, solange „nur Beiträge mit Bezug“ aktiv ist.</p>
 {% else %}<p class="hint">Keine Meldungen für diese Auswahl. Quellen werden alle 30 Minuten abgerufen; Status unter „Quellen“.</p>{% endif %}
 {% endfor %}
 {% if total > page * page_size %}

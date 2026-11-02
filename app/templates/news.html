@@ -14,13 +14,28 @@
   {{ tab_link('articles', 'Artikel') }}
   {{ tab_link('videos', 'Videos') }}
   {{ tab_link('community', 'Community') }}
+  <a href="/news?tab=saved" class="{{ 'active' if params.tab == 'saved' }}" title="Gemerkte Meldungen – bleiben dauerhaft erhalten">★ Gemerkt{% if n_saved %} <span class="badge">{{ n_saved }}</span>{% endif %}</a>
   {{ tab_link('report', 'Tagesbericht') }}
   {{ tab_link('suggestions', 'Kanal-Vorschläge', n_suggestions if n_suggestions else None) }}
   {{ tab_link('sources', 'Quellen') }}
   {{ tab_link('status', 'Status') }}
 </nav>
 
-{% if params.tab in ('articles', 'videos', 'community') %}
+{% if params.tab == 'saved' %}
+  <section class="card">
+    <div class="card-head"><h2>{{ total }} gemerkt</h2><span class="hint">Artikel, Videos und Beiträge · zuletzt gemerkte zuerst · bleiben dauerhaft erhalten</span></div>
+    <div id="news-list" class="vgrid">
+      {% include "partials/news_items.html" %}
+    </div>
+  </section>
+
+{% elif params.tab in ('articles', 'videos', 'community') %}
+  {% if undo %}
+  <div class="alert info" role="status"><span class="icon">i</span><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+    <span>{{ undo.n }} Meldung{{ 'en' if undo.n != 1 }} als gelesen markiert ({{ undo.at|datetime_de }}).</span>
+    <button class="btn sm" hx-post="/news/read-all/undo">Rückgängig</button>
+    <button class="btn sm ghost" hx-post="/news/read-all/undo" hx-vals='{"dismiss": "1"}' title="Hinweis schließen">Schließen</button></div></div>
+  {% endif %}
   {% if params.tab == 'community' %}
   {% elif report_teaser %}
   <details class="box" style="margin-bottom:12px">
@@ -53,7 +68,7 @@
       </select></label>
     <label class="field">Status
       <select name="status" data-autosubmit>
-        {% for v, l in [('all', 'Alle'), ('unread', 'Ungelesen'), ('read', 'Gelesen')] %}<option value="{{ v }}" {% if params.status == v %}selected{% endif %}>{{ l }}</option>{% endfor %}
+        {% for v, l in [('unread', 'Ungelesen'), ('all', 'Alle'), ('read', 'Gelesen')] %}<option value="{{ v }}" {% if params.status == v %}selected{% endif %}>{{ l }}</option>{% endfor %}
       </select></label>
     {% if params.tab != 'community' %}<label class="field">Sortierung
       <select name="sort" data-autosubmit>
@@ -62,7 +77,7 @@
       </select></label>{% endif %}
     {% if params.tab == 'videos' %}<label class="check"><input type="checkbox" name="shorts" value="1" data-autosubmit {% if params.shorts %}checked{% endif %}> Shorts</label>{% endif %}
     <label class="check"><input type="checkbox" name="hidden" value="1" data-autosubmit {% if params.hidden %}checked{% endif %}> Ausgeblendete</label>
-    <button class="btn sm ghost" type="button" hx-post="/news/read-all" hx-vals='{"tab": "{{ params.tab }}", "days": "{{ params.days }}"}'>Alle als gelesen</button>
+    <button class="btn sm ghost" type="button" hx-post="/news/read-all" title="Genau diese Auswahl (alle Seiten, gleiche Filter) als gelesen markieren – kann rückgängig gemacht werden">Alle angezeigten als gelesen</button>
   </form>
   <section class="card">
     <div class="card-head"><h2>{{ total }} {{ {'articles': 'Artikel', 'videos': 'Videos', 'community': 'Beiträge'}[params.tab] }}</h2>

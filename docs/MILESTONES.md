@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 01.11.2026 · Version 0.79.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 02.11.2026 · Version 0.80.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,32 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.80.0 – News: Merken ★ mit Notiz, Standard „Ungelesen“, alle angezeigten gelesen mit Rückgängig, Transkripte im Status
+
+* **Merken ★** auf jeder Karte (Artikel, Videos, Community) und in der Leseansicht; neuer Reiter **„★ Gemerkt“** (alle Arten, zuletzt gemerkte
+  zuerst, ohne Zeitfenster). Gemerkte Meldungen überspringt die Aufbewahrungsfrist (`retention_days`) – damit bleiben Artikeltext, KI-Analyse,
+  Transkript, Positionsbezug und das zwischengespeicherte Bild erhalten (Migration 34: `news_item.saved_at`, `note`, Index). Merken aufheben → es gilt
+  wieder die Frist. Der Knopf setzt den Zustand ausdrücklich (`on=0/1`), Doppelklicks bleiben folgenlos.
+* **Notiz** je gemerkter Meldung (höchstens 500 Zeichen, nur lokal) in der Leseansicht; sichtbar auf der Karte im Reiter „Gemerkt“. Eine Notiz merkt die
+  Meldung zugleich; leere Notiz = keine. Beim Aufheben bleibt die Notiz gespeichert und erscheint beim erneuten Merken wieder.
+* **Standardfilter „Ungelesen“** in Artikel, Videos und Community. Als gelesen markierte Karten bleiben bis zum Neuladen stehen (kein Springen der Liste);
+  „Alle“/„Gelesen“ zeigen sie wieder. Leere Liste unterscheidet „alles gelesen“ von „keine Meldungen“. Ungültiger Status → „Ungelesen“.
+* **„Alle angezeigten als gelesen“** markiert genau die gefilterte Auswahl (Asset, Quelle, Zeitraum, Shorts, Ausgeblendete; alle Seiten) – bisher den ganzen
+  Zeitraum der Art ohne Filter. Hinweis mit **„Rückgängig“** (15 Min.; nimmt genau die geänderten zurück, vorher schon gelesene bleiben gelesen).
+* **Statusseite – Stufe „Transkripte“:** wartende Videos, spätere Wiederholungen, in 24 h geladen/ohne Untertitel/nicht lesbar, letzter und nächster Lauf,
+  Kennzeichnung „läuft (automatisch/manuell)“. **YouTube-Sperre** und **unlesbare Bibliothek** erscheinen als Hinweis mit Link zu „Bibliothek aktualisieren“
+  und als Engpass; Fehler des Jobs in der Fehlerliste. Bei der KI-Analyse zusätzlich „dazu n Videos mit Transkript – Kernaussagen folgen“ (nicht im
+  Balken: dessen Zyklus zählt Artikel; so bleibt die Zählweise der Balken unverändert).
+* **„Jetzt abarbeiten“** lädt nach dem Import auch Transkripte (höchstens 10 Min., Pause je Video bleibt; Sperre beendet die Stufe als „wartet“) und
+  arbeitet in der Analyse die Videos vollständig ab (mehrere Runden, wenn mehr als 10 warten). Ältere gespeicherte Laufzustände ohne die neue Stufe
+  werden ergänzt.
+* Tests (`tests/test_news_saved.py`): Merken/Aufheben/404, Notiz (Kürzung, Leeren, Anzeige), Reiter „Gemerkt“ (Arten, Reihenfolge, ohne Zeitfenster),
+  Aufbewahrung mit Inhalt/Zuordnung, Standard „Ungelesen“, „alle gelesen“ nach Filter mit Rückgängig, Ablauf und Schließen, Statuszahlen, Engpässe
+  Sperre/Bibliothek/Takt, manueller Lauf mit Transkripten und mehreren Video-Runden, Sperre/ausgeschaltet, alter Laufzustand.
+
+**Grenzen:** „Alle angezeigten“ erfasst wie die Liste höchstens die 1500 neuesten Treffer der Auswahl. Gemerkte Meldungen wachsen unbegrenzt (Text je
+Artikel typ. wenige KB). Rückgängig gilt nur für das jeweils letzte „alle gelesen“.
 
 ## 0.79.0 – YouTube-Transkripte: Kernaussagen, genannte Werte, Transkript lesen, Bibliothek per Knopf aktualisieren
 

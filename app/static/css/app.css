@@ -465,6 +465,16 @@ body.panel-open { overflow: hidden; }
 .vcard .summary { font-size: 0.86rem; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .vcard .vfoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 14px 12px; }
 .vcard .vfoot .icon-btn { font-size: 1.1rem; min-width: 36px; min-height: 36px; justify-content: center; }
+.vcard .vfoot-btns { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.vcard .note-text { font-size: 0.86rem; color: var(--ink); background: var(--surface-2); border-radius: var(--radius-sm); padding: 6px 8px; white-space: pre-line; overflow-wrap: anywhere; }
+/* Merken ★: gemerkt in der Warnfarbe (Stern), Text bleibt in Schriftfarbe */
+.btn.save.on { color: var(--warn-ink); }
+.icon-btn.save.on { color: var(--warn-mark); -webkit-text-stroke: 0.6px var(--warn-ink); }
+.reader-save { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+.reader-save .note-box { flex: 1 1 280px; min-width: 0; }
+.reader-save .note-box > summary { cursor: pointer; padding: 4px 0; }
+.reader-save .note-form { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.reader-save textarea { width: 100%; resize: vertical; }
 .vcard .vactions { flex-wrap: wrap; justify-content: stretch; }
 .vcard .vactions .btn { flex: 1 1 auto; justify-content: center; min-height: 40px; }
 .vcard .vactions .btn.primary { flex-basis: 100%; }

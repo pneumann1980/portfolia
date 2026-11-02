@@ -1072,6 +1072,12 @@ CREATE TABLE IF NOT EXISTS news_report (
   UNIQUE (day, version)
 );
 """),
+    (34, """
+-- News merken (★): gemerkte Meldungen bleiben dauerhaft (Aufbewahrungsfrist überspringt sie), optional mit Notiz.
+ALTER TABLE news_item ADD COLUMN saved_at TEXT;
+ALTER TABLE news_item ADD COLUMN note TEXT;
+CREATE INDEX IF NOT EXISTS ix_news_saved ON news_item(saved_at);
+"""),
 ]
 
 

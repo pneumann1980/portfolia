@@ -315,7 +315,7 @@ def test_reader_shows_core_statements_values_and_transcript_with_jumps(client):
     plain = add_video(ctx, "NOTR")
     r = client.get(f"/news/{plain}", follow_redirects=False)
     assert r.status_code == 303  # ohne Transkript wie bisher direkt zu YouTube
-    cards = client.get("/news?tab=videos").text
+    cards = client.get("/news?tab=videos&status=all").text  # geöffnet = gelesen (Standard „Ungelesen“)
     assert f'href="/news/{iid}?back=' in cards and "Transkript" in cards
 
 

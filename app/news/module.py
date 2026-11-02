@@ -125,7 +125,8 @@ def job_group(ctx: AppContext) -> dict[str, Any]:
 
 
 def job_wave(ctx: AppContext, fetch: bool = True) -> dict[str, Any]:
-    """Manueller Lauf „Jetzt abarbeiten“ (Import → Artikeltexte → Analyse → Gruppierung) – ``app.news.wave``."""
+    """Manueller Lauf „Jetzt abarbeiten“ (Import → Transkripte → Artikeltexte → Analyse → Gruppierung) –
+    ``app.news.wave``."""
     with exclusive(ctx, "wave") as got:
         if not got:
             return {"skipped": "manueller Lauf läuft bereits"}
@@ -184,17 +185,32 @@ startup_job("news_fetch", 45)
 # Abfragen für die Oberfläche
 # ----------------------------------------------------------------------------------------------------
 
+STATUSES = ("unread", "all", "read")
+READ_ALL_UNDO = "news.read_all.undo"
+UNDO_MINUTES = 15
+NOTE_MAX = 500
+
+
 def query_items(ctx: AppContext, *, kind: str, asset: str = "", source: str = "", days: int = 7,
                 status: str = "all", sort: str = "relevance", shorts: bool = False, hidden: bool = False,
                 offset: int = 0, limit: int = PAGE_SIZE,
                 sources: list[str] | None = None) -> tuple[list[dict[str, Any]], int]:
     """``sources``: nur diese Quellen (z. B. Community); leere Liste = keine Treffer."""
+    items = _filtered(ctx, kind=kind, asset=asset, source=source, days=days, status=status, sort=sort,
+                      shorts=shorts, hidden=hidden, sources=sources)
+    return _decorate(ctx, items[offset:offset + limit]), len(items)
+
+
+def _filtered(ctx: AppContext, *, kind: str, asset: str = "", source: str = "", days: int = 7, status: str = "all",
+              sort: str = "relevance", shorts: bool = False, hidden: bool = False,
+              sources: list[str] | None = None) -> list[dict[str, Any]]:
+    """Alle Meldungen der Auswahl in Anzeigereihenfolge (höchstens 1500 neueste) – Liste und „alle gelesen“."""
     since = iso(datetime.now(UTC) - timedelta(days=days))
     where = ["n.kind=?", "n.published_at>=?"]
     params: list[Any] = [kind, since]
     if sources is not None:
         if not sources:
-            return [], 0
+            return []
         where.append(f"n.source_id IN ({','.join('?' * len(sources))})")
         params.extend(sources)
     if asset:
@@ -225,8 +241,24 @@ def query_items(ctx: AppContext, *, kind: str, asset: str = "", source: str = ""
         items.append({"row": r, "score": score, "published": pub})
     if sort == "relevance":
         items.sort(key=lambda x: -x["score"])
-    total = len(items)
-    page = items[offset:offset + limit]
+    return items
+
+
+def query_saved(ctx: AppContext, *, offset: int = 0, limit: int = PAGE_SIZE) -> tuple[list[dict[str, Any]], int]:
+    """Gemerkte Meldungen aller Arten (Artikel, Videos, Community), zuletzt gemerkte zuerst – ohne Zeitfenster."""
+    total = int(ctx.db.scalar("SELECT COUNT(*) FROM news_item WHERE saved_at IS NOT NULL", default=0) or 0)
+    rows = ctx.db.q("SELECT * FROM news_item WHERE saved_at IS NOT NULL ORDER BY saved_at DESC, id DESC "
+                    "LIMIT ? OFFSET ?", (limit, offset))
+    now = datetime.now(UTC)
+    items = []
+    for r in rows:
+        pub = parse_iso(r["published_at"]) or now
+        items.append({"row": r, "score": float(r["relevance"]) * recency_factor(pub, now), "published": pub})
+    return _decorate(ctx, items), total
+
+
+def _decorate(ctx: AppContext, page: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Positionen, Ereignis, Textstatus und Stimmung je Karte ergänzen (nur für die angezeigte Seite)."""
     ids = [x["row"]["id"] for x in page]
     assets_by_item: dict[int, list[str]] = {}
     if ids:
@@ -252,7 +284,88 @@ def query_items(ctx: AppContext, *, kind: str, asset: str = "", source: str = ""
         x["event"] = events.get(x["row"]["id"])
         x["cstatus"] = cstatus.get(x["row"]["id"])
         x["sentiment"], x["importance"] = sentiment.get(x["row"]["id"], (None, None))
-    return page, total
+    return page
+
+
+# ---- Merken, Notiz, alle gelesen (synchron: läuft im Threadpool) ----------------------------------------
+
+def set_saved(ctx: AppContext, item_id: int, on: bool) -> Any:
+    """Merken (★) setzen/aufheben; die Notiz bleibt erhalten (erscheint wieder, wenn erneut gemerkt)."""
+    if on:
+        ctx.db.x("UPDATE news_item SET saved_at=COALESCE(saved_at, ?) WHERE id=?", (iso(datetime.now(UTC)), item_id))
+    else:
+        ctx.db.x("UPDATE news_item SET saved_at=NULL WHERE id=?", (item_id,))
+    row = ctx.db.q1("SELECT * FROM news_item WHERE id=?", (item_id,))
+    if row is None:
+        raise HTTPException(404, "Meldung nicht gefunden")
+    return row
+
+
+def set_note(ctx: AppContext, item_id: int, note: str) -> Any:
+    """Notiz speichern (gekürzt auf ``NOTE_MAX`` Zeichen, leer = keine); eine Notiz merkt die Meldung zugleich."""
+    text = note.replace("\r", "").strip()[:NOTE_MAX] or None
+    ctx.db.x("UPDATE news_item SET note=?, saved_at=COALESCE(saved_at, ?) WHERE id=?",
+             (text, iso(datetime.now(UTC)), item_id))
+    row = ctx.db.q1("SELECT * FROM news_item WHERE id=?", (item_id,))
+    if row is None:
+        raise HTTPException(404, "Meldung nicht gefunden")
+    return row
+
+
+def _filters_from(form: Any) -> dict[str, Any]:
+    def num(key: str, default: int) -> int:
+        try:
+            return int(str(form.get(key) or default))
+        except ValueError:
+            return default
+
+    status = str(form.get("status") or "unread")
+    return {"tab": str(form.get("tab") or "articles"), "asset": str(form.get("asset") or ""),
+            "source": str(form.get("source") or ""), "days": max(1, min(num("days", 7), 90)),
+            "status": status if status in STATUSES else "unread", "sort": str(form.get("sort") or "relevance"),
+            "shorts": bool(num("shorts", 0)), "hidden": bool(num("hidden", 0))}
+
+
+def mark_all_read(ctx: AppContext, f: dict[str, Any]) -> int:
+    """Genau die angezeigte Auswahl (alle Seiten, gleiche Filter) als gelesen markieren; die geänderten IDs werden
+    für „Rückgängig“ gemerkt (``UNDO_MINUTES``)."""
+    tab = f["tab"]
+    if tab not in ("articles", "videos", "community"):
+        return 0
+    community = community_ids(news_service(ctx)) if tab == "community" else None
+    items = _filtered(ctx, kind="video" if tab == "videos" else "article", asset=f["asset"], source=f["source"],
+                      days=f["days"], status=f["status"], sort="time" if community is not None else f["sort"],
+                      shorts=f["shorts"], hidden=f["hidden"], sources=community)
+    ids = [int(x["row"]["id"]) for x in items if not x["row"]["is_read"]]
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        ctx.db.x(f"UPDATE news_item SET is_read=1 WHERE id IN ({','.join('?' * len(chunk))})", chunk)
+    ctx.db.set_state(READ_ALL_UNDO, {"ids": ids, "at": iso(datetime.now(UTC)), "tab": tab} if ids else None)
+    return len(ids)
+
+
+def _undo_valid(st: Any) -> bool:
+    at = parse_iso(st.get("at")) if isinstance(st, dict) else None
+    return at is not None and bool(st.get("ids")) and datetime.now(UTC) - at <= timedelta(minutes=UNDO_MINUTES)
+
+
+def read_all_undo_info(ctx: AppContext) -> dict[str, Any] | None:
+    """Letztes „alle gelesen“, solange es rückgängig gemacht werden kann."""
+    st = ctx.db.get_state(READ_ALL_UNDO)
+    return {"n": len(st["ids"]), "at": st["at"], "tab": st.get("tab")} if _undo_valid(st) else None
+
+
+def undo_read_all(ctx: AppContext, dismiss: bool = False) -> int:
+    st = ctx.db.get_state(READ_ALL_UNDO)
+    ctx.db.set_state(READ_ALL_UNDO, None)
+    if dismiss or not _undo_valid(st):
+        return 0
+    ids = [int(i) for i in st["ids"]]
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        ctx.db.x(f"UPDATE news_item SET is_read=0 WHERE id IN ({','.join('?' * len(chunk))})", chunk)
+    return len(ids)
+
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -378,7 +491,7 @@ def community_ids(svc: NewsService) -> list[str]:
     return [x.id for x in svc.cfg.sources() if x.type == "telegram"]
 
 
-TABS = ("articles", "videos", "community", "report", "suggestions", "sources", "status")
+TABS = ("articles", "videos", "community", "saved", "report", "suggestions", "sources", "status")
 
 
 def make_router() -> APIRouter:
@@ -386,12 +499,14 @@ def make_router() -> APIRouter:
 
     @router.get("/news", response_class=HTMLResponse)
     def news_page(request: Request, tab: str = "articles", asset: str = "", source: str = "", days: int = 7,
-                  status: str = "all", sort: str = "relevance", shorts: int = 0, hidden: int = 0,
+                  status: str = "unread", sort: str = "relevance", shorts: int = 0, hidden: int = 0,
                   page: int = 1, report_id: int = 0) -> HTMLResponse:
         ctx = get_ctx(request)
         svc = news_service(ctx)
         if tab not in TABS:  # veraltetes Lesezeichen / manipulierte URL: Standardreiter statt Fehlerseite
             tab = "articles"
+        if status not in STATUSES:  # Standard „Ungelesen“: gelesene bleiben bis zum Neuladen sichtbar
+            status = "unread"
         days = max(1, min(int(days), 90))
         params = {"tab": tab, "asset": asset, "source": source, "days": days, "status": status, "sort": sort,
                   "shorts": shorts, "hidden": hidden}
@@ -408,6 +523,8 @@ def make_router() -> APIRouter:
         rep = ReportService(ctx)
         base["report_teaser"] = rep.latest()
         base["ai"] = AiGateway(ctx)
+        base["n_saved"] = int(ctx.db.scalar("SELECT COUNT(*) FROM news_item WHERE saved_at IS NOT NULL",
+                                            default=0) or 0)
         if tab in ("articles", "videos", "community"):
             kind = "video" if tab == "videos" else "article"
             page = max(1, int(page))
@@ -420,6 +537,17 @@ def make_router() -> APIRouter:
             items, total = query_items(ctx, kind=kind, asset=asset, source=source, days=days, status=status, sort=sort,
                                        shorts=bool(shorts), hidden=bool(hidden), offset=(page - 1) * PAGE_SIZE,
                                        sources=community)
+            # leer unter „Ungelesen“: alles gelesen (Hinweis auf „Alle“) oder wirklich nichts da (Quellen-Hinweis)
+            all_read = not total and status == "unread" and bool(_filtered(
+                ctx, kind=kind, asset=asset, source=source, days=days, status="all", sort=sort, shorts=bool(shorts),
+                hidden=bool(hidden), sources=community))
+            base.update(items=items, total=total, page=page, page_size=PAGE_SIZE, undo=read_all_undo_info(ctx),
+                        all_read=all_read)
+            if request.headers.get("hx-target") == "news-more":
+                return render(request, "partials/news_items.html", alerts=[], **base)
+        elif tab == "saved":
+            page = max(1, int(page))
+            items, total = query_saved(ctx, offset=(page - 1) * PAGE_SIZE)
             base.update(items=items, total=total, page=page, page_size=PAGE_SIZE)
             if request.headers.get("hx-target") == "news-more":
                 return render(request, "partials/news_items.html", alerts=[], **base)
@@ -528,7 +656,7 @@ def make_router() -> APIRouter:
 
     @router.post("/news/pipeline/run", response_class=HTMLResponse)
     async def pipeline_run(request: Request) -> HTMLResponse:
-        """„Jetzt abarbeiten“: Import (optional) → Artikeltexte → Analyse → Gruppierung, sofort und nacheinander."""
+        """„Jetzt abarbeiten“: Import (optional) → Transkripte → Artikeltexte → Analyse → Gruppierung, nacheinander."""
         ctx = get_ctx(request)
         if ctx.scheduler is None:
             return HTMLResponse('<span class="badge warn">Scheduler inaktiv</span>')
@@ -564,23 +692,34 @@ def make_router() -> APIRouter:
 
     @router.post("/news/read-all")
     async def read_all(request: Request) -> Response:
+        """„Alle angezeigten als gelesen“: genau die gefilterte Liste (alle Seiten); rückgängig machbar."""
         ctx = get_ctx(request)
         form = await request.form()
+        await run_in_threadpool(mark_all_read, ctx, _filters_from(form))
+        return Response(status_code=204, headers={"HX-Refresh": "true"})
 
-        def work() -> Response:
-            kind = "video" if form.get("tab") == "videos" else "article"
-            days = int(form.get("days") or 7)
-            since = iso(datetime.now(UTC) - timedelta(days=days))
-            if form.get("tab") == "community":  # nur die Community-Quellen
-                ids = community_ids(news_service(ctx))
-                if ids:
-                    ctx.db.x(f"UPDATE news_item SET is_read=1 WHERE kind='article' AND published_at>=? "
-                             f"AND source_id IN ({','.join('?' * len(ids))})", (since, *ids))
-                return Response(status_code=204, headers={"HX-Refresh": "true"})
-            ctx.db.x("UPDATE news_item SET is_read=1 WHERE kind=? AND published_at>=?", (kind, since))
-            return Response(status_code=204, headers={"HX-Refresh": "true"})
+    @router.post("/news/read-all/undo")
+    async def read_all_undo(request: Request) -> Response:
+        ctx = get_ctx(request)
+        form = await request.form()
+        await run_in_threadpool(undo_read_all, ctx, form.get("dismiss") == "1")
+        return Response(status_code=204, headers={"HX-Refresh": "true"})
 
-        return await run_in_threadpool(work)
+    @router.post("/news/{item_id:int}/save", response_class=HTMLResponse)
+    async def save_item(request: Request, item_id: int) -> HTMLResponse:
+        """Merken ★ (``on=1``) bzw. aufheben (``on=0``) – Fragment für Karte oder Leseansicht (``where=reader``)."""
+        ctx = get_ctx(request)
+        form = await request.form()
+        row = await run_in_threadpool(set_saved, ctx, item_id, form.get("on") == "1")
+        tpl = "partials/news_save_reader.html" if form.get("where") == "reader" else "partials/news_save_button.html"
+        return render(request, tpl, alerts=[], n=row)
+
+    @router.post("/news/{item_id:int}/note", response_class=HTMLResponse)
+    async def save_note(request: Request, item_id: int) -> HTMLResponse:
+        ctx = get_ctx(request)
+        form = await request.form()
+        row = await run_in_threadpool(set_note, ctx, item_id, str(form.get("note") or ""))
+        return render(request, "partials/news_save_reader.html", alerts=[], n=row, note_saved=True)
 
     @router.post("/news/refresh", response_class=HTMLResponse)
     def refresh(request: Request) -> HTMLResponse:

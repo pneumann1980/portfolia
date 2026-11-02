@@ -1,0 +1,6 @@
+{# Merken ★ auf der Karte: setzt den Zustand ausdrücklich (on=0/1), kein Umschalten – Doppelklick bleibt harmlos. #}
+{% if n.saved_at %}
+<button class="icon-btn save on" title="Gemerkt – Merken aufheben (danach gilt wieder die Aufbewahrungsfrist)" aria-label="Merken aufheben" aria-pressed="true" hx-post="/news/{{ n.id }}/save" hx-vals='{"on": "0"}' hx-target="#sb-{{ n.id }}">★</button>
+{% else %}
+<button class="icon-btn save" title="Merken – bleibt dauerhaft erhalten (Reiter „Gemerkt“)" aria-label="Merken" aria-pressed="false" hx-post="/news/{{ n.id }}/save" hx-vals='{"on": "1"}' hx-target="#sb-{{ n.id }}">☆</button>
+{% endif %}

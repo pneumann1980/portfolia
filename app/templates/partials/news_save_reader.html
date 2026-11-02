@@ -1,0 +1,15 @@
+{# Leseansicht: Merken ★ und – sobald gemerkt – eine kurze Notiz (höchstens 500 Zeichen). Ziel: #reader-save. #}
+<div id="reader-save" class="reader-save">
+  {% if n.saved_at %}
+  <button class="btn sm save on" aria-pressed="true" hx-post="/news/{{ n.id }}/save" hx-vals='{"on": "0", "where": "reader"}' hx-target="#reader-save" hx-swap="outerHTML" title="Merken aufheben – danach gilt wieder die Aufbewahrungsfrist">★ Gemerkt</button>
+  <details class="note-box"{% if n.note or note_saved %} open{% endif %}>
+    <summary>{{ 'Notiz' if n.note else 'Notiz hinzufügen' }} <span class="muted small">(optional, nur für Sie)</span></summary>
+    <form class="note-form" hx-post="/news/{{ n.id }}/note" hx-target="#reader-save" hx-swap="outerHTML">
+      <textarea name="note" rows="2" maxlength="500" aria-label="Notiz" placeholder="z. B. Warum gemerkt, was beobachten …">{{ n.note or '' }}</textarea>
+      <div class="row" style="gap:8px"><button class="btn sm" type="submit">Notiz speichern</button>{% if note_saved %}<span class="badge good" role="status">gespeichert</span>{% endif %}</div>
+    </form>
+  </details>
+  {% else %}
+  <button class="btn sm ghost save" aria-pressed="false" hx-post="/news/{{ n.id }}/save" hx-vals='{"on": "1", "where": "reader"}' hx-target="#reader-save" hx-swap="outerHTML" title="Bleibt dauerhaft erhalten (Reiter „Gemerkt“), auch Text, Analyse und Transkript">☆ Merken</button>
+  {% endif %}
+</div>

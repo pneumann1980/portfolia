@@ -512,6 +512,10 @@ class AnalysisService:
         """Anzahl der Meldungen (48 h), die auf eine Analyse warten (unter Schutz nur die frischen)."""
         return len(self.candidates(100_000))
 
+    def video_backlog(self) -> int:
+        """Videos mit Transkript, die auf ihre Kernaussagen warten (ohne die nach Fehler zurückgestellten)."""
+        return len(self.video_candidates(1000))
+
     def window_total(self) -> int:
         """Meldungen im Analysefenster, die überhaupt analysiert werden sollen (ohne Quellen mit ``ai: false``)."""
         hours = int(self.ctx.settings.get("news.analysis_hours", WINDOW_H))

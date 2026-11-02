@@ -1902,7 +1902,15 @@ Speichern aus der Oberfläche erhalten).
 * **Relevanz:** Aliase mit Wortgrenzen, mehrdeutige Ticker (z. B. SUI, TAP, PI, NIGHT) nur mit Kontextwort,
   Gewichtung nach Quelle (Primär 1,0 · Agenturen/Portale 0,8 · Krypto-Portale 0,7 · YouTube 0,6 ·
   entdeckt 0,4) und Positionsgröße, Aktualität (Halbwertszeit 48 h). Dubletten über URL und Titelähnlichkeit;
-  Aufbewahrung 90 Tage; Abruf alle 30 Minuten.
+  Aufbewahrung 90 Tage (gemerkte dauerhaft); Abruf alle 30 Minuten.
+* **Lesen, Merken, Aufräumen:** Listen zeigen standardmäßig nur **ungelesene** Meldungen (gelesene bleiben bis zum
+  Neuladen stehen; Status „Alle“/„Gelesen“ zeigt sie). **„Alle angezeigten als gelesen“** markiert genau die gefilterte
+  Auswahl und lässt sich 15 Minuten lang **rückgängig** machen. Mit **☆/★** gemerkte Artikel, Videos und Beiträge stehen im
+  Reiter **„Gemerkt“**, bleiben **dauerhaft** erhalten (auch nach Ablauf der Aufbewahrung, samt Text, KI-Analyse und
+  Transkript) und können eine kurze **Notiz** (bis 500 Zeichen) tragen.
+* **Status der Pipeline** (*News → Status*): Import, **Transkripte** (wartend, geladen, ohne Untertitel, YouTube-Sperre,
+  Bibliotheksfehler mit Link „Bibliothek aktualisieren“), Artikeltexte, KI-Analyse (inkl. wartender Video-Kernaussagen),
+  Gruppierung, Tagesbericht und Engpass; „Jetzt abarbeiten“ durchläuft alle Stufen einschließlich Transkripten.
 * **Leseansicht:** Ein Klick auf einen Artikel öffnet die **interne Leseansicht** (`/news/<id>`): bereinigter
   Artikeltext (im Hintergrund nachgeladen, ohne Umgehung von Bezahl- oder Zustimmungsschranken), KI-Zusammenfassung
   und KI-Einordnung klar getrennt vom Artikel, weitere Berichte zum selben Ereignis, Original-Link separat.
