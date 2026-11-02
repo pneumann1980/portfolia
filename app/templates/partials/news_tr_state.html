@@ -1,0 +1,32 @@
+{# Kernaussagen auf Wunsch: Stand je Video mit Live-Aktualisierung (solange etwas läuft). Erwartet: iid, tr
+   (module.transcript_states). Zustände: none | off | queued | paused | analyzing | done | ai_off | no_captions | failed
+   | analysis_failed. #}
+{% set paste = '/news/' ~ iid ~ '/transkript' %}
+<div id="trs-{{ iid }}" class="tr-state"{% if tr.poll %} hx-get="/news/{{ iid }}/transcript/state" hx-trigger="every {{ tr.poll }}" hx-swap="outerHTML"{% endif %}>
+  {% if tr.state == 'none' %}
+    <button class="btn sm" hx-post="/news/{{ iid }}/transcript/request" hx-target="#trs-{{ iid }}" hx-swap="outerHTML" title="Untertitel dieses Videos laden und daraus Kernaussagen und genannte Werte erstellen lassen">✨ Kernaussagen erstellen</button>
+    <a class="small" href="{{ paste }}">Transkript selbst einfügen</a>
+  {% elif tr.state == 'off' %}
+    <span class="hint">Transkripte sind ausgeschaltet (<a href="/news?tab=sources#yt-transcripts">Quellen</a>) –</span> <a class="small" href="{{ paste }}">Transkript selbst einfügen</a>
+  {% elif tr.state == 'queued' %}
+    <span class="badge info" role="status"><span class="spinner" aria-hidden="true"></span> Transkript wird geladen …</span>
+  {% elif tr.state == 'paused' %}
+    <span class="badge warn" role="status" title="Der Auftrag bleibt vorgemerkt und läuft automatisch, sobald die Sperre endet">vorgemerkt – YouTube sperrt bis {{ tr.paused_until|datetime_de }}</span>
+    <a class="small" href="{{ paste }}">Transkript selbst einfügen</a>
+  {% elif tr.state == 'analyzing' %}
+    <span class="badge info" role="status"><span class="spinner" aria-hidden="true"></span> KI erstellt Kernaussagen …</span>
+  {% elif tr.state == 'done' %}
+    <a class="btn sm" href="/news/{{ iid }}">Kernaussagen lesen →</a>
+  {% elif tr.state == 'ai_off' %}
+    <a class="small" href="/news/{{ iid }}">Transkript lesen →</a> <span class="hint">(KI ist aus – keine Kernaussagen)</span>
+  {% elif tr.state == 'no_captions' %}
+    <span class="hint">Keine Untertitel verfügbar –</span> <a class="small" href="{{ paste }}">Transkript selbst einfügen</a>
+  {% elif tr.state == 'analysis_failed' %}
+    <span class="badge warn">KI-Auswertung fehlgeschlagen</span>
+    <button class="btn sm ghost" hx-post="/news/{{ iid }}/transcript/request" hx-target="#trs-{{ iid }}" hx-swap="outerHTML">Erneut versuchen</button>
+  {% else %}
+    <span class="badge warn" title="{{ tr.reason }}">Transkript nicht lesbar</span>
+    <button class="btn sm ghost" hx-post="/news/{{ iid }}/transcript/request" hx-target="#trs-{{ iid }}" hx-swap="outerHTML">Erneut versuchen</button>
+    <a class="small" href="{{ paste }}">selbst einfügen</a>
+  {% endif %}
+</div>

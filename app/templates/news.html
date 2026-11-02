@@ -183,7 +183,7 @@
   <section class="card" style="margin-top:16px">
     <div class="card-head"><h2>YouTube-Kanäle</h2><span class="hint">{% if has_yt_key %}API-Key gesetzt · {{ yt_units }} Einheiten heute{% else %}ohne API-Key (Kanal-RSS){% endif %}</span></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Handle</th><th>Aufgelöst</th><th class="num">Abonnenten</th><th>Status</th><th>Gruppe</th><th></th></tr></thead>
+      <thead><tr><th>Handle</th><th>Aufgelöst</th><th class="num">Abonnenten</th><th>Status</th><th>Gruppe</th><th title="Kernaussagen neuer Videos automatisch erstellen (Tagesgrenze siehe YouTube-Transkripte)">Auto-Kernaussagen</th><th></th></tr></thead>
       <tbody>
       {% for c in channels %}{% set ch = c.channel %}
         <tr>
@@ -193,6 +193,7 @@
           <td>{% if not ch.active %}<span class="badge">inaktiv</span>{% elif c.status == 'ok' and ch.confirmed %}<span class="badge good">bestätigt</span>{% elif c.status == 'pinned' %}<span class="badge good">Channel-ID fest</span>{% elif c.status == 'ok' %}<span class="badge info">aufgelöst – bitte bestätigen</span>{% elif c.status == 'unresolvable' %}<span class="badge crit" title="{{ c.error or '' }}">nicht auflösbar – deaktiviert</span>{% else %}<span class="badge warn" title="{{ c.error or '' }}">ausstehend</span>{% endif %}
             {% if c.error %}<br><small class="muted">{{ c.error }}</small>{% endif %}</td>
           <td>{{ ch.group }}</td>
+          <td>{% if c.channel_id %}{% set fav = c.channel_id in tr.fav %}<button class="btn sm {{ '' if fav else 'ghost' }}" aria-pressed="{{ 'true' if fav else 'false' }}" hx-post="/news/transcripts/fav" hx-vals='{"channel_id": "{{ c.channel_id }}", "on": "{{ '0' if fav else '1' }}"}' title="{{ 'Lieblingskanal: neue Videos bekommen automatisch Kernaussagen – ausschalten' if fav else 'Als Lieblingskanal: neue Videos automatisch auswerten' }}">{{ '★ an' if fav else '☆ aus' }}</button>{% else %}–{% endif %}</td>
           <td class="nowrap">
             {% if c.status == 'ok' and not ch.confirmed %}<button class="btn sm primary" hx-post="/youtube/channel" hx-vals='{"key": "{{ ch.key }}", "action": "confirm"}'>Bestätigen</button>{% endif %}
             {% if c.status in ('unresolvable', 'pending') %}<button class="btn sm" hx-post="/youtube/channel" hx-vals='{"key": "{{ ch.key }}", "action": "resolve"}'>Erneut auflösen</button>{% endif %}

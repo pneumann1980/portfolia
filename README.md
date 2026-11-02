@@ -1888,17 +1888,20 @@ Speichern aus der Oberfläche erhalten).
   Abonnenten zur Bestätigung; nicht auflösbare Handles werden deaktiviert (nie geraten). Discovery (mit
   `YOUTUBE_API_KEY`): täglich Vorschläge ab 100.000 Abonnenten, Aktionen *abonnieren/ignorieren/blockieren*
   werden in `sources.yaml` gespeichert. Shorts ausgeblendet, Livestreams markiert.
-* **YouTube-Transkripte und Kernaussagen:** Für neue Videos der eigenen Kanäle (ohne Shorts und Livestreams) und für
-  Videos mit Bezug zu einer Position lädt Portfolia die Untertitel (Bibliothek `youtube-transcript-api`, wie der
-  Untertitel-Knopf im Player; nur die Video-Kennung geht an YouTube) und lässt daraus **5–10 Kernaussagen** und die
-  **genannten Werte mit Aussage (kaufen/halten/verkaufen/beobachten/meiden) und Begründung** erstellen – ausdrücklich
-  als Aussagen des Videos, nicht als Empfehlung von Portfolia. Bis etwa 60 Minuten wird das ganze Transkript
-  ausgewertet, darüber gleichmäßig verteilte Abschnitte. Videos mit Transkript öffnen die Leseansicht: Kernaussagen,
-  Werte (mit Sprung zur Stelle im Video) und das vollständige Transkript mit Zeitmarken. Der Abruf ist inoffiziell; sperrt
-  YouTube ihn (typisch bei Cloud-/Rechenzentrums-IPs), ruht er 24 h. Unter *News → Quellen → YouTube-Transkripte*:
-  ein/aus, Stand, und **„Bibliothek aktualisieren“** – lädt die neueste Version derselben Hauptversion von PyPI (nur als
-  fertiges Wheel, ohne Installationscode, ohne Abhängigkeiten) nach `/data/pylib`, prüft sie in einem eigenen Prozess und
-  schaltet erst dann um; „Mitgelieferte Version verwenden“ kehrt zurück.
+* **YouTube-Transkripte und Kernaussagen – auf Wunsch:** Auf jeder Videokarte **„✨ Kernaussagen erstellen“**: Portfolia
+  lädt die Untertitel dieses Videos (Bibliothek `youtube-transcript-api`, wie der Untertitel-Knopf im Player; nur die
+  Video-Kennung geht an YouTube) und lässt daraus **5–10 Kernaussagen** und die **genannten Werte mit Aussage
+  (kaufen/halten/verkaufen/beobachten/meiden) und Begründung** erstellen – ausdrücklich als Aussagen des Videos, nicht als
+  Empfehlung von Portfolia. Die Karte zeigt den Stand live bis „Kernaussagen lesen →“. Automatisch nur für
+  **Lieblingskanäle** (Spalte „Auto-Kernaussagen“ unter *News → Quellen*), zusammen höchstens 5 Videos am Tag (einstellbar):
+  YouTube sperrt den inoffiziellen Abruf bei vielen Anfragen (beobachtet ab etwa 24 am Tag), dann ruht er 24 h; ein Auftrag
+  bleibt vorgemerkt und läuft danach von selbst. **„Transkript selbst einfügen“**: Text aus „Transkript anzeigen“ der
+  YouTube-App kopieren und einfügen (Zeitmarken werden erkannt) – funktioniert immer, ohne Anfrage an YouTube. Bis etwa 60
+  Minuten wird das ganze Transkript ausgewertet, darüber gleichmäßig verteilte Abschnitte. Die Leseansicht zeigt
+  Kernaussagen, Werte (mit Sprung zur Stelle im Video) und das vollständige Transkript mit Zeitmarken. Unter *News → Quellen →
+  YouTube-Transkripte*: ein/aus, Tagesgrenze, Stand und **„Bibliothek aktualisieren“** – lädt die neueste Version derselben
+  Hauptversion von PyPI (nur als fertiges Wheel, ohne Installationscode, ohne Abhängigkeiten) nach `/data/pylib`, prüft sie
+  in einem eigenen Prozess und schaltet erst dann um; „Mitgelieferte Version verwenden“ kehrt zurück.
 * **Relevanz:** Aliase mit Wortgrenzen, mehrdeutige Ticker (z. B. SUI, TAP, PI, NIGHT) nur mit Kontextwort,
   Gewichtung nach Quelle (Primär 1,0 · Agenturen/Portale 0,8 · Krypto-Portale 0,7 · YouTube 0,6 ·
   entdeckt 0,4) und Positionsgröße, Aktualität (Halbwertszeit 48 h). Dubletten über URL und Titelähnlichkeit;
@@ -1909,7 +1912,7 @@ Speichern aus der Oberfläche erhalten).
   Reiter **„Gemerkt“**, bleiben **dauerhaft** erhalten (auch nach Ablauf der Aufbewahrung, samt Text, KI-Analyse und
   Transkript) und können eine kurze **Notiz** (bis 500 Zeichen) tragen.
 * **Status der Pipeline** (*News → Status*): Import, **Transkripte** (Fortschrittsbalken mit Restzeit wie Artikeltexte
-  und KI-Analyse; geladen, ohne Untertitel; bei YouTube-Sperre Hinweis mit **„Jetzt fortsetzen“**, bei
+  und KI-Analyse über die offenen Aufträge und Lieblingskanäle; geladen, ohne Untertitel; bei YouTube-Sperre Hinweis mit **„Jetzt fortsetzen“**, bei
   Bibliotheksfehler Link „Bibliothek aktualisieren“), Artikeltexte, KI-Analyse (inkl. wartender Video-Kernaussagen),
   Gruppierung, Tagesbericht und Engpass; „Jetzt abarbeiten“ durchläuft alle Stufen einschließlich Transkripten.
 * **Leseansicht:** Ein Klick auf einen Artikel öffnet die **interne Leseansicht** (`/news/<id>`): bereinigter

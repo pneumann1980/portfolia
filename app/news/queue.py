@@ -44,10 +44,10 @@ def done_since(ctx: AppContext, stage: str, since: str) -> int:
     if stage == "enrich":
         sql = """SELECT COUNT(*) FROM news_content c JOIN news_item n ON n.id=c.item_id
                  WHERE c.fetched_at>=? AND n.kind='article' AND n.hidden_reason IS NULL AND n.published_at>=?"""
-    elif stage == "transcripts":  # erledigt: geladen oder endgültig ohne (Wiederholungen zählen erst am Ende)
+    elif stage == "transcripts":  # erledigt: geladen/eingefügt oder endgültig ohne; Aufträge auch älter
         sql = """SELECT COUNT(*) FROM news_content c JOIN news_item n ON n.id=c.item_id
                  WHERE c.fetched_at>=? AND n.kind='video' AND c.status IN ('success','failed')
-                   AND n.hidden_reason IS NULL AND n.published_at>=?"""
+                   AND (n.tr_requested_at IS NOT NULL OR (n.hidden_reason IS NULL AND n.published_at>=?))"""
     else:
         sql = """SELECT COUNT(*) FROM news_analysis a JOIN news_item n ON n.id=a.item_id
                  WHERE a.analyzed_at>=? AND n.kind='article' AND n.hidden_reason IS NULL AND n.published_at>=?"""

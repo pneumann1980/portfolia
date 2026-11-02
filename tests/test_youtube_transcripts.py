@@ -38,14 +38,19 @@ def _clean_lib():
     ytlib._purge()
 
 
-def add_video(ctx, vid: str, *, source="yt:UC123", hours=2.0, short=0, live=0, assets=(), title="Marktausblick"):
+def add_video(ctx, vid: str, *, source="yt:UC123", hours=2.0, short=0, live=0, assets=(), title="Marktausblick",
+              channel="UC123", requested=False):
+    """Video; ``requested`` = Knopf „Kernaussagen erstellen“ gedrückt (seit 0.81.0 lädt nur ein Auftrag oder ein
+    Lieblingskanal ein Transkript)."""
     url = f"https://www.youtube.com/watch?v={vid}"
     cur = ctx.db.x(
         """INSERT INTO news_item(kind, url, url_norm, title, title_norm, summary, source_id, source_name, source_weight,
-               language, published_at, fetched_at, video_id, channel_name, duration_s, is_short, is_live)
-           VALUES ('video',?,?,?,?,?,?,?,0.5,'de',?,?,?,?,?,?,?)""",
+               language, published_at, fetched_at, video_id, channel_id, channel_name, duration_s, is_short, is_live,
+               tr_requested_at)
+           VALUES ('video',?,?,?,?,?,?,?,0.5,'de',?,?,?,?,?,?,?,?,?)""",
         (url, normalize_url(url), f"{title} {vid}", normalize_title(f"{title} {vid}"), "Beschreibung", source,
-         "Kanal", iso(NOW - timedelta(hours=hours)), iso(NOW), vid, "Kanal", 900, short, live))
+         "Kanal", iso(NOW - timedelta(hours=hours)), iso(NOW), vid, channel, "Kanal", 900, short, live,
+         iso(NOW) if requested else None))
     iid = int(cur.lastrowid)
     for a in assets:
         ctx.db.x("INSERT INTO news_asset(item_id, asset_id, score) VALUES (?,?,0.9)", (iid, a))
@@ -189,25 +194,45 @@ def test_paragraphs_have_timestamps():
     assert text.split("\n\n") == ["[0:00] Erster Satz. noch was Ende.", "[1:01:40] Spät."]
 
 
-def test_job_loads_channel_and_asset_videos_and_stores_them_like_articles(ctx, monkeypatch):
+def test_job_loads_only_requests_and_favorite_channels_up_to_daily_cap(ctx, monkeypatch):
     seen: list[str] = []
     monkeypatch.setattr(T.ytlib, "fetch", lambda cfg, vid, langs: seen.append(vid) or fetched())
-    a = add_video(ctx, "AAA")
-    add_video(ctx, "SHORT", short=1)
-    add_video(ctx, "LIVE", live=1)
-    add_video(ctx, "OTHER", source="ytsearch")  # fremdes Video ohne Bezug
-    b = add_video(ctx, "ASSET", source="ytsearch", assets=("BTC",))
-    add_video(ctx, "OLD", hours=24 * 5)
-    res = T.TranscriptService(ctx, gap_s=0).run()
-    assert res["loaded"] == 2 and sorted(seen) == ["AAA", "ASSET"]
-    c = ctx.db.q1("SELECT * FROM news_content WHERE item_id=?", (a,))
+    old = add_video(ctx, "OLDREQ", hours=24 * 30, requested=True)  # Auftrag: egal wie alt
+    add_video(ctx, "PLAIN")  # kein Auftrag, kein Lieblingskanal → nie automatisch
+    favs = [add_video(ctx, f"FAV{i}", channel="UCFAV", hours=1 + i) for i in range(4)]
+    add_video(ctx, "FAVSHORT", channel="UCFAV", short=1)
+    add_video(ctx, "FAVOLD", channel="UCFAV", hours=24 * 5)
+    svc = T.TranscriptService(ctx, gap_s=0)
+    assert svc.run()["loaded"] == 1 and seen == ["OLDREQ"]  # ohne Lieblingskanäle nur der Auftrag
+    c = ctx.db.q1("SELECT * FROM news_content WHERE item_id=?", (old,))
     assert c["status"] == "success" and c["reason"] == "transcript:auto:de" and c["content"].startswith("[0:00] ")
-    assert T.is_transcript(c) and T.is_transcript(ctx.db.q1("SELECT * FROM news_content WHERE item_id=?", (b,)))
-    assert T.TranscriptService(ctx, gap_s=0).run()["loaded"] == 0  # nie doppelt
+    assert T.is_transcript(c)
+    svc.set_favorite("UCFAV", True)
+    ctx.settings.set(T.AUTO_PER_DAY_KEY, 2)
+    assert svc.run()["loaded"] == 2 and seen[1:] == ["FAV0", "FAV1"]  # neueste zuerst, Tagesgrenze 2
+    assert svc.auto_used_today() == 2 and not svc.favorite_candidates(5)
+    req = add_video(ctx, "REQ2", requested=True)  # Aufträge zählen nicht gegen die Grenze
+    assert svc.run()["loaded"] == 1 and seen[-1] == "REQ2"
+    ctx.settings.set(T.AUTO_PER_DAY_KEY, 10)
+    svc.run()
+    assert sorted(seen[4:]) == ["FAV2", "FAV3"] and "PLAIN" not in seen and "FAVSHORT" not in seen
+    assert svc.run()["loaded"] == 0  # nie doppelt
+    assert svc.set_favorite("UCFAV", False) == [] and favs and req
+
+
+def test_pasted_transcript_with_and_without_timestamps():
+    app_style = ("0:00\nHallo und willkommen zurück.\n0:31\nHeute geht es um Bitcoin.\n1:05\nUnd um Zinsen.\n"
+                 "1:40\nZum Schluss Gold.\n")  # Format von „Transkript anzeigen“: Zeitmarke in eigener Zeile
+    assert T.pasted_paragraphs(app_style) == ("[0:00] Hallo und willkommen zurück. Heute geht es um Bitcoin. "
+                                              "Und um Zinsen.\n\n[1:40] Zum Schluss Gold.")
+    inline = "\n".join(f"{m}:00 Satz {m}." for m in range(4))
+    assert T.pasted_paragraphs(inline).startswith("[0:00] Satz 0. Satz 1.")
+    plain = " ".join(["wort"] * 400)
+    assert T.pasted_paragraphs(plain).count("\n\n") == 2  # 150 Wörter je Absatz
 
 
 def test_job_pauses_on_block_and_retries_broken_then_gives_up(ctx, monkeypatch):
-    add_video(ctx, "V1")
+    add_video(ctx, "V1", requested=True)
     blocked = ytlib.TranscriptError("blocked", "IpBlocked")
     monkeypatch.setattr(T.ytlib, "fetch", lambda *a: (_ for _ in ()).throw(blocked))
     res = T.TranscriptService(ctx, gap_s=0).run()
@@ -225,7 +250,7 @@ def test_job_pauses_on_block_and_retries_broken_then_gives_up(ctx, monkeypatch):
 
 
 def test_video_without_captions_is_not_retried(ctx, monkeypatch):
-    add_video(ctx, "V1")
+    add_video(ctx, "V1", requested=True)
     monkeypatch.setattr(T.ytlib, "fetch", lambda *a: (_ for _ in ()).throw(ytlib.TranscriptError("none")))
     assert T.TranscriptService(ctx, gap_s=0).run()["none"] == 1
     assert ctx.db.q1("SELECT status, reason FROM news_content")["reason"] == "no_transcript"

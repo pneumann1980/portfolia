@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Transkript einfügen{% endblock %}
+{% block heading %}News{% endblock %}
+{% block content %}
+<article class="stack reader">
+  <p><a href="{{ back }}">← Zurück zur Übersicht</a></p>
+  <section class="card">
+    <h2 class="reader-title">{{ n.title }}</h2>
+    <p class="meta meta-row"><span>{{ n.channel_name or n.source_name }}</span><span>· {{ n.published_at|datetime_de }}</span>{% if n.duration_s %}<span class="badge">{{ n.duration_s|duration }}</span>{% endif %}
+      <a href="{{ n.url }}" target="_blank" rel="noopener noreferrer">Video auf YouTube ↗</a></p>
+    <h3>Transkript selbst einfügen</h3>
+    <ol class="small">
+      <li>Video in der YouTube-App oder im Browser öffnen.</li>
+      <li>Beschreibung aufklappen → <b>„Transkript anzeigen“</b>.</li>
+      <li>Text markieren und kopieren (im Browser: alles im Transkript-Fenster markieren) und hier einfügen.</li>
+    </ol>
+    <p class="hint">Zeitmarken wie „1:23“ (eigene Zeile oder am Zeilenanfang) werden erkannt und springen später in der Leseansicht ins Video. Ohne Zeitmarken wird der Text in Absätze geteilt. Danach erstellt die KI wie gewohnt die Kernaussagen und genannten Werte; eingefügte Transkripte gelten wie automatische Untertitel als fehleranfällig (Konfidenz höchstens 70 %). Ein vorhandenes Transkript wird ersetzt.</p>
+    <form hx-post="/news/{{ n.id }}/transkript" hx-target="#paste-msg" hx-swap="innerHTML" class="stack">
+      <label class="field">Transkript
+        <textarea name="text" rows="14" required maxlength="300000" placeholder="0:00&#10;Hallo und willkommen …&#10;0:05&#10;Heute schauen wir auf …"></textarea></label>
+      <div id="paste-msg"></div>
+      <div class="row" style="gap:8px"><button class="btn primary" type="submit">Speichern und auswerten</button></div>
+    </form>
+  </section>
+</article>
+{% endblock %}

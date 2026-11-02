@@ -339,7 +339,8 @@ class AnalysisService:
         return out
 
     def video_candidates(self, limit: int) -> list[dict[str, Any]]:
-        """Videos mit geladenem Transkript, die (für diesen Stand) noch keine Analyse haben – neueste zuerst."""
+        """Videos mit geladenem Transkript, die (für diesen Stand) noch keine Analyse haben – angeforderte (Knopf,
+        auch ältere als ``news.video_analysis_hours``) zuerst, danach neueste zuerst."""
         hours = int(self.ctx.settings.get("news.video_analysis_hours", VIDEO_HOURS))
         skip_sql, skip_args = not_in_clause("n.source_id", ai_off_ids(self.ctx.config.sources_path))
         rows = self.db.q(
@@ -347,9 +348,9 @@ class AnalysisService:
                       c.content, c.content_hash, c.reason AS creason,
                       a.input_hash AS ahash, a.analyzed_at, a.summary AS asummary
                FROM news_item n JOIN news_content c ON c.item_id=n.id LEFT JOIN news_analysis a ON a.item_id=n.id
-               WHERE n.kind='video' AND n.hidden_reason IS NULL AND n.published_at >= ? AND c.status='success'
-                 AND c.reason LIKE 'transcript:%'""" + skip_sql + """
-               ORDER BY n.published_at DESC LIMIT 300""",
+               WHERE n.kind='video' AND (n.tr_requested_at IS NOT NULL OR (n.hidden_reason IS NULL
+                 AND n.published_at >= ?""" + skip_sql + """)) AND c.status='success' AND c.reason LIKE 'transcript:%'
+               ORDER BY n.tr_requested_at IS NULL, n.tr_requested_at, n.published_at DESC LIMIT 300""",
             (iso(datetime.now(UTC) - timedelta(hours=hours)), *skip_args))
         now = datetime.now(UTC)
         out = []
@@ -368,11 +369,13 @@ class AnalysisService:
 
     def _video(self, r: dict[str, Any], res: dict[str, Any]) -> None:
         text, shortened = video_text(str(r["content"] or ""))
-        auto = ":auto:" in str(r["creason"] or "")
+        auto = any(k in str(r["creason"] or "") for k in (":auto:", ":eingefuegt:"))  # eingefügt: Herkunft unklar
         user = json.dumps({"video": {
             "titel": r["title"], "kanal": r["channel_name"] or r["source_name"], "veroeffentlicht": r["published_at"],
             "laenge_min": round((r["duration_s"] or 0) / 60) or None, "bezug_assets": self._assets(r["id"]),
-            "untertitel": "automatisch erzeugt (Erkennungsfehler möglich)" if auto else "vom Kanal erstellt",
+            "untertitel": "selbst eingefügt (Herkunft unklar, Erkennungsfehler möglich)"
+            if ":eingefuegt:" in str(r["creason"] or "") else
+            "automatisch erzeugt (Erkennungsfehler möglich)" if auto else "vom Kanal erstellt",
             "gekuerzt": "ja – gleichmäßig verteilte Abschnitte" if shortened else "nein",
             "transkript": text}}, ensure_ascii=False)
         out = self.ai.generate(VIDEO_SYSTEM, user, None, 3000, json_mode=True)

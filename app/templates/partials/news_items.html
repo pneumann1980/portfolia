@@ -28,6 +28,7 @@
     </div>{% endif %}
     {% if n.llm_summary %}<div class="summary"><span class="badge info">KI</span> {{ n.llm_summary }}</div>
     {% elif n.summary %}<div class="summary">{{ n.summary }}</div>{% endif %}
+    {% if video and x.tr and x.tr.state not in ('done',) %}{% set tr = x.tr %}{% set iid = n.id %}{% include "partials/news_tr_state.html" %}{% endif %}
     {% if params.tab == 'saved' and n.note %}<div class="note-text" title="Ihre Notiz">✎ {{ n.note }}</div>{% endif %}
   </div>
   <div class="vfoot">

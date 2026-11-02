@@ -470,6 +470,9 @@ body.panel-open { overflow: hidden; }
 /* Merken ★: gemerkt in der Warnfarbe (Stern), Text bleibt in Schriftfarbe */
 .btn.save.on { color: var(--warn-ink); }
 .icon-btn.save.on { color: var(--warn-mark); -webkit-text-stroke: 0.6px var(--warn-ink); }
+.tr-state { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.tr-state .badge { white-space: normal; }
+.card-head .hint { min-width: 0; overflow-wrap: anywhere; }
 .pipe-alert { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .reader-save { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
 .reader-save .note-box { flex: 1 1 280px; min-width: 0; }

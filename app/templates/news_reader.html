@@ -22,11 +22,12 @@
     </div>
     {% if transcript is not none %}
     {% set auto = ':auto:' in (content.reason or '') %}
-    <p class="meta meta-row">{% if n.duration_s %}<span class="badge">{{ n.duration_s|duration }}</span>{% endif %}<span class="badge good" title="Untertitel des Videos wurden lokal geladen">Transkript</span><span class="badge {{ 'warn' if auto else '' }}" title="{{ 'Automatisch erzeugte Untertitel – Namen, Ticker und Zahlen können falsch erkannt sein' if auto else 'Vom Kanal erstellte Untertitel' }}">{{ 'automatische Untertitel' if auto else 'Untertitel vom Kanal' }}</span></p>
+    <p class="meta meta-row">{% if n.duration_s %}<span class="badge">{{ n.duration_s|duration }}</span>{% endif %}<span class="badge good" title="Untertitel des Videos wurden lokal geladen">Transkript</span>{% if ':eingefuegt:' in (content.reason or '') %}<span class="badge warn" title="Selbst eingefügter Text – Herkunft und Genauigkeit unbekannt">selbst eingefügt</span>{% else %}<span class="badge {{ 'warn' if auto else '' }}" title="{{ 'Automatisch erzeugte Untertitel – Namen, Ticker und Zahlen können falsch erkannt sein' if auto else 'Vom Kanal erstellte Untertitel' }}">{{ 'automatische Untertitel' if auto else 'Untertitel vom Kanal' }}</span>{% endif %}</p>
     {% if n.video_id %}<a href="{{ video_url }}" target="_blank" rel="noopener noreferrer"><img class="reader-img" src="https://i.ytimg.com/vi/{{ n.video_id }}/hqdefault.jpg" alt="Vorschaubild – Video auf YouTube öffnen" loading="lazy"></a>{% endif %}
     <p class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
       <a class="btn" href="{{ video_url }}" target="_blank" rel="noopener noreferrer">Video auf YouTube ansehen ↗</a>
       <a class="btn ghost" href="#transkript">Transkript lesen</a>
+      <a class="btn ghost" href="/news/{{ n.id }}/transkript?back={{ urlq(back) }}" title="Transkript durch einen selbst kopierten Text ersetzen">Transkript ersetzen</a>
     </p>
   </section>
   {% else %}
@@ -56,6 +57,11 @@
   </section>
   {% endif %}
 
+  {% if tr and tr.state in ('analyzing', 'analysis_failed') %}
+  <section class="card">{% set iid = n.id %}{% include "partials/news_tr_state.html" %}</section>
+  {% elif tr and tr.state == 'ai_off' %}
+  <section class="card"><p class="hint">Die KI ist ausgeschaltet – Kernaussagen entstehen, sobald sie aktiviert ist (Einstellungen → News &amp; KI). Das Transkript steht unten.</p></section>
+  {% endif %}
   {% if analysis %}
   <section class="card ai-box" aria-label="KI-Analyse">
     <div class="card-head"><h2>{{ 'Kernaussagen des Videos' if analysis.video else 'KI-Zusammenfassung' }} <span class="badge info">KI</span></h2>

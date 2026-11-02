@@ -115,7 +115,8 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
     elif analyze_backlog or video_waiting:
         bottleneck = "Analyse-Takt: läuft in Runden, alle 10 min"
     elif tr["enabled"] and tr["waiting"]:
-        bottleneck = f"Transkript-Takt: {tr['per_run']} Videos je Lauf, alle 30 min (Pause je Video 3 s)"
+        bottleneck = (f"Transkripte: {tr['waiting']} warten (Aufträge sofort, Lieblingskanäle alle 30 min, "
+                      "Pause je Video 3 s)")
     elif enrich_paused or enrich_retry:
         bottleneck = (f"keiner – alles Abrufbare abgearbeitet ({enrich_paused} Artikel pausierter Quellen und "
                       f"{enrich_retry} Wiederholungen später)")

@@ -7,8 +7,10 @@
       <span class="badge {{ 'good' if tr.on else '' }}">{{ 'eingeschaltet' if tr.on else 'ausgeschaltet' }}</span>
       <button class="btn sm" type="submit">{{ 'Ausschalten' if tr.on else 'Einschalten' }}</button>
     </form></div>
-  <p class="hint">Für neue Videos deiner Kanäle (ohne Shorts und Livestreams) und für Videos mit Bezug zu deinen Werten lädt Portfolia die Untertitel und lässt daraus 5–10 Kernaussagen und die genannten Werte mit Begründung erstellen. Übertragen wird nur die Video-Kennung an YouTube. Der Abruf ist inoffiziell (wie der Untertitel-Knopf im Player) und kann ausfallen, wenn YouTube etwas ändert – dann hilft meist „Bibliothek aktualisieren“.</p>
+  <p class="hint">Kernaussagen gibt es <b>auf Wunsch</b>: Knopf „✨ Kernaussagen erstellen“ auf der Videokarte – Portfolia lädt dann die Untertitel dieses Videos und lässt daraus 5–10 Kernaussagen und die genannten Werte mit Begründung erstellen. Alternativ „Transkript selbst einfügen“. Automatisch nur für <b>Lieblingskanäle</b> (Spalte „Auto-Kernaussagen“ oben), begrenzt pro Tag – YouTube sperrt den inoffiziellen Abruf bei vielen Anfragen (beobachtet: nach etwa 24 am Tag). Übertragen wird nur die Video-Kennung.</p>
   <dl class="kv">
+    <dt>Lieblingskanäle</dt><dd>{{ tr.fav|length }} gewählt · heute {{ tr.auto_used }} von {{ tr.auto_per_day }} automatischen Abrufen
+      <form hx-post="/news/transcripts/fav" class="inline row" style="gap:6px;margin-top:4px"><label class="small">Tagesgrenze <input type="number" name="per_day" min="0" max="50" value="{{ tr.auto_per_day }}" style="width:70px"></label><button class="btn sm ghost" type="submit">✓</button></form></dd>
     <dt>Letzte 7 Tage</dt><dd>{{ tr.stats.success }} Transkripte geladen · {{ tr.stats.failed }} ohne Untertitel bzw. nicht verfügbar · {{ tr.stats.pending }} warten auf einen neuen Versuch</dd>
     <dt>Bibliothek</dt><dd>youtube-transcript-api {{ tr.lib.version or '–' }} {% if tr.lib.updated %}<span class="badge info">in der App aktualisiert</span>{% if tr.lib.updated_at %} <span class="hint">{{ tr.lib.updated_at|datetime_de }}</span>{% endif %}{% else %}<span class="badge">mitgeliefert</span>{% endif %}{% if not tr.lib.available %} <span class="badge crit">nicht installiert</span>{% endif %}</dd>
   </dl>

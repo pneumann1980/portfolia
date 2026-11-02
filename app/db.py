@@ -1078,6 +1078,11 @@ ALTER TABLE news_item ADD COLUMN saved_at TEXT;
 ALTER TABLE news_item ADD COLUMN note TEXT;
 CREATE INDEX IF NOT EXISTS ix_news_saved ON news_item(saved_at);
 """),
+    (35, """
+-- Transkripte auf Wunsch: Zeitpunkt, zu dem Kernaussagen für ein Video angefordert wurden (Knopf auf der Karte).
+ALTER TABLE news_item ADD COLUMN tr_requested_at TEXT;
+CREATE INDEX IF NOT EXISTS ix_news_tr_requested ON news_item(tr_requested_at);
+"""),
 ]
 
 

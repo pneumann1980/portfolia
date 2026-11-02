@@ -89,7 +89,7 @@ def job_transcripts(ctx: AppContext) -> dict[str, Any]:
         res = TranscriptService(ctx).run()
         _observe(ctx)
     if ctx.scheduler is not None and res.get("loaded"):
-        ctx.scheduler.trigger("news_analyze", 10)
+        ctx.scheduler.trigger("news_analyze", 2)
     return res
 
 
@@ -281,12 +281,74 @@ def _decorate(ctx: AppContext, page: list[dict[str, Any]]) -> list[dict[str, Any
         for a in ctx.db.q(f"SELECT item_id, sentiment, importance FROM news_analysis "
                           f"WHERE summary IS NOT NULL AND item_id IN ({ph})", ids):
             sentiment[a["item_id"]] = (a["sentiment"], a["importance"])
+    trstates = transcript_states(ctx, [x["row"]["id"] for x in page if x["row"]["kind"] == "video"])
     for x in page:
         x["assets"] = [(aid, pf.asset(aid).name if pf else aid) for aid in assets_by_item.get(x["row"]["id"], [])]
         x["event"] = events.get(x["row"]["id"])
         x["cstatus"] = cstatus.get(x["row"]["id"])
         x["sentiment"], x["importance"] = sentiment.get(x["row"]["id"], (None, None))
+        x["tr"] = trstates.get(x["row"]["id"])
     return page
+
+
+# ---- Transkripte auf Wunsch (Knopf „Kernaussagen erstellen“, selbst einfügen) -------------------------------------
+
+TR_POLL = {"queued": "4s", "analyzing": "4s", "paused": "60s"}
+
+
+def transcript_states(ctx: AppContext, ids: list[int]) -> dict[int, dict[str, Any]]:
+    """Stand der Kernaussagen je Video: none | queued | paused | analyzing | done | ai_off | no_captions | failed |
+    analysis_failed – mit Abfrageintervall für die Live-Anzeige auf der Karte."""
+    if not ids:
+        return {}
+    svc = TranscriptService(ctx)
+    on = svc.enabled()
+    paused = svc.paused_until()
+    ai_on = AnalysisService(ctx).enabled()
+    ph = ",".join("?" * len(ids))
+    out: dict[int, dict[str, Any]] = {}
+    for r in ctx.db.q(
+            f"""SELECT n.id, n.tr_requested_at, c.status, c.reason, a.item_id AS aid, a.summary AS asum
+                FROM news_item n LEFT JOIN news_content c ON c.item_id=n.id
+                LEFT JOIN news_analysis a ON a.item_id=n.id WHERE n.id IN ({ph})""", ids):
+        reason = str(r["reason"] or "")
+        if r["status"] == "success" and reason.startswith("transcript:"):
+            st = ("done" if r["asum"] else "analysis_failed" if r["aid"] else "analyzing" if ai_on else "ai_off")
+        elif r["status"] == "failed":
+            st = "no_captions" if reason in ("no_transcript", "unavailable") else "failed"
+        elif r["tr_requested_at"]:
+            st = "paused" if paused is not None else "queued" if on else "off"
+        else:
+            st = "none" if on else "off"
+        out[int(r["id"])] = {"state": st, "poll": TR_POLL.get(st), "paused_until": iso(paused) if paused else None,
+                             "pasted": ":eingefuegt:" in reason, "reason": reason}
+    return out
+
+
+def request_transcript(ctx: AppContext, item_id: int) -> dict[str, Any]:
+    """Kernaussagen anfordern (bzw. nach Fehler erneut): Auftrag vormerken und den Abruf sofort anstoßen."""
+    row = ctx.db.q1("SELECT id FROM news_item WHERE id=? AND kind='video'", (item_id,))
+    if row is None:
+        raise HTTPException(404, "Video nicht gefunden")
+    ctx.db.x("UPDATE news_item SET tr_requested_at=? WHERE id=?", (iso(datetime.now(UTC)), item_id))
+    # erneuter Versuch: Fehlschlag (nicht „keine Untertitel“) bzw. verworfene Analyse zurücksetzen
+    ctx.db.x("""DELETE FROM news_content WHERE item_id=? AND (status='pending' OR (status='failed'
+                AND reason NOT IN ('no_transcript','unavailable')))""", (item_id,))
+    ctx.db.x("DELETE FROM news_analysis WHERE item_id=? AND summary IS NULL", (item_id,))
+    if ctx.scheduler is not None:
+        ctx.scheduler.trigger("news_transcripts", 0.3)
+        ctx.scheduler.trigger("news_analyze", 2)  # liegt das Transkript schon vor (oder eingefügt): gleich auswerten
+    log.info("Kernaussagen angefordert für Video %s", item_id)
+    return transcript_states(ctx, [item_id])[item_id]
+
+
+def paste_transcript(ctx: AppContext, item_id: int, text: str) -> int:
+    words = TranscriptService(ctx).paste(item_id, text)
+    ctx.db.x("DELETE FROM news_analysis WHERE item_id=? AND summary IS NULL", (item_id,))
+    if ctx.scheduler is not None:
+        ctx.scheduler.trigger("news_analyze", 1)
+    log.info("Transkript für Video %s eingefügt (%s Wörter)", item_id, words)
+    return words
 
 
 # ---- Merken, Notiz, alle gelesen (synchron: läuft im Threadpool) ----------------------------------------
@@ -441,7 +503,8 @@ def reader_context(ctx: AppContext, row: Any, back: str = "") -> dict[str, Any]:
     transcript = [_ts_paragraph(p, row["url"]) for p in paragraphs] if is_transcript(content) else None
     return {"n": row, "content": content, "paragraphs": paragraphs, "analysis": analysis, "event": ev,
             "others": others, "assets": assets, "back": _safe_back(back), "ai": AiGateway(ctx),
-            "transcript": transcript, "video_url": row["url"], "video_at": video_at}
+            "transcript": transcript, "video_url": row["url"], "video_at": video_at,
+            "tr": transcript_states(ctx, [iid]).get(iid) if row["kind"] == "video" else None}
 
 
 def video_at(url: str, stelle: str) -> str:
@@ -466,6 +529,7 @@ def _ts_paragraph(p: str, url: str) -> dict[str, str]:
 def transcripts_view(ctx: AppContext) -> dict[str, Any]:
     svc = TranscriptService(ctx)
     return {"on": svc.enabled(), "paused_until": svc.paused_until(), "stats": svc.stats(),
+            "fav": svc.favorites(), "auto_per_day": svc.auto_per_day(), "auto_used": svc.auto_used_today(),
             "last_error": ctx.db.get_state("news.transcripts.last_error"), "lib": ytlib.info(ctx.config)}
 
 
@@ -494,6 +558,17 @@ def resume_transcripts(ctx: AppContext) -> str:
         return ("Abruf fortgesetzt – läuft gleich an. Ist YouTube weiterhin gesperrt, ruht er nach dem ersten Video "
                 "erneut 24 Stunden.")
     return "Pause aufgehoben – der nächste Transkript-Lauf startet nach Plan (Scheduler inaktiv)."
+
+
+def _transcripts_fav(ctx: AppContext, form: dict[str, Any]) -> None:
+    svc = TranscriptService(ctx)
+    if form.get("channel_id"):
+        svc.set_favorite(str(form["channel_id"]), form.get("on") == "1")
+    if form.get("per_day") not in (None, ""):
+        try:
+            ctx.settings.set("news.transcripts_auto_per_day", max(0, min(int(str(form["per_day"])), 50)))
+        except ValueError:
+            raise HTTPException(400, "Tagesgrenze ungültig") from None
 
 
 def _transcripts_toggle(request: Request, ctx: AppContext, on: bool) -> HTMLResponse:
@@ -646,6 +721,50 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         ytlib.reset(ctx.config)
         return _transcripts_card(request, ctx, {"ok": True, "reset": True})
+
+    @router.post("/news/{item_id:int}/transcript/request", response_class=HTMLResponse)
+    def transcript_request(request: Request, item_id: int) -> HTMLResponse:
+        """Knopf „Kernaussagen erstellen“ auf der Videokarte – Fragment mit Live-Stand."""
+        ctx = get_ctx(request)
+        return render(request, "partials/news_tr_state.html", alerts=[], iid=item_id,
+                      tr=request_transcript(ctx, item_id))
+
+    @router.get("/news/{item_id:int}/transcript/state", response_class=HTMLResponse)
+    def transcript_state(request: Request, item_id: int) -> HTMLResponse:
+        ctx = get_ctx(request)
+        st = transcript_states(ctx, [item_id]).get(item_id)
+        if st is None:
+            raise HTTPException(404)
+        return render(request, "partials/news_tr_state.html", alerts=[], iid=item_id, tr=st)
+
+    @router.get("/news/{item_id:int}/transkript", response_class=HTMLResponse)
+    def transcript_paste_page(request: Request, item_id: int, back: str = "") -> HTMLResponse:
+        """Transkript selbst einfügen (Text aus „Transkript anzeigen“ der YouTube-App)."""
+        ctx = get_ctx(request)
+        row = ctx.db.q1("SELECT * FROM news_item WHERE id=? AND kind='video'", (item_id,))
+        if row is None:
+            raise HTTPException(404, "Video nicht gefunden")
+        return render(request, "news_paste.html", active="news", n=row, back=_safe_back(back), error="")
+
+    @router.post("/news/{item_id:int}/transkript", response_class=HTMLResponse)
+    async def transcript_paste(request: Request, item_id: int) -> Response:
+        ctx = get_ctx(request)
+        form = await request.form()
+        text = str(form.get("text") or "")
+        try:
+            await run_in_threadpool(paste_transcript, ctx, item_id, text)
+        except ValueError as e:
+            return HTMLResponse(f'<div class="alert warn" role="alert"><span class="icon">!</span>'
+                                f'<div>{html.escape(str(e))}</div></div>')
+        return Response(status_code=204, headers={"HX-Redirect": f"/news/{item_id}?keep=1"})
+
+    @router.post("/news/transcripts/fav")
+    async def transcripts_fav(request: Request) -> Response:
+        """Lieblingskanal (automatische Kernaussagen) an/aus bzw. Tagesgrenze setzen."""
+        ctx = get_ctx(request)
+        form = await request.form()
+        await run_in_threadpool(_transcripts_fav, ctx, dict(form))
+        return Response(status_code=204, headers={"HX-Refresh": "true"})
 
     @router.post("/news/transcripts/resume", response_class=HTMLResponse)
     def transcripts_resume(request: Request) -> HTMLResponse:

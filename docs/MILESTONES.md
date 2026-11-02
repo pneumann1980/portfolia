@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 02.11.2026 · Version 0.80.1 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 02.11.2026 · Version 0.81.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,39 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.81.0 – Kernaussagen auf Wunsch: Knopf je Video, Lieblingskanäle mit Tagesgrenze, Transkript selbst einfügen
+
+Anlass: Der automatische Abruf aller Videos lief im Betrieb nach etwa 24 Transkripten am Tag in YouTubes Sperre (113 Videos
+warteten, „Jetzt fortsetzen“ wurde sofort wieder gesperrt). Die Grenze setzt YouTube je Anschluss; mehr Versuche verlängern
+sie eher.
+
+* **Kein automatischer Abruf aller Videos mehr.** Der Job lädt nur noch **Aufträge** und **Lieblingskanäle**; vorhandene
+  Transkripte und Analysen bleiben.
+* **Knopf „✨ Kernaussagen erstellen“** auf jeder Videokarte ohne Transkript: Auftrag vormerken (`news_item.tr_requested_at`,
+  Migration 35), Abruf sofort anstoßen, danach sofort die KI-Analyse. Die Karte zeigt den Stand live (alle 4 s): „Transkript
+  wird geladen …“ → „KI erstellt Kernaussagen …“ → „Kernaussagen lesen →“; bei YouTube-Sperre „vorgemerkt – YouTube sperrt bis
+  …“ (Abfrage jede Minute, der Auftrag läuft nach der Pause von selbst); „Keine Untertitel“ bzw. „nicht lesbar“ mit „Erneut
+  versuchen“/„selbst einfügen“; verworfene KI-Auswertung erneut anforderbar. Aufträge kommen immer zuerst, auch für ältere
+  Videos (die Video-Analyse nimmt angeforderte unabhängig von `news.video_analysis_hours`).
+* **Lieblingskanäle:** Spalte „Auto-Kernaussagen“ in der Kanalliste (Quellen); neue Videos dieser Kanäle (≤ 3 Tage, ohne
+  Shorts/Livestreams) automatisch, zusammen höchstens **5 je Kalendertag** (`news.transcripts_auto_per_day`, einstellbar
+  0–50 in der Karte „YouTube-Transkripte“). Aufträge zählen nicht gegen die Grenze.
+* **Transkript selbst einfügen** (`/news/<id>/transkript`): Text aus „Transkript anzeigen“ der YouTube-App bzw. des
+  Browsers; Zeitmarken in eigener Zeile oder am Zeilenanfang werden erkannt (Absatz je Minute, Sprung ins Video), ohne
+  Zeitmarken Absätze des Originals bzw. 150 Wörter; mindestens 30 Wörter, höchstens 300.000 Zeichen. Gespeichert als
+  `transcript:eingefuegt:<Sprache>`, gilt wie automatische Untertitel als fehleranfällig (Konfidenz ≤ 70 %, Hinweis an die
+  KI). Leseansicht: Kennzeichnung „selbst eingefügt“, Knopf „Transkript ersetzen“.
+* **Statusseite:** Balken und Restzeit zählen nur Aufträge und fällige Videos der Lieblingskanäle („1 Auftrag offen ·
+  Lieblingskanäle: 2 (heute 3 von 5 automatisch)“). Sperr-Hinweis mit „Jetzt fortsetzen“ bleibt; „Jetzt abarbeiten“ holt nur
+  Aufträge und Lieblingskanäle.
+* Tests (`tests/test_transcripts_on_demand.py`, angepasste Auswahltests): nur Aufträge/Lieblingskanäle, Tagesgrenze, Aufträge
+  außerhalb der Grenze und des Fensters, Live-Stand aller Zustände, erneut versuchen, Einfügen (Formate, zu kurz, Analyse,
+  Kennzeichnung), Lieblingskanäle/Tagesgrenze per Oberfläche, Statuszählung.
+
+**Grenzen:** Auch einzelne Abrufe können gesperrt werden, wenn YouTube den Anschluss generell drosselt – dann bleibt das
+Einfügen. Nach Ende einer Sperre startet ein vorgemerkter Auftrag mit dem nächsten Lauf (spätestens 30 Min.). Eingefügte
+Texte prüft Portfolia nicht auf Herkunft.
 
 ## 0.80.1 – Transkripte mit Fortschrittsbalken, „Jetzt fortsetzen“ bei YouTube-Sperre
 

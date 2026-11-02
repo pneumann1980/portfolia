@@ -1,7 +1,13 @@
 """YouTube-Transkripte laden (Hintergrundjob, getrennt vom Feed-Import) – Grundlage der Video-Analyse.
 
-Auswahl: neue Videos der abonnierten Kanäle sowie Videos mit Bezug zu einer Position – ohne Shorts und Livestreams,
-höchstens ``news.transcripts_days`` Tage alt, je Lauf begrenzt und mit Pause zwischen den Abrufen. Gespeichert wird
+Nur auf Wunsch (seit 0.81.0; der automatische Abruf aller Videos lief nach etwa 24 Abrufen am Tag in YouTubes Sperre):
+
+* **Aufträge** – Videos, für die jemand „Kernaussagen erstellen“ gedrückt hat (``news_item.tr_requested_at``), egal
+  wie alt; immer zuerst.
+* **Lieblingskanäle** – neue Videos (höchstens ``news.transcripts_days`` Tage alt, ohne Shorts und Livestreams) der in
+  ``news.transcripts_fav`` gewählten Kanäle, zusammen höchstens ``news.transcripts_auto_per_day`` Abrufe je Kalendertag.
+
+Je Lauf begrenzt und mit Pause zwischen den Abrufen. Gespeichert wird
 wie ein Artikeltext (``news_content``: Absätze mit Zeitmarke ``[mm:ss]``, Grund
 ``transcript:<auto|manuell>:<Sprache>``), damit die Leseansicht und die Analyse ihn nutzen.
 
@@ -15,17 +21,22 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.context import AppContext
 from app.news import ytlib
-from app.util.timeutil import iso, parse_iso
+from app.util.timeutil import iso, now_local, parse_iso
 
 log = logging.getLogger(__name__)
 
 SETTING = "news.transcripts"
+FAV_KEY = "news.transcripts_fav"  # Kanal-IDs mit automatischem Abruf
+AUTO_PER_DAY_KEY = "news.transcripts_auto_per_day"
+AUTO_PER_DAY = 5  # Lieblingskanäle: Abrufe je Kalendertag (beobachtete Sperrgrenze ≈ 24/Tag)
+PASTE_MAX = 300_000  # Zeichen eines selbst eingefügten Transkripts
 PAUSE_KEY = "news.transcripts.paused_until"
 ERROR_KEY = "news.transcripts.last_error"
 BLOCK_PAUSE = timedelta(hours=24)
@@ -75,19 +86,60 @@ class TranscriptService:
         until = parse_iso(self.db.get_state(PAUSE_KEY))
         return until if until is not None and until > datetime.now(UTC) else None
 
-    def candidates(self, limit: int) -> list[Any]:
-        days = int(self.ctx.settings.get("news.transcripts_days", 3))
-        now = iso(datetime.now(UTC))
+    def favorites(self) -> list[str]:
+        fav = self.ctx.settings.get(FAV_KEY, []) or []
+        return [str(x) for x in fav if x] if isinstance(fav, list) else []
+
+    def set_favorite(self, channel_id: str, on: bool) -> list[str]:
+        fav = [c for c in self.favorites() if c != channel_id] + ([channel_id] if on else [])
+        self.ctx.settings.set(FAV_KEY, fav)
+        return fav
+
+    def auto_per_day(self) -> int:
+        return max(0, int(self.ctx.settings.get(AUTO_PER_DAY_KEY, AUTO_PER_DAY) or 0))
+
+    def auto_used_today(self) -> int:
+        """Heutige automatische Abrufe (Lieblingskanäle, ohne Aufträge) – Kalendertag Europe/Berlin."""
+        midnight = iso(now_local().replace(hour=0, minute=0, second=0, microsecond=0))
+        return int(self.db.scalar(
+            """SELECT COUNT(*) FROM news_content c JOIN news_item n ON n.id=c.item_id
+               WHERE n.kind='video' AND n.tr_requested_at IS NULL AND c.fetched_at >= ?
+                 AND (c.reason IS NULL OR c.reason NOT LIKE 'transcript:eingefuegt:%')""",
+            (midnight,), default=0) or 0)
+
+    _DUE = "(c.item_id IS NULL OR (c.status='pending' AND (c.next_attempt IS NULL OR c.next_attempt <= ?)))"
+
+    def requested(self, limit: int) -> list[Any]:
+        """Offene Aufträge (Knopf „Kernaussagen erstellen“), älteste Anforderung zuerst."""
         return self.db.q(
-            """SELECT n.id, n.video_id, n.url, n.language, c.attempts FROM news_item n
-               LEFT JOIN news_content c ON c.item_id=n.id
-               WHERE n.kind='video' AND n.video_id IS NOT NULL AND n.hidden_reason IS NULL
-                 AND COALESCE(n.is_short, 0)=0 AND COALESCE(n.is_live, 0)=0
-                 AND COALESCE(n.duration_s, 0) <= ? AND n.published_at >= ?
-                 AND (n.source_id LIKE 'yt:%' OR EXISTS (SELECT 1 FROM news_asset a WHERE a.item_id=n.id))
-                 AND (c.item_id IS NULL OR (c.status='pending' AND (c.next_attempt IS NULL OR c.next_attempt <= ?)))
-               ORDER BY n.published_at DESC LIMIT ?""",
-            (MAX_DURATION_S, iso(datetime.now(UTC) - timedelta(days=days)), now, limit))
+            f"""SELECT n.id, n.video_id, n.url, n.language, c.attempts FROM news_item n
+                LEFT JOIN news_content c ON c.item_id=n.id
+                WHERE n.kind='video' AND n.video_id IS NOT NULL AND n.tr_requested_at IS NOT NULL AND {self._DUE}
+                ORDER BY n.tr_requested_at, n.id LIMIT ?""", (iso(datetime.now(UTC)), limit))
+
+    def favorite_candidates(self, limit: int) -> list[Any]:
+        """Neue Videos der Lieblingskanäle, solange die Tagesgrenze nicht erreicht ist."""
+        fav = self.favorites()
+        left = min(limit, self.auto_per_day() - self.auto_used_today())
+        if not fav or left <= 0:
+            return []
+        days = int(self.ctx.settings.get("news.transcripts_days", 3))
+        return self.db.q(
+            f"""SELECT n.id, n.video_id, n.url, n.language, c.attempts FROM news_item n
+                LEFT JOIN news_content c ON c.item_id=n.id
+                WHERE n.kind='video' AND n.video_id IS NOT NULL AND n.hidden_reason IS NULL
+                  AND n.tr_requested_at IS NULL AND n.channel_id IN ({','.join('?' * len(fav))})
+                  AND COALESCE(n.is_short, 0)=0 AND COALESCE(n.is_live, 0)=0
+                  AND COALESCE(n.duration_s, 0) <= ? AND n.published_at >= ? AND {self._DUE}
+                ORDER BY n.published_at DESC LIMIT ?""",
+            (*fav, MAX_DURATION_S, iso(datetime.now(UTC) - timedelta(days=days)), iso(datetime.now(UTC)), left))
+
+    def candidates(self, limit: int) -> list[Any]:
+        """Aufträge zuerst, danach Lieblingskanäle (Tagesgrenze)."""
+        rows = list(self.requested(limit))
+        if len(rows) < limit:
+            rows += self.favorite_candidates(limit - len(rows))
+        return rows
 
     def run(self, limit: int = PER_RUN) -> dict[str, Any]:
         res: dict[str, Any] = {"loaded": 0, "none": 0, "failed": 0, "retry": 0}
@@ -95,8 +147,14 @@ class TranscriptService:
             return {"skipped": "ausgeschaltet"}
         if self.paused_until() is not None:
             return {"skipped": "pausiert (YouTube-Sperre)"}
-        rows = self.candidates(limit)
-        for i, r in enumerate(rows):
+        rows = self.requested(limit)
+        for i in range(limit):
+            if i >= len(rows):  # Lieblingskanäle erst nach den Aufträgen, je Abruf neu gegen die Tagesgrenze
+                more = self.favorite_candidates(1) if len(rows) < limit else []
+                if not more:
+                    break
+                rows.append(more[0])
+            r = rows[i]
             if i and self.gap_s:
                 time.sleep(self.gap_s)
             kind = self.process(r)
@@ -154,6 +212,23 @@ class TranscriptService:
             (item_id, status, reason, url, lang, content, words, chash, attempts, iso(next_at) if next_at else None,
              now, now))
 
+    def paste(self, item_id: int, text: str) -> int:
+        """Selbst eingefügtes Transkript (z. B. aus „Transkript anzeigen“ der YouTube-App) wie ein geladenes speichern;
+        Zeitmarken („1:23“ allein oder am Zeilenanfang) werden erkannt. Rückgabe: Wortzahl."""
+        row = self.db.q1("SELECT id, url, language FROM news_item WHERE id=? AND kind='video'", (item_id,))
+        if row is None:
+            raise ValueError("Video nicht gefunden")
+        content = pasted_paragraphs(text[:PASTE_MAX])
+        words = len(content.split())
+        if words < 30:
+            raise ValueError("Zu kurz – bitte das ganze Transkript einfügen (mindestens 30 Wörter).")
+        lang = (row["language"] or "de").split("-")[0].lower()
+        self._upsert(item_id, "success", f"transcript:eingefuegt:{lang}", url=row["url"], lang=lang, content=content,
+                     words=words, chash=hashlib.sha256(content.encode()).hexdigest()[:32])
+        self.db.x("UPDATE news_item SET tr_requested_at=COALESCE(tr_requested_at, ?) WHERE id=?",
+                  (iso(datetime.now(UTC)), item_id))
+        return words
+
     def pipeline(self) -> dict[str, Any]:
         """Statusseite: wartend (jetzt abrufbar), spätere Wiederholungen, letzte 24 h geladen/ohne Untertitel, Sperre
         und Bibliotheksfehler (``broken`` = „Bibliothek aktualisieren“)."""
@@ -174,7 +249,10 @@ class TranscriptService:
         err = self.db.get_state(ERROR_KEY)
         err = err if isinstance(err, dict) else None
         paused = self.paused_until()
-        return {"enabled": self.enabled(), "waiting": len(self.candidates(100_000)), "retry": retry,
+        open_requests = len(self.requested(100_000))
+        return {"enabled": self.enabled(), "waiting": open_requests + len(self.favorite_candidates(100_000)),
+                "requests": open_requests, "favorites": len(self.favorites()), "auto_used": self.auto_used_today(),
+                "auto_per_day": self.auto_per_day(), "retry": retry,
                 "loaded": by.get("loaded", 0), "none": by.get("none", 0), "failed": by.get("failed", 0),
                 "paused_until": iso(paused) if paused else None, "last_error": err,
                 "broken": bool(err and err.get("kind") == ytlib.KIND_BROKEN), "per_run": PER_RUN, "days": days}
@@ -187,6 +265,47 @@ class TranscriptService:
                    WHERE n.kind='video' AND n.published_at>=? GROUP BY c.status""", (since,)):
             out[r["status"]] = int(r["n"])
         return out
+
+
+_TS = re.compile(r"^\[?((?:\d{1,2}:)?\d{1,2}:\d{2})\]?\s*(.*)$")
+
+
+def _seconds(ts: str) -> float:
+    sec = 0
+    for part in ts.split(":"):
+        sec = sec * 60 + int(part)
+    return float(sec)
+
+
+def pasted_paragraphs(text: str) -> str:
+    """Eingefügten Text in Absätze bringen: mit Zeitmarken wie ein geladenes Transkript (Absatz je Minute), ohne
+    Zeitmarken Absätze des Originals bzw. etwa 150 Wörter."""
+    lines = [ln.strip() for ln in text.replace("\r", "").split("\n")]
+    segs: list[tuple[float, str]] = []
+    pending: float | None = None
+    stamped = 0
+    for ln in lines:
+        if not ln:
+            continue
+        m = _TS.match(ln)
+        if m:
+            stamped += 1
+            if m.group(2):
+                segs.append((_seconds(m.group(1)), m.group(2)))
+                pending = None
+            else:
+                pending = _seconds(m.group(1))
+        else:
+            t = pending if pending is not None else (segs[-1][0] if segs else 0.0)
+            segs.append((t, ln))
+            pending = None
+    if stamped >= 3:
+        return paragraphs(segs)
+    blocks = [" ".join(b.split()) for b in text.replace("\r", "").split("\n\n") if b.strip()]
+    if len(blocks) >= 3:
+        return "\n\n".join(blocks)
+    words = " ".join(text.split()).split(" ")
+    return "\n\n".join(" ".join(words[i:i + 150]) for i in range(0, len(words), 150))
 
 
 def is_transcript(content: Any) -> bool:

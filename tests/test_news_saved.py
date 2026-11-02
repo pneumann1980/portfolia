@@ -174,10 +174,10 @@ def test_read_all_undo_expires_and_can_be_dismissed(client):
 def test_status_shows_transcript_stage_counts_and_video_analyses(client, monkeypatch):
     ctx = wctx(client)
     monkeypatch.setattr(T.ytlib, "fetch", lambda *a: (_ for _ in ()).throw(ytlib.TranscriptError("none")))
-    add_video(ctx, "NOCAP")
+    add_video(ctx, "NOCAP", requested=True)
     T.TranscriptService(ctx, gap_s=0).run()
-    add_video(ctx, "WAIT1")
-    add_video(ctx, "WAIT2")
+    add_video(ctx, "WAIT1", requested=True)
+    add_video(ctx, "WAIT2", requested=True)
     with_transcript(ctx, "DONE1")
     ps = pipeline_status(ctx)
     tr = ps["transcripts"]
@@ -194,7 +194,7 @@ def test_status_shows_transcript_stage_counts_and_video_analyses(client, monkeyp
 
 def test_status_bottleneck_for_youtube_block_and_broken_library(client):
     ctx = wctx(client)
-    add_video(ctx, "V1")
+    add_video(ctx, "V1", requested=True)
     ctx.db.set_state(T.PAUSE_KEY, iso(NOW + timedelta(hours=5)))
     ps = pipeline_status(ctx)
     assert "YouTube sperrt den Transkript-Abruf" in ps["backlog"]["bottleneck"]
@@ -205,7 +205,7 @@ def test_status_bottleneck_for_youtube_block_and_broken_library(client):
     assert "Transkript-Bibliothek kann Videos nicht lesen" in pipeline_status(ctx)["backlog"]["bottleneck"]
     assert "CouldNotRetrieveTranscript" in client.get("/news?tab=status").text
     ctx.db.set_state(T.ERROR_KEY, None)
-    assert "Transkript-Takt" in pipeline_status(ctx)["backlog"]["bottleneck"]  # nur noch Wartende
+    assert "Transkripte: 1 warten" in pipeline_status(ctx)["backlog"]["bottleneck"]  # nur noch Wartende
     ctx.settings.set("news.transcripts", False)
     assert "ausgeschaltet" in client.get("/news?tab=status").text
 
@@ -221,7 +221,7 @@ def _wave(ctx, gw, monkeypatch):
 
 def test_manual_run_loads_transcripts_and_analyses_videos(client, monkeypatch):
     ctx = wctx(client)
-    vids = [add_video(ctx, f"W{i}") for i in range(3)]
+    vids = [add_video(ctx, f"W{i}", requested=True) for i in range(3)]
     ctx.settings.set("news.video_analysis_max_per_run", 1)  # mehrere Runden nötig
     gw = FakeGateway(ANSWER)
     res = _wave(ctx, gw, monkeypatch).run()
@@ -235,7 +235,7 @@ def test_manual_run_loads_transcripts_and_analyses_videos(client, monkeypatch):
 
 def test_manual_run_transcript_stage_skipped_or_waiting(client, monkeypatch):
     ctx = wctx(client)
-    add_video(ctx, "V1")
+    add_video(ctx, "V1", requested=True)
     ctx.db.set_state(T.PAUSE_KEY, iso(NOW + timedelta(hours=3)))
     _wave(ctx, FakeGateway(ANSWER), monkeypatch).run()
     st = W.load(ctx)["stages"]["transcripts"]
@@ -267,7 +267,7 @@ def test_transcript_bar_counts_cycle_like_other_stages(client, monkeypatch):
         [(0.0, "Satz.")], "de", True, "1.2.4"))
     monkeypatch.setattr(T.time, "sleep", lambda _s: None)  # Pause je Video im Test überspringen
     for i in range(10):
-        add_video(ctx, f"C{i}")
+        add_video(ctx, f"C{i}", requested=True)
     job_transcripts(ctx)  # öffnet den Zyklus, lädt 8 (PER_RUN), schreibt den Stand fort
     bar = Q.bar(ctx, "transcripts", Q.waiting_now(ctx)["transcripts"])
     assert (bar["done"], bar["waiting"], bar["total"]) == (8, 2, 10) and bar["pct"] == 80
@@ -278,8 +278,8 @@ def test_transcript_bar_counts_cycle_like_other_stages(client, monkeypatch):
 
 def test_transcript_eta_during_block_and_resume_button(client):
     ctx = wctx(client)
-    v1 = add_video(ctx, "B1")
-    add_video(ctx, "B2")
+    v1 = add_video(ctx, "B1", requested=True)
+    add_video(ctx, "B2", requested=True)
     until = NOW + timedelta(hours=20)
     ctx.db.set_state(T.PAUSE_KEY, iso(until))
     T.TranscriptService(ctx)._upsert(v1, "pending", "blocked", url="u", next_at=until)
