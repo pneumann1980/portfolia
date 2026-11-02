@@ -1354,6 +1354,10 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > Einzelentscheidung buchbar sind (Grund je Zeile, Weg in den Prüfstapel), und die Zählung API-Vorgänge → ausgewertete
 > Vorgänge → Zeilen. Die Übernahme bleibt bis zum vollständigen Nachweis gesperrt; „vorerst überspringen“ führt zurück
 > zu „Buchungen prüfen“ bzw. in den Prüfstapel, ohne den Abruf oder Zuordnungen zu verlieren.
+> **Ab 0.83.0** erkennt die Übernahme Lücken der API am Saldoverlauf der Quelle: Import-Buchungen ohne API-Gegenstück, die
+> eine belegte Lücke füllen (z. B. Auszahlungen aufs Bankkonto), bleiben erhalten; ein verbleibender Rest wird nur mit
+> ausdrücklicher Zustimmung je Asset als gekennzeichnete Ausgleichsbuchung gebucht (zur Lücke bzw. zum Abruf) – danach
+> exakter Bestand, rückgängig als Ganzes.
 
 > **DKB-Dokumente (ab 0.36.0):** An einem DKB-Konto (*Einstellungen → Datenquellen*) richtet *DKB-Abruf einrichten* ein
 > Abrufprogramm ein (eigene Python-Umgebung im Datenordner, kein zweiter Container). Per Knopfdruck werden – nach Freigabe in

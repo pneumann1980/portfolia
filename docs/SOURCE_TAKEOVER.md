@@ -54,6 +54,20 @@ Seit 0.68.0 gibt es zwei Stufen: *belegt* (`takeover.PROOF`, Bitpanda) und *best
 | Transfer mit anderem Konto | bleibt (die Gegenseite liegt dort); die API-Seite ist durch ihn gedeckt und wird nicht doppelt gebucht |
 | manuelle Buchungen, Transfers der App, Korrekturen der Diagnose | bleiben; müssen durch den Bestandsnachweis gedeckt sein |
 | nicht ausblendbare (z. B. Teil einer Gruppe) | bleiben, mit Grund in der Vorschau |
+| Import ohne API-Gegenstück, der eine belegte Lücke der API füllt (ab 0.83.0) | bleibt, mit Grund „füllt eine Lücke der API“ |
+
+## Lücken der API (ab 0.83.0)
+
+Bitpanda liefert je Vorgang den Saldo danach (`asset_balance_after`). `bitpanda.chain_gaps` rechnet ihn je Wallet und Asset
+nach; springt der Saldo stärker, als die Vorgänge erklären, fehlt dort eine Bewegung (Fenster zwischen den beiden Vorgängen,
+Betrag). Der Rest zwischen letztem Saldo und gemeldetem Bestand ist eine Lücke „bis zum Abruf“.
+
+1. **Lückenfüller:** Import-Buchungen ohne Gegenstück mit gleichem Vorzeichen im Fenster (±36 h), deren Betrag den offenen
+   Rest nicht übersteigt, bleiben stehen.
+2. **Ausgleich:** Bleibt eine Differenz, wird sie nur mit Zustimmung je Asset gebucht (Parameter `adjust`): *belegt*, wenn
+   die offenen Lücken sie genau erklären (je Lücke eine Buchung am Fensterende), sonst *nicht belegt* (eine Buchung zum
+   Abruf). Kennung `ausgleich:<übernahme>:<asset>:<n>`, Bezeichnung „Ausgleich: Bewegung fehlt in der API“.
+3. Zustimmung und Füller gehen in den Beweis-Token ein; Nachprüfung exakt; Rückgängig nimmt den Ausgleich mit zurück.
 
 **Spender:** Wo die API einen Wert nicht liefert, übernehmen die API-Zeilen EUR-Wert, Gebührenwert und Einordnung (Tag, nur bei
 gleicher Buchungsart) aus der zugeordneten Import-Buchung (`CsvImportService._donate`). Wo die API selbst einen Wert liefert

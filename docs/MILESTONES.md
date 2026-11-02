@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 02.11.2026 · Version 0.82.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 02.11.2026 · Version 0.83.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,41 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.83.0 – Quellenübernahme mit Lücken der API: Saldoverlauf als Beleg, Lückenfüller, Ausgleich mit Zustimmung
+
+**Ausgangslage (Bitpanda, realer Fall):** EUR stand nach der Übernahme bei 6.531,28 statt 0 (vorher 891,28), USD bei 35
+statt 0. Ursache: Der Import enthält Abgänge (u. a. Auszahlungen aufs Bankkonto), die die API nicht liefert; die Summe der
+API-Vorgänge ergibt nicht einmal ihren eigenen letzten Saldo (`asset_balance_after`). Wer „API maßgeblich“ wählte, verlor
+durch das Ausblenden diese Import-Buchungen – die Abweichung wuchs. Die bisherige Regel (Bestand exakt, sonst gesperrt) war
+richtig, bot aber keinen Weg.
+
+**Änderungen**
+
+* **Lücken der API erkennen** (`bitpanda.chain_gaps`): Je Wallet und Asset wird der Saldoverlauf der Vorgänge nachgerechnet
+  (Gebühren nach Gebührenmodus; offene Gebühr als zweite Variante). Springt der gemeldete Saldo stärker als die Vorgänge
+  erklären, ist das eine belegte Lücke (Zeitfenster zwischen den beiden Vorgängen, Betrag). Fehlende Umbuchungen zwischen
+  zwei Wallets desselben Assets heben sich auf. Dazu kommt der Rest zwischen letztem Saldo und gemeldetem Bestand (Fenster
+  „bis zum Abruf“). Ergebnis in `coverage.balances.gaps`.
+* **Lückenfüller bleiben:** Import-Buchungen ohne API-Gegenstück, die nach Asset, Richtung, Zeitfenster (±36 h) und Betrag
+  in eine belegte Lücke passen, werden nicht ausgeblendet, sondern bleiben mit Grund („füllt eine Lücke der API … –
+  Saldoverlauf der Quelle belegt die fehlende Bewegung“). Füllen sie alle Lücken, ist die Übernahme ohne weiteres exakt.
+* **Ausgleich nur mit ausdrücklicher Zustimmung je Asset:** Verbleibt eine Differenz, bietet die Seite einen Ausgleich an –
+  *belegt* (die verbleibenden Lücken erklären die Differenz genau: eine Buchung je Lücke am Fensterende) oder *nicht
+  belegt* (eine Buchung zum Abrufzeitpunkt). Gebucht wird als deutlich gekennzeichneter Zu-/Abgang („Ausgleich: Bewegung
+  fehlt in der API“, Vermerk mit Fenster und „vom Nutzer bestätigt“, Kennung `ausgleich:…`) im selben Stapel wie die
+  API-Vorgänge; die Nachprüfung bleibt exakt, Rückgängig nimmt den Ausgleich mit zurück.
+* **Beweis/Token:** Der Token enthält Lückenfüller und Ausgleich; ein ohne Zustimmung erzeugter Token gilt nicht für eine
+  Ausführung mit Ausgleich und umgekehrt. Stufe „… mit Ausgleich“ in Vorschau, Ergebnis und Protokoll.
+* **Oberfläche:** Problem „Bestand weicht ab“ zeigt die Lücken bzw. den nicht belegten Rest, Auswahl „Mit Ausgleich prüfen“
+  (bleibt über Bestätigung/Aufgabenbezug erhalten); Bestandstabelle mit „davon aus bleibenden Import-Buchungen“ und
+  „davon Ausgleich“; Hinweis vor dem Übernehmen.
+
+**Grenzen:** Belegt ist der *Betrag* einer Lücke und ihr Zeitfenster, nicht der genaue Zeitpunkt und nicht der Grund; der
+Ausgleich am Fensterende (bzw. zum Abruf) kann historische Bestände im Fenster verschieben. Ohne EUR-Wert bei Nicht-EUR-Assets
+(Kurs bei Bedarf). Nur Bitpanda liefert Salden je Vorgang; andere Quellen bieten ausschließlich den nicht belegten Ausgleich
+zum Abrufzeitpunkt an. Die Zuordnung der Lückenfüller ist heuristisch (gleiches Vorzeichen, Fenster, Betrag ≤ Rest); ein
+nicht passender Füller wird durch die Nachprüfung nicht verdeckt, weil der Bestand trotzdem exakt sein muss.
 
 ## 0.82.0 – Prüfablauf repariert: Quellenübernahme mit Einzelproblemen, Rückweg/Überspringen, Nachprüfung der Klärung
 

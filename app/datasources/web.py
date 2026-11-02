@@ -48,6 +48,14 @@ CHECK_LABELS = {"transaction": "Vorgänge", "balances": "Bestände", "assets": "
 _KID = re.compile(r"[A-Za-z0-9_:.\-]{1,120}")  # Aufgabenbezug aus „Buchungen prüfen“ (wie im Assistenten)
 
 
+def _adjust_of(values: list[str]) -> frozenset[str]:
+    """Bestätigter Ausgleich je Asset (Asset-Kennungen aus Formular/Adresse; nur zulässige Zeichen, höchstens 50)."""
+    return frozenset(v for v in values[:50] if _ASSET.fullmatch(v))
+
+
+_ASSET = re.compile(r"[A-Za-z0-9_:.#@\-]{1,80}")
+
+
 def _takeover_extra(ctx: Any, ds: Any, a: Any) -> dict[str, Any]:
     """Zusatzangaben der Übernahmeseite: offener Prüfstapel der Quelle (Einzelprüfung), bekannte Assets für „Asset
     zuordnen“, gespeicherte Zuordnungen nur für diesen Anbieter (einzeln entfernbar), Stammdaten der Assets, die unter
@@ -578,13 +586,14 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         row = TK.view(ctx.db, sid)
         a = None
+        adjust = _adjust_of(request.query_params.getlist("adjust"))
         if row is not None and row["status"] == "staged" and TK.supported(ds.provider):
-            a = await run_in_threadpool(lambda: TK.assess(ctx, sid, confirm=confirm == "1"))
+            a = await run_in_threadpool(lambda: TK.assess(ctx, sid, confirm=confirm == "1", adjust=adjust))
         result = json.loads(row["result_json"] or "{}") if row is not None else {}
         extra = await run_in_threadpool(_takeover_extra, ctx, ds, a)
         return render(request, "datasource_takeover.html", active="settings", ds=ds, t=row, a=a, result=result,
                       supported=TK.supported(ds.provider), mode=TK.mode(ds.provider), confirmed=confirm == "1",
-                      msg=msg, error=error, kid=_kid(kid), **extra)
+                      msg=msg, error=error, kid=_kid(kid), adjust_sel=sorted(adjust), **extra)
 
     @router.post("/settings/datasources/{sid}/uebernahme/abruf")
     async def takeover_fetch(request: Request, sid: int) -> Response:
@@ -607,7 +616,8 @@ def make_router() -> APIRouter:
         if str(f.get("confirm") or "") != "1":
             return _back(request, _tk_url(sid, kid, "#uebernehmen", error="Bitte die Vorschau bestätigen."))
         res = await run_in_threadpool(TK.start_apply, get_ctx(request), sid, str(f.get("token") or ""),
-                                      str(f.get("confirmed") or "") == "1")
+                                      str(f.get("confirmed") or "") == "1",
+                                      _adjust_of([str(v) for v in f.getlist("adjust")]))
         # „gestartet“ ist kein Erfolg: die Seite zeigt das Ergebnis, sobald der Hintergrundlauf fertig ist
         key, text = ("error", " ".join(res["errors"])) if res.get("errors") else (
             "msg", "Übernahme gestartet – noch nicht abgeschlossen; das Ergebnis erscheint hier.")

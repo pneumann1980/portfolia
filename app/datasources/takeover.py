@@ -284,11 +284,18 @@ class Assessment:
     problems: list[dict[str, Any]] = field(default_factory=list)  # einzeln bearbeitbare Probleme (stabile Kennung)
     breakdown: dict[str, list[tuple[str, Decimal]]] = field(default_factory=dict)  # Zusammensetzung je Asset
     raw_check: dict[str, list[dict[str, str]]] = field(default_factory=dict)  # Bestandsprüfung der Quelle je Kürzel
+    gaps: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # Lücken laut Saldoverlauf je Asset
+    fillers: list[tuple[Any, dict[str, Any]]] = field(default_factory=list)  # Import-Buchung füllt Lücke (bleibt)
+    adjust: frozenset[str] = frozenset()  # Assets, für die der Nutzer den Ausgleich bestätigt hat
+    adjustable: dict[str, dict[str, Any]] = field(default_factory=dict)  # möglicher Ausgleich je Asset
+    adjustments: list[dict[str, Any]] = field(default_factory=list)  # zu buchende Ausgleichsbuchungen (bestätigt)
 
     @property
     def tier(self) -> str:
-        """belegt = Beweis erbracht · bestätigt = vom Nutzer bestätigt, Bestand wird nicht schlechter."""
-        return "belegt" if self.mode == "proof" else "bestätigt"
+        """belegt = Beweis erbracht · bestätigt = vom Nutzer bestätigt, Bestand wird nicht schlechter; mit Ausgleich:
+        Restabweichung mit Zustimmung als gekennzeichnete Ausgleichsbuchung."""
+        base = "belegt" if self.mode == "proof" else "bestätigt"
+        return base + (" mit Ausgleich" if self.adjustments else "")
 
     @property
     def ok(self) -> bool:
@@ -411,6 +418,89 @@ def _counts(cov: dict[str, Any], a: Any) -> dict[str, Any]:
 _MAP = re.compile(r"Asset für „([^“]+)“ zuordnen|„([^“]+)“ bei .+ Asset zuordnen")
 
 
+_FIAT_TOL = Decimal("0.01")
+
+
+def _tol(aid: str, q: Decimal) -> Decimal:
+    """Vergleichsspielraum für Lücke ↔ Import-Buchung: Fiat auf den Cent, sonst sehr eng (relativ)."""
+    from app.importer import contract as C
+
+    return _FIAT_TOL if aid.upper() in C.ISO_CURRENCIES else max(DUST, abs(q) * Decimal("1e-9"))
+
+
+def _window(g: dict[str, Any]) -> str:
+    f, t = parse_iso(g.get("from")), parse_iso(g.get("to"))
+    fmt = "%d.%m.%Y"
+    return (f"{f.strftime(fmt) if f else 'Beginn'} bis {t.strftime(fmt) if t else 'zum Abruf'}")
+
+
+def _gaps_by_asset(cov: dict[str, Any], resolver: Any, provider: str) -> dict[str, list[dict[str, Any]]]:
+    """Lücken laut Saldoverlauf (``coverage.balances.gaps`` der Quelle, je Kürzel) → je Portfolia-Asset."""
+    out: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for sym, items in ((cov.get("balances") or {}).get("gaps") or {}).items():
+        aid, _how, _key = resolver.resolve_for(str(sym), provider)
+        if aid is None:
+            continue
+        for g in items:
+            out[aid].append({"from": g.get("from"), "to": g.get("to"), "amount": _dec(g.get("amount")),
+                             "wallet": g.get("wallet") or ""})
+    return {k: sorted(v, key=lambda g: (g["to"] or "9999", g["from"] or "")) for k, v in out.items()}
+
+
+def _fill(gaps: dict[str, list[dict[str, Any]]], unmatched: list[Any], account: str, fetched_at: str
+          ) -> list[tuple[Any, dict[str, Any]]]:
+    """Import-Buchungen ohne Gegenstück in der API, die eine Lücke im Saldoverlauf füllen: gleiches Asset, gleiche
+    Richtung, Zeitpunkt im Fenster der Lücke (± Zuordnungsspielraum) und zusammen nicht mehr als die Lücke. Sie bleiben
+    bei der Übernahme bestehen – die Bewegung ist von beiden Seiten belegt (Import: Vorgang, Quelle: Saldosprung)."""
+    out: list[tuple[Any, dict[str, Any]]] = []
+    used: set[str] = set()
+    end = parse_iso(fetched_at) or datetime.now(UTC)
+    for aid, gs in gaps.items():
+        for g in gs:
+            start = parse_iso(g["from"])
+            lo = start - WINDOW if start is not None else datetime(1970, 1, 1, tzinfo=UTC)
+            hi = (parse_iso(g["to"]) or end) + WINDOW
+            rest = g["amount"]
+            cands = []
+            for t in unmatched:
+                q = _tx_legs(t, account).get(aid, ZERO)
+                if t.tx_id in used or not q or (q > 0) != (rest > 0) or not (lo <= t.ts <= hi):
+                    continue
+                cands.append((t, q))
+            for t, q in sorted(cands, key=lambda x: (x[0].ts, x[0].tx_id)):
+                if abs(q) <= abs(rest) + _tol(aid, rest):
+                    out.append((t, g))
+                    used.add(t.tx_id)
+                    rest -= q
+            g["left"] = rest if abs(rest) > _tol(aid, g["amount"]) else ZERO
+    return out
+
+
+def _adjustable(a: Any, expected: dict[str, Decimal], observed: dict[str, Decimal],
+                parts: dict[str, dict[str, Decimal]]) -> None:
+    """Rest je Asset nach Lückenfüllern: Ausgleich auf den beobachteten Bestand anbieten – „belegt“, wenn die
+    verbleibenden Lücken des Saldoverlaufs genau die Differenz erklären (Buchung je Lücke zu deren Zeitpunkt), sonst
+    „nicht belegt“ (eine Buchung zum Abrufzeitpunkt). Nur mit gemeldetem Bestand der Quelle; gebucht wird nur, wenn
+    der Nutzer den Ausgleich für dieses Asset ausdrücklich bestätigt (``a.adjust``)."""
+    end = a.fetched_at
+    for aid in sorted(set(expected) | set(observed)):
+        need = observed.get(aid, ZERO) - expected.get(aid, ZERO)
+        if abs(need) <= DUST or (aid not in a.delivered and not observed.get(aid)):
+            continue
+        left = [g for g in a.gaps.get(aid, []) if g.get("left", g["amount"])]
+        total = sum((g.get("left", g["amount"]) for g in left), ZERO)
+        dated = bool(left) and abs(total - need) <= _tol(aid, need)
+        items = ([{"asset": aid, "ts": (g["to"] or end), "amount": g.get("left", g["amount"]), "window": _window(g)}
+                  for g in left] if dated else
+                 [{"asset": aid, "ts": end, "amount": need, "window": "zum Abrufzeitpunkt"}])
+        a.adjustable[aid] = {"need": need, "dated": dated, "gaps_total": total, "items": items}
+        if aid in a.adjust:
+            a.adjustments += items
+            expected[aid] += need
+            key = "Ausgleich: " + ("Lücken laut Saldoverlauf der Quelle" if dated else "nicht belegte Restabweichung")
+            parts[aid][key] = parts[aid].get(key, ZERO) + need
+
+
 def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
               refusal: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Einzeln bearbeitbare Probleme mit stabiler Kennung (nie gekürzter Meldungstext): fehlende Asset-Zuordnung je
@@ -465,6 +555,7 @@ def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
             continue
         out.append({"id": f"bal:{b['asset']}", "kind": "balance", "asset": b["asset"],
                     "symbol": str(b["name"]).split(" (", 1)[0],
+                    "adjust": (getattr(a, "adjustable", None) or {}).get(b["asset"]),
                     "title": f"Bestand {b['name']} passt nicht",
                     "detail": f"jetzt {qty_exact(b['now'])}, nach Übernahme {qty_exact(b['after'])}, laut Quelle "
                               f"{_obs(b)}" + (" – würde negativ" if b["negative"] else ""),
@@ -479,7 +570,8 @@ def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
     return out
 
 
-def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> Assessment | None:
+def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
+           adjust: frozenset[str] | set[str] = frozenset()) -> Assessment | None:
     """Beweis und Vorschau aus dem abgelegten Vollabruf (rein lesend). ``None``: kein abgelegter Abruf."""
     from app.csvimport.events import identity_keys, source_ref_keys
     from app.csvimport.identity import note_identity_keys
@@ -618,6 +710,17 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
     a.unmatched_new = [ln for i, ln in enumerate(lines) if i not in matched_new and ln.covered_by is None
                        and ln.legs and (ln.rec.ext_id or "") not in own_ids]
 
+    # -- Lücken der API (Saldoverlauf der Quelle): passende Import-Buchungen ohne Gegenstück bleiben ------------
+    a.gaps = _gaps_by_asset(cov, resolver, prov)
+    a.fillers = _fill(a.gaps, a.unmatched_old, account, a.fetched_at)
+    if a.fillers:
+        keep_ids = {t.tx_id for t, _g in a.fillers}
+        cand = [t for t in cand if t.tx_id not in keep_ids]
+        a.unmatched_old = [t for t in a.unmatched_old if t.tx_id not in keep_ids]
+        for t, g in a.fillers:
+            a.kept.append((t, f"füllt eine Lücke der API ({_window(g)}) – Saldoverlauf der Quelle belegt die "
+                              "fehlende Bewegung"))
+
     # -- Plan: ausblenden (Korrektur der Diagnose) ---------------------------------------------------------
     if plan and cand:
         from app.diagnosis import actions as A
@@ -668,6 +771,8 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
             for aid, q in _tx_legs(t, account).items():
                 expected[aid] += q
                 parts[aid][f"bleibt: {why.split(' – ')[0]}"] += q
+    a.adjust = frozenset(adjust)
+    _adjustable(a, expected, observed, parts)
     led = ctx.ledger()
     now = led.holdings_by_account(account) if led is not None else {}
     assets = pf.assets if pf is not None else {}
@@ -679,9 +784,11 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
         known = aid in a.delivered or bool(o)
         # Bestätigt: ohne gemeldete Position ist „nicht schlechter“ nur belegt, wenn sich nichts ändert
         not_worse = abs(e - o) <= abs(n - o) + DUST if known or a.mode == "proof" else abs(e - n) <= DUST
+        adj = sum((x["amount"] for x in a.adjustments if x["asset"] == aid), ZERO)
         a.balances.append({"asset": aid, "name": name, "now": n, "after": e, "observed": o, "negative": e < -DUST,
                            "ok": abs(e - o) <= DUST, "was_ok": abs(n - o) <= DUST, "known": known,
-                           "not_worse": not_worse})
+                           "not_worse": not_worse, "adjusted": adj,
+                           "filled": sum((_tx_legs(t, account).get(aid, ZERO) for t, _g in a.fillers), ZERO)})
     names = [b["name"] for b in a.balances]
     for b in a.balances:  # gleiches Kürzel, verschiedene Assets (z. B. PEAQ und PEAQ-Token auf Ethereum)
         if names.count(b["name"]) > 1 and b["name"] != b["asset"]:
@@ -726,7 +833,9 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
         Check("balance", "Vorgänge der API ergeben den beobachteten Bestand exakt je Asset",
               all(b["ok"] for b in a.balances),
               "; ".join(f"{b['name']}: erklärt {qty_exact(b['after'])}, laut Quelle {_obs(b)}"
-                         for b in a.balances if not b["ok"])[:400] or f"{len(a.balances)} Assets stimmen")
+                         for b in a.balances if not b["ok"])[:400] or f"{len(a.balances)} Assets stimmen" + (
+                  " – davon mit bestätigtem Ausgleich: " + ", ".join(sorted({x["asset"] for x in a.adjustments}))
+                  if a.adjustments else ""))
         if proof else
         Check("balance", "Der Bestand weicht danach je Asset nicht stärker vom beobachteten ab als jetzt",
               all(b["not_worse"] for b in a.balances),
@@ -761,7 +870,8 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False) -> A
     a.problems = _problems(a, lines, unmapped, prov, last if same else None)
     fp = json.dumps({"s": sid, "r": a.rid, "h": sorted(hide_ids), "b": {k: _fmt(v) for k, v in sorted(
         expected.items())}, "p": a.plan.token if a.plan else "", "d": sorted(a.donors), "m": a.mode,
-        "c": a.confirm}, sort_keys=True)
+        "c": a.confirm, "f": sorted(t.tx_id for t, _g in a.fillers),
+        "a": [[x["asset"], x["ts"], _fmt(x["amount"])] for x in a.adjustments]}, sort_keys=True)
     a.token = hashlib.sha256(fp.encode()).hexdigest()[:32]
     a.lines_by_ext = {ln.rec.ext_id: ln for ln in lines if ln.rec.ext_id}
     return a
@@ -794,7 +904,8 @@ def _year_diff(before: dict[int, tuple[Decimal, Decimal]], after: dict[int, tupl
 # Übernehmen
 # ----------------------------------------------------------------------------------------------------
 
-def start_apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, Any]:
+def start_apply(ctx: Any, sid: int, token: str, confirm: bool = False,
+                adjust: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Übernahme im Hintergrund: Beweis erneut prüfen, dann übernehmen (Fortschritt in ``ds_takeover.message``)."""
     with _LOCK:
         if busy(sid):
@@ -803,7 +914,7 @@ def start_apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[s
 
     def work() -> None:
         try:
-            apply(ctx, sid, token, confirm)
+            apply(ctx, sid, token, confirm, adjust)
         except Exception as e:  # pragma: no cover - Absicherung
             log.exception("Quellenübernahme von %s fehlgeschlagen", sid)
             r = latest(ctx.db, sid)
@@ -818,7 +929,8 @@ def start_apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[s
     return {"errors": []}
 
 
-def apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, Any]:
+def apply(ctx: Any, sid: int, token: str, confirm: bool = False,
+          adjust: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Quelle übernehmen – nur wenn der Beweis hält und die Vorschau noch gilt; danach Nachprüfung am Bestand, sonst
     vollständige Rücknahme. Rückgabe: ``errors`` (leer bei Erfolg), ``result``."""
     from app.datasources import service as S
@@ -829,12 +941,13 @@ def apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, An
             return {"errors": [S.BUSY_TEXT]}
         try:
             with S._INGEST_LOCK:
-                return _apply(ctx, sid, token, confirm)
+                return _apply(ctx, sid, token, confirm, adjust)
         finally:
             S._release(sid)
 
 
-def _apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, Any]:
+def _apply(ctx: Any, sid: int, token: str, confirm: bool = False,
+           adjust: frozenset[str] = frozenset()) -> dict[str, Any]:
     from app.csvimport import batch as B
     from app.csvimport.service import csv_service, rec_to_json
     from app.diagnosis import actions as A
@@ -842,7 +955,7 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, A
 
     db = ctx.db
     csv = csv_service(ctx)
-    a = assess(ctx, sid, confirm=confirm)
+    a = assess(ctx, sid, confirm=confirm, adjust=adjust)
     if a is None or db.q1("SELECT status FROM ds_takeover WHERE id=?", (a.rid,))["status"] != "staged":
         return {"errors": ["Kein abgelegter Vollabruf – bitte zuerst abrufen."]}
     def refuse(text: str) -> dict[str, Any]:
@@ -904,6 +1017,7 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, A
 
     row = db.q1("SELECT events_json FROM ds_takeover WHERE id=?", (rid,))
     recs = [rec_from_json(json.dumps(d)) for d in json.loads(row["events_json"])]
+    recs += _adjust_recs(a)  # bestätigter Ausgleich: gekennzeichnete Zeilen im selben Stapel (gemeinsam rückgängig)
     payload = ("[" + ",".join(rec_to_json(r) for r in recs) + "]").encode()
     prov = a.provider
     try:
@@ -978,17 +1092,50 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False) -> dict[str, A
     csv.refresh_status(bid)
     exact = all(abs(now.get(aid, ZERO) - a.observed.get(aid, ZERO)) <= DUST for aid in set(now) | set(a.observed))
     result = {"hidden": len(a.hide), "kept": len(a.kept), "booked": len(book), "covered": len(cover_ext),
+              "fillers": len(a.fillers),
+              "adjusted": [{"asset": x["asset"], "amount": _fmt(x["amount"]), "window": x["window"]}
+                           for x in a.adjustments],
               "matched": a.matched, "donors": len(a.donors), "left": len(stuck), "tier": a.tier,
               "before": len(a.before), "window_from": a.window_from,
               "check": {"assets": len(a.balances), "exact": exact},
               "years": _year_diff(years_before, _years(ctx))}
     db.x("UPDATE ds_takeover SET status='applied', applied_at=?, message=?, result_json=? WHERE id=?",
-         (_now(), f"Übernommen ({a.tier}): {len(a.hide)} Buchungen ersetzt, {len(book)} API-Vorgänge gebucht, "
+         (_now(), f"Übernommen ({a.tier}): {len(a.hide)} Buchungen ersetzt, {len(book)} API-Vorgänge gebucht"
+                  + (f" (davon {len(a.adjustments)} Ausgleichsbuchungen)" if a.adjustments else "")
+                  + (f", {len(a.fillers)} Import-Buchungen füllen Lücken der API und bleiben" if a.fillers else "")
+                  + ", "
                   + (f"Bestand exakt bestätigt ({len(a.balances)} Assets)." if exact else
                      "Bestand nicht schlechter als vorher (nicht exakt – Abweichung bleibt als Befund sichtbar)."),
           json.dumps(result, ensure_ascii=False), rid))
     log.info("Quellenübernahme %s: %s", sid, result)
     return {"errors": [], "result": result, "unresolved": len(rest)}
+
+
+def _adjust_recs(a: Any) -> list[Any]:
+    """Ausgleichsbuchungen als Vorgänge der Übernahme: Zugang bzw. Abgang ohne Gegenbuchung, zum Zeitpunkt der Lücke
+    (belegt) bzw. des Abrufs (nicht belegt), deutlich gekennzeichnet; stabile Kennung je Übernahme, Asset und Lücke."""
+    from app.csvimport import model as M
+    from app.importer import contract as C
+
+    out = []
+    for i, x in enumerate(a.adjustments):
+        q, aid = x["amount"], x["asset"]
+        ts = parse_iso(x["ts"]) or datetime.now(UTC)
+        ts = ts - timedelta(seconds=1) if x["window"] != "zum Abrufzeitpunkt" else ts  # vor dem Vorgang danach
+        fiat_eur = aid.upper() == "EUR"
+        why = "nicht belegte Restabweichung" if x["window"] == "zum Abrufzeitpunkt" else \
+            "Lücke laut Saldoverlauf der Quelle"
+        r = M.Rec(line=900_000 + i, ts=ts, kind=M.DEPOSIT if q > 0 else M.WITHDRAWAL,
+                  ext_id=f"ausgleich:{a.rid}:{aid}:{i}", label="Ausgleich: Bewegung fehlt in der API",
+                  note=f"Quellenübernahme – {why} ({x['window']}); vom Nutzer bestätigt",
+                  value=abs(q) if fiat_eur else None, value_ccy="EUR" if fiat_eur else None,
+                  class_hint={aid: "fiat"} if aid.upper() in C.ISO_CURRENCIES else {})
+        if q > 0:
+            r.in_sym, r.in_qty = aid, q
+        else:
+            r.out_sym, r.out_qty = aid, -q
+        out.append(r)
+    return out
 
 
 # ----------------------------------------------------------------------------------------------------

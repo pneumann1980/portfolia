@@ -117,6 +117,19 @@
             <span class="hint">Danach hier erneut übernehmen – geänderte Daten werden neu geprüft.</span>
           </div>
         {% elif p.kind == 'balance' %}
+          {% set adj = p.adjust %}
+          {% if adj %}
+          <div class="tk-actions tk-adjust">
+            {% if adj.dated %}<p><b>Die Quelle belegt die fehlenden Bewegungen selbst</b> (Sprünge im Kontostand je Vorgang): {{ adj['items']|length }} Lücke{{ 'n' if adj['items']|length != 1 }} ergeben zusammen genau {{ adj.need|qty_exact }} {{ p.symbol }}.</p>
+            {% else %}<p><b>Nicht durch den Saldoverlauf belegt</b>{% if adj.gaps_total %} (Lücken laut Saldoverlauf ergeben {{ adj.gaps_total|qty_exact }}, nötig sind {{ adj.need|qty_exact }}){% endif %}. Ein Ausgleich wäre eine einzige Buchung über {{ adj.need|qty_exact }} {{ p.symbol }} zum Abrufzeitpunkt.</p>{% endif %}
+            <details{% if adj['items']|length <= 6 %} open{% endif %}><summary>Ausgleichsbuchungen ({{ adj['items']|length }})</summary><ul class="small">{% for x in adj['items'][:40] %}<li>{{ x.amount|qty_exact }} {{ p.symbol }} – {{ x.window }}</li>{% endfor %}</ul></details>
+            <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme#uebernehmen" class="stack" style="gap:6px">{{ kidf() }}{% if confirmed %}<input type="hidden" name="confirm" value="1">{% endif %}
+              {% for x in adjust_sel if x != p.asset %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}
+              <label class="check"><input type="checkbox" name="adjust" value="{{ p.asset }}"> Ich bestätige: Für {{ p.symbol }} gilt der Bestand der Quelle. Die fehlenden Bewegungen werden als gekennzeichnete Ausgleichsbuchungen gebucht ({% if p.asset|upper == 'EUR' %}steuerlich neutral{% else %}Zu- bzw. Abgang ohne Gegenwert – die Wirkung auf die Steuerjahre wird gemessen und angezeigt{% endif %}); rückgängig mit der ganzen Übernahme.</label>
+              <div><button class="btn sm" type="submit">Mit Ausgleich prüfen</button></div>
+            </form>
+          </div>
+          {% endif %}
           <details class="tk-actions"><summary>Abweichung untersuchen</summary>
             <p class="hint">„Nach Übernahme“ setzt sich so zusammen (gebuchte Wirkung je Buchungsart; nicht buchbare und gedeckte Vorgänge zählen nicht):</p>
             <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Bestandteil</th><th class="num">Menge</th></tr></thead><tbody>
@@ -157,7 +170,7 @@
   <section class="card" id="beweis">
     <div class="card-head"><h2>2 · {{ 'Beweis' if a.mode == 'proof' else 'Prüfung und Bestätigung' }}</h2> {% if a.ok %}<span class="badge good">{{ 'erbracht' if a.mode == 'proof' else 'bestätigt' }}</span>{% else %}<span class="badge crit">{{ 'nicht erbracht' if a.mode == 'proof' else 'offen' }}</span>{% endif %}</div>
     {% if a.mode == 'confirm' %}
-    <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme" class="stack" style="gap:6px;margin-bottom:10px">{{ kidf() }}
+    <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme" class="stack" style="gap:6px;margin-bottom:10px">{{ kidf() }}{% for x in adjust_sel %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}
       <label class="check"><input type="checkbox" name="confirm" value="1"{% if confirmed %} checked{% endif %}> Ich bestätige: {{ ds.provider_label }} kennt für das Konto „{{ ds.account }}“ die <b>vollständige Historie</b> (der kuratierte Import darf ab dem ersten Ereignis der Quelle zurücktreten).</label>
       <div><button class="btn sm" type="submit">Mit dieser Angabe prüfen</button></div>
     </form>
@@ -172,7 +185,7 @@
     <div class="card-head"><h2>3 · Bestand</h2></div>
     <p class="hint">„Jetzt“ = aktueller Bestand der Buchungen des Kontos; „nach Übernahme“ = Vorgänge der Quelle plus bleibende Buchungen; „beobachtet“ = Bestand laut Quelle.{% if a.window_from %} Buchungen vor dem {{ a.window_from|date_de }} (erstes Ereignis der Quelle) bleiben: {{ a.before|length }}.{% endif %}</p>
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th class="num">Jetzt</th><th class="num">Nach Übernahme</th><th class="num">Beobachtet</th><th>Stand</th></tr></thead><tbody>
-    {% for b in a.balances %}<tr><td><b>{{ b.name }}</b></td><td class="num" data-label="Jetzt">{{ b.now|qty_exact }}{% if not b.was_ok %} <span class="badge warn">weicht ab</span>{% endif %}</td><td class="num" data-label="Nach Übernahme">{{ b.after|qty_exact }}{% if b.negative %} <span class="badge crit">würde negativ</span>{% endif %}</td><td class="num" data-label="Beobachtet">{% if b.known %}{{ b.observed|qty_exact }}{% else %}<span class="badge warn" title="Die Quelle meldet für dieses Asset keine Position – nicht dasselbe wie 0">nicht geliefert</span>{% endif %}</td><td data-label="Stand">{% if b.ok %}<span class="badge good">exakt</span>{% elif a.mode == 'confirm' and b.not_worse %}<span class="badge warn">Abweichung {{ (b.after - b.observed)|qty_exact }} (nicht schlechter)</span>{% else %}<span class="badge crit">Abweichung {{ (b.after - b.observed)|qty_exact }}</span>{% endif %}</td></tr>{% endfor %}
+    {% for b in a.balances %}<tr><td><b>{{ b.name }}</b></td><td class="num" data-label="Jetzt">{{ b.now|qty_exact }}{% if not b.was_ok %} <span class="badge warn">weicht ab</span>{% endif %}</td><td class="num" data-label="Nach Übernahme">{{ b.after|qty_exact }}{% if b.negative %} <span class="badge crit">würde negativ</span>{% endif %}{% if b.filled %}<br><span class="hint" title="Import-Buchungen, die eine Lücke der API füllen, bleiben bestehen">davon {{ b.filled|qty_exact }} aus bleibenden Import-Buchungen</span>{% endif %}{% if b.adjusted %}<br><span class="badge warn">davon Ausgleich {{ b.adjusted|qty_exact }}</span>{% endif %}</td><td class="num" data-label="Beobachtet">{% if b.known %}{{ b.observed|qty_exact }}{% else %}<span class="badge warn" title="Die Quelle meldet für dieses Asset keine Position – nicht dasselbe wie 0">nicht geliefert</span>{% endif %}</td><td data-label="Stand">{% if b.ok %}<span class="badge good">exakt</span>{% elif a.mode == 'confirm' and b.not_worse %}<span class="badge warn">Abweichung {{ (b.after - b.observed)|qty_exact }} (nicht schlechter)</span>{% else %}<span class="badge crit">Abweichung {{ (b.after - b.observed)|qty_exact }}</span>{% endif %}</td></tr>{% endfor %}
     </tbody></table></div>
   </section>
 
@@ -214,7 +227,9 @@
     <div class="card-head"><h2>5 · Übernehmen</h2></div>
     {% if a.ok %}
     <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/uebernehmen" class="stack" style="gap:8px">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="token" value="{{ a.token }}">{% if a.confirm %}<input type="hidden" name="confirmed" value="1">{% endif %}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="token" value="{{ a.token }}">{% for x in a.adjust|sort %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}{% if a.confirm %}<input type="hidden" name="confirmed" value="1">{% endif %}
+      {% if a.adjustments %}<div class="alert warn"><span class="icon">!</span><div>Mit bestätigtem Ausgleich: {{ a.adjustments|length }} gekennzeichnete Ausgleichsbuchung{{ 'en' if a.adjustments|length != 1 }} ({% for x in a.adjust|sort %}{{ x }}{{ ', ' if not loop.last }}{% endfor %}) werden mitgebucht.</div></div>{% endif %}
+      {% if a.fillers %}<p class="hint">{{ a.fillers|length }} Import-Buchung{{ 'en' if a.fillers|length != 1 }} ohne Gegenstück füll{{ 'en' if a.fillers|length != 1 else 't' }} eine Lücke der API und bleib{{ 'en' if a.fillers|length != 1 else 't' }} bestehen (Liste unter „Bleibende Buchungen“).</p>{% endif %}
       <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe Beweis, Bestand und Wirkung geprüft. {{ a.hide|length }} Buchungen werden ausgeblendet, die Vorgänge der API gebucht; weicht der Bestand danach ab, wird alles zurückgenommen.</label>
       <div><button class="btn primary" type="submit">API maßgeblich machen</button></div>
     </form>

@@ -611,6 +611,61 @@ def _chain(ops: list[_Op], diag: _Diag) -> None:
                 diag.count("Saldoverlauf: Brüche")
 
 
+def chain_gaps(ops: list[_Op]) -> tuple[dict[str, list[dict[str, Any]]], dict[str, tuple[datetime, Decimal]]]:
+    """Lücken im Saldoverlauf je Asset-ID: Wo ``asset_balance_after`` eines Wallets nicht aus dem vorigen Saldo und dem
+    Betrag (± Gebühr) folgt, fehlt dazwischen eine Bewegung – Betrag und Zeitfenster sind damit von der Quelle selbst
+    belegt, nur das Gegenüber ist unbekannt. Teile mit gleichem Zeitpunkt werden gemeinsam betrachtet (Reihenfolge
+    unbekannt); der erste Saldo eines Wallets wird gegen 0 geprüft. Rückgabe: Lücken je Asset-ID
+    (``from``/``to``/``amount``/``wallet``) und letzter Saldo je Asset-ID (Summe der Wallets, jüngster Zeitpunkt)."""
+    groups: dict[tuple[str, str], list[_Leg]] = defaultdict(list)
+    for op in ops:
+        for lg in op.legs:
+            if lg.wallet and lg.balance_ref and lg.ts is not None and lg.balance_after is not None \
+                    and lg.amount is not None and lg.side in ("in", "out"):
+                groups[(lg.wallet, lg.balance_ref)].append(lg)
+    gaps: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    last: dict[str, tuple[datetime, Decimal]] = {}
+    for (wallet, ref), legs in groups.items():
+        legs.sort(key=lambda x: x.ts)  # type: ignore[arg-type, return-value]
+        prev_bal, prev_ts = ZERO, None
+        i = 0
+        while i < len(legs):
+            same = [lg for lg in legs[i:] if lg.ts == legs[i].ts]
+            i += len(same)
+            known = ZERO
+            open_fees: list[Decimal] = []  # Gebühr ohne belegte Lesart: mit und ohne prüfen
+            for lg in same:
+                signed = lg.amount if lg.side == "in" else -lg.amount  # type: ignore[operator]
+                fee = lg.fee if lg.fee_same else ZERO
+                tfee = lg.trade_fee if lg.trade_fee_ref == lg.ref and lg.trade_fee_extra else ZERO
+                known += signed - tfee - (fee if lg.fee_mode == "extra" else ZERO)
+                if fee and lg.fee_mode is None:
+                    open_fees.append(fee)
+            options = [prev_bal + known, prev_bal + known - sum(open_fees, ZERO)]
+            finals = [lg.balance_after for lg in same if lg.balance_after is not None]
+            hit = next((f for f in finals for e in options if _close(f, e)), None)
+            final = hit if hit is not None else same[-1].balance_after
+            if hit is None and final is not None:
+                amount = min((final - e for e in options), key=abs)
+                gaps[ref].append({"from": _iso(prev_ts) if prev_ts else None, "to": _iso(same[0].ts),
+                                  "amount": amount, "wallet": wallet})
+            prev_bal, prev_ts = (final if final is not None else prev_bal), same[0].ts
+        cur = last.get(ref)
+        last[ref] = (max(cur[0], prev_ts) if cur else prev_ts, (cur[1] if cur else ZERO) + prev_bal)  # type: ignore
+    # Umbuchungen zwischen zwei Wallets desselben Assets, die beide fehlen, heben sich auf: nicht als Lücke führen
+    for ref, gs in gaps.items():
+        keep: list[dict[str, Any]] = []
+        for g in gs:
+            twin = next((k for k in keep if k["wallet"] != g["wallet"] and _close(k["amount"], -g["amount"])
+                         and k["to"] == g["to"]), None)
+            if twin is not None:
+                keep.remove(twin)
+            else:
+                keep.append(g)
+        gaps[ref] = keep
+    return {r: g for r, g in gaps.items() if g}, last
+
+
 # ----------------------------------------------------------------------------------------------------
 # Teile → Zeilen
 # ----------------------------------------------------------------------------------------------------
@@ -1172,6 +1227,17 @@ class BitpandaConnector(K.Connector):
 
         detail: dict[str, list[dict[str, str]]] = {}
         rows = self._reconcile(ops, held, sym, detail) if full_history else {}
+        gaps_out: dict[str, list[dict[str, str]]] = {}
+        if full_history:  # Lücken laut Saldoverlauf + Rest bis zum Bestand laut /portfolio (nach dem letzten Vorgang)
+            gaps, last = chain_gaps(ops)
+            for ref in set(gaps) | set(last):
+                items = [{"from": g["from"], "to": g["to"], "amount": _q(g["amount"]), "wallet": g["wallet"]}
+                         for g in gaps.get(ref, [])]
+                if ref in last and ref in held and not _close(held[ref], last[ref][1]):
+                    items.append({"from": _iso(last[ref][0]), "to": None, "amount": _q(held[ref] - last[ref][1]),
+                                  "wallet": ""})
+                if items:
+                    gaps_out.setdefault(sym(ref), []).extend(items)
         by_key: dict[str, list[str]] = defaultdict(list)
         for ref in held:
             by_key[sym(ref)].append(ref)
@@ -1189,7 +1255,7 @@ class BitpandaConnector(K.Connector):
         diffs = [t for t in rows.values() if not t.startswith("Vorgänge stimmen")]
         coverage["balances"] = {"checked": True, "assets": len(held), "unparsed": unparsed,
                                 "compared": len(rows) if full_history else 0, "differences": len(diffs),
-                                "examples": diffs[:6], "detail": detail,
+                                "examples": diffs[:6], "detail": detail, "gaps": gaps_out,
                                 **({} if full_history else {"note": "Vergleich mit der Summe der Vorgänge nur nach "
                                                                     "vollständigem Abruf der Historie"})}
         if diffs:
