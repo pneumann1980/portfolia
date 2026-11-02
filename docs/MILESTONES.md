@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 02.11.2026 · Version 0.83.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 02.11.2026 · Version 0.84.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,37 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.84.0 – Bitpanda: Hat die API Lücken? (Prüfseite, nur lesend)
+
+**Anlass:** In der Quellenübernahme fehlten der API Bewegungen (EUR, USD). Zu klären war, ob die Bitpanda Public API
+tatsächlich Lücken hat, welche Arten und Zeiträume betroffen sind – oder ob der Abruf etwas auslässt.
+
+**Recherche (Doku, Stand 02.11.2026):** `/v1/operations` nennt weder einen Wertebereich der Vorgangsarten noch eine
+Begrenzung der Historie; Karten-, Pay- oder Nutzer-Transfers werden weder ein- noch ausgeschlossen. Laut „Migrating from
+the legacy API“ fasst `/operations` die alten Endpunkte `/trades`, `/wallets/transactions`, `/fiatwallets/transactions`
+und `/assets/transactions/commodity` zusammen; die alte API (`api.bitpanda.com`) läuft bis **31.01.2027**.
+
+**Änderungen**
+
+* Neue Seite *Datenquelle → Quellenübernahme → Lücken der API prüfen* (`/settings/datasources/{id}/luecken`, nur
+  Bitpanda) auf Basis des gespeicherten Vollabrufs:
+  1. **Saldoverlauf:** belegte Lücken je Asset (Zeitraum, Betrag), davon durch Import-Buchungen gefüllt, Rest ohne
+     Beleg; Beginn der API-Historie gegenüber dem Import.
+  2. **Import ohne Gegenstück** und **API ohne Gegenstück**, gruppiert nach Asset, Art und Jahr – zeigt, welche Arten
+     bzw. Jahre die API auslässt.
+  3. **Gegenprüfung mit der alten API** (Hintergrundlauf): Fiat- und Krypto-Transaktionen (Status `finished`) gegen
+     die Teile der neuen API (Asset, Richtung, Betrag mit/ohne Gebühr, ±36 h, jeder Teil einmal); interne
+     Umbuchungen (verknüpfte Gegenbuchung bzw. gleicher Betrag binnen 5 Min.) zählen nicht. Ergebnis: Einträge nur in
+     der alten API je Asset/Art/Jahr und ob sie die Lücke laut Saldo vollständig erklären; Vollständigkeit über
+     `meta.total_count`.
+* Lehnt die alte API den hinterlegten Schlüssel ab, kann für die Prüfung einmalig ein eigener eingegeben werden
+  (nicht gespeichert, im Protokoll maskiert).
+* Bericht als CSV (Datum/Asset/Art/Mengen, keine Kennungen oder Schlüssel) zum Weitergeben.
+
+**Grenzen:** Nur Befund, keine Buchung. Die Zuordnung alt ↔ neu ist heuristisch (Betrag/Zeit); Aktien, Metalle und
+Indizes prüft die Gegenprüfung nicht (alte Endpunkte für Fiat und Krypto). Ob neue Schlüssel für die alte API gelten,
+ist nicht dokumentiert. Getestet mit nachgestellten Antworten laut Doku, nicht mit einem echten Konto.
 
 ## 0.83.0 – Quellenübernahme mit Lücken der API: Saldoverlauf als Beleg, Lückenfüller, Ausgleich mit Zustimmung
 

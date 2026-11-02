@@ -69,6 +69,12 @@ Betrag). Der Rest zwischen letztem Saldo und gemeldetem Bestand ist eine Lücke 
    Abruf). Kennung `ausgleich:<übernahme>:<asset>:<n>`, Bezeichnung „Ausgleich: Bewegung fehlt in der API“.
 3. Zustimmung und Füller gehen in den Beweis-Token ein; Nachprüfung exakt; Rückgängig nimmt den Ausgleich mit zurück.
 
+**Lücken der API prüfen (ab 0.84.0, `app/datasources/bitpanda_gaps.py`):** eigene Seite mit dem Befund aus dem
+gespeicherten Vollabruf (Lücken je Asset, Import/API ohne Gegenstück nach Art und Jahr) und einer optionalen
+Gegenprüfung mit der alten API (`/fiatwallets/transactions`, `/wallets/transactions`; laut Bitpanda bis 31.01.2027).
+Nur lesend; das Ergebnis liegt in `app_state` (`bp_gapcheck:<id>`), ein einmalig eingegebener Schlüssel wird nicht
+gespeichert.
+
 **Spender:** Wo die API einen Wert nicht liefert, übernehmen die API-Zeilen EUR-Wert, Gebührenwert und Einordnung (Tag, nur bei
 gleicher Buchungsart) aus der zugeordneten Import-Buchung (`CsvImportService._donate`). Wo die API selbst einen Wert liefert
 (z. B. Kauf gegen EUR), gilt der Wert der API. Zuordnung der Gegenstücke: Anbieterkennung (UUID in Notiz/Quellkennung, Alias),

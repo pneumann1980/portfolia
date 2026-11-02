@@ -17,7 +17,8 @@ Vertrag laut offizieller Referenz (docs.public.bitpanda.com, geprüft am 02.10.2
     Nicht dokumentiert und deshalb nie vorausgesetzt: Wertebereich von ``operation_type``/``transaction_type``
     (beobachtet u. a. buy, sell, swap, deposit, withdrawal, savings_plan, stake, passive_earn_reward), der Höchstwert
     von ``page_size``, ob Gebühren im Betrag enthalten sind, ob ``balance`` gestakte Mengen enthält. Keine
-    schreibenden Aufrufe, kein Rückgriff auf die ältere API ``api.bitpanda.com``, Umleitungen werden nicht verfolgt.
+    schreibenden Aufrufe, kein Rückgriff auf die ältere API ``api.bitpanda.com`` beim Abruf (nur die Lückenprüfung
+    ``bitpanda_gaps`` liest sie auf Wunsch zum Abgleich, ohne zu buchen), Umleitungen werden nicht verfolgt.
 
 Pagination
     Erst wird die Seite vollständig verarbeitet, dann entscheidet ``has_next_page``: ``false`` beendet den Abruf –
