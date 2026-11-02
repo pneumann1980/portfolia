@@ -470,6 +470,7 @@ body.panel-open { overflow: hidden; }
 /* Merken ★: gemerkt in der Warnfarbe (Stern), Text bleibt in Schriftfarbe */
 .btn.save.on { color: var(--warn-ink); }
 .icon-btn.save.on { color: var(--warn-mark); -webkit-text-stroke: 0.6px var(--warn-ink); }
+.pipe-alert { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .reader-save { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
 .reader-save .note-box { flex: 1 1 280px; min-width: 0; }
 .reader-save .note-box > summary { cursor: pointer; padding: 4px 0; }
@@ -1050,6 +1051,8 @@ details.ds-rename { margin: 8px 0 12px; }
 
 .bar-row { margin: 2px 0 8px; }
 .bar-label { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85rem; color: var(--ink-2); margin-bottom: 3px; }
+.bar-label > span:first-child { white-space: nowrap; }  /* „n von m“ nie umbrechen */
+.bar-label > span:last-child { text-align: right; }
 .bar-row .progress { height: 8px; }
 .bar-eta { margin-top: 3px; font-size: 0.82rem; }
 .community .news-item .summary { display: block; -webkit-line-clamp: unset; overflow: visible; font-size: 0.9rem; line-height: 1.45; }

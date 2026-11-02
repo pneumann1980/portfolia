@@ -4,6 +4,7 @@ angezeigten als gelesen“ mit Rückgängig, Transkripte und Video-Analysen in d
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import ClassVar
 
 import pytest
 
@@ -183,7 +184,11 @@ def test_status_shows_transcript_stage_counts_and_video_analyses(client, monkeyp
     assert (tr["waiting"], tr["none"], tr["loaded"], tr["enabled"]) == (2, 1, 1, True)
     assert ps["video_waiting"] == 1 and "transcripts" in ps["badges"]
     page = client.get("/news?tab=status").text
-    assert "<dt>Transkripte" in page and "2 Videos warten" in page and "1 geladen, 1 ohne Untertitel" in page
+    assert "<dt>Transkripte" in page and 'aria-label="Transkripte"' in page
+    assert "in 24 h 1 geladen, 1 ohne Untertitel" in page
+    bar = ps["bars"]["transcripts"]
+    assert (bar["waiting"], bar["total"]) == (2, 2)  # ohne offenen Zyklus: 0 erledigt + 2 wartend
+    assert "Rest" in page and ps["eta"]["transcripts"]["minutes"] == 30  # Nennleistung 8 je 30 Min.
     assert "dazu 1 Video mit Transkript – Kernaussagen folgen" in page
 
 
@@ -249,3 +254,57 @@ def test_old_wave_state_without_transcript_stage_still_loads(client):
     assert client.get("/news?tab=status").status_code == 200
     runner = W.WaveRunner(ctx, None, state=W.reserved(ctx) or st)
     assert "transcripts" in runner.state["stages"]
+
+
+# ---- 0.80.1: Balken für Transkripte, „Jetzt fortsetzen“ bei YouTube-Sperre --------------------------------------
+
+def test_transcript_bar_counts_cycle_like_other_stages(client, monkeypatch):
+    from app.news import queue as Q
+    from app.news.module import job_transcripts
+
+    ctx = wctx(client)
+    monkeypatch.setattr(T.ytlib, "fetch", lambda cfg, vid, langs: ytlib.Fetched(
+        [(0.0, "Satz.")], "de", True, "1.2.4"))
+    monkeypatch.setattr(T.time, "sleep", lambda _s: None)  # Pause je Video im Test überspringen
+    for i in range(10):
+        add_video(ctx, f"C{i}")
+    job_transcripts(ctx)  # öffnet den Zyklus, lädt 8 (PER_RUN), schreibt den Stand fort
+    bar = Q.bar(ctx, "transcripts", Q.waiting_now(ctx)["transcripts"])
+    assert (bar["done"], bar["waiting"], bar["total"]) == (8, 2, 10) and bar["pct"] == 80
+    job_transcripts(ctx)  # Rest; leer → Zyklus schließt mit Umfang
+    bar = Q.bar(ctx, "transcripts", 0)
+    assert (bar["total"], bar["last_done"]) == (0, 10) and bar["finished_at"]
+
+
+def test_transcript_eta_during_block_and_resume_button(client):
+    ctx = wctx(client)
+    v1 = add_video(ctx, "B1")
+    add_video(ctx, "B2")
+    until = NOW + timedelta(hours=20)
+    ctx.db.set_state(T.PAUSE_KEY, iso(until))
+    T.TranscriptService(ctx)._upsert(v1, "pending", "blocked", url="u", next_at=until)
+    ps = pipeline_status(ctx)
+    assert ps["eta"]["transcripts"]["minutes"] is None and "ruht bis" in ps["eta"]["transcripts"]["text"]
+    page = client.get("/news?tab=status").text
+    assert "Jetzt fortsetzen" in page and "/news/transcripts/resume" in page and "YouTube-Sperre" in page
+
+    class Sched:
+        calls: ClassVar[list[str]] = []
+
+        def trigger(self, name, delay=1.0, **kw):
+            self.calls.append(name)
+            return True
+
+        def next_runs(self):
+            return {}
+
+    ctx.scheduler = Sched()
+    try:
+        r = client.post("/news/transcripts/resume")
+    finally:
+        ctx.scheduler = None
+    assert r.status_code == 200 and 'id="pipe-live"' in r.text and "Abruf fortgesetzt" in r.text
+    assert Sched.calls == ["news_transcripts"] and T.TranscriptService(ctx).paused_until() is None
+    assert ctx.db.q1("SELECT next_attempt FROM news_content WHERE item_id=?", (v1,))["next_attempt"] is None
+    assert len(T.TranscriptService(ctx).candidates(10)) == 2  # das zurückgestellte Video ist wieder fällig
+    assert "Jetzt fortsetzen" not in r.text

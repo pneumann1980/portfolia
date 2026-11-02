@@ -13,7 +13,7 @@ from app.news import hosts, queue, wave
 from app.news.ai import AiGateway
 from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
-from app.news.eta import enrich_eta
+from app.news.eta import enrich_eta, transcripts_eta
 from app.news.transcripts import TranscriptService
 from app.util.timeutil import iso, local_tz, now_local, parse_iso
 
@@ -86,6 +86,15 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
             enrich_ready, per_run=per_run, inflow_per_hour=inflow,
             observed_done_3h=n("SELECT COUNT(*) FROM news_content WHERE fetched_at>=? AND status!='pending'", since3)),
         "analyze": guard["eta"],
+        "transcripts": transcripts_eta(
+            tr["waiting"], per_run=tr["per_run"], paused_until=parse_iso(tr["paused_until"]),
+            enabled=tr["enabled"],
+            inflow_per_hour=n("""SELECT COUNT(*) FROM news_item WHERE kind='video' AND source_id LIKE 'yt:%'
+                                 AND COALESCE(is_short, 0)=0 AND hidden_reason IS NULL AND fetched_at>=?""",
+                              since24) / 24,
+            observed_done_3h=n("""SELECT COUNT(*) FROM news_content c JOIN news_item i ON i.id=c.item_id
+                                  WHERE i.kind='video' AND c.status IN ('success','failed') AND c.fetched_at>=?""",
+                               since3)),
     }
     if guard["active"]:
         bottleneck = f"KI-Analyse: {guard['reason']}"
@@ -136,7 +145,8 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         "content_reasons": [(r["reason"], int(r["n"])) for r in reasons],
         "with_content_total": n("SELECT COUNT(*) FROM news_content WHERE status IN ('success','partial')"),
         "analyzed": n("SELECT COUNT(*) FROM news_analysis WHERE summary IS NOT NULL AND analyzed_at>=?", day),
-        "bars": {"enrich": queue.bar(ctx, "enrich", enrich_ready),
+        "bars": {"transcripts": queue.bar(ctx, "transcripts", tr["waiting"]),
+                 "enrich": queue.bar(ctx, "enrich", enrich_ready),
                  "analyze": queue.bar(ctx, "analyze", analyze_backlog)},
         "eta": eta,
         "backlog": {"enrich": enrich_ready, "enrich_paused": enrich_paused, "enrich_retry": enrich_retry,

@@ -12,7 +12,7 @@
     <dt>Letzte 7 Tage</dt><dd>{{ tr.stats.success }} Transkripte geladen · {{ tr.stats.failed }} ohne Untertitel bzw. nicht verfügbar · {{ tr.stats.pending }} warten auf einen neuen Versuch</dd>
     <dt>Bibliothek</dt><dd>youtube-transcript-api {{ tr.lib.version or '–' }} {% if tr.lib.updated %}<span class="badge info">in der App aktualisiert</span>{% if tr.lib.updated_at %} <span class="hint">{{ tr.lib.updated_at|datetime_de }}</span>{% endif %}{% else %}<span class="badge">mitgeliefert</span>{% endif %}{% if not tr.lib.available %} <span class="badge crit">nicht installiert</span>{% endif %}</dd>
   </dl>
-  {% if tr.paused_until %}<div class="alert warn" role="status"><span class="icon">!</span><div>YouTube hat den Abruf als automatisiert erkannt und gesperrt. Portfolia pausiert bis {{ tr.paused_until|datetime_de }} und versucht es dann erneut.</div></div>{% endif %}
+  {% if tr.paused_until %}<div class="alert warn" role="status"><span class="icon">!</span><div>YouTube hat den Abruf als automatisiert erkannt und gesperrt. Portfolia pausiert bis {{ tr.paused_until|datetime_de }} und versucht es dann erneut. Vorzeitig weitermachen: <em>News → Status → Transkripte → „Jetzt fortsetzen“</em>.</div></div>{% endif %}
   {% if tr.last_error and tr.last_error.kind == 'broken' %}<div class="alert warn" role="status"><span class="icon">!</span><div>Die Bibliothek konnte zuletzt keine Untertitel lesen ({{ tr.last_error.detail }}). Wahrscheinlich hat YouTube etwas geändert – bitte „Bibliothek aktualisieren“.</div></div>{% endif %}
   {% if tr_result %}
     {% if tr_result.reset %}<div class="alert good" role="status"><span class="icon">✓</span><div>Wieder die mitgelieferte Version.</div></div>

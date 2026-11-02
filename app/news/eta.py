@@ -53,6 +53,22 @@ def enrich_eta(waiting: int, *, per_run: int, interval_min: int = 15, observed_d
     return out
 
 
+def transcripts_eta(waiting: int, *, per_run: int, interval_min: int = 30, observed_done_3h: int = 0,
+                    inflow_per_hour: float = 0.0, paused_until: datetime | None = None,
+                    enabled: bool = True) -> dict[str, Any]:
+    """Restzeit der Transkripte: wie Artikeltexte (gemessen bzw. Nennleistung je 30-Min.-Lauf); während einer
+    YouTube-Sperre bzw. ausgeschaltet ohne Restzeit."""
+    if waiting <= 0:
+        return {"minutes": 0, "text": "kein Rückstau", "growing": False, "basis": ""}
+    if not enabled:
+        return {"minutes": None, "text": "ausgeschaltet", "growing": False, "basis": ""}
+    if paused_until is not None:
+        return {"minutes": None, "text": f"ruht bis {_hhmm(paused_until)}", "growing": False,
+                "basis": ""}
+    return enrich_eta(waiting, per_run=per_run, interval_min=interval_min, observed_done_3h=observed_done_3h,
+                      inflow_per_hour=inflow_per_hour)
+
+
 def analyze_eta(waiting: int, *, per_run: int, interval_min: int = 10, observed_done_3h: int = 0,
                 inflow_per_hour: float = 0.0, requests_left: int | None = None, batch: int = 6,
                 paused_until: datetime | None = None, reset_at: datetime | None = None,
@@ -108,4 +124,4 @@ def analyze_eta(waiting: int, *, per_run: int, interval_min: int = 10, observed_
     return out
 
 
-__all__ = ["analyze_eta", "enrich_eta", "fmt_minutes"]
+__all__ = ["analyze_eta", "enrich_eta", "fmt_minutes", "transcripts_eta"]

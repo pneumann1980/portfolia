@@ -1,9 +1,10 @@
 """Warteschlange je Pipeline-Stufe als Zyklus: „n von m“ für alles, was seit Beginn des Zyklus anstand.
 
-Ein Zyklus beginnt, wenn in der Stufe (Artikeltexte, KI-Analyse) Arbeit wartet und kein Zyklus offen ist, und endet,
-sobald nichts mehr wartet. Erledigt = seit Zyklusbeginn bearbeitete Meldungen im Fenster der Stufe (Abrufversuch bzw.
-Analyse); gesamt = erledigt + jetzt wartend. Ist die Warteschlange leer, steht „0 von 0“ mit Zeitpunkt und Umfang des
-letzten Zyklus – der alte Vorgang fällt heraus. Automatische und manuelle Läufe arbeiten dieselbe Warteschlange ab.
+Ein Zyklus beginnt, wenn in der Stufe (Transkripte, Artikeltexte, KI-Analyse) Arbeit wartet und kein Zyklus offen
+ist, und endet, sobald nichts mehr wartet. Erledigt = seit Zyklusbeginn bearbeitete Meldungen im Fenster der Stufe
+(Abrufversuch, Transkript geladen oder endgültig ohne, Analyse); gesamt = erledigt + jetzt wartend. Ist die
+Warteschlange leer, steht „0 von 0“ mit Zeitpunkt und Umfang des letzten Zyklus – der alte Vorgang fällt heraus.
+Automatische und manuelle Läufe arbeiten dieselbe Warteschlange ab.
 
 Den Zustand schreiben nur die Jobs (``observe`` vor und nach jedem Lauf); die Statusseite liest nur (``bar``).
 Annahmen/Grenzen: Bei Dauerzufluss endet ein Zyklus nie – der Beginn wird deshalb auf höchstens ``CYCLE_MAX_H``
@@ -19,7 +20,7 @@ from app.context import AppContext
 from app.util.timeutil import iso, parse_iso
 
 CYCLE_MAX_H = 24
-STAGES = ("enrich", "analyze")
+STAGES = ("transcripts", "enrich", "analyze")
 
 
 def _key(stage: str) -> str:
@@ -30,6 +31,8 @@ def _window_since(ctx: AppContext, stage: str) -> str:
     now = datetime.now(UTC)
     if stage == "enrich":
         return iso(now - timedelta(days=int(ctx.settings.get("news.enrich_days", 3))))
+    if stage == "transcripts":
+        return iso(now - timedelta(days=int(ctx.settings.get("news.transcripts_days", 3))))
     from app.news.analysis import WINDOW_H
 
     return iso(now - timedelta(hours=int(ctx.settings.get("news.analysis_hours", WINDOW_H))))
@@ -41,6 +44,10 @@ def done_since(ctx: AppContext, stage: str, since: str) -> int:
     if stage == "enrich":
         sql = """SELECT COUNT(*) FROM news_content c JOIN news_item n ON n.id=c.item_id
                  WHERE c.fetched_at>=? AND n.kind='article' AND n.hidden_reason IS NULL AND n.published_at>=?"""
+    elif stage == "transcripts":  # erledigt: geladen oder endgültig ohne (Wiederholungen zählen erst am Ende)
+        sql = """SELECT COUNT(*) FROM news_content c JOIN news_item n ON n.id=c.item_id
+                 WHERE c.fetched_at>=? AND n.kind='video' AND c.status IN ('success','failed')
+                   AND n.hidden_reason IS NULL AND n.published_at>=?"""
     else:
         sql = """SELECT COUNT(*) FROM news_analysis a JOIN news_item n ON n.id=a.item_id
                  WHERE a.analyzed_at>=? AND n.kind='article' AND n.hidden_reason IS NULL AND n.published_at>=?"""
@@ -92,13 +99,16 @@ def bar(ctx: AppContext, stage: str, waiting: int) -> dict[str, Any]:
 
 
 def waiting_now(ctx: AppContext, enrich: Any = None, analysis: Any = None) -> dict[str, int]:
-    """Jetzt wartend je Stufe: abrufbare Artikeltexte (ohne pausierte Quellen/spätere Wiederholungen) und Analysen."""
+    """Jetzt wartend je Stufe: Videos ohne Transkript, abrufbare Artikeltexte (ohne pausierte Quellen/spätere
+    Wiederholungen) und Analysen."""
     from app.news.analysis import AnalysisService
     from app.news.enrich import EnrichService
+    from app.news.transcripts import TranscriptService
 
     enrich = enrich or EnrichService(ctx)
     analysis = analysis or AnalysisService(ctx)
-    return {"enrich": len(enrich.candidates(100_000)), "analyze": analysis.backlog()}
+    return {"transcripts": len(TranscriptService(ctx).candidates(100_000)),
+            "enrich": len(enrich.candidates(100_000)), "analyze": analysis.backlog()}
 
 
 def observe_all(ctx: AppContext, enrich: Any = None, analysis: Any = None) -> dict[str, int]:

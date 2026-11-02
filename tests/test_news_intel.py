@@ -2268,8 +2268,8 @@ def test_pipeline_page_one_bar_per_queue_stage_and_run_route(client):
 
     page = client.get("/news?tab=status").text
     assert "Jetzt abarbeiten" in page and "Welle" not in page and "Pipeline heute" not in page
-    assert page.count('role="progressbar"') == 2  # nur Artikeltexte und KI-Analyse
-    for label in ("Import", "Artikeltexte", "KI-Analyse", "Gruppierung", "Tagesbericht", "Heute"):
+    assert page.count('role="progressbar"') == 3  # Transkripte, Artikeltexte und KI-Analyse
+    for label in ("Import", "Transkripte", "Artikeltexte", "KI-Analyse", "Gruppierung", "Tagesbericht", "Heute"):
         assert label in page, label
     assert 'hx-trigger="every 60s"' in page and "0 von 0" in page  # nichts läuft: selten nachfragen
     ctx.scheduler = Sched()

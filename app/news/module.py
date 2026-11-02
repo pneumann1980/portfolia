@@ -85,7 +85,9 @@ def job_transcripts(ctx: AppContext) -> dict[str, Any]:
     with exclusive(ctx, "transcripts") as got:
         if not got:
             return {"skipped": "läuft bereits"}
+        _observe(ctx)
         res = TranscriptService(ctx).run()
+        _observe(ctx)
     if ctx.scheduler is not None and res.get("loaded"):
         ctx.scheduler.trigger("news_analyze", 10)
     return res
@@ -479,6 +481,21 @@ def _transcripts_update(request: Request, ctx: AppContext) -> HTMLResponse:
     return _transcripts_card(request, ctx, res)
 
 
+def resume_transcripts(ctx: AppContext) -> str:
+    """YouTube-Sperre vorzeitig beenden: Pause aufheben, wegen der Sperre zurückgestellte Videos wieder fällig machen
+    und den Abruf sofort anstoßen. Ist YouTube weiter gesperrt, endet der Lauf nach dem ersten Video und ruht erneut."""
+    from app.news.transcripts import PAUSE_KEY
+
+    ctx.db.set_state(PAUSE_KEY, None)
+    ctx.db.x("UPDATE news_content SET next_attempt=NULL WHERE status='pending' AND reason='blocked'")
+    log.info("YouTube-Transkripte: Sperre vorzeitig aufgehoben (manuell)")
+    if ctx.scheduler is not None:
+        ctx.scheduler.trigger("news_transcripts", 0.5)
+        return ("Abruf fortgesetzt – läuft gleich an. Ist YouTube weiterhin gesperrt, ruht er nach dem ersten Video "
+                "erneut 24 Stunden.")
+    return "Pause aufgehoben – der nächste Transkript-Lauf startet nach Plan (Scheduler inaktiv)."
+
+
 def _transcripts_toggle(request: Request, ctx: AppContext, on: bool) -> HTMLResponse:
     ctx.settings.set("news.transcripts", on)
     if on:
@@ -629,6 +646,12 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         ytlib.reset(ctx.config)
         return _transcripts_card(request, ctx, {"ok": True, "reset": True})
+
+    @router.post("/news/transcripts/resume", response_class=HTMLResponse)
+    def transcripts_resume(request: Request) -> HTMLResponse:
+        """„Jetzt fortsetzen“ (Statusseite): YouTube-Sperre vorzeitig beenden und sofort weitermachen."""
+        ctx = get_ctx(request)
+        return pipeline_view(request, ctx, resume_transcripts(ctx))
 
     @router.post("/news/transcripts/toggle", response_class=HTMLResponse)
     async def transcripts_toggle(request: Request) -> HTMLResponse:

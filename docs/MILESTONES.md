@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 02.11.2026 · Version 0.80.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 02.11.2026 · Version 0.80.1 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,22 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.80.1 – Transkripte mit Fortschrittsbalken, „Jetzt fortsetzen“ bei YouTube-Sperre
+
+* **Balken wie bei Artikeltexten und KI-Analyse:** Transkripte sind die dritte Warteschlange (`app/news/queue.py`):
+  „n von m“ seit Zyklusbeginn, erledigt = Transkript geladen oder endgültig ohne Untertitel (Wiederholungen zählen
+  erst am Ende), leer = „0 von 0 · zuletzt fertig“. Restzeit gemessen (letzte 3 h) bzw. Nennleistung 8 Videos je
+  30-Min.-Lauf, abzüglich neuer Videos; während einer Sperre „ruht bis …“. Der Job schreibt den Zyklus vor und nach
+  jedem Lauf fort. Zahlen der letzten 24 h, Wiederholungen und letzter/nächster Lauf stehen unter dem Balken.
+* **„Jetzt fortsetzen“** im Hinweis zur YouTube-Sperre: hebt die 24-h-Pause auf, macht die wegen der Sperre
+  zurückgestellten Videos wieder fällig und stößt den Abruf sofort an. Ist YouTube weiterhin gesperrt, endet der Lauf
+  nach dem ersten Video und ruht erneut 24 h (nur eine Anfrage je Versuch). Hinweis darauf auch in Quellen →
+  Transkripte.
+* „n von m“ bricht im Balken nicht mehr um. Tests: Zyklus zählt wie die anderen Stufen, Restzeit bei Sperre,
+  Fortsetzen (Pause, Wiederfälligkeit, Job angestoßen); bestehender Test auf drei Balken angepasst.
+
+**Grenze:** Häufiges Fortsetzen während einer bestehenden Sperre kann sie seitens YouTube verlängern.
 
 ## 0.80.0 – News: Merken ★ mit Notiz, Standard „Ungelesen“, alle angezeigten gelesen mit Rückgängig, Transkripte im Status
 

@@ -1908,8 +1908,9 @@ Speichern aus der Oberfläche erhalten).
   Auswahl und lässt sich 15 Minuten lang **rückgängig** machen. Mit **☆/★** gemerkte Artikel, Videos und Beiträge stehen im
   Reiter **„Gemerkt“**, bleiben **dauerhaft** erhalten (auch nach Ablauf der Aufbewahrung, samt Text, KI-Analyse und
   Transkript) und können eine kurze **Notiz** (bis 500 Zeichen) tragen.
-* **Status der Pipeline** (*News → Status*): Import, **Transkripte** (wartend, geladen, ohne Untertitel, YouTube-Sperre,
-  Bibliotheksfehler mit Link „Bibliothek aktualisieren“), Artikeltexte, KI-Analyse (inkl. wartender Video-Kernaussagen),
+* **Status der Pipeline** (*News → Status*): Import, **Transkripte** (Fortschrittsbalken mit Restzeit wie Artikeltexte
+  und KI-Analyse; geladen, ohne Untertitel; bei YouTube-Sperre Hinweis mit **„Jetzt fortsetzen“**, bei
+  Bibliotheksfehler Link „Bibliothek aktualisieren“), Artikeltexte, KI-Analyse (inkl. wartender Video-Kernaussagen),
   Gruppierung, Tagesbericht und Engpass; „Jetzt abarbeiten“ durchläuft alle Stufen einschließlich Transkripten.
 * **Leseansicht:** Ein Klick auf einen Artikel öffnet die **interne Leseansicht** (`/news/<id>`): bereinigter
   Artikeltext (im Hintergrund nachgeladen, ohne Umgehung von Bezahl- oder Zustimmungsschranken), KI-Zusammenfassung
