@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 03.11.2026 · Version 0.87.1 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 03.11.2026 · Version 0.88.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,27 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.88.0 – Spam-Tokens in der Quellenübernahme ignorieren; News-Quellenfilter für entdeckte Kanäle
+
+**Befunde**
+
+* *Wallet-Übernahme (z. B. PulseChain) gesperrt:* Ungefragt zugesandte Tokens (M32, PDAI …) erschienen als „Asset
+  zuordnen“ – die Seite bot nur Zuordnen oder Neu anlegen. Die Ignorier-Funktion des Imports (Zuordnung ohne Asset)
+  war dort nicht erreichbar; zudem zählte ein gemeldeter Bestand einer ignorierten Kennung weiter als „nicht
+  zugeordnet“.
+* *News → Filter „Quelle“ sprang zurück:* Alle entdeckten Videos teilen die Quelle `yt:discovery`; die Einträge
+  „Entdeckt: …“ hatten denselben Wert, der Browser wählte stets den ersten, gefiltert wurde nach allen entdeckten
+  Kanälen zugleich.
+
+**Änderungen**
+
+* Problem „Asset zuordnen“: Knopf **„Als Spam ignorieren“** (mit Rückfrage). Speichert die Kennung nur für diesen
+  Anbieter als ignoriert (`origin=spam`); Vorgänge und gemeldeter Bestand zählen nicht und werden nicht gebucht,
+  rückgängig über „Zuordnungen für diese Quelle“. Stand der Token zuvor über den Import im Bestand, verschwindet er mit
+  der Übernahme (Import-Buchungen werden ersetzt).
+* Quellenfilter: entdeckte Videos je Kanal mit eigenem Wert `yt:discovery:<Kanal-ID>` (Name der jüngsten Meldung);
+  Liste, „alle gelesen“ und Seitenwechsel filtern danach.
 
 ## 0.87.1 – Lückenprüfung: belegte Lücken nicht mehr als „Rest ohne Beleg“
 

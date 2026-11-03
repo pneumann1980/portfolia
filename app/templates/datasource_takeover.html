@@ -108,6 +108,11 @@
               <label class="field">Art<select name="new_class"><option value="crypto">Krypto</option><option value="security">Wertpapier</option><option value="other">Sonstiges</option></select></label>
               <button class="btn sm" type="submit">Anlegen und zuordnen</button>
             </form></details>
+            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnen" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px" data-confirm="„{{ p.symbol }}“ als Spam markieren? Vorgänge und Bestand dieses Tokens zählen dann nicht und werden nicht gebucht (rückgängig über „Zuordnungen für diese Quelle“).">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="symbol" value="{{ p.symbol }}"><input type="hidden" name="action" value="spam">
+              <button class="btn sm" type="submit">Als Spam ignorieren</button>
+              <span class="hint">Für ungefragt zugesandte Tokens (Airdrop-Spam, Werbung) – sie erscheinen nicht im Bestand.</span>
+            </form>
             <p class="hint">Die Zuordnung gilt nur für {{ ds.provider_label }} (Kennung <span class="mono">{{ p.key }}</span>), ändert keine anderen Quellen und bucht nichts. Bitte nach Name und Anbieterkennung wählen, nicht nur nach Kürzel (z. B. ist LUNC nicht LUNA).</p>
           </div>
         {% elif p.kind == 'row' or p.kind == 'line' %}

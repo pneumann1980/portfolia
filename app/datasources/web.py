@@ -97,6 +97,14 @@ def _takeover_map(ctx: Any, ds: Any, form: dict[str, Any]) -> tuple[bool, str]:
     js = journal_service(ctx)
     known = js.known_assets()
     action = str(form.get("action") or "map")
+    if action == "spam":  # Spam-/Werbe-Token: Kennung ignorieren – Vorgänge und Bestand zählen nicht, nichts gebucht
+        key = provider_key(symbol, ds.provider)
+        csv_service(ctx).set_symbol(key, None, origin="spam")
+        log.info("Quellenübernahme %s: %s als Spam ignoriert", ds.id, key)
+        n = len(open_maps[symbol]["events"])
+        return True, (f"„{symbol}“ als Spam markiert und ignoriert (gilt nur für {ds.provider_label}, Kennung {key}): "
+                      f"{n} Vorgang{'' if n == 1 else 'e'} und der gemeldete Bestand zählen nicht und werden nicht "
+                      "gebucht. Rückgängig unter „Zuordnungen für diese Quelle“.")
     if action == "new":
         aid_in = str(form.get("new_id") or symbol).strip()[:40]
         cls = str(form.get("new_class") or "crypto")

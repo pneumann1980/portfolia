@@ -393,9 +393,9 @@ def _observed(meta: dict[str, Any], resolver: Any, provider: str
     delivered: set[str] = set()
     for b in meta.get("balances") or []:
         q = _dec(b.get("qty"))
-        aid, _how, _key = resolver.resolve_for(str(b["key"]), provider)
+        aid, how, _key = resolver.resolve_for(str(b["key"]), provider)
         if aid is None:
-            if q:
+            if q and how != "ignored":  # als Spam/ignoriert markierte Kennungen zählen nicht
                 unmapped.append(str(b["key"]))
             continue
         obs[aid] += q

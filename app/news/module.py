@@ -193,6 +193,24 @@ UNDO_MINUTES = 15
 NOTE_MAX = 500
 
 
+DISCOVERY = "yt:discovery"  # Quelle der entdeckten Videos (alle Kanäle); Filterwert je Kanal: „yt:discovery:<Kanal>“
+
+
+def source_options(ctx: AppContext) -> list[dict[str, str]]:
+    """Auswahl „Quelle“: je Quelle ein Eintrag, entdeckte Videos je Kanal mit eigenem Wert (vorher hatten alle
+    „Entdeckt: …“-Einträge denselben Wert – die Auswahl sprang auf den ersten)."""
+    out, seen = [], set()
+    for r in ctx.db.q("SELECT source_id, source_name, channel_id, MAX(published_at) AS last FROM news_item "
+                      "GROUP BY source_id, CASE WHEN source_id=? THEN channel_id END ORDER BY source_name",
+                      (DISCOVERY,)):
+        sid = f"{DISCOVERY}:{r['channel_id']}" if r["source_id"] == DISCOVERY and r["channel_id"] else r["source_id"]
+        if sid in seen:
+            continue
+        seen.add(sid)
+        out.append({"source_id": sid, "source_name": r["source_name"]})
+    return out
+
+
 def query_items(ctx: AppContext, *, kind: str, asset: str = "", source: str = "", days: int = 7,
                 status: str = "all", sort: str = "relevance", shorts: bool = False, hidden: bool = False,
                 offset: int = 0, limit: int = PAGE_SIZE,
@@ -218,7 +236,10 @@ def _filtered(ctx: AppContext, *, kind: str, asset: str = "", source: str = "", 
     if asset:
         where.append("n.id IN (SELECT item_id FROM news_asset WHERE asset_id=?)")
         params.append(asset)
-    if source:
+    if source.startswith(DISCOVERY + ":"):  # entdeckte Videos: eine Quelle, je Kanal getrennt filterbar
+        where.append("n.source_id=? AND n.channel_id=?")
+        params.extend([DISCOVERY, source[len(DISCOVERY) + 1:]])
+    elif source:
         where.append("n.source_id=?")
         params.append(source)
     if status == "unread":
@@ -607,7 +628,7 @@ def make_router() -> APIRouter:
         pf = ctx.portfolio()
         val = ctx.valuation()
         base["assets"] = [(p.asset_id, p.asset.name) for p in (val.positions if val else []) if not p.asset.is_fiat]
-        base["sources"] = ctx.db.q("SELECT DISTINCT source_id, source_name FROM news_item ORDER BY source_name")
+        base["sources"] = source_options(ctx)
         base["n_suggestions"] = ctx.db.scalar("SELECT COUNT(*) FROM yt_suggestion WHERE status='new'", default=0)
         digest = ctx.db.q1("SELECT * FROM digest ORDER BY day DESC LIMIT 1")
         base["digest"] = digest
