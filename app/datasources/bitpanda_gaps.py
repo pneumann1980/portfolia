@@ -75,6 +75,21 @@ def _rows(items: list[_Item]) -> list[dict[str, Any]]:
                                                                           x[0]))]
 
 
+def _around(lines: list[Any], aid: str, g: dict[str, Any]) -> list[dict[str, Any]]:
+    """API-Vorgänge dieses Assets an den Rändern einer Lücke (Saldo davor bzw. danach) – zeigt, zwischen welchen
+    gelieferten Vorgängen die Bewegung fehlt."""
+    lo, hi = _ts(g.get("from")), _ts(g.get("to"))
+    out = []
+    for ln in lines:
+        ts = _ts(ln.rec.ts)
+        if ts is None or aid not in ln.legs:
+            continue
+        if (lo and abs((ts - lo).total_seconds()) <= 60) or (hi and abs((ts - hi).total_seconds()) <= 60):
+            out.append({"ts": ts, "kind": str(ln.rec.label or ln.rec.kind), "qty": ln.legs[aid],
+                        "side": "davor" if lo and abs((ts - lo).total_seconds()) <= 60 else "danach"})
+    return out[:8]
+
+
 def analyse(ctx: Any, sid: int) -> dict[str, Any] | None:
     """Befund aus dem gespeicherten Vollabruf; ``None`` ohne gespeicherten Vollabruf."""
     from app.datasources import takeover as TK
@@ -97,18 +112,29 @@ def analyse(ctx: Any, sid: int) -> dict[str, Any] | None:
     for t, _g in a.fillers:
         for asset, q in TK._tx_legs(t, a.account).items():
             filled[asset] += q
+    api_lines = sorted(a.lines_by_ext.values(), key=lambda ln: _ts(ln.rec.ts) or datetime.min.replace(tzinfo=UTC))
     assets = []
     for b in a.balances:
         aid = b["asset"]
         gaps = a.gaps.get(aid, [])
         adj = a.adjustable.get(aid) or {}
+        # belegt = durch Lücken des Saldoverlaufs gedeckter, datiert ausgleichbarer Teil; ohne Beleg = Rest bzw. die
+        # ganze Abweichung, wenn kein Ausgleich angeboten wird
+        documented = adj.get("amount", ZERO) if adj.get("dated") else ZERO
+        undoc = (adj.get("rest", adj.get("need", ZERO)) if adj.get("dated") else adj.get("need", ZERO)) if adj else (
+            ZERO if b.get("ok") else (b.get("observed") or ZERO) - (b.get("after") or ZERO))
+        state = ("lückenlos" if not gaps and not undoc else
+                 "Abweichung ohne Lücke" if not gaps else
+                 "Lücken belegt – ausgleichbar" if not undoc else "Lücken belegt, Rest ohne Beleg")
         assets.append({"asset": aid, "name": b.get("name"), "after": b.get("after"), "observed": b.get("observed"),
                        "gaps": [{"from": g.get("from"), "to": g.get("to"), "amount": g["amount"],
-                                 "left": g.get("left", g["amount"]), "window": TK._window(g)} for g in gaps],
-                       "gaps_total": sum((g["amount"] for g in gaps), ZERO), "filled": filled.get(aid, ZERO),
-                       "rest": adj.get("need"),
-                       "state": ("lückenlos" if not gaps and not adj else "Lücken belegt" if gaps else
-                                 "Abweichung ohne Beleg")})
+                                 "left": g.get("left", g["amount"]), "window": TK._window(g),
+                                 "around": _around(api_lines, aid, g)} for g in gaps],
+                       "gaps_total": sum((g["amount"] for g in gaps), ZERO),
+                       "gaps_out": sum((g["amount"] for g in gaps if g["amount"] < 0), ZERO),
+                       "gaps_in": sum((g["amount"] for g in gaps if g["amount"] > 0), ZERO),
+                       "open": sum((g.get("left", g["amount"]) for g in gaps), ZERO),
+                       "filled": filled.get(aid, ZERO), "documented": documented, "rest": undoc, "state": state})
     # Zeitraum des Imports (Buchungen des Kontos, die die Übernahme ersetzen würde) und der API
     imported: list[datetime] = [x for x in [_ts(t.ts) for t in a.hide]
                                 + [_ts(t.ts) for t, _w in a.kept if t.tx_id in fill_ids] if x]
@@ -135,8 +161,13 @@ def analyse(ctx: Any, sid: int) -> dict[str, Any] | None:
     elif not gap_count and not rest:
         verdict = ("good", "API vollständig: Der Saldoverlauf ist lückenlos und ergibt den gemeldeten Bestand.")
     elif gap_count and not rest:
-        verdict = ("warn", f"Die API lässt {gap_count} Bewegung(en) aus (Saldoverlauf belegt sie); der Import füllt "
-                           "sie vollständig.")
+        open_ = [x for x in assets if x["documented"]]
+        verdict = ("warn", f"Die API lässt {gap_count} Bewegung(en) aus – Bitpanda belegt sie selbst im Saldoverlauf "
+                           "(Zeitraum und Betrag)." + (
+                               " Was der Import nicht füllt (" + ", ".join(
+                                   f"{_fmt(x['documented'])} {x['asset']}" for x in open_)
+                               + "), lässt sich auf der Übernahmeseite als datierte, gekennzeichnete Ausgleichsbuchung "
+                                 "übernehmen." if open_ else " Der Import füllt sie vollständig."))
     else:
         verdict = ("crit", f"Die API lässt Bewegungen aus; für {', '.join(rest)} bleibt ein Rest ohne Beleg.")
     return {"account": a.account, "fetched_at": a.fetched_at, "first": a.first, "last": a.last,

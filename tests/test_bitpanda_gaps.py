@@ -100,9 +100,12 @@ def test_gap_report_names_rest_and_import_rows(config, master, api):
         TK.run_fetch(ctx(c), sid)
         rep = G.analyse(ctx(c), sid)
         eur = next(x for x in rep["assets"] if x["asset"] == "EUR")
-        assert eur["gaps_total"] == D(-200) and eur["filled"] == D(-150) and eur["rest"] == D(-50)
-        assert eur["state"] == "Lücken belegt" and rep["gap_count"] == 1
-        assert rep["verdict"][0] == "crit" and "EUR" in rep["verdict"][1]
+        assert eur["gaps_total"] == D(-200) and eur["filled"] == D(-150) and eur["open"] == D(-50)
+        # der offene Teil ist durch den Saldoverlauf belegt (datiert ausgleichbar) – kein „Rest ohne Beleg“
+        assert eur["documented"] == D(-50) and eur["rest"] == 0 and eur["state"] == "Lücken belegt – ausgleichbar"
+        assert rep["gap_count"] == 1 and rep["verdict"][0] == "warn"
+        assert [v["side"] for v in eur["gaps"][0]["around"]] == ["davor"]  # letzter gelieferter Vorgang vor der Lücke
+        assert "belegt sie selbst" in rep["verdict"][1] and "-50 EUR" in rep["verdict"][1]
         k5 = [g for g in rep["import_only"] if g["asset"] == "EUR" and g["kind"].startswith("withdrawal")]
         assert k5 and k5[0]["fillers"] == 1 and k5[0]["sum"] == D(-150)
         page_ = c.get(f"/settings/datasources/{sid}/luecken").text

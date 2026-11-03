@@ -18,18 +18,19 @@
     <div class="card-head"><h2>1 · Saldoverlauf der API</h2>
       {% if rep.gap_count %}<span class="badge crit">Lücken belegt: {{ rep.gap_count }}</span>{% else %}<span class="badge good">keine Lücke laut Saldo</span>{% endif %}</div>
     <p class="hint">Vollabruf vom {{ rep.fetched_at|datetime_de }}.{% if rep.before %} Der Import hat <b>{{ rep.before }} Buchungen vor dem ersten Vorgang der API</b>{% if rep.before_first %} (ab {{ rep.before_first|date_de }}){% endif %} – dort beginnt die Historie der API später.{% endif %}</p>
-    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th>Befund</th><th class="num">Fehlt laut Saldo</th><th class="num">davon durch Import gefüllt</th><th class="num">Rest ohne Beleg</th></tr></thead><tbody>
+    <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Asset</th><th>Befund</th><th class="num">Fehlt laut Saldo</th><th class="num">durch Import gefüllt</th><th class="num">offen, belegt</th><th class="num">ohne Beleg</th></tr></thead><tbody>
     {% for x in rep.assets if x.gaps or x.rest %}
-      <tr><td>{{ x.asset }}</td><td data-label="Befund"><span class="badge {{ 'warn' if x.gaps else 'crit' }}">{{ x.state }}</span></td>
-        <td class="num" data-label="Fehlt laut Saldo">{{ x.gaps_total|qty_exact if x.gaps else '–' }}</td>
+      <tr><td>{{ x.asset }}</td><td data-label="Befund"><span class="badge {{ 'crit' if x.rest else 'warn' }}">{{ x.state }}</span></td>
+        <td class="num" data-label="Fehlt laut Saldo">{% if x.gaps %}{{ x.gaps_total|qty_exact }}{% if x.gaps_in and x.gaps_out %}<br><span class="hint">Abgänge {{ x.gaps_out|qty_exact }} · Zugänge +{{ x.gaps_in|qty_exact }}</span>{% endif %}{% else %}–{% endif %}</td>
         <td class="num" data-label="durch Import gefüllt">{{ x.filled|qty_exact if x.filled else '–' }}</td>
-        <td class="num" data-label="Rest">{{ x.rest|qty_exact if x.rest else '–' }}</td></tr>
-      {% if x.gaps %}<tr><td colspan="5" class="wide"><details><summary class="hint">{{ x.gaps|length }} Lücke(n) im Einzelnen</summary><ul class="hint">{% for g in x.gaps %}<li>{{ g.window }}: {{ g.amount|qty_exact }} {{ x.asset }}{% if g.left != g.amount %} · offen nach Import {{ g.left|qty_exact }}{% endif %}</li>{% endfor %}</ul></details></td></tr>{% endif %}
+        <td class="num" data-label="offen, belegt">{{ x.documented|qty_exact if x.documented else '–' }}</td>
+        <td class="num" data-label="ohne Beleg">{{ x.rest|qty_exact if x.rest else '–' }}</td></tr>
+      {% if x.gaps %}<tr><td colspan="6" class="wide"><details><summary class="hint">{{ x.gaps|length }} Lücke(n) im Einzelnen</summary><ul class="hint">{% for g in x.gaps %}<li>{{ g.window }}: <b>{{ g.amount|qty_exact }} {{ x.asset }}</b>{% if g.left != g.amount %} · offen nach Import {{ g.left|qty_exact }}{% endif %}{% if g.around %}<br><span class="small">{% for v in g.around %}{{ v.side }}: {{ v.ts|datetime_de }} {{ v.kind }} {{ v.qty|qty_exact }}{{ ' · ' if not loop.last }}{% endfor %}</span>{% endif %}</li>{% endfor %}</ul></details></td></tr>{% endif %}
     {% else %}
-      <tr><td colspan="5">Für alle Assets ergibt die Folge der Vorgänge den jeweils gemeldeten Saldo – keine Lücke nachweisbar.</td></tr>
+      <tr><td colspan="6">Für alle Assets ergibt die Folge der Vorgänge den jeweils gemeldeten Saldo – keine Lücke nachweisbar.</td></tr>
     {% endfor %}
     </tbody></table></div>
-    <p class="hint">„Fehlt laut Saldo“: Der von Bitpanda gemeldete Saldo springt stärker, als die gelieferten Vorgänge erklären – dazwischen fehlt eine Bewegung (Betrag und Zeitraum belegt, Art unbekannt).</p>
+    <p class="hint">„Fehlt laut Saldo“: Der von Bitpanda gemeldete Saldo springt stärker, als die gelieferten Vorgänge erklären – dazwischen fehlt eine Bewegung (Betrag und Zeitraum belegt, Art unbekannt). „Offen, belegt“: was der Import nicht füllt; auf der Übernahmeseite mit Zustimmung als datierte Ausgleichsbuchung übernehmbar. „Ohne Beleg“: Abweichung, die keine Lücke erklärt (Ursachen auf der Übernahmeseite).</p>
   </section>
 
   {% if rep.lagged %}
@@ -77,7 +78,8 @@
     <ul class="hint">
       <li><b>API vollständig:</b> Die Quellenübernahme kann die API ohne Ausgleich maßgeblich machen; Vorgänge nach dem Ende des Imports kommen dabei hinzu.</li>
       <li><b>Lücken belegt und vom Import gefüllt:</b> Die Übernahme lässt diese Import-Buchungen stehen – nichts weiter zu tun.</li>
-      <li><b>Rest ohne Beleg:</b> nur mit Ausgleich (Zustimmung je Asset) auf der Übernahmeseite.</li>
+      <li><b>Lücken belegt, offen:</b> auf der Übernahmeseite unter „Bestand passt nicht“ den Ausgleich bestätigen – je Lücke eine gekennzeichnete Buchung zum Zeitpunkt der Lücke.</li>
+      <li><b>Ohne Beleg:</b> kein Ausgleich; die Übernahmeseite nennt die Ursachen (bleibende oder doppelte Buchungen).</li>
     </ul>
   </section>
   {% endif %}

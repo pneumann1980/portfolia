@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 03.11.2026 · Version 0.87.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 03.11.2026 · Version 0.87.1 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,24 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.87.1 – Lückenprüfung: belegte Lücken nicht mehr als „Rest ohne Beleg“
+
+**Befund (echtes Konto, Vollabruf 03.11.2026):** Der Saldoverlauf von Bitpanda belegt 13 Lücken – EUR netto
+−6.531,28 (Abgänge −7.251,28, Zugänge +720 in 11 Zeiträumen zwischen 22.08.2025 und 17.09.2026), USD −35. Das ist
+genau die Abweichung, die die Übernahme seit Wochen zeigt; die Rechnung ist also konsistent. Die frühere Aussage
+„API vollständig“ (0.84/0.85) stützte sich auf einen Vollabruf ohne Saldoverlauf-Daten und ist damit überholt. Die
+Seite nannte den durch die Lücken belegten, offenen Teil (EUR −7.246,28 nach dem Import-Füller über +715) fälschlich
+„Rest ohne Beleg“.
+
+**Änderungen**
+
+* Je Asset getrennt: fehlt laut Saldo (mit Abgängen/Zugängen), durch Import gefüllt, **offen, belegt** (datiert
+  ausgleichbar) und **ohne Beleg**; Befund „Lücken belegt – ausgleichbar“ bzw. „Rest ohne Beleg“.
+* Urteil bei belegten Lücken: „Bitpanda belegt sie selbst im Saldoverlauf … als datierte, gekennzeichnete
+  Ausgleichsbuchung übernehmen“ statt „Rest ohne Beleg“.
+* Je Lücke die angrenzenden API-Vorgänge („davor“/„danach“), damit erkennbar ist, zwischen welchen Vorgängen die
+  Bewegung fehlt.
 
 ## 0.87.0 – Quellenübernahme: bleibende Buchungen gegen die API prüfen, Ausgleich nur bei belegter Lücke
 
