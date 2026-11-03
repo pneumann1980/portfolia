@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 03.11.2026 · Version 0.86.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 03.11.2026 · Version 0.87.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,41 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.87.0 – Quellenübernahme: bleibende Buchungen gegen die API prüfen, Ausgleich nur bei belegter Lücke
+
+**Befund:** Bitpandas Saldoverlauf ist lückenlos (0.84/0.85) – die API-Vorgänge allein ergeben also den gemeldeten
+Bestand. Trotzdem wich der erwartete Bestand nach der Übernahme ab und es wurde ein „nicht belegter“ Ausgleich
+angeboten. Ursache: Erwartet = API-Vorgänge + **bleibende Buchungen**, und für diese fehlte die Prüfung, ob die API
+dieselbe Bewegung schon enthält.
+
+1. *Transfer mit anderem Konto* (z. B. Bankkonto → Bitpanda) deckte die API-Einzahlung nur bei höchstens 36 h Abstand;
+   SEPA- und Sparplan-Einzahlungen führt die API mit dem Datum der Gutschrift (Tage später) → doppelt gezählt.
+   Nachgestellt: 3 × 50 € → „danach“ 550 statt 400, angebotener Ausgleich −150 € zum Abrufzeitpunkt.
+2. *In der App erfasste Buchungen* (manuell, Korrekturen) wurden ungeprüft mitgezählt – steht dieselbe Bewegung in der
+   API, zählt sie doppelt.
+3. Der Ausgleich wurde ohne Ursachenprüfung angeboten; bei lückenlosem Saldo hätte er eine erfundene Buchung erzeugt.
+
+**Änderungen**
+
+* Bleibende Transfers werden zusätzlich mit Zeitversatz zugeordnet (Ein-/Auszahlung, gleicher Betrag, bis 7 Tage, erst
+  „API später“, dann „API früher“, gegenseitig nächste Kandidaten) → API-Vorgang gedeckt, nicht doppelt.
+* In der App erfasste Buchungen mit Gegenstück in der API (±36 h bzw. mit Versatz) erscheinen als doppelt; mit
+  Zustimmung je Buchung (`adjust=drop:<tx_id>`, geht in den Beweis-Token ein) werden sie bei der Übernahme
+  ausgeblendet und mit ihr zurückgenommen. Korrekturen der Datenqualität, abgeglichene Transfers und Teile
+  zusammengesetzter Buchungen werden nicht ausgeblendet, sondern mit dem Weg dorthin genannt.
+* **Ursachen je Asset** im Problem „Bestand passt nicht“: doppelte App-Buchungen, Transfers bzw. App-Buchungen ohne
+  Gegenstück in der API, nicht buchbare API-Vorgänge, offene Lücken – mit „vollständig erklärt“ bzw. erklärtem Anteil.
+* **Ausgleich nur noch für belegte Lücken**, wenn die Quelle einen Saldoverlauf liefert (Bitpanda): bei lückenlosem
+  Verlauf kein Ausgleich, sondern die Ursachen; bei Lücke nur der belegte Betrag (Rest wird genannt, nicht
+  ausgeglichen). Quellen ohne Saldoverlauf: unverändert.
+* Lückenprüfseite und CSV: Abschnitt „Buchungen, die bei der Übernahme bleiben“ (gedeckt, mit Versatz, doppelt, ohne
+  Gegenstück); Urteil „API vollständig – Abweichung aus bleibenden Buchungen“.
+
+**Grenzen:** Ein Transfer ohne Gegenstück in der API bleibt bestehen (seine Gegenseite liegt auf dem anderen Konto) und
+blockiert die exakte Übernahme, bis er korrigiert ist. Die Zuordnung mit Versatz verlangt exakt gleiche Beträge; bei
+mehrdeutigen Raten bleibt eine Buchung offen und wird angezeigt. Die tatsächliche Ursache beim echten Konto ist ohne
+dessen Daten nicht verifiziert – die Seite zeigt sie jetzt an.
 
 ## 0.86.0 – YouTube-Kanäle selbst hinzufügen (Suche nach Name, @Handle oder Link)
 

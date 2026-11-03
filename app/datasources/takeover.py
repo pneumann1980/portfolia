@@ -291,6 +291,12 @@ class Assessment:
     adjustable: dict[str, dict[str, Any]] = field(default_factory=dict)  # möglicher Ausgleich je Asset
     adjustments: list[dict[str, Any]] = field(default_factory=list)  # zu buchende Ausgleichsbuchungen (bestätigt)
     lagged: list[tuple[Any, Any, timedelta]] = field(default_factory=list)  # Sparplan-Einzahlung mit Versatz
+    lagged_kept: list[tuple[Any, Any, timedelta]] = field(default_factory=list)  # Transfer ↔ API mit Versatz
+    dups: list[dict[str, Any]] = field(default_factory=list)  # in der App erfasst und zugleich in der API
+    kept_free: list[Any] = field(default_factory=list)  # bleibende Transfers ohne Gegenstück in der API
+    causes: dict[str, dict[str, Any]] = field(default_factory=dict)  # Ursachen einer Bestandsabweichung je Asset
+    chain: bool = False  # die Quelle liefert einen Saldoverlauf (Lücken belegbar)
+    app_free: list[Any] = field(default_factory=list)  # in der App erfasst, ohne Gegenstück in der Quelle
 
     @property
     def tier(self) -> str:
@@ -556,6 +562,76 @@ def lag_pairs(olds: list[_Cand], news: list[_Cand], max_lag: timedelta = LAG_MAX
     return out
 
 
+def _move_line(ln: Line) -> tuple[str, Decimal] | None:
+    """Ein- bzw. Auszahlung der Quelle mit genau einem Asset (Betrag ohne Gebühr) – Kandidat für eine Zuordnung mit
+    Zeitversatz."""
+    from app.csvimport import model as M
+
+    if ln.errors or ln.rec.ts_missing or ln.rec.kind not in (M.DEPOSIT, M.WITHDRAWAL):
+        return None
+    legs = ln.base or ln.legs
+    return next(iter(legs.items())) if len(legs) == 1 else None
+
+
+def _move_tx(t: Any, account: str) -> tuple[str, Decimal] | None:
+    legs = _tx_legs(t, account, fee=False)
+    return next(iter(legs.items())) if len(legs) == 1 else None
+
+
+def _lag_moves(txs: list[Any], lines: list[Line], taken: set[int], account: str) -> list[tuple[Any, int, timedelta]]:
+    """Buchungen ↔ freie Ein-/Auszahlungen der Quelle mit Zeitversatz bis ``LAG_MAX``: erst Quelle später (Gutschrift
+    nach dem Datum des Imports), dann Quelle früher – jeweils nur gegenseitig nächste Kandidaten."""
+    olds = [(t.ts, k, t) for t in txs if (k := _move_tx(t, account))]
+    news = [(ln.rec.ts, k, i) for i, ln in enumerate(lines)
+            if i not in taken and ln.covered_by is None and (k := _move_line(ln))]
+    fwd = lag_pairs(olds, news)
+    done_t, done_i = {id(t) for t, _i, _l in fwd}, {i for _t, i, _l in fwd}
+    back = lag_pairs([x for x in news if x[2] not in done_i], [x for x in olds if id(x[2]) not in done_t])
+    return fwd + [(t, i, -lag) for i, t, lag in back]
+
+
+def _dup(db: Any, t: Any, lns: list[Line], lag: timedelta | None) -> dict[str, Any]:
+    """In der App erfasste Buchung mit Gegenstück in der Quelle: ausblendbar nur, wenn sie keine Korrektur der
+    Diagnose, kein abgeglichener Transfer und kein Teil einer Gruppe ist (sonst dort zurücknehmen)."""
+    row = db.q1("SELECT source, group_ref FROM journal_tx WHERE tx_id=?", (t.tx_id,))
+    source = str(row["source"]) if row is not None else ""
+    hideable = row is not None and not row["group_ref"] and source not in ("diagnose", "transfer")
+    why = ("Korrektur aus der Datenqualität – dort zurücknehmen" if source == "diagnose" else
+           "abgeglichener Transfer – im Journal auflösen" if source == "transfer" else
+           "Teil einer zusammengesetzten Buchung – im Journal bearbeiten" if row is not None and row["group_ref"]
+           else "")
+    return {"tx": t, "lines": lns, "lag": lag, "hideable": hideable, "why": why, "source": source}
+
+
+def _causes(a: Any, lines: list[Line], account: str) -> dict[str, dict[str, Any]]:
+    """Ursachen einer Bestandsabweichung je Asset (nach ihrer Wirkung auf „danach“): bleibende Transfers ohne
+    Gegenstück in der Quelle, in der App erfasste Buchungen ohne bzw. mit Gegenstück (doppelt), nicht buchbare
+    Vorgänge der Quelle (fehlen in „danach“) und offene Lücken des Saldoverlaufs (fehlen ebenfalls)."""
+    out: dict[str, dict[str, Any]] = {}
+    for b in a.balances:
+        if b["ok"]:
+            continue
+        aid = b["asset"]
+
+        def rows(txs: list[Any], aid: str = aid) -> list[dict[str, Any]]:
+            return [{"tx": t, "qty": q} for t in txs if (q := _tx_legs(t, account).get(aid))]
+
+        c: dict[str, Any] = {
+            "kept_free": rows(a.kept_free),
+            "app": rows(a.app_free),
+            "dups": [{**d, "qty": q} for d in a.dups if not d["drop"] and (q := _tx_legs(d["tx"], account).get(aid))],
+            "unbookable": sum((ln.legs.get(aid, ZERO) for ln in lines if ln.errors), ZERO),
+            "gaps": sum((g.get("left", g["amount"]) for g in a.gaps.get(aid, [])), ZERO)}
+        explained = (sum((r["qty"] for k in ("kept_free", "app", "dups") for r in c[k]), ZERO)
+                     - c["unbookable"] - c["gaps"])
+        c["deviation"] = b["after"] - b["observed"]
+        c["explained"] = explained
+        c["complete"] = bool(explained) and abs(explained - c["deviation"]) <= _tol(aid, c["deviation"])
+        if any(c[k] for k in ("kept_free", "app", "dups", "unbookable", "gaps")):
+            out[aid] = c
+    return out
+
+
 def _adjustable(a: Any, expected: dict[str, Decimal], observed: dict[str, Decimal],
                 parts: dict[str, dict[str, Decimal]]) -> None:
     """Rest je Asset nach Lückenfüllern: Ausgleich auf den beobachteten Bestand anbieten – „belegt“, wenn die
@@ -569,16 +645,25 @@ def _adjustable(a: Any, expected: dict[str, Decimal], observed: dict[str, Decima
             continue
         left = [g for g in a.gaps.get(aid, []) if g.get("left", g["amount"])]
         total = sum((g.get("left", g["amount"]) for g in left), ZERO)
-        dated = bool(left) and abs(total - need) <= _tol(aid, need)
+        if getattr(a, "chain", False):
+            # Mit Saldoverlauf: nur der belegte Teil (Lücken) ist ausgleichbar. Ist der Verlauf lückenlos, enthält die
+            # API alle Bewegungen – die Abweichung stammt aus bleibenden Buchungen bzw. der Abbildung (a.causes)
+            if not left or (total > 0) != (need > 0) or abs(total) > abs(need) + _tol(aid, need):
+                continue
+            dated, amount = True, total
+        else:
+            dated = bool(left) and abs(total - need) <= _tol(aid, need)
+            amount = need
         items = ([{"asset": aid, "ts": (g["to"] or end), "amount": g.get("left", g["amount"]), "window": _window(g)}
                   for g in left] if dated else
                  [{"asset": aid, "ts": end, "amount": need, "window": "zum Abrufzeitpunkt"}])
-        a.adjustable[aid] = {"need": need, "dated": dated, "gaps_total": total, "items": items}
+        a.adjustable[aid] = {"need": need, "dated": dated, "gaps_total": total, "items": items, "amount": amount,
+                             "rest": need - amount}
         if aid in a.adjust:
             a.adjustments += items
-            expected[aid] += need
+            expected[aid] += amount
             key = "Ausgleich: " + ("Lücken laut Saldoverlauf der Quelle" if dated else "nicht belegte Restabweichung")
-            parts[aid][key] = parts[aid].get(key, ZERO) + need
+            parts[aid][key] = parts[aid].get(key, ZERO) + amount
 
 
 def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
@@ -636,6 +721,7 @@ def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
         out.append({"id": f"bal:{b['asset']}", "kind": "balance", "asset": b["asset"],
                     "symbol": str(b["name"]).split(" (", 1)[0],
                     "adjust": (getattr(a, "adjustable", None) or {}).get(b["asset"]),
+                    "causes": (getattr(a, "causes", None) or {}).get(b["asset"]),
                     "title": f"Bestand {b['name']} passt nicht",
                     "detail": f"jetzt {qty_exact(b['now'])}, nach Übernahme {qty_exact(b['after'])}, laut Quelle "
                               f"{_obs(b)}" + (" – würde negativ" if b["negative"] else ""),
@@ -721,7 +807,8 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
             by_asset[(aid, q > 0)].append(i)
     used: set[int] = set()
 
-    def find(t: Any) -> list[int]:
+    def find(t: Any, taken: set[int] | None = None) -> list[int]:
+        taken = used if taken is None else taken
         keys = source_ref_keys(t.source, t.source_ref) | aliases.get(t.tx_id, set()) | note_identity_keys(
             t.source, account, t.note)
         hit = sorted({i for k in keys for i in by_key.get(k, ())})
@@ -740,7 +827,7 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
         for aid, q in legs.items():
             for i in by_asset.get((aid, q > 0), ()):
                 ln = lines[i]
-                if i in used or ln.rec.ts_missing or ln.covered_by:
+                if i in taken or ln.rec.ts_missing or ln.covered_by:
                     continue
                 dt = abs(ln.rec.ts - t.ts)
                 if dt > win or not hit(aid, ln):
@@ -757,11 +844,46 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
     for t, _why in a.kept:
         if t.tx_id in own_ids or not (t.from_account and t.to_account and t.from_account != t.to_account):
             continue
-        for i in find(t):
-            if i not in used and lines[i].legs:
-                used.add(i)
-                lines[i].covered_by = t.tx_id
-                a.covered += 1
+        hits = [i for i in find(t) if i not in used and lines[i].legs]
+        for i in hits:
+            used.add(i)
+            lines[i].covered_by = t.tx_id
+            a.covered += 1
+        if not hits:
+            a.kept_free.append(t)
+    # … auch mit Zeitversatz (SEPA/Sparplan: Gutschrift Tage nach dem Datum des Imports bzw. umgekehrt)
+    for t, i, lag in _lag_moves(a.kept_free, lines, used, account):
+        used.add(i)
+        lines[i].covered_by = t.tx_id
+        a.covered += 1
+        a.kept_free.remove(t)
+        a.lagged_kept.append((t, lines[i], lag))
+
+    # In der App erfasste Buchungen, die die (vollständige) Quelle ebenfalls enthält, zählten doppelt: anzeigen und nur
+    # mit Zustimmung je Buchung („drop:<tx_id>“) bei der Übernahme ausblenden
+    drops = {x[5:] for x in adjust if x.startswith("drop:")}
+    dup_taken: set[int] = set()
+    app_free: list[Any] = []
+    for t, why in list(a.kept):
+        if not why.startswith("in der App erfasst"):
+            continue
+        hit = [i for i in find(t, dup_taken) if lines[i].legs and not lines[i].errors]
+        if not hit:
+            app_free.append(t)
+            continue
+        dup_taken.update(hit)
+        a.dups.append(_dup(db, t, [lines[i] for i in hit], None))
+    for t, i, lag in _lag_moves(app_free, lines, dup_taken | {j for j, ln in enumerate(lines) if ln.covered_by},
+                                account):
+        dup_taken.add(i)
+        app_free.remove(t)
+        a.dups.append(_dup(db, t, [lines[i]], lag))
+    a.app_free = app_free
+    for d in a.dups:
+        d["drop"] = d["tx"].tx_id in drops and d["hideable"]
+        if d["drop"]:
+            a.kept = [(t, w) for t, w in a.kept if t.tx_id != d["tx"].tx_id]
+            cand.append(d["tx"])
     matched_new: set[int] = set()
     hide_ids: list[str] = []
     donors: dict[str, dict[str, Any]] = {}
@@ -793,6 +915,7 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
 
     # -- Lücken der API (Saldoverlauf der Quelle): passende Import-Buchungen ohne Gegenstück bleiben ------------
     a.gaps = _gaps_by_asset(cov, resolver, prov)
+    a.chain = "gaps" in (cov.get("balances") or {})
     a.fillers = _fill(a.gaps, a.unmatched_old, account, a.fetched_at)
     if a.fillers:
         keep_ids = {t.tx_id for t, _g in a.fillers}
@@ -870,6 +993,7 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
                            "ok": abs(e - o) <= DUST, "was_ok": abs(n - o) <= DUST, "known": known,
                            "not_worse": not_worse, "adjusted": adj,
                            "filled": sum((_tx_legs(t, account).get(aid, ZERO) for t, _g in a.fillers), ZERO)})
+    a.causes = _causes(a, lines, account)
     names = [b["name"] for b in a.balances]
     for b in a.balances:  # gleiches Kürzel, verschiedene Assets (z. B. PEAQ und PEAQ-Token auf Ethereum)
         if names.count(b["name"]) > 1 and b["name"] != b["asset"]:

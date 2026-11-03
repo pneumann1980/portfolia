@@ -51,8 +51,8 @@ Seit 0.68.0 gibt es zwei Stufen: *belegt* (`takeover.PROOF`, Bitpanda) und *best
 | --- | --- |
 | Import (kuratierter Import) und Dateiimporte der App (`csv:…`) | ausgeblendet, durch API-Vorgänge ersetzt |
 | bereits aus der API gebucht (`sync:<anbieter>`) | bleibt (ist der Beleg selbst) |
-| Transfer mit anderem Konto | bleibt (die Gegenseite liegt dort); die API-Seite ist durch ihn gedeckt und wird nicht doppelt gebucht |
-| manuelle Buchungen, Transfers der App, Korrekturen der Diagnose | bleiben; müssen durch den Bestandsnachweis gedeckt sein |
+| Transfer mit anderem Konto | bleibt (die Gegenseite liegt dort); die API-Seite ist durch ihn gedeckt und wird nicht doppelt gebucht – ab 0.87.0 auch mit Zeitversatz bis 7 Tage (SEPA/Sparplan); ohne Gegenstück in der API als Ursache genannt |
+| manuelle Buchungen, Transfers der App, Korrekturen der Diagnose | bleiben; müssen durch den Bestandsnachweis gedeckt sein. Ab 0.87.0: steht dieselbe Bewegung auch in der API, wird sie als doppelt gezeigt und (manuelle Buchungen) mit Zustimmung bei der Übernahme ausgeblendet |
 | nicht ausblendbare (z. B. Teil einer Gruppe) | bleiben, mit Grund in der Vorschau |
 | Import ohne API-Gegenstück, der eine belegte Lücke der API füllt (ab 0.83.0) | bleibt, mit Grund „füllt eine Lücke der API“ |
 

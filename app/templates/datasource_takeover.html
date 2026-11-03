@@ -117,10 +117,33 @@
             <span class="hint">Danach hier erneut übernehmen – geänderte Daten werden neu geprüft.</span>
           </div>
         {% elif p.kind == 'balance' %}
+          {% set c = p.causes %}
+          {% if c %}
+          <div class="tk-actions tk-causes">
+            <p><b>Ursachen der Abweichung</b> ({{ c.deviation|qty_exact }} {{ p.symbol }}{% if c.complete %} – vollständig erklärt{% else %} – davon erklärt {{ c.explained|qty_exact }}{% endif %}):</p>
+            {% if c.dups %}
+            <p class="small">In der App erfasste Buchungen, die <b>auch in der API</b> stehen – sie zählen sonst doppelt:</p>
+            <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme#probleme" class="stack" style="gap:6px">{{ kidf() }}{% if confirmed %}<input type="hidden" name="confirm" value="1">{% endif %}
+              {% set ids = c.dups|map(attribute='tx')|map(attribute='tx_id')|list %}{% for x in adjust_sel %}{% if not (x.startswith('drop:') and x[5:] in ids) %}<input type="hidden" name="adjust" value="{{ x }}">{% endif %}{% endfor %}
+              <ul class="small">{% for d in c.dups %}<li>{{ d.tx.ts|date_de }} · {{ d.tx.type }} · {{ d.qty|qty_exact }} {{ p.symbol }} <span class="mono muted">{{ d.tx.tx_id }}</span>{% if d.lag %} <span class="hint">(API mit Versatz)</span>{% endif %}
+                {% if d.hideable %}<label class="check"><input type="checkbox" name="adjust" value="drop:{{ d.tx.tx_id }}"{% if ('drop:' ~ d.tx.tx_id) in adjust_sel %} checked{% endif %}> bei der Übernahme ausblenden</label>
+                {% else %}<br><span class="hint">{{ d.why }} · <a href="/journal/{{ d.tx.tx_id }}/edit">Buchung ansehen</a></span>{% endif %}</li>{% endfor %}</ul>
+              {% if c.dups|selectattr('hideable')|list %}<div><button class="btn sm" type="submit">Mit Ausblenden prüfen</button></div>{% endif %}
+            </form>
+            {% endif %}
+            {% if c.kept_free %}<p class="small">Transfers mit einem anderen Konto, die <b>nicht in der API</b> stehen (bleiben bei der Übernahme):</p>
+            <ul class="small">{% for r in c.kept_free[:30] %}<li>{{ r.tx.ts|date_de }} · {{ r.tx.from_account or '–' }} → {{ r.tx.to_account or '–' }} · {{ r.qty|qty_exact }} {{ p.symbol }} <span class="mono muted">{{ r.tx.tx_id }}</span></li>{% endfor %}</ul>
+            <p class="hint">Bitpandas Saldoverlauf ist lückenlos – ein Transfer ohne Gegenstück ist daher wahrscheinlich im Import falsch (Datum, Betrag, Konto oder doppelt). Bitte die Buchung bzw. ihre Gegenseite prüfen und korrigieren.</p>{% endif %}
+            {% if c.app %}<p class="small">In der App erfasste Buchungen <b>ohne Gegenstück in der API</b> (bleiben):</p>
+            <ul class="small">{% for r in c.app[:30] %}<li>{{ r.tx.ts|date_de }} · {{ r.tx.type }} · {{ r.qty|qty_exact }} {{ p.symbol }} · <a href="/journal/{{ r.tx.tx_id }}/edit">{{ r.tx.tx_id }}</a></li>{% endfor %}</ul>{% endif %}
+            {% if c.unbookable %}<p class="small">Nicht buchbare Vorgänge der API (fehlen danach): {{ c.unbookable|qty_exact }} {{ p.symbol }} – siehe „Vorgang nicht buchbar“.</p>{% endif %}
+            {% if c.gaps %}<p class="small">Lücken laut Saldoverlauf der Quelle (fehlen in der API): {{ c.gaps|qty_exact }} {{ p.symbol }}.</p>{% endif %}
+          </div>
+          {% endif %}
           {% set adj = p.adjust %}
           {% if adj %}
           <div class="tk-actions tk-adjust">
-            {% if adj.dated %}<p><b>Die Quelle belegt die fehlenden Bewegungen selbst</b> (Sprünge im Kontostand je Vorgang): {{ adj['items']|length }} Lücke{{ 'n' if adj['items']|length != 1 }} ergeben zusammen genau {{ adj.need|qty_exact }} {{ p.symbol }}.</p>
+            {% if adj.dated %}<p><b>Die Quelle belegt die fehlenden Bewegungen selbst</b> (Sprünge im Kontostand je Vorgang): {{ adj['items']|length }} Lücke{{ 'n' if adj['items']|length != 1 }} ergeben zusammen {{ adj.amount|qty_exact }} {{ p.symbol }}{% if adj.rest %} – der Rest von {{ adj.rest|qty_exact }} {{ p.symbol }} ist keine Lücke der API (Ursachen oben) und wird nicht ausgeglichen{% endif %}.</p>
             {% else %}<p><b>Nicht durch den Saldoverlauf belegt</b>{% if adj.gaps_total %} (Lücken laut Saldoverlauf ergeben {{ adj.gaps_total|qty_exact }}, nötig sind {{ adj.need|qty_exact }}){% endif %}. Ein Ausgleich wäre eine einzige Buchung über {{ adj.need|qty_exact }} {{ p.symbol }} zum Abrufzeitpunkt.</p>{% endif %}
             <details{% if adj['items']|length <= 6 %} open{% endif %}><summary>Ausgleichsbuchungen ({{ adj['items']|length }})</summary><ul class="small">{% for x in adj['items'][:40] %}<li>{{ x.amount|qty_exact }} {{ p.symbol }} – {{ x.window }}</li>{% endfor %}</ul></details>
             <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme#uebernehmen" class="stack" style="gap:6px">{{ kidf() }}{% if confirmed %}<input type="hidden" name="confirm" value="1">{% endif %}

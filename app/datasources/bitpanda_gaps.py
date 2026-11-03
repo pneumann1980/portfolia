@@ -119,7 +119,20 @@ def analyse(ctx: Any, sid: int) -> dict[str, Any] | None:
                "qty": next(iter(ln.legs.values())), "lag": TK._days(lag)} for t, ln, lag in a.lagged]
     gap_count = sum(len(x["gaps"]) for x in assets)
     rest = [x["asset"] for x in assets if x["rest"]]
-    if not gap_count and not rest:
+
+    def kept_rows(txs: list[Any], note: str = "") -> list[dict[str, Any]]:
+        return [{"ts": _ts(t.ts), "asset": asset, "kind": t.type, "qty": q, "tx": t.tx_id, "note": note}
+                for t in txs for asset, q in TK._tx_legs(t, a.account).items()]
+
+    kept = {"covered": a.covered, "lagged": len(a.lagged_kept),
+            "free": kept_rows(a.kept_free), "app": kept_rows(a.app_free),
+            "dups": [r for d in a.dups for r in kept_rows([d["tx"]], d["why"] or ("ausblendbar" if d["hideable"]
+                                                                                     else ""))]}
+    off = sorted({b["asset"] for b in a.balances if not b["ok"]})
+    if not gap_count and off:
+        verdict = ("warn", "API vollständig (Saldoverlauf lückenlos) – die Abweichung bei " + ", ".join(off)
+                   + " stammt aus Buchungen, die bei der Übernahme stehen bleiben bzw. doppelt zählen (unten).")
+    elif not gap_count and not rest:
         verdict = ("good", "API vollständig: Der Saldoverlauf ist lückenlos und ergibt den gemeldeten Bestand.")
     elif gap_count and not rest:
         verdict = ("warn", f"Die API lässt {gap_count} Bewegung(en) aus (Saldoverlauf belegt sie); der Import füllt "
@@ -133,7 +146,8 @@ def analyse(ctx: Any, sid: int) -> dict[str, Any] | None:
             "verdict": verdict, "assets": assets, "gap_count": gap_count,
             "import_only": _groups(imp), "import_only_n": len(old), "fillers_n": len(fill_ids),
             "import_rows": _rows(imp), "api_only": _groups(api), "api_only_n": len(a.unmatched_new),
-            "api_rows": _rows(api), "lagged": lagged, "lag_range": a.lag_range}
+            "api_rows": _rows(api), "lagged": lagged, "lag_range": a.lag_range, "kept": kept,
+            "causes": a.causes}
 
 
 def csv_rows(rep: dict[str, Any] | None) -> list[list[str]]:
@@ -154,6 +168,10 @@ def csv_rows(rep: dict[str, Any] | None) -> list[list[str]]:
     for p in rep["lagged"]:
         rows.append(["Sparplan mit Versatz", _iso(p["import_ts"]), p["asset"], "deposit",
                      _fmt(p["qty"]), f"API: {_iso(p['api_ts']) or '?'} (+{p['lag']} Tage)"])
+    for section, items in (("bleibt, nicht in der API", rep["kept"]["free"] + rep["kept"]["app"]),
+                           ("bleibt, auch in der API (doppelt)", rep["kept"]["dups"])):
+        for r in items[:MAX_ROWS]:
+            rows.append([section, _iso(r["ts"]), r["asset"], r["kind"], _fmt(r["qty"]), r["note"]])
     for section, items in (("Import ohne API", rep["import_rows"]), ("API ohne Import", rep["api_rows"])):
         for r in items[:MAX_ROWS]:
             rows.append([section, _iso(r["ts"]), r["asset"], r["kind"], _fmt(r["qty"]),

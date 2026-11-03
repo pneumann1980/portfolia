@@ -59,6 +59,19 @@
     <p class="hint">Einzelzeilen mit Datum stehen im <a href="/settings/datasources/{{ ds.id }}/luecken.csv">CSV-Bericht</a>.</p>
   </section>
 
+  {% set k = rep.kept %}
+  <section class="card">
+    <div class="card-head"><h2>Buchungen, die bei der Übernahme bleiben</h2>{% if k.free or k.app or k.dups %}<span class="badge warn">{{ (k.free + k.app + k.dups)|length }} zu prüfen</span>{% else %}<span class="badge good">alle gedeckt</span>{% endif %}</div>
+    <p class="hint">Transfers mit anderen Konten und in der App erfasste Buchungen bleiben bestehen. Steht dieselbe Bewegung auch in der API, darf sie nur einmal zählen: {{ k.covered }} Transfer{{ 's' if k.covered != 1 }} sind durch API-Vorgänge gedeckt{% if k.lagged %} (davon {{ k.lagged }} mit Zeitversatz){% endif %}.</p>
+    {% for title, items in [('Auch in der API – zählen sonst doppelt', k.dups), ('Transfers ohne Gegenstück in der API', k.free), ('In der App erfasst, ohne Gegenstück in der API', k.app)] if items %}
+    <details open><summary><b>{{ title }}</b> ({{ items|length }})</summary>
+      <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Datum</th><th>Asset</th><th>Art</th><th class="num">Menge</th><th>Buchung</th></tr></thead><tbody>
+      {% for r in items[:60] %}<tr><td>{{ r.ts|date_de }}</td><td data-label="Asset">{{ r.asset }}</td><td data-label="Art">{{ r.kind }}</td><td class="num" data-label="Menge">{{ r.qty|qty_exact }}</td><td data-label="Buchung" class="mono small">{{ r.tx }}{% if r.note %}<br><span class="hint">{{ r.note }}</span>{% endif %}</td></tr>{% endfor %}
+      </tbody></table></div></details>
+    {% endfor %}
+    {% if k.free or k.app or k.dups %}<p class="hint">Auf der <a href="/settings/datasources/{{ ds.id }}/uebernahme#probleme">Übernahmeseite</a> lassen sich doppelte App-Buchungen mit Zustimmung ausblenden; Transfers ohne Gegenstück bitte im Journal bzw. auf dem anderen Konto prüfen.</p>{% endif %}
+  </section>
+
   <section class="card">
     <h2>Was folgt daraus?</h2>
     <ul class="hint">

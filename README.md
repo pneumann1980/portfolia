@@ -1362,6 +1362,10 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > Bewegungen auslässt: Urteil aus dem Saldoverlauf, Zeitraum von API und Import, Buchungen ohne Gegenstück nach Art
 > und Jahr; nur lesend, Bericht als CSV mit Einzelzeilen. **Ab 0.85.0** ordnet die Übernahme Sparplan-Einzahlungen
 > zu, die die API mit dem späteren Datum der Gutschrift führt (gleicher Betrag, bis 7 Tage, eindeutig).
+> **Ab 0.87.0** prüft die Übernahme auch die Buchungen, die stehen bleiben (Transfers mit anderen Konten, in der App
+> erfasste Buchungen), gegen die API: gedeckte zählen nicht doppelt, doppelte App-Buchungen lassen sich mit Zustimmung
+> ausblenden, und ein Ausgleich wird nur noch für Lücken angeboten, die der Saldoverlauf der Quelle belegt – sonst
+> nennt die Seite die Ursachen der Abweichung.
 
 > **DKB-Dokumente (ab 0.36.0):** An einem DKB-Konto (*Einstellungen → Datenquellen*) richtet *DKB-Abruf einrichten* ein
 > Abrufprogramm ein (eigene Python-Umgebung im Datenordner, kein zweiter Container). Per Knopfdruck werden – nach Freigabe in
