@@ -1127,3 +1127,10 @@ details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
 .tk-problems details > summary { cursor: pointer; }
 .tk-skip { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
 .tk-skip .btn, .tk-problems .btn { white-space: normal; text-align: left; max-width: 100%; }
+
+/* Kanalsuche (News › Kanäle): kompakte Trefferliste mit Initial statt Vorschaubild */
+.ytres { flex-wrap: wrap; }
+.ytres .ytav { flex: 0 0 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--ink-2); background: var(--div-mid); }
+.ytres .grow { flex: 1 1 220px; }
+.ytres .meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ytres .ytact { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-left: auto; }

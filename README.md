@@ -1902,7 +1902,10 @@ Speichern aus der Oberfläche erhalten).
 * **YouTube:** Kanäle per Handle; Auflösung zur Kanal-ID (API oder Kanalseite) mit Anzeige von Name und
   Abonnenten zur Bestätigung; nicht auflösbare Handles werden deaktiviert (nie geraten). Discovery (mit
   `YOUTUBE_API_KEY`): täglich Vorschläge ab 100.000 Abonnenten, Aktionen *abonnieren/ignorieren/blockieren*
-  werden in `sources.yaml` gespeichert. Shorts ausgeblendet, Livestreams markiert.
+  werden in `sources.yaml` gespeichert. Shorts ausgeblendet, Livestreams markiert. **Eigene Kanäle (ab 0.86.0):**
+  *News → Kanäle → Kanal hinzufügen* sucht nach Name, `@Handle`, Kanal- oder Video-Link (mit API-Key über die Data
+  API, sonst über die YouTube-Suche), prüft den Kanal über seinen Feed und trägt ihn als Gruppe „Eigene“ ein;
+  entfernen unter *Quellen → YouTube-Kanäle*.
 * **YouTube-Transkripte und Kernaussagen – auf Wunsch:** Auf jeder Videokarte **„✨ Kernaussagen erstellen“**: Portfolia
   lädt die Untertitel dieses Videos (Bibliothek `youtube-transcript-api`, wie der Untertitel-Knopf im Player; nur die
   Video-Kennung geht an YouTube) und lässt daraus **5–10 Kernaussagen** und die **genannten Werte mit Aussage

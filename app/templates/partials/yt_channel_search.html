@@ -1,0 +1,24 @@
+{# Ergebnis der Kanalsuche (Reiter „Kanäle“): kompakte Liste, Hinzufügen je Kanal #}
+{% if error %}<div class="alert warn" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>
+{% elif res and not res.results %}<p class="hint">Keine Kanäle zu „{{ res.query }}“ gefunden. Tipp: @Handle oder den Link eines Videos des Kanals eingeben.</p>
+{% elif res %}
+<p class="hint">{{ res.results|length }} Kan{{ 'äle' if res.results|length != 1 else 'al' }} · {{ res.via }}</p>
+<div class="list">
+{% for r in res.results %}
+  <div class="list-item ytres">
+    <span class="ytav" aria-hidden="true">{{ (r.title or r.channel_id)[:1]|upper }}</span>
+    <span class="grow">
+      <span class="title"><a href="https://www.youtube.com/channel/{{ r.channel_id }}" target="_blank" rel="noopener noreferrer" title="Kanal auf YouTube ansehen">{{ r.title }} ↗</a>{% if r.handle %} <span class="muted small">{{ r.handle }}</span>{% endif %}</span>
+      <span class="meta">{% if r.subscribers %}{{ r.subscribers|num(0) }} Abonnenten · {% endif %}{% if r.description %}{{ r.description }}{% else %}<span class="mono">{{ r.channel_id }}</span>{% endif %}</span>
+    </span>
+    <span class="ytact">
+    {% if r.state == 'subscribed' %}<span class="badge good">bereits abonniert</span>
+    {% else %}
+      {% if r.state == 'blocked' %}<span class="badge crit" title="Hinzufügen hebt die Blockierung auf">blockiert</span>{% elif r.state == 'ignored' %}<span class="badge">ignoriert</span>{% elif r.state == 'inactive' %}<span class="badge" title="Hinzufügen aktiviert den Kanal wieder">deaktiviert</span>{% endif %}
+      <button class="btn sm primary" hx-post="/youtube/channel/add" hx-vals='{{ {"channel_id": r.channel_id, "handle": r.handle or ""}|tojson }}' hx-include="#yt-lang" hx-target="closest .ytact" hx-swap="innerHTML" hx-disabled-elt="this">Hinzufügen</button>
+    {% endif %}
+    </span>
+  </div>
+{% endfor %}
+</div>
+{% endif %}

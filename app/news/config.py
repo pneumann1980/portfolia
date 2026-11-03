@@ -273,9 +273,12 @@ class SourcesConfig:
             if yt.get("channels") is None:
                 yt["channels"] = CommentedSeq()
             for c in yt["channels"]:
-                if c.get("channel_id") == channel_id or (handle and c.get("handle") == handle):
+                h = str(c.get("handle") or "")
+                if c.get("channel_id") == channel_id or (handle and h.lower() == handle.lower()):
                     c["active"] = True
                     c["confirmed"] = True
+                    if not c.get("channel_id"):  # bisher nur über den Handle bekannt: Channel-ID festhalten
+                        c["channel_id"] = channel_id
                     self.save(d)
                     return
             entry = CommentedMap()
@@ -320,6 +323,34 @@ class SourcesConfig:
                     if c.get("channel_id") == channel_id:
                         c["active"] = False
             self.save(d)
+
+    def release_channel(self, channel_id: str) -> None:
+        """Ausdrücklich hinzugefügter Kanal: aus ``ignored_channels`` und ``blocked_channels`` entfernen."""
+        with self._lock:
+            d = self.data()
+            yt = self._yt(d)
+            self._remove_from(yt, "ignored_channels", channel_id)
+            self._remove_from(yt, "blocked_channels", channel_id)
+            self.save(d)
+
+    def remove_channel(self, key: str, group: str) -> bool:
+        """Kanal aus ``channels`` entfernen – nur Einträge der angegebenen Gruppe (selbst hinzugefügte)."""
+        with self._lock:
+            d = self.data()
+            yt = self._yt(d)
+            keep, hit = [], False
+            for c in yt.get("channels") or []:
+                h = c.get("handle")
+                if h and not str(h).startswith("@"):
+                    h = "@" + str(h)
+                if not hit and (h == key or c.get("channel_id") == key) and str(c.get("group") or "") == group:
+                    hit = True
+                    continue
+                keep.append(c)
+            if hit:
+                yt["channels"] = CommentedSeq(keep)
+                self.save(d)
+            return hit
 
     def set_channel(self, key: str, **fields: Any) -> bool:
         with self._lock:

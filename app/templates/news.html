@@ -16,7 +16,7 @@
   {{ tab_link('community', 'Community') }}
   <a href="/news?tab=saved" class="{{ 'active' if params.tab == 'saved' }}" title="Gemerkte Meldungen – bleiben dauerhaft erhalten">★ Gemerkt{% if n_saved %} <span class="badge">{{ n_saved }}</span>{% endif %}</a>
   {{ tab_link('report', 'Tagesbericht') }}
-  {{ tab_link('suggestions', 'Kanal-Vorschläge', n_suggestions if n_suggestions else None) }}
+  {{ tab_link('suggestions', 'Kanäle', n_suggestions if n_suggestions else None) }}
   {{ tab_link('sources', 'Quellen') }}
   {{ tab_link('status', 'Status') }}
 </nav>
@@ -111,6 +111,16 @@
   {% include "partials/news_status.html" %}
 
 {% elif params.tab == 'suggestions' %}
+  <section class="card" style="margin-bottom:16px">
+    <div class="card-head"><h2>Kanal hinzufügen</h2>{% if has_yt_key %}<span class="hint">Suche über die YouTube Data API (100 Einheiten je Suche)</span>{% endif %}</div>
+    <form hx-get="/youtube/search" hx-target="#yt-search" hx-disabled-elt="find button" class="row" style="gap:8px;flex-wrap:wrap" role="search">
+      <input type="search" name="q" required maxlength="200" placeholder="Kanalname, @Handle, Kanal- oder Video-Link" autocomplete="off" aria-label="Kanal suchen" style="flex:1 1 260px;min-width:0">
+      <select id="yt-lang" name="language" aria-label="Sprache des Kanals"><option value="de">Deutsch</option><option value="en">Englisch</option></select>
+      <button class="btn primary" type="submit">Suchen</button>
+    </form>
+    <div id="yt-search" class="stack" style="margin-top:10px"></div>
+    <p class="hint">Ein Treffer wird vor dem Speichern über den Kanal-Feed geprüft und in <code>sources.yaml</code> als eigener Kanal (Gruppe „Eigene“) eingetragen; neue Videos erscheinen beim nächsten Abruf unter „Videos“. Entfernen unter „Quellen“ → YouTube-Kanäle.</p>
+  </section>
   <section class="card">
     <div class="card-head"><h2>Kanal-Vorschläge aus der Entdeckung</h2><span class="hint">Gefunden über die YouTube-Suche zu den größten Positionen</span></div>
     {% if not suggestions %}<p class="hint">Noch keine Vorschläge. Die Entdeckung läuft täglich und benötigt <code>YOUTUBE_API_KEY</code>.</p>{% endif %}
@@ -181,7 +191,7 @@
     <p class="hint">Mit Kanalname und Bridge-Adresse wird die Feed-URL der <b>RSS-Bridge</b> (<span class="mono">TelegramBridge</span>, Format Atom) gebildet; alternativ kann hier direkt eine fertige Feed-URL stehen. Der Feed wird vor dem Speichern einmal abgerufen. Bilder werden beim Abruf lokal gespeichert. Eingetragen wird in <code>sources.yaml</code>.</p>
   </section>
   <section class="card" style="margin-top:16px">
-    <div class="card-head"><h2>YouTube-Kanäle</h2><span class="hint">{% if has_yt_key %}API-Key gesetzt · {{ yt_units }} Einheiten heute{% else %}ohne API-Key (Kanal-RSS){% endif %}</span></div>
+    <div class="card-head"><h2>YouTube-Kanäle</h2><a class="btn sm" href="/news?tab=suggestions">+ Kanal hinzufügen</a><span class="hint">{% if has_yt_key %}API-Key gesetzt · {{ yt_units }} Einheiten heute{% else %}ohne API-Key (Kanal-RSS){% endif %}</span></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Handle</th><th>Aufgelöst</th><th class="num">Abonnenten</th><th>Status</th><th>Gruppe</th><th title="Kernaussagen neuer Videos automatisch erstellen (Tagesgrenze siehe YouTube-Transkripte)">Auto-Kernaussagen</th><th></th></tr></thead>
       <tbody>
@@ -198,6 +208,7 @@
             {% if c.status == 'ok' and not ch.confirmed %}<button class="btn sm primary" hx-post="/youtube/channel" hx-vals='{"key": "{{ ch.key }}", "action": "confirm"}'>Bestätigen</button>{% endif %}
             {% if c.status in ('unresolvable', 'pending') %}<button class="btn sm" hx-post="/youtube/channel" hx-vals='{"key": "{{ ch.key }}", "action": "resolve"}'>Erneut auflösen</button>{% endif %}
             <button class="btn sm" hx-post="/youtube/channel" hx-vals='{"key": "{{ ch.key }}", "action": "{{ 'deactivate' if ch.active else 'activate' }}"}'>{{ 'Deaktivieren' if ch.active else 'Aktivieren' }}</button>
+            {% if ch.group == 'Eigene' %}<button class="btn sm ghost" hx-post="/youtube/channel" hx-vals='{"key": "{{ ch.key }}", "action": "remove"}' hx-confirm="Kanal „{{ c.title or ch.key }}“ entfernen? Bereits geladene Videos bleiben erhalten.">Entfernen</button>{% endif %}
           </td>
         </tr>
       {% endfor %}

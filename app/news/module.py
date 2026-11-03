@@ -659,6 +659,7 @@ def make_router() -> APIRouter:
             base["st"] = pipeline_status(ctx)
             base["pipe_note"] = ""
         elif tab == "suggestions":
+            base["has_yt_key"] = bool(ctx.config.secrets.youtube_api_key)
             base["suggestions"] = ctx.db.q(
                 "SELECT * FROM yt_suggestion ORDER BY CASE status WHEN 'new' THEN 0 ELSE 1 END, hits DESC, "
                 "subscribers DESC LIMIT 200")
@@ -912,6 +913,12 @@ def make_router() -> APIRouter:
                 svc.cfg.set_channel(key, channel_id=row["channel_id"], title=row["title"], confirmed=True)
             elif action in ("activate", "deactivate"):
                 svc.cfg.set_channel(key, active=action == "activate")
+            elif action == "remove":
+                from app.news.ytchannels import GROUP
+
+                if not svc.cfg.remove_channel(key, GROUP):  # nur selbst hinzugefügte Kanäle (andere: deaktivieren)
+                    raise HTTPException(400, "Nur selbst hinzugefügte Kanäle können entfernt werden.")
+                log.info("YouTube-Kanal entfernt: %s", key)
             elif action == "resolve":
                 if ctx.scheduler is not None:
                     ctx.scheduler.trigger("news_fetch", 0.5)
@@ -921,6 +928,36 @@ def make_router() -> APIRouter:
             return Response(status_code=204, headers={"HX-Refresh": "true"})
 
         return await run_in_threadpool(work)
+
+    @router.get("/youtube/search", response_class=HTMLResponse)
+    def channel_search(request: Request, q: str = "") -> HTMLResponse:
+        """Kanal suchen: Name, @Handle, Kanal- oder Video-Link (Ergebnisliste für den Reiter „Kanäle“)."""
+        from app.news import ytchannels as Y
+
+        ctx = get_ctx(request)
+        try:
+            res, error = Y.search(news_service(ctx), q), None
+        except Y.ChannelError as e:
+            res, error = None, str(e)
+        return render(request, "partials/yt_channel_search.html", res=res, error=error, q=q)
+
+    @router.post("/youtube/channel/add", response_class=HTMLResponse)
+    async def channel_add(request: Request) -> HTMLResponse:
+        from app.news import ytchannels as Y
+
+        ctx = get_ctx(request)
+        form = await request.form()
+        cid, handle = str(form.get("channel_id") or ""), str(form.get("handle") or "") or None
+        language = str(form.get("language") or "en")
+        try:
+            out = await run_in_threadpool(Y.add, news_service(ctx), cid, handle, language)
+        except Y.ChannelError as e:
+            return HTMLResponse(f'<span class="badge crit">{html.escape(str(e))}</span>')
+        if ctx.scheduler is not None:
+            ctx.scheduler.trigger("news_fetch", 1.0)
+        note = " · Blockierung aufgehoben" if out["unblocked"] else ""
+        return HTMLResponse(f'<span class="badge good">✓ hinzugefügt{note}</span> '
+                            '<a class="small" href="/news?tab=videos">Videos ansehen</a>')
 
     @router.post("/news/source")
     async def source_action(request: Request) -> Response:

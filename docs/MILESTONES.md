@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 02.11.2026 · Version 0.85.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 03.11.2026 · Version 0.86.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,29 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.86.0 – YouTube-Kanäle selbst hinzufügen (Suche nach Name, @Handle oder Link)
+
+**Änderungen**
+
+* Reiter **„Kanäle“** (bisher „Kanal-Vorschläge“) unter *News & Videos* mit Suchfeld **„Kanal hinzufügen“**. Eingabe:
+  Kanalname, `@Handle`, Kanal-Link (`/@…`, `/channel/UC…`), Channel-ID oder Video-Link (`watch?v=`, `youtu.be/`,
+  `/shorts/`, `/live/`) – Video-Links führen über oEmbed zum Kanal.
+* Freitext-Suche: mit `YOUTUBE_API_KEY` über `search?type=channel` (100 Einheiten, nur innerhalb des Tagesbudgets der
+  Entdeckung) plus Abonnenten/Handle über `channels` (1 Einheit); sonst über die YouTube-Ergebnisseite (Filter
+  „Kanäle“, `ytInitialData`, beide bekannten Layouts). Treffer zeigen Name, Handle, Abonnenten, Beschreibung und, ob
+  der Kanal schon abonniert (auch nur als Handle konfiguriert), deaktiviert, ignoriert oder blockiert ist.
+* **Hinzufügen** prüft den Kanal über seinen Feed (nur existierende Kanäle, Name aus dem Feed) und trägt ihn in
+  `sources.yaml` ein: Gruppe „Eigene“, bestätigt, Sprache wählbar. Ein ignorierter oder blockierter Kanal wird dabei
+  freigegeben (ausgeblendete Videos wieder sichtbar), ein deaktivierter wieder aktiviert; ein nur per Handle
+  konfigurierter Kanal erhält seine Channel-ID. Der Abruf wird sofort angestoßen.
+* Unter *Quellen → YouTube-Kanäle*: Knopf „+ Kanal hinzufügen“ und **„Entfernen“** für selbst hinzugefügte Kanäle
+  (andere weiterhin nur deaktivieren); bereits geladene Videos bleiben.
+
+**Grenzen:** Die Ergebnisseite ist kein dokumentierter Vertrag von YouTube und kann sich ändern oder durch eine
+Zustimmungs-/Prüfseite ersetzt werden – dann bleibt der Weg über `@Handle`, Kanal- oder Video-Link (klare Meldung).
+Kanalbilder werden nicht geladen (Content-Security-Policy), stattdessen das Initial. Eingaben über 200 Zeichen werden
+abgelehnt (kein Abruf).
 
 ## 0.85.0 – Sparplan-Einzahlungen mit Zeitversatz zuordnen, Lückenprüfung mit Urteil, alte API entfernt
 
