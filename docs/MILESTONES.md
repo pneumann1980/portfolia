@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 03.11.2026 · Version 0.88.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 04.11.2026 · Version 0.89.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,33 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.89.0 – „Buchungen prüfen“: Korrekturen zum Review vom 03.11.2026 (R01–R14, V01–V05)
+
+Prüftabelle, Ursachen, Nachweise und Grenzen: [`BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](BUCHUNGEN_PRUEFEN_KORREKTUREN.md).
+Alle 14 Befunde waren auf 0.88.0 noch reproduzierbar.
+
+**Änderungen**
+
+* *Quellenübernahme:* kein Teilzustand mehr bei Fehlern in einer Schreibphase (Kompensation, sichtbare Wiederherstellung
+  nach Abbruch, R04); **Probelauf** derselben Schreibphasen auf einer Kopie der Datenbank schon in der Vorschau – Blocker
+  vor jeder Änderung, „Jetzt entscheiden“ aus dem gespeicherten Vollabruf ohne neuen Abruf (R03); unerklärte
+  Vorgangszählung blockiert (Bitpanda, R10); Hintergrundlauf endet immer mit sichtbarem Ergebnis (R05); wiederholtes
+  Absenden löscht die Ablehnungsgründe nicht mehr (R06).
+* *Vorschau gilt für die gezeigten Werte:* Stapelplan und Assistentenkarten binden Werte, Gebühren, Entscheidung,
+  Transferpaar und Buchungszeile (R09).
+* *Assistent:* Seitenaufgaben öffnen und „Später“ funktionieren (R13); Eingaben je Antwort getrennt, leere Auswahl bleibt
+  leer, Einordnung in der Bestätigung sichtbar (R01, R11); Transferfrage mit ausführbaren Antworten (R02); Durchgang
+  serverseitig – beliebig viele Übersprungene (R08); „Alles geprüft“ nur ohne zurückgestellte bzw. offene Arbeit (R12);
+  Fehler behalten Aufgabe, Antwort und Eingaben (V05); Teilfortschritt wird gemeldet (V04).
+* *Navigation:* lange Ereignis-IDs ungekürzt, ungültige sichtbar zurückgewiesen (R14); Direktsprung zum Einzelvorgang mit
+  Rückweg (V01).
+* *Protokoll:* verweigerte Rücknahme mit Grund und richtigem Rückweg (R07); Stapelaktionen, Quellenübernahmen und
+  abgelehnte Quellenpräferenzen mit ihrem Rücknahmeweg (V02, V03).
+
+**Grenzen:** Entscheidungen, die vom ausgeblendeten Zustand der Übernahme abhängen, lassen sich im normalen Prüf-Stapel
+nur als dauerhafte Entscheidung treffen (R03 teilweise); Zählung als Blocker nur für Bitpanda; Durchgänge je Browser,
+nicht je Tab. Keine Schemamigration (neue Zustände in `app_state`).
 
 ## 0.88.0 – Spam-Tokens in der Quellenübernahme ignorieren; News-Quellenfilter für entdeckte Kanäle
 

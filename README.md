@@ -1366,6 +1366,11 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > erfasste Buchungen), gegen die API: gedeckte zählen nicht doppelt, doppelte App-Buchungen lassen sich mit Zustimmung
 > ausblenden, und ein Ausgleich wird nur noch für Lücken angeboten, die der Saldoverlauf der Quelle belegt – sonst
 > nennt die Seite die Ursachen der Abweichung.
+> **Ab 0.89.0** führt die Vorschau einen **Probelauf** derselben Schreibschritte auf einer Kopie der Datenbank aus:
+> Vorgänge, die nur mit Einzelentscheidung buchbar sind, und eine scheiternde Nachprüfung zeigen sich vor jeder
+> Änderung; *Jetzt entscheiden* öffnet den Vorgang aus dem gespeicherten Abruf (ohne neuen Abruf). Fehler in einer
+> Schreibphase hinterlassen keinen Teilzustand; nach einem Abbruch bietet die Seite *Unterbrochene Übernahme
+> zurücknehmen*. Korrekturen zum Review „Buchungen prüfen“: [`docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md).
 
 > **DKB-Dokumente (ab 0.36.0):** An einem DKB-Konto (*Einstellungen → Datenquellen*) richtet *DKB-Abruf einrichten* ein
 > Abrufprogramm ein (eigene Python-Umgebung im Datenordner, kein zweiter Container). Per Knopfdruck werden – nach Freigabe in
