@@ -181,6 +181,7 @@ def _begin(db: Any, sid: int) -> int:
     with db.transaction() as c:
         c.execute("UPDATE ds_takeover SET status='discarded' WHERE source_id=? AND status IN "
                   "('staged', 'failed', 'undone', 'fetching')", (sid,))
+        c.execute("DELETE FROM app_state WHERE key=?", (_dec_key(sid),))  # Entscheidungen galten dem alten Abruf
         return int(c.execute("INSERT INTO ds_takeover(source_id, status, message, created_at) VALUES (?, 'fetching', "
                              "'Vollabruf läuft …', ?)", (sid, _now())).lastrowid)  # type: ignore[arg-type]
 
@@ -216,49 +217,6 @@ def run_fetch(ctx: Any, sid: int, rid: int | None = None) -> dict[str, Any]:
          (f"{len({r.event_key or r.ext_id for r in recs})} Vorgänge abgerufen", "[" + ",".join(
              rec_to_json(r) for r in recs) + "]", json.dumps(meta, ensure_ascii=False, default=str), rid))
     return {"id": rid, "events": len(recs), "errors": []}
-
-
-def to_review(ctx: Any, sid: int, *, confirm: bool = False, adjust: frozenset[str] = frozenset()) -> dict[str, Any]:
-    """Vorgänge, die nur mit Einzelentscheidung buchbar sind, aus dem **gespeicherten** Vollabruf in einen Prüf-Stapel
-    der Quelle legen – ohne neuen Abruf beim Anbieter. Dort entscheiden (z. B. Transfer bestätigen, dauerhaft
-    ignorieren); danach bewertet die Vorschau den Plan neu. Bereits vorgelegte Vorgänge werden nicht doppelt abgelegt.
-
-    Ergebnis: ``bid`` (Stapel mit den Vorgängen), ``event`` (erster betroffener Vorgang), ``errors``."""
-    from app.csvimport.service import csv_service, rec_from_json, rec_to_json
-    from app.datasources import service as DSM
-
-    db = ctx.db
-    row = latest(db, sid)
-    ds = DSM.datasource_service(ctx).get(sid)
-    if row is None or ds is None or row["status"] != "staged" or not row["events_json"]:
-        return {"errors": ["Kein gespeicherter Vollabruf vorhanden."]}
-    a = assess(ctx, sid, confirm=confirm, adjust=adjust)
-    keys = [str(e.get("event") or "") for p in (a.problems if a is not None else []) if p.get("kind") == "row"
-            for e in p.get("events") or []]
-    keys = list(dict.fromkeys(k for k in keys if k))
-    if not keys:
-        return {"errors": ["Kein Vorgang braucht eine Einzelentscheidung."]}
-    recs = [r for r in (rec_from_json(json.dumps(d)) for d in json.loads(row["events_json"]))
-            if (r.event_key or "") in set(keys)]
-    svc = DSM.datasource_service(ctx)
-    csv = csv_service(ctx)
-    with DSM._INGEST_LOCK:
-        present = svc._present(sid, recs)
-        fresh = [r for r in recs if (r.event_key or "") not in present]
-        if fresh:
-            payload = ("[" + ",".join(rec_to_json(r) for r in fresh) + "]").encode()
-            bid = csv.ingest(fresh, source=f"sync:{ds.provider}", profile=f"sync:{ds.provider}", account=ds.account,
-                             label=f"{ds.name} · Einzelentscheidungen aus dem Vollabruf "
-                                   f"{datetime.now(UTC).strftime('%d.%m.%Y %H:%M')}",
-                             datasource_id=sid, payload=payload, append_to=svc._appendable(sid))
-        else:  # schon vorgelegt: den offenen Stapel mit dem ersten Vorgang öffnen
-            hit = db.q1("SELECT r.batch_id FROM csv_row r JOIN csv_batch b ON b.id=r.batch_id WHERE b.kind='sync' AND "
-                        "b.datasource_id=? AND b.status IN ('preview','partial') AND r.event_key=? ORDER BY r.batch_id "
-                        "DESC LIMIT 1", (sid, keys[0]))
-            if hit is None:
-                return {"errors": ["Die Vorgänge sind bereits entschieden – bitte die Vorschau neu laden."]}
-            bid = int(hit["batch_id"])
-    return {"bid": int(bid), "event": keys[0], "n": len(keys), "errors": []}
 
 
 def discard(ctx: Any, sid: int) -> bool:
@@ -329,6 +287,10 @@ class Assessment:
     before: list[Any] = field(default_factory=list)  # Buchungen vor dem Beginn der Quelle (bleiben)
     delivered: set[str] = field(default_factory=set)  # Assets, für die die Quelle einen Bestand meldet (auch 0)
     counts: dict[str, Any] = field(default_factory=dict)  # API-Vorgänge → ausgewertete Vorgänge → Zeilen
+    # Einzelentscheidungen dieses Laufs (Kennung → Entscheidung) – gültige bzw. verworfene (Grundlage geändert)
+    decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    stale: list[dict[str, Any]] = field(default_factory=list)
+    replaced: list[Any] = field(default_factory=list)  # Import-Buchungen anderer Konten, die ein Transfer ersetzt
     problems: list[dict[str, Any]] = field(default_factory=list)  # einzeln bearbeitbare Probleme (stabile Kennung)
     breakdown: dict[str, list[tuple[str, Decimal]]] = field(default_factory=dict)  # Zusammensetzung je Asset
     raw_check: dict[str, list[dict[str, str]]] = field(default_factory=dict)  # Bestandsprüfung der Quelle je Kürzel
@@ -820,6 +782,8 @@ def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
 def _row_problem(x: dict[str, Any]) -> dict[str, Any]:
     return {"id": f"row:{x.get('key')}", "kind": "row", "title": "Vorgang braucht eine Einzelentscheidung",
             "detail": f"{x.get('when', '')} {x.get('what', '')}: {x.get('why', '')}".strip(),
+            "key": x.get("key"), "options": list(x.get("options") or []), "partner": x.get("partner"),
+            "basis": x.get("basis"), "labels": {k: CHOICES[k] for k in x.get("options") or [] if k in CHOICES},
             "events": [{"event": x.get("event", ""), "ext": x.get("key", ""), "line": x.get("line")}]}
 
 
@@ -847,6 +811,7 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
     a.skipped = dict(meta.get("skipped") or {})
 
     lines, resolver = _lines(ctx, recs, account, prov)
+    _validate_decisions(ctx, a, recs)
     a.lines = len(lines)
     a.events = len({ln.rec.event_key or ln.rec.ext_id for ln in lines})
     times = sorted(ln.rec.ts for ln in lines if not ln.rec.ts_missing)
@@ -1034,6 +999,22 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
             else:
                 pl.ops += scratch.ops
                 hide_ids.append(t.tx_id)
+        # bestätigter Transfer mit einer Import-Buchung eines anderen Kontos: sie wird durch die Gegenseite ersetzt
+        pf = ctx.recorded_portfolio()
+        by_id = {t.tx_id: t for t in (pf.txs if pf is not None else [])}
+        for d in a.decisions.values():
+            p_ = d.get("partner") or {}
+            t = by_id.get(str(p_.get("tx"))) if d.get("choice") == "pair" and p_.get("kind") == "imp" else None
+            if t is None or t.tx_id in hide_ids:
+                continue
+            scratch = A.Plan(f, opt, {})
+            if A._hide(st, st.tx(t.tx_id), scratch) is None:
+                a.stale.append({"key": "", "why": f"{t.tx_id} lässt sich nicht ausblenden: "
+                                                  + " ".join(scratch.errors)[:200], **d})
+                continue
+            pl.ops += scratch.ops
+            hide_ids.append(t.tx_id)
+            a.replaced.append(t)
         a.plan, a.finding = pl, f
     a.hide = [t for t in cand if t.tx_id in set(hide_ids)] if plan else list(cand)
     if plan:
@@ -1165,7 +1146,9 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
     fp = json.dumps({"s": sid, "r": a.rid, "h": sorted(hide_ids), "b": {k: _fmt(v) for k, v in sorted(
         expected.items())}, "p": a.plan.token if a.plan else "", "d": sorted(a.donors), "m": a.mode,
         "c": a.confirm, "f": sorted(t.tx_id for t, _g in a.fillers),
-        "a": [[x["asset"], x["ts"], _fmt(x["amount"])] for x in a.adjustments]}, sort_keys=True)
+        "a": [[x["asset"], x["ts"], _fmt(x["amount"])] for x in a.adjustments],
+        "x": sorted([k, d.get("choice"), d.get("basis"), (d.get("partner") or {}).get("basis")]
+                    for k, d in a.decisions.items())}, sort_keys=True, default=str)
     a.token = hashlib.sha256(fp.encode()).hexdigest()[:32]
     a.lines_by_ext = {ln.rec.ext_id: ln for ln in lines if ln.rec.ext_id}
     # Probelauf: dieselben Schreibphasen wie die Übernahme auf einer Kopie der Datenbank – erst wenn alle übrigen
@@ -1551,6 +1534,203 @@ def recover(ctx: Any, sid: int) -> dict[str, Any]:
             S._release(sid)
 
 
+# ----------------------------------------------------------------------------------------------------
+# Einzelentscheidungen im Übernahmekontext (Zustand nach dem Ausblenden, je Quelle und gespeichertem Lauf)
+# ----------------------------------------------------------------------------------------------------
+
+CHOICES = {"pair": "Transfer bestätigen", "nopair": "Kein Transfer – eigener Vorgang",
+           "include": "Einzeln buchen", "skip": "Nicht übernehmen (nur dieser Lauf)"}
+
+
+def _dec_key(sid: int) -> str:
+    return f"takeover.decisions.{int(sid)}"
+
+
+def _h(obj: Any) -> str:
+    return hashlib.sha256(json.dumps(obj, sort_keys=True, default=str).encode()).hexdigest()[:24]
+
+
+def _rec_basis(rec: Any) -> str:
+    """Entscheidungsrelevanter Inhalt eines API-Vorgangs (stabil über Auswertungen desselben Abrufs)."""
+    return _h([rec.ext_id, rec.event_key, rec.kind, None if rec.ts_missing else iso(rec.ts), rec.in_sym,
+               str(rec.in_qty), rec.out_sym, str(rec.out_qty), rec.fee_sym, str(rec.fee_qty), rec.account,
+               rec.to_account, str(rec.value), rec.value_ccy, rec.label])
+
+
+def _tx_basis(ctx: Any, tx_id: str) -> str | None:
+    """Wirksamer Zustand einer vorhandenen Buchung (Konto, Asset, Menge, Gebühr, Wert, Einordnung, Herkunft)."""
+    import dataclasses
+
+    pf = ctx.recorded_portfolio()
+    t = next((x for x in (pf.txs if pf is not None else []) if x.tx_id == tx_id), None)
+    return None if t is None else _h(sorted((k, str(v)) for k, v in dataclasses.asdict(t).items() if k != "seq"))
+
+
+def _choice_info(ctx: Any, rc: Any, rows: list[Any]) -> dict[str, Any]:
+    """Im Übernahmekontext ausführbare Entscheidungen zu einem abgelehnten Vorgang samt Partnerbezug und Prüfsumme der
+    Grundlage (eigener Vorgang + Partnerzustand). Nur angebotene Antworten lässt die Übernahme später zu."""
+    from app.diagnosis.guide import _tx_text
+
+    by_idx = {x.idx: x for x in rows}
+    ref = rc.pair_ref or ""
+    partner: dict[str, Any] | None = None
+    if rc.pair_alts:
+        options = ["nopair", "skip"]
+        partner = {"kind": "alts", "text": f"{len(rc.pair_alts) + 1} mögliche Gegenbuchungen – keine eindeutig"}
+    elif ref.startswith("b:") and ref[2:].isdigit() and int(ref[2:]) in by_idx:
+        p = by_idx[int(ref[2:])]
+        partner = {"kind": "b", "ext": p.rec.ext_id, "basis": _rec_basis(p.rec),
+                   "text": f"API-Vorgang {p.rec.label or p.rec.kind} auf {p.rec.account}"}
+        options = ["pair", "nopair", "skip"]
+    elif ref.startswith("j:"):
+        partner = {"kind": "j", "tx": ref[2:], "basis": _tx_basis(ctx, ref[2:]), "text": _tx_text(ctx, ref[2:])}
+        options = ["pair", "nopair", "skip"]
+    elif rc.counterpart:
+        partner = {"kind": "imp", "tx": rc.counterpart, "basis": _tx_basis(ctx, rc.counterpart),
+                   "text": _tx_text(ctx, rc.counterpart)}
+        options = ["pair", "nopair", "skip"]
+    else:
+        options = ["include", "skip"]
+    return {"options": options, "partner": partner, "basis": _rec_basis(rc.rec)}
+
+
+def load_decisions(db: Any, sid: int, rid: int) -> dict[str, dict[str, Any]]:
+    """Gespeicherte Entscheidungen genau dieses Laufs; ein neuer Vollabruf (anderer Lauf) verwirft sie."""
+    st = db.get_state(_dec_key(sid)) or {}
+    return dict(st.get("items") or {}) if isinstance(st, dict) and st.get("rid") == rid else {}
+
+
+def decide(ctx: Any, sid: int, key: str, choice: str, token: str, *, confirm: bool = False,
+           adjust: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Einzelentscheidung zu einem abgelehnten Vorgang speichern – nur zur gerade angezeigten Vorschau (``token``)
+    und nur eine dort angebotene Antwort. Danach gilt eine neue Vorschau (Token und Probelauf ändern sich)."""
+    db = ctx.db
+    with _LOCK:
+        a = assess(ctx, sid, confirm=confirm, adjust=adjust)
+        if a is None or a.token != token:
+            return {"errors": ["Die Vorschau ist nicht mehr aktuell – bitte die Seite neu laden und erneut "
+                               "entscheiden."]}
+        prob = next((p for p in a.problems if p.get("kind") == "row" and p.get("key") == key), None)
+        if prob is None or choice not in (prob.get("options") or []):
+            return {"errors": ["Diese Entscheidung ist für den Vorgang nicht (mehr) möglich."]}
+        items = load_decisions(db, sid, a.rid)
+        items[key] = {"choice": choice, "basis": prob.get("basis"), "partner": prob.get("partner"),
+                      "what": prob.get("detail", ""), "at": _now()}
+        db.set_state(_dec_key(sid), {"rid": a.rid, "items": items})
+    return {"errors": []}
+
+
+def undecide(ctx: Any, sid: int, key: str) -> bool:
+    r = latest(ctx.db, sid)
+    if r is None:
+        return False
+    items = load_decisions(ctx.db, sid, int(r["id"]))
+    if items.pop(key, None) is None:
+        return False
+    ctx.db.set_state(_dec_key(sid), {"rid": int(r["id"]), "items": items})
+    return True
+
+
+def _validate_decisions(ctx: Any, a: Assessment, recs: list[Any]) -> None:
+    """Gespeicherte Entscheidungen gegen den aktuellen Stand prüfen: eigener Vorgang und Partner (API-Vorgang,
+    Journal- bzw. Import-Buchung) müssen unverändert sein – sonst wird die Entscheidung sichtbar verworfen."""
+    by_ext = {r.ext_id: r for r in recs if r.ext_id}
+    for key, d in load_decisions(ctx.db, a.sid, a.rid).items():
+        rec = by_ext.get(key)
+        why = ""
+        if rec is None:
+            why = "Vorgang nicht mehr im Abruf"
+        elif _rec_basis(rec) != d.get("basis"):
+            why = "Vorgang hat sich geändert"
+        else:
+            p = d.get("partner") or {}
+            if p.get("kind") == "b" and (by_ext.get(p.get("ext")) is None or
+                                         _rec_basis(by_ext[p["ext"]]) != p.get("basis")):
+                why = "Gegenbuchung im Abruf hat sich geändert"
+            elif p.get("kind") in ("j", "imp") and _tx_basis(ctx, str(p.get("tx"))) != p.get("basis"):
+                why = "Gegenbuchung hat sich geändert"
+        if why:
+            a.stale.append({"key": key, "why": why, **d})
+        else:
+            a.decisions[key] = d
+
+
+def _partner_recs(ctx: Any, a: Any) -> list[Any]:
+    """Bestätigter Transfer mit einer Import-Buchung eines anderen Kontos: deren Seite als Vorgang der Übernahme (die
+    Import-Buchung wird im selben Lauf ausgeblendet). So wird ein Transfer gebucht – Einstand und Haltedauer bleiben;
+    stabile Kennung je Lauf und Buchung, gemeinsam rückgängig."""
+    from app.csvimport import model as M
+
+    pf = ctx.recorded_portfolio()
+    txs = {t.tx_id: t for t in (pf.txs if pf is not None else [])}
+    out = []
+    for i, t in enumerate(a.replaced):
+        t = txs.get(t.tx_id, t)
+        r = M.Rec(line=950_000 + i, ts=t.ts, kind=M.DEPOSIT if t.type == "deposit" else M.WITHDRAWAL,
+                  ext_id=f"takeover:{a.rid}:partner:{t.tx_id}", label=f"Gegenseite des Transfers (ersetzt {t.tx_id})",
+                  note=f"Quellenübernahme – Transfer bestätigt; ersetzt die Import-Buchung {t.tx_id}",
+                  value=t.value_eur, value_ccy="EUR" if t.value_eur is not None else None)
+        if t.type == "deposit":
+            r.account, r.in_sym, r.in_qty = t.to_account or "", t.to_asset, t.to_qty
+        else:
+            r.account, r.out_sym, r.out_qty = t.from_account or "", t.from_asset, t.from_qty
+        out.append(r)
+    return out
+
+
+def _apply_decisions(ctx: Any, csv: Any, bid: int, a: Any) -> tuple[dict[int, str], set[int], list[dict[str, Any]]]:
+    """Entscheidungen im Übernahmestapel anwenden (nach dem Auswerten, vor dem Buchungsplan): Transferpaar bestätigen
+    bzw. ablehnen (``pair_ok`` wie im Prüf-Stapel), Freigabe nur für genau diese Zeilen. Passt der Partner im
+    Zustand nach dem Ausblenden nicht mehr zum Entschiedenen, wird abgelehnt statt etwas anderes zu buchen.
+
+    Rückgabe: Freigaben (Zeile → Entscheidung), nicht zu übernehmende Zeilen, abgelehnte Entscheidungen."""
+    if not a.decisions:
+        return {}, set(), []
+    rows = csv.rows(bid)
+    by_ext = {rc.rec.ext_id: rc for rc in rows if rc.rec.ext_id}
+    approved: dict[int, str] = {}
+    skip: set[int] = set()
+    bad: list[dict[str, Any]] = []
+    vals: dict[str, str] = {}
+    want: dict[int, str] = {}  # Zeile → erwarteter pair_ref
+    for key, d in a.decisions.items():
+        rc = by_ext.get(key)
+        if rc is None or not rc.open:
+            continue
+        ch, p = d.get("choice"), d.get("partner") or {}
+        if ch == "skip":
+            skip.add(rc.idx)
+        elif ch == "include":
+            approved[rc.idx] = "include"
+        elif ch == "nopair":
+            approved[rc.idx] = "nopair"
+            if rc.pair_ref:
+                vals[f"pair_{rc.idx}"] = "0"
+        elif ch == "pair":
+            if p.get("kind") == "j":
+                ref = f"j:{p.get('tx')}"
+            else:
+                other = by_ext.get(p.get("ext") if p.get("kind") == "b" else f"takeover:{a.rid}:partner:{p.get('tx')}")
+                ref = f"b:{other.idx}" if other is not None else ""
+                if other is not None:
+                    approved[other.idx] = "pair"
+            if not ref or rc.pair_ref != ref:
+                bad.append({"key": key, "why": "Der bestätigte Partner passt im Zustand nach dem Ausblenden nicht "
+                                                "(mehr) – bitte neu entscheiden"})
+                continue
+            want[rc.idx] = ref
+            vals[f"pair_{rc.idx}"] = "1"
+            approved[rc.idx] = "pair"
+    if vals:
+        csv.set_rows(bid, vals)
+        csv.evaluate(bid)
+        now = {rc.idx: rc for rc in csv.rows(bid)}
+        for i, ref in want.items():
+            if now[i].pair_ref != ref or now[i].pair_ok != 1:
+                bad.append({"key": now[i].rec.ext_id, "why": "Transferpaar ließ sich nicht wie entschieden bilden"})
+    return approved, skip, bad
+
+
 def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_name: str, rollback: Any,
                  st: dict[str, Any]) -> dict[str, Any]:
     """Schreibphasen der Übernahme. Jede Kennung des Geschriebenen (Entscheidung, Stapel, Stapelaktion) steht sofort
@@ -1580,6 +1760,7 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
     row = db.q1("SELECT events_json FROM ds_takeover WHERE id=?", (rid,))
     recs = [rec_from_json(json.dumps(d)) for d in json.loads(row["events_json"])]
     recs += _adjust_recs(a)  # bestätigter Ausgleich: gekennzeichnete Zeilen im selben Stapel (gemeinsam rückgängig)
+    recs += _partner_recs(ctx, a)  # bestätigter Transfer mit ersetzter Import-Buchung: deren Seite im selben Stapel
     payload = ("[" + ",".join(rec_to_json(r) for r in recs) + "]").encode()
     prov = a.provider
     try:
@@ -1592,10 +1773,22 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
         return rollback(f"Auswertung der API-Vorgänge fehlgeschlagen ({type(e).__name__}).", [])
     db.x("UPDATE ds_takeover SET batch_id=? WHERE id=?", (bid, rid))
     _fault("batch")
+    # Einzelentscheidungen dieses Laufs (Zustand nach dem Ausblenden) – Probelauf und Übernahme gleich
+    approved, skip, bad = _apply_decisions(ctx, csv, bid, a)
+    if bad:
+        return rollback("Eine gespeicherte Entscheidung passt nicht mehr – bitte neu entscheiden.",
+                        [f"{x['key']}: {x['why']}" for x in bad],
+                        [{"key": x["key"], "why": x["why"], "what": "Entscheidung", "when": "", "line": 0,
+                          "event": ""} for x in bad])
     rows = csv.rows(bid)
+    if skip:  # „nicht übernehmen“ – nur in diesem Lauf, keine dauerhafte Ignorier-Entscheidung
+        sp = B.plan(csv, bid, "skip", skip, rows=rows)
+        B.execute(csv, bid, "skip", {i.rc.idx for i in sp.todo}, token=B.new_token(), fingerprint=sp.fingerprint(),
+                  params={"takeover": rid})
+        rows = csv.rows(bid)
     cover_ext = {e for e, ln in a.lines_by_ext.items() if ln.covered_by}
     book = [rc for rc in rows if rc.status == "new" and rc.row is not None and not rc.errors
-            and (rc.rec.ext_id or "") not in cover_ext]
+            and (rc.rec.ext_id or "") not in cover_ext and rc.idx not in skip and rc.decision != "skip"]
     rest = [rc for rc in rows if rc not in book and rc.open and (rc.rec.ext_id or "") not in cover_ext]
 
     # 3. buchen -------------------------------------------------------------------------------------------------
@@ -1605,20 +1798,21 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
     _msg(db, rid, f"{len(book)} Vorgänge werden gebucht …")
     if book:
         idxs = {rc.idx for rc in book}
-        p = B.plan(csv, bid, "include", idxs)
+        p = B.plan(csv, bid, "include", idxs, rows=rows, approved=approved)
         refused = [it for it in p.items if not it.act]
         if refused or not p.todo:
             info = [{"key": it.rc.rec.ext_id or it.rc.rec.event_key or f"zeile:{it.rc.line}",
                      "event": it.rc.rec.event_key or "", "line": it.rc.line,
                      "when": it.rc.rec.ts.astimezone(UTC).strftime("%d.%m.%Y") if not it.rc.rec.ts_missing else "",
-                     "what": str(it.rc.rec.label or it.rc.rec.kind or ""), "why": it.note or "nicht buchbar"}
+                     "what": str(it.rc.rec.label or it.rc.rec.kind or ""), "why": it.note or "nicht buchbar",
+                     **_choice_info(ctx, it.rc, rows)}
                     for it in refused]
             head = ("Keine API-Zeile ist ohne Einzelentscheidung buchbar" if not p.todo else
                     f"{len(refused)} von {len(book)} API-Vorgängen sind nur mit Einzelentscheidung buchbar")
-            return rollback(f"{head} – bitte zuerst im Prüfstapel entscheiden.",
+            return rollback(f"{head} – bitte je Vorgang auf der Übernahmeseite entscheiden.",
                             [f"Zeile {x['line']} ({x['when']} {x['what']}): {x['why']}" for x in info][:12], info)
         out = B.execute(csv, bid, "include", {i.rc.idx for i in p.todo}, token=B.new_token(),
-                        fingerprint=p.fingerprint(), params={"takeover": rid},
+                        fingerprint=p.fingerprint(), params={"takeover": rid}, approved=approved,
                         in_tx=lambda c, aid: c.execute("UPDATE ds_takeover SET action_id=? WHERE id=?", (aid, rid)))
         if out.get("errors"):
             return rollback("Buchen der API-Vorgänge nicht möglich.", list(out["errors"]))

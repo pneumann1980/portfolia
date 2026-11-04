@@ -601,7 +601,8 @@ def make_router() -> APIRouter:
         extra = await run_in_threadpool(_takeover_extra, ctx, ds, a)
         return render(request, "datasource_takeover.html", active="settings", ds=ds, t=row, a=a, result=result,
                       supported=TK.supported(ds.provider), mode=TK.mode(ds.provider), confirmed=confirm == "1",
-                      msg=msg, error=error, kid=_kid(kid), adjust_sel=sorted(adjust), **extra)
+                      msg=msg, error=error, kid=_kid(kid), adjust_sel=sorted(adjust), choice_labels=TK.CHOICES,
+                      **extra)
 
     @router.post("/settings/datasources/{sid}/uebernahme/abruf")
     async def takeover_fetch(request: Request, sid: int) -> Response:
@@ -655,21 +656,34 @@ def make_router() -> APIRouter:
                 " " + " ".join(res.get("notes") or []) if res.get("notes") else ""))
         return _back(request, _tk_url(sid, _kid(f.get("kid")), **{key: text}))
 
-    @router.post("/settings/datasources/{sid}/uebernahme/pruefstapel")
-    async def takeover_review(request: Request, sid: int) -> Response:
-        """Vorgänge mit Einzelentscheidung aus dem gespeicherten Vollabruf in den Prüf-Stapel (kein neuer Abruf) und
-        direkt den ersten davon öffnen."""
+    @router.post("/settings/datasources/{sid}/uebernahme/entscheidung")
+    async def takeover_decide(request: Request, sid: int) -> Response:
+        """Einzelentscheidung im Übernahmekontext speichern (nur zur angezeigten Vorschau; danach neuer Probelauf)."""
         from app.datasources import takeover as TK
 
         _takeover_ds(request, sid)
         f = await request.form()
         kid = _kid(f.get("kid"))
-        res = await run_in_threadpool(lambda: TK.to_review(get_ctx(request), sid, confirm=f.get("confirm") == "1",
-                                                           adjust=_adjust_of([str(v) for v in f.getlist("adjust")])))
-        if res["errors"]:
-            return _back(request, _tk_url(sid, kid, error=" ".join(res["errors"])))
-        q = {"ev": res["event"]} | ({"kid": kid} if kid else {})
-        return _back(request, f"/journal/csv/{res['bid']}?{urlencode(q)}#zeilen")
+        adjust = _adjust_of([str(v) for v in f.getlist("adjust")])
+        confirm = f.get("confirm") == "1"
+        res = await run_in_threadpool(lambda: TK.decide(get_ctx(request), sid, str(f.get("key") or "")[:300],
+                                                        str(f.get("choice") or ""), str(f.get("token") or ""),
+                                                        confirm=confirm, adjust=adjust))
+        key, text = ("error", " ".join(res["errors"])) if res["errors"] else (
+            "msg", "Entscheidung gespeichert – die Vorschau ist neu geprüft.")
+        q: list[tuple[str, str]] = [(key, text)] + ([("confirm", "1")] if confirm else []) + \
+            [("adjust", x) for x in sorted(adjust)] + ([("kid", kid)] if kid else [])
+        return _back(request, f"/settings/datasources/{sid}/uebernahme?{urlencode(q)}#entscheidungen")
+
+    @router.post("/settings/datasources/{sid}/uebernahme/entscheidung/zurueck")
+    async def takeover_undecide(request: Request, sid: int) -> Response:
+        from app.datasources import takeover as TK
+
+        _takeover_ds(request, sid)
+        f = await request.form()
+        ok = await run_in_threadpool(TK.undecide, get_ctx(request), sid, str(f.get("key") or "")[:300])
+        key, text = ("msg", "Entscheidung zurückgenommen.") if ok else ("error", "Diese Entscheidung besteht nicht.")
+        return _back(request, _tk_url(sid, _kid(f.get("kid")), **{key: text}))
 
     @router.post("/settings/datasources/{sid}/uebernahme/verwerfen")
     async def takeover_discard(request: Request, sid: int) -> Response:

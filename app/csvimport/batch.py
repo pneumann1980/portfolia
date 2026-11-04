@@ -313,6 +313,8 @@ class Plan:
     action: str
     force: bool
     items: list[Item] = field(default_factory=list)
+    # ausdrückliche Einzelentscheidungen (Zeile → „pair“ | „nopair“), z. B. im Übernahmekontext; Teil der Vorschau
+    approved: dict[int, str] = field(default_factory=dict)
     impact: list[dict[str, Any]] = field(default_factory=list)  # Bestandswirkung (übernehmen)
     prevented: list[dict[str, Any]] = field(default_factory=list)  # sonst gebuchte Mengen (verknüpfen/auslassen)
     questions: list[tuple[RowCtx, str]] = field(default_factory=list)  # offene Fragen (z. B. Gebühr nicht belegbar)
@@ -342,7 +344,8 @@ class Plan:
         """Bindet die Vorschau an genau diesen Plan: Aktion, wirksame Zeilenaktion, Ziel und den vollständigen
         normalisierten Zeileninhalt samt entscheidungsrelevanter Eingaben (Menge, EUR-Wert, Asset, Konto, Zeitpunkt,
         Gebühr, Einordnung, Transferentscheidung). Jede Änderung daran verlangt eine neue Vorschau."""
-        data = json.dumps(sorted([i.rc.idx, i.act or "", i.target or "", row_state(i.rc)] for i in self.items),
+        data = json.dumps(sorted([i.rc.idx, i.act or "", i.target or "", row_state(i.rc),
+                                  self.approved.get(i.rc.idx, "")] for i in self.items),
                           sort_keys=True, default=str)
         return hashlib.sha256(f"{self.action}|{int(self.force)}|{data}".encode()).hexdigest()[:24]
 
@@ -401,7 +404,7 @@ def _first_issue(m: Mapping[str, Any]) -> str:
 
 
 def _decide(action: str, rc: RowCtx, kind: str, force: bool, by_idx: Mapping[int, RowCtx],
-            chosen: set[int]) -> tuple[str | None, str, str | None]:
+            chosen: set[int], choice: str | None = None) -> tuple[str | None, str, str | None]:
     """(wirksame Aktion, Begründung bzw. Ausschlussgrund, verknüpfte Buchung)."""
     m = rc.match or {}
     if not rc.open:
@@ -465,9 +468,10 @@ def _decide(action: str, rc: RowCtx, kind: str, force: bool, by_idx: Mapping[int
             return None, "vor dem Stichtag – maßgeblich ist der kuratierte Import (nur mit Bestätigung)", None
         if rc.rec.review and not force:
             return None, "von der Quelle als prüfbedürftig markiert", None
-        if (rc.pair_ref or "").startswith("j:"):
+        if (rc.pair_ref or "").startswith("j:") and not (
+                (choice == "pair" and rc.pair_ok == 1) or (choice == "nopair" and rc.pair_ok == 0)):
             return None, "Transfer mit einer bereits übernommenen Buchung – nur einzeln bestätigen", None
-        if rc.transfer_unclear:
+        if rc.transfer_unclear and choice != "nopair":
             return None, "möglicher Transfer – zuerst bestätigen oder ablehnen", None
         if rc.pair_ref and rc.pair_ref.startswith("b:") and pair_accepted(rc):
             partner = by_idx.get(int(rc.pair_ref[2:]))
@@ -480,15 +484,20 @@ def _decide(action: str, rc: RowCtx, kind: str, force: bool, by_idx: Mapping[int
 
 
 def plan(svc: Any, bid: int, action: str, idxs: Iterable[int], force: bool = False,
-         rows: list[RowCtx] | None = None) -> Plan:
+         rows: list[RowCtx] | None = None, approved: Mapping[int, str] | None = None) -> Plan:
+    """Plan einer Stapelaktion. ``approved``: ausdrückliche Einzelentscheidung je Zeile zur Transferfrage
+    („pair“ = Transfer mit dem angezeigten Partner bestätigt, „nopair“ = kein Transfer, eigener Vorgang). Sie öffnet
+    für genau diese Zeilen nur die Transfer-Sperren (Partner im Journal, ungeklärter Transfer) – Dubletten-,
+    Vollständigkeits- und Mehrdeutigkeitsprüfungen bleiben."""
     batch = svc.batch(bid)
     rows = rows if rows is not None else svc.rows(bid)
     by_idx = {rc.idx: rc for rc in rows}
     chosen = {i for i in idxs if i in by_idx}
-    p = Plan(action=action, force=force)
+    ok = {i: c for i, c in (approved or {}).items() if i in chosen and c in ("pair", "nopair")}
+    p = Plan(action=action, force=force, approved=ok)
     for i in sorted(chosen):
         rc = by_idx[i]
-        act, note, target = _decide(action, rc, batch["kind"], force, by_idx, chosen)
+        act, note, target = _decide(action, rc, batch["kind"], force or i in ok, by_idx, chosen, ok.get(i))
         p.items.append(Item(rc, act, note, target))
     # Transfer-Paare, deren Partner ausgeschlossen wurde, ebenfalls ausschließen (nur gemeinsam buchen)
     inc = {i.rc.idx for i in p.items if i.act == "include"}
@@ -595,7 +604,8 @@ def _event_one_to_one(rc: RowCtx, rows: list[RowCtx], link_targets: Mapping[int,
 
 
 def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str, fingerprint: str,
-            force: bool = False, params: Mapping[str, Any] | None = None, in_tx: Any = None) -> dict[str, Any]:
+            force: bool = False, params: Mapping[str, Any] | None = None, in_tx: Any = None,
+            approved: Mapping[int, str] | None = None) -> dict[str, Any]:
     """Stapelaktion ausführen – genau einmal je Vorschau (``token``) und nur, wenn die Vorschau noch gilt
     (``fingerprint``). Alles in einer Transaktion; danach neu bewerten."""
     if action not in ACTIONS:
@@ -610,7 +620,7 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
             return {"errors": ["Stapel nicht bearbeitbar."]}
         svc.evaluate(bid)
         rows = svc.rows(bid)
-        p = plan(svc, bid, action, idxs, force, rows)
+        p = plan(svc, bid, action, idxs, force, rows, approved)
         if p.fingerprint() != fingerprint:
             return {"errors": ["Die Vorschau ist nicht mehr aktuell (der Stapel wurde inzwischen neu bewertet oder "
                                "geändert). Bitte die Vorschau erneut öffnen."]}

@@ -69,7 +69,7 @@ def test_rows_needing_a_decision_are_refused_before_booking_with_reason_and_bloc
         t = TK.latest(ctx(c).db, sid)
         assert t["status"] == "staged" and t["batch_id"] is None and t["decision_id"] is None
         page = c.get(f"/settings/datasources/{sid}/uebernahme").text
-        assert "braucht eine Einzelentscheidung" in page and "Jetzt entscheiden" in page
+        assert "braucht eine Einzelentscheidung" in page and "Entscheidung speichern" in page
         # Datenstand ändert sich (hier: irgendeine Zuordnung) → neuer Probelauf, derselbe sachliche Grund bleibt
         csv_service(ctx(c)).set_symbol("XYZ@KRAKEN", None)
         a3 = TK.assess(ctx(c), sid)

@@ -88,6 +88,16 @@
     </div>
   </section>
 
+  {% if a and (a.decisions or a.stale) %}
+  <section class="card" id="entscheidungen">
+    <div class="card-head"><h2>Deine Entscheidungen in diesem Lauf</h2></div>
+    <ul class="plain-list">
+      {% for k, d in a.decisions.items() %}<li><b>{{ choice_labels.get(d.choice, d.choice) }}</b> – {{ d.what }}{% if d.partner and d.partner.text %} <span class="hint">({{ d.partner.text }})</span>{% endif %} <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/entscheidung/zurueck" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="key" value="{{ k }}"><button class="btn sm ghost" type="submit">Zurücknehmen</button></form></li>{% endfor %}
+      {% for d in a.stale %}<li><span class="badge warn">verworfen</span> {{ choice_labels.get(d.choice, d.choice) }} – {{ d.what }}: <b>{{ d.why }}</b> – bitte neu entscheiden.{% if d.key %} <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/entscheidung/zurueck" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="key" value="{{ d.key }}"><button class="btn sm ghost" type="submit">Entfernen</button></form>{% endif %}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   {% if a and a.problems %}
   <section class="card" id="probleme">
     <div class="card-head"><h2>Probleme einzeln bearbeiten</h2><span class="badge warn">{{ a.problems|length }} offen</span></div>
@@ -123,9 +133,16 @@
             <p class="hint">Die Zuordnung gilt nur für {{ ds.provider_label }} (Kennung <span class="mono">{{ p.key }}</span>), ändert keine anderen Quellen und bucht nichts. Bitte nach Name und Anbieterkennung wählen, nicht nur nach Kürzel (z. B. ist LUNC nicht LUNA).</p>
           </div>
         {% elif p.kind == 'row' or p.kind == 'line' %}
-          <div class="tk-actions row" style="gap:8px;flex-wrap:wrap">
-            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/pruefstapel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}{% if request.query_params.get('confirm') == '1' %}<input type="hidden" name="confirm" value="1">{% endif %}{% for x in request.query_params.getlist('adjust') %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}<button class="btn sm" type="submit" title="Aus dem gespeicherten Vollabruf – kein neuer Abruf beim Anbieter">Jetzt entscheiden</button></form>
-            <span class="hint">Öffnet den Vorgang im Prüf-Stapel (aus dem gespeicherten Abruf, ohne neuen Abruf): dort z. B. den Transfer bestätigen oder ablehnen bzw. den Vorgang dauerhaft ignorieren. Danach hier neu prüfen.</span>
+          <div class="tk-actions">
+            {% if p.partner %}<p class="hint">Mögliche Gegenbuchung im Zustand nach dem Ausblenden: {{ p.partner.text }}</p>{% endif %}
+            {% if p.options %}
+            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/entscheidung" class="stack" style="gap:4px">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="token" value="{{ a.token }}">{% if a.confirm %}<input type="hidden" name="confirm" value="1">{% endif %}{% for x in a.adjust|sort %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}<input type="hidden" name="key" value="{{ p.key }}">
+              {% for k in p.options %}<label class="check"><input type="radio" name="choice" value="{{ k }}" required> <span>{% if k == 'pair' %}Transfer mit dieser Gegenbuchung bestätigen{% if p.partner and p.partner.kind == 'imp' %} – die Import-Buchung wird durch die Gegenseite des Transfers ersetzt (Einstand und Haltedauer bleiben){% endif %}{% else %}{{ p.labels[k] }}{% endif %}</span></label>{% endfor %}
+              <div><button class="btn sm" type="submit">Entscheidung speichern</button></div>
+            </form>
+            {% endif %}
+            <span class="hint">Gilt nur für diesen gespeicherten Abruf, im Zustand nach dem Ausblenden; danach prüft der Probelauf neu. Ein neuer Vollabruf verwirft die Entscheidung.</span>
           </div>
         {% elif p.kind == 'balance' %}
           {% set c = p.causes %}

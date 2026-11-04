@@ -518,27 +518,17 @@ def test_R03_preview_shows_the_blocker_before_any_write_and_offers_a_decision(co
         res = TK.apply(ctx(c), sid, a.token)  # wird ohne Schreiben abgelehnt
         assert res["errors"] and economic_state(c) == state
         page = c.get(f"/settings/datasources/{sid}/uebernahme").text
-        assert "Jetzt entscheiden" in page and "In den Prüfstapel abrufen" not in page
+        assert "Entscheidung speichern" in page and "In den Prüfstapel abrufen" not in page
+        # Entscheidung im Übernahmekontext (ab 0.90.0, Nachprüfung): Transfer mit der bleibenden Einzahlung L1
         calls = len(api.calls) if hasattr(api, "calls") else None
-        r = post(c, f"/settings/datasources/{sid}/uebernahme/pruefstapel", {})
-        loc = r.headers["location"]
-        assert r.status_code == 303 and loc.startswith("/journal/csv/") and "ev=" in loc
+        p = next(x for x in a.problems if x["kind"] == "row")
+        r = post(c, f"/settings/datasources/{sid}/uebernahme/entscheidung",
+                 {"key": p["key"], "choice": "pair", "token": a.token})
+        assert r.status_code == 303 and "Entscheidung+gespeichert" in r.headers["location"]
         if calls is not None:
             assert len(api.calls) == calls  # kein neuer Abruf beim Anbieter
-        detail = c.get(loc).text
-        assert detail.count('data-label="Datum"') == 1
-        # Entscheidung, die auch im Übernahmekontext gilt: Vorgang dauerhaft ignorieren → Plan wird neu bewertet
-        bid = int(urlsplit(loc).path.rsplit("/", 1)[1])
-        svc = csv_service(ctx(c))
-        (rc,) = [x for x in svc.rows(bid) if x.open]
-        assert svc.set_ignored(bid, rc.rec.event_key, True, "Test")
-        a2 = TK.assess(ctx(c), sid)
-        assert "rows" not in [x.key for x in a2.blockers]  # nicht mehr „Einzelentscheidung“ …
-        assert not a2.ok and economic_state(c) == state  # … aber ohne die Auszahlung stimmt der Bestand nicht
-        # erneut anfordern legt nichts doppelt ab
-        again = post(c, f"/settings/datasources/{sid}/uebernahme/pruefstapel", {})
-        assert again.status_code == 303
-        assert ctx(c).db.scalar("SELECT COUNT(*) FROM csv_row WHERE event_key=?", (rc.rec.event_key,)) == 1
+        a2 = TK.assess(ctx(c), sid)  # Plan neu bewertet: Blocker gelöst
+        assert a2.ok and economic_state(c) == state
     finally:
         c.__exit__(None, None, None)
 
