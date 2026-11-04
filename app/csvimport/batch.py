@@ -18,13 +18,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import secrets
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import Any, ClassVar
 
 from app.csvimport import assess as A
 from app.csvimport import review as RV
@@ -124,6 +125,15 @@ def group_state(rows: list[RowCtx], chosen: set[int]) -> dict[str, tuple[int, in
     return {g: (v[0], v[1]) for g, v in out.items()}
 
 
+EV_MAX = 256  # Anbieterpräfix + 200 Zeichen Kennung (connector.EVENT_KEY_RE) mit Reserve
+_EV_RE = re.compile(r"(?:[a-z0-9_]{1,50}:[^\s#]{1,200}|#\d{1,9})")
+
+
+def valid_event_id(ev: str) -> bool:
+    """Gültige, vollständige Vorgangskennung für den Detailfilter (keine Kürzung, keine Steuerzeichen)."""
+    return len(ev) <= EV_MAX and _EV_RE.fullmatch(ev) is not None
+
+
 @dataclass
 class Filters:
     status: str = ""
@@ -136,14 +146,27 @@ class Filters:
     conflict: str = ""
     ev: str = ""  # ein wirtschaftlicher Vorgang (Ereignis-ID bzw. „#<Zeile>“) – Sprung aus der Prüfwarteschlange
 
+    rejected: list[str] = field(default_factory=list)  # ausdrücklich zurückgewiesene Eingaben (sichtbar gemeldet)
+
     KEYS = ("status", "cat", "conf", "dec", "acc", "frm", "to", "conflict", "ev")
+    # Identitätsfilter werden exakt verglichen und darum nie gekürzt: Ereignis-IDs folgen dem Vertrag
+    # ``anbieter:<bis 200 Zeichen>`` (connector.EVENT_KEY_RE) bzw. „#<Zeile>“; Konten sind Freitext.
+    EXACT: ClassVar[dict[str, int]] = {"ev": EV_MAX, "acc": 200}
 
     @classmethod
     def parse(cls, data: Mapping[str, Any], statuses: Iterable[str] = ()) -> Filters:
         def g(k: str) -> str:
-            return str(data.get(k) or data.get(f"_{k}") or "").strip()[:80]
+            v = str(data.get(k) or data.get(f"_{k}") or "").strip()
+            return v if k in cls.EXACT else v[:80]
 
         f = cls(**{k: g(k) for k in cls.KEYS})
+        if f.ev and not valid_event_id(f.ev):
+            f.rejected.append("Die Vorgangskennung im Link ist ungültig oder zu lang – der Filter wurde nicht "
+                              "angewendet. Bitte den Vorgang erneut aus der Prüfliste öffnen.")
+            f.ev = ""
+        if len(f.acc) > cls.EXACT["acc"]:
+            f.rejected.append("Der Kontofilter ist zu lang und wurde nicht angewendet.")
+            f.acc = ""
         if f.status and statuses and f.status not in statuses:
             f.status = ""
         if f.cat not in ("", *A.CATS, "manuell", *GROUPS):

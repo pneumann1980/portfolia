@@ -137,7 +137,8 @@ def test_open_answer_uses_the_target_of_the_task_only(client):
             "x_href": "https://example.org/"}
     r = client.post(f"{BASE}/antwort", data=form, follow_redirects=False)
     assert r.status_code == 303 and t.href.startswith("/journal/csv/")
-    assert r.headers["location"] == f"{t.href}?kid={t.kid}"  # Aufgabenbezug für Rückweg/Überspringen (je Tab)
+    path, _, frag = t.href.partition("#")  # Einzelvorgang (?ev=…) plus Aufgabenbezug für Rückweg/Überspringen
+    assert r.headers["location"] == f"{path}&kid={t.kid}#{frag}" and "ev=" in path
     form["kid"] = "00000000"
     r = client.post(f"{BASE}/antwort", data=form, follow_redirects=False)
     assert r.headers["location"].startswith(BASE + "?err=")

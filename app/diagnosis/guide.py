@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlencode
 
 from app.diagnosis import workplan as WP
 from app.util.timeutil import to_local_date
@@ -315,8 +316,13 @@ def _stack_tasks(ctx: Any) -> list[Task]:
             continue  # „Weiß ich nicht“ bzw. bewusst zurückgestellt
         key = f"zeile:{it.batch_id}:{it.event}"
         out.append(Task(key=key, theme="import", kind="zeile", heading="Neuer Vorgang",
-                        ref=f"{it.batch_id}:{it.event}", item=it, href=f"/journal/csv/{it.batch_id}"))
+                        ref=f"{it.batch_id}:{it.event}", item=it, href=_event_href(it.batch_id, it.event)))
     return out
+
+
+def _event_href(batch_id: int, event: str) -> str:
+    """Direkter Sprung zum Einzelvorgang im Prüf-Stapel – mit vollständiger Ereignis-ID (nie gekürzt)."""
+    return f"/journal/csv/{int(batch_id)}?{urlencode({'ev': event})}#zeilen"
 
 
 def _date_of(iso_ts: str) -> str:
@@ -671,7 +677,7 @@ def _page_task(it: Any, theme: str) -> Task:
         q, ctxt, cta = (f"{it.title} – jetzt ansehen?", it.recommendation + (f" – {it.why}" if it.why else ""),
                         f"Ja – {it.cta or 'ansehen'}")
     return Task(key=it.key, theme=theme, kind="seite", heading=THEME_LABEL.get(theme, theme), question=q,
-                context=ctxt, href=it.href, cta=cta, item=it, weight=it.weight,
+                context=ctxt, href=it.href, cta=cta, item=it, weight=it.weight, ref=it.key,
                 answers=[Answer("go:open", cta, "Öffnet die passende Seite. Danach geht es hier weiter.",
                                 recommended=True),
                          Answer("skip", "Später", NO_CHANGE)])

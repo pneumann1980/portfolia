@@ -191,19 +191,23 @@ def make_router() -> APIRouter:
             before = int(str(form.get("before") or "0"))
         except ValueError:
             before = 0
-        if not fid or not aid:
+        kid = str(form.get("kid") or "")
+        if not aid:
             return _go(err="Bitte eine Antwort auswählen.")
 
         def gone() -> int:
             return max(0, before - len(G.tasks(ctx)) - 1) if before else 0
 
+        # Navigation und Überspringen brauchen nur den Aufgabenbezug (kid) – eine fachliche Referenz verlangen erst
+        # die schreibenden Antworten unten (Seitenaufgaben haben keine)
         if aid == "skip":
-            return _go(skip=str(form.get("kid") or ""))
+            return _go(skip=kid) if kid else _go(err="Die Aufgabe ist nicht mehr bekannt – bitte neu laden.")
         if aid == "go:open":  # ausdrücklich gewählt: Seite öffnen (Ziel aus der Aufgabe, nie aus dem Formular)
-            kid = str(form.get("kid") or "")
-            href = await run_in_threadpool(_href_of, ctx, kid)
+            href = await run_in_threadpool(_href_of, ctx, kid) if kid else ""
             return RedirectResponse(with_kid(href, kid), status_code=303) if href else \
                 _go(err="Die Aufgabe besteht nicht mehr.")
+        if not fid:
+            return _go(err="Diese Antwort braucht einen Vorgang – die Aufgabe hat sich geändert, bitte neu laden.")
         if typ in ("erneut", "rechnung"):
             return await run_in_threadpool(_simple_answer, ctx, typ, fid, aid, gone)
         if typ in ("stapel", "zeile"):

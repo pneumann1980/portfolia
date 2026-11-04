@@ -238,3 +238,149 @@ def test_R09_assistant_row_answer_is_bound_to_the_shown_values(c, monkeypatch):
     fresh["a"] = ["row:include"]
     assert "err=" not in post(c, "/quality/assistent/antwort", fresh).headers["location"]
     assert cx.db.scalar("SELECT value_eur FROM journal_tx WHERE batch_id=? AND status='active'", (bid,)) == "999"
+
+
+# ---- R13 · Antworten mit Seitenwechsel: Navigation und „Später“ brauchen nur den Aufgabenbezug --------------------
+
+def _page_form(c) -> dict[str, list[str]]:
+    shown = form_values(c.get("/quality/assistent?new=1").text)
+    assert shown["typ"] == ["seite"]
+    return shown
+
+
+def test_R13_rendered_page_task_opens_its_page(c):
+    cx = c.app.state.ctx
+    task = next(t for t in G.tasks(cx) if t.kind == "seite")
+    shown = _page_form(c)
+    assert shown["a"] == ["go:open"] and shown["kid"] == [task.kid]  # empfohlene Antwort ist vorausgewählt
+    r = post(c, "/quality/assistent/antwort", shown)
+    loc = r.headers["location"]
+    assert r.status_code == 303 and loc.startswith(task.href) and parse_qs(urlsplit(loc).query)["kid"] == [task.kid]
+    assert c.get(loc).status_code == 200
+
+
+def test_R13_rendered_page_task_can_be_postponed(c):
+    cx = c.app.state.ctx
+    task = next(t for t in G.tasks(cx) if t.kind == "seite")
+    shown = _page_form(c)
+    shown["a"] = ["skip"]
+    r = post(c, "/quality/assistent/antwort", shown)
+    q = parse_qs(urlsplit(r.headers["location"]).query)
+    assert "err" not in q and q["skip"] == [task.kid]
+    assert f'value="{task.kid}"' not in c.get(r.headers["location"]).text  # für diesen Durchgang übersprungen
+
+
+def test_R13_case_downgraded_to_page_task_still_opens(c, monkeypatch):
+    """Ein Klärungsfall mit vorbereiteter Lösung, dessen Lösung nicht (mehr) direkt anwendbar ist, wird zur
+    Seitenaufgabe zurückgestuft – auch dann führt die empfohlene Antwort zur Seite."""
+    from app.diagnosis import workplan as WP
+
+    real = WP.build
+
+    def build(*a, **kw):
+        plan = real(*a, **kw)
+        for it in plan.items:
+            if it.kind == "fall":
+                it.cta = "Lösung prüfen"
+        return plan
+
+    monkeypatch.setattr(WP, "build", build)
+    cx = c.app.state.ctx
+    task = next(t for t in G.tasks(cx) if t.kind == "fall")
+    shown = _page_form(c)  # gerendert als „seite“ (Rückstufung in _case_detail)
+    r = post(c, "/quality/assistent/antwort", shown)
+    assert r.headers["location"].startswith(task.href) and "err=" not in r.headers["location"]
+
+
+def test_R13_navigation_without_task_reference_is_rejected_visibly(c):
+    r = post(c, "/quality/assistent/antwort", {"typ": "seite", "a": "go:open", "kid": ""})
+    assert "nicht mehr" in parse_qs(urlsplit(r.headers["location"]).query)["err"][0]
+    r = post(c, "/quality/assistent/antwort", {"typ": "seite", "a": "go:open", "kid": "unbekannt"})
+    assert "nicht mehr" in parse_qs(urlsplit(r.headers["location"]).query)["err"][0]
+
+
+# ---- R14 · Lange Ereigniskennungen öffnen genau ihren Vorgang ------------------------------------------------------
+
+def _solana_batch(c, sigs: list[str]) -> tuple[int, list[str]]:
+    from datetime import UTC, datetime
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    from app.csvimport.model import Rec
+    from app.datasources import service as DS
+    from app.datasources.connector import FetchResult
+    from app.datasources.wallet import event as chain_event
+
+    cx = c.app.state.ctx
+    evs = []
+    for i, sig in enumerate(sigs):
+        ts = datetime(2025, 3, 12, 12, i, tzinfo=UTC)
+        rec = Rec(line=1, ts=ts, kind="deposit", in_sym="BTC", in_qty=Decimal("0.003") + i, account="Wallet SOL",
+                  value=Decimal("150"), value_ccy="EUR")
+        evs.append(chain_event("solana", sig, "7" * 44, ts, [rec], "Synthetische Einzahlung"))
+    recs = DS.datasource_service(cx)._normalize(
+        SimpleNamespace(is_wallet=True, provider="solana", account="Wallet SOL"), FetchResult(events=evs))
+    bid = csv_service(cx).ingest(recs, source="sync:solana", profile="sync:solana", account="Wallet SOL",
+                                 label="Synthetische Solana-Historie", datasource_id=None, payload=b"[]",
+                                 options={"cutoff": ""})
+    return bid, [e.event_key for e in evs]
+
+
+def _shown_rows(page: str) -> int:
+    return page.count('data-label="Datum"')
+
+
+def test_R14_long_event_id_opens_exactly_its_row(c):
+    bid, (key,) = _solana_batch(c, ["5" * 88])
+    assert len(key) > 80
+    assert BA.Filters.parse({"ev": key}).ev == key
+    page = c.get(f"/journal/csv/{bid}?" + urlencode({"ev": key})).text
+    assert _shown_rows(page) == 1 and "Keine Zeilen" not in page and "Gezeigt wird ein einzelner Vorgang" in page
+
+
+def test_R14_ids_with_same_80_char_prefix_stay_distinguishable(c):
+    bid, keys = _solana_batch(c, ["5" * 87 + "A", "5" * 87 + "B"])
+    assert keys[0][:80] == keys[1][:80] and keys[0] != keys[1]
+    rows = csv_service(c.app.state.ctx).rows(bid)
+    for key in keys:
+        flt = BA.Filters.parse({"ev": key})
+        assert [rc.rec.event_key for rc in rows if flt.test(rc)] == [key]
+        assert _shown_rows(c.get(f"/journal/csv/{bid}?" + urlencode({"ev": key})).text) == 1
+    # über die Formular-Rundreise (versteckte Felder „_ev“) bleibt die vollständige ID erhalten
+    assert BA.Filters.parse({"_ev": keys[1]}).ev == keys[1]
+
+
+def test_R14_short_and_row_ids_open_their_row(c):
+    cx = c.app.state.ctx
+    bid = _new_row_batch(c)
+    rc = csv_service(cx).rows(bid)[0]
+    ev = rc.rec.event_key or f"#{rc.idx}"
+    assert _shown_rows(c.get(f"/journal/csv/{bid}?" + urlencode({"ev": ev})).text) == 1
+
+
+@pytest.mark.parametrize("bad", ["solana:" + "5" * 300, "solana:abc def", "x\u0000y"])
+def test_R14_invalid_event_id_is_rejected_not_truncated(c, bad):
+    bid, _ = _solana_batch(c, ["5" * 88])
+    flt = BA.Filters.parse({"ev": bad})
+    assert flt.ev == "" and flt.rejected
+    page = c.get(f"/journal/csv/{bid}?" + urlencode({"ev": bad})).text
+    assert "Vorgangskennung im Link ist ungültig" in page
+
+
+# ---- V01 · Aus der Aufgabe direkt zum Einzelvorgang, mit Rückweg ---------------------------------------------------
+
+def test_V01_row_task_jumps_to_its_single_event_and_keeps_the_way_back(c, monkeypatch):
+    cx = c.app.state.ctx
+    bid = upload(c, "inv.csv", PF_HEADER + "N1,2025-03-12T12:00:00Z,deposit,,,,,Wallet K,ZZZUNBEKANNT,3.5,,,,,x\n")
+    task = next(t for t in G.tasks(cx) if t.kind == "zeile" and t.ref.startswith(f"{bid}:"))
+    ev = task.ref.partition(":")[2]
+    assert parse_qs(urlsplit(task.href).query)["ev"] == [ev] and task.href.endswith("#zeilen")
+    monkeypatch.setattr(G, "tasks", lambda ctx, hints=False: [task])
+    shown = form_values(c.get("/quality/assistent?new=1").text)
+    shown["a"] = ["go:open"]
+    loc = post(c, "/quality/assistent/antwort", shown).headers["location"]
+    q = parse_qs(urlsplit(loc).query)
+    assert q["ev"] == [ev] and q["kid"] == [task.kid]
+    page = c.get(loc).text
+    assert _shown_rows(page) == 1 and "Zurück zu Buchungen prüfen" in page
+    assert f'name="kid" value="{task.kid}"' in page and f'name="ev" value="{ev}"' in page  # Filterformular
