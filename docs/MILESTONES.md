@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 04.11.2026 · Version 0.90.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 04.11.2026 · Version 0.91.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,24 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.91.0 – Review „Buchungen prüfen“ 0.90.0: Gebühren, atomare Bestätigung, Einzelbuchung, gebundenes Entfernen
+
+Ursache, Änderung, Nachweis und Grenzen je Punkt: [`BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](BUCHUNGEN_PRUEFEN_KORREKTUREN.md#review-vom-04112026-zu-0900-version-0910).
+7 der 13 Reviewfälle schlugen auf 0.90.0 fehl; alle 13 bestehen jetzt (plus 9 eigene Regressionstests).
+
+* **N05:** Ersetzt die Übernahme eine Import-Gegenbuchung durch die Gegenseite eines Transfers, bleibt deren Gebühr
+  (Asset, Menge, EUR-Wert, Zugangskonto) erhalten; die Nachprüfung vergleicht jetzt **alle** Konten. Eine Gebühr nur in
+  EUR ohne Asset verhindert den Ersatz sichtbar statt still verloren zu gehen.
+* **N06:** Antworten im Assistenten prüfen den Stand der abhängigen Buchungen (Verknüpfungsziel, Journalpartner) in
+  der Schreibtransaktion – parallele Journaländerungen werden erkannt bzw. serialisiert; nichts wird halb gespeichert.
+* **N07:** „Einzeln buchen“ wirkt im Planer; es öffnet nur die Prüfmarkierung der Quelle, Dubletten, Abweichungen und
+  Unvollständiges bleiben gesperrt.
+* **N08:** Entfernen einer Entscheidung ist an Lauf und Entscheidungsstand gebunden, atomar geprüft.
+* **N09:** Angewendete Entscheidungen erscheinen als „angewendet“ (nach Rücknahme „zurückgenommen“), nie als „verworfen“.
+
+**Grenzen:** reine EUR-Gebühr ohne Asset nicht übertragbar; Läufe aus 0.90.0 ohne Entscheidungsprotokoll. Keine
+Schemamigration.
 
 ## 0.90.0 – Nachprüfung „Buchungen prüfen“: Commitgrenzen, Gegenseite, fortsetzbare Rücknahme, Entscheidungen je Übernahmelauf
 

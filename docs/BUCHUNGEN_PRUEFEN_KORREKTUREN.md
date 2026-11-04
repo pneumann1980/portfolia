@@ -235,3 +235,52 @@ Angepasste Bestandstests: `test_review_fixes.py::test_R03_preview_…` und `test
   nicht eigens als Übernahme-Szenario konstruierbar – abgedeckt über den Import-Partner und die Assistententests.
 * **Probelauf-Kosten:** je neuer Entscheidung ein Probelauf auf einer Datenbankkopie.
 * Zurückgenommene Buchungen und Aliase auf sie bleiben als Nachweis stehen; wirksam sind sie nicht.
+
+# Review vom 04.11.2026 zu 0.90.0 (Version 0.91.0)
+
+Grundlage: `Portfolia_Buchungen_pruefen_Review_090_2026-11-04.md` mit Nachweispaket (`test_review_090.py`, 13 Fälle,
+geprüft auf `e950b88`, 0.90.0). **Reproduktion auf `e950b88`: 7 der 13 Fälle schlugen fehl** (N05 ×3, N06, N07, N08,
+N09); die übrigen 6 (zwei API-Seiten in einem Abruf, fünf Fehlerarten beim Verwerfen des Stapels während der
+Rücknahme) bestanden bereits und bestätigen die Korrekturen zu N01/N03. **Auf dem Endstand bestehen alle 13.** Die Fälle
+sind mit unveränderten fachlichen Erwartungen in `tests/test_review_090.py` übernommen und um 9 eigene ergänzt.
+
+| ID | Abgleich auf e950b88 | Ursache | Änderung | Nachweis | Verbleibende Grenze |
+| --- | --- | --- | --- | --- | --- |
+| N05 Gebühren erhalten | bestätigt: bei BTC-, ETH- und EUR-Gebühr am Zugangskonto fehlte nach der Übernahme genau die Gebühr im Bestand von Ledger; die Nachprüfung meldete nichts | `_partner_recs` baute die Gegenseite der ersetzten Import-Buchung ohne Gebührenfelder; die Nachprüfung verglich nur das Konto der Quelle | Gegenseite übernimmt Gebührenasset, -menge und EUR-Wert der ersetzten Buchung; der Planer bucht sie wie jede Empfängergebühr als Gebührenbuchung am Zugangskonto, zum Transfer gruppiert (Belastungslogik unverändert). Eine Gebühr nur als EUR-Wert ohne Asset wird nicht still verworfen: die Buchung wird dann nicht ersetzt, die Entscheidung erscheint mit Grund als nicht anwendbar. **Nachprüfung über alle Konten:** erwarteter Bestand jedes anderen Kontos = vorher + Wirkung der gebuchten API-Zeilen (ersetzte Gegenseiten neutral) – jede Abweichung führt zur vollständigen Rücknahme | Reviewfälle BTC/ETH/EUR; eigene: Gebühr + empfangene Mengendifferenz (BTC, ETH; Transfer 0,001 → 0,00097, Sendergebühr der API, Empfängergebühr mit EUR-Wert am Zugangskonto, übrige Konten unverändert, vollständige Rücknahme); EUR-Gebühr ohne Asset. Gegenprobe: Gebührenübertrag deaktiviert → Probelauf sperrt mit „Ledger · BTC: danach 0,001, erwartet 0,00098“ | Reine EUR-Gebühr ohne Asset ist nicht übertragbar (sichtbar, kein Ersatz) |
+| N06 Bestätigung atomar | bestätigt: Änderung der Verknüpfungsziel-Buchung zwischen Kartenprüfung und Schreiben → Verknüpfung trotzdem geschrieben | Prüfsumme wurde unter der Sperre des Prüf-Stapels geprüft, Journaländerungen nehmen diese Sperre nicht; `execute` prüfte die referenzierten Buchungen nicht erneut | Karte trägt zusätzlich die **Revision der abhängigen Buchungen aus der Datenbank** (`x_rev`: Journalzeile, App-Änderung, Zeile des aktiven Imports von Verknüpfungsziel, Dubletten-Bezug und Journal-Transferpartner). `batch.execute(expect_refs=…)` prüft sie als erste Anweisung **innerhalb** seiner Schreibtransaktion (`BEGIN IMMEDIATE`): eine parallele Änderung davor wird erkannt, eine danach wartet auf den Commit (serialisiert). Bei Ablehnung wird nichts geschrieben; ein vorab gesetztes `pair_ok` wird zurückgesetzt | Reviewfall (echter zweiter Thread); eigene: Dienstebene (Revision geändert → Fehler, keine Verknüpfung), neu geladenes Formular verknüpft genau einmal, erneutes Absenden ohne Doppelung | Prüfung gilt für Bezüge der Wirkungsmenge; andere Journaländerungen ohne Bezug zur Antwort blockieren nicht (gewollt) |
+| N07 Einzeln buchen | bestätigt: „Einzeln buchen“ angeboten und gespeichert, Vorgang blieb gesperrt | Freigabefilter im Planer ließ nur `pair`/`nopair` zu | Planer akzeptiert `include`; es öffnet **ausschließlich** die Prüfmarkierung der Quelle. Abweichungen zu einer vorhandenen Buchung, Dubletten, Unvollständiges, offene Transferfragen und Mehrdeutigkeit bleiben gesperrt (`pair`/`nopair` unverändert) | Reviewfall; eigener: Freigabe `include` für Zeile mit Gegenstück und für unvollständige Zeile → beide gesperrt | – |
+| N08 Entfernen gebunden | bestätigt: Formular eines alten Abrufs entfernte die Entscheidung des neuen Laufs | `undecide` nutzte nur die Kennung des Vorgangs und den jüngsten Lauf | Formular trägt Laufkennung und Stand der Entscheidung (`stamp` aus Antwort, Grundlage, Partnerzustand, Zeitpunkt, laufender Nummer). `undecide(sid, key, rid, stamp)` prüft Lauf (muss der jüngste, noch offene sein) und Stand in **einer Schreibtransaktion** unter der Übernahmesperre; Abweichung → sichtbare Meldung, nichts geändert. `decide` schreibt ebenfalls atomar und nur in den offenen, angezeigten Lauf | Reviewfall; eigene: gleicher Lauf mit inzwischen geänderter Entscheidung (alter Tab), Formular ohne Lauf/Stand, doppeltes Absenden, zwei gleichzeitige Entfernen-Anfragen (genau eine wirkt) | – |
+| N09 Angewendete Entscheidungen | bestätigt: nach erfolgreicher Übernahme erschien die bestätigte Import-Gegenbuchung als „verworfen – Gegenbuchung hat sich geändert“ | Die Bewertung prüfte gespeicherte Entscheidungen auch im angewendeten Lauf gegen den aktuellen Stand – dort ist die ersetzte Buchung planmäßig ausgeblendet | Nur Vorschauentscheidungen (Lauf `staged`) werden geprüft. Beim Übernehmen werden die angewendeten Entscheidungen im Ergebnis des Laufs protokolliert; die Seite zeigt sie als „angewendet“ (nach Rücknahme als „zurückgenommen“), ohne Entfernen-Knopf; Ändern nur über „Übernahme zurücknehmen“ | Reviewfall; eigener: nach Neustart (neuer Kontext) „angewendet“, kein „verworfen“, Entfernen im angewendeten Lauf abgelehnt, Rücknahme vollständig | Läufe aus 0.90.0 ohne Protokoll zeigen keine Liste (keine falsche „verworfen“-Meldung) |
+
+## Erhalt früherer Korrekturen
+
+N01 (Bezüge in derselben Transaktion), N03 (fortsetzbare Rücknahme inkl. aller fünf Fehlerarten beim Verwerfen des
+Stapels) und N04 sind durch die Bestandstests und die übernommenen Reviewfälle abgedeckt. Herkunft, Gebühren,
+Kostenbasis (Lots mit Einstand/Datum) und vollständige Rücknahme prüft `_all_state` (alle Konten, Lots, Ergebnisse je
+Jahr, wirksamer Journalzustand) vor und nach jeder Rücknahme.
+
+## Teststeuerung
+
+Keine Änderung der Synchronisierung nötig: Der N06-Reviewfall ersetzt `BA.execute` durch einen Wrapper, der die
+parallele Journaländerung genau vor dem Aufruf auslöst; die neue Prüfung liegt innerhalb der Transaktion von
+`execute` und damit hinter diesem Punkt. Angepasst ist nur `test_nachpruefung.py::test_R03_skip_and_standalone_…`
+(`undecide` verlangt jetzt Lauf und Stand – Erwartung unverändert).
+
+## Tests und Befehle (0.91.0)
+
+| Befehl | Ergebnis |
+| --- | --- |
+| `ruff check app tests scripts` | ohne Befund |
+| `python -m app validate examples/beispiel-import.zip` | 0 Fehler, 0 Warnungen, 124 Transaktionen |
+| `tests/test_review_090.py` auf `e950b88` | 14 fehlgeschlagen (7 Reviewfälle + 7 eigene), 8 bestanden (6 Reviewfälle zu N01/N03; eigene Sicherungsfälle „Schutzprüfungen bei Einzelbuchung“ und „Verknüpfung genau einmal“) |
+| `pytest tests/test_review_090.py` (Endstand) | 22 bestanden (13 Reviewfälle + 9 eigene) |
+| Nachbarsuiten (Übernahme, Prüf-Stapel, Assistent, Diagnose, Journal, Bitpanda, Nachprüfung, Reviews) | bestanden |
+| Volltest `TZ=Europe/Berlin pytest -q -x tests` (Worktree des Endstands) | 2136 Tests, davon 2133 bestanden und 3 übersprungen, 0 fehlgeschlagen (Exit-Code 0) |
+
+## Grenzen nach dem Review 0.90.0
+
+* Die Revisionsprüfung (N06) schützt die Bezüge einer Antwort; sie ersetzt keine fachliche Neubewertung anderer,
+  gleichzeitig geänderter Vorgänge.
+* Mehrere Prozesse auf derselben Datenbank: Entscheidungen (N08) und Stapelaktionen (N06) sind über die
+  SQLite-Schreibtransaktion serialisiert; der Probelauf selbst bleibt prozesslokal zwischengespeichert.
+* Die Grenzen der Nachprüfung (konkurrierende Partner, Probelauf-Kosten) gelten weiter.

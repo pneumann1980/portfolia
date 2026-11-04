@@ -41,7 +41,11 @@ Seit 0.68.0 gibt es zwei Stufen: *belegt* (`takeover.PROOF`, Bitpanda) und *best
      ausführbaren Antworten an – Transfer mit dem angezeigten Partner bestätigen (API-Vorgang, Journalbuchung oder
      Import-Buchung eines anderen Kontos; letztere wird im selben Lauf durch die Gegenseite des Transfers ersetzt),
      kein Transfer, nicht übernehmen (nur dieser Lauf). Ablage je Quelle und Lauf, gebunden an Vorschau-Token und
-     Partnerzustand; ein neuer Vollabruf verwirft sie.
+     Partnerzustand; ein neuer Vollabruf verwirft sie. Ab 0.91.0: die Gebühr einer ersetzten Import-Buchung (Asset,
+     Menge, EUR-Wert) wird als Empfängergebühr mitgebucht – eine Gebühr nur in EUR ohne Asset verhindert den Ersatz
+     sichtbar; „Einzeln buchen“ öffnet nur die Prüfmarkierung der Quelle; Entfernen verlangt Laufkennung und Stand der
+     Entscheidung (atomar geprüft); angewendete Entscheidungen werden im Ergebnis des Laufs protokolliert und als
+     „angewendet“ angezeigt.
    * **Zählung (ab 0.89.0, Bitpanda):** Einträge von `/operations` = ausgewertete Vorgänge + begründete Auslassungen,
      sonst gesperrt; fehlende Zählung gilt als unbekannt.
 3. **Vorschau** – Beweis, Bestand (jetzt · nach Übernahme · beobachtet), Wirkung: ausgeblendete und bleibende Buchungen,
@@ -51,8 +55,9 @@ Seit 0.68.0 gibt es zwei Stufen: *belegt* (`takeover.PROOF`, Bitpanda) und *best
    1. Import- und Dateibuchungen des Kontos ausblenden – Korrektur der Diagnose (`diag_decision`, Art „Quellenübernahme“);
    2. API-Vorgänge in einem eigenen Stapel auswerten (ohne Stichtag) und als Stapelaktion buchen;
    3. durch bleibende Transfers gedeckte API-Zeilen mit der bleibenden Buchung verknüpfen bzw. bewusst nicht übernehmen;
-   4. **Nachprüfung:** Bestand des Kontos == beobachteter Bestand, sonst **vollständige Rücknahme** (Stapelaktion,
-      Stapel, Ausblendung) – es bleibt nie ein halber Zustand.
+   4. **Nachprüfung:** Bestand des Kontos == beobachteter Bestand und (ab 0.91.0) jedes andere Konto == vorher +
+      Wirkung der gebuchten API-Zeilen, sonst **vollständige Rücknahme** (Stapelaktion, Stapel, Ausblendung) – es
+      bleibt nie ein halber Zustand.
    Ab 0.89.0 steht jede Kennung des Geschriebenen sofort in `ds_takeover`; auch eine unerwartete Ausnahme wird
    kompensiert. Scheitert die Kompensation oder bricht der Prozess ab, sperrt die Seite neue Läufe und bietet
    *Unterbrochene Übernahme zurücknehmen* (`recover`). Ab 0.90.0 stehen die Bezüge in derselben Transaktion wie die
