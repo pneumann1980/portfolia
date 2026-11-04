@@ -125,6 +125,40 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
     return resp
 
 
+def _to_log(**q: str) -> Response:
+    qs = urlencode({k: v[:600] for k, v in q.items() if v})
+    return RedirectResponse(f"{BASE}/protokoll" + (f"?{qs}" if qs else "") + "#antworten", status_code=303)
+
+
+def _log_extra(ctx: Any, rows: list[Any]) -> dict[str, Any]:
+    """Abhängigkeiten und weitere Protokollquellen für „Was ich geändert habe“: Teil einer Quellenübernahme (nur
+    gemeinsam zurücknehmbar), spätere Korrekturen an denselben Buchungen, Stapelaktionen und Quellenübernahmen."""
+    import json
+
+    db = ctx.db
+    owner = {int(r["decision_id"]): int(r["source_id"]) for r in db.q(
+        "SELECT decision_id, source_id FROM ds_takeover WHERE status='applied' AND decision_id IS NOT NULL")}
+    deps: dict[int, list[int]] = {}
+    for d in rows:
+        if d.status == "active" and d.action == "fix" and d.id not in owner:
+            r = db.q1("SELECT ops_json FROM diag_decision WHERE id=?", (d.id,))
+            try:
+                later = A._dependents(db, d.id, json.loads(r["ops_json"] or "[]")) if r is not None else []
+            except ValueError:
+                later = []
+            if later:
+                deps[d.id] = later
+    acts = db.q("SELECT a.id, a.batch_id, a.action, a.label, a.status, a.created_at, b.filename AS blabel "
+                "FROM import_action a LEFT JOIN csv_batch b ON b.id=a.batch_id ORDER BY (a.status='active') DESC, "
+                "a.id DESC LIMIT 40")
+    takeovers = db.q("SELECT t.id, t.source_id, t.status, t.applied_at, t.undone_at, s.name FROM ds_takeover t "
+                     "LEFT JOIN data_source s ON s.id=t.source_id WHERE t.status IN ('applied', 'undone') "
+                     "ORDER BY t.id DESC LIMIT 20")
+    by_takeover = {int(r["action_id"]) for r in db.q("SELECT action_id FROM ds_takeover WHERE status='applied' AND "
+                                                       "action_id IS NOT NULL")}
+    return {"owner": owner, "deps": deps, "acts": acts, "takeovers": takeovers, "act_owned": by_takeover}
+
+
 def _go_log(**q: str) -> Response:
     qs = urlencode({k: v for k, v in q.items() if v})
     return RedirectResponse(f"{BASE}/protokoll" + (f"?{qs}" if qs else "") + "#sicherung", status_code=303)
@@ -158,6 +192,9 @@ def _undo(ctx: Any, v: dict[str, str]) -> Response:
         errs = []
         for a in [int(x) for x in v["acts"].split(",") if x.isdigit()]:
             errs += BA.undo(svc, a).get("errors") or []
+        if v["back"] == "protokoll":
+            return _to_log(err=" ".join(errs[:3]),
+                           msg="" if errs else "Zurückgenommen – die Vorgänge sind wieder offen.")
         return _go(err=" ".join(errs[:3])) if errs else _go(msg="Zurückgenommen – die Vorgänge sind wieder offen.",
                                                             new=1)
     if v["rm"]:  # „Buchung stimmt“ → Vormerkung wieder setzen
@@ -181,8 +218,9 @@ def _undo(ctx: Any, v: dict[str, str]) -> Response:
     if not v["d"].isdigit():
         return _go(err="Ungültige Angabe.")
     errs2 = _undo_decision(ctx, int(v["d"]))
-    if v["back"] == "protokoll":
-        return RedirectResponse(f"{BASE}/protokoll", status_code=303)
+    if v["back"] == "protokoll":  # Ergebnis erst auswerten, dann mit Meldung zurück ins Protokoll
+        return _to_log(err="Diese Antwort ist schon zurückgenommen." if errs2 is None else " ".join(errs2),
+                       msg="" if errs2 is None or errs2 else "Zurückgenommen – die Frage ist wieder offen.")
     if errs2 is None:
         return _go(err="Diese Antwort ist schon zurückgenommen.")
     if errs2:
@@ -368,7 +406,8 @@ def make_router() -> APIRouter:
         from app.jobs.maintenance import list_backups
 
         ctx = get_ctx(request)
-        return render(request, "guide_log.html", active="quality", title=G.TITLE, rows=A.decisions(ctx.db, 100),
+        rows = A.decisions(ctx.db, 100)
+        return render(request, "guide_log.html", active="quality", title=G.TITLE, rows=rows, log=_log_extra(ctx, rows),
                       mark_actions=A.MARK_ACTIONS, reset_last=RS.last(ctx.db), reset_running=RS.running(ctx),
                       backups=list_backups(ctx), restore_pending=DR.pending(ctx.config),
                       restore_result=DR.result(ctx.config), restore_word=DR.CONFIRM_WORD)
@@ -533,7 +572,8 @@ def make_router() -> APIRouter:
             expect_version=str(form.get("x_version") or "") or None, expect_tokens=tokens))
         if not res.ok:
             return _go(err=" ".join(res.errors))
-        return _go(msg="Übernommen.", kl=res.token, gone=await run_in_threadpool(gone))
+        # Teilfortschritt: was geändert wurde und was offen bleibt (statt pauschal „Übernommen“)
+        return _go(msg=res.message or "Übernommen.", kl=res.token, gone=await run_in_threadpool(gone))
 
     def _confirm(request: Request, fid: str, key: str, aid: str, params: dict[str, list[str]],
                  kid: str = "") -> Response:

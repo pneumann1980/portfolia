@@ -683,3 +683,127 @@ def test_R02_deferring_and_detail_view_are_complete_paths(c, monkeypatch):
     shown["a"] = ["row:defer"]
     assert "err=" not in post(c, "/quality/assistent/antwort", shown).headers["location"]
     assert any(rc.decision == "defer" for rc in csv_service(cx).rows(out["bid"]))
+
+
+# ---- R05 · Hintergrundlauf endet nie ohne sichtbares Ergebnis -----------------------------------------------------
+
+def test_R05_busy_source_is_answered_immediately(config, master, api):
+    from app.datasources import service as S
+
+    c, sid = started(config, api)
+    try:
+        a = staged(c, sid)
+        ev = S._acquire(sid)
+        assert ev is not None
+        try:
+            res = TK.start_apply(ctx(c), sid, a.token)
+        finally:
+            S._release(sid)
+        assert res["errors"] and "läuft bereits" in res["errors"][0] and "erneut übernehmen" in res["errors"][0]
+        assert not TK.busy(sid)
+    finally:
+        c.__exit__(None, None, None)
+
+
+def test_R05_returned_error_of_the_background_run_is_persisted(config, master, api, monkeypatch):
+    from app.datasources import service as S
+
+    c, sid = started(config, api)
+    try:
+        a = staged(c, sid)
+        monkeypatch.setattr(TK.threading, "Thread", InlineThread)
+        monkeypatch.setattr(TK, "apply", lambda *x, **k: {"errors": [S.BUSY_TEXT]})  # Sperre erst im Lauf belegt
+        assert TK.start_apply(ctx(c), sid, a.token)["errors"] == []  # gestartet ≠ übernommen
+        last = TK.latest(ctx(c).db, sid)
+        assert last["status"] == "staged" and last["message"].startswith("Übernahme nicht ausgeführt")
+        assert S.BUSY_TEXT in last["message"]
+        page = c.get(f"/settings/datasources/{sid}/uebernahme").text
+        assert "Übernahme nicht ausgeführt" in page
+    finally:
+        c.__exit__(None, None, None)
+
+
+def test_R05_stale_preview_and_missing_fetch_end_with_explanation(config, master, api, monkeypatch):
+    c, sid = started(config, api)
+    try:
+        assert "Kein gespeicherter Vollabruf" in TK.start_apply(ctx(c), sid, "x")["errors"][0]
+        staged(c, sid)
+        monkeypatch.setattr(TK.threading, "Thread", InlineThread)
+        assert TK.start_apply(ctx(c), sid, "veraltet")["errors"] == []
+        last = TK.latest(ctx(c).db, sid)
+        assert "nicht mehr aktuell" in last["message"] and "neu öffnen" in last["message"]
+    finally:
+        c.__exit__(None, None, None)
+
+
+# ---- R06 · Wiederholtes Absenden erhält die Ablehnungsgründe -------------------------------------------------------
+
+def test_R06_resubmitting_an_old_preview_keeps_the_row_blockers(config, master, api, monkeypatch):
+    import json
+
+    c, sid = started(config, api, rows=_refusing_rows())
+    try:
+        staged(c, sid)
+        monkeypatch.setattr(TK, "probe", lambda ctx, sid, a, run=True: {"ok": True})  # nur der echte Lauf erkennt
+        old = TK.assess(ctx(c), sid)
+        assert old.ok
+        first = TK.apply(ctx(c), sid, old.token)
+        assert first["errors"] and "Einzelentscheidung" in first["errors"][0]
+        state = economic_state(c)
+        rows_doc = json.loads(TK.latest(ctx(c).db, sid)["result_json"])
+        for _ in range(2):  # alte Vorschau aus einem zweiten Tab, zweimal
+            assert TK.apply(ctx(c), sid, old.token)["errors"]
+            doc = json.loads(TK.latest(ctx(c).db, sid)["result_json"])
+            assert doc["rows"] == rows_doc["rows"] and doc["dv"] == rows_doc["dv"]
+            a = TK.assess(ctx(c), sid)
+            assert not a.ok and [x.key for x in a.blockers] == ["rows"]
+        assert economic_state(c) == state
+    finally:
+        c.__exit__(None, None, None)
+
+
+# ---- R07 · Verweigerte Rücknahme im Protokoll zeigt Grund und Rückweg · V02 · gemeinsames Protokoll -------------
+
+def test_R07_takeover_part_in_protocol_points_to_the_takeover_and_explains_refusal(config, master, api):
+    c, sid = started(config, api)
+    try:
+        a = staged(c, sid)
+        assert TK.apply(ctx(c), sid, a.token)["errors"] == []
+        did = ctx(c).db.scalar("SELECT decision_id FROM ds_takeover WHERE source_id=? AND status='applied'", (sid,))
+        page = c.get("/quality/assistent/protokoll").text
+        assert f"/settings/datasources/{sid}/uebernahme" in page and "nur gemeinsam zurücknehmbar" in page
+        assert f'name="d" value="{did}"' not in page  # kein wirkungsloser Knopf
+        state = economic_state(c)
+        r = post(c, "/quality/assistent/rueckgaengig", {"d": str(did), "back": "protokoll"})
+        q = parse_qs(urlsplit(r.headers["location"]).query)
+        assert r.headers["location"].startswith("/quality/assistent/protokoll") and "Quellenübernahme" in q["err"][0]
+        assert economic_state(c) == state
+        assert "Quellenübernahme" in c.get(r.headers["location"]).text
+    finally:
+        c.__exit__(None, None, None)
+
+
+def test_V02_protocol_lists_batch_actions_and_takeovers_with_their_undo_path(c):
+    cx = c.app.state.ctx
+    svc = csv_service(cx)
+    bid = _new_row_batch(c)
+    p = BA.plan(svc, bid, "include", [0])
+    act = BA.execute(svc, bid, "include", [0], token=BA.new_token(), fingerprint=p.fingerprint())["action_id"]
+    page = c.get("/quality/assistent/protokoll").text
+    assert "Weitere Änderungen" in page and f'name="acts" value="{act}"' in page
+    r = post(c, "/quality/assistent/rueckgaengig", {"acts": str(act), "back": "protokoll"})
+    q = parse_qs(urlsplit(r.headers["location"]).query)
+    assert "wieder offen" in q["msg"][0]
+    assert not cx.db.q("SELECT 1 FROM journal_tx WHERE batch_id=? AND status='active'", (bid,))
+
+
+# ---- V04 · Teilfortschritt wird gemeldet --------------------------------------------------------------------------
+
+def test_V04_partial_progress_of_a_case_is_reported(c, monkeypatch):
+    from app.diagnosis import clarify as K
+
+    msg = "1 Korrektur gespeichert und nachgeprüft – 1 Problem dieses Falls bleibt offen."
+    monkeypatch.setattr(K, "apply_hypothesis", lambda *a, **k: K.Result(ok=True, message=msg, remaining=1, token="t1"))
+    r = post(c, "/quality/assistent/antwort", {"typ": "fall", "ref": "kg-x", "kid": "abcdef01", "a": "case:apply"})
+    q = parse_qs(urlsplit(r.headers["location"]).query)
+    assert q["msg"] == [msg]

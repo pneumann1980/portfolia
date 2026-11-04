@@ -127,6 +127,7 @@ def view(db: Any, sid: int) -> dict[str, Any] | None:
                         "Übernahme unterbrochen (Neustart) – bitte „Unterbrochene Übernahme zurücknehmen“: der Stand "
                         "vor der Übernahme wird wiederhergestellt.")
     d["recover"] = needs_recovery(db, sid) is not None
+    d["busy"] = sid in _RUNNING  # auch zwischen Start und Laufbeginn automatisch aktualisieren
     return d
 
 
@@ -1286,19 +1287,52 @@ def _year_diff(before: dict[int, tuple[Decimal, Decimal]], after: dict[int, tupl
 # Übernehmen
 # ----------------------------------------------------------------------------------------------------
 
+STARTED = "Übernahme gestartet – der Beweis wird unmittelbar vor dem Buchen erneut geprüft …"
+
+
+def note_refusal(db: Any, rid: int, text: str) -> None:
+    """Abgelehnten Versuch melden, ohne die fachliche Ablehnungsdiagnose (``rows``/``dv`` des letzten Laufs) zu
+    überschreiben: wiederholtes Absenden ändert den fachlichen Stand nicht."""
+    row = db.q1("SELECT result_json FROM ds_takeover WHERE id=?", (rid,))
+    try:
+        old = json.loads(row["result_json"] or "{}") if row is not None else {}
+    except ValueError:
+        old = {}
+    doc = {**(old if isinstance(old, dict) else {}), "refused": text}
+    doc.setdefault("detail", [])
+    db.x("UPDATE ds_takeover SET message=?, result_json=? WHERE id=?",
+         (text[:500], json.dumps(doc, ensure_ascii=False), rid))
+
+
 def start_apply(ctx: Any, sid: int, token: str, confirm: bool = False,
                 adjust: frozenset[str] = frozenset()) -> dict[str, Any]:
-    """Übernahme im Hintergrund: Beweis erneut prüfen, dann übernehmen (Fortschritt in ``ds_takeover.message``)."""
+    """Übernahme im Hintergrund: Beweis erneut prüfen, dann übernehmen (Fortschritt in ``ds_takeover.message``).
+
+    „Gestartet“ ist kein Erfolg: vor dem Start steht der Laufzustand im Übernahmedatensatz, Ablehnungen (beschäftigte
+    Quelle, veraltete Vorschau, fehlender Vollabruf, Prüfungsfehler) werden dort mit nächstem Schritt gespeichert."""
+    from app.datasources.service import is_busy
+
+    db = ctx.db
     with _LOCK:
-        if busy(sid):
-            return {"errors": ["Es läuft bereits ein Abruf bzw. eine Übernahme."]}
-        if needs_recovery(ctx.db, sid) is not None:
+        if busy(sid) or is_busy(sid):
+            return {"errors": ["Für diese Datenquelle läuft bereits ein Abruf bzw. eine Übernahme – bitte warten, bis "
+                               "er abgeschlossen ist, dann erneut übernehmen."]}
+        if needs_recovery(db, sid) is not None:
             return {"errors": [RECOVER_FIRST]}
+        r = latest(db, sid)
+        if r is None or r["status"] != "staged" or not r["events_json"]:
+            return {"errors": ["Kein gespeicherter Vollabruf – bitte zuerst den Vollabruf starten."]}
+        rid = int(r["id"])
         _RUNNING.add(sid)
+        _msg(db, rid, STARTED)
 
     def work() -> None:
         try:
-            apply(ctx, sid, token, confirm, adjust)
+            res = apply(ctx, sid, token, confirm, adjust)
+            cur = db.q1("SELECT message FROM ds_takeover WHERE id=?", (rid,))
+            if res.get("errors") and cur is not None and cur["message"] == STARTED:
+                # zurückgegebener Fehler ohne eigene Meldung (z. B. Quelle beschäftigt): sichtbar machen
+                note_refusal(db, rid, "Übernahme nicht ausgeführt: " + " ".join(res["errors"])[:400])
         except Exception as e:  # pragma: no cover - Absicherung
             log.exception("Quellenübernahme von %s fehlgeschlagen", sid)
             r = latest(ctx.db, sid)
@@ -1340,8 +1374,7 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False,
         return {"errors": ["Kein abgelegter Vollabruf – bitte zuerst abrufen."]}
 
     def refuse(text: str) -> dict[str, Any]:
-        db.x("UPDATE ds_takeover SET message=?, result_json=? WHERE id=?",
-             (text[:500], json.dumps({"detail": []}), a.rid))
+        note_refusal(db, a.rid, text)  # Ablehnungsdiagnose (Zeilenblocker) bleibt erhalten
         return {"errors": [text]}
 
     if not a.ok:

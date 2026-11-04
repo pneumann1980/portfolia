@@ -5,7 +5,7 @@
 {% block content %}
 {% set kidq = ('?kid=' ~ kid|urlencode) if kid else '' %}
 {% macro kidf() %}{% if kid %}<input type="hidden" name="kid" value="{{ kid }}">{% endif %}{% endmacro %}
-<div class="stack" id="takeover"{% if t and t.status in ('fetching', 'running') %} hx-get="/settings/datasources/{{ ds.id }}/uebernahme{{ kidq }}" hx-trigger="every 3s" hx-select="#takeover" hx-swap="outerHTML"{% endif %}>
+<div class="stack" id="takeover"{% if t and (t.status in ('fetching', 'running') or t.busy) %} hx-get="/settings/datasources/{{ ds.id }}/uebernahme{{ kidq }}" hx-trigger="every 3s" hx-select="#takeover" hx-swap="outerHTML"{% endif %}>
   <p class="hint row" style="gap:12px;flex-wrap:wrap"><a href="/settings/datasources/{{ ds.id }}">← {{ ds.name }}</a><a href="/quality/assistent">Buchungen prüfen</a><a href="/quality">Datenqualität</a>{% if ds.provider == 'bitpanda' %}<a href="/settings/datasources/{{ ds.id }}/luecken">Lücken der API prüfen</a>{% endif %}</p>
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}

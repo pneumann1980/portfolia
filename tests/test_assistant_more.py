@@ -75,7 +75,8 @@ def test_log_page_lists_answers_and_takes_them_back(client):
     did = ctx.db.scalar("SELECT id FROM diag_decision WHERE status='active' ORDER BY id DESC LIMIT 1")
     r = client.post("/quality/assistent/rueckgaengig", data={"csrf_token": client.token, "d": str(did),
                                                               "back": "protokoll"}, follow_redirects=False)
-    assert r.headers["location"] == "/quality/assistent/protokoll"
+    loc = r.headers["location"]  # zurück ins Protokoll – mit Ergebnis der Rücknahme (nicht stumm)
+    assert loc.startswith("/quality/assistent/protokoll?msg=") and loc.endswith("#antworten")
     assert "zurückgenommen" in client.get("/quality/assistent/protokoll").text
 
 
