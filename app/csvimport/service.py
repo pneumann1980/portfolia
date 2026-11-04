@@ -55,6 +55,7 @@ from app.csvimport.identity import (
     note_identity_keys,
     provider_key,
     provider_of,
+    source_provider,
     split_provider_key,
 )
 from app.csvimport.model import ParseOptions, Rec
@@ -1364,9 +1365,11 @@ class CsvImportService:
             return acc_map.get(n, n)
 
         # Anbieter des Vorgangs (Datenquelle, Profil, sonst Konto – z. B. Koinly-Wallet „Bitpanda“)
+        # Datenquellen ohne Symbol-Identität (Wallets, Chains): ihr Anbieter aus der Quellkennung, damit Zuordnungen
+        # der Quellenübernahme (``SYMBOL@PULSECHAIN``, auch „als Spam ignoriert“) auch für die Vorgänge gelten
         provider = provider_of(source, batch["profile"], None) or provider_of(
             None, None, acc(r.account) if r.kind != M.DIRECT or r.row is None
-            else (r.row.get("to_account") or r.row.get("from_account") or batch["account"]))
+            else (r.row.get("to_account") or r.row.get("from_account") or batch["account"])) or source_provider(source)
 
         def res(raw: str | None) -> str | None:
             if not raw:

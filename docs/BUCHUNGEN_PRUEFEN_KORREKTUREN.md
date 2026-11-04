@@ -519,3 +519,31 @@ Integrität, Übernahme-Probelauf). `bulk.run` und `auto_link` nutzen den Vertra
 | dieselben auf dem Endstand | 46 bestanden |
 | `mypy` wie in CI, lokal (Python 3.11) | 334 Fehler in 61 Dateien auf `ecf69ff` und auf dem Endstand – zeilenweise identisch. In den geänderten Modulen (`csvimport/service.py`, `batch.py`, `module.py`, `datasources/takeover.py`, `diagnosis/actions.py`, `assistant_web.py`, `db.py`) 57 → 56 bestehende Fehler (einer entfällt mit dem entfernten `_restore_pairs`); fünf zwischenzeitlich eingeführte Typfehler wurden vor dem Commit behoben. Keine neuen Typfehler, Bestand offen |
 | Volltest `TZ=Europe/Berlin pytest -q -x tests` (Worktree des Endstands) | 2275 Tests, davon 2272 bestanden und 3 übersprungen, 0 fehlgeschlagen (Exit-Code 0) |
+
+# Nachtrag 0.94.1: Zuordnungen der Quellenübernahme bei Wallets und Chains
+
+**Befund (Nutzermeldung, PulseChain):** „Als Spam ignorieren“ bzw. „Zuordnen“ speicherte die Kennung
+(`M32@PLS:0x…@PULSECHAIN`), das Problem „Asset für … zuordnen“ blieb jedoch, die Sperre „Alle Vorgänge sind eindeutig
+und buchbar“ nannte weiter beide Vorgänge, die Übernahme ging nicht weiter.
+
+**Ursache:** zwei Bewertungswege mit unterschiedlichem Anbieter. `takeover._observed` (Bestand) löste mit dem Anbieter
+der Datenquelle auf, `CsvImportService._build` (Vorgänge) über `identity.provider_of`, das nur Anbieter mit eigener
+Symbol-Identität kennt (`PROVIDER_LABEL`, derzeit Bitpanda). Für `sync:pulsechain` war der Anbieter dort `None`; die
+nur für den Anbieter gespeicherte Zuordnung wurde nie gelesen.
+
+**Korrektur:**
+
+* `identity.source_provider("sync:<anbieter>")` liefert den Anbieter jeder Datenquelle; `_build` nutzt ihn als letzten
+  Rückfall. `resolve_for` prüft damit die eigene Kennung `SYMBOL@ANBIETER` zuerst – dieselbe Regel wie beim Bestand.
+  Für Anbieter ohne Symbol-Identität ändert sich sonst nichts (`identity()` bleibt `None`, Auflösung wie bisher).
+* `zuordnung-entfernen` trennt die Kennung am letzten `@` (`SYM@PLS:0x…@PULSECHAIN`); vorher wurde jede Token-Kennung
+  als „Unbekannte Zuordnung“ abgelehnt.
+
+**Bedienweg nachgewiesen** (`tests/test_takeover_wallet_mapping.py`, PulseChain-Wallet mit Fake-Explorer):
+Spam ignorieren → Problem und Zeilensperre weg, Bestand ohne Token, nichts gebucht → Entfernen → Problem und Sperre
+wieder da; PLS neu anlegen und zuordnen + Spam ignorieren → nur noch die Vollständigkeitsbestätigung offen → Seite mit
+Bestätigung → übernehmen (Status „applied“, kein Spam-Token gebucht, Bestand nur PLS) → zurücknehmen (nichts mehr
+gebucht, Status „undone“).
+
+**Grenze:** Prüfstapel aus normalen Abrufen werden mit der Zuordnung erst bei der nächsten Bewertung neu aufgelöst;
+bereits gebuchte Vorgänge bleiben unverändert.

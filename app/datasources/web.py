@@ -715,7 +715,7 @@ def make_router() -> APIRouter:
         ds = _takeover_ds(request, sid)
         f = await request.form()
         key = str(f.get("key") or "")
-        if not key.endswith("@" + ds.provider.upper()) or provider_key(key.split("@", 1)[0], ds.provider) != key:
+        if not key.endswith("@" + ds.provider.upper()) or provider_key(key.rsplit("@", 1)[0], ds.provider) != key:
             return _back(request, _tk_url(sid, _kid(f.get("kid")), "#probleme", error="Unbekannte Zuordnung."))
         await run_in_threadpool(csv_service(get_ctx(request)).delete_symbol, key)
         return _back(request, _tk_url(sid, _kid(f.get("kid")), "#probleme",

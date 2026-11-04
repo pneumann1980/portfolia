@@ -51,6 +51,17 @@ def provider_of(source: str | None = None, profile: str | None = None, account: 
     return None
 
 
+def source_provider(source: str | None) -> str | None:
+    """Anbieter einer Datenquelle aus ihrer Quellkennung (``sync:pulsechain`` → ``pulsechain``) – auch für Anbieter
+    ohne eigene Symbol-Identität. Zuordnungen der Quellenübernahme gelten genau für diesen Anbieter
+    (``SYMBOL@PULSECHAIN``) und müssen beim Bewerten der Vorgänge derselben Quelle gefunden werden."""
+    s = (source or "").strip().lower().removeprefix("portfolia:")
+    if not s.startswith("sync:"):
+        return None
+    prov = s.split(":", 1)[1].strip()
+    return prov or None
+
+
 def provider_key(symbol: str, provider: str) -> str:
     """Kennung einer Zuordnung, die nur für diesen Anbieter gilt."""
     return f"{symbol.strip().upper()}@{provider.strip().upper()}"

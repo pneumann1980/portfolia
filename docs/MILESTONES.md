@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 04.11.2026 · Version 0.94.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 04.11.2026 · Version 0.94.1 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,26 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.94.1 – Quellenübernahme Wallets/Chains: Zuordnung und „Als Spam ignorieren“ wirken auf die Vorgänge
+
+Fehlerbild (PulseChain): Nach „Als Spam ignorieren“ bzw. „Zuordnen“ stand die Kennung unter „Zuordnungen nur für
+PulseChain (PLS)“, das Problem „Asset für … zuordnen“ und die Sperre „Alle Vorgänge sind eindeutig und buchbar“
+blieben aber bestehen – die Übernahme ging nicht weiter.
+
+* **Ursache:** Die Zuordnung wird nur für den Anbieter gespeichert (`SYMBOL@CHAIN:Contract@PULSECHAIN`). Der Bestand
+  wurde mit diesem Anbieter bewertet, die Vorgänge nicht: Die Anbieter-Erkennung beim Zeilenbau kannte nur Anbieter mit
+  eigener Symbol-Identität (Bitpanda). Betroffen waren alle Wallet-/Chain-Quellen, für echte Zuordnungen wie für Spam.
+* **Lösung:** Der Zeilenbau nimmt den Anbieter zusätzlich aus der Quellkennung (`sync:<anbieter>`,
+  `identity.source_provider`); Zuordnungen der Quellenübernahme gelten damit auch für die Vorgänge derselben Quelle
+  (Übernahme und normaler Abruf). Die Symbol-Identität (Bitpanda „TH“) ist unverändert.
+* **„Entfernen“** einer Zuordnung lehnte Token-Kennungen (mit `@` in Chain-Teil) als „Unbekannte Zuordnung“ ab –
+  geprüft wird jetzt am letzten `@`.
+* Nachweis: `tests/test_takeover_wallet_mapping.py` (PulseChain-Wallet mit Spam-Token: Problem und Sperre verschwinden,
+  Bestand zählt nicht, Entfernen stellt das Problem wieder her; PLS zuordnen + Spam → bestätigen → übernehmen →
+  nichts vom Spam-Token gebucht → zurücknehmen).
+* Grenze: Bereits vor 0.94.1 im normalen Abruf importierte Prüfstapel werden erst bei der nächsten Bewertung neu
+  aufgelöst (Seite öffnen bzw. erneut abrufen); bereits gebuchte Vorgänge bleiben unverändert.
 
 ## 0.94.0 – „Buchungen prüfen“: Fehlerklasse systematisch geschlossen (Schreibrevisionen, Kandidatenmengen, Besitzkennungen)
 
