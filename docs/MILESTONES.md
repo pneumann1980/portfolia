@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 04.11.2026 · Version 0.89.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 04.11.2026 · Version 0.90.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,27 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.90.0 – Nachprüfung „Buchungen prüfen“: Commitgrenzen, Gegenseite, fortsetzbare Rücknahme, Entscheidungen je Übernahmelauf
+
+Abgleich, Ursachen, Tests und Grenzen: [`BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](BUCHUNGEN_PRUEFEN_KORREKTUREN.md#nachprüfung-vom-04112026-version-0900).
+Alle sechs Soll-Tests der Nachprüfung schlugen auf 0.89.0 fehl und bestehen jetzt.
+
+* **N01:** Ausblendung, Stapel und Buchungsaktion speichern ihren Rücknahmebezug in derselben Transaktion wie die
+  Änderung – Fehler oder Prozessabbruch an jeder Commitgrenze hinterlassen den alten Stand oder einen vollständig
+  referenzierten, wiederherstellbaren Teilzustand.
+* **N02:** Antworten im Assistenten gelten für die gesamte angezeigte Wirkungsmenge (eigene Zeilen, Transferpartner,
+  Verknüpfungsziel); eine geänderte Gegenseite verlangt eine neue Bestätigung, nichts wird halb gespeichert.
+* **N03:** Rückgängig einer Quellenübernahme ist fortsetzbar (`undoing`), erkennt erledigte Teile, nimmt alle
+  Stapelaktionen des Laufs zurück; „zurückgenommen“ erst, wenn alles zurück ist.
+* **N04:** Zur Kenntnis genommene Integritätsbefunde stehen mit Bezeichnung, Zeitpunkt und „Zurücknehmen“ im Protokoll.
+* **R03:** Entscheidungen je Quelle und gespeichertem Übernahmelauf im Zustand nach dem Ausblenden: Transfer bestätigen
+  (auch mit Journal- bzw. Import-Buchung eines anderen Kontos, die dann durch die Gegenseite des Transfers ersetzt
+  wird), kein Transfer, nicht übernehmen; an Vorschau-Token und Probelauf gebunden, bei geändertem Partner verworfen,
+  bei neuem Abruf gelöscht; gemeinsam zurücknehmbar.
+
+**Grenzen:** einen bestimmten von mehreren konkurrierenden Partnern auswählen ist nicht vorgesehen; je Entscheidung ein
+Probelauf auf einer Datenbankkopie. Keine Schemamigration (neue Zustände in `app_state`).
 
 ## 0.89.0 – „Buchungen prüfen“: Korrekturen zum Review vom 03.11.2026 (R01–R14, V01–V05)
 

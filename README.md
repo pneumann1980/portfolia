@@ -1368,7 +1368,8 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > nennt die Seite die Ursachen der Abweichung.
 > **Ab 0.89.0** führt die Vorschau einen **Probelauf** derselben Schreibschritte auf einer Kopie der Datenbank aus:
 > Vorgänge, die nur mit Einzelentscheidung buchbar sind, und eine scheiternde Nachprüfung zeigen sich vor jeder
-> Änderung; *Jetzt entscheiden* öffnet den Vorgang aus dem gespeicherten Abruf (ohne neuen Abruf). Fehler in einer
+> Änderung. Ab 0.90.0 wird je Vorgang **auf der Übernahmeseite** entschieden, im Zustand nach dem Ausblenden
+> (Transfer bestätigen – auch mit einer Buchung eines anderen Kontos –, kein Transfer, nicht übernehmen). Fehler in einer
 > Schreibphase hinterlassen keinen Teilzustand; nach einem Abbruch bietet die Seite *Unterbrochene Übernahme
 > zurücknehmen*. Korrekturen zum Review „Buchungen prüfen“: [`docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md).
 

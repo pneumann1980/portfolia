@@ -36,8 +36,12 @@ Seit 0.68.0 gibt es zwei Stufen: *belegt* (`takeover.PROOF`, Bitpanda) und *best
    * **Probelauf (ab 0.89.0):** sind alle übrigen Bedingungen erfüllt, laufen die Schritte 4.1–4.4 unverändert
      (`_apply_steps`) auf einer Kopie der Datenbank, die danach verworfen wird; Ergebnis je Vorschau-Token und Datenstand
      zwischengespeichert. Zeilen, die nur mit Einzelentscheidung buchbar sind (Prüfung „rows“), bzw. eine scheiternde
-     Nachprüfung (Prüfung „probe“) sperren schon die Vorschau; *Jetzt entscheiden* legt die betroffenen Vorgänge aus dem
-     gespeicherten Vollabruf in einen Prüf-Stapel.
+     Nachprüfung (Prüfung „probe“) sperren schon die Vorschau.
+   * **Einzelentscheidungen (ab 0.90.0):** je abgelehntem Vorgang bietet die Seite die im Zustand nach dem Ausblenden
+     ausführbaren Antworten an – Transfer mit dem angezeigten Partner bestätigen (API-Vorgang, Journalbuchung oder
+     Import-Buchung eines anderen Kontos; letztere wird im selben Lauf durch die Gegenseite des Transfers ersetzt),
+     kein Transfer, nicht übernehmen (nur dieser Lauf). Ablage je Quelle und Lauf, gebunden an Vorschau-Token und
+     Partnerzustand; ein neuer Vollabruf verwirft sie.
    * **Zählung (ab 0.89.0, Bitpanda):** Einträge von `/operations` = ausgewertete Vorgänge + begründete Auslassungen,
      sonst gesperrt; fehlende Zählung gilt als unbekannt.
 3. **Vorschau** – Beweis, Bestand (jetzt · nach Übernahme · beobachtet), Wirkung: ausgeblendete und bleibende Buchungen,
@@ -51,9 +55,10 @@ Seit 0.68.0 gibt es zwei Stufen: *belegt* (`takeover.PROOF`, Bitpanda) und *best
       Stapel, Ausblendung) – es bleibt nie ein halber Zustand.
    Ab 0.89.0 steht jede Kennung des Geschriebenen sofort in `ds_takeover`; auch eine unerwartete Ausnahme wird
    kompensiert. Scheitert die Kompensation oder bricht der Prozess ab, sperrt die Seite neue Läufe und bietet
-   *Unterbrochene Übernahme zurücknehmen* (`recover`). Ablehnungen (beschäftigte Quelle, veraltete Vorschau) erscheinen
+   *Unterbrochene Übernahme zurücknehmen* (`recover`). Ab 0.90.0 stehen die Bezüge in derselben Transaktion wie die
+   jeweilige Änderung. Ablehnungen (beschäftigte Quelle, veraltete Vorschau) erscheinen
    als Meldung, ohne die gespeicherten Zeilengründe zu überschreiben.
-5. **Rückgängig** – Übernahme als Ganzes: gebuchte API-Vorgänge zurücknehmen, ausgeblendete Buchungen wiederherstellen
+5. **Rückgängig** – fortsetzbar (Status `undoing` bis alles zurück ist; ein erneuter Aufruf setzt fort) – Übernahme als Ganzes: gebuchte API-Vorgänge zurücknehmen, ausgeblendete Buchungen wiederherstellen
    (verweigert, wenn spätere Korrekturen dieselben Buchungen berühren).
 
 ## Was ersetzt wird und was bleibt

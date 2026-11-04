@@ -1,6 +1,6 @@
 # „Buchungen prüfen“ – Korrekturen zum Review vom 03.11.2026
 
-Stand: 04.11.2026 · Version 0.89.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 04.11.2026 · Version 0.90.0 (Nachprüfung) · Branch `claude/portfolia-dashboard-s9p6zr`
 
 ## Grundlage
 
@@ -158,13 +158,7 @@ test_log_page_lists_answers_…` (Rückweg mit Meldung), `test_assistant.py::tes
 
 ## Verbleibende Grenzen
 
-* **R03 – Entscheidungen im Übernahmekontext:** Der Probelauf erkennt jeden Blocker vor der Änderung, und „Jetzt
-  entscheiden“ öffnet den betroffenen Vorgang ohne Neuabruf. Entscheidungen im normalen Prüf-Stapel gelten aber im
-  Stand *ohne* Ausblendung. Hängt ein Blocker gerade davon ab, dass eine Import-Buchung ausgeblendet wird (Beispiel des
-  Reviews: getrennte Auszahlung K3 und Einzahlung L1, K3 wird ersetzt), wirkt dort nur eine dauerhafte Entscheidung
-  (z. B. „dauerhaft ignorieren“) in die Übernahme hinein; „Verknüpfen“ mit der später ausgeblendeten Buchung nicht. Eine
-  eigene Entscheidungsablage je Übernahmelauf (Transfer bestätigen/ablehnen im ersetzten Zustand) wäre der nächste
-  Schritt; sie ist nicht umgesetzt.
+* **R03 (bis 0.89.0):** Entscheidungen im Übernahmekontext fehlten – mit 0.90.0 umgesetzt, siehe „Nachprüfung“.
 * **Probelauf:** braucht kurzzeitig Plattenplatz für eine Kopie der Datenbank und Rechenzeit (einmal je Vorschau und
   Datenstand). Gelingt die Kopie nicht, wird das als nicht blockierende Prüfung gemeldet; die echte Übernahme prüft
   weiterhin selbst und nimmt bei Ablehnung alles zurück.
@@ -172,3 +166,72 @@ test_log_page_lists_answers_…` (Rückweg mit Meldung), `test_assistant.py::tes
   `coverage.operations` aus den Ereignissen abgeleitet und kein unabhängiger Beleg.
 * **R08:** Durchgänge sind je Browser (Cookie), nicht je Tab getrennt.
 * **R11:** Das Deaktivieren ungewählter Felder setzt JavaScript voraus; die Trennung gilt serverseitig unabhängig davon.
+
+
+---
+
+# Nachprüfung vom 04.11.2026 (Version 0.90.0)
+
+Grundlage: `Portfolia_Buchungen_pruefen_Nachpruefung_2026-11-04.md` mit Nachweispaket
+(`test_additional_review.py`, geprüft auf `725ad2c`, 0.89.0). Die Nachprüfung stufte R03, R04, R09 und V02 als
+teilweise erledigt ein und belegte vier neue Befunde N01–N04. **Alle sechs Soll-Tests des Nachweispakets schlugen auf
+`725ad2c` fehl (Einzelabgleich vor jeder Änderung) und bestehen auf dem Endstand.** Die beiden „Nachweis“-Fälle des
+Pakets prüften Zwischenstände, die es nicht mehr gibt (Weg über den normalen Prüf-Stapel entfernt; die im Test lokal
+geöffnete Planersperre ist jetzt regulär und eng geöffnet, mit erweiterter Signatur) – sie sind durch die Tests unten
+ersetzt.
+
+Commits: `be36937` N01/N02/N03 · `9231eef` N04 · `9b8d539` R03 · danach Version 0.90.0 und diese Dokumentation.
+
+| ID | Abgleich auf 725ad2c | Tatsächliche Ursache | Korrektur | Test danach | Verbleibende Grenze |
+| --- | --- | --- | --- | --- | --- |
+| N01 (R04) | bestätigt: Ausnahme bzw. Abbruch nach dem Commit von `apply_plan` → alle Buchungen ausgeblendet, Bezüge `NULL`, kein Wiederherstellungsweg | `apply_plan`, `ingest` und `batch.execute` committen, bevor `_apply_steps` die Kennung speichert; danach laufen noch Nachberechnung, Bewertung, Cache | Haken `in_tx(c, id)` in allen drei Diensten schreibt den Bezug in `ds_takeover` **in derselben Transaktion** wie die Änderung; die Rücknahme liest die Bezüge aus der Datenbank; Kompensation erkennt Teile, die nach ihrem Commit scheiterten, an ihrem Zustand | `test_N01_*`: Fehler und Prozessabbruch **vor und nach** jedem Commit (Ausblendung, Stapel, Buchungsaktion) – jeweils alter Stand oder vollständig referenzierter, sichtbar wiederherstellbarer Teilzustand; 10/10 bestanden | keine eigene Spalte für zusätzliche Stapelaktionen nötig: sie hängen am gespeicherten Stapel des Laufs |
+| N02 (R09) | bestätigt: geänderte Gegenseite, alter POST bucht Transfer nach „Changed after preview“ | `x_fp` band nur die eigenen Zeilen; „Ja, Transfer“ nahm den Partner erst beim Absenden auf; `pair_ok` wurde vor der Schlussprüfung gespeichert | `batch.effect_digest`: Wirkungsmenge = eigene Zeilen + Transferpartner + wirksamer Zustand referenzierter Buchungen (Journalpartner, Verknüpfungsziel inkl. Import); dieselbe Grundlage beim Anzeigen und Schreiben; Prüfung und Änderung unter der Sperre des Prüf-Stapels; bei Ablehnung wird `pair_ok` zurückgesetzt | `test_N02_*`: Konto, Wert, Gebühr, Entscheidung der Gegenseite, geänderte Verknüpfungszielbuchung – alte Antwort ohne Wirkung, neue Vorschau genau einmal; 5/5 | – |
+| N03 (R04) | bestätigt: Fehlerergebnis → Status wieder `applied`, zweiter Versuch scheitert; Ausnahme → schon `undone` | `undo` setzte nur den Gesamtstatus zurück, obwohl Teilschritte wirksam waren; nutzte nicht die idempotente Kompensation; nahm nur die Hauptaktion zurück | `undo` setzt vor dem ersten Schritt dauerhaft `undoing`, nutzt `_compensate(keep=True)`: alle aktiven Stapelaktionen des Laufs, Stapel, Ausblendung; erledigte Teile werden übersprungen; `undone` erst bei vollständiger Rücknahme; `needs_recovery`/`recover` führen ein begonnenes Rückgängig fort; Ausblendung bleibt getrennt gesperrt, solange API-Buchungen des Laufs bestehen | `test_N03_*`: Fehlerergebnis, Ausnahme, Prozessabbruch je Schritt (Aktion, Ausblendung), zweiter Aufruf stellt her, dritter ändert nichts; 7/7 | – |
+| N04 (V02) | bestätigt: Bestätigung verschwindet aus den Aufgaben, fehlt im Protokoll | `guide.integrity_ack` wurde vom Protokoll nicht gelesen; nur ID und Prüfsumme gespeichert | zusätzlich Bezeichnung, Konto/Asset, Zeitpunkt (`guide.integrity_ack_info`); Protokoll listet Bestätigungen mit „Zurücknehmen“; alte Einträge und vom neuen Prüflauf nicht mehr gemeldete Befunde bleiben verständlich | `test_N04_*`; 2/2 | – |
+| R03 | bestätigt: normales Verknüpfen im Prüf-Stapel löst den Übernahme-Blocker nicht | Entscheidungen wurden im Zustand **vor** dem Ausblenden getroffen | Entscheidungen je Quelle und gespeichertem Lauf (siehe unten) | `test_R03_*`; 9/9 | siehe Grenzen |
+
+## R03 – Entscheidungen je Übernahmelauf
+
+* **Angebot aus dem tatsächlichen Plan:** Der Probelauf (Zustand nach dem Ausblenden) liefert je abgelehntem Vorgang
+  die ausführbaren Antworten und den Partner: API-Vorgang im selben Abruf, Journalbuchung, Import-Buchung eines anderen
+  Kontos oder konkurrierende Partner. Bei konkurrierenden Partnern gibt es nur „Kein Transfer“ und „Nicht übernehmen“ –
+  ein Partner wird nie still gewählt.
+* **Ablage:** `app_state` `takeover.decisions.<Quelle>` mit Laufkennung; Prüfsumme des Vorgangs und des Partnerzustands.
+  Gespeichert nur zur angezeigten Vorschau (Token); jede Entscheidung ändert Token und damit den Probelauf-Cache; ein
+  neuer Vollabruf löscht sie. Geänderter Vorgang oder Partner → „verworfen“ mit Grund, nie angewendet.
+* **Anwendung** in `_apply_steps` (Probelauf und Übernahme identisch): `pair_ok` wie im Prüf-Stapel, „nicht übernehmen“
+  als Stapelaktion nur dieses Laufs (keine dauerhafte Ignorier-Entscheidung). Der Planer öffnet über `approved` nur für
+  genau diese Zeilen die Transfer-Sperren („Partner im Journal“, „möglicher Transfer“); Dubletten-, Vollständigkeits- und
+  Mehrdeutigkeitsprüfungen bleiben. Passt der Partner im Zustand nach dem Ausblenden nicht, wird abgelehnt.
+* **Import-Buchung als Partner** (Originalfall K3/L1): Sie wird im selben Lauf ausgeblendet und durch die Gegenseite
+  eines Transfers ersetzt (gekennzeichneter Vorgang `takeover:<Lauf>:partner:<Buchung>`). Ergebnis: ein Transfer
+  Bitpanda → Ledger, Bestand beider Konten exakt, Einstand und Anschaffungsdatum des Kaufs fortgeführt.
+* **Journalpartner:** bestätigtes Paar wird mit den vorhandenen Diensten zusammengeführt (`merged`) und mit dem Lauf
+  zurückgenommen (Partner wieder aktiv).
+* **Nachweis:** Lebenszyklus Vorschau → Entscheidung → alte Vorschau abgelehnt → neuer Probelauf → Übernahme → exakte
+  Bestände (alle Konten) → vollständige Rücknahme (Bestände, Lots mit Einstand/Datum, Ergebnisse je Jahr, wirksame
+  Aliase und Journalzustand) → wiederholte Rücknahme ohne Wirkung; mit und ohne Gebühr am Zugangskonto.
+
+## Tests und Befehle (0.90.0)
+
+| Befehl | Ergebnis |
+| --- | --- |
+| `ruff check app tests scripts` | ohne Befund |
+| `python -m app validate examples/beispiel-import.zip` | 0 Fehler, 0 Warnungen, 124 Transaktionen |
+| `pytest tests/test_nachpruefung.py` | 33 bestanden |
+| Nachweispaket der Nachprüfung auf `725ad2c` | 6 Soll-Tests fehlgeschlagen (wie berichtet) |
+| Nachweispaket auf dem Endstand | 6 Soll-Tests bestanden; 2 Zwischenstand-Nachweise nicht mehr anwendbar (s. o.) |
+| Nachbarsuiten (Übernahme, Prüf-Stapel, Assistent, Transfer, Diagnose, Reset, Bitpanda) | bestanden |
+| Volltest `TZ=Europe/Berlin pytest -q -x tests` (Worktree des Endstands) | 2114 Tests, davon 2111 bestanden und 3 übersprungen, 0 fehlgeschlagen (Exit-Code 0) |
+
+Angepasste Bestandstests: `test_review_fixes.py::test_R03_preview_…` und `test_review_repair.py::test_rows_needing_…`
+(Entscheidung jetzt auf der Übernahmeseite statt über den Prüf-Stapel).
+
+## Grenzen nach der Nachprüfung
+
+* **Konkurrierende Partner:** Die Übernahme bietet „Kein Transfer“ bzw. „Nicht übernehmen“; einen bestimmten der
+  konkurrierenden Partner auszuwählen ist nicht vorgesehen (die Paarbildung des Prüf-Stapels kennt nur den Vorschlag).
+* **Partner im selben API-Abruf** (`b:`): gleicher Codepfad wie die ersetzte Import-Buchung; mit dem Bitpanda-Fixture
+  nicht eigens als Übernahme-Szenario konstruierbar – abgedeckt über den Import-Partner und die Assistententests.
+* **Probelauf-Kosten:** je neuer Entscheidung ein Probelauf auf einer Datenbankkopie.
+* Zurückgenommene Buchungen und Aliase auf sie bleiben als Nachweis stehen; wirksam sind sie nicht.
