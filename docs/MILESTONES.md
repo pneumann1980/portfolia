@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 04.11.2026 · Version 0.93.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 04.11.2026 · Version 0.94.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,20 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.94.0 – „Buchungen prüfen“: Fehlerklasse systematisch geschlossen (Schreibrevisionen, Kandidatenmengen, Besitzkennungen)
+
+Gemeinsame Lösung, Wegematrix, Befundzuordnung und Testmatrix: [`BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](BUCHUNGEN_PRUEFEN_KORREKTUREN.md#systematische-überarbeitung-nach-dem-doppelcheck-zu-0930-version-0940).
+2 der 5 Fälle des Doppelchecks schlugen auf 0.93.0 fehl; alle bestehen jetzt (46 Fälle in `tests/test_review_093.py`).
+
+* **Persistente Schreibrevisionen** (Migration 37): Zähler je Tabelle, per Trigger in derselben Transaktion erhöht –
+  Vorschaucache und Datenstand erkennen jede Änderung, auch in derselben Sekunde (N16, keine Entscheidungsschleife).
+* **Kandidatenmengen:** Eine Transferentscheidung gilt allen angebotenen Gegenbuchungen; Zusammensetzung und Inhalt
+  werden bis in die Buchungstransaktion geprüft – in der Detailansicht, im Commit-Weg und in der Quellenübernahme (N15).
+* **Besitzkennungen:** Eingaben je Gruppe mit eindeutiger Schreibkennung; Rücknahmen und veraltete Formulare
+  überschreiben keine neueren Eingaben mehr, auch bei gleichem Wert oder A → B → A (N13-Grenze).
+* In dieser Runde zusätzlich gefunden und geschlossen: Assistent-Rücknahme nach abgelehnter Transferantwort, neuer
+  Kandidat erst beim Übernehmen erkannt, veraltetes Formular überschrieb neuere Eingaben.
 
 ## 0.93.0 – Review „Buchungen prüfen“ 0.92.0: Rücknahme ohne Fremdverlust, Partnerstand ohne Rückfall
 

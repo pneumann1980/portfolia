@@ -402,3 +402,120 @@ siehe Tabelle unten; CI (Python 3.12) meldete für 0.92.0 333 Fehler in 61 Datei
   gespeichert (die Planung braucht sie) und bei Ablehnung kompensiert, nicht in derselben Transaktion wie die Aktion.
 * Die Grenzen der früheren Runden (konkurrierende Partner nur „kein Transfer“, reine EUR-Gebühr ohne Asset,
   mypy-Bestand) gelten weiter.
+
+# Systematische Überarbeitung nach dem Doppelcheck zu 0.93.0 (Version 0.94.0)
+
+Grundlage: `Portfolia_Buchungen_pruefen_Review_093_2026-11-04.md` mit Nachweispaket (`test_review_093.py`, 5 Fälle,
+geprüft auf `ecf69ff`). **Reproduktion auf `ecf69ff`: 2 Soll-Tests schlugen fehl** (N15: geänderter, nicht
+vorgeschlagener Partner nach dem Anwenden der Entscheidung; N16: Journaländerung in derselben gespeicherten Sekunde →
+alte Vorschau, Entscheidungsschleife), 3 Kontrollen bestanden. **Auf dem Endstand bestehen alle 5.** Ziel dieser
+Runde war nicht die Einzelkorrektur, sondern die gemeinsame Fehlerklasse: veraltete Bestätigungen, unvollständig
+geprüfte Abhängigkeiten, Entscheidungsschleifen und verlorene Fremdeingaben.
+
+## Gemeinsame Lösung
+
+| Baustein | Umsetzung | Ersetzt |
+| --- | --- | --- |
+| **Persistente Schreibrevisionen** | Migration 37: Tabelle `data_rev` mit je einem Zähler für jede Tabelle, aus der Vorschau, Prüfungen und Übernehmen kommen (`db.REV_TABLES`: Journal, App-Änderungen, Verknüpfungen, Aliase, Zuordnungen, Bestandsnachweise, Zusammenführungen, Ereignis-Entscheidungen, aktiver Import, Einstellungen `ledger.`/`tax.`). SQLite-Trigger erhöhen ihn **in derselben Transaktion** wie jede Änderung. `actions.data_version` liest nur diese Zähler (Index-Zugriff statt Zählungen) | Anzahl + jüngster sekundengenauer Zeitstempel je Tabelle (N16: gleiche Sekunde, gleiche Zeilenzahl, Änderung ohne `updated_at` blieben unerkannt) |
+| **Ein Abhängigkeitsvertrag je Plan** | `batch.plan_deps`: Revision jeder abhängigen Buchung (Verknüpfungsziel, Dubletten-Bezug, **alle** Journal-Kandidaten eines möglichen Transfers) und für entschiedene Transferfragen der Stand der **gesamten Kandidatenmenge** (`service.cands_rev`: Zusammensetzung + Inhalt aller Kandidaten). Teil des Fingerabdrucks; `batch.execute` prüft beides als erste Anweisung der Schreibtransaktion (`check_deps`), dazu die Zähler der Transfer-Tabellen seit **vor** der Bewertung (`check_tables`: neue/entfernte Kandidaten). `row_state` enthält zusätzlich konkurrierende Kandidaten, Import-Gegenstück und Entscheidungsstand | Einzelpartner-Revision (N15: nicht vorgeschlagene Alternativen ungeprüft) |
+| **Transferentscheidung = Antwort auf eine Kandidatenmenge** | `csv_row.pair_rev` speichert den angezeigten Stand der Kandidatenmenge (`pairrev_<Zeile>`, Pflicht bei Journal-Kandidaten, kein Rückfall). Die Bewertung setzt eine Entscheidung zurück, sobald Zusammensetzung oder Inhalt abweicht, und zeigt den Grund; der Planer wertet nur gebundene Entscheidungen (`decided_pair`). Quellenübernahme: Entscheidung speichert `rev` (Kandidatenmenge) und `cands`; `_apply_decisions` übergibt genau diesen Stand für „Transfer bestätigen“ und „kein Transfer“ | Partnerstand nur des vorgeschlagenen Partners |
+| **Besitzkennungen der Eingaben** | Migration 37: `csv_row.ver_dec/ver_val/ver_fee/ver_pair` je Eingabegruppe. Jede inhaltliche Änderung erhält eine neue, global eindeutige Kennung (`set_rows` explizit, alle übrigen Schreiber per Trigger). `restore_inputs` setzt eine Gruppe nur zurück, solange sie **genau die eigene Kennung** trägt, und schreibt selbst mit neuer Kennung (wiederholte/verspätete Aufträge finden nichts). Transferentscheidung und Partnerstand sind eine Gruppe | Wertvergleich (Grenze N13: gleichlautende Fremdeingabe, A → B → A) |
+| **Veraltete Formulare** | Detailseite rendert je Zeile den angezeigten Eingabestand (`iv_<Zeile>`: Version + Prüfsumme je Gruppe). Ein veraltetes Formular überschreibt keine neuere Eingabe: unberührte Felder werden übergangen, eine eigene abweichende Änderung sichtbar abgelehnt („inzwischen an anderer Stelle geändert“), derselbe Wert ausdrücklich übernommen | „Letzter Speichervorgang gewinnt“ für alle Felder der Seite |
+| **Probelauf-Rückmeldung** | Kann der Probelauf eine gespeicherte Übernahme-Entscheidung im Zustand nach dem Ausblenden nicht anwenden (z. B. neuer Kandidat), erscheint sie sofort als „verworfen“ – Entfernen → neues Angebot → neue Entscheidung | Entscheidung galt in der Vorschau als gültig und scheiterte erst beim Übernehmen |
+
+## Umgestellte Aufrufer
+
+`batch.plan`/`execute` (alle Stapelaktionen), `module.preview`/`execute`/`row_action`/`rows`, `service.set_rows`/
+`restore_inputs`/`commit`/`commit_apply`/`evaluate`, `assistant_web._stack_answer` (Transferantwort: gemeinsame
+Rücknahme statt unbedingtem Zurückschreiben von `pair_ok` – dieselbe Fehlerklasse wie N13, in dieser Runde gefunden),
+`takeover._choice_info`/`_validate_decisions`/`_apply_decisions`/`probe`/`_probe_checks`, `actions.data_version`/
+`assert_version` (alle Vorschau-/Cache-Nutzer: Diagnose-Korrekturen, Sammelbearbeitung, Klärung, Arbeitsplan,
+Integrität, Übernahme-Probelauf). `bulk.run` und `auto_link` nutzen den Vertrag über `batch.execute` unverändert.
+
+## Wegematrix (abgeschlossen)
+
+| Einstieg | Aktion | Betroffene Daten | Abhängigkeiten | Gültigkeitsprüfung | Schreibtransaktion | Rücknahme | Nachweis |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Assistent (Karte) | verknüpfen, buchen, Transfer ja/nein, nicht übernehmen, zurückstellen | Prüf-Stapel, Journal, Verknüpfung | eigene Zeilen, Partnerzeilen, Verknüpfungsziel, Journalpartner | `x_fp` (Wirkungsmenge), `x_rev` + `Plan.refs/pairs` in der Transaktion | `batch.execute` | Protokoll-Rückgängig (`batch.undo`); abgelehnte Transferantwort: `restore_inputs` | `test_review_090` (N06), `test_assistant*`, `test_review_fixes` |
+| Detail: Vorschau → Ausführen | alle Stapelaktionen | wie oben | wie oben + Kandidatenmengen | Fingerabdruck (inkl. Abhängigkeiten) + Prüfung in der Transaktion + Tabellenzähler | `batch.execute` | Verlauf → Rückgängig | `test_review_091`, `test_review_093` (Detail-Matrix) |
+| Detail: Einzelknopf | verknüpfen, übernehmen | Eingaben der Seite + Aktion | Zeilenabhängigkeiten (`rev_`) | `rev_` vor dem Speichern, `expect_refs` in der Transaktion | `set_rows` + `batch.execute` | `restore_inputs` (Besitzkennung) | `test_review_091`, `test_review_092`, `test_review_093` |
+| Detail: Eingaben speichern | Entscheidung, Wert, Gebühr, Transfer | `csv_row` | angezeigter Eingabestand (`iv_`), Kandidatenstand (`pairrev_`) | in derselben Transaktion | `set_rows` | – (keine Buchung) | `test_review_092`, `test_review_093` |
+| Detail: „… Buchungen übernehmen“ | Stapel übernehmen | Journal, Transfers | gebundene Transferentscheidungen, Kandidatenmenge, Tabellenzähler | `check_pairs` + `check_tables` in der Transaktion | `commit` | „Import rückgängig“ (`revert`) | `test_review_091/092/093` (Commit-Weg) |
+| Sammelvorschau (Prüfwarteschlange) | sichere Vorschläge mehrerer Stapel | wie Stapelaktion | wie Stapelaktion | gerenderter Fingerabdruck je Stapel + Transaktion | `batch.execute` je Stapel | Verlauf je Stapel | `test_reconciliation_pipeline` (Sammelvorschau), `test_review_bulk` |
+| Automatische Verknüpfung (Stufe A) | sichere Verknüpfung ohne Anzeige | Verknüpfung | Ziel | `Plan.refs` von der Planung bis zur Transaktion | `batch.execute` | Verlauf | `test_reconciliation_pipeline` (paralleler Thread) |
+| API-Import / Hintergrundabruf | Übernahme eindeutiger Ereignisse | Journal | wie Commit | wie Commit | `commit(only_idx)` | Verlauf/Import rückgängig | `test_bitpanda*`, `test_wallets*`, `test_transfer_side` |
+| Quellenübernahme: Vorschau | Probelauf | – (Kopie) | Datenstand (`data_version`) | Cache-Schlüssel = Lauf + Token + Schreibzähler | keine (Kopie) | – | `test_review_093` (N16, Wiederverwendung, Neustart) |
+| Quellenübernahme: Entscheidung | entscheiden/entfernen | `app_state` | Lauf, Token, Entscheidungsstand | Schreibtransaktion | `decide`/`undecide` | Entfernen | `test_review_090` (N08), `test_review_093` |
+| Quellenübernahme: Übernehmen | Ausblenden, Auswerten, Entscheidungen, Buchen, Verknüpfen, Nachprüfung | Ausblendung, Stapel, Journal | Datenstand (Ausblenden), Kandidatenmengen (Entscheidungen), Plan-Abhängigkeiten (Buchen) | `assert_version`; `pairrev_` aus der Entscheidung; `check_deps`/`check_tables` | je Phase eine Transaktion mit Rücknahmebezug (`in_tx`) | vollständige Kompensation; `undo`/`recover` fortsetzbar | `test_nachpruefung` (N01/N03), `test_review_091/092/093` |
+| Rücknahme | Rückgängig, Wiederherstellen | alle obigen | eigene Bezüge | idempotent, fortsetzbar | je Schritt | – | `test_nachpruefung`, `test_review_090` |
+
+## Zuordnung aller Befunde
+
+| Befund | Stand | Nachweis |
+| --- | --- | --- |
+| R01–R14, V01–V05 (Review 03.11.) | geschlossen in 0.89.0/0.90.0; Tests unverändert grün | `test_review_fixes`, `test_review_repair`, `test_review_workflow`, `test_review_bulk` |
+| N01 Commitbezüge, N03 fortsetzbare Rücknahme, N04 Integritätsprotokoll | geschlossen (0.90.0) | `test_nachpruefung` |
+| N02 Wirkungsmenge der Assistentenkarte | geschlossen (0.90.0), seit 0.94.0 mit Kandidatenmengen im `row_state` | `test_nachpruefung`, `test_review_090` |
+| N05 Gebühren ersetzter Gegenbuchungen | geschlossen (0.91.0) | `test_review_090` |
+| N06 Bestätigung atomar (Assistent) | geschlossen (0.91.0), Teil des gemeinsamen Vertrags | `test_review_090` |
+| N07 Einzelbuchung, N08 Entfernen gebunden, N09 Anzeige angewendeter Entscheidungen | geschlossen (0.91.0) | `test_review_090` |
+| N10 Detailaktionen gebunden | geschlossen (0.92.0), Vertrag erweitert | `test_review_091`, `test_review_093` |
+| N11 Journaltransfer im Vorschauweg | geschlossen (0.92.0), Bindung an Kandidatenmenge | `test_review_091`, `test_review_093` |
+| N12 Journalpartner in der Übernahme atomar | geschlossen (0.92.0) | `test_review_091` |
+| N13 Fehlerrücknahme ohne Fremdverlust | geschlossen (0.93.0); **offengelegte Grenze (gleichlautende Fremdeingabe, A → B → A) in 0.94.0 geschlossen** (Besitzkennungen) | `test_review_092`, `test_review_093` |
+| N14 Partnerstand ohne Rückfall | geschlossen (0.93.0) | `test_review_092` |
+| **N15** alle angebotenen Partner bis zum Commit gebunden | **geschlossen (0.94.0)** | Reviewfälle + Matrix in `test_review_093` |
+| **N16** zuverlässige Datenrevision, keine Entscheidungsschleife | **geschlossen (0.94.0)** | Reviewfälle + Matrix in `test_review_093` |
+| neu: Assistent setzte nach abgelehnter Transferantwort `pair_ok` unbedingt zurück | **geschlossen (0.94.0)** – gemeinsame Rücknahme | `test_assistant*` |
+| neu: neuer Kandidat in der Übernahme erst beim Übernehmen erkannt | **geschlossen (0.94.0)** – Probelauf-Rückmeldung | `test_review_093::test_takeover_new_candidate…` |
+| neu: veraltetes Formular überschrieb neuere Eingaben anderer Tabs beim Speichern | **geschlossen (0.94.0)** – `iv_` | `test_review_093::test_stale_form…` |
+
+## Testmatrix (`tests/test_review_093.py`, 46 Fälle)
+
+| Bereich | Aktion | Abhängigkeit | Zeitpunkte | Fälle |
+| --- | --- | --- | --- | --- |
+| Reviewfälle | Übernahme „kein Transfer“ / „Transfer bestätigen“ | alle Kandidaten / Journalpartner | nach Anwenden der Entscheidung; gleiche Sekunde | 5 |
+| Datenrevision | jede Schreibart | Journal | gleiche Sekunde, ohne `updated_at`, A → B → A, nur lesen | 1 |
+| Vorschaucache | Probelauf | Datenstand | unverändert, nach Neustart | 1 |
+| Übernahme, mehrere Kandidaten | „kein Transfer“ | jeder Kandidat × Wert/Menge/Konto/Status | nach der Bewertung, nach dem Anwenden der Entscheidungen, unmittelbar vor dem Commit | 24 |
+| Übernahme, Kandidatenmenge | „kein Transfer“ | neuer Kandidat | nach der Entscheidung → verworfen → neu entscheiden → Übernahme → exakte Rücknahme | 1 |
+| Übernahme, Wiederanlauf | „kein Transfer“ | Alternative | vor dem Commit → abgelehnt → neu → genau einmal → Rücknahme (auch wiederholt) | 1 |
+| Detail, mehrere Kandidaten | gerendertes Formular → nein → Vorschau → Buchung → Rücknahme | alle Kandidaten | – | 1 |
+| Detail, mehrere Kandidaten | Vorschau/Ausführen | jeder Kandidat | vor der Vorschau, nach der Vorschau, vor dem Commit | 6 |
+| Detail, Kandidatenmenge | Ausführen | neuer Kandidat | vor dem Commit → abgelehnt → neue Anzeige → genau eine Buchung | 1 |
+| Commit-Weg | „Buchungen übernehmen“ | Alternative | vor der Transaktion | 1 |
+| Eingaben | Rücknahme | Besitz | gleichlautende Fremdeingabe, A → B → A, wiederholt, verspätet | 2 |
+| Eingaben | veraltetes Formular | angezeigter Stand | unberührt, abweichend, gleicher Wert, frisch | 1 |
+| Eingaben | Transfergruppe | Entscheidung + Partnerstand | Rücknahme als Gruppe | 1 |
+
+## Teststeuerung
+
+* `tests/test_diagnosis_actions.py::LOG_TABLES` nimmt `data_rev` aus der Nutzdaten-Prüfsumme aus (Zähler zählen jede
+  Schreiboperation, auch Rücknahmen – Metadaten wie Protokolle). Dass eine **Vorschau nichts schreibt**, prüft
+  `test_diagnosis.fingerprint` weiterhin **einschließlich** der Zähler.
+* `tests/test_review_092.py::test_repeated_restore_never_overwrites_newer_inputs` erwartet jetzt die stärkere Zusage
+  (gleichlautende spätere Eingabe bleibt) statt der in 0.93.0 dokumentierten Grenze.
+* Nebenläufigkeit über echte zweite Threads; Wrapper wählen nur den Zeitpunkt und rufen den unveränderten Dienst auf.
+
+## Grenzen
+
+* Formulare **ohne** `iv_` (vor 0.94.0 geöffnet, eigene Skripte) speichern wie bisher (letzter Speichervorgang gewinnt);
+  Formulare der Anwendung tragen das Feld immer.
+* Die Prüfung der Tabellenzähler für Transfer-Kandidaten ist bewusst grob: jede Journaländerung zwischen Bewertung und
+  Commit einer transferrelevanten Aktion führt zur Ablehnung (sicher, im Millisekundenfenster selten).
+* Kandidaten im selben Stapel (`b:`) zählen mit ihrer Kennung zur Kandidatenmenge; ihr Inhalt ist über `row_state`
+  gebunden, nicht über `pair_rev`.
+* Konkurrierende Partner: gezielte Wahl eines bestimmten Partners weiterhin nicht angeboten; reine EUR-Gebühr ohne
+  Asset weiterhin nicht übertragbar; mypy-Bestand (s. u.).
+
+## Tests und Befehle (0.94.0)
+
+| Befehl | Ergebnis |
+| --- | --- |
+| `ruff check app tests scripts` | ohne Befund |
+| `python -m app validate examples/beispiel-import.zip` | 0 Fehler, 0 Warnungen, 124 Transaktionen |
+| Reviewfälle (`test_review_093.py`) auf `ecf69ff` | 2 fehlgeschlagen, 3 bestanden |
+| `tests/test_review_093.py` (46) auf `ecf69ff` | 38 fehlgeschlagen, 8 bestanden (Kontrollfälle ohne Änderung bzw. mit Änderung des vorgeschlagenen Partners und Detailfälle, die schon 0.93.0 ablehnte) |
+| dieselben auf dem Endstand | 46 bestanden |
+| `mypy` wie in CI, lokal (Python 3.11) | 334 Fehler in 61 Dateien auf `ecf69ff` und auf dem Endstand – zeilenweise identisch. In den geänderten Modulen (`csvimport/service.py`, `batch.py`, `module.py`, `datasources/takeover.py`, `diagnosis/actions.py`, `assistant_web.py`, `db.py`) 57 → 56 bestehende Fehler (einer entfällt mit dem entfernten `_restore_pairs`); fünf zwischenzeitlich eingeführte Typfehler wurden vor dem Commit behoben. Keine neuen Typfehler, Bestand offen |
+| Volltest `TZ=Europe/Berlin pytest -q -x tests` (Worktree des Endstands) | 2275 Tests, davon 2272 bestanden und 3 übersprungen, 0 fehlgeschlagen (Exit-Code 0) |
