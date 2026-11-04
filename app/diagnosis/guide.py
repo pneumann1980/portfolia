@@ -411,6 +411,15 @@ def _plain_reason(reason: str) -> str:
     return "Eine Angabe fehlt oder ist ungültig." if "_" in reason else _first_sentence(reason)
 
 
+def _bind_rows(task: Task, rows: list[Any]) -> None:
+    """Die Antwort gilt genau für den angezeigten Stand des Vorgangs: Prüfsumme seiner offenen Zeilen (dieselbe
+    Auswahl wie beim Antworten in ``assistant_web._stack_answer``)."""
+    from app.csvimport.batch import rows_digest
+
+    event = task.ref.partition(":")[2]
+    task.payload["fp"] = rows_digest([rc for rc in rows if (rc.rec.event_key or f"#{rc.idx}") == event and rc.open])
+
+
 def _row_detail(ctx: Any, task: Task) -> Task:
     from app.csvimport import model as M
     from app.csvimport import queue as Q
@@ -458,6 +467,7 @@ def _row_detail(ctx: Any, task: Task) -> Task:
         task.context = f"{what}. Ein Gegenstück in deinen Buchungen gibt es nicht."
         task.answers = [Answer("row:include", "Ja, buchen", "Wird gebucht: " + (", ".join(it.legs) or what) + ".",
                                recommended=True)]
+    _bind_rows(task, csv_service(ctx).rows(it.batch_id))
     task.answers += [
         Answer("row:skip", "Nicht buchen (gehört nicht in mein Depot)",
                "Wird nicht gebucht; Portfolia fragt bei diesem Vorgang nicht wieder."),

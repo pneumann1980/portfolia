@@ -124,8 +124,9 @@ def view(db: Any, sid: int) -> dict[str, Any] | None:
     if d["status"] in ("fetching", "running") and sid not in _RUNNING:
         d["status"] = "failed"
         d["message"] = ("Vollabruf unterbrochen (Neustart) – bitte erneut abrufen." if r["status"] == "fetching" else
-                        "Übernahme unterbrochen (Neustart) – Zustand unter Datenqualität → Entscheidungen und "
-                        "Korrekturen prüfen.")
+                        "Übernahme unterbrochen (Neustart) – bitte „Unterbrochene Übernahme zurücknehmen“: der Stand "
+                        "vor der Übernahme wird wiederhergestellt.")
+    d["recover"] = needs_recovery(db, sid) is not None
     return d
 
 
@@ -151,6 +152,8 @@ def start_fetch(ctx: Any, sid: int) -> dict[str, Any]:
     with _LOCK:
         if is_busy(sid) or busy(sid):
             return {"errors": ["Für diese Datenquelle läuft bereits ein Abruf bzw. eine Übernahme."]}
+        if needs_recovery(ctx.db, sid) is not None:
+            return {"errors": [RECOVER_FIRST]}
         _RUNNING.add(sid)
     try:
         _settle(ctx.db, sid)
@@ -1115,6 +1118,8 @@ def start_apply(ctx: Any, sid: int, token: str, confirm: bool = False,
     with _LOCK:
         if busy(sid):
             return {"errors": ["Es läuft bereits ein Abruf bzw. eine Übernahme."]}
+        if needs_recovery(ctx.db, sid) is not None:
+            return {"errors": [RECOVER_FIRST]}
         _RUNNING.add(sid)
 
     def work() -> None:
@@ -1153,16 +1158,13 @@ def apply(ctx: Any, sid: int, token: str, confirm: bool = False,
 
 def _apply(ctx: Any, sid: int, token: str, confirm: bool = False,
            adjust: frozenset[str] = frozenset()) -> dict[str, Any]:
-    from app.csvimport import batch as B
-    from app.csvimport.service import csv_service, rec_to_json
     from app.diagnosis import actions as A
-    from app.journal.service import journal_service
 
     db = ctx.db
-    csv = csv_service(ctx)
     a = assess(ctx, sid, confirm=confirm, adjust=adjust)
     if a is None or db.q1("SELECT status FROM ds_takeover WHERE id=?", (a.rid,))["status"] != "staged":
         return {"errors": ["Kein abgelegter Vollabruf – bitte zuerst abrufen."]}
+
     def refuse(text: str) -> dict[str, Any]:
         db.x("UPDATE ds_takeover SET message=?, result_json=? WHERE id=?",
              (text[:500], json.dumps({"detail": []}), a.rid))
@@ -1177,34 +1179,153 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False,
     ds_name = (db.q1("SELECT name FROM data_source WHERE id=?", (sid,)) or {"name": "Quelle"})["name"]
     db.x("UPDATE ds_takeover SET status='running', donors_json=?, message=? WHERE id=?",
          (json.dumps(a.donors, ensure_ascii=False), "Buchungen werden ausgeblendet …", rid))
-
-    decision_id: int | None = None
-    action_id: int | None = None
-    bid: int | None = None
+    st: dict[str, Any] = {"decision_id": None, "action_id": None, "bid": None}
 
     def rollback(why: str, detail: list[str], rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        notes: list[str] = []
-        if action_id is not None:
-            r = B.undo(csv, action_id)
-            notes += r.get("errors") or []
-        if bid is not None:
-            csv.discard(bid, rewind=False)
-        if decision_id is not None:
-            r2 = A.undo(ctx, decision_id)
-            notes += r2.errors
-        written = decision_id is not None or action_id is not None
-        text = why + ((" Zurückgenommen – es bleibt nichts davon." if written else " Es wurde nichts gebucht.")
-                      if not notes else " Rücknahme unvollständig – bitte unter Datenqualität → Entscheidungen prüfen: "
-                      + "; ".join(notes))
-        journal_service(ctx).after_change()
+        written = st["decision_id"] is not None or st["action_id"] is not None
+        notes = _compensate(ctx, rid, st["decision_id"], st["action_id"], st["bid"])
         res_doc: dict[str, Any] = {"detail": detail[:40], "rollback_errors": notes,
                                    "rolled_back": written and not notes}
         if rows:  # Gründe je Zeile + Datenstand: bei unverändertem Stand sperrt die Vorschau einen neuen Versuch
             res_doc["rows"] = rows[:200]
             res_doc["dv"] = A.data_version(db)
+        if notes:  # Teilzustand: Bezüge bleiben gespeichert, die Seite bietet die Wiederherstellung an (recover)
+            text = (why + " Rücknahme unvollständig – bitte „Unterbrochene Übernahme zurücknehmen“ ausführen: "
+                    + "; ".join(notes))
+            db.x("UPDATE ds_takeover SET status='failed', message=?, result_json=? WHERE id=?",
+                 (text[:500], json.dumps(res_doc, ensure_ascii=False), rid))
+            return {"errors": [text, *detail[:12]]}
+        text = why + (" Zurückgenommen – es bleibt nichts davon." if written else " Es wurde nichts gebucht.")
         db.x("UPDATE ds_takeover SET status='staged', message=?, result_json=?, donors_json=NULL, decision_id=NULL, "
              "action_id=NULL, batch_id=NULL WHERE id=?", (text[:500], json.dumps(res_doc, ensure_ascii=False), rid))
         return {"errors": [text, *detail[:12]]}
+
+    try:
+        return _apply_steps(ctx, sid, a, rid, years_before, ds_name, rollback, st)
+    except Exception as e:  # unerwarteter Fehler nach dem ersten Schreiben: den gespeicherten Stand kompensieren
+        log.exception("Quellenübernahme %s: unerwarteter Fehler – Rücknahme", sid)
+        return rollback(f"Unerwarteter Fehler bei der Übernahme ({type(e).__name__}).", [])
+
+
+def _fault(phase: str) -> None:
+    """Testhaken: Fehler nach einer Schreibphase einspeisen (``hidden``, ``batch``, ``booked``, ``check``)."""
+    if phase in _FAULTS:
+        raise RuntimeError(f"eingespeister Fehler nach Phase {phase}")
+
+
+_FAULTS: set[str] = set()
+
+
+def _compensate(ctx: Any, rid: int, decision_id: int | None, action_id: int | None, bid: int | None) -> list[str]:
+    """Geschriebenes in umgekehrter Reihenfolge zurücknehmen: Stapelaktion, Stapel, Ausblendung. Jeder erfolgreich
+    zurückgenommene Schritt wird sofort aus ``ds_takeover`` gelöscht; was nicht gelingt, bleibt mit seiner Kennung
+    gespeichert (erneuter Versuch über ``recover``). Bereits Zurückgenommenes gilt als erledigt (idempotent)."""
+    from app.csvimport import batch as B
+    from app.csvimport.service import csv_service
+    from app.diagnosis import actions as A
+    from app.journal.service import journal_service
+
+    db = ctx.db
+    csv = csv_service(ctx)
+    notes: list[str] = []
+    if action_id is not None:
+        try:
+            done = (db.q1("SELECT status FROM import_action WHERE id=?", (action_id,)) or {"status": ""})["status"]
+            errs = [] if done != "active" else list(B.undo(csv, action_id).get("errors") or [])
+        except Exception as e:
+            log.exception("Quellenübernahme %s: Rücknahme der Stapelaktion %s fehlgeschlagen", rid, action_id)
+            errs = [f"Buchungen der Stapelaktion #{action_id} nicht zurückgenommen ({type(e).__name__})"]
+        if errs:
+            notes += errs
+        else:
+            action_id = None
+            db.x("UPDATE ds_takeover SET action_id=NULL WHERE id=?", (rid,))
+    if bid is not None and action_id is None:
+        try:
+            if csv.batch(bid) is not None:
+                csv.discard(bid, rewind=False)
+            db.x("UPDATE ds_takeover SET batch_id=NULL WHERE id=?", (rid,))
+        except Exception as e:
+            log.exception("Quellenübernahme %s: Verwerfen des Stapels %s fehlgeschlagen", rid, bid)
+            notes.append(f"Prüf-Stapel #{bid} nicht verworfen ({type(e).__name__})")
+    if decision_id is not None and not notes:  # Ausblendung erst, wenn die API-Buchungen sicher weg sind
+        try:
+            done = (db.q1("SELECT status FROM diag_decision WHERE id=?", (decision_id,)) or {"status": ""})["status"]
+            errs = [] if done != "active" else list(A.undo(ctx, decision_id).errors)
+        except Exception as e:
+            log.exception("Quellenübernahme %s: Rücknahme der Ausblendung %s fehlgeschlagen", rid, decision_id)
+            errs = [f"Ausgeblendete Buchungen (Entscheidung #{decision_id}) nicht wiederhergestellt "
+                    f"({type(e).__name__})"]
+        if errs:
+            notes += errs
+        else:
+            db.x("UPDATE ds_takeover SET decision_id=NULL WHERE id=?", (rid,))
+    elif decision_id is not None:
+        notes.append(f"Ausgeblendete Buchungen (Entscheidung #{decision_id}) noch nicht wiederhergestellt")
+    try:
+        journal_service(ctx).after_change()
+    except Exception as e:  # pragma: no cover - Nachberechnung holt der nächste Lauf nach
+        log.exception("Quellenübernahme %s: Nachberechnung nach Rücknahme fehlgeschlagen", rid)
+        notes.append(f"Nachberechnung fehlgeschlagen ({type(e).__name__})")
+    return notes
+
+
+RECOVER_FIRST = ("Eine frühere Übernahme wurde unterbrochen und ist noch nicht zurückgenommen – bitte zuerst "
+                 "„Unterbrochene Übernahme zurücknehmen“.")
+
+
+def needs_recovery(db: Any, sid: int) -> Any:
+    """Übernahme mit gespeichertem Teilzustand: abgebrochen (``running`` ohne laufenden Prozess) oder nach
+    unvollständiger Rücknahme (``failed``) – mit mindestens einer Kennung des Geschriebenen."""
+    r = db.q1("SELECT * FROM ds_takeover WHERE source_id=? AND status IN ('running', 'failed') AND "
+              "(decision_id IS NOT NULL OR action_id IS NOT NULL OR batch_id IS NOT NULL) ORDER BY id DESC LIMIT 1",
+              (sid,))
+    if r is None or (r["status"] == "running" and sid in _RUNNING):
+        return None
+    return r
+
+
+def recover(ctx: Any, sid: int) -> dict[str, Any]:
+    """Unterbrochene bzw. unvollständig zurückgenommene Übernahme kompensieren (Wiederanlauf nach Neustart oder
+    Fehler): exakt der Stand vor der Übernahme; der Vollabruf bleibt für einen neuen Versuch erhalten."""
+    from app.datasources import service as S
+
+    with _LOCK:
+        if busy(sid):
+            return {"errors": ["Es läuft bereits ein Abruf bzw. eine Übernahme."]}
+        r = needs_recovery(ctx.db, sid)
+        if r is None:
+            return {"errors": ["Keine unterbrochene Übernahme gespeichert."]}
+        ev = S._acquire(sid)
+        if ev is None:
+            return {"errors": [S.BUSY_TEXT]}
+        try:
+            with S._INGEST_LOCK:
+                notes = _compensate(ctx, int(r["id"]), r["decision_id"], r["action_id"], r["batch_id"])
+                if notes:
+                    ctx.db.x("UPDATE ds_takeover SET status='failed', message=? WHERE id=?",
+                             (("Rücknahme weiterhin unvollständig: " + "; ".join(notes))[:500], r["id"]))
+                    return {"errors": notes}
+                ctx.db.x("UPDATE ds_takeover SET status='staged', donors_json=NULL, message=? WHERE id=?",
+                         ("Unterbrochene Übernahme zurückgenommen – es bleibt nichts davon. Der Vollabruf ist "
+                          "erhalten; die Übernahme kann neu geprüft werden.", r["id"]))
+                log.info("Quellenübernahme %s: unterbrochener Lauf %s zurückgenommen", sid, r["id"])
+                return {"errors": []}
+        finally:
+            S._release(sid)
+
+
+def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_name: str, rollback: Any,
+                 st: dict[str, Any]) -> dict[str, Any]:
+    """Schreibphasen der Übernahme. Jede Kennung des Geschriebenen (Entscheidung, Stapel, Stapelaktion) steht sofort
+    in ``st`` und in ``ds_takeover`` – für die Rücknahme bei Fehlern und nach einer Unterbrechung (``recover``)."""
+    from app.csvimport import batch as B
+    from app.csvimport.service import csv_service, rec_from_json, rec_to_json
+    from app.diagnosis import actions as A
+    from app.journal.service import journal_service
+
+    db = ctx.db
+    csv = csv_service(ctx)
 
     # 1. ausblenden -----------------------------------------------------------------------------------------
     if a.plan is not None and a.plan.ops:
@@ -1213,26 +1334,26 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False,
             db.x("UPDATE ds_takeover SET status='staged', message=?, donors_json=NULL WHERE id=?",
                  (res.errors[0][:500], rid))
             return {"errors": res.errors}
-        decision_id = res.decision_id
-        db.x("UPDATE ds_takeover SET decision_id=? WHERE id=?", (decision_id, rid))
+        st["decision_id"] = res.decision_id
+        db.x("UPDATE ds_takeover SET decision_id=? WHERE id=?", (res.decision_id, rid))
+        _fault("hidden")
 
     # 2. Vorgänge der Quelle auswerten ----------------------------------------------------------------------------
     _msg(db, rid, "API-Vorgänge werden ausgewertet …")
-    from app.csvimport.service import rec_from_json
-
     row = db.q1("SELECT events_json FROM ds_takeover WHERE id=?", (rid,))
     recs = [rec_from_json(json.dumps(d)) for d in json.loads(row["events_json"])]
     recs += _adjust_recs(a)  # bestätigter Ausgleich: gekennzeichnete Zeilen im selben Stapel (gemeinsam rückgängig)
     payload = ("[" + ",".join(rec_to_json(r) for r in recs) + "]").encode()
     prov = a.provider
     try:
-        bid = csv.ingest(recs, source=f"sync:{prov}", profile=f"sync:{prov}", account=a.account,
+        bid = st["bid"] = csv.ingest(recs, source=f"sync:{prov}", profile=f"sync:{prov}", account=a.account,
                          label=f"{ds_name} · Quellenübernahme {datetime.now(UTC).strftime('%d.%m.%Y %H:%M')}",
                          datasource_id=sid, payload=payload, options={"cutoff": ""}, append_to=None)
     except Exception as e:
         log.exception("Quellenübernahme: Auswertung fehlgeschlagen")
         return rollback(f"Auswertung der API-Vorgänge fehlgeschlagen ({type(e).__name__}).", [])
     db.x("UPDATE ds_takeover SET batch_id=? WHERE id=?", (bid, rid))
+    _fault("batch")
     rows = csv.rows(bid)
     cover_ext = {e for e, ln in a.lines_by_ext.items() if ln.covered_by}
     book = [rc for rc in rows if rc.status == "new" and rc.row is not None and not rc.errors
@@ -1262,8 +1383,9 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False,
                         fingerprint=p.fingerprint(), params={"takeover": rid})
         if out.get("errors"):
             return rollback("Buchen der API-Vorgänge nicht möglich.", list(out["errors"]))
-        action_id = int(out["action_id"])
-        db.x("UPDATE ds_takeover SET action_id=? WHERE id=?", (action_id, rid))
+        st["action_id"] = int(out["action_id"])
+        db.x("UPDATE ds_takeover SET action_id=? WHERE id=?", (st["action_id"], rid))
+        _fault("booked")
     # durch Transfers gedeckte Zeilen: mit der bleibenden Buchung verknüpfen, sonst bewusst nicht übernehmen
     for act in ("link", "skip"):
         left = {rc.idx for rc in csv.rows(bid) if (rc.rec.ext_id or "") in cover_ext and rc.open}
@@ -1276,6 +1398,7 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False,
 
     # 4. Nachprüfung am Bestand -----------------------------------------------------------------------------------
     journal_service(ctx).after_change()
+    _fault("check")
     led = ctx.ledger()
     now = led.holdings_by_account(a.account) if led is not None else {}
     diffs = []

@@ -440,12 +440,18 @@ def make_router() -> APIRouter:
             return _go(err="Unbekannte Antwort.")
         bid = int(bid_s)
 
+        shown = str(form.get("x_fp") or "")
+
         def run() -> dict[str, Any]:
             svc.evaluate(bid)
             rows = svc.rows(bid)
             idxs = [rc.idx for rc in rows if (rc.rec.event_key or f"#{rc.idx}") == event and rc.open]
             if not idxs:
                 return {"errors": ["Der Vorgang ist schon entschieden oder hat sich geändert."]}
+            if shown and op in ("include", "link") and \
+                    BA.rows_digest([rc for rc in rows if rc.idx in set(idxs)]) != shown:
+                return {"errors": ["Der Vorgang hat sich seit der Anzeige geändert (Betrag, Wert, Konto oder "
+                                   "Transferentscheidung) – bitte die neu angezeigten Angaben prüfen."]}
             if op in ("skip", "defer"):
                 return BU.decide(svc, bid, idxs, op)
             p = BA.plan(svc, bid, op, idxs, True, rows)  # ausdrückliche Antwort: auch bei abweichenden Angaben

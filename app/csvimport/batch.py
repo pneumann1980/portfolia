@@ -316,8 +316,24 @@ class Plan:
         return sorted(((k, len(v), v[:5]) for k, v in by.items()), key=lambda x: -x[1])
 
     def fingerprint(self) -> str:
-        data = json.dumps(sorted((i.rc.idx, i.act or "", i.target or "") for i in self.items))
+        """Bindet die Vorschau an genau diesen Plan: Aktion, wirksame Zeilenaktion, Ziel und den vollständigen
+        normalisierten Zeileninhalt samt entscheidungsrelevanter Eingaben (Menge, EUR-Wert, Asset, Konto, Zeitpunkt,
+        Gebühr, Einordnung, Transferentscheidung). Jede Änderung daran verlangt eine neue Vorschau."""
+        data = json.dumps(sorted([i.rc.idx, i.act or "", i.target or "", row_state(i.rc)] for i in self.items),
+                          sort_keys=True, default=str)
         return hashlib.sha256(f"{self.action}|{int(self.force)}|{data}".encode()).hexdigest()[:24]
+
+
+def row_state(rc: RowCtx) -> list[Any]:
+    """Entscheidungsrelevanter Stand einer Zeile (für Vorschau-Bindung und Assistenten-Karten)."""
+    return [rc.status, rc.decision or "", rc.value_in or "", rc.fee_in or "", rc.pair_ref or "", rc.pair_conf or "",
+            rc.pair_ok if rc.pair_ok is not None else "", rc.tx_id or "", sorted((rc.row or {}).items())]
+
+
+def rows_digest(rcs: Iterable[RowCtx]) -> str:
+    """Prüfsumme des angezeigten Stands mehrerer Zeilen (z. B. eines Vorgangs auf einer Assistenten-Karte)."""
+    data = json.dumps([[rc.idx, row_state(rc)] for rc in sorted(rcs, key=lambda r: r.idx)], default=str)
+    return hashlib.sha256(data.encode()).hexdigest()[:24]
 
 
 def _first_issue(m: Mapping[str, Any]) -> str:

@@ -631,6 +631,18 @@ def make_router() -> APIRouter:
             "msg", "Übernahme gestartet – noch nicht abgeschlossen; das Ergebnis erscheint hier.")
         return _back(request, _tk_url(sid, kid, **{key: text}))
 
+    @router.post("/settings/datasources/{sid}/uebernahme/wiederherstellen")
+    async def takeover_recover(request: Request, sid: int) -> Response:
+        """Unterbrochene bzw. unvollständig zurückgenommene Übernahme kompensieren (Stand vor der Übernahme)."""
+        from app.datasources import takeover as TK
+
+        _takeover_ds(request, sid)
+        f = await request.form()
+        res = await run_in_threadpool(TK.recover, get_ctx(request), sid)
+        key, text = ("error", " ".join(res["errors"])) if res["errors"] else (
+            "msg", "Unterbrochene Übernahme zurückgenommen – der Stand vor der Übernahme ist wiederhergestellt.")
+        return _back(request, _tk_url(sid, _kid(f.get("kid")), **{key: text}))
+
     @router.post("/settings/datasources/{sid}/uebernahme/zurueck")
     async def takeover_undo(request: Request, sid: int) -> Response:
         from app.datasources import takeover as TK

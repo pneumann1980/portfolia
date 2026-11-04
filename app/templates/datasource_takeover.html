@@ -29,7 +29,14 @@
   <div class="alert warn"><span class="icon">!</span><div>Für {{ ds.provider_label }} ist keine Quellenübernahme vorgesehen (belegt: Bitpanda; mit Bestätigung: Binance und Blockchain-Wallets).</div></div>
   {% else %}
 
-  {% if not t or t.status in ('discarded', 'undone', 'failed') %}
+  {% if t and t.recover %}
+  <section class="card" id="wiederherstellen">
+    <div class="card-head"><h2>Unterbrochene Übernahme</h2><span class="badge crit">Teilzustand</span></div>
+    <div class="alert crit" role="alert"><span class="icon">!</span><div>{{ t.message }}</div></div>
+    <p>Ein früherer Übernahmelauf wurde unterbrochen oder ließ sich nicht vollständig zurücknehmen. Gespeichert sind die Bezüge des bereits Geschriebenen ({% if t.decision_id %}Ausblendung #{{ t.decision_id }}{% endif %}{% if t.batch_id %} · Prüf-Stapel #{{ t.batch_id }}{% endif %}{% if t.action_id %} · Buchungsaktion #{{ t.action_id }}{% endif %}). Die Rücknahme stellt exakt den Stand vor der Übernahme wieder her; der Vollabruf bleibt erhalten.</p>
+    <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/wiederherstellen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<button class="btn primary" type="submit">Unterbrochene Übernahme zurücknehmen</button></form>
+  </section>
+  {% elif not t or t.status in ('discarded', 'undone', 'failed') %}
   <section class="card">
     <div class="card-head"><h2>1 · Vollabruf</h2></div>
     {% if t and t.message %}<p class="hint">Letzter Stand: {{ t.message }}</p>{% endif %}
