@@ -166,16 +166,17 @@ def test_answer_with_inputs_shows_the_effect_before_saving(client):
     assert not yes.advanced and "Kursquelle" in yes.text
     name = yes.params[0].name
     r = client.post("/quality/assistent/antwort", data={"csrf_token": client.token, "f": t.finding_id, "a": yes.id,
-                                                         f"n_{yes.id}": "1", f"p_{name}": ""})
+                                                         f"n_{yes.id}": "1", f"ap.{yes.id}.{name}": ""})
     assert r.status_code == 200 and "Bitte" in text_of(r.text)  # Eingabe fehlt → Frage mit Fehlermeldung
     before = A.decisions(ctx.db)
     r = client.post("/quality/assistent/antwort", data={"csrf_token": client.token, "f": t.finding_id, "a": yes.id,
-                                                         f"n_{yes.id}": "1", f"p_{name}": "toka-token"})
+                                                         f"n_{yes.id}": "1", f"ap.{yes.id}.{name}": "toka-token"})
     assert r.status_code == 200 and "Das ändert sich mit deiner Antwort" in r.text
     assert A.decisions(ctx.db) == before  # noch nichts gespeichert
     token = re.search(r'name="token" value="([0-9a-f]+)"', r.text).group(1)
     r = client.post("/quality/assistent/antwort", data={"csrf_token": client.token, "f": t.finding_id, "a": yes.id,
-                                                         "token": token, "confirm": "1", f"p_{name}": "toka-token"},
+                                                         "token": token, "confirm": "1",
+                                                         f"ap.{yes.id}.{name}": "toka-token"},
                     follow_redirects=False)
     assert r.status_code == 303 and "done=" in r.headers["location"], r.headers["location"]
 

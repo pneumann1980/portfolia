@@ -257,7 +257,7 @@ def test_finish_screen_never_claims_all_checked_with_skipped_tasks(config, maste
 
     c, _sid = started(config, api)
     try:
-        monkeypatch.setattr(G, "step", lambda ctx, skipped, hints=False: SimpleNamespace(
+        monkeypatch.setattr(G, "step", lambda ctx, skipped, hints=False, focus="": SimpleNamespace(
             task=None, skipped=len(skipped), themes=[], position=0, total=0, minutes=0))
         c.cookies.set("dq_skip", "abcdef01,12345678")
         page = c.get("/quality/assistent").text

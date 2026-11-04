@@ -64,7 +64,7 @@
           <b>{{ a.text }}</b>{% if a.recommended %} <span class="badge good">empfohlen</span>{% endif %}
           {% if a.effect %}<span class="hint guide-a-eff">→ {{ a.effect }}</span>{% endif %}
           {% if a.caution %}<span class="hint caution">⚠ {{ a.caution }}</span>{% endif %}
-          {% if a.params %}<span class="guide-params">{% for p in a.params %}{{ dm.param_field(p, values.get(p.name) or p.default) }}{% endfor %}<span class="hint">Diese Angaben gelten nur für diese Antwort; vor dem Speichern siehst du die Wirkung.</span></span>{% endif %}
+          {% if a.params %}<span class="guide-params" data-answer="{{ a.id }}">{% for p in a.params %}{{ dm.param_field(p, (values.get(p.name, []) if a.id == values_for else p.default), 'ap.' ~ a.id ~ '.') }}{% endfor %}<span class="hint">Diese Angaben gelten nur für diese Antwort; vor dem Speichern siehst du die Wirkung.</span></span>{% endif %}
         </span>
         <input type="hidden" name="l_{{ a.id }}" value="{{ a.text }}">
         {% if a.token %}<input type="hidden" name="t_{{ a.id }}" value="{{ a.token }}">{% endif %}

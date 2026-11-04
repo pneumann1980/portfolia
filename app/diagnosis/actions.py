@@ -777,10 +777,22 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
         return Plan(f, dummy, {}, errors=["Diese Lösung steht für den Befund nicht (mehr) zur Verfügung."])
     raw = dict(params or {})
     norm: dict[str, list[str]] = {}
+    bad: list[str] = []
     for p in opt.params:
-        vals = [str(v).strip() for v in raw.get(p.name, []) if str(v).strip()]
+        got = [str(v).strip() for v in raw.get(p.name, [])]
+        # leere Auswahl, die selbst eine gültige Einordnung ist (z. B. „Zugang ohne Ertrag“), bleibt erhalten
+        keep_empty = p.kind == "select" and any(c[0] == "" for c in p.choices)
+        vals = [v for v in got if v or keep_empty]
+        if p.kind != "multi" and len(vals) > 1:
+            bad.append(f"„{p.label}“: mehrere Werte erhalten – bitte genau einen angeben.")
+            vals = vals[:1]
+        if p.kind == "select" and vals and vals[0] not in {c[0] for c in p.choices}:
+            bad.append(f"„{p.label}“: unbekannte Auswahl.")
         norm[p.name] = vals if (given or vals) else list(p.default)
     plan = Plan(f, opt, norm, version=data_version(ctx.db))
+    if bad:
+        plan.errors.extend(bad)
+        return plan
     st = _State(ctx, report)
     d = f.data
     key = opt.key

@@ -27,21 +27,21 @@
 
 {% macro ext_links(links) %}{% for l in links %} · <a href="{{ l.url }}"{% if l.external %} target="_blank" rel="noopener noreferrer"{% endif %}>{{ l.label }}{% if l.external %} ↗{% endif %}</a>{% endfor %}{% endmacro %}
 
-{% macro param_field(p, values) %}
+{% macro param_field(p, values, ns="p_", disabled=false) %}
 {% if p.kind == 'multi' %}
 <fieldset class="param-set">
   <legend>{{ p.label }}</legend>
-  {% for v, label in p.choices %}<label class="check"><input type="checkbox" name="p_{{ p.name }}" value="{{ v }}"{% if v in values %} checked{% endif %}> <span>{{ label }}</span></label>{% endfor %}
+  {% for v, label in p.choices %}<label class="check"><input type="checkbox" name="{{ ns }}{{ p.name }}"{% if disabled %} disabled{% endif %} value="{{ v }}"{% if v in values %} checked{% endif %}> <span>{{ label }}</span></label>{% endfor %}
   {% if p.hint %}<div class="hint">{{ p.hint }}</div>{% endif %}
 </fieldset>
 {% else %}
 <label class="field">{{ p.label }}
   {% if p.kind == 'select' %}
-  <select name="p_{{ p.name }}">{% for v, label in p.choices %}<option value="{{ v }}"{% if v in values %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+  <select name="{{ ns }}{{ p.name }}"{% if disabled %} disabled{% endif %}>{% for v, label in p.choices %}<option value="{{ v }}"{% if v in values %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
   {% elif p.kind == 'date' %}
-  <input type="date" name="p_{{ p.name }}" value="{{ values[0] if values else '' }}">
+  <input type="date" name="{{ ns }}{{ p.name }}"{% if disabled %} disabled{% endif %} value="{{ values[0] if values else '' }}">
   {% else %}
-  <input type="text" name="p_{{ p.name }}" value="{{ values[0] if values else '' }}"{% if p.kind == 'decimal' %} inputmode="decimal"{% endif %} autocomplete="off">
+  <input type="text" name="{{ ns }}{{ p.name }}"{% if disabled %} disabled{% endif %} value="{{ values[0] if values else '' }}"{% if p.kind == 'decimal' %} inputmode="decimal"{% endif %} autocomplete="off">
   {% endif %}
   {% if p.hint %}<span class="hint">{{ p.hint }}</span>{% endif %}
 </label>

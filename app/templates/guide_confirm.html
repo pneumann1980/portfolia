@@ -11,9 +11,10 @@
     {% for y in effects.years[:3] %}<div class="hint">Steuerjahr {{ y.year }}: realisiert {{ y.realized[0]|eur }} → {{ y.realized[1]|eur }}, Erträge {{ y.income[0]|eur }} → {{ y.income[1]|eur }}</div>{% endfor %}
     {% for a, b in effects.negative_new %}<div class="hint caution">⚠ Danach negativer Bestand: {{ b }} auf {{ a }}</div>{% endfor %}
     {% for w in plan.warnings %}<div class="hint caution">⚠ {{ w }}</div>{% endfor %}
+    {% if shown %}<div class="box guide-shown"><b>Deine Angaben</b> <span class="hint">(nur für die Antwort „{{ plan.option.label }}“)</span><ul class="plain-list">{% for label, v in shown %}<li>{{ label }}: <b>{{ v }}</b></li>{% endfor %}</ul></div>{% endif %}
     <form method="post" action="/quality/assistent/antwort" class="row guide-actions">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ f.id }}"><input type="hidden" name="a" value="{{ aid }}"><input type="hidden" name="token" value="{{ plan.token }}"><input type="hidden" name="confirm" value="1">
-      {% for k, vs in params.items() %}{% for v in vs %}<input type="hidden" name="p_{{ k }}" value="{{ v }}">{% endfor %}{% endfor %}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ f.id }}"><input type="hidden" name="a" value="{{ aid }}"><input type="hidden" name="token" value="{{ plan.token }}"><input type="hidden" name="confirm" value="1">{% if kid %}<input type="hidden" name="kid" value="{{ kid }}">{% endif %}
+      {% for k, vs in params.items() %}{% for v in vs %}<input type="hidden" name="{{ ns }}{{ k }}" value="{{ v }}">{% endfor %}{% endfor %}
       <button class="btn primary" type="submit" data-once>So speichern und weiter</button>
       <a class="btn ghost" href="/quality/assistent">Zurück zur Frage</a>
     </form>

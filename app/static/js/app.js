@@ -550,3 +550,23 @@
   }
   setTimeout(poll, 2500);
 })();
+
+/* „Buchungen prüfen“: Eingaben gelten nur für die gewählte Antwort – die Felder der anderen Antworten werden
+   abgeblendet und beim Absenden nicht mitgeschickt (der Server liest ohnehin nur den Namensraum der gewählten
+   Antwort). Erst beim Absenden deaktivieren: deaktivierte Felder ließen sich sonst nicht anklicken. */
+(function () {
+  document.querySelectorAll("form.guide-form").forEach(function (form) {
+    function boxes(fn) {
+      var pick = form.querySelector('input[name="a"]:checked');
+      form.querySelectorAll(".guide-params[data-answer]").forEach(function (box) {
+        fn(box, !pick || box.getAttribute("data-answer") !== pick.value);
+      });
+    }
+    function mark() { boxes(function (box, off) { box.classList.toggle("is-off", off); }); }
+    function fields(box, off) { box.querySelectorAll("input, select, textarea").forEach(function (el) { el.disabled = off; }); }
+    form.addEventListener("change", function (e) { if (e.target && e.target.name === "a") mark(); });
+    form.addEventListener("submit", function () { boxes(fields); });
+    window.addEventListener("pageshow", function () { boxes(function (box) { fields(box, false); }); mark(); });
+    mark();
+  });
+})();

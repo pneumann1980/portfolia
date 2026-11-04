@@ -384,3 +384,111 @@ def test_V01_row_task_jumps_to_its_single_event_and_keeps_the_way_back(c, monkey
     page = c.get(loc).text
     assert _shown_rows(page) == 1 and "Zurück zu Buchungen prüfen" in page
     assert f'name="kid" value="{task.kid}"' in page and f'name="ev" value="{ev}"' in page  # Filterformular
+
+
+# ---- R01 · Leere Mehrfachauswahl bleibt leer · V05 · Fehler behalten Aufgabe, Antwort und Eingaben --------------
+
+def _question_task(c, prefix: str):
+    from app.diagnosis.engine import report_for
+
+    cx = c.app.state.ctx
+    f = next(f for f in report_for(cx).findings if f.key.startswith(prefix))
+    return f, G.Task(key="befund:" + f.id, theme="bestand", kind="frage", heading="", finding_id=f.id, ref=f.id)
+
+
+def test_R01_unchecking_every_pair_is_rejected_and_stays_empty(c, monkeypatch):
+    cx = c.app.state.ctx
+    _, t = _question_task(c, "ident|")
+    monkeypatch.setattr(G, "tasks", lambda ctx, hints=False: [t])
+    shown = form_values(c.get("/quality/assistent?new=1").text)
+    field = "ap.opt:hide_second.pairs"
+    assert shown[field] == ["D1|D2"]  # Vorgabe angehakt
+    shown["a"] = ["opt:hide_second"]
+    del shown[field]  # Browser schickt abgewählte Checkboxen nicht
+    before, state = cx.db.scalar("SELECT COUNT(*) FROM diag_decision"), economic_state(c)
+    r = post(c, "/quality/assistent/antwort", shown)
+    assert r.status_code == 200 and "Bitte mindestens einen Eintrag auswählen." in r.text
+    assert "Das ändert sich mit deiner Antwort" not in r.text
+    again = form_values(r.text)
+    assert field not in again  # bleibt leer, keine Vorgabe eingesetzt
+    assert again["a"] == ["opt:hide_second"] and again["kid"] == [t.kid]  # V05: Aufgabe und Antwort bleiben
+    assert cx.db.scalar("SELECT COUNT(*) FROM diag_decision") == before and economic_state(c) == state
+
+
+def test_V05_redirected_error_keeps_task_and_answer(c, monkeypatch):
+    """Fehler, die über eine Weiterleitung gemeldet werden (z. B. Vorschau veraltet), zeigen dieselbe Aufgabe mit
+    derselben gewählten Antwort – nicht die nächste Aufgabe."""
+    cx = c.app.state.ctx
+    svc = csv_service(cx)
+    bid = _new_row_batch(c)
+    stack = next(t for t in G.tasks(cx) if t.kind == "stapel")
+    other = next(t for t in G.tasks(cx) if t.kind == "seite")
+    monkeypatch.setattr(G, "tasks", lambda ctx, hints=False: [other, stack])
+    page = c.get("/quality/assistent?new=1&" + urlencode({"skip": other.kid})).text
+    shown = form_values(page)
+    assert shown["kid"] == [stack.kid]
+    svc.set_rows(bid, {"val_0": "999"})
+    loc = post(c, "/quality/assistent/antwort", shown).headers["location"]
+    q = parse_qs(urlsplit(loc).query)
+    assert q["cur"] == [stack.kid] and q["ch"] == ["stk:all"]
+    c.cookies.delete("dq_skip")  # auch ohne Überspringen-Cookie (andere Aufgabe stünde vorn): dieselbe Aufgabe
+    page = c.get(loc).text
+    assert "nicht mehr aktuell" in page and form_values(page)["kid"] == [stack.kid]
+
+
+# ---- R11 · Eingaben gelten nur für die gewählte Antwort -----------------------------------------------------------
+
+from tests.test_chainscan_diag import client as chain_client  # noqa: E402,F401  (Fixture)
+from tests.test_chainscan_diag import holdings as chain_holding  # noqa: E402
+
+
+def _chain_form(chain_client, monkeypatch):
+    cx = chain_client.app.state.ctx
+    _, f = chain_holding(cx)
+    t = G.Task(key="befund:" + f.id, theme="bestand", kind="frage", heading="", finding_id=f.id, ref=f.id)
+    monkeypatch.setattr(G, "tasks", lambda ctx, hints=False: [t])
+    return cx, form_values(chain_client.get("/quality/assistent?new=1").text)
+
+
+def test_R11_inputs_of_the_unchosen_answer_have_no_effect(chain_client, monkeypatch):
+    c = chain_client
+    cx, shown = _chain_form(c, monkeypatch)
+    assert "ap.opt:chain_steps.tag" in shown and "ap.opt:adjust.tag" in shown and "p_tag" not in shown
+    shown["ap.opt:chain_steps.tag"] = ["reward"]  # erst beim Hauptvorschlag „Belohnung“ gewählt …
+    shown["a"] = ["opt:adjust"]  # … dann zur Ausgleichsbuchung „Zugang ohne Ertrag“ gewechselt
+    shown["ap.opt:adjust.tag"] = [""]
+    shown["ap.opt:adjust.value"] = ["123"]
+    r = post(c, "/quality/assistent/antwort", shown)
+    assert r.status_code == 200 and "Das ändert sich mit deiner Antwort" in r.text
+    assert "Zugang ohne Ertrag" in r.text and "Deine Angaben" in r.text  # Einordnung sichtbar
+    confirm = form_values(r.text)
+    assert confirm["ap.opt:adjust.tag"] == [""] and not any(k.startswith("ap.opt:chain_steps") for k in confirm)
+    done = post(c, "/quality/assistent/antwort", confirm)
+    assert "done=" in done.headers["location"], done.headers["location"]
+    tag = cx.db.scalar("SELECT tag FROM journal_tx WHERE source='diagnose' AND status='active' ORDER BY id DESC "
+                       "LIMIT 1")
+    assert tag in ("", None)  # kein steuerpflichtiger Ertrag
+
+
+def test_R11_scalar_input_with_several_values_is_rejected(chain_client, monkeypatch):
+    c = chain_client
+    cx, shown = _chain_form(c, monkeypatch)
+    shown["a"] = ["opt:adjust"]
+    shown["ap.opt:adjust.tag"] = ["", "reward"]
+    shown["ap.opt:adjust.value"] = ["123"]
+    before = cx.db.scalar("SELECT COUNT(*) FROM diag_decision")
+    r = post(c, "/quality/assistent/antwort", shown)
+    assert r.status_code == 200 and "mehrere Werte" in r.text
+    assert cx.db.scalar("SELECT COUNT(*) FROM diag_decision") == before
+
+
+def test_R11_legacy_shared_field_names_are_ignored(chain_client, monkeypatch):
+    """Alte, antwortübergreifende Feldnamen (p_tag) wirken nicht mehr – nur der Namensraum der Antwort zählt."""
+    c = chain_client
+    _, shown = _chain_form(c, monkeypatch)
+    shown["a"] = ["opt:adjust"]
+    shown["ap.opt:adjust.tag"] = [""]
+    shown["ap.opt:adjust.value"] = ["123"]
+    shown["p_tag"] = ["reward"]
+    r = post(c, "/quality/assistent/antwort", shown)
+    assert form_values(r.text)["ap.opt:adjust.tag"] == [""]

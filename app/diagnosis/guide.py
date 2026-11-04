@@ -907,10 +907,14 @@ def parse_skip(raw: str) -> list[str]:
     return [x for x in (raw or "").split(",") if len(x) == 8 and all(c in "0123456789abcdef" for c in x)][:60]
 
 
-def step(ctx: Any, skip: list[str], *, hints: bool = False) -> Step:
+def step(ctx: Any, skip: list[str], *, hints: bool = False, focus: str = "") -> Step:
+    """Nächste Aufgabe; ``focus`` (kid) hält eine gerade beantwortete Aufgabe fest (z. B. nach einem Eingabefehler)."""
     ts = tasks(ctx, hints=hints)
-    skipped = set(skip)
+    skipped = set(skip) - {focus}
     todo = [t for t in ts if t.kid not in skipped]
+    pinned = next((t for t in todo if focus and t.kid == focus), None)
+    if pinned is not None:
+        todo = [pinned, *(t for t in todo if t is not pinned)]
     themes = []
     for key, label, text in THEMES:
         n = sum(1 for t in ts if t.theme == key)

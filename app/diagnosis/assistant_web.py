@@ -62,21 +62,40 @@ def _go(**q: Any) -> Response:
     return RedirectResponse(BASE + (f"?{qs}" if qs else ""), status_code=303)
 
 
-def _params(form: Any) -> dict[str, list[str]]:
-    return {k[2:]: [str(v) for v in form.getlist(k)] for k in form if k.startswith("p_") and k != "p__set"}
+def param_ns(aid: str) -> str:
+    """Feldpräfix der Eingaben einer Antwort (``ap.<antwort>.<name>``): jede Antwort hat ihren eigenen Namensraum."""
+    return f"ap.{aid}."
+
+
+def _params(form: Any, aid: str) -> dict[str, list[str]]:
+    """Eingaben ausschließlich der gewählten Antwort – gleichnamige Felder anderer Antworten bleiben wirkungslos."""
+    ns = param_ns(aid)
+    return {k[len(ns):]: [str(v) for v in form.getlist(k)] for k in form if k.startswith(ns) and len(k) > len(ns)}
+
+
+def _keep_task(resp: Response, kid: str, aid: str) -> Response:
+    """Bei einem Fehler bleibt die beantwortete Aufgabe samt gewählter Antwort stehen (statt der nächsten)."""
+    loc = resp.headers.get("location", "") if isinstance(resp, RedirectResponse) else ""
+    if not loc.startswith(BASE + "?") or "err=" not in loc or not kid or not _SAFE.fullmatch(kid):
+        return resp
+    extra = {"cur": kid} | ({"ch": aid} if aid and _SAFE.fullmatch(aid) else {})
+    return RedirectResponse(f"{loc}&{urlencode(extra)}", status_code=303)
 
 
 def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new: int = 0, hints: str = "",
           done: int = 0, gone: int = 0, acts: str = "", kl: str = "", dids: str = "",
           same: dict[str, str] | None = None, errors: list[str] | None = None, chosen: str = "",
-          values: dict[str, list[str]] | None = None, more: dict[str, str] | None = None) -> Response:
+          values: dict[str, list[str]] | None = None, more: dict[str, str] | None = None,
+          focus: str = "") -> Response:
     ctx = get_ctx(request)
     show_hints = hints == "1" if hints else (request.cookies.get("dq_hints") == "1" and not new)
     skipped = [] if new else G.parse_skip(request.cookies.get("dq_skip", ""))
     for x in G.parse_skip(skip):
         if x not in skipped:
             skipped.append(x)
-    st = G.step(ctx, skipped, hints=show_hints)
+    st = G.step(ctx, skipped, hints=show_hints, focus=focus)
+    if st.task is not None and chosen and chosen not in {a.id for a in st.task.answers}:
+        chosen = ""  # Antwort gehört zu einer anderen (inzwischen erledigten) Aufgabe
     undo = None
     if done:
         row = ctx.db.q1("SELECT id, action, status, title FROM diag_decision WHERE id=?", (done,))
@@ -97,7 +116,8 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
             batch = {**same, "n": n}
     resp = render(request, "guide.html", active="quality", step=st, task=st.task, title=G.TITLE,
                   pos=G.theme_position(st), msg=msg, err=err, errors=errors or [], undo=undo, gone=gone,
-                  chosen=chosen, values=values or {}, hints=show_hints, batch=batch, **_common())
+                  chosen=chosen, values=values or {}, values_for=chosen if values is not None else "",
+                  hints=show_hints, batch=batch, **_common())
     if st.task is None:
         _clear(resp)
     else:
@@ -176,15 +196,22 @@ def make_router() -> APIRouter:
     @router.get(BASE, response_class=HTMLResponse)
     def assistant(request: Request, msg: str = "", err: str = "", skip: str = "", new: int = 0, hints: str = "",
                   done: int = 0, gone: int = 0, acts: str = "", kl: str = "", dids: str = "", sig: str = "",
-                  sa: str = "", st: str = "", rm: str = "", ro: int = 0, ia: str = "") -> Response:
+                  sa: str = "", st: str = "", rm: str = "", ro: int = 0, ia: str = "", cur: str = "",
+                  ch: str = "") -> Response:
+        keep = bool(err) and bool(_SAFE.fullmatch(cur))  # nach einem Fehler: dieselbe Aufgabe, dieselbe Antwort
         return _page(request, msg=msg, err=err, skip=skip, new=new, hints=hints, done=done, gone=gone, acts=acts,
                      kl=kl, dids=dids, same={"sig": sig[:80], "sa": sa[:80], "st": st[:160]},
-                     more={"rm": rm[:120], "ro": str(ro or ""), "ia": ia[:80]})
+                     more={"rm": rm[:120], "ro": str(ro or ""), "ia": ia[:80]}, focus=cur if keep else "",
+                     chosen=ch if keep and _SAFE.fullmatch(ch) else "")
 
     @router.post(f"{BASE}/antwort")
     async def answer(request: Request) -> Response:
-        ctx = get_ctx(request)
         form = await request.form()
+        resp = await _answer(request, form)
+        return _keep_task(resp, str(form.get("kid") or ""), str(form.get("a") or ""))
+
+    async def _answer(request: Request, form: Any) -> Response:
+        ctx = get_ctx(request)
         fid, aid = str(form.get("f") or form.get("ref") or ""), str(form.get("a") or "")
         typ = str(form.get("typ") or "frage")
         try:
@@ -238,11 +265,11 @@ def make_router() -> APIRouter:
         if not aid.startswith("opt:"):
             return _go(err="Unbekannte Antwort.")
         key = aid.split(":", 1)[1]
-        params = _params(form)
+        params = _params(form, aid)
         token = str(form.get(f"t_{aid}") or form.get("token") or "")
         needs = str(form.get(f"n_{aid}") or "") == "1"
         if (needs or not token) and not form.get("confirm"):  # Eingaben bzw. keine Vorschau → Wirkung zeigen
-            return await run_in_threadpool(_confirm, request, fid, key, aid, params)
+            return await run_in_threadpool(_confirm, request, fid, key, aid, params, kid)
         res = await run_in_threadpool(A.apply, ctx, fid, key, params, token)
         if not res.ok:
             return _go(err=" ".join(res.errors))
@@ -492,7 +519,8 @@ def make_router() -> APIRouter:
             return _go(err=" ".join(res.errors))
         return _go(msg="Übernommen.", kl=res.token, gone=await run_in_threadpool(gone))
 
-    def _confirm(request: Request, fid: str, key: str, aid: str, params: dict[str, list[str]]) -> Response:
+    def _confirm(request: Request, fid: str, key: str, aid: str, params: dict[str, list[str]],
+                 kid: str = "") -> Response:
         from app.diagnosis.engine import report_for
 
         ctx = get_ctx(request)
@@ -500,12 +528,23 @@ def make_router() -> APIRouter:
         f = report.by_id(fid)
         if f is None:
             return _go(err="Die Aufgabe besteht nicht mehr – die Daten haben sich geändert.")
-        plan = A.build_plan(ctx, report, f, key, params, given=bool(params))
-        if plan.errors:
-            return _page(request, errors=plan.errors, chosen=aid, values=params)
+        # Das Formular wurde abgeschickt: eine leere Mehrfachauswahl bleibt leer (keine Vorgaben einsetzen)
+        plan = A.build_plan(ctx, report, f, key, params, given=True)
+        if plan.errors:  # dieselbe Aufgabe, dieselbe Antwort, dieselben Eingaben
+            return _page(request, errors=plan.errors, chosen=aid, values=params, focus=kid)
         effects = A.preview(ctx, report, plan)
         return render(request, "guide_confirm.html", active="quality", title=G.TITLE, f=f, plan=plan,
-                      effects=effects, aid=aid, params=plan.params)
+                      effects=effects, aid=aid, params=plan.params, ns=param_ns(aid), kid=kid,
+                      shown=_shown_params(plan))
+
+    def _shown_params(plan: Any) -> list[tuple[str, str]]:
+        """Eingaben der gewählten Antwort zur Kontrolle in der Bestätigung (Bezeichnung, Wert in Klartext)."""
+        out = []
+        for p in plan.option.params:
+            vals = plan.params.get(p.name, [])
+            names = dict(p.choices)
+            out.append((p.label, ", ".join(names.get(v, v) for v in vals) if vals else "keine Auswahl"))
+        return out
 
     @router.post(f"{BASE}/rueckgaengig")
     async def undo(request: Request) -> Response:
