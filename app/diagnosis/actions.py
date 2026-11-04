@@ -126,31 +126,13 @@ class Plan:
 
 
 # Datenstand, auf dem Vorschau und Übernehmen beruhen: alle Tabellen, aus denen Buchungen, Verknüpfungen, Zuordnungen,
-# Bestandsnachweise und entscheidungsrelevante Einstellungen kommen – je Tabelle Anzahl und jüngster Zeitstempel
-# (Anlegen, Ändern, Rücknahme). Rein aus der Datenbank berechnet: gilt prozessübergreifend und wird beim Übernehmen
-# innerhalb der Schreibtransaktion erneut geprüft.
-_VERSION_SQL = (
-    "SELECT (SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM journal_tx), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM tx_override), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(decided_at), '') FROM journal_import_link), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM asset_source WHERE status='active'), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM csv_symbol), "
-    "(SELECT COALESCE(MAX(id), 0) FROM imports WHERE status='active'), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(created_at), '') || '/' || COALESCE(MAX(deleted_at), '') "
-    "FROM reference_balance), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(observed_at), '') FROM ds_balance), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(created_at), '') || '/' || COALESCE(MAX(reverted_at), '') "
-    "FROM asset_merge), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(created_at), '') || '/' || COALESCE(MAX(reverted_at), '') "
-    "FROM account_merge), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(created_at), '') || '/' || COALESCE(MAX(reverted_at), '') "
-    "FROM account_remove), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM account_meta), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(created_at), '') FROM tx_link), "
-    "(SELECT COUNT(*) FROM journal_event_alias), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(decided_at), '') FROM event_decision), "
-    "(SELECT COUNT(*) || '/' || COALESCE(MAX(updated_at), '') FROM settings WHERE key LIKE 'ledger.%' "
-    "OR key LIKE 'tax.%')")
+# Bestandsnachweise und entscheidungsrelevante Einstellungen kommen (``db.REV_TABLES`` + Einstellungen ledger./tax.).
+# Seit 0.94.0 persistente Schreibzähler je Tabelle, die Trigger in derselben Transaktion wie jede Änderung erhöhen –
+# zuverlässig auch bei gleichem Zeitstempel, gleicher Zeilenzahl oder Änderungen ohne ``updated_at`` (früher: Anzahl und
+# jüngster Zeitstempel je Tabelle, sekundengenau). Ein Index-Zugriff statt Zählungen – günstig bei jedem Seitenaufruf.
+# Rein aus der Datenbank: gilt prozessübergreifend und wird beim Übernehmen in der Schreibtransaktion erneut geprüft.
+_VERSION_SQL = ("SELECT (SELECT group_concat(name || ':' || n, ',') FROM "
+                "(SELECT name, n FROM data_rev WHERE name <> 'input' ORDER BY name))")
 
 
 def data_version(db: Any) -> str:

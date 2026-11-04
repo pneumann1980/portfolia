@@ -31,7 +31,7 @@ _WRITE_ERRORS = ("readonly", "read-only", "disk i/o", "disk is full", "database 
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 
 # Weitere Migrationen werden hier angehängt: (version, sql)
-MIGRATIONS: list[tuple[int, str]] = [
+MIGRATIONS: list[tuple[int, str | None]] = [
     (1, "__schema__"),
     (2, """
 CREATE TABLE IF NOT EXISTS yt_channel (
@@ -1088,7 +1088,46 @@ CREATE INDEX IF NOT EXISTS ix_news_tr_requested ON news_item(tr_requested_at);
 -- der Entscheidung. Ändert sich der Partner danach, gilt die Entscheidung nicht mehr (neu bestätigen).
 ALTER TABLE csv_row ADD COLUMN pair_rev TEXT;
 """),
+    (37, None),  # Schreibrevisionen und Besitzkennungen – siehe _migration_37()
 ]
+
+
+# Tabellen, deren Inhalt Vorschau, Prüfungen und Übernehmen bestimmt (wie ``actions.data_version``)
+REV_TABLES = ("journal_tx", "tx_override", "journal_import_link", "asset_source", "csv_symbol", "imports",
+              "reference_balance", "ds_balance", "asset_merge", "account_merge", "account_remove", "account_meta",
+              "tx_link", "journal_event_alias", "event_decision")  # Importzeilen (``tx``) sind je Import unveränderlich
+# Eingabegruppen einer Prüf-Stapel-Zeile: Spalten → Versionsspalte (Besitzkennung der letzten Schreiboperation)
+INPUT_GROUPS = {"dec": ("decision",), "val": ("value_in",), "fee": ("fee_in",), "pair": ("pair_ok", "pair_rev")}
+
+
+def _migration_37() -> str:
+    """Persistente Schreibrevisionen (0.94.0): je Tabelle ein Zähler, den Trigger in **derselben** Transaktion wie die
+    Änderung erhöhen – zuverlässig auch bei gleichem Zeitstempel, gleicher Zeilenzahl und Änderungen ohne
+    ``updated_at``. Dazu je Eingabegruppe einer Prüf-Stapel-Zeile eine Versionsspalte: jede inhaltliche Änderung erhält
+    eine neue, global eindeutige Kennung (Folge A → B → A und gleichlautende Fremdeingaben bleiben unterscheidbar)."""
+    out = ["CREATE TABLE IF NOT EXISTS data_rev (name TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0);",
+           "INSERT OR IGNORE INTO data_rev(name, n) VALUES ('input', 0);",
+           "INSERT OR IGNORE INTO data_rev(name, n) VALUES ('settings', 0);"]
+    for t in REV_TABLES:
+        out.append(f"INSERT OR IGNORE INTO data_rev(name, n) VALUES ('{t}', 0);")
+        for ev in ("INSERT", "UPDATE", "DELETE"):
+            out.append(f"CREATE TRIGGER IF NOT EXISTS rev_{t}_{ev.lower()} AFTER {ev} ON {t} BEGIN "
+                       f"UPDATE data_rev SET n = n + 1 WHERE name = '{t}'; END;")
+    cond = {"INSERT": "NEW.key", "DELETE": "OLD.key", "UPDATE": "NEW.key"}
+    for ev, k in cond.items():
+        out.append(f"CREATE TRIGGER IF NOT EXISTS rev_settings_{ev.lower()} AFTER {ev} ON settings "
+                   f"WHEN {k} LIKE 'ledger.%' OR {k} LIKE 'tax.%' BEGIN "
+                   "UPDATE data_rev SET n = n + 1 WHERE name = 'settings'; END;")
+    for g, cols in INPUT_GROUPS.items():
+        out.append(f"ALTER TABLE csv_row ADD COLUMN ver_{g} INTEGER NOT NULL DEFAULT 0;")
+        changed = " OR ".join(f"OLD.{c} IS NOT NEW.{c}" for c in cols)
+        # nur wenn der Schreibende keine eigene Kennung gesetzt hat (``set_rows``/``restore_inputs`` setzen sie selbst)
+        out.append(f"CREATE TRIGGER IF NOT EXISTS ver_csv_row_{g} AFTER UPDATE OF {', '.join(cols)} ON csv_row "
+                   f"WHEN ({changed}) AND NEW.ver_{g} IS OLD.ver_{g} BEGIN "
+                   "UPDATE data_rev SET n = n + 1 WHERE name = 'input'; "
+                   f"UPDATE csv_row SET ver_{g} = (SELECT n FROM data_rev WHERE name = 'input') "
+                   "WHERE id = NEW.id; END;")
+    return "\n".join(out)
 
 
 class Database:
@@ -1145,7 +1184,8 @@ class Database:
         for version, sql in MIGRATIONS:
             if version <= current or (target is not None and version > target):
                 continue
-            script = SCHEMA_FILE.read_text(encoding="utf-8") if sql == "__schema__" else sql
+            script = (SCHEMA_FILE.read_text(encoding="utf-8") if sql == "__schema__" else
+                      _migration_37() if version == 37 else sql or "")
             log.info("DB-Migration auf Version %s", version)
             c.executescript("BEGIN;" + script + f";PRAGMA user_version={version};COMMIT;")
         # Laufende Jobs aus einem vorherigen Prozess sind nicht mehr aktiv.

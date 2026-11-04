@@ -42,7 +42,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, ClassVar
 
 from app.csvimport import model as M
 from app.csvimport import reconcile as R
@@ -2098,23 +2098,21 @@ class CsvImportService:
         for rc in rows:
             if rc.open and rc.pair_ref is None:
                 rc.pair_ok = rc.pair_rev = None
-        # Transferentscheidung zu einem Journalpartner gilt nur für dessen Stand bei der Entscheidung (N11/N12)
-        decided = [rc for rc in rows if rc.open and (rc.pair_ref or "").startswith("j:") and rc.pair_ok is not None]
-        if decided:
-            now = ref_revs(self.db.conn, [rc.pair_ref[2:] for rc in decided])  # type: ignore[index]
-            for rc in decided:
-                if rc.pair_rev != now.get(rc.pair_ref[2:]):  # type: ignore[index]
+        # Transferentscheidung zu Journalpartnern gilt nur für die bei der Entscheidung angebotene Kandidatenmenge
+        # (Zusammensetzung und Inhalt aller Journal-Kandidaten, N11/N12/N15)
+        bound = [rc for rc in rows if rc.open and (rc.pair_rev or (rc.pair_ok is not None and has_j_cands(rc)))]
+        if bound:
+            now = cands_revs(self.db.conn, bound)
+            for rc in bound:
+                if rc.pair_ok is not None and rc.pair_rev != now.get(rc.idx):
                     rc.pair_ok = None  # pair_rev bleibt als Hinweis „geändert“ stehen, bis neu entschieden wird
-        stale = [rc for rc in rows if rc.open and (rc.pair_ref or "").startswith("j:") and rc.pair_ok is None
-                 and rc.pair_rev]
-        if stale:
-            now = ref_revs(self.db.conn, [rc.pair_ref[2:] for rc in stale])  # type: ignore[index]
-            for rc in stale:
-                if rc.pair_rev != now.get(rc.pair_ref[2:]):  # type: ignore[index]
-                    rc.pair_why = (f"Die Gegenbuchung {rc.pair_ref[2:]} wurde nach deiner Transferentscheidung "  # type: ignore[index]
-                                   "geändert – bitte erneut entscheiden.")
-                else:
-                    rc.pair_rev = None
+                if rc.pair_ok is None and rc.pair_rev:
+                    if rc.pair_rev != now.get(rc.idx):
+                        rc.pair_why = (f"Die Gegenbuchung {(rc.pair_ref or 'j:?')[2:]} bzw. die Auswahl möglicher "
+                                       "Gegenbuchungen hat sich nach deiner Transferentscheidung geändert – bitte "
+                                       "erneut entscheiden.")
+                    else:
+                        rc.pair_rev = None
         self._import_counterparts([s_ for s_ in (*outs, *ins) if s_.rc is not None and s_.ref not in used], pf, V)
 
     @staticmethod
@@ -2161,7 +2159,7 @@ class CsvImportService:
                     "roles": {k: v for k, v in rc.roles.items() if k in rc.dup_of[:5]} or None, "match": rc.match}
             data.append((json.dumps(rc.row, ensure_ascii=False) if rc.row is not None else None, rc.status,
                          json.dumps(msgs, ensure_ascii=False), rc.pair_ref, rc.pair_conf, rc.pair_ok,
-                         rc.pair_rev if (rc.pair_ref or "").startswith("j:") else None,
+                         rc.pair_rev,
                          rc.id))
         if data:
             self.db.xmany("UPDATE csv_row SET row_json=?, status=?, messages=?, pair_ref=?, pair_conf=?, pair_ok=?, "
@@ -2227,49 +2225,67 @@ class CsvImportService:
                 "by_idx": {rc.idx: rc for rc in rows}, "recon": summ.get("recon"), "auto_symbols": auto}
 
     # -- Eingaben -----------------------------------------------------------------------------------------
-    _INPUT_COLS = ("decision", "value_in", "fee_in", "pair_ok", "pair_rev")
+    # Eingabegruppen einer Zeile (wie ``db.INPUT_GROUPS``): Werte → Versionsspalte ``ver_<Gruppe>`` (Besitzkennung)
+    _GROUPS: ClassVar[dict[str, tuple[str, ...]]] = {"dec": ("decision",), "val": ("value_in",), "fee": ("fee_in",),
+                                                     "pair": ("pair_ok", "pair_rev")}
 
-    @staticmethod
-    def _inputs_of(rc: RowCtx) -> tuple[Any, ...]:
-        return (rc.decision, rc.value_in, rc.fee_in, rc.pair_ok, rc.pair_rev)
+    def input_marks(self, bid: int) -> dict[int, str]:
+        """Angezeigter Eingabestand je Zeile für Formulare (``iv_<Zeile>``): je Gruppe Version und Prüfsumme des
+        angezeigten Werts. Damit erkennt ``set_rows`` veraltete Formulare (anderer Tab hat inzwischen gespeichert)."""
+        out = {}
+        for r in self.db.q("SELECT idx, decision, value_in, fee_in, pair_ok, pair_rev, ver_dec, ver_val, ver_fee, "
+                           "ver_pair FROM csv_row WHERE batch_id=?", (bid,)):
+            out[int(r["idx"])] = "-".join(f"{g}.{r[f'ver_{g}']}.{_vh(tuple(r[c] for c in cols))}"
+                                          for g, cols in self._GROUPS.items())
+        return out
 
     @_locked
-    def restore_inputs(self, bid: int, snap: list[tuple[int, tuple[Any, ...], tuple[Any, ...]]]) -> int:
-        """Eigene Eingaben einer abgelehnten Einzelaktion zurücknehmen (``snap`` aus :meth:`set_rows`: Zeile, Stand
-        davor, von diesem Aufruf geschriebener Stand). Feldweise und nur, solange das Feld noch genau den von diesem
-        Aufruf geschriebenen Wert hat – neuere Eingaben anderer Tabs/Aufrufe bleiben erhalten. Prüfen und Schreiben in
-        einer Schreibtransaktion. Rückgabe: Anzahl zurückgesetzter Felder."""
+    def restore_inputs(self, bid: int, snap: list[tuple[int, str, tuple[Any, ...], int]]) -> int:
+        """Eigene Eingaben einer abgelehnten Einzelaktion zurücknehmen. ``snap`` (aus :meth:`set_rows`): Zeile, Gruppe,
+        Werte davor, eigene Schreibkennung. Zurückgesetzt wird eine Gruppe nur, solange sie noch **genau diese**
+        Kennung trägt – jede spätere Schreiboperation (auch mit gleichem Wert, auch A → B → A) hat eine neue Kennung
+        und bleibt erhalten. Die Rücknahme ist selbst ein Schreibvorgang mit neuer Kennung: ein zweiter oder verspäteter
+        Rücknahmeauftrag findet nichts mehr. Prüfen und Schreiben in einer Schreibtransaktion. Rückgabe: Anzahl
+        zurückgesetzter Gruppen."""
         n = 0
-        cols = self._INPUT_COLS
         with self.db.transaction() as c:
-            for rid, before, written in snap:
-                changed = [k for k in range(len(cols)) if before[k] != written[k]]
-                if not changed:
-                    continue
-                cur = c.execute(f"SELECT {', '.join(cols)}, status FROM csv_row WHERE id=? AND batch_id=?",
+            tok = None
+            for rid, g, before, mine in snap:
+                cols = self._GROUPS[g]
+                cur = c.execute(f"SELECT ver_{g}, status FROM csv_row WHERE id=? AND batch_id=?",
                                 (rid, bid)).fetchone()
-                if cur is None or cur["status"] in CLOSED:
+                if cur is None or cur["status"] in CLOSED or int(cur[0]) != int(mine):
                     continue
-                back = [k for k in changed if cur[cols[k]] == written[k]]
-                if back:
-                    c.execute(f"UPDATE csv_row SET {', '.join(f'{cols[k]}=?' for k in back)} WHERE id=?",
-                              [before[k] for k in back] + [rid])
-                    n += len(back)
+                tok = tok or _input_token(c)
+                c.execute(f"UPDATE csv_row SET {', '.join(f'{x}=?' for x in cols)}, ver_{g}=? WHERE id=?",
+                          [*before, tok, rid])
+                n += 1
         self.evaluate(bid)
         self.refresh_status(bid)
         return n
 
     @_locked
     def set_rows(self, bid: int, form: Mapping[str, Any]) -> dict[str, Any]:
-        """Eingaben der Prüfseite speichern. Eine Transferentscheidung zu einem Journalpartner gilt nur zusammen mit
-        dem angezeigten Partnerstand (``pairrev_<Zeile>``) – fehlt er, wird diese Entscheidung sichtbar abgelehnt (kein
-        Rückfall auf den jetzigen Stand). Rückgabe: ``errors`` und ``undo`` (Zeile, vorher, geschrieben) für
-        :meth:`restore_inputs`."""
+        """Eingaben der Prüfseite speichern – je Gruppe (Entscheidung, EUR-Wert, Gebühr, Transferentscheidung samt
+        Partnerstand) mit eigener Schreibkennung.
+
+        * Eine Transferentscheidung zu Journal-Kandidaten gilt nur zusammen mit dem angezeigten Stand der
+          Kandidatenmenge (``pairrev_<Zeile>``); fehlt er, wird sie sichtbar abgelehnt (kein Rückfall auf den jetzigen
+          Stand).
+        * Trägt das Formular den angezeigten Eingabestand (``iv_<Zeile>``), überschreibt ein veraltetes Formular keine
+          inzwischen anderswo gespeicherte Eingabe: unverändert gelassene Felder werden übergangen, eine eigene
+          abweichende Änderung wird sichtbar abgelehnt; wer denselben Wert ausdrücklich setzt, übernimmt die Gruppe.
+
+        Lesen und Schreiben in einer Schreibtransaktion. Rückgabe: ``errors`` und ``undo`` für :meth:`restore_inputs`.
+        """
         errors: list[str] = []
-        with self.db.transaction():  # Lesen und Schreiben der Eingaben atomar
+        undo: list[tuple[int, str, tuple[Any, ...], int]] = []
+        with self.db.transaction() as c:
             rows = {rc.idx: rc for rc in self._load(bid)}
-            before = {rc.id: self._inputs_of(rc) for rc in rows.values()}
-            data = []
+            cur = {int(r["id"]): r for r in c.execute(
+                "SELECT id, idx, line, status, decision, value_in, fee_in, pair_ok, pair_rev, ver_dec, ver_val, "
+                "ver_fee, ver_pair FROM csv_row WHERE batch_id=?", (bid,)).fetchall()}
+            want: dict[int, dict[str, tuple[Any, ...]]] = {}
             for key in form:
                 k = str(key)
                 if not k.startswith(("dec_", "val_", "fee_", "pair_")):
@@ -2281,36 +2297,62 @@ class CsvImportService:
                 if not rc.open:
                     continue
                 v = str(form.get(k) or "").strip()
+                grp = want.setdefault(rc.id, {})
                 if kind == "dec":
-                    rc.decision = v if v in ("include", "skip", "defer") else None
+                    grp["dec"] = (v if v in ("include", "skip", "defer") else None,)
                 elif kind == "val":
-                    rc.value_in = v[:40] or None
+                    grp["val"] = (v[:40] or None,)
                 elif kind == "fee":
-                    rc.fee_in = v[:40] or None
+                    grp["fee"] = (v[:40] or None,)
                 elif kind == "pair":
                     ok = 1 if v == "1" else 0 if v == "0" else None
-                    if (rc.pair_ref or "").startswith("j:"):  # an den angezeigten Partnerstand gebunden (N14)
+                    rev = rc.pair_rev
+                    if has_j_cands(rc):  # an den angezeigten Stand aller Journal-Kandidaten gebunden (N14/N15)
                         shown = str(form.get(f"pairrev_{rc.idx}") or "").strip()
                         if ok is not None and not shown:
                             if ok != rc.pair_ok:
                                 errors.append(f"Zeile {rc.line}: Transferentscheidung ohne angezeigten Stand der "
-                                              f"Gegenbuchung {rc.pair_ref[2:]} – nicht gespeichert. Bitte die Seite "  # type: ignore[index]
-                                              "neu laden und erneut entscheiden.")
+                                              "Gegenbuchung(en) – nicht gespeichert. Bitte die Seite neu laden und "
+                                              "erneut entscheiden.")
                             continue
-                        rc.pair_ok, rc.pair_rev = ok, (shown if ok is not None else None)
-                    else:
-                        rc.pair_ok = ok
+                        rev = shown if ok is not None else None
+                    elif ok is None:
+                        rev = None
+                    grp["pair"] = (ok, rev)
                     if rc.pair_ref and rc.pair_ref.startswith("b:") and int(rc.pair_ref[2:]) in rows:
                         partner = rows[int(rc.pair_ref[2:])]
-                        partner.pair_ok = rc.pair_ok
-                        data.append(partner)
-                data.append(rc)
-            uniq = {rc.id: rc for rc in data}
-            if uniq:
-                self.db.xmany("UPDATE csv_row SET decision=?, value_in=?, fee_in=?, pair_ok=?, pair_rev=? WHERE id=?",
-                              [(*self._inputs_of(rc), rc.id) for rc in uniq.values()])
-            undo = [(rid, before[rid], self._inputs_of(rc)) for rid, rc in uniq.items()
-                    if before[rid] != self._inputs_of(rc)]
+                        if partner.open:
+                            want.setdefault(partner.id, {})["pair"] = (ok, partner.pair_rev)
+            tok = None
+            for rid, groups in want.items():
+                r = cur[rid]
+                marks = _parse_marks(str(form.get(f"iv_{r['idx']}") or ""))
+                for g, vals in groups.items():
+                    cols = self._GROUPS[g]
+                    old = tuple(r[x] for x in cols)
+                    ver = int(r[f"ver_{g}"])
+                    if g in marks:
+                        mver, mh = marks[g]
+                        untouched = _vh(vals) == mh  # abgesendet == angezeigt
+                        if mver != ver:  # inzwischen anderswo gespeichert
+                            if untouched:
+                                continue  # nicht angefasst: neuere Eingabe bleibt
+                            if vals != old:
+                                errors.append(f"Zeile {r['line']}: Eingabe wurde inzwischen an anderer Stelle "
+                                              "geändert – nicht überschrieben. Bitte die neu angezeigten Werte prüfen.")
+                                continue
+                            # derselbe Wert ausdrücklich gesetzt: Gruppe gehört jetzt diesem Aufruf (ohne Rücknahme)
+                            tok = tok or _input_token(c)
+                            c.execute(f"UPDATE csv_row SET ver_{g}=? WHERE id=?", (tok, rid))
+                            continue
+                        if untouched and vals == old:
+                            continue
+                    if vals == old:
+                        continue
+                    tok = tok or _input_token(c)
+                    c.execute(f"UPDATE csv_row SET {', '.join(f'{x}=?' for x in cols)}, ver_{g}=? WHERE id=?",
+                              [*vals, tok, rid])
+                    undo.append((rid, g, old, tok))
         self.evaluate(bid)
         self.refresh_status(bid)
         return {"errors": errors, "undo": undo}
@@ -2329,6 +2371,7 @@ class CsvImportService:
         batch = self.batch(bid)
         if batch is None or batch["status"] in ("mapping", "reverted"):
             return {"errors": ["Stapel nicht übernehmbar."]}
+        tables = table_revs(self.db.conn, TRANSFER_TABLES)  # vor der Bewertung: Kandidatenmenge dieses Stands
         self.evaluate(bid)
         rows = self._load(bid)
         plan = self.commit_plan(rows, only_idx)
@@ -2344,7 +2387,8 @@ class CsvImportService:
                    and rc.status in ("new", "duplicate") and rc.decision is None and not rc.include()]
         try:
             with self.db.transaction() as c:
-                res = self.commit_apply(c, batch, rows, plan, only_idx, stamp)
+                transfer = any(has_j_cands(rc) or rc.counterpart for rc in plan["chosen"])
+                res = self.commit_apply(c, batch, rows, plan, only_idx, stamp, tables if transfer else None)
                 if skipped:
                     c.executemany("UPDATE csv_row SET decision='skip' WHERE id=? AND decision IS NULL",
                                   [(rc.id,) for rc in skipped])
@@ -2376,7 +2420,8 @@ class CsvImportService:
         return {"chosen": chosen, "parsed": {rc.idx: p for rc, p in zip(chosen, parsed, strict=True)}}
 
     def commit_apply(self, c: Any, batch: Any, rows: list[RowCtx], plan: Mapping[str, Any],
-                     only_idx: set[int] | None, stamp: str) -> dict[str, Any]:
+                     only_idx: set[int] | None, stamp: str,
+                     expect_table: Mapping[str, int] | None = None) -> dict[str, Any]:
         """Geplante Zeilen innerhalb der Transaktion ``c`` buchen (Transfers zusammenführen, Status des Stapels)."""
         bid = int(batch["id"])
         chosen: list[RowCtx] = plan["chosen"]
@@ -2389,8 +2434,9 @@ class CsvImportService:
         pairs: list[tuple[RowCtx, str]] = []  # (Zeile, Gegenbuchung) – bestätigte Paare
         # Transferentscheidung zu einem Journalpartner: dessen Stand bei der Entscheidung, hier in der Transaktion
         # (Paare mit einem Journalpartner ohne Entscheidung werden nie übernommen – siehe ``RowCtx.include``)
-        check_revs(c, {rc.pair_ref[2:]: rc.pair_rev or "" for rc in chosen  # type: ignore[index]
-                       if (rc.pair_ref or "").startswith("j:") and rc.pair_ok is not None})
+        check_pairs(c, [rc for rc in chosen if rc.pair_ok is not None and has_j_cands(rc)])
+        if expect_table is not None:  # neue bzw. entfernte Journal-Kandidaten seit der Bewertung (Zusammensetzung)
+            check_tables(c, expect_table)
         for rc in chosen:
             p = p_by_idx[rc.idx]
             pair_other = rc.pair_ref if rc.pair_ref and pair_accepted(rc) else None
@@ -2750,6 +2796,80 @@ def ref_revs(conn: Any, refs: Iterable[str]) -> dict[str, str]:
 def refs_revision(conn: Any, refs: Iterable[str]) -> str:
     """Gemeinsame Revision mehrerer abhängiger Buchungen (siehe :func:`ref_revs`)."""
     return hashlib.sha256(json.dumps(sorted(ref_revs(conn, refs).items())).encode()).hexdigest()[:24]
+
+
+# Transferpartner: Kandidatenmenge einer Zeile (vorgeschlagener Partner + konkurrierende Möglichkeiten). Eine
+# Transferentscheidung („ja“/„nein“) gilt genau dieser Menge – Zusammensetzung und Inhalt aller Journal-Kandidaten.
+TRANSFER_TABLES = ("journal_tx", "tx_override", "imports")
+
+
+def pair_cands(rc: RowCtx) -> list[str]:
+    return sorted({str(x) for x in [rc.pair_ref, *(rc.pair_alts or [])] if x})
+
+
+def has_j_cands(rc: RowCtx) -> bool:
+    return any(x.startswith("j:") for x in pair_cands(rc))
+
+
+def cands_rev(conn: Any, cands: Iterable[str]) -> str | None:
+    """Revision einer Kandidatenmenge: ``None`` ohne Journal-Kandidaten; bei genau einem Kandidaten (Journalpartner)
+    dessen Einzelrevision (wie ``ref_revs``), sonst eine gemeinsame Revision über Zusammensetzung und Inhalt aller
+    Journal-Kandidaten (Partner im selben Stapel zählen mit ihrer Kennung)."""
+    cs = sorted(set(cands))
+    js = [x[2:] for x in cs if x.startswith("j:")]
+    if not js:
+        return None
+    revs = ref_revs(conn, js)
+    if len(cs) == 1:
+        return revs.get(js[0])
+    return hashlib.sha256(json.dumps([cs, sorted(revs.items())]).encode()).hexdigest()[:24]
+
+
+def pair_cand_rev(conn: Any, rc: RowCtx) -> str | None:
+    return cands_rev(conn, pair_cands(rc))
+
+
+def cands_revs(conn: Any, rcs: Iterable[RowCtx]) -> dict[int, str | None]:
+    return {rc.idx: pair_cand_rev(conn, rc) for rc in rcs}
+
+
+def check_pairs(conn: Any, rcs: Iterable[RowCtx]) -> None:
+    """Gespeicherte Transferentscheidungen gegen den Stand ihrer Kandidatenmenge prüfen (in der Schreibtransaktion)."""
+    for rc in rcs:
+        if not rc.pair_rev or pair_cand_rev(conn, rc) != rc.pair_rev:
+            raise StaleRefs
+
+
+def table_revs(conn: Any, names: Iterable[str]) -> dict[str, int]:
+    """Persistente Schreibzähler je Tabelle (``data_rev``, per Trigger in jeder Schreibtransaktion erhöht)."""
+    names = list(names)
+    rows = conn.execute(f"SELECT name, n FROM data_rev WHERE name IN ({','.join('?' * len(names))})",
+                        names).fetchall()
+    return {r[0]: int(r[1]) for r in rows}
+
+
+def check_tables(conn: Any, expected: Mapping[str, int]) -> None:
+    if expected and table_revs(conn, expected) != dict(expected):
+        raise StaleRefs
+
+
+def _vh(vals: Iterable[Any]) -> str:
+    return hashlib.sha256(json.dumps([None if v is None else str(v) for v in vals]).encode()).hexdigest()[:8]
+
+
+def _parse_marks(mark: str) -> dict[str, tuple[int, str]]:
+    out: dict[str, tuple[int, str]] = {}
+    for part in mark.split("-") if mark else []:
+        g, _, rest = part.partition(".")
+        ver, _, h = rest.partition(".")
+        if g and ver.isdigit() and h:
+            out[g] = (int(ver), h)
+    return out
+
+
+def _input_token(c: Any) -> int:
+    """Neue, global eindeutige Schreibkennung für Eingabegruppen (in der laufenden Schreibtransaktion)."""
+    return int(c.execute("UPDATE data_rev SET n = n + 1 WHERE name = 'input' RETURNING n").fetchone()[0])
 
 
 def check_revs(conn: Any, expected: Mapping[str, str]) -> None:

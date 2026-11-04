@@ -24,8 +24,9 @@ from app.csvimport.service import (
     STATUS_BADGE,
     STATUS_LABEL,
     csv_service,
+    has_j_cands,
     pair_accepted,
-    ref_revs,
+    pair_cand_rev,
 )
 from app.csvimport.suggest import batch_suggestions
 from app.jobs.scheduler import Scheduler, extra_jobs
@@ -257,8 +258,8 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         # angezeigter Stand der abhängigen Buchungen je Zeile bzw. Journal-Transferpartner (Bindung der Einzelaktion
         # und der Transferentscheidung an genau diese Anzeige)
         row_revs={rc.idx: BA.row_revision(ctx.db.conn, rc) for rc in page if rc.open and BA.row_refs(rc)},
-        pair_revs={rc.idx: rv for rc in ov["pairs"] if (rc.pair_ref or "").startswith("j:")
-                   for rv in [ref_revs(ctx.db.conn, [rc.pair_ref[2:]]).get(rc.pair_ref[2:], "")]},
+        pair_revs={rc.idx: pair_cand_rev(ctx.db.conn, rc) or "" for rc in ov["pairs"] if has_j_cands(rc)},
+        input_marks=svc.input_marks(bid) if b["status"] in ("preview", "partial") else {},
         kind_label=M.KIND_LABEL, source_label=source_label,
         ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
                                                               (b["datasource_id"],))),

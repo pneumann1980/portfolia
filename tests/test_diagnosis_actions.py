@@ -36,8 +36,11 @@ from tests.test_diagnosis import (
     th_like_ctx,
 )
 
+# ``data_rev``: persistente Schreibzähler (seit 0.94.0) – zählen jede Schreiboperation, auch eine Rücknahme, und sind
+# deshalb wie Protokolle Änderungsmetadaten, keine Nutzdaten. Dass eine Vorschau **nichts** schreibt, prüft
+# ``test_diagnosis.fingerprint`` weiterhin einschließlich dieser Zähler.
 LOG_TABLES = ("event_log", "api_usage", "job_status", "source_status", "journal_log", "diag_decision",
-              "sqlite_sequence")
+              "sqlite_sequence", "data_rev")
 
 
 @pytest.fixture

@@ -1218,6 +1218,7 @@ def probe(ctx: Any, sid: int, a: Assessment, run: bool = True) -> dict[str, Any]
         res = _apply_steps(sb, sid, a, a.rid, _years(sb), "Probelauf", rollback, st)
         if res.get("errors") and not out:
             out.update(errors=list(res["errors"]), detail=[], rows=[])
+        out["stale"] = list(st.get("stale") or [])  # Entscheidungen, die im Zustand nach dem Ausblenden nicht passen
         out["ok"] = not out.get("errors")
     except Exception as e:
         log.exception("Quellenübernahme %s: Probelauf nicht möglich", sid)
@@ -1234,6 +1235,14 @@ def probe(ctx: Any, sid: int, a: Assessment, run: bool = True) -> dict[str, Any]
 
 
 def _probe_checks(a: Assessment, pr: dict[str, Any]) -> None:
+    # Entscheidungen, die der Probelauf im Zustand nach dem Ausblenden nicht anwenden kann (z. B. geänderte
+    # Kandidatenmenge: neuer, entfernter oder geänderter Partner) erscheinen sofort als „verworfen“ – mit Entfernen und
+    # danach neuem Angebot, statt erst beim Übernehmen zu scheitern (keine Entscheidungsschleife)
+    for x in pr.get("stale") or []:
+        d = a.decisions.pop(str(x.get("key")), None)
+        if d is not None:
+            a.stale.append({"key": x["key"], "why": "Gegenbuchung hat sich geändert – " + str(x.get("why") or ""),
+                            **d})
     if pr.get("failed"):
         a.checks.append(Check("probe", "Probelauf der Übernahme", False,
                               "; ".join(pr.get("errors") or []) + " – beim Übernehmen wird erneut geprüft; bei einer "
@@ -1587,9 +1596,14 @@ def _choice_info(ctx: Any, rc: Any, rows: list[Any]) -> dict[str, Any]:
 
         options = ["nopair", "skip"]
         # Stand aller angebotenen Journalpartner: „kein Transfer“ gilt genau diesen (N14)
-        js = sorted({str(x)[2:] for x in [ref, *rc.pair_alts] if str(x).startswith("j:")})
+        from app.csvimport.service import pair_cand_rev, pair_cands
+
+        js = sorted({x[2:] for x in pair_cands(rc) if x.startswith("j:")})
+        # „revs“: Stand jedes angebotenen Journalpartners; „rev“: Stand der gesamten Kandidatenmenge (Zusammensetzung
+        # und Inhalt) – geht mit der Entscheidung bis in die Buchungstransaktion (N15)
         partner = {"kind": "alts", "text": f"{len(rc.pair_alts) + 1} mögliche Gegenbuchungen – keine eindeutig",
-                   "revs": ref_revs(ctx.db.conn, js)}
+                   "revs": ref_revs(ctx.db.conn, js), "cands": pair_cands(rc),
+                   "rev": pair_cand_rev(ctx.db.conn, rc) or ""}
     elif ref.startswith("b:") and ref[2:].isdigit() and int(ref[2:]) in by_idx:
         p = by_idx[int(ref[2:])]
         partner = {"kind": "b", "ext": p.rec.ext_id, "basis": _rec_basis(p.rec),
@@ -1773,6 +1787,8 @@ def _apply_decisions(ctx: Any, csv: Any, bid: int, a: Any) -> tuple[dict[int, st
     Zustand nach dem Ausblenden nicht mehr zum Entschiedenen, wird abgelehnt statt etwas anderes zu buchen.
 
     Rückgabe: Freigaben (Zeile → Entscheidung), nicht zu übernehmende Zeilen, abgelehnte Entscheidungen."""
+    from app.csvimport.service import has_j_cands, pair_cands
+
     if not a.decisions:
         return {}, set(), []
     rows = csv.rows(bid)
@@ -1793,19 +1809,20 @@ def _apply_decisions(ctx: Any, csv: Any, bid: int, a: Any) -> tuple[dict[int, st
             approved[rc.idx] = "include"
         elif ch == "nopair":
             approved[rc.idx] = "nopair"
-            if p.get("kind") == "j" or (rc.pair_ref or "").startswith("j:"):
-                # „kein Transfer“ zu einem Journalpartner: derselbe Partner und dessen Stand aus der bestätigten
-                # Vorschau – wie bei „Transfer bestätigen“ bis in die Buchungstransaktion (N14); bei konkurrierenden
-                # Partnern der Stand genau des jetzt vorgeschlagenen aus den damals angebotenen
-                revs = {str(p.get("tx")): p.get("rev")} if p.get("kind") == "j" else dict(p.get("revs") or {})
-                tx = (rc.pair_ref or "")[2:] if (rc.pair_ref or "").startswith("j:") else ""
-                if not tx or not revs.get(tx):
-                    bad.append({"key": key, "why": "Der Partner, zu dem „kein Transfer“ entschieden wurde, passt im "
-                                                    "Zustand nach dem Ausblenden nicht (mehr) – bitte neu entscheiden"})
+            if p.get("kind") in ("j", "alts") or has_j_cands(rc):
+                # „kein Transfer“ zu Journal-Kandidaten: genau die damals angebotene Kandidatenmenge und ihr Stand aus
+                # der bestätigten Vorschau – bis in die Buchungstransaktion (N14/N15). Zusammensetzung und Inhalt
+                # aller Kandidaten (auch der nicht vorgeschlagenen) werden geprüft.
+                cands = pair_cands(rc)
+                expect = [f"j:{p.get('tx')}"] if p.get("kind") == "j" else list(p.get("cands") or [])
+                if not p.get("rev") or cands != expect:
+                    bad.append({"key": key, "why": "Die Gegenbuchungen, zu denen „kein Transfer“ entschieden wurde, "
+                                                    "passen im Zustand nach dem Ausblenden nicht (mehr) – bitte neu "
+                                                    "entscheiden"})
                     continue
                 vals[f"pair_{rc.idx}"] = "0"
-                vals[f"pairrev_{rc.idx}"] = str(revs[tx])
-                want[rc.idx] = str(rc.pair_ref)
+                vals[f"pairrev_{rc.idx}"] = str(p["rev"])
+                want[rc.idx] = str(rc.pair_ref or "")
             elif rc.pair_ref:
                 vals[f"pair_{rc.idx}"] = "0"
         elif ch == "pair":
@@ -1816,7 +1833,7 @@ def _apply_decisions(ctx: Any, csv: Any, bid: int, a: Any) -> tuple[dict[int, st
                 ref = f"b:{other.idx}" if other is not None else ""
                 if other is not None:
                     approved[other.idx] = "pair"
-            if not ref or rc.pair_ref != ref:
+            if not ref or rc.pair_ref != ref or (p.get("kind") == "j" and pair_cands(rc) != [ref]):
                 bad.append({"key": key, "why": "Der bestätigte Partner passt im Zustand nach dem Ausblenden nicht "
                                                 "(mehr) – bitte neu entscheiden"})
                 continue
@@ -1885,6 +1902,7 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
     # Einzelentscheidungen dieses Laufs (Zustand nach dem Ausblenden) – Probelauf und Übernahme gleich
     approved, skip, bad = _apply_decisions(ctx, csv, bid, a)
     if bad:  # keine Zeilensperre speichern: die Entscheidung erscheint als „verworfen“, der Probelauf bietet neu an
+        st["stale"] = [{"key": x["key"], "why": x["why"]} for x in bad]  # Rückmeldung für die Vorschau (Probelauf)
         return rollback("Eine gespeicherte Entscheidung passt nicht mehr – bitte neu entscheiden.",
                         [f"{x['key']}: {x['why']}" for x in bad])
     rows = csv.rows(bid)

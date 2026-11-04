@@ -552,32 +552,30 @@ def make_router() -> APIRouter:
                 refs = [rc for rc in mine if (rc.pair_ref or "").startswith("b:") and not rc.pair_alts]
                 if not refs:
                     return {"errors": ["Dieser Transfer lässt sich nur in der Detailansicht klären."]}
-                touched = {rc.idx for rc in refs} | {int(rc.pair_ref[2:]) for rc in refs}
-                before = {rc.idx: rc.pair_ok for rc in rows if rc.idx in touched}
-                svc.set_rows(bid, {f"pair_{rc.idx}": "1" if op == "pair" else "0" for rc in refs})
+                # eigene Transferantwort mit Schreibkennung: bei Ablehnung nur genau diese zurücknehmen (keine
+                # neueren Eingaben anderer Tabs überschreiben – gemeinsame Rücknahme, siehe ``restore_inputs``)
+                saved = svc.set_rows(bid, {f"pair_{rc.idx}": "1" if op == "pair" else "0" for rc in refs})
+                if saved["errors"]:
+                    svc.restore_inputs(bid, saved["undo"])
+                    return {"errors": saved["errors"]}
                 svc.evaluate(bid)
                 rows = svc.rows(bid)
                 want = set(idxs) | ({int(rc.pair_ref[2:]) for rc in refs} if op == "pair" else set())
                 p = BA.plan(svc, bid, "include", want, True, rows)
                 if not p.todo or any(not it.act for it in p.items if it.rc.idx in want):
                     why = next((it.note for it in p.items if not it.act), "nicht buchbar")
-                    _restore_pairs(bid, before)  # keine halbe Entscheidung: Transferstand wie vorher
+                    svc.restore_inputs(bid, saved["undo"])  # keine halbe Entscheidung: Transferstand wie vorher
                     return {"errors": [f"Nicht gebucht: {why}. Es wurde nichts geändert."]}
                 res = BA.execute(svc, bid, "include", {i.rc.idx for i in p.todo}, token=BA.new_token(),
                                  fingerprint=p.fingerprint(), force=True, expect_refs=expect)
                 if res.get("errors"):
-                    _restore_pairs(bid, before)  # nichts halb gespeichert
+                    svc.restore_inputs(bid, saved["undo"])  # nichts halb gespeichert
                 return res
             p = BA.plan(svc, bid, op, idxs, True, rows)  # ausdrückliche Antwort: auch bei abweichenden Angaben
             if not p.todo:
                 return {"errors": [p.items[0].note if p.items else "Nichts auszuführen."]}
             return BA.execute(svc, bid, op, idxs, token=BA.new_token(), fingerprint=p.fingerprint(), force=True,
                               expect_refs=expect)
-
-        def _restore_pairs(bid: int, before: dict[int, int | None]) -> None:
-            ctx.db.xmany("UPDATE csv_row SET pair_ok=? WHERE batch_id=? AND idx=?",
-                         [(v, bid, i) for i, v in before.items()])
-            svc.evaluate(bid)
 
         res = await run_in_threadpool(run)
         if res.get("errors"):

@@ -34,13 +34,18 @@ from app.csvimport.service import (
     _LOCK,
     STALE_REFS_TEXT,
     STATUS_LABEL,
+    TRANSFER_TABLES,
     RowCtx,
     StaleRefs,
     check_revs,
+    check_tables,
+    has_j_cands,
     line_key,
     pair_accepted,
+    pair_cands,
     ref_revs,
     refs_revision,
+    table_revs,
 )
 from app.db import fallback
 from app.util.timeutil import iso, to_local_date
@@ -330,6 +335,8 @@ class Plan:
     # erwartete Revision: beim Anzeigen ermittelt (bzw. bei einer Transferentscheidung deren Stand), Teil des
     # Fingerabdrucks und **verbindlich** in der Schreibtransaktion von :func:`execute` geprüft
     refs: dict[str, str] = field(default_factory=dict)
+    # gespeicherte Transferentscheidungen der geplanten Zeilen: Kandidatenmenge → Stand bei der Entscheidung
+    pairs: dict[str, str] = field(default_factory=dict)
     impact: list[dict[str, Any]] = field(default_factory=list)  # Bestandswirkung (übernehmen)
     prevented: list[dict[str, Any]] = field(default_factory=list)  # sonst gebuchte Mengen (verknüpfen/auslassen)
     questions: list[tuple[RowCtx, str]] = field(default_factory=list)  # offene Fragen (z. B. Gebühr nicht belegbar)
@@ -362,14 +369,15 @@ class Plan:
         data = json.dumps(sorted([i.rc.idx, i.act or "", i.target or "", row_state(i.rc),
                                   self.approved.get(i.rc.idx, "")] for i in self.items),
                           sort_keys=True, default=str)
-        refs = json.dumps(sorted(self.refs.items()))
+        refs = json.dumps([sorted(self.refs.items()), sorted(self.pairs.items())])
         return hashlib.sha256(f"{self.action}|{int(self.force)}|{data}|{refs}".encode()).hexdigest()[:24]
 
 
 def row_state(rc: RowCtx) -> list[Any]:
     """Entscheidungsrelevanter Stand einer Zeile (für Vorschau-Bindung und Assistenten-Karten)."""
     return [rc.status, rc.decision or "", rc.value_in or "", rc.fee_in or "", rc.pair_ref or "", rc.pair_conf or "",
-            rc.pair_ok if rc.pair_ok is not None else "", rc.tx_id or "", sorted((rc.row or {}).items())]
+            rc.pair_ok if rc.pair_ok is not None else "", rc.tx_id or "", sorted((rc.row or {}).items()),
+            sorted(rc.pair_alts or []), rc.counterpart or "", rc.pair_rev or ""]
 
 
 def rows_digest(rcs: Iterable[RowCtx]) -> str:
@@ -389,30 +397,50 @@ def effect_rows(rows: list[RowCtx], event: str) -> list[RowCtx]:
 
 
 def row_refs(rc: RowCtx) -> list[str]:
-    """Vorhandene Buchungen, von denen eine Zeilenaktion abhängt: Verknüpfungsziel, Dubletten-Bezug, Transferpartner
-    im Journal."""
+    """Vorhandene Buchungen, von denen eine Zeilenaktion abhängt: Verknüpfungsziel, Dubletten-Bezug und **alle**
+    Journal-Kandidaten eines möglichen Transfers (vorgeschlagener Partner und konkurrierende Möglichkeiten)."""
     out = {str(t) for t in [(rc.match or {}).get("target"), *(rc.dup_of or [])] if t}
-    if (rc.pair_ref or "").startswith("j:"):
-        out.add(str(rc.pair_ref)[2:])
+    out |= {x[2:] for x in pair_cands(rc) if x.startswith("j:")}
     return sorted(out)
 
 
+def decided_pair(rc: RowCtx) -> bool:
+    """Gespeicherte Transferentscheidung („ja“/„nein“) zu Journal-Kandidaten, gebunden an den Stand ihrer
+    Kandidatenmenge bei der Entscheidung (``pair_rev``); ohne Bindung gilt sie nicht."""
+    return rc.pair_ok in (0, 1) and bool(rc.pair_rev) and has_j_cands(rc)
+
+
 def decided_pair_ref(rc: RowCtx) -> str | None:
-    """Journalpartner einer gespeicherten Transferentscheidung („ja“/„nein“) – gebunden an dessen Stand bei der
-    Entscheidung (``pair_rev``); ohne Bindung gilt die Entscheidung nicht."""
-    if (rc.pair_ref or "").startswith("j:") and rc.pair_ok in (0, 1) and rc.pair_rev:
-        return str(rc.pair_ref)[2:]
-    return None
+    """Journalpartner einer gebundenen Transferentscheidung (für die Transfersperre des Planers)."""
+    return str(rc.pair_ref)[2:] if decided_pair(rc) and (rc.pair_ref or "").startswith("j:") else None
+
+
+def plan_deps(conn: Any, rcs: Iterable[RowCtx]) -> tuple[dict[str, str], dict[str, str]]:
+    """Erwarteter Stand aller Abhängigkeiten: (Buchung → jetzige Revision; Kandidatenmenge → Stand bei der
+    Transferentscheidung). Journal-Kandidaten einer entschiedenen Zeile gelten mit dem Stand der Entscheidung."""
+    rcs = list(rcs)
+    decided = [rc for rc in rcs if decided_pair(rc)]
+    bound = {x[2:] for rc in decided for x in pair_cands(rc) if x.startswith("j:")}
+    refs = ref_revs(conn, [t for rc in rcs for t in row_refs(rc) if t not in bound])
+    pairs = {json.dumps(pair_cands(rc)): str(rc.pair_rev) for rc in decided}
+    return refs, pairs
 
 
 def expected_revs(conn: Any, rcs: Iterable[RowCtx]) -> dict[str, str]:
-    """Erwarteter Stand der abhängigen Buchungen: Stand bei der Transferentscheidung, sonst der jetzige."""
-    rcs = list(rcs)
-    out = ref_revs(conn, [t for rc in rcs for t in row_refs(rc)])
-    for rc in rcs:
-        if (t := decided_pair_ref(rc)) is not None:
-            out[t] = str(rc.pair_rev)
-    return out
+    """Abhängigkeiten als eine Zuordnung (für ``expect_refs``): Buchungen und Kandidatenmengen (Schlüssel ``[…]``)."""
+    refs, pairs = plan_deps(conn, rcs)
+    return {**refs, **pairs}
+
+
+def check_deps(conn: Any, expected: Mapping[str, str]) -> None:
+    """Erwarteten Stand prüfen (in der Schreibtransaktion): Einzelbuchungen und Kandidatenmengen."""
+    refs = {k: v for k, v in expected.items() if not k.startswith("[")}
+    check_revs(conn, refs)
+    from app.csvimport.service import cands_rev
+
+    for k, v in expected.items():
+        if k.startswith("[") and cands_rev(conn, json.loads(k)) != v:
+            raise StaleRefs
 
 
 def row_revision(conn: Any, rc: RowCtx) -> str:
@@ -555,7 +583,7 @@ def plan(svc: Any, bid: int, action: str, idxs: Iterable[int], force: bool = Fal
         # gespeicherte Transferentscheidung zum Journalpartner (an dessen Stand gebunden): beantwortet genau die
         # Transferfrage – wie eine Freigabe im Übernahmekontext, aber ohne weitere Sperren zu öffnen (N11)
         choice = ok.get(i) or ({1: "pair", 0: "nopair"}[int(rc.pair_ok)]  # type: ignore[arg-type]
-                               if decided_pair_ref(rc) is not None else None)
+                               if decided_pair(rc) else None)
         # „pair“/„nopair“ (ausdrücklich übergeben) wirken wie eine Bestätigung der Zeile; „include“ öffnet nur die
         # Prüfmarkierung der Quelle – Abweichungen zu einer vorhandenen Buchung, Dubletten, Unvollständiges bleiben
         act, note, target = _decide(action, rc, batch["kind"], force or ok.get(i) in ("pair", "nopair"), by_idx,
@@ -569,7 +597,7 @@ def plan(svc: Any, bid: int, action: str, idxs: Iterable[int], force: bool = Fal
             other = int(rc.pair_ref[2:])
             if other in by_idx and by_idx[other].open and other not in inc:
                 it.act, it.note = None, "Transfer-Partner nicht übernehmbar – nur gemeinsam"
-    p.refs = expected_revs(svc.db.conn, [it.rc for it in p.todo if it.act in ("link", "include")])
+    p.refs, p.pairs = plan_deps(svc.db.conn, [it.rc for it in p.todo if it.act in ("link", "include")])
     _impact(svc, p)
     for it in p.todo:
         m = it.rc.match or {}
@@ -688,9 +716,12 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
         batch = svc.batch(bid)
         if batch is None or batch["status"] in ("mapping", "reverted"):
             return {"errors": ["Stapel nicht bearbeitbar."]}
+        tables0 = table_revs(db.conn, TRANSFER_TABLES)  # vor der Bewertung: Grundlage der Kandidatenmengen
         svc.evaluate(bid)
         rows = svc.rows(bid)
         p = plan(svc, bid, action, idxs, force, rows, approved)
+        transfer = any(has_j_cands(i.rc) or i.rc.counterpart for i in p.todo if i.act in ("include", "link"))
+        tables = tables0 if transfer else None
         if p.fingerprint() != fingerprint:
             return {"errors": ["Die Vorschau ist nicht mehr aktuell (der Stapel wurde inzwischen neu bewertet oder "
                                "geändert). Bitte die Vorschau erneut öffnen."]}
@@ -709,7 +740,7 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
         source = svc.source_of(batch)
         try:
             return _execute_tx(svc, db, bid, action, token, force, params, in_tx, expect_refs, p, rows, orig,
-                               cplan, only, batch, source)
+                               cplan, only, batch, source, tables)
         except StaleRefs:
             svc.evaluate(bid)  # geänderte Partner: gespeicherte Transferentscheidung sichtbar zurückgesetzt
             return {"errors": [STALE_REFS_TEXT]}
@@ -717,7 +748,7 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
 
 def _execute_tx(svc: Any, db: Any, bid: int, action: str, token: str, force: bool, params: Any, in_tx: Any,
                 expect_refs: Any, p: Plan, rows: list[RowCtx], orig: dict[int, Any], cplan: Any, only: set[int],
-                batch: Any, source: str) -> dict[str, Any]:
+                batch: Any, source: str, tables: Mapping[str, int] | None = None) -> dict[str, Any]:
     """Schreibteil von :func:`execute` (unter dessen Sperre): eine Transaktion, danach neu bewerten."""
     from app.journal.service import _now
 
@@ -728,12 +759,14 @@ def _execute_tx(svc: Any, db: Any, bid: int, action: str, token: str, force: boo
     label = ACTIONS[action][0]
     with db.transaction() as c:
         # innerhalb der Schreibtransaktion: parallele Bearbeitung sicher erkannt bzw. serialisiert
-        check_revs(c, p.refs)  # verbindlich: Stand aus der Vorschau bzw. der Transferentscheidung
+        check_deps(c, {**p.refs, **p.pairs})  # verbindlich: Stand aus der Vorschau bzw. der Transferentscheidung
+        if tables:  # Zusammensetzung der Transfer-Kandidaten seit der Bewertung (neue/entfernte Gegenbuchungen)
+            check_tables(c, tables)
         if isinstance(expect_refs, tuple):
             if refs_revision(c, expect_refs[0]) != expect_refs[1]:
                 raise StaleRefs
         elif expect_refs is not None:
-            check_revs(c, expect_refs)
+            check_deps(c, expect_refs)
         aid = int(c.execute(
             "INSERT INTO import_action(token, batch_id, action, label, params_json, ops_json, created_at) "
             "VALUES (?,?,?,?,?, '{}', ?)",

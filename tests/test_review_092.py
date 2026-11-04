@@ -273,6 +273,8 @@ def test_foreign_later_inputs_on_the_same_row_survive_and_own_rest_is_reverted(c
 
 
 def test_repeated_restore_never_overwrites_newer_inputs(c):
+    """Seit 0.94.0 mit Schreibkennungen: auch ein späterer Aufruf, der zufällig denselben Wert schreibt, gehört nicht
+    mehr dem alten Rücknahmeauftrag (frühere Grenze aus 0.93.0 geschlossen)."""
     cx, svc, bid, _mine, other = _two_rows(c)
     saved = svc.set_rows(bid, {f"val_{other.idx}": "50", f"dec_{other.idx}": "skip"})
     assert not saved["errors"] and saved["undo"]
@@ -280,8 +282,8 @@ def test_repeated_restore_never_overwrites_newer_inputs(c):
     assert _inputs(cx, bid, other.idx) == (None, None, None)
     svc.set_rows(bid, {f"val_{other.idx}": "50"})  # neuer Aufruf schreibt zufällig denselben Wert
     svc.set_rows(bid, {f"dec_{other.idx}": "defer"})
-    assert svc.restore_inputs(bid, saved["undo"]) == 1  # alter Rücknahmeauftrag erneut: nur der noch eigene Wert …
-    assert _inputs(cx, bid, other.idx) == ("defer", None, None)  # … „defer“ des anderen Aufrufs bleibt
+    assert svc.restore_inputs(bid, saved["undo"]) == 0  # alter Rücknahmeauftrag erneut: gehört ihm nichts mehr
+    assert _inputs(cx, bid, other.idx) == ("defer", "50", None)
 
 
 def test_foreign_transfer_decision_survives_rejected_row_action(c, monkeypatch):
