@@ -1083,6 +1083,11 @@ CREATE INDEX IF NOT EXISTS ix_news_saved ON news_item(saved_at);
 ALTER TABLE news_item ADD COLUMN tr_requested_at TEXT;
 CREATE INDEX IF NOT EXISTS ix_news_tr_requested ON news_item(tr_requested_at);
 """),
+    (36, """
+-- Transferentscheidung zu einer bereits gebuchten Gegenbuchung (Journalpartner): Revision des Partners zum Zeitpunkt
+-- der Entscheidung. Ändert sich der Partner danach, gilt die Entscheidung nicht mehr (neu bestätigen).
+ALTER TABLE csv_row ADD COLUMN pair_rev TEXT;
+"""),
 ]
 
 

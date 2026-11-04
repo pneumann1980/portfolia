@@ -25,6 +25,7 @@ from app.csvimport.service import (
     STATUS_LABEL,
     csv_service,
     pair_accepted,
+    ref_revs,
 )
 from app.csvimport.suggest import batch_suggestions
 from app.jobs.scheduler import Scheduler, extra_jobs
@@ -253,6 +254,11 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         sel_count=len(chosen), batch_actions=BA.ACTIONS, filtered_n=len(sel),
         group_state=BA.group_state(rows, chosen), qs=_qs(flt, status),
         page_idx=[rc.idx for rc in page],
+        # angezeigter Stand der abhängigen Buchungen je Zeile bzw. Journal-Transferpartner (Bindung der Einzelaktion
+        # und der Transferentscheidung an genau diese Anzeige)
+        row_revs={rc.idx: BA.row_revision(ctx.db.conn, rc) for rc in page if rc.open and BA.row_refs(rc)},
+        pair_revs={rc.idx: rv for rc in ov["pairs"] if (rc.pair_ref or "").startswith("j:")
+                   for rv in [ref_revs(ctx.db.conn, [rc.pair_ref[2:]]).get(rc.pair_ref[2:], "")]},
         kind_label=M.KIND_LABEL, source_label=source_label,
         ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
                                                               (b["datasource_id"],))),
@@ -864,12 +870,25 @@ def make_router() -> APIRouter:
         action, _, idx = str(f.get("row_action") or "").partition(":")
         if action not in ("link", "include") or not idx.isdigit():
             raise HTTPException(400)
+        i = int(idx)
+        # an den angezeigten Vergleich gebunden: Stand der abhängigen Buchungen (Verknüpfungsziel, Dubletten-Bezug,
+        # Journalpartner) wie beim Anzeigen – sonst nichts speichern und nichts ausführen (N10)
+        shown = str(f.get(f"rev_{i}") or "")
+        before = {rc.idx: rc for rc in svc.rows(bid)}
+        if i not in before:
+            raise HTTPException(404)
+        if BA.row_refs(before[i]) and BA.row_revision(ctx.db.conn, before[i]) != shown:
+            return _batch_page(request, bid, errors=[BA.STALE_REFS_TEXT])
+        expect = BA.expected_revs(ctx.db.conn, [before[i]]) if shown else {}
+        snap = svc.inputs(bid)  # Eingaben vor dem Speichern – bei Ablehnung unverändert wiederherstellen
         await run_in_threadpool(svc.set_rows, bid, f)  # übrige Eingaben der Seite nicht verlieren
         rows_ = svc.rows(bid)
-        p = BA.plan(svc, bid, action, {int(idx)}, True, rows_)
-        res = await run_in_threadpool(BA.execute, svc, bid, action, {int(idx)}, token=BA.new_token(),
-                                      fingerprint=p.fingerprint(), force=True, params={"single": True})
+        p = BA.plan(svc, bid, action, {i}, True, rows_)
+        res = await run_in_threadpool(BA.execute, svc, bid, action, {i}, token=BA.new_token(),
+                                      fingerprint=p.fingerprint(), force=True, params={"single": True},
+                                      expect_refs=expect)
         if res.get("errors"):
+            await run_in_threadpool(svc.restore_inputs, bid, snap)
             reason = p.items[0].note if p.items else ""
             return _batch_page(request, bid, errors=[*res["errors"], *([reason] if reason else [])])
         return _finish(request, bid, f, "action")

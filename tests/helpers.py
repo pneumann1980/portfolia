@@ -73,3 +73,16 @@ def portfolio(rows: list[dict[str, Any]], assets: list[dict[str, Any]] | None = 
         assets={a["asset_id"]: AssetInfo.from_parsed({**a, "aliases": a.get("aliases")}) for a in (assets or ASSETS)},
         accounts={a["account"]: AccountInfo.from_parsed(a) for a in (accounts or [])},
     )
+
+
+def row_action(c: Any, bid: int, value: str) -> Any:
+    """Einzelaktion einer Zeile wie im Browser: mit dem auf der Detailseite angezeigten Stand der abhängigen Buchungen
+    (``rev_<Zeile>``) – ohne ihn lehnt die Anwendung eine Zeile mit Abhängigkeiten ab (seit 0.92.0)."""
+    import re as _re
+
+    page = c.get(f"/journal/csv/{bid}").text
+    idx = value.partition(":")[2]
+    data = {"csrf_token": c.token, "row_action": value}
+    if (m := _re.search(rf'name="rev_{idx}" value="([^"]*)"', page)) is not None:
+        data[f"rev_{idx}"] = m.group(1)
+    return c.post(f"/journal/csv/{bid}/row-action", data=data, follow_redirects=False)

@@ -53,9 +53,11 @@ jobs:
       - name: Bekannte Schwachstellen (pip-audit)
         # fragt die Schwachstellen-Datenbank ab: eine neu veröffentlichte Meldung darf keinen Push blockieren, soll aber auffallen
         run: pip-audit -r requirements.txt --no-deps --disable-pip
-      - name: Typprüfung (mypy, schrittweise – meldet nur)
+      - name: Typprüfung (mypy, schrittweise – meldet nur, blockiert nicht; grün heißt NICHT fehlerfrei)
+        # Bestand bekannter Typfehler (Stand 0.92.0: 334 in 61 Dateien, vor allem über Importe erreichte Module) –
+        # die letzte Zeile nennt die Gesamtzahl, damit Zu- oder Abnahme sichtbar bleibt
         continue-on-error: true
-        run: mypy app/news app/jobs app/web app/health.py app/logging_setup.py --ignore-missing-imports --no-error-summary | tail -n 25 || true
+        run: mypy app/news app/jobs app/web app/health.py app/logging_setup.py --ignore-missing-imports | tail -n 25 || true
 
   image:
     needs: test

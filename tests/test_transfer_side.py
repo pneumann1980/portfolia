@@ -32,7 +32,7 @@ from app.datasources.wallet import WalletConnector
 from app.importer.zipbuilder import build_zip
 from app.jobs import tasks
 from app.ledger.models import Tx
-from tests.helpers import ASSETS, tx
+from tests.helpers import ASSETS, row_action, tx
 from tests.wallet_fakes import MASTER, FakeEsplora, all_rows, create_wallet, ctx, make_client, post
 
 D = Decimal
@@ -222,7 +222,7 @@ def test_delayed_wallet_deposit_is_not_booked_twice(client, config, esplora):
     assert _btc(c) == {"Börse": D("1") - D(QTY), WALLET_IMPORT: D(QTY)}
     # verknüpfen: nichts wird gebucht, die Angaben der Datenquelle bleiben am Transfer
     bid = int(ctx(c).db.scalar("SELECT batch_id FROM csv_row WHERE id=?", (rc.id,)))
-    r = post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{rc.idx}")
+    r = row_action(c, bid, f"link:{rc.idx}")
     assert r.status_code == 303, r.text[:800]
     (rc2,) = [v for v in csv_service(ctx(c)).rows(bid) if v.idx == rc.idx]
     assert rc2.status == "linked" and rc2.tx_id == "IMP-T"
@@ -240,7 +240,7 @@ def test_already_booked_wallet_deposit_is_found_and_resolved(client, config, esp
     datasource_service(ctx(c)).sync(sid, "manual")
     rc = _wallet_row(c, sid)
     bid = int(ctx(c).db.scalar("SELECT batch_id FROM csv_row WHERE id=?", (rc.id,)))
-    r = post(c, f"/journal/csv/{bid}/row-action", row_action=f"include:{rc.idx}")  # ausdrücklich gebucht
+    r = row_action(c, bid, f"include:{rc.idx}")  # ausdrücklich gebucht
     assert r.status_code == 303, r.text[:800]
     jid = ctx(c).db.scalar("SELECT tx_id FROM journal_tx WHERE status='active' AND type='deposit'")
     assert jid and jid.startswith("PF-S-")
@@ -286,7 +286,7 @@ def test_journal_decision_distinct_removes_hint(client, config, esplora):
     datasource_service(ctx(c)).sync(sid, "manual")
     rc = _wallet_row(c, sid)
     bid = int(ctx(c).db.scalar("SELECT batch_id FROM csv_row WHERE id=?", (rc.id,)))
-    post(c, f"/journal/csv/{bid}/row-action", row_action=f"include:{rc.idx}")
+    row_action(c, bid, f"include:{rc.idx}")
     jid = ctx(c).db.scalar("SELECT tx_id FROM journal_tx WHERE status='active' AND type='deposit'")
     r = post(c, "/journal/abgleich", journal_tx_id=jid, import_tx_id="IMP-T", decision="distinct")
     assert r.status_code == 303
@@ -318,7 +318,7 @@ def test_account_hint_from_transfer_side_is_suggestion_only(client, config, espl
     bid = int(ctx(c).db.scalar("SELECT batch_id FROM csv_row WHERE id=?", (rc.id,)))
     assert "davon 1 als Seite eines Transfers" in c.get(f"/journal/csv/{bid}").text
     # nach „verknüpfen“ bleibt der Beleg erhalten
-    post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{rc.idx}")
+    row_action(c, bid, f"link:{rc.idx}")
     assert svc.account_suggestion(svc.get(sid))["account"] == WALLET_IMPORT
     # Umstellung per Klick und zurück – Buchungen bleiben unberührt
     r = post(c, f"/settings/datasources/{sid}/account-adopt", account=WALLET_IMPORT)
@@ -342,7 +342,7 @@ def test_booked_deposit_still_found_after_account_switch(client, config, esplora
     svc.sync(sid, "manual")
     rc = _wallet_row(c, sid)
     bid = int(ctx(c).db.scalar("SELECT batch_id FROM csv_row WHERE id=?", (rc.id,)))
-    post(c, f"/journal/csv/{bid}/row-action", row_action=f"include:{rc.idx}")
+    row_action(c, bid, f"include:{rc.idx}")
     jid = ctx(c).db.scalar("SELECT tx_id FROM journal_tx WHERE status='active' AND type='deposit'")
     assert post(c, f"/settings/datasources/{sid}/account-adopt", account=WALLET_IMPORT).status_code == 303
     assert svc.get(sid).account == WALLET_IMPORT

@@ -38,7 +38,7 @@ import logging
 import re
 import threading
 from collections import Counter, defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -389,6 +389,7 @@ class RowCtx:
     pair_conf: str | None
     pair_ok: int | None
     tx_id: str | None
+    pair_rev: str | None = None  # Revision des Journalpartners bei der Transferentscheidung (nur ``j:``)
     row: dict[str, str] | None = None
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -962,7 +963,7 @@ class CsvImportService:
         for r in self.db.q("SELECT * FROM csv_row WHERE batch_id=? ORDER BY idx", (bid,)):
             rc = RowCtx(id=r["id"], idx=r["idx"], line=r["line"], rec=rec_from_json(r["rec_json"]), status=r["status"],
                         decision=r["decision"], value_in=r["value_in"], fee_in=r["fee_in"], pair_ref=r["pair_ref"],
-                        pair_conf=r["pair_conf"], pair_ok=r["pair_ok"], tx_id=r["tx_id"])
+                        pair_conf=r["pair_conf"], pair_ok=r["pair_ok"], tx_id=r["tx_id"], pair_rev=r["pair_rev"])
             if r["row_json"]:
                 rc.row = json.loads(r["row_json"])
             msgs = json.loads(r["messages"] or "{}")
@@ -2083,7 +2084,7 @@ class CsvImportService:
                 if me.rc is not None:
                     me.rc.pair_ref, me.rc.pair_conf, me.rc.pair_why = other.ref, e.conf, why
                     if me.rc.prev_ref != other.ref:
-                        me.rc.pair_ok = None
+                        me.rc.pair_ok = me.rc.pair_rev = None
         for side in (*outs, *ins):  # konkurrierende Möglichkeiten sichtbar halten, auch für leer ausgegangene Zeilen
             if side.rc is None:
                 continue
@@ -2096,7 +2097,24 @@ class CsvImportService:
                                         "beansprucht sind – Betrag und Zeit reichen zur Zuordnung nicht aus")
         for rc in rows:
             if rc.open and rc.pair_ref is None:
-                rc.pair_ok = None
+                rc.pair_ok = rc.pair_rev = None
+        # Transferentscheidung zu einem Journalpartner gilt nur für dessen Stand bei der Entscheidung (N11/N12)
+        decided = [rc for rc in rows if rc.open and (rc.pair_ref or "").startswith("j:") and rc.pair_ok is not None]
+        if decided:
+            now = ref_revs(self.db.conn, [rc.pair_ref[2:] for rc in decided])  # type: ignore[index]
+            for rc in decided:
+                if rc.pair_rev != now.get(rc.pair_ref[2:]):  # type: ignore[index]
+                    rc.pair_ok = None  # pair_rev bleibt als Hinweis „geändert“ stehen, bis neu entschieden wird
+        stale = [rc for rc in rows if rc.open and (rc.pair_ref or "").startswith("j:") and rc.pair_ok is None
+                 and rc.pair_rev]
+        if stale:
+            now = ref_revs(self.db.conn, [rc.pair_ref[2:] for rc in stale])  # type: ignore[index]
+            for rc in stale:
+                if rc.pair_rev != now.get(rc.pair_ref[2:]):  # type: ignore[index]
+                    rc.pair_why = (f"Die Gegenbuchung {rc.pair_ref[2:]} wurde nach deiner Transferentscheidung "  # type: ignore[index]
+                                   "geändert – bitte erneut entscheiden.")
+                else:
+                    rc.pair_rev = None
         self._import_counterparts([s_ for s_ in (*outs, *ins) if s_.rc is not None and s_.ref not in used], pf, V)
 
     @staticmethod
@@ -2142,10 +2160,12 @@ class CsvImportService:
                     "counterpart": rc.counterpart, "basis": rc.basis if rc.dup_of else None,
                     "roles": {k: v for k, v in rc.roles.items() if k in rc.dup_of[:5]} or None, "match": rc.match}
             data.append((json.dumps(rc.row, ensure_ascii=False) if rc.row is not None else None, rc.status,
-                         json.dumps(msgs, ensure_ascii=False), rc.pair_ref, rc.pair_conf, rc.pair_ok, rc.id))
+                         json.dumps(msgs, ensure_ascii=False), rc.pair_ref, rc.pair_conf, rc.pair_ok,
+                         rc.pair_rev if (rc.pair_ref or "").startswith("j:") else None,
+                         rc.id))
         if data:
-            self.db.xmany("UPDATE csv_row SET row_json=?, status=?, messages=?, pair_ref=?, pair_conf=?, pair_ok=? "
-                          "WHERE id=?", data)
+            self.db.xmany("UPDATE csv_row SET row_json=?, status=?, messages=?, pair_ref=?, pair_conf=?, pair_ok=?, "
+                          "pair_rev=? WHERE id=?", data)
 
     # -- Ansicht ------------------------------------------------------------------------------------------
     def rows(self, bid: int) -> list[RowCtx]:
@@ -2207,6 +2227,19 @@ class CsvImportService:
                 "by_idx": {rc.idx: rc for rc in rows}, "recon": summ.get("recon"), "auto_symbols": auto}
 
     # -- Eingaben -----------------------------------------------------------------------------------------
+    def inputs(self, bid: int) -> list[tuple[Any, ...]]:
+        """Eingaben aller Zeilen (Entscheidung, Wert, Gebühr, Transferentscheidung samt Partnerstand) – zum
+        Wiederherstellen, wenn eine Einzelaktion nach dem Speichern abgelehnt wird."""
+        return [tuple(r) for r in self.db.q(
+            "SELECT decision, value_in, fee_in, pair_ok, pair_rev, id FROM csv_row WHERE batch_id=?", (bid,))]
+
+    @_locked
+    def restore_inputs(self, bid: int, snap: list[tuple[Any, ...]]) -> None:
+        self.db.xmany("UPDATE csv_row SET decision=?, value_in=?, fee_in=?, pair_ok=?, pair_rev=? WHERE id=? AND "
+                      "status NOT IN ('committed', 'merged', 'linked')", snap)
+        self.evaluate(bid)
+        self.refresh_status(bid)
+
     @_locked
     def set_rows(self, bid: int, form: Mapping[str, Any]) -> None:
         rows = {rc.idx: rc for rc in self._load(bid)}
@@ -2230,14 +2263,18 @@ class CsvImportService:
                 rc.fee_in = v[:40] or None
             elif kind == "pair":
                 rc.pair_ok = 1 if v == "1" else 0 if v == "0" else None
+                if (rc.pair_ref or "").startswith("j:"):  # Entscheidung an den angezeigten Partnerstand binden
+                    shown = str(form.get(f"pairrev_{rc.idx}") or "")
+                    rc.pair_rev = (shown or ref_revs(self.db.conn, [rc.pair_ref[2:]]).get(rc.pair_ref[2:])  # type: ignore[index]
+                                   ) if rc.pair_ok is not None else None
                 if rc.pair_ref and rc.pair_ref.startswith("b:") and int(rc.pair_ref[2:]) in rows:
                     partner = rows[int(rc.pair_ref[2:])]
                     partner.pair_ok = rc.pair_ok
                     data.append(partner)
             data.append(rc)
         if data:
-            self.db.xmany("UPDATE csv_row SET decision=?, value_in=?, fee_in=?, pair_ok=? WHERE id=?",
-                          [(rc.decision, rc.value_in, rc.fee_in, rc.pair_ok, rc.id) for rc in
+            self.db.xmany("UPDATE csv_row SET decision=?, value_in=?, fee_in=?, pair_ok=?, pair_rev=? WHERE id=?",
+                          [(rc.decision, rc.value_in, rc.fee_in, rc.pair_ok, rc.pair_rev, rc.id) for rc in
                            {rc.id: rc for rc in data}.values()])
         self.evaluate(bid)
         self.refresh_status(bid)
@@ -2269,11 +2306,15 @@ class CsvImportService:
         # übernehmen“) gelten damit als entschieden – sichtbar im Ergebnis, rückgängig über die Zeilenauswahl
         skipped = [rc for rc in rows if only_idx is None and rc.open and rc.idx not in chosen_ids
                    and rc.status in ("new", "duplicate") and rc.decision is None and not rc.include()]
-        with self.db.transaction() as c:
-            res = self.commit_apply(c, batch, rows, plan, only_idx, stamp)
-            if skipped:
-                c.executemany("UPDATE csv_row SET decision='skip' WHERE id=? AND decision IS NULL",
-                              [(rc.id,) for rc in skipped])
+        try:
+            with self.db.transaction() as c:
+                res = self.commit_apply(c, batch, rows, plan, only_idx, stamp)
+                if skipped:
+                    c.executemany("UPDATE csv_row SET decision='skip' WHERE id=? AND decision IS NULL",
+                                  [(rc.id,) for rc in skipped])
+        except StaleRefs:
+            self.evaluate(bid)  # geänderte Partner: Entscheidung sichtbar zurückgesetzt
+            return {"errors": [STALE_REFS_TEXT]}
         self.refresh_status(bid)
         self.journal.after_change()
         log.info("CSV-Stapel %s übernommen: %d Buchungen, %d Transfers", bid, res["created"], res["transfers"])
@@ -2310,6 +2351,10 @@ class CsvImportService:
         created = merged = transfers = 0
         tx_ids: list[str] = []
         pairs: list[tuple[RowCtx, str]] = []  # (Zeile, Gegenbuchung) – bestätigte Paare
+        # Transferentscheidung zu einem Journalpartner: dessen Stand bei der Entscheidung, hier in der Transaktion
+        # (Paare mit einem Journalpartner ohne Entscheidung werden nie übernommen – siehe ``RowCtx.include``)
+        check_revs(c, {rc.pair_ref[2:]: rc.pair_rev or "" for rc in chosen  # type: ignore[index]
+                       if (rc.pair_ref or "").startswith("j:") and rc.pair_ok is not None})
         for rc in chosen:
             p = p_by_idx[rc.idx]
             pair_other = rc.pair_ref if rc.pair_ref and pair_accepted(rc) else None
@@ -2621,6 +2666,60 @@ def _span_abs(d: timedelta) -> str:
     if secs < 7200:
         return f"{int(secs // 60)} min"
     return f"{secs / 3600:.1f} h".replace(".", ",")
+
+
+# ----------------------------------------------------------------------------------------------------
+# Revision abhängiger Buchungen (Verknüpfungsziel, Dubletten-Bezug, Journal-Transferpartner)
+# ----------------------------------------------------------------------------------------------------
+
+_REV_SKIP = {"id", "created_at", "updated_at", "import_id"}
+_REV_SQL = (("journal_tx", "SELECT * FROM journal_tx WHERE tx_id IN ({})"),
+            ("tx_override", "SELECT * FROM tx_override WHERE tx_id IN ({})"),
+            ("tx", "SELECT * FROM tx WHERE import_id=? AND tx_id IN ({})"))
+
+
+class StaleRefs(Exception):
+    """Abhängige Buchung hat sich seit der Anzeige bzw. Entscheidung geändert – nichts wird geschrieben."""
+
+
+STALE_REFS_TEXT = ("Eine abhängige Buchung (Verknüpfungsziel, Dubletten-Bezug bzw. Transferpartner) wurde seit der "
+                   "Anzeige bzw. Entscheidung geändert – es wurde nichts geändert. Bitte die neu angezeigten Angaben "
+                   "prüfen und erneut bestätigen.")
+
+
+def ref_revs(conn: Any, refs: Iterable[str]) -> dict[str, str]:
+    """Revision je abhängiger Buchung **aus der Datenbank**: Journalzeile, Änderung in der App und Zeile des aktiven
+    Imports (ohne technische Spalten). Innerhalb einer Schreibtransaktion gelesen, ist sie atomar gegenüber parallelen
+    Bearbeitungen; eine inhaltsgleiche Speicherung ändert sie nicht."""
+    ids = sorted({str(t) for t in refs if t})
+    if not ids:
+        return {}
+    row = conn.execute("SELECT value FROM app_state WHERE key='active_import_id'").fetchone()
+    iid = row[0] if row is not None else None
+    parts: dict[str, dict[str, Any]] = {t: {} for t in ids}
+    for i in range(0, len(ids), 400):
+        chunk = ids[i:i + 400]
+        marks = ",".join("?" * len(chunk))
+        for name, sql in _REV_SQL:
+            if name == "tx" and iid is None:
+                continue
+            args = ([iid] if name == "tx" else []) + chunk
+            for r in conn.execute(sql.format(marks), args).fetchall():
+                parts[r["tx_id"]][name] = sorted(kv for kv in zip(r.keys(), tuple(r), strict=True)
+                                                 if kv[0] not in _REV_SKIP)  # sqlite3.Row: Spalten und Werte
+    return {t: hashlib.sha256(json.dumps([t, [parts[t].get(n) for n, _ in _REV_SQL]], default=str).encode())
+            .hexdigest()[:24] for t in ids}
+
+
+def refs_revision(conn: Any, refs: Iterable[str]) -> str:
+    """Gemeinsame Revision mehrerer abhängiger Buchungen (siehe :func:`ref_revs`)."""
+    return hashlib.sha256(json.dumps(sorted(ref_revs(conn, refs).items())).encode()).hexdigest()[:24]
+
+
+def check_revs(conn: Any, expected: Mapping[str, str]) -> None:
+    """Erwartete Revisionen gegen den Stand in der Datenbank prüfen (in der Schreibtransaktion aufrufen)."""
+    if expected and ref_revs(conn, expected) != dict(expected):
+        raise StaleRefs
 
 
 def pair_accepted(rc: RowCtx) -> bool:

@@ -1591,7 +1591,11 @@ def _choice_info(ctx: Any, rc: Any, rows: list[Any]) -> dict[str, Any]:
                    "text": f"API-Vorgang {p.rec.label or p.rec.kind} auf {p.rec.account}"}
         options = ["pair", "nopair", "skip"]
     elif ref.startswith("j:"):
-        partner = {"kind": "j", "tx": ref[2:], "basis": _tx_basis(ctx, ref[2:]), "text": _tx_text(ctx, ref[2:])}
+        from app.csvimport.service import ref_revs
+
+        # „rev“: Stand des Journalpartners aus der Datenbank – geht mit der Entscheidung bis in die Buchungstransaktion
+        partner = {"kind": "j", "tx": ref[2:], "basis": _tx_basis(ctx, ref[2:]), "text": _tx_text(ctx, ref[2:]),
+                   "rev": ref_revs(ctx.db.conn, [ref[2:]]).get(ref[2:], "")}
         options = ["pair", "nopair", "skip"]
     elif rc.counterpart:
         partner = {"kind": "imp", "tx": rc.counterpart, "basis": _tx_basis(ctx, rc.counterpart),
@@ -1693,13 +1697,20 @@ def _validate_decisions(ctx: Any, a: Assessment, recs: list[Any]) -> None:
             if p.get("kind") == "b" and (by_ext.get(p.get("ext")) is None or
                                          _rec_basis(by_ext[p["ext"]]) != p.get("basis")):
                 why = "Gegenbuchung im Abruf hat sich geändert"
-            elif p.get("kind") in ("j", "imp") and _tx_basis(ctx, str(p.get("tx"))) != p.get("basis"):
+            elif (p.get("kind") in ("j", "imp") and _tx_basis(ctx, str(p.get("tx"))) != p.get("basis")) or (
+                    p.get("kind") == "j" and _partner_rev(ctx, str(p.get("tx"))) != p.get("rev")):
                 why = "Gegenbuchung hat sich geändert"
         d = {**d, "stamp": decision_stamp(d)}
         if why:
             a.stale.append({"key": key, "why": why, **d})
         else:
             a.decisions[key] = d
+
+
+def _partner_rev(ctx: Any, tx_id: str) -> str:
+    from app.csvimport.service import ref_revs
+
+    return ref_revs(ctx.db.conn, [tx_id]).get(tx_id, "")
 
 
 def _partner_recs(ctx: Any, a: Any) -> list[Any]:
@@ -1786,6 +1797,8 @@ def _apply_decisions(ctx: Any, csv: Any, bid: int, a: Any) -> tuple[dict[int, st
                 continue
             want[rc.idx] = ref
             vals[f"pair_{rc.idx}"] = "1"
+            if p.get("kind") == "j":  # erwarteter Partnerstand aus der bestätigten Vorschau, nicht der jetzige (N12)
+                vals[f"pairrev_{rc.idx}"] = str(p.get("rev") or "-")
             approved[rc.idx] = "pair"
     if vals:
         csv.set_rows(bid, vals)
@@ -1843,11 +1856,9 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
     _fault("batch")
     # Einzelentscheidungen dieses Laufs (Zustand nach dem Ausblenden) – Probelauf und Übernahme gleich
     approved, skip, bad = _apply_decisions(ctx, csv, bid, a)
-    if bad:
+    if bad:  # keine Zeilensperre speichern: die Entscheidung erscheint als „verworfen“, der Probelauf bietet neu an
         return rollback("Eine gespeicherte Entscheidung passt nicht mehr – bitte neu entscheiden.",
-                        [f"{x['key']}: {x['why']}" for x in bad],
-                        [{"key": x["key"], "why": x["why"], "what": "Entscheidung", "when": "", "line": 0,
-                          "event": ""} for x in bad])
+                        [f"{x['key']}: {x['why']}" for x in bad])
     rows = csv.rows(bid)
     if skip:  # „nicht übernehmen“ – nur in diesem Lauf, keine dauerhafte Ignorier-Entscheidung
         sp = B.plan(csv, bid, "skip", skip, rows=rows)

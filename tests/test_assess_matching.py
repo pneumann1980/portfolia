@@ -12,9 +12,8 @@ import pytest
 from app.csvimport.service import csv_service
 from app.jobs import tasks
 from tests import test_bitpanda as TB
-from tests.helpers import tx
+from tests.helpers import row_action, tx
 from tests.test_bitpanda import ctx
-from tests.test_csvimport import post
 from tests.test_importcheck import KOINLY_HEAD, _import, _upload_csv, scenario
 
 
@@ -89,13 +88,13 @@ def test_linking_one_row_keeps_the_other_assigned_to_the_free_booking(client, co
     bid = _setup(c, config, [("IMP-A", "2024-04-01T10:46:00Z"), ("IMP-B", "2024-04-01T10:47:02Z")],
                  [_row("2024-04-01 10:47:00"), _row("2024-04-01 10:48:00")])
     first = _rows(c, bid)[0]
-    r = post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{first.idx}")
+    r = row_action(c, bid, f"link:{first.idx}")
     assert r.status_code == 303
     (left,) = [rc for rc in _rows(c, bid) if rc.open]
     # die vergebene Buchung ist kein Kandidat mehr; die andere Zeile gehört zur freien Buchung
     assert left.match["target"] == "IMP-B" and left.dup_of == ["IMP-B"]
     assert left.match["cat"] in ("dublette", "ergaenzung") and left.match["action"] == "link"
-    r = post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{left.idx}")
+    r = row_action(c, bid, f"link:{left.idx}")
     assert r.status_code == 303
     assert not [rc for rc in _rows(c, bid) if rc.open]
     # keine Buchung entstanden: nur zwei verknüpfte Datensätze
@@ -121,7 +120,7 @@ def test_row_with_all_similar_bookings_already_taken_is_a_separate_booking(clien
     bid = _setup(c, config, [("IMP-A", "2024-04-01T10:00:00Z")],
                  [_row("2024-04-01 10:00:00"), _row("2024-04-01 10:00:40")])
     first = _rows(c, bid)[0]
-    assert post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{first.idx}").status_code == 303
+    assert row_action(c, bid, f"link:{first.idx}").status_code == 303
     (left,) = [rc for rc in _rows(c, bid) if rc.open]
     assert left.match["cat"] == "neu" and left.match["action"] == "include"
     assert left.match["conf"] == "mittel" and any("anderen Datensatz" in h for h in left.match["hints"])
@@ -167,9 +166,9 @@ def test_single_action_stays_on_rows_until_batch_is_done_then_returns_to_overvie
     bid = _setup(c, config, [("IMP-A", "2024-04-01T10:46:00Z"), ("IMP-B", "2024-04-01T10:47:02Z")],
                  [_row("2024-04-01 10:47:00"), _row("2024-04-01 10:48:00")])
     r1, r2 = _rows(c, bid)
-    loc = post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{r1.idx}").headers["location"]
+    loc = row_action(c, bid, f"link:{r1.idx}").headers["location"]
     assert loc.startswith(f"/journal/csv/{bid}") and loc.endswith("#zeilen")  # an der Zeilenliste, nicht oben
-    loc = post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{r2.idx}").headers["location"]
+    loc = row_action(c, bid, f"link:{r2.idx}").headers["location"]
     assert loc == "/journal/csv"  # alles geklärt → zurück zur Übersicht
     assert csv_service(ctx(c)).batch(bid)["status"] == "done"
 
@@ -179,9 +178,9 @@ def test_datasource_batch_returns_to_datasource_overview_when_done(client, confi
     bid, rows = scenario(c, config, api, "extra")
     first, last = sorted(rows.values(), key=lambda rc: rc.line or 0)
     sid = csv_service(ctx(c)).batch(bid)["datasource_id"]
-    loc = post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{first.idx}").headers["location"]
+    loc = row_action(c, bid, f"link:{first.idx}").headers["location"]
     assert loc.startswith(f"/journal/csv/{bid}") and loc.endswith("#zeilen")
-    loc = post(c, f"/journal/csv/{bid}/row-action", row_action=f"link:{last.idx}").headers["location"]
+    loc = row_action(c, bid, f"link:{last.idx}").headers["location"]
     assert loc.startswith("/accounts?msg=") and loc.endswith(f"#ds-{sid}")
     page = c.get(loc)
     assert page.status_code == 200 and "Prüfung abgeschlossen" in page.text

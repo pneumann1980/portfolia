@@ -197,3 +197,81 @@ def test_rows_with_own_user_decision_are_never_auto_linked(client, api):  # noqa
     assert row.idx in BA.safe_link_rows(csv_service(ctx(c)).rows(bid))  # technische Identität (Trade-ID)
     ctx(c).db.x("UPDATE csv_row SET decision='skip' WHERE batch_id=? AND idx=?", (bid, row.idx))
     assert row.idx not in BA.safe_link_rows(csv_service(ctx(c)).rows(bid))  # eigene Entscheidung hat Vorrang
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 0.92.0 (Review 0.91, N10): Sammelvorschau und automatisches Verknüpfen sind an den Stand des Ziels gebunden
+# ----------------------------------------------------------------------------------------------------------------------
+
+def _edit_import_value(c, tx_id: str, value: str) -> None:
+    from app.journal.service import journal_service
+
+    js = journal_service(ctx(c))
+    form = js.import_form_data(tx_id)
+    assert form is not None
+    form["value_eur"] = value
+    assert not js.save_import(tx_id, form).errors
+
+
+def test_suggest_preview_rejects_changed_link_target(client, config, api):  # noqa: F811
+    from tests.test_importcheck import _execute, _preview
+
+    c = client
+    bid, _rows = scenario(c, config, api, "extra")
+    _html, form = _preview(c, bid)
+    target = next(str(rc.match["target"]) for rc in csv_service(ctx(c)).rows(bid) if (rc.match or {}).get("target"))
+    _edit_import_value(c, target, "1234")
+    assert _execute(c, bid, form).status_code == 409  # alte Sammelvorschau gilt nicht mehr
+    assert "linked" not in {rc.status for rc in csv_service(ctx(c)).rows(bid)}
+    _html, fresh = _preview(c, bid)
+    assert _execute(c, bid, fresh).status_code == 303  # neue Vorschau genau einmal
+    assert {rc.status for rc in csv_service(ctx(c)).rows(bid)} == {"linked"}
+
+
+def test_auto_link_rejects_parallel_edit_of_target(client, api, monkeypatch):  # noqa: F811
+    """Stufe A (automatisch, ohne Anzeige): Plan und Schreiben sind über die Revision des Ziels in der
+    Schreibtransaktion verbunden – eine echte parallele Journaländerung dazwischen verhindert die Verknüpfung."""
+    import threading
+
+    from app.journal.service import journal_service
+
+    c = client
+    b, _ = upload(c, "bitpanda.csv", BUY_CSV.encode(), account="Bitpanda")
+    create_unknown_assets(c, b)
+    post(c, f"/journal/csv/{b}/commit")
+    (buy,) = journal(c, "source='csv:bitpanda'")
+    sid = create_bitpanda(c, auto_commit="1")
+    assert datasource_service(ctx(c)).sync(sid)["linked"] >= 1
+    db = ctx(c).db
+    act = db.q1("SELECT id, batch_id FROM import_action WHERE params_json LIKE '%\"stage\": \"A\"%'")
+    svc = csv_service(ctx(c))
+    assert not BA.undo(svc, int(act["id"])).get("errors")  # Ausgangslage: Stufe A erneut ausführbar
+    bid = int(act["batch_id"])
+    assert BA.safe_link_rows(svc.rows(bid))
+    real = BA._execute_tx
+    done: list[int] = []
+
+    def edit():
+        js = journal_service(ctx(c))
+        form = js.form_data(db.q1("SELECT * FROM journal_tx WHERE tx_id=?", (buy["tx_id"],)))
+        form["value_eur"] = "999"
+        assert not js.save(form, buy["tx_id"]).errors
+        done.append(1)
+        db.close_thread_conn()
+
+    def edit_first(*args, **kwargs):
+        t = threading.Thread(target=edit)
+        t.start()
+        t.join(8)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(BA, "_execute_tx", edit_first)
+    assert BA.auto_link(svc, bid) == 0
+    monkeypatch.undo()
+    assert done
+    assert db.q1("SELECT value_eur FROM journal_tx WHERE tx_id=?", (buy["tx_id"],))["value_eur"] == "999"
+    assert not db.scalar("SELECT COUNT(*) FROM tx_link WHERE tx_id=? AND status='active'", (buy["tx_id"],))
+    # danach gilt der neue Stand: die Zeile bleibt offen bzw. wird nur noch verknüpft, wenn sie weiterhin sicher ist
+    svc.evaluate(bid)
+    n = BA.auto_link(svc, bid)
+    assert n == len({rc.idx for rc in svc.rows(bid) if rc.status == "linked"}) <= 1

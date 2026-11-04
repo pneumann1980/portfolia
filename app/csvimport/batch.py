@@ -30,7 +30,18 @@ from typing import Any, ClassVar
 from app.csvimport import assess as A
 from app.csvimport import review as RV
 from app.csvimport.events import derive_tx_hash, identity_keys, normalize_hash
-from app.csvimport.service import _LOCK, STATUS_LABEL, RowCtx, line_key, pair_accepted
+from app.csvimport.service import (
+    _LOCK,
+    STALE_REFS_TEXT,
+    STATUS_LABEL,
+    RowCtx,
+    StaleRefs,
+    check_revs,
+    line_key,
+    pair_accepted,
+    ref_revs,
+    refs_revision,
+)
 from app.db import fallback
 from app.util.timeutil import iso, to_local_date
 
@@ -315,6 +326,10 @@ class Plan:
     items: list[Item] = field(default_factory=list)
     # ausdrückliche Einzelentscheidungen (Zeile → „pair“ | „nopair“), z. B. im Übernahmekontext; Teil der Vorschau
     approved: dict[int, str] = field(default_factory=dict)
+    # Abhängige Buchungen der geplanten Zeilenaktionen (Verknüpfungsziel, Dubletten-Bezug, Journal-Transferpartner) →
+    # erwartete Revision: beim Anzeigen ermittelt (bzw. bei einer Transferentscheidung deren Stand), Teil des
+    # Fingerabdrucks und **verbindlich** in der Schreibtransaktion von :func:`execute` geprüft
+    refs: dict[str, str] = field(default_factory=dict)
     impact: list[dict[str, Any]] = field(default_factory=list)  # Bestandswirkung (übernehmen)
     prevented: list[dict[str, Any]] = field(default_factory=list)  # sonst gebuchte Mengen (verknüpfen/auslassen)
     questions: list[tuple[RowCtx, str]] = field(default_factory=list)  # offene Fragen (z. B. Gebühr nicht belegbar)
@@ -347,7 +362,8 @@ class Plan:
         data = json.dumps(sorted([i.rc.idx, i.act or "", i.target or "", row_state(i.rc),
                                   self.approved.get(i.rc.idx, "")] for i in self.items),
                           sort_keys=True, default=str)
-        return hashlib.sha256(f"{self.action}|{int(self.force)}|{data}".encode()).hexdigest()[:24]
+        refs = json.dumps(sorted(self.refs.items()))
+        return hashlib.sha256(f"{self.action}|{int(self.force)}|{data}|{refs}".encode()).hexdigest()[:24]
 
 
 def row_state(rc: RowCtx) -> list[Any]:
@@ -372,36 +388,41 @@ def effect_rows(rows: list[RowCtx], event: str) -> list[RowCtx]:
     return sorted({rc.idx: rc for rc in [*own, *partners]}.values(), key=lambda r: r.idx)
 
 
+def row_refs(rc: RowCtx) -> list[str]:
+    """Vorhandene Buchungen, von denen eine Zeilenaktion abhängt: Verknüpfungsziel, Dubletten-Bezug, Transferpartner
+    im Journal."""
+    out = {str(t) for t in [(rc.match or {}).get("target"), *(rc.dup_of or [])] if t}
+    if (rc.pair_ref or "").startswith("j:"):
+        out.add(str(rc.pair_ref)[2:])
+    return sorted(out)
+
+
+def decided_pair_ref(rc: RowCtx) -> str | None:
+    """Journalpartner einer gespeicherten Transferentscheidung („ja“/„nein“) – gebunden an dessen Stand bei der
+    Entscheidung (``pair_rev``); ohne Bindung gilt die Entscheidung nicht."""
+    if (rc.pair_ref or "").startswith("j:") and rc.pair_ok in (0, 1) and rc.pair_rev:
+        return str(rc.pair_ref)[2:]
+    return None
+
+
+def expected_revs(conn: Any, rcs: Iterable[RowCtx]) -> dict[str, str]:
+    """Erwarteter Stand der abhängigen Buchungen: Stand bei der Transferentscheidung, sonst der jetzige."""
+    rcs = list(rcs)
+    out = ref_revs(conn, [t for rc in rcs for t in row_refs(rc)])
+    for rc in rcs:
+        if (t := decided_pair_ref(rc)) is not None:
+            out[t] = str(rc.pair_rev)
+    return out
+
+
+def row_revision(conn: Any, rc: RowCtx) -> str:
+    """Angezeigter Stand der Abhängigkeiten einer Zeile (für Einzelaktionen der Detailansicht)."""
+    return hashlib.sha256(json.dumps(sorted(expected_revs(conn, [rc]).items())).encode()).hexdigest()[:24]
+
+
 def effect_refs(rows: list[RowCtx], event: str) -> list[str]:
     """Vorhandene Buchungen, von denen eine Antwort abhängt (Transferpartner im Journal, Verknüpfungsziel)."""
-    eff = effect_rows(rows, event)
-    return sorted({str(rc.pair_ref)[2:] for rc in eff if (rc.pair_ref or "").startswith("j:")}
-                  | {str(t) for rc in eff for t in [(rc.match or {}).get("target"), *(rc.dup_of or [])] if t})
-
-
-_REV_SKIP = {"id", "created_at", "updated_at"}
-
-
-def refs_revision(conn: Any, refs: Iterable[str]) -> str:
-    """Revision der abhängigen Buchungen **aus der Datenbank** (Import-Zeile des aktiven Imports, Änderung in der App,
-    Journalzeile). Innerhalb einer Schreibtransaktion gelesen, ist sie atomar gegenüber parallelen Bearbeitungen."""
-    row = conn.execute("SELECT value FROM app_state WHERE key='active_import_id'").fetchone()
-    iid = row[0] if row is not None else None
-    out = [iid]
-    for t in sorted(set(refs)):
-        parts = []
-        for sql in ("SELECT * FROM journal_tx WHERE tx_id=?", "SELECT * FROM tx_override WHERE tx_id=?",
-                    "SELECT * FROM tx WHERE tx_id=? AND import_id=?"):
-            args = (t, iid) if sql.endswith("import_id=?") else (t,)
-            r = conn.execute(sql, args).fetchone() if "import_id" not in sql or iid is not None else None
-            cols = list(r.keys()) if r is not None else []  # sqlite3.Row
-            parts.append(None if r is None else sorted((k, r[k]) for k in cols if k not in _REV_SKIP))
-        out.append([t, parts])
-    return hashlib.sha256(json.dumps(out, default=str).encode()).hexdigest()[:24]
-
-
-class StaleRefs(Exception):
-    """Abhängige Buchung hat sich seit der Anzeige geändert – nichts wird geschrieben."""
+    return sorted({t for rc in effect_rows(rows, event) for t in row_refs(rc)})
 
 
 def effect_digest(ctx: Any, rows: list[RowCtx], event: str) -> str:
@@ -531,10 +552,14 @@ def plan(svc: Any, bid: int, action: str, idxs: Iterable[int], force: bool = Fal
     p = Plan(action=action, force=force, approved=ok)
     for i in sorted(chosen):
         rc = by_idx[i]
-        # „pair“/„nopair“ wirken wie eine ausdrückliche Bestätigung der Zeile; „include“ öffnet nur die Prüfmarkierung
-        # der Quelle – Abweichungen zu einer vorhandenen Buchung, Dubletten und Unvollständiges bleiben gesperrt
+        # gespeicherte Transferentscheidung zum Journalpartner (an dessen Stand gebunden): beantwortet genau die
+        # Transferfrage – wie eine Freigabe im Übernahmekontext, aber ohne weitere Sperren zu öffnen (N11)
+        choice = ok.get(i) or ({1: "pair", 0: "nopair"}[int(rc.pair_ok)]  # type: ignore[arg-type]
+                               if decided_pair_ref(rc) is not None else None)
+        # „pair“/„nopair“ (ausdrücklich übergeben) wirken wie eine Bestätigung der Zeile; „include“ öffnet nur die
+        # Prüfmarkierung der Quelle – Abweichungen zu einer vorhandenen Buchung, Dubletten, Unvollständiges bleiben
         act, note, target = _decide(action, rc, batch["kind"], force or ok.get(i) in ("pair", "nopair"), by_idx,
-                                    chosen, ok.get(i))
+                                    chosen, choice)
         p.items.append(Item(rc, act, note, target))
     # Transfer-Paare, deren Partner ausgeschlossen wurde, ebenfalls ausschließen (nur gemeinsam buchen)
     inc = {i.rc.idx for i in p.items if i.act == "include"}
@@ -544,6 +569,7 @@ def plan(svc: Any, bid: int, action: str, idxs: Iterable[int], force: bool = Fal
             other = int(rc.pair_ref[2:])
             if other in by_idx and by_idx[other].open and other not in inc:
                 it.act, it.note = None, "Transfer-Partner nicht übernehmbar – nur gemeinsam"
+    p.refs = expected_revs(svc.db.conn, [it.rc for it in p.todo if it.act in ("link", "include")])
     _impact(svc, p)
     for it in p.todo:
         m = it.rc.match or {}
@@ -643,9 +669,15 @@ def _event_one_to_one(rc: RowCtx, rows: list[RowCtx], link_targets: Mapping[int,
 def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str, fingerprint: str,
             force: bool = False, params: Mapping[str, Any] | None = None, in_tx: Any = None,
             approved: Mapping[int, str] | None = None,
-            expect_refs: tuple[list[str], str] | None = None) -> dict[str, Any]:
+            expect_refs: tuple[list[str], str] | Mapping[str, str] | None = None) -> dict[str, Any]:
     """Stapelaktion ausführen – genau einmal je Vorschau (``token``) und nur, wenn die Vorschau noch gilt
-    (``fingerprint``). Alles in einer Transaktion; danach neu bewerten."""
+    (``fingerprint``). Alles in einer Transaktion; danach neu bewerten.
+
+    Abhängige Buchungen (``Plan.refs``) werden **immer** als erste Anweisung der Schreibtransaktion gegen den
+    erwarteten Stand geprüft – der Fingerabdruck enthält ihn, eine aus der Anzeige stammende Vorschau ist also an den
+    angezeigten Stand gebunden. Wer den Fingerabdruck erst beim Absenden bildet, übergibt den angezeigten Stand
+    zusätzlich als ``expect_refs`` (gemeinsame Revision ``(Bezüge, Revision)`` oder je Buchung ``{Bezug: Revision}``).
+    """
     if action not in ACTIONS:
         return {"errors": ["Unbekannte Aktion."]}
     db = svc.db
@@ -679,8 +711,8 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
             return _execute_tx(svc, db, bid, action, token, force, params, in_tx, expect_refs, p, rows, orig,
                                cplan, only, batch, source)
         except StaleRefs:
-            return {"errors": ["Eine abhängige Buchung (Verknüpfungsziel bzw. Transferpartner) wurde seit der Anzeige "
-                               "geändert – es wurde nichts geändert. Bitte die neu angezeigten Angaben prüfen."]}
+            svc.evaluate(bid)  # geänderte Partner: gespeicherte Transferentscheidung sichtbar zurückgesetzt
+            return {"errors": [STALE_REFS_TEXT]}
 
 
 def _execute_tx(svc: Any, db: Any, bid: int, action: str, token: str, force: bool, params: Any, in_tx: Any,
@@ -695,8 +727,13 @@ def _execute_tx(svc: Any, db: Any, bid: int, action: str, token: str, force: boo
     targets = {i.rc.idx: i.target for i in p.todo if i.act == "link" and i.target}
     label = ACTIONS[action][0]
     with db.transaction() as c:
-        if expect_refs is not None and refs_revision(c, expect_refs[0]) != expect_refs[1]:
-            raise StaleRefs  # innerhalb der Schreibtransaktion: parallele Bearbeitung sicher erkannt
+        # innerhalb der Schreibtransaktion: parallele Bearbeitung sicher erkannt bzw. serialisiert
+        check_revs(c, p.refs)  # verbindlich: Stand aus der Vorschau bzw. der Transferentscheidung
+        if isinstance(expect_refs, tuple):
+            if refs_revision(c, expect_refs[0]) != expect_refs[1]:
+                raise StaleRefs
+        elif expect_refs is not None:
+            check_revs(c, expect_refs)
         aid = int(c.execute(
             "INSERT INTO import_action(token, batch_id, action, label, params_json, ops_json, created_at) "
             "VALUES (?,?,?,?,?, '{}', ?)",
