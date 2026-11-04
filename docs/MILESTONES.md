@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 04.11.2026 · Version 0.91.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 04.11.2026 · Version 0.92.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,26 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.92.0 – Review „Buchungen prüfen“ 0.91.0: Bestätigungen an den angezeigten Stand gebunden, Journaltransfer im Vorschauweg
+
+Abgleich, Ursache, Korrektur, Nachweis und Grenzen je Punkt: [`BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](BUCHUNGEN_PRUEFEN_KORREKTUREN.md#review-vom-04112026-zu-0910-version-0920).
+5 der 10 Reviewfälle schlugen auf 0.91.0 fehl; alle 10 bestehen jetzt, ergänzt um eigene Regressionstests.
+
+* **Gemeinsamer Vertrag:** Jeder Buchungsplan trägt den erwarteten Stand der Buchungen, von denen er abhängt
+  (Verknüpfungsziel, Dubletten-Bezug, Journal-Transferpartner); der Fingerabdruck enthält ihn, und die Ausführung prüft
+  ihn **immer** in ihrer Schreibtransaktion.
+* **N10:** Detailvorschau und Einzelknopf „verknüpfen“ lehnen ab, wenn sich das angezeigte Ziel geändert hat (Wert,
+  Menge, Konto, Gebühr, Löschen); keine teilweise gespeicherten Eingaben. Sammelvorschau und automatisches Verknüpfen
+  folgen demselben Vertrag.
+* **N11:** „ja“/„nein“ zu einem bereits gebuchten Transferpartner gilt auch in der normalen Vorschau – gebunden an den
+  Partnerstand bei der Entscheidung (Migration 36, `csv_row.pair_rev`); ändert sich der Partner, wird neu gefragt.
+* **N12:** Die Quellenübernahme prüft den bestätigten Journalpartner in der Buchungstransaktion gegen den Stand aus der
+  bestätigten Vorschau; eine Fremdänderung führt zur vollständigen Kompensation und bleibt selbst erhalten.
+* **mypy:** CI-Schritt bleibt meldend und nennt jetzt die Gesamtzahl; Bestand 334 Fehler (unverändert, keine neuen).
+
+**Grenzen:** vor 0.92.0 gespeicherte Journaltransfer-Entscheidungen und offene Formulare aus 0.91.0 müssen einmal neu
+bestätigt werden.
 
 ## 0.91.0 – Review „Buchungen prüfen“ 0.90.0: Gebühren, atomare Bestätigung, Einzelbuchung, gebundenes Entfernen
 

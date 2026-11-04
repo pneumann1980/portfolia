@@ -45,7 +45,9 @@ Seit 0.68.0 gibt es zwei Stufen: *belegt* (`takeover.PROOF`, Bitpanda) und *best
      Menge, EUR-Wert) wird als Empfängergebühr mitgebucht – eine Gebühr nur in EUR ohne Asset verhindert den Ersatz
      sichtbar; „Einzeln buchen“ öffnet nur die Prüfmarkierung der Quelle; Entfernen verlangt Laufkennung und Stand der
      Entscheidung (atomar geprüft); angewendete Entscheidungen werden im Ergebnis des Laufs protokolliert und als
-     „angewendet“ angezeigt.
+     „angewendet“ angezeigt. Ab 0.92.0: bei einem Journalpartner speichert die Entscheidung dessen Stand aus der
+     bestätigten Vorschau; die Buchung prüft ihn in ihrer Transaktion – eine zwischenzeitliche Fremdänderung führt zur
+     vollständigen Rücknahme des Laufs (die Änderung selbst bleibt), die Entscheidung erscheint als „verworfen“.
    * **Zählung (ab 0.89.0, Bitpanda):** Einträge von `/operations` = ausgewertete Vorgänge + begründete Auslassungen,
      sonst gesperrt; fehlende Zählung gilt als unbekannt.
 3. **Vorschau** – Beweis, Bestand (jetzt · nach Übernahme · beobachtet), Wirkung: ausgeblendete und bleibende Buchungen,

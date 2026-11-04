@@ -284,3 +284,72 @@ parallele Journaländerung genau vor dem Aufruf auslöst; die neue Prüfung lieg
 * Mehrere Prozesse auf derselben Datenbank: Entscheidungen (N08) und Stapelaktionen (N06) sind über die
   SQLite-Schreibtransaktion serialisiert; der Probelauf selbst bleibt prozesslokal zwischengespeichert.
 * Die Grenzen der Nachprüfung (konkurrierende Partner, Probelauf-Kosten) gelten weiter.
+
+# Review vom 04.11.2026 zu 0.91.0 (Version 0.92.0)
+
+Grundlage: `Portfolia_Buchungen_pruefen_Review_091_2026-11-04.md` mit Nachweispaket (`test_review_091.py`, 10 Fälle,
+geprüft auf `bc612c0`, 0.91.0). **Reproduktion auf `bc612c0`: 5 Soll-Tests schlugen fehl** (N10 ×2, N11 ×2, N12), die
+5 Kontrollfälle bestanden. **Auf dem Endstand bestehen alle 10.** Die Fälle sind mit unveränderten fachlichen
+Erwartungen in `tests/test_review_091.py` übernommen und um eigene Fälle ergänzt; zwei weitere stehen in
+`tests/test_reconciliation_pipeline.py` (Sammelvorschau, automatisches Verknüpfen).
+
+## Gemeinsamer Vertrag: Revision abhängiger Buchungen (Grundlage für N10–N12)
+
+* `service.ref_revs(conn, refs)`: Revision je abhängiger Buchung **aus der Datenbank** – Journalzeile, Änderung in der
+  App (`tx_override`), Zeile des aktiven Imports; ohne technische Spalten (Kennung, Zeitstempel, Importnummer), also
+  unverändert bei inhaltsgleichem Speichern. Abhängig sind Verknüpfungsziel, Dubletten-Bezug und Journal-Transferpartner
+  (`batch.row_refs`).
+* `batch.Plan.refs`: erwarteter Stand dieser Buchungen für alle geplanten Verknüpfungen/Buchungen; bei einer
+  gespeicherten Transferentscheidung der Stand **zum Zeitpunkt der Entscheidung**. Er ist Teil von
+  `Plan.fingerprint()` – eine aus der Anzeige stammende Vorschau ist damit an den angezeigten Stand gebunden.
+* `batch.execute` prüft `Plan.refs` **immer** als erste Anweisung der Schreibtransaktion (`BEGIN IMMEDIATE`), zusätzlich
+  einen vom Aufrufer übergebenen angezeigten Stand (`expect_refs`). Eine Änderung davor wird erkannt; eine danach wartet
+  auf den Commit. Abgelehnt wird mit Rücknahme der Transaktion und ohne Teilzustand.
+* Der ältere Weg „Buchungen übernehmen“ (`commit_apply`) prüft Transferentscheidungen zu Journalpartnern ebenfalls in
+  seiner Transaktion.
+
+| ID | Abgleich auf bc612c0 | Ursache | Änderung | Nachweis | Verbleibende Grenze |
+| --- | --- | --- | --- | --- | --- |
+| **N10** Detailaktionen | bestätigt: alte Detailvorschau (`action=link&force=1`) und alter Knopf „verknüpfen“ verknüpften nach Änderung des Ziels (EUR-Wert 1 → 7) | `expect_refs` war optional und nur im Assistenten übergeben; `Plan.fingerprint` band nur Zeile und Ziel-ID; der Einzelknopf bildete seinen Fingerabdruck erst beim Absenden | Vertrag oben: Fingerabdruck enthält den Stand der Abhängigkeiten, Prüfung in der Transaktion verbindlich. Detailseite rendert je Zeile mit Abhängigkeiten `rev_<Zeile>`; der Einzelknopf prüft ihn **vor** dem Speichern der übrigen Eingaben (sonst nichts gespeichert, nichts ausgeführt), übergibt ihn an `execute` und stellt bei einer Ablehnung danach die vorherigen Eingaben wieder her. Fehlt die Bindung bei einer Zeile mit Abhängigkeiten, wird abgelehnt. Sammelvorschau (`bulk.run`) nutzt den gerenderten Fingerabdruck und ist damit gebunden; automatisches Verknüpfen (Stufe A, ohne Anzeige) ist über `Plan.refs` von der Planung bis zur Transaktion gebunden | Reviewfälle ×2; eigene: alte Vorschau und alter Knopf nach Änderung von Wert, Menge, Konto, Gebühr, Löschstatus (10 Fälle; keine Verknüpfung, keine Stapelaktion, keine gespeicherte Nebeneingabe, erneutes Absenden weiterhin abgelehnt); neue Vorschau bzw. neuer Knopf genau einmal mit Rücknahme; echte parallele Änderung zwischen Prüfung und Schreiben (Verknüpfung, Journaltransfer); Dienstebene mit frisch gebildetem Fingerabdruck; Sammelvorschau und Stufe A mit parallelem zweitem Thread | Formulare aus 0.91.0 ohne `rev_` werden nach dem Update einmal abgelehnt (Seite neu laden) |
+| **N11** Journaltransfer im Vorschauweg | bestätigt: nach gespeichertem „ja“ bzw. „nein“ blieb der Plan leer („Transfer mit einer bereits übernommenen Buchung – nur einzeln bestätigen“) | Die Planersperre für `j:`-Partner verlangte eine ausdrückliche Freigabe (`approved`), die nur die Quellenübernahme übergab; das gespeicherte `pair_ok` zählte nicht | Transferentscheidung zum Journalpartner speichert dessen Stand (`csv_row.pair_rev`, Migration 36; aus dem gerenderten Formular `pairrev_<Zeile>`). Der Planer wertet eine so gebundene Entscheidung als Antwort genau auf die Transferfrage (wie die Freigabe der Übernahme) – **ohne** weitere Sperren zu öffnen (kein `force`): Dubletten, Abweichungen, Unvollständiges, Mehrdeutigkeit bleiben gesperrt. Ändert sich der Partner danach, setzt die Bewertung die Entscheidung zurück und zeigt „Gegenbuchung … nach deiner Transferentscheidung geändert – bitte erneut entscheiden“ | Reviewfälle ×2 und Kontrollfälle (älterer Weg „Buchungen übernehmen“ ×2); eigene: gerenderte Formulare → ja/nein → Vorschau → Buchung → Bestände/Lots (Anschaffungsdatum fortgeführt) → erneutes Absenden ohne Doppelung → Rücknahme exakt, je mit und ohne Gebühr (4 Fälle); Partneränderung nach der Entscheidung (Wert, Menge, Konto, Gebühr, Löschen: 5 Fälle); veraltetes Entscheidungsformular; älterer Commit-Weg mit Partneränderung vor der Transaktion | Entscheidungen zu Journalpartnern, die vor 0.92.0 gespeichert wurden, haben keinen Partnerstand; die Bewertung setzt sie sichtbar zurück – sie müssen auf jedem Weg einmal neu bestätigt werden (bewusst: der Partner kann sich seitdem geändert haben). Paare mit einem Journalpartner werden ohne ausdrückliche Entscheidung auf keinem Weg gebucht (unverändert) |
+| **N12** Übernahme mit Journalpartner | bestätigt: Änderung des Partners (55 → 777 €) zwischen Planung und Buchung → Zusammenführung, `exact=True` | `_apply_steps` übergab `approved`, aber keinen erwarteten Partnerstand; die Mengen-Nachprüfung erkennt reine Wertänderungen nicht | Die Entscheidung speichert den Partnerstand aus der bestätigten Vorschau (`partner.rev`); `_validate_decisions` prüft ihn; `_apply_decisions` gibt **diesen** Stand an den Prüf-Stapel (`pairrev_`), nicht den jetzigen; `execute` prüft ihn in der Buchungstransaktion. Abweichung → Ablehnung und vollständige Kompensation (Ausblendung, Stapel); die Fremdänderung bleibt. Ausblendungen und ersetzte Gegenbuchungen des Laufs sind eigene Planschritte und gehen nicht in die Partnerprüfung ein. Eine abgelehnte Entscheidung legt keine Zeilensperre mehr ab: sie erscheint als „verworfen“, nach dem Entfernen bietet der Probelauf neu an | Reviewfall; eigene: Änderung von Wert, Gebühr, Menge, Konto, Löschstatus jeweils vor der Ausblendung und vor der Buchung (10 Fälle) – abgelehnt, Lauf `staged` ohne Bezüge, kein Wiederherstellungsbedarf, Fremdänderung erhalten; Wiederanlauf: verworfene Entscheidung entfernen, neu entscheiden, genau eine Übernahme, zweites Absenden abgelehnt, Rücknahme; unveränderter Partner weiterhin zusammengeführt und exakt zurückgenommen | Import-Gegenbuchungen anderer Konten (`imp`) werden im selben Lauf ausgeblendet und aus dem bestätigten Stand ersetzt; ihre Prüfung bleibt die der Bewertung (`_tx_basis`) |
+
+## Teststeuerung
+
+* Nebenläufigkeit: Die Fälle ersetzen `BA.execute` (Reviewfall N12), `BA._execute_tx`, `A.apply_plan` bzw.
+  `commit_plan` durch Wrapper, die einen echten zweiten Thread über den regulären Journaldienst ändern lassen und dann
+  den unveränderten Dienst aufrufen. Die Prüfung liegt in der Schreibtransaktion, also hinter diesen Punkten.
+* **Angepasst:** `tests/test_transfer_side.py` und `tests/test_assess_matching.py` sendeten den Einzelknopf ohne die
+  gerenderten Felder. Sie verwenden jetzt `tests.helpers.row_action`, das wie ein Browser den auf der Detailseite
+  angezeigten Stand (`rev_<Zeile>`) mitsendet; die fachlichen Erwartungen sind unverändert.
+
+## mypy
+
+Der CI-Schritt ist ausdrücklich nur meldend (`continue-on-error: true`, `|| true`) – grün belegt keine Fehlerfreiheit.
+Lokal mit demselben Aufruf (`mypy app/news app/jobs app/web app/health.py app/logging_setup.py --ignore-missing-imports`):
+**334 Fehler in 61 Dateien** auf `bc612c0` **und** auf dem Endstand (Ausgabe zeilenweise ohne Zeilennummern identisch);
+in den geänderten Modulen `csvimport/batch.py`, `csvimport/module.py`, `csvimport/service.py`, `datasources/takeover.py`
+jeweils 39 bestehende Fehler vorher und nachher. Die Änderung führt also keine neuen Typfehler ein; der Bestand bleibt
+offen (vor allem `datasources/service.py` 67, `diagnosis/audit.py` 31, `documentimport/bridge.py` 25,
+`csvimport/service.py` 23). Der CI-Schritt gibt jetzt die Gesamtzahl aus (`--no-error-summary` entfernt), bleibt aber
+nicht blockierend.
+
+## Tests und Befehle (0.92.0)
+
+| Befehl | Ergebnis |
+| --- | --- |
+| `ruff check app tests scripts` | ohne Befund |
+| `python -m app validate examples/beispiel-import.zip` | 0 Fehler, 0 Warnungen, 124 Transaktionen |
+| Reviewfälle (`test_review_091.py`) auf `bc612c0` | 5 fehlgeschlagen, 5 bestanden |
+| `tests/test_review_091.py` (47) + `tests/test_reconciliation_pipeline.py` (7, davon 2 neu) auf `bc612c0` | 33 fehlgeschlagen (5 Reviewfälle, 26 eigene, 2 neue Abgleichsfälle); 21 bestanden (5 Kontrollfälle, 11 eigene Kontroll-/Sicherungsfälle, z. B. Änderungen, bei denen die Zuordnung schon vorher entfiel, 5 bestehende Abgleichsfälle) |
+| dieselben 54 auf dem Endstand | 54 bestanden |
+| `mypy` wie in CI | 334 Fehler in 61 Dateien – identisch zu `bc612c0` |
+| Volltest `TZ=Europe/Berlin pytest -q -x tests` (Worktree des Endstands) | 2185 Tests, davon 2182 bestanden und 3 übersprungen, 0 fehlgeschlagen (Exit-Code 0) |
+
+## Grenzen nach dem Review 0.91.0
+
+* Geprüft werden die Buchungen, von denen die jeweilige Aktion abhängt; andere gleichzeitig geänderte Buchungen ohne
+  Bezug blockieren nicht (gewollt).
+* Der Probelauf der Übernahme bleibt prozesslokal zwischengespeichert; maßgeblich ist die Prüfung im echten Lauf.
+* Bestehender mypy-Bestand (s. o.) und die Grenzen der früheren Runden (konkurrierende Partner, reine EUR-Gebühr ohne
+  Asset) gelten weiter.
