@@ -21,13 +21,22 @@
 
   {% if not task %}
   <section class="card guide-card">
-    {% if step.skipped %}
+    {% if step.skipped or rest_n %}
     <h2>Für diesen Durchgang fertig</h2>
-    <p><b>{{ step.skipped }} Aufgabe{{ 'n' if step.skipped != 1 }} übersprungen – {{ 'sie ist' if step.skipped == 1 else 'sie sind' }} weiter offen</b> und {{ 'zählt' if step.skipped == 1 else 'zählen' }} nicht als gelöst. Du kannst sie jederzeit erneut ansehen.</p>
+    <p>Noch nicht alles ist entschieden – nichts davon zählt als gelöst:</p>
+    <ul class="guide-rest">
+      {% if step.skipped %}<li><b>{{ step.skipped }} übersprungen</b> – weiter offen, jederzeit erneut ansehen.</li>{% endif %}
+      {% if rest.import_deferred %}<li><b>{{ rest.import_deferred }} Vorgang{{ '' if rest.import_deferred == 1 else 'e' }} zurückgestellt</b> („Weiß ich nicht“) – <a href="/journal/pruefung?tab=offen">in der Prüfliste wieder aufnehmen</a>.</li>{% endif %}
+      {% if rest.import_open %}<li><b>{{ rest.import_open }} Vorgang{{ '' if rest.import_open == 1 else 'e' }} noch offen</b> im Prüf-Stapel – <a href="/journal/pruefung">Prüfliste öffnen</a>.</li>{% endif %}
+      {% if rest.findings_deferred %}<li><b>{{ rest.findings_deferred }} Frage{{ '' if rest.findings_deferred == 1 else 'n' }} zeitweise zurückgestellt</b> – kommt nach einigen Tagen bzw. bei geänderten Daten wieder.</li>{% endif %}
+      {% if rest.cases_deferred %}<li><b>{{ rest.cases_deferred }} Klärungsfall{{ '' if rest.cases_deferred == 1 else 'fälle' }} zurückgestellt</b> – öffnet sich bei neuer Evidenz; <a href="/quality/klaerung">Klärungsfälle ansehen</a>.</li>{% endif %}
+      {% if rest.cases_waiting %}<li><b>{{ rest.cases_waiting }} Klärungsfall{{ '' if rest.cases_waiting == 1 else 'fälle' }} wartet auf Belege</b> – <a href="/quality/klaerung">Klärungsfälle ansehen</a>.</li>{% endif %}
+    </ul>
     {% else %}
     <h2>Alles geprüft</h2>
-    <p>Es gibt nichts mehr, das du entscheiden musst. Neue Fragen erscheinen nach dem nächsten Import oder Abruf von selbst.</p>
+    <p>Es gibt nichts mehr, das du entscheiden musst – auch nichts Zurückgestelltes. Neue Fragen erscheinen nach dem nächsten Import oder Abruf von selbst.</p>
     {% endif %}
+    {% if declined %}<p class="hint">Bewusst abgelehnt (keine offene Arbeit): {% for d in declined %}Quellenvorrang {{ d.name }}{% if d.at %} am {{ d.at|datetime_de }}{% endif %} · <a href="/quality/assistent/protokoll#weitere">erneut fragen</a>{{ '; ' if not loop.last }}{% endfor %}</p>{% endif %}
     <div class="row"><a class="btn primary" href="/quality">Zur Übersicht</a>{% if step.skipped %}<a class="btn" href="/quality/assistent?new=1">Übersprungene ansehen</a>{% endif %}{% if not hints %}<a class="btn ghost" href="/quality/assistent?new=1&amp;hints=1">Auch Hinweise ohne Fehler ansehen</a>{% endif %}</div>
   </section>
   {% else %}

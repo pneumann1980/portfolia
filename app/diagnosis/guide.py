@@ -252,10 +252,54 @@ def _takeover_tasks(ctx: Any, report: Any) -> list[Task]:
     return out
 
 
+DECLINED_AT_KEY = "guide.takeover_declined_at"  # Quelle → Zeitpunkt der Ablehnung (Anzeige, erneut öffnen)
+
+
 def decline_takeover(ctx: Any, sid: int) -> None:
     cur = set(ctx.db.get_state(DECLINED_KEY) or [])
     cur.add(int(sid))
     ctx.db.set_state(DECLINED_KEY, sorted(cur))
+    at = dict(ctx.db.get_state(DECLINED_AT_KEY) or {})
+    at[str(int(sid))] = datetime.now(UTC).isoformat(timespec="seconds")
+    ctx.db.set_state(DECLINED_AT_KEY, at)
+
+
+def declined_takeovers(ctx: Any) -> list[dict[str, Any]]:
+    """Abgelehnte Quellenpräferenzen mit Quelle und Datum – je einzeln wieder zu öffnen."""
+    ids = [int(x) for x in ctx.db.get_state(DECLINED_KEY) or []]
+    at = dict(ctx.db.get_state(DECLINED_AT_KEY) or {})
+    names = {int(r["id"]): r["name"] for r in ctx.db.q("SELECT id, name FROM data_source")} if ids else {}
+    return [{"sid": sid, "name": names.get(sid, f"Quelle {sid}"), "at": at.get(str(sid), "")} for sid in ids]
+
+
+def reopen_takeover(ctx: Any, sid: int) -> bool:
+    """Ablehnung einer Quellenpräferenz zurücknehmen: die Frage erscheint wieder (nichts sonst wird zurückgesetzt)."""
+    cur = {int(x) for x in ctx.db.get_state(DECLINED_KEY) or []}
+    if int(sid) not in cur:
+        return False
+    ctx.db.set_state(DECLINED_KEY, sorted(cur - {int(sid)}))
+    at = dict(ctx.db.get_state(DECLINED_AT_KEY) or {})
+    at.pop(str(int(sid)), None)
+    ctx.db.set_state(DECLINED_AT_KEY, at)
+    return True
+
+
+def rest_overview(ctx: Any) -> dict[str, int]:
+    """Fachlich noch offene Arbeit außerhalb der aktuell vorgelegten Fragen – aus den vorhandenen Zuständen (zentrale
+    Importprüfung, „Weiß ich nicht“-Befunde, Klärungsfälle), keine eigene Definition von „offen“."""
+    from app.csvimport import review as RV
+    from app.diagnosis import clarify as K
+    from app.diagnosis.engine import report_for
+
+    summ = RV.active_summary(ctx.db)
+    n_back = int(ctx.db.scalar("SELECT COUNT(*) FROM clarify_case WHERE status='zurueck'") or 0)
+    marks = ",".join("?" * len(K.OPEN_STATUSES))
+    n_wait = int(ctx.db.scalar(f"SELECT COUNT(*) FROM clarify_case WHERE status IN ({marks})",
+                               K.OPEN_STATUSES) or 0)
+    return {"import_deferred": summ.events["zurueckgestellt"],
+            "import_open": summ.open - summ.events["zurueckgestellt"],
+            "findings_deferred": len(_deferred(ctx, report_for(ctx))),
+            "cases_deferred": n_back, "cases_waiting": n_wait}
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -951,7 +995,43 @@ def detail(ctx: Any, task: Task) -> Task:
 # ----------------------------------------------------------------------------------------------------
 
 def parse_skip(raw: str) -> list[str]:
-    return [x for x in (raw or "").split(",") if len(x) == 8 and all(c in "0123456789abcdef" for c in x)][:60]
+    """Aufgabenbezüge (kid) aus Adresse bzw. altem Cookie – ohne Längenbegrenzung der Liste selbst (der Durchgang
+    liegt serverseitig, siehe :func:`load_pass`)."""
+    return list(dict.fromkeys(x for x in (raw or "").split(",")
+                              if len(x) == 8 and all(c in "0123456789abcdef" for c in x)))[:PASS_MAX]
+
+
+PASSES_STATE = "guide.passes"  # Durchgang → {"t": Zeitpunkt, "skip": [kid, …]} (serverseitig statt Cookie-Liste)
+PASS_MAX = 5000  # übersprungene Aufgaben je Durchgang
+PASS_KEEP = 30  # gespeicherte Durchgänge (älteste fallen weg)
+_PASS_RE = re.compile(r"p:[0-9a-f]{16}")
+
+
+def new_pass() -> str:
+    import secrets
+
+    return "p:" + secrets.token_hex(8)
+
+
+def is_pass(ref: str) -> bool:
+    return bool(_PASS_RE.fullmatch(ref or ""))
+
+
+def load_pass(db: Any, ref: str) -> list[str]:
+    """Übersprungene Aufgaben eines Durchgangs; ältere Cookies mit Kennungsliste werden weiter gelesen."""
+    if not is_pass(ref):
+        return parse_skip(ref)
+    all_ = db.get_state(PASSES_STATE) or {}
+    got = all_.get(ref) if isinstance(all_, dict) else None
+    return parse_skip(",".join(got.get("skip") or [])) if isinstance(got, dict) else []
+
+
+def save_pass(db: Any, ref: str, skip: list[str]) -> None:
+    all_ = db.get_state(PASSES_STATE) or {}
+    all_ = all_ if isinstance(all_, dict) else {}
+    all_[ref] = {"t": datetime.now(UTC).isoformat(timespec="seconds"), "skip": list(dict.fromkeys(skip))[:PASS_MAX]}
+    keep = sorted(all_.items(), key=lambda kv: str((kv[1] or {}).get("t") or ""), reverse=True)[:PASS_KEEP]
+    db.set_state(PASSES_STATE, dict(keep))
 
 
 def step(ctx: Any, skip: list[str], *, hints: bool = False, focus: str = "") -> Step:

@@ -35,11 +35,13 @@ MARK_TEXT = {"defer": "Für später vorgemerkt – nichts geändert.", "reject":
              "dismiss": "Gespeichert: ist in Ordnung so."}
 
 
-def _set(resp: Response, cur: str, skip: list[str], hints: bool) -> None:
+def _set(resp: Response, cur: str, ref: str, hints: bool) -> None:
+    """Cookies des Durchgangs: nur der Bezug ``ref`` auf den serverseitig gespeicherten Durchgang (übersprungene
+    Aufgaben), nie die Liste selbst – sie ist unbegrenzt und passt in kein Cookie."""
     kw: dict[str, Any] = {"max_age": FLOW_MAX_AGE, "path": "/", "samesite": "lax", "httponly": True}
     resp.set_cookie("dq_flow", "1", **kw)
     resp.set_cookie("dq_cur", cur, **kw)
-    resp.set_cookie("dq_skip", ",".join(skip), **kw)
+    resp.set_cookie("dq_skip", ref, **kw)
     resp.set_cookie("dq_hints", "1" if hints else "", **kw)
 
 
@@ -89,10 +91,13 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
           focus: str = "") -> Response:
     ctx = get_ctx(request)
     show_hints = hints == "1" if hints else (request.cookies.get("dq_hints") == "1" and not new)
-    skipped = [] if new else G.parse_skip(request.cookies.get("dq_skip", ""))
+    raw = request.cookies.get("dq_skip", "")
+    ref = raw if G.is_pass(raw) and not new else G.new_pass()
+    skipped = [] if new else G.load_pass(ctx.db, raw)
     for x in G.parse_skip(skip):
         if x not in skipped:
             skipped.append(x)
+    G.save_pass(ctx.db, ref, skipped)
     st = G.step(ctx, skipped, hints=show_hints, focus=focus)
     if st.task is not None and chosen and chosen not in {a.id for a in st.task.answers}:
         chosen = ""  # Antwort gehört zu einer anderen (inzwischen erledigten) Aufgabe
@@ -114,14 +119,17 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
         n = len(G.similar(ctx, same["sig"], same["sa"]))
         if n:
             batch = {**same, "n": n}
-    resp = render(request, "guide.html", active="quality", step=st, task=st.task, title=G.TITLE,
+    rest = G.rest_overview(ctx) if st.task is None else {}
+    declined = G.declined_takeovers(ctx) if st.task is None else []
+    resp = render(request, "guide.html", active="quality", step=st, task=st.task, title=G.TITLE, rest=rest,
+                  rest_n=sum(rest.values()), declined=declined,
                   pos=G.theme_position(st), msg=msg, err=err, errors=errors or [], undo=undo, gone=gone,
                   chosen=chosen, values=values or {}, values_for=chosen if values is not None else "",
                   hints=show_hints, batch=batch, **_common())
     if st.task is None:
         _clear(resp)
     else:
-        _set(resp, st.task.kid, skipped, show_hints)
+        _set(resp, st.task.kid, ref, show_hints)
     return resp
 
 
@@ -156,7 +164,8 @@ def _log_extra(ctx: Any, rows: list[Any]) -> dict[str, Any]:
                      "ORDER BY t.id DESC LIMIT 20")
     by_takeover = {int(r["action_id"]) for r in db.q("SELECT action_id FROM ds_takeover WHERE status='applied' AND "
                                                        "action_id IS NOT NULL")}
-    return {"owner": owner, "deps": deps, "acts": acts, "takeovers": takeovers, "act_owned": by_takeover}
+    return {"owner": owner, "deps": deps, "acts": acts, "takeovers": takeovers, "act_owned": by_takeover,
+            "declined": G.declined_takeovers(ctx)}
 
 
 def _go_log(**q: str) -> Response:
@@ -601,6 +610,13 @@ def make_router() -> APIRouter:
             names = dict(p.choices)
             out.append((p.label, ", ".join(names.get(v, v) for v in vals) if vals else "keine Auswahl"))
         return out
+
+    @router.post(f"{BASE}/vorrang/{{sid}}/wieder")
+    def takeover_reopen(request: Request, sid: int) -> Response:
+        """Abgelehnte Quellenpräferenz gezielt wieder öffnen – ohne den übrigen Prüfablauf zurückzusetzen."""
+        ok = G.reopen_takeover(get_ctx(request), sid)
+        return _to_log(msg="Die Frage zum Quellenvorrang erscheint wieder in „Buchungen prüfen“." if ok else "",
+                       err="" if ok else "Diese Ablehnung besteht nicht mehr.")
 
     @router.post(f"{BASE}/rueckgaengig")
     async def undo(request: Request) -> Response:

@@ -807,3 +807,87 @@ def test_V04_partial_progress_of_a_case_is_reported(c, monkeypatch):
     r = post(c, "/quality/assistent/antwort", {"typ": "fall", "ref": "kg-x", "kid": "abcdef01", "a": "case:apply"})
     q = parse_qs(urlsplit(r.headers["location"]).query)
     assert q["msg"] == [msg]
+
+
+# ---- R08 · Durchgang mit deutlich mehr als 60 übersprungenen Aufgaben -------------------------------------------
+
+def test_R08_skipping_far_more_than_60_tasks_never_oscillates(c, monkeypatch):
+    tasks = [G.Task(key=f"probe:{n}", theme="bestand", kind="seite", heading=f"Probe {n}", ref=str(n),
+                    question=f"Frage Nummer {n:03d}?") for n in range(130)]
+    monkeypatch.setattr(G, "tasks", lambda ctx, hints=False: tasks)
+    page = c.get("/quality/assistent?new=1").text
+    seen = []
+    for n in range(len(tasks)):
+        cur = form_values(page)["kid"][0]
+        assert cur not in seen  # nie eine schon übersprungene Aufgabe erneut
+        seen.append(cur)
+        page = c.get("/quality/assistent?" + urlencode({"skip": cur})).text
+        if n == 69:  # mitten im Durchgang: Browser hält nur den Bezug, Fortsetzen ohne Parameter bleibt dort
+            ref = c.cookies.get("dq_skip") or ""
+            assert G.is_pass(ref) and len(ref) < 30
+            assert form_values(c.get("/quality/assistent").text)["kid"] == [tasks[70].kid]
+    assert seen == [t.kid for t in tasks]
+    assert "130 übersprungen" in page and "Alles geprüft" not in page
+    assert form_values(c.get("/quality/assistent?new=1").text)["kid"] == [tasks[0].kid]  # gezielt erneut öffnen
+
+
+def test_R08_old_cookie_lists_are_still_read(c, monkeypatch):
+    tasks = [G.Task(key=f"probe:{n}", theme="bestand", kind="seite", heading=f"Probe {n}", ref=str(n),
+                    question=f"Frage {n}?") for n in range(3)]
+    monkeypatch.setattr(G, "tasks", lambda ctx, hints=False: tasks)
+    c.cookies.set("dq_skip", ",".join(t.kid for t in tasks[:2]))
+    assert form_values(c.get("/quality/assistent").text)["kid"] == [tasks[2].kid]
+
+
+# ---- R12 · „Alles geprüft“ nur, wenn der fachliche Stand es trägt -----------------------------------------------
+
+def test_R12_deferred_work_is_reported_not_called_everything_checked(c):
+    from app.diagnosis import actions as A
+    from app.diagnosis import clarify as K
+    from app.diagnosis.engine import report_for
+
+    cx = c.app.state.ctx
+    bid = _new_row_batch(c)
+    for f in report_for(cx).findings:
+        if f.parent is None:
+            A.mark(cx, f.id, "defer")
+    for case in K.stored_cases(cx.db):
+        K.defer(cx, case["key"], "später")
+    csv_service(cx).set_rows(bid, {"dec_0": "defer"})
+    assert G.tasks(cx) == []
+    rest = G.rest_overview(cx)
+    assert rest["import_deferred"] == 1 and rest["cases_deferred"] >= 1
+    page = c.get("/quality/assistent?new=1").text
+    assert "Alles geprüft" not in page and "Für diesen Durchgang fertig" in page
+    assert "1 Vorgang zurückgestellt" in page and "zurückgestellt" in page
+
+
+def test_R12_everything_checked_only_without_open_work(c, monkeypatch):
+    monkeypatch.setattr(G, "tasks", lambda ctx, hints=False: [])
+    monkeypatch.setattr(G, "rest_overview", lambda ctx: dict.fromkeys(
+        ("import_deferred", "import_open", "findings_deferred", "cases_deferred", "cases_waiting"), 0))
+    assert "Alles geprüft" in c.get("/quality/assistent?new=1").text
+
+
+# ---- V03 · Abgelehnte Quellenpräferenz gezielt erneut öffnen ------------------------------------------------------
+
+def test_V03_declined_source_preference_is_visible_and_reopenable(config, master, api):
+    from app.diagnosis import actions as A
+    from app.diagnosis.engine import report_for
+
+    c, sid = started(config, api)
+    try:
+        cx = ctx(c)
+        f = next(f for f in report_for(cx).findings if f.parent is None)
+        A.mark(cx, f.id, "defer")  # anderer Prüfstand bleibt unberührt
+        G.decline_takeover(cx, sid)
+        page = c.get("/quality/assistent/protokoll").text
+        assert "Quellenvorrang für" in page and "abgelehnt am" in page and f"/vorrang/{sid}/wieder" in page
+        r = post(c, f"/quality/assistent/vorrang/{sid}/wieder", {})
+        assert "erscheint wieder" in parse_qs(urlsplit(r.headers["location"]).query)["msg"][0]
+        assert sid not in (cx.db.get_state(G.DECLINED_KEY) or [])
+        assert f.id in A.active_marks(cx.db)  # „Weiß ich nicht“ bleibt bestehen
+        assert "nicht mehr" in parse_qs(urlsplit(post(c, f"/quality/assistent/vorrang/{sid}/wieder", {})
+                                                 .headers["location"]).query)["err"][0]
+    finally:
+        c.__exit__(None, None, None)

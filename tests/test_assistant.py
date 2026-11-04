@@ -183,6 +183,7 @@ def test_answer_with_inputs_shows_the_effect_before_saving(client):
 
 def test_finished_state_offers_hints_and_clears_the_flow(client, monkeypatch):
     monkeypatch.setattr(G, "tasks", lambda ctx, hints=False: [])
+    monkeypatch.setattr(G, "rest_overview", lambda ctx: {"import_deferred": 0})  # fachlich nichts mehr offen
     page = client.get("/quality/assistent").text
     assert "Alles geprüft" in page and "Hinweise ohne Fehler" in page and client.cookies.get("dq_flow") is None
 
