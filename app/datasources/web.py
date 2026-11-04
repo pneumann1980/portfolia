@@ -681,8 +681,10 @@ def make_router() -> APIRouter:
 
         _takeover_ds(request, sid)
         f = await request.form()
-        ok = await run_in_threadpool(TK.undecide, get_ctx(request), sid, str(f.get("key") or "")[:300])
-        key, text = ("msg", "Entscheidung zurückgenommen.") if ok else ("error", "Diese Entscheidung besteht nicht.")
+        rid = str(f.get("rid") or "")
+        res = await run_in_threadpool(TK.undecide, get_ctx(request), sid, str(f.get("key") or "")[:300],
+                                      int(rid) if rid.isdigit() else None, str(f.get("stamp") or "")[:64])
+        key, text = ("error", " ".join(res["errors"])) if res["errors"] else ("msg", "Entscheidung zurückgenommen.")
         return _back(request, _tk_url(sid, _kid(f.get("kid")), **{key: text}))
 
     @router.post("/settings/datasources/{sid}/uebernahme/verwerfen")

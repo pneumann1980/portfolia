@@ -290,6 +290,8 @@ class Assessment:
     # Einzelentscheidungen dieses Laufs (Kennung → Entscheidung) – gültige bzw. verworfene (Grundlage geändert)
     decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
     stale: list[dict[str, Any]] = field(default_factory=list)
+    # bereits angewendete Entscheidungen (Protokoll des übernommenen Laufs; nicht mehr änderbar, nie „verworfen“)
+    applied_decisions: list[dict[str, Any]] = field(default_factory=list)
     replaced: list[Any] = field(default_factory=list)  # Import-Buchungen anderer Konten, die ein Transfer ersetzt
     problems: list[dict[str, Any]] = field(default_factory=list)  # einzeln bearbeitbare Probleme (stabile Kennung)
     breakdown: dict[str, list[tuple[str, Decimal]]] = field(default_factory=dict)  # Zusammensetzung je Asset
@@ -811,7 +813,10 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
     a.skipped = dict(meta.get("skipped") or {})
 
     lines, resolver = _lines(ctx, recs, account, prov)
-    _validate_decisions(ctx, a, recs)
+    if row["status"] == "staged":  # nur Vorschauentscheidungen prüfen; angewendete sind Protokoll (N09)
+        _validate_decisions(ctx, a, recs)
+    else:
+        a.applied_decisions = applied_decisions(row)
     a.lines = len(lines)
     a.events = len({ln.rec.event_key or ln.rec.ext_id for ln in lines})
     times = sorted(ln.rec.ts for ln in lines if not ln.rec.ts_missing)
@@ -1006,6 +1011,9 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
             p_ = d.get("partner") or {}
             t = by_id.get(str(p_.get("tx"))) if d.get("choice") == "pair" and p_.get("kind") == "imp" else None
             if t is None or t.tx_id in hide_ids:
+                continue
+            if why := _unbookable_fee(t):
+                a.stale.append({"key": "", "why": why, **d})
                 continue
             scratch = A.Plan(f, opt, {})
             if A._hide(st, st.tx(t.tx_id), scratch) is None:
@@ -1613,22 +1621,60 @@ def decide(ctx: Any, sid: int, key: str, choice: str, token: str, *, confirm: bo
         prob = next((p for p in a.problems if p.get("kind") == "row" and p.get("key") == key), None)
         if prob is None or choice not in (prob.get("options") or []):
             return {"errors": ["Diese Entscheidung ist für den Vorgang nicht (mehr) möglich."]}
-        items = load_decisions(db, sid, a.rid)
-        items[key] = {"choice": choice, "basis": prob.get("basis"), "partner": prob.get("partner"),
-                      "what": prob.get("detail", ""), "at": _now()}
-        db.set_state(_dec_key(sid), {"rid": a.rid, "items": items})
+        with db.transaction():  # Lesen-Ändern-Schreiben atomar und nur für den noch offenen, angezeigten Lauf
+            r = latest(db, sid)
+            if r is None or int(r["id"]) != a.rid or r["status"] != "staged":
+                return {"errors": [STALE_DECISION]}
+            items = load_decisions(db, sid, a.rid)
+            items[key] = {"choice": choice, "basis": prob.get("basis"), "partner": prob.get("partner"),
+                          "what": prob.get("detail", ""), "at": _now(), "n": _next_n(db, sid, a.rid)}
+            db.set_state(_dec_key(sid), {"rid": a.rid, "items": items, "n": items[key]["n"]})
     return {"errors": []}
 
 
-def undecide(ctx: Any, sid: int, key: str) -> bool:
-    r = latest(ctx.db, sid)
-    if r is None:
-        return False
-    items = load_decisions(ctx.db, sid, int(r["id"]))
-    if items.pop(key, None) is None:
-        return False
-    ctx.db.set_state(_dec_key(sid), {"rid": int(r["id"]), "items": items})
-    return True
+STALE_DECISION = ("Diese Entscheidung gehört zu einem anderen bzw. inzwischen geänderten Stand (neuer Abruf, geänderte "
+                  "oder bereits angewendete Entscheidung) – es wurde nichts geändert. Bitte die Seite neu laden.")
+
+
+def _next_n(db: Any, sid: int, rid: int) -> int:
+    """Laufende Nummer je Entscheidungsstand eines Laufs – jede Speicherung bekommt eine neue."""
+    st = db.get_state(_dec_key(sid)) or {}
+    return int(st.get("n") or 0) + 1 if isinstance(st, dict) and st.get("rid") == rid else 1
+
+
+def decision_stamp(d: dict[str, Any]) -> str:
+    """Kennung genau dieses Entscheidungsstands (Antwort, Grundlage, Partner, Speicherzeitpunkt, laufende Nummer) –
+    ein Entfernen-Formular wirkt nur, solange die Entscheidung unverändert so gespeichert ist."""
+    return _h([d.get("choice"), d.get("basis"), (d.get("partner") or {}).get("basis"), d.get("at"), d.get("n")])
+
+
+def undecide(ctx: Any, sid: int, key: str, rid: int | None = None, stamp: str = "") -> dict[str, Any]:
+    """Gespeicherte Entscheidung entfernen – nur im angegebenen, noch offenen Lauf (``rid``) und nur, wenn sie noch
+    genau dem angezeigten Stand (``stamp``) entspricht. Prüfung und Schreiben in einer Schreibtransaktion."""
+    db = ctx.db
+    with _LOCK, db.transaction():
+        r = latest(db, sid)
+        if r is None or rid is None or int(r["id"]) != int(rid) or r["status"] != "staged":
+            return {"errors": [STALE_DECISION]}
+        items = load_decisions(db, sid, int(rid))
+        d = items.get(key)
+        if d is None:
+            return {"errors": ["Diese Entscheidung besteht nicht (mehr)."]}
+        if not stamp or decision_stamp(d) != stamp:
+            return {"errors": [STALE_DECISION]}
+        del items[key]
+        st = db.get_state(_dec_key(sid)) or {}
+        db.set_state(_dec_key(sid), {"rid": int(rid), "items": items, "n": int(st.get("n") or 0)})
+    return {"errors": []}
+
+
+def applied_decisions(row: Any) -> list[dict[str, Any]]:
+    """Protokoll der beim Übernehmen angewendeten Entscheidungen (aus dem Ergebnis des Laufs)."""
+    try:
+        res = json.loads(row["result_json"] or "{}")
+    except (TypeError, ValueError):
+        return []
+    return list(res.get("decisions") or []) if isinstance(res, dict) else []
 
 
 def _validate_decisions(ctx: Any, a: Assessment, recs: list[Any]) -> None:
@@ -1649,6 +1695,7 @@ def _validate_decisions(ctx: Any, a: Assessment, recs: list[Any]) -> None:
                 why = "Gegenbuchung im Abruf hat sich geändert"
             elif p.get("kind") in ("j", "imp") and _tx_basis(ctx, str(p.get("tx"))) != p.get("basis"):
                 why = "Gegenbuchung hat sich geändert"
+        d = {**d, "stamp": decision_stamp(d)}
         if why:
             a.stale.append({"key": key, "why": why, **d})
         else:
@@ -1674,8 +1721,27 @@ def _partner_recs(ctx: Any, a: Any) -> list[Any]:
             r.account, r.in_sym, r.in_qty = t.to_account or "", t.to_asset, t.to_qty
         else:
             r.account, r.out_sym, r.out_qty = t.from_account or "", t.from_asset, t.from_qty
+        if t.fee_asset and t.fee_qty:  # Gebühr der ersetzten Buchung: gleiches Asset, Menge, EUR-Wert, Belastungskonto
+            r.fee_sym, r.fee_qty = t.fee_asset, t.fee_qty
+            if t.fee_eur is not None:
+                r.fee_value, r.fee_value_ccy = t.fee_eur, "EUR"
         out.append(r)
     return out
+
+
+def _other_balances(led: Any, account: str) -> dict[tuple[str, str], Decimal]:
+    if led is None:
+        return {}
+    return {(acc, aid): q for (acc, aid), q in led.balances.items() if acc != account and abs(q) > DUST}
+
+
+def _unbookable_fee(t: Any) -> str:
+    """Gebühr einer zu ersetzenden Buchung, die sich nicht übertragen lässt (EUR-Wert ohne Asset/Menge) – dann wird
+    nicht ersetzt statt die Gebühr still wegfallen zu lassen."""
+    if (t.fee_eur or ZERO) and not (t.fee_asset and t.fee_qty):
+        return (f"{t.tx_id} hat eine Gebühr von {t.fee_eur} EUR ohne Gebührenasset – sie ließe sich im Transfer nicht "
+                "erhalten; Transfer nicht ersetzbar")
+    return ""
 
 
 def _apply_decisions(ctx: Any, csv: Any, bid: int, a: Any) -> tuple[dict[int, str], set[int], list[dict[str, Any]]]:
@@ -1742,6 +1808,8 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
 
     db = ctx.db
     csv = csv_service(ctx)
+    led0 = ctx.ledger()
+    others0 = _other_balances(led0, a.account)  # alle übrigen Konten müssen danach exakt gleich sein
 
     # 1. ausblenden -----------------------------------------------------------------------------------------
     if a.plan is not None and a.plan.ops:
@@ -1842,14 +1910,32 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
         if abs(n - o) > limit:
             diffs.append(f"{asset_label(aid)}: gebucht {qty_exact(n)}, laut Quelle {qty_exact(o)}"
                          + ("" if a.mode == "proof" else f" (vorher {qty_exact(before.get(aid, ZERO))})"))
+    # Übrige Konten: ersetzte Gegenbuchungen und Zusammenführungen sind bestandsneutral (Menge und Gebühr wie vorher);
+    # verändern dürfen sie nur echte API-Vorgänge anderer Konten (Gebühren inklusive)
+    from app.diagnosis.research import effects_of_row
+
+    expected = defaultdict(Decimal, others0)
+    partner_prefix = f"takeover:{a.rid}:partner:"
+    for rc in csv.rows(bid):
+        if rc.status in ("committed", "merged") and rc.row is not None \
+                and not (rc.rec.ext_id or "").startswith(partner_prefix):
+            for acc, aid, q in effects_of_row(rc.row):
+                if acc != a.account:
+                    expected[(acc, aid)] += q
+    others1 = _other_balances(led, a.account)
+    for acc, aid in sorted(set(expected) | set(others1)):
+        q0, q1 = expected.get((acc, aid), ZERO), others1.get((acc, aid), ZERO)
+        if abs(q1 - q0) > DUST:
+            diffs.append(f"{acc} · {asset_label(aid)}: danach {qty_exact(q1)}, erwartet {qty_exact(q0)} "
+                         f"(vorher {qty_exact(others0.get((acc, aid), ZERO))})")
     stuck = [rc for rc in csv.rows(bid) if rc.open and (rc.rec.ext_id or "") not in cover_ext
              and rc.status not in ("known", "ignored")]
     if diffs:
         detail = diffs[:12] + [f"Zeile {rc.line}: {rc.status} {'; '.join((rc.errors or rc.warnings)[:1])[:120]}"
                                for rc in stuck[:12]]
         return rollback("Nachprüfung fehlgeschlagen: Der Bestand des Kontos weicht "
-                        + ("vom beobachteten ab." if a.mode == "proof" else "stärker vom beobachteten ab als vorher."),
-                        detail)
+                        + ("vom beobachteten ab" if a.mode == "proof" else "stärker vom beobachteten ab als vorher")
+                        + " bzw. ein anderes Konto hat sich verändert.", detail)
     csv.refresh_status(bid)
     exact = all(abs(now.get(aid, ZERO) - a.observed.get(aid, ZERO)) <= DUST for aid in set(now) | set(a.observed))
     result = {"hidden": len(a.hide), "kept": len(a.kept), "booked": len(book), "covered": len(cover_ext),
@@ -1859,7 +1945,11 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
               "matched": a.matched, "donors": len(a.donors), "left": len(stuck), "tier": a.tier,
               "before": len(a.before), "window_from": a.window_from,
               "check": {"assets": len(a.balances), "exact": exact},
-              "years": _year_diff(years_before, _years(ctx))}
+              "years": _year_diff(years_before, _years(ctx)),
+              # angewendete Entscheidungen als Protokoll des Laufs (die Vorschau zeigt sie danach als „angewendet“)
+              "decisions": [{"key": k, "choice": d.get("choice"), "what": d.get("what", ""),
+                             "partner": (d.get("partner") or {}).get("text", ""), "at": d.get("at")}
+                            for k, d in sorted(a.decisions.items())]}
     db.x("UPDATE ds_takeover SET status='applied', applied_at=?, message=?, result_json=? WHERE id=?",
          (_now(), f"Übernommen ({a.tier}): {len(a.hide)} Buchungen ersetzt, {len(book)} API-Vorgänge gebucht"
                   + (f" (davon {len(a.adjustments)} Ausgleichsbuchungen)" if a.adjustments else "")

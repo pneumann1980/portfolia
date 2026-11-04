@@ -420,7 +420,8 @@ def test_R03_skip_and_standalone_decisions_keep_the_balance_proof(config, master
         b = TK.assess(cx, sid)
         assert not b.ok and "rows" not in [x.key for x in b.blockers]  # entschieden – aber Bestand stimmt nicht
         assert TK.apply(cx, sid, b.token)["errors"] and _all_state(client) == before
-        assert TK.undecide(cx, sid, _row(a)["key"])
+        k = _row(a)["key"]
+        assert TK.undecide(cx, sid, k, b.rid, b.decisions[k]["stamp"])["errors"] == []
         c2 = TK.assess(cx, sid)
         assert TK.decide(cx, sid, _row(c2)["key"], "nopair", c2.token)["errors"] == []
         d = TK.assess(cx, sid)

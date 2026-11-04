@@ -372,6 +372,38 @@ def effect_rows(rows: list[RowCtx], event: str) -> list[RowCtx]:
     return sorted({rc.idx: rc for rc in [*own, *partners]}.values(), key=lambda r: r.idx)
 
 
+def effect_refs(rows: list[RowCtx], event: str) -> list[str]:
+    """Vorhandene Buchungen, von denen eine Antwort abhängt (Transferpartner im Journal, Verknüpfungsziel)."""
+    eff = effect_rows(rows, event)
+    return sorted({str(rc.pair_ref)[2:] for rc in eff if (rc.pair_ref or "").startswith("j:")}
+                  | {str(t) for rc in eff for t in [(rc.match or {}).get("target"), *(rc.dup_of or [])] if t})
+
+
+_REV_SKIP = {"id", "created_at", "updated_at"}
+
+
+def refs_revision(conn: Any, refs: Iterable[str]) -> str:
+    """Revision der abhängigen Buchungen **aus der Datenbank** (Import-Zeile des aktiven Imports, Änderung in der App,
+    Journalzeile). Innerhalb einer Schreibtransaktion gelesen, ist sie atomar gegenüber parallelen Bearbeitungen."""
+    row = conn.execute("SELECT value FROM app_state WHERE key='active_import_id'").fetchone()
+    iid = row[0] if row is not None else None
+    out = [iid]
+    for t in sorted(set(refs)):
+        parts = []
+        for sql in ("SELECT * FROM journal_tx WHERE tx_id=?", "SELECT * FROM tx_override WHERE tx_id=?",
+                    "SELECT * FROM tx WHERE tx_id=? AND import_id=?"):
+            args = (t, iid) if sql.endswith("import_id=?") else (t,)
+            r = conn.execute(sql, args).fetchone() if "import_id" not in sql or iid is not None else None
+            cols = list(r.keys()) if r is not None else []  # sqlite3.Row
+            parts.append(None if r is None else sorted((k, r[k]) for k in cols if k not in _REV_SKIP))
+        out.append([t, parts])
+    return hashlib.sha256(json.dumps(out, default=str).encode()).hexdigest()[:24]
+
+
+class StaleRefs(Exception):
+    """Abhängige Buchung hat sich seit der Anzeige geändert – nichts wird geschrieben."""
+
+
 def effect_digest(ctx: Any, rows: list[RowCtx], event: str) -> str:
     """Prüfsumme des angezeigten Stands der **gesamten** Wirkungsmenge: eigene Zeilen, Partnerzeilen (Konto, Asset,
     Menge, Gebühr, Einordnung, Status, Zuordnung) sowie der wirksame Zustand referenzierter Buchungen (Transferpartner
@@ -466,7 +498,7 @@ def _decide(action: str, rc: RowCtx, kind: str, force: bool, by_idx: Mapping[int
             return None, f"{A.CAT_LABEL.get(cat, cat)} – nur einzeln oder mit ausdrücklicher Bestätigung", None
         if rc.status == "before" and not force:
             return None, "vor dem Stichtag – maßgeblich ist der kuratierte Import (nur mit Bestätigung)", None
-        if rc.rec.review and not force:
+        if rc.rec.review and not force and choice != "include":  # „Einzeln buchen“ bestätigt genau diese Markierung
             return None, "von der Quelle als prüfbedürftig markiert", None
         if (rc.pair_ref or "").startswith("j:") and not (
                 (choice == "pair" and rc.pair_ok == 1) or (choice == "nopair" and rc.pair_ok == 0)):
@@ -485,19 +517,24 @@ def _decide(action: str, rc: RowCtx, kind: str, force: bool, by_idx: Mapping[int
 
 def plan(svc: Any, bid: int, action: str, idxs: Iterable[int], force: bool = False,
          rows: list[RowCtx] | None = None, approved: Mapping[int, str] | None = None) -> Plan:
-    """Plan einer Stapelaktion. ``approved``: ausdrückliche Einzelentscheidung je Zeile zur Transferfrage
-    („pair“ = Transfer mit dem angezeigten Partner bestätigt, „nopair“ = kein Transfer, eigener Vorgang). Sie öffnet
-    für genau diese Zeilen nur die Transfer-Sperren (Partner im Journal, ungeklärter Transfer) – Dubletten-,
-    Vollständigkeits- und Mehrdeutigkeitsprüfungen bleiben."""
+    """Plan einer Stapelaktion. ``approved``: ausdrückliche Einzelentscheidung je Zeile – „pair“ (Transfer mit dem
+    angezeigten Partner bestätigt), „nopair“ (kein Transfer, eigener Vorgang), „include“ (einzeln buchen, z. B. von der
+    Quelle als prüfbedürftig markiert). „pair“/„nopair“ wirken wie eine ausdrückliche Bestätigung genau dieser Zeile
+    und öffnen zusätzlich nur die Transfer-Sperren; „include“ öffnet ausschließlich die Prüfmarkierung der Quelle.
+    Dubletten (verknüpfen statt buchen), Abweichungen zu vorhandenen Buchungen (bei „include“), unvollständige bzw.
+    nicht buchbare Zeilen, offene Transferfragen bei „include“ und Mehrdeutigkeit bleiben gesperrt."""
     batch = svc.batch(bid)
     rows = rows if rows is not None else svc.rows(bid)
     by_idx = {rc.idx: rc for rc in rows}
     chosen = {i for i in idxs if i in by_idx}
-    ok = {i: c for i, c in (approved or {}).items() if i in chosen and c in ("pair", "nopair")}
+    ok = {i: c for i, c in (approved or {}).items() if i in chosen and c in ("pair", "nopair", "include")}
     p = Plan(action=action, force=force, approved=ok)
     for i in sorted(chosen):
         rc = by_idx[i]
-        act, note, target = _decide(action, rc, batch["kind"], force or i in ok, by_idx, chosen, ok.get(i))
+        # „pair“/„nopair“ wirken wie eine ausdrückliche Bestätigung der Zeile; „include“ öffnet nur die Prüfmarkierung
+        # der Quelle – Abweichungen zu einer vorhandenen Buchung, Dubletten und Unvollständiges bleiben gesperrt
+        act, note, target = _decide(action, rc, batch["kind"], force or ok.get(i) in ("pair", "nopair"), by_idx,
+                                    chosen, ok.get(i))
         p.items.append(Item(rc, act, note, target))
     # Transfer-Paare, deren Partner ausgeschlossen wurde, ebenfalls ausschließen (nur gemeinsam buchen)
     inc = {i.rc.idx for i in p.items if i.act == "include"}
@@ -605,7 +642,8 @@ def _event_one_to_one(rc: RowCtx, rows: list[RowCtx], link_targets: Mapping[int,
 
 def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str, fingerprint: str,
             force: bool = False, params: Mapping[str, Any] | None = None, in_tx: Any = None,
-            approved: Mapping[int, str] | None = None) -> dict[str, Any]:
+            approved: Mapping[int, str] | None = None,
+            expect_refs: tuple[list[str], str] | None = None) -> dict[str, Any]:
     """Stapelaktion ausführen – genau einmal je Vorschau (``token``) und nur, wenn die Vorschau noch gilt
     (``fingerprint``). Alles in einer Transaktion; danach neu bewerten."""
     if action not in ACTIONS:
@@ -637,76 +675,90 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
             if cplan.get("errors"):
                 return {"errors": ["Übernehmen nicht möglich – nichts wurde geändert:", *cplan["errors"]]}
         source = svc.source_of(batch)
-        from app.journal.service import _now
+        try:
+            return _execute_tx(svc, db, bid, action, token, force, params, in_tx, expect_refs, p, rows, orig,
+                               cplan, only, batch, source)
+        except StaleRefs:
+            return {"errors": ["Eine abhängige Buchung (Verknüpfungsziel bzw. Transferpartner) wurde seit der Anzeige "
+                               "geändert – es wurde nichts geändert. Bitte die neu angezeigten Angaben prüfen."]}
 
-        stamp = _now()
-        js = svc.journal
-        ops: dict[str, Any] = {"rows": {}, "aliases": [], "decisions": [], "links": [], "txs": []}
-        targets = {i.rc.idx: i.target for i in p.todo if i.act == "link" and i.target}
-        label = ACTIONS[action][0]
-        with db.transaction() as c:
-            aid = int(c.execute(
-                "INSERT INTO import_action(token, batch_id, action, label, params_json, ops_json, created_at) "
-                "VALUES (?,?,?,?,?, '{}', ?)",
-                (token, bid, action, label, json.dumps({"rows": sorted(only | set(targets) | {
-                    i.rc.idx for i in p.todo}), "force": force, **(params or {})}, ensure_ascii=False),
-                 stamp)).lastrowid)  # type: ignore[arg-type]
-            seen_events: set[str] = set()
-            for it in p.todo:
-                rc = it.rc
-                prev = {"status": rc.status, "decision": orig.get(rc.idx), "tx_id": rc.tx_id}
-                if it.act == "link":
-                    if not (it.target is not None):
-                        raise RuntimeError('Interne Annahme verletzt: it.target is not None')
-                    keys = [k for k in [line_key(source, rc.rec)] if k]
-                    if _event_one_to_one(rc, rows, targets):
-                        keys += sorted(identity_keys(rc.rec.event_key, rc.rec.aliases, rc.rec.ext_id))
-                    for k in dict.fromkeys(keys):
-                        if c.execute("INSERT OR IGNORE INTO journal_event_alias(key, tx_id) VALUES (?,?)",
-                                     (k, it.target)).rowcount:
-                            ops["aliases"].append([k, it.target])
-                    lid = int(c.execute(
-                        "INSERT INTO tx_link(tx_id, source, ext_id, event_key, role, batch_id, row_idx, action_id, "
-                        "record_json, assessment_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                        (it.target, source, rc.rec.ext_id, rc.rec.event_key, (rc.match or {}).get("role"), bid,
-                         rc.idx, aid, json.dumps(_record(rc, source), ensure_ascii=False, default=str),
-                         json.dumps(rc.match, ensure_ascii=False, default=str), stamp)).lastrowid)  # type: ignore
-                    ops["links"].append(lid)
-                    msgs = json.loads(c.execute("SELECT messages FROM csv_row WHERE id=?", (rc.id,)).fetchone()[0]
-                                      or "{}")
-                    msgs["linked"] = {"to": it.target, "action": aid, "link": lid, "at": stamp}
-                    c.execute("UPDATE csv_row SET status='linked', tx_id=?, messages=? WHERE id=?",
-                              (it.target, json.dumps(msgs, ensure_ascii=False), rc.id))
-                    rc.status, rc.tx_id = "linked", it.target
-                    ops["rows"][str(rc.idx)] = {**prev, "set": {"status": "linked", "tx_id": it.target}}
-                elif it.act in ("skip", "defer", "reset", "include"):
-                    dec = {"skip": "skip", "defer": "defer", "reset": None, "include": "include"}[it.act]
-                    c.execute("UPDATE csv_row SET decision=? WHERE id=?", (dec, rc.id))
-                    ops["rows"][str(rc.idx)] = {**prev, "set": {"decision": dec}}
-                elif it.act == "ignore":
-                    key = rc.rec.event_key or ""
-                    if key not in seen_events:
-                        seen_events.add(key)
-                        if c.execute("SELECT 1 FROM event_decision WHERE event_key=?", (key,)).fetchone() is None:
-                            c.execute("INSERT INTO event_decision(event_key, decision, reason, batch_id, decided_at) "
-                                      "VALUES (?, 'ignore', ?, ?, ?)", (key, "Stapelaktion", bid, stamp))
-                            ops["decisions"].append(key)
-            res: dict[str, Any] = {"created": 0, "transfers": 0, "merged": 0, "tx_ids": []}
-            if cplan is not None:
-                res = svc.commit_apply(c, batch, rows, cplan, only, stamp)
-                ops["txs"] = res["tx_ids"]
-            summary = {"counts": p.counts(), "excluded": len(p.excluded), "created": res["created"],
-                       "transfers": res["transfers"],
-                       "impact": [{k: (str(v) if isinstance(v, Decimal) else v) for k, v in x.items()}
-                                  for x in p.impact[:50]]}
-            c.execute("UPDATE import_action SET ops_json=?, summary_json=? WHERE id=?",
-                      (json.dumps(ops, ensure_ascii=False), json.dumps(summary, ensure_ascii=False), aid))
-            js._log(c, "import_batch", f"csv:{bid}", None, {"action": action, "id": aid, **p.counts()}, stamp)
-            if in_tx is not None:  # Besitzbezug des Aufrufers in derselben Transaktion wie die Buchungen
-                in_tx(c, aid)
-        svc.evaluate(bid)
-        svc.refresh_status(bid)
-        set_selection(db, bid, selection(db, bid, svc.rows(bid)) - {i.rc.idx for i in p.todo})
+
+def _execute_tx(svc: Any, db: Any, bid: int, action: str, token: str, force: bool, params: Any, in_tx: Any,
+                expect_refs: Any, p: Plan, rows: list[RowCtx], orig: dict[int, Any], cplan: Any, only: set[int],
+                batch: Any, source: str) -> dict[str, Any]:
+    """Schreibteil von :func:`execute` (unter dessen Sperre): eine Transaktion, danach neu bewerten."""
+    from app.journal.service import _now
+
+    stamp = _now()
+    js = svc.journal
+    ops: dict[str, Any] = {"rows": {}, "aliases": [], "decisions": [], "links": [], "txs": []}
+    targets = {i.rc.idx: i.target for i in p.todo if i.act == "link" and i.target}
+    label = ACTIONS[action][0]
+    with db.transaction() as c:
+        if expect_refs is not None and refs_revision(c, expect_refs[0]) != expect_refs[1]:
+            raise StaleRefs  # innerhalb der Schreibtransaktion: parallele Bearbeitung sicher erkannt
+        aid = int(c.execute(
+            "INSERT INTO import_action(token, batch_id, action, label, params_json, ops_json, created_at) "
+            "VALUES (?,?,?,?,?, '{}', ?)",
+            (token, bid, action, label, json.dumps({"rows": sorted(only | set(targets) | {
+                i.rc.idx for i in p.todo}), "force": force, **(params or {})}, ensure_ascii=False),
+             stamp)).lastrowid)  # type: ignore[arg-type]
+        seen_events: set[str] = set()
+        for it in p.todo:
+            rc = it.rc
+            prev = {"status": rc.status, "decision": orig.get(rc.idx), "tx_id": rc.tx_id}
+            if it.act == "link":
+                if not (it.target is not None):
+                    raise RuntimeError('Interne Annahme verletzt: it.target is not None')
+                keys = [k for k in [line_key(source, rc.rec)] if k]
+                if _event_one_to_one(rc, rows, targets):
+                    keys += sorted(identity_keys(rc.rec.event_key, rc.rec.aliases, rc.rec.ext_id))
+                for k in dict.fromkeys(keys):
+                    if c.execute("INSERT OR IGNORE INTO journal_event_alias(key, tx_id) VALUES (?,?)",
+                                 (k, it.target)).rowcount:
+                        ops["aliases"].append([k, it.target])
+                lid = int(c.execute(
+                    "INSERT INTO tx_link(tx_id, source, ext_id, event_key, role, batch_id, row_idx, action_id, "
+                    "record_json, assessment_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (it.target, source, rc.rec.ext_id, rc.rec.event_key, (rc.match or {}).get("role"), bid,
+                     rc.idx, aid, json.dumps(_record(rc, source), ensure_ascii=False, default=str),
+                     json.dumps(rc.match, ensure_ascii=False, default=str), stamp)).lastrowid)  # type: ignore
+                ops["links"].append(lid)
+                msgs = json.loads(c.execute("SELECT messages FROM csv_row WHERE id=?", (rc.id,)).fetchone()[0]
+                                  or "{}")
+                msgs["linked"] = {"to": it.target, "action": aid, "link": lid, "at": stamp}
+                c.execute("UPDATE csv_row SET status='linked', tx_id=?, messages=? WHERE id=?",
+                          (it.target, json.dumps(msgs, ensure_ascii=False), rc.id))
+                rc.status, rc.tx_id = "linked", it.target
+                ops["rows"][str(rc.idx)] = {**prev, "set": {"status": "linked", "tx_id": it.target}}
+            elif it.act in ("skip", "defer", "reset", "include"):
+                dec = {"skip": "skip", "defer": "defer", "reset": None, "include": "include"}[it.act]
+                c.execute("UPDATE csv_row SET decision=? WHERE id=?", (dec, rc.id))
+                ops["rows"][str(rc.idx)] = {**prev, "set": {"decision": dec}}
+            elif it.act == "ignore":
+                key = rc.rec.event_key or ""
+                if key not in seen_events:
+                    seen_events.add(key)
+                    if c.execute("SELECT 1 FROM event_decision WHERE event_key=?", (key,)).fetchone() is None:
+                        c.execute("INSERT INTO event_decision(event_key, decision, reason, batch_id, decided_at) "
+                                  "VALUES (?, 'ignore', ?, ?, ?)", (key, "Stapelaktion", bid, stamp))
+                        ops["decisions"].append(key)
+        res: dict[str, Any] = {"created": 0, "transfers": 0, "merged": 0, "tx_ids": []}
+        if cplan is not None:
+            res = svc.commit_apply(c, batch, rows, cplan, only, stamp)
+            ops["txs"] = res["tx_ids"]
+        summary = {"counts": p.counts(), "excluded": len(p.excluded), "created": res["created"],
+                   "transfers": res["transfers"],
+                   "impact": [{k: (str(v) if isinstance(v, Decimal) else v) for k, v in x.items()}
+                              for x in p.impact[:50]]}
+        c.execute("UPDATE import_action SET ops_json=?, summary_json=? WHERE id=?",
+                  (json.dumps(ops, ensure_ascii=False), json.dumps(summary, ensure_ascii=False), aid))
+        js._log(c, "import_batch", f"csv:{bid}", None, {"action": action, "id": aid, **p.counts()}, stamp)
+        if in_tx is not None:  # Besitzbezug des Aufrufers in derselben Transaktion wie die Buchungen
+            in_tx(c, aid)
+    svc.evaluate(bid)
+    svc.refresh_status(bid)
+    set_selection(db, bid, selection(db, bid, svc.rows(bid)) - {i.rc.idx for i in p.todo})
     js.after_change()
     log.info("Stapelaktion %s in Prüf-Stapel %s: %s", action, bid, p.counts())
     return {"action_id": aid, "counts": p.counts(), "created": res["created"], "errors": []}

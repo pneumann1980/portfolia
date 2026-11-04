@@ -464,9 +464,12 @@ def _plain_reason(reason: str) -> str:
 def _bind_rows(ctx: Any, task: Task, rows: list[Any]) -> None:
     """Die Antwort gilt genau für den angezeigten Stand des Vorgangs: Prüfsumme seiner offenen Zeilen (dieselbe
     Auswahl wie beim Antworten in ``assistant_web._stack_answer``)."""
-    from app.csvimport.batch import effect_digest
+    from app.csvimport.batch import effect_digest, effect_refs, refs_revision
 
-    task.payload["fp"] = effect_digest(ctx, rows, task.ref.partition(":")[2])
+    event = task.ref.partition(":")[2]
+    task.payload["fp"] = effect_digest(ctx, rows, event)
+    # Revision der abhängigen Buchungen aus der Datenbank: beim Schreiben in derselben Transaktion erneut geprüft
+    task.payload["rev"] = refs_revision(ctx.db.conn, effect_refs(rows, event))
 
 
 def _transfer_case(ctx: Any, mine: list[Any], all_rows: list[Any]) -> dict[str, Any] | None:

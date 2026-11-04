@@ -524,6 +524,7 @@ def make_router() -> APIRouter:
         bid = int(bid_s)
 
         shown = str(form.get("x_fp") or "")
+        shown_rev = str(form.get("x_rev") or "")
 
         def run() -> dict[str, Any]:
             from app.csvimport.service import _LOCK as CSV_LOCK
@@ -544,6 +545,8 @@ def make_router() -> APIRouter:
                                    "prüfen; es wurde nichts geändert."]}
             if op in ("skip", "defer"):
                 return BU.decide(svc, bid, idxs, op)
+            # dieselbe Revision wie angezeigt – die Ausführung prüft sie erneut in ihrer Schreibtransaktion
+            expect = (BA.effect_refs(rows, event), shown_rev)
             if op in ("pair", "nopair"):  # Transferfrage beantworten (pair_ok wie im Prüf-Stapel), dann buchen
                 mine = [rc for rc in rows if rc.idx in set(idxs)]
                 refs = [rc for rc in mine if (rc.pair_ref or "").startswith("b:") and not rc.pair_alts]
@@ -560,12 +563,16 @@ def make_router() -> APIRouter:
                     why = next((it.note for it in p.items if not it.act), "nicht buchbar")
                     _restore_pairs(bid, before)  # keine halbe Entscheidung: Transferstand wie vorher
                     return {"errors": [f"Nicht gebucht: {why}. Es wurde nichts geändert."]}
-                return BA.execute(svc, bid, "include", {i.rc.idx for i in p.todo}, token=BA.new_token(),
-                                  fingerprint=p.fingerprint(), force=True)
+                res = BA.execute(svc, bid, "include", {i.rc.idx for i in p.todo}, token=BA.new_token(),
+                                 fingerprint=p.fingerprint(), force=True, expect_refs=expect)
+                if res.get("errors"):
+                    _restore_pairs(bid, before)  # nichts halb gespeichert
+                return res
             p = BA.plan(svc, bid, op, idxs, True, rows)  # ausdrückliche Antwort: auch bei abweichenden Angaben
             if not p.todo:
                 return {"errors": [p.items[0].note if p.items else "Nichts auszuführen."]}
-            return BA.execute(svc, bid, op, idxs, token=BA.new_token(), fingerprint=p.fingerprint(), force=True)
+            return BA.execute(svc, bid, op, idxs, token=BA.new_token(), fingerprint=p.fingerprint(), force=True,
+                              expect_refs=expect)
 
         def _restore_pairs(bid: int, before: dict[int, int | None]) -> None:
             ctx.db.xmany("UPDATE csv_row SET pair_ok=? WHERE batch_id=? AND idx=?",
