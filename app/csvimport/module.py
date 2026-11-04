@@ -779,7 +779,9 @@ def make_router() -> APIRouter:
             st, _, dec = bulk.partition(":")
             await run_in_threadpool(svc.set_all, bid, st, dec if dec in ("include", "skip") else None)
         else:
-            await run_in_threadpool(svc.set_rows, bid, f)
+            saved = await run_in_threadpool(svc.set_rows, bid, f)
+            if saved["errors"]:  # z. B. Transferentscheidung ohne angezeigten Partnerstand (altes Formular)
+                return _batch_page(request, bid, errors=saved["errors"])
         return _back(request, _redir(bid, f, "rows"))
 
     # -- Importprüfung: Auswahl, Vorschau, Stapelaktionen ----------------------------------------------
@@ -880,8 +882,11 @@ def make_router() -> APIRouter:
         if BA.row_refs(before[i]) and BA.row_revision(ctx.db.conn, before[i]) != shown:
             return _batch_page(request, bid, errors=[BA.STALE_REFS_TEXT])
         expect = BA.expected_revs(ctx.db.conn, [before[i]]) if shown else {}
-        snap = svc.inputs(bid)  # Eingaben vor dem Speichern – bei Ablehnung unverändert wiederherstellen
-        await run_in_threadpool(svc.set_rows, bid, f)  # übrige Eingaben der Seite nicht verlieren
+        saved = await run_in_threadpool(svc.set_rows, bid, f)  # übrige Eingaben der Seite nicht verlieren
+        if saved["errors"]:  # Eingabe ohne notwendige Bindung: nichts ausführen, eigene Eingaben zurücknehmen
+            await run_in_threadpool(svc.restore_inputs, bid, saved["undo"])
+            return _batch_page(request, bid, errors=saved["errors"])
+        snap = saved["undo"]  # nur eigene Änderungen – bei Ablehnung feldweise zurück, solange unverändert (N13)
         rows_ = svc.rows(bid)
         p = BA.plan(svc, bid, action, {i}, True, rows_)
         res = await run_in_threadpool(BA.execute, svc, bid, action, {i}, token=BA.new_token(),

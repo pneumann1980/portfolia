@@ -20,6 +20,7 @@ from app.datasources import connector as K
 from app.datasources.chains import evm as E
 from app.datasources.service import datasource_service
 from app.datasources.wallet import WalletConnector
+from tests.helpers import shown_pair_rev
 from tests.wallet_fakes import (
     ETHERSCAN_KEY,
     MASTER,
@@ -375,7 +376,9 @@ def test_exchange_withdrawal_and_wallet_deposit_become_one_transfer(client, evm)
     # Menge und Zeit passen, aber die Börsenbuchung trägt keinen Hash: nur ein Vorschlag, bis jemand bestätigt
     assert dep.pair_ref == f"j:{wd}" and dep.pair_conf == "mittel" and "Menge 100.0 %" in dep.pair_why
     assert dep.status == "new" and not dep.tx_id  # nicht automatisch: bestehende Lots nie stillschweigend ändern
-    csv_service(ctx(client)).set_rows(res["batch_id"], {f"pair_{dep.idx}": "1"})
+    rev = shown_pair_rev(client, res["batch_id"], dep.idx)  # angezeigter Partnerstand (interner Aufrufer)
+    assert rev
+    csv_service(ctx(client)).set_rows(res["batch_id"], {f"pair_{dep.idx}": "1", f"pairrev_{dep.idx}": rev})
     out = csv_service(ctx(client)).commit(res["batch_id"], only_idx={dep.idx})
     assert out["transfers"] == 1, out
     t = ctx(client).db.q1("SELECT * FROM journal_tx WHERE source='transfer' AND status='active'")

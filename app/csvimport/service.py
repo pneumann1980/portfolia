@@ -2227,57 +2227,93 @@ class CsvImportService:
                 "by_idx": {rc.idx: rc for rc in rows}, "recon": summ.get("recon"), "auto_symbols": auto}
 
     # -- Eingaben -----------------------------------------------------------------------------------------
-    def inputs(self, bid: int) -> list[tuple[Any, ...]]:
-        """Eingaben aller Zeilen (Entscheidung, Wert, Gebühr, Transferentscheidung samt Partnerstand) – zum
-        Wiederherstellen, wenn eine Einzelaktion nach dem Speichern abgelehnt wird."""
-        return [tuple(r) for r in self.db.q(
-            "SELECT decision, value_in, fee_in, pair_ok, pair_rev, id FROM csv_row WHERE batch_id=?", (bid,))]
+    _INPUT_COLS = ("decision", "value_in", "fee_in", "pair_ok", "pair_rev")
+
+    @staticmethod
+    def _inputs_of(rc: RowCtx) -> tuple[Any, ...]:
+        return (rc.decision, rc.value_in, rc.fee_in, rc.pair_ok, rc.pair_rev)
 
     @_locked
-    def restore_inputs(self, bid: int, snap: list[tuple[Any, ...]]) -> None:
-        self.db.xmany("UPDATE csv_row SET decision=?, value_in=?, fee_in=?, pair_ok=?, pair_rev=? WHERE id=? AND "
-                      "status NOT IN ('committed', 'merged', 'linked')", snap)
+    def restore_inputs(self, bid: int, snap: list[tuple[int, tuple[Any, ...], tuple[Any, ...]]]) -> int:
+        """Eigene Eingaben einer abgelehnten Einzelaktion zurücknehmen (``snap`` aus :meth:`set_rows`: Zeile, Stand
+        davor, von diesem Aufruf geschriebener Stand). Feldweise und nur, solange das Feld noch genau den von diesem
+        Aufruf geschriebenen Wert hat – neuere Eingaben anderer Tabs/Aufrufe bleiben erhalten. Prüfen und Schreiben in
+        einer Schreibtransaktion. Rückgabe: Anzahl zurückgesetzter Felder."""
+        n = 0
+        cols = self._INPUT_COLS
+        with self.db.transaction() as c:
+            for rid, before, written in snap:
+                changed = [k for k in range(len(cols)) if before[k] != written[k]]
+                if not changed:
+                    continue
+                cur = c.execute(f"SELECT {', '.join(cols)}, status FROM csv_row WHERE id=? AND batch_id=?",
+                                (rid, bid)).fetchone()
+                if cur is None or cur["status"] in CLOSED:
+                    continue
+                back = [k for k in changed if cur[cols[k]] == written[k]]
+                if back:
+                    c.execute(f"UPDATE csv_row SET {', '.join(f'{cols[k]}=?' for k in back)} WHERE id=?",
+                              [before[k] for k in back] + [rid])
+                    n += len(back)
         self.evaluate(bid)
         self.refresh_status(bid)
+        return n
 
     @_locked
-    def set_rows(self, bid: int, form: Mapping[str, Any]) -> None:
-        rows = {rc.idx: rc for rc in self._load(bid)}
-        data = []
-        for key in form:
-            k = str(key)
-            if not k.startswith(("dec_", "val_", "fee_", "pair_")):
-                continue
-            kind, _, num_ = k.partition("_")
-            if not num_.isdigit() or int(num_) not in rows:
-                continue
-            rc = rows[int(num_)]
-            if not rc.open:
-                continue
-            v = str(form.get(k) or "").strip()
-            if kind == "dec":
-                rc.decision = v if v in ("include", "skip", "defer") else None
-            elif kind == "val":
-                rc.value_in = v[:40] or None
-            elif kind == "fee":
-                rc.fee_in = v[:40] or None
-            elif kind == "pair":
-                rc.pair_ok = 1 if v == "1" else 0 if v == "0" else None
-                if (rc.pair_ref or "").startswith("j:"):  # Entscheidung an den angezeigten Partnerstand binden
-                    shown = str(form.get(f"pairrev_{rc.idx}") or "")
-                    rc.pair_rev = (shown or ref_revs(self.db.conn, [rc.pair_ref[2:]]).get(rc.pair_ref[2:])  # type: ignore[index]
-                                   ) if rc.pair_ok is not None else None
-                if rc.pair_ref and rc.pair_ref.startswith("b:") and int(rc.pair_ref[2:]) in rows:
-                    partner = rows[int(rc.pair_ref[2:])]
-                    partner.pair_ok = rc.pair_ok
-                    data.append(partner)
-            data.append(rc)
-        if data:
-            self.db.xmany("UPDATE csv_row SET decision=?, value_in=?, fee_in=?, pair_ok=?, pair_rev=? WHERE id=?",
-                          [(rc.decision, rc.value_in, rc.fee_in, rc.pair_ok, rc.pair_rev, rc.id) for rc in
-                           {rc.id: rc for rc in data}.values()])
+    def set_rows(self, bid: int, form: Mapping[str, Any]) -> dict[str, Any]:
+        """Eingaben der Prüfseite speichern. Eine Transferentscheidung zu einem Journalpartner gilt nur zusammen mit
+        dem angezeigten Partnerstand (``pairrev_<Zeile>``) – fehlt er, wird diese Entscheidung sichtbar abgelehnt (kein
+        Rückfall auf den jetzigen Stand). Rückgabe: ``errors`` und ``undo`` (Zeile, vorher, geschrieben) für
+        :meth:`restore_inputs`."""
+        errors: list[str] = []
+        with self.db.transaction():  # Lesen und Schreiben der Eingaben atomar
+            rows = {rc.idx: rc for rc in self._load(bid)}
+            before = {rc.id: self._inputs_of(rc) for rc in rows.values()}
+            data = []
+            for key in form:
+                k = str(key)
+                if not k.startswith(("dec_", "val_", "fee_", "pair_")):
+                    continue
+                kind, _, num_ = k.partition("_")
+                if not num_.isdigit() or int(num_) not in rows:
+                    continue
+                rc = rows[int(num_)]
+                if not rc.open:
+                    continue
+                v = str(form.get(k) or "").strip()
+                if kind == "dec":
+                    rc.decision = v if v in ("include", "skip", "defer") else None
+                elif kind == "val":
+                    rc.value_in = v[:40] or None
+                elif kind == "fee":
+                    rc.fee_in = v[:40] or None
+                elif kind == "pair":
+                    ok = 1 if v == "1" else 0 if v == "0" else None
+                    if (rc.pair_ref or "").startswith("j:"):  # an den angezeigten Partnerstand gebunden (N14)
+                        shown = str(form.get(f"pairrev_{rc.idx}") or "").strip()
+                        if ok is not None and not shown:
+                            if ok != rc.pair_ok:
+                                errors.append(f"Zeile {rc.line}: Transferentscheidung ohne angezeigten Stand der "
+                                              f"Gegenbuchung {rc.pair_ref[2:]} – nicht gespeichert. Bitte die Seite "  # type: ignore[index]
+                                              "neu laden und erneut entscheiden.")
+                            continue
+                        rc.pair_ok, rc.pair_rev = ok, (shown if ok is not None else None)
+                    else:
+                        rc.pair_ok = ok
+                    if rc.pair_ref and rc.pair_ref.startswith("b:") and int(rc.pair_ref[2:]) in rows:
+                        partner = rows[int(rc.pair_ref[2:])]
+                        partner.pair_ok = rc.pair_ok
+                        data.append(partner)
+                data.append(rc)
+            uniq = {rc.id: rc for rc in data}
+            if uniq:
+                self.db.xmany("UPDATE csv_row SET decision=?, value_in=?, fee_in=?, pair_ok=?, pair_rev=? WHERE id=?",
+                              [(*self._inputs_of(rc), rc.id) for rc in uniq.values()])
+            undo = [(rid, before[rid], self._inputs_of(rc)) for rid, rc in uniq.items()
+                    if before[rid] != self._inputs_of(rc)]
         self.evaluate(bid)
         self.refresh_status(bid)
+        return {"errors": errors, "undo": undo}
 
     @_locked
     def set_all(self, bid: int, status: str, decision: str | None) -> None:

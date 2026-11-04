@@ -20,6 +20,7 @@ from app.csvimport.reader import CsvError, num, parse_ts, read_table, zone
 from app.csvimport.service import csv_service, rec_from_json, rec_to_json
 from app.jobs import tasks
 from app.main import build_app
+from tests.helpers import transfer_decision
 
 D = Decimal
 DATA = Path(__file__).resolve().parent / "data" / "csv"
@@ -315,7 +316,7 @@ def test_transfer_matching_across_imports_and_revert(client):
     assert dep.pair_ref and dep.pair_ref.startswith("j:PF-C-") and dep.pair_conf == "mittel"
     assert "ohne Identitätsbeleg" in dep.pair_why and dep.transfer_unclear
     assert "Überträge zwischen eigenen Konten" in client.get(f"/journal/csv/{b2}").text
-    assert post(client, f"/journal/csv/{b2}/rows", **{f"pair_{dep.idx}": "1"}).status_code == 303
+    assert transfer_decision(client, b2, dep.idx, "1").status_code == 303
     r = post(client, f"/journal/csv/{b2}/commit")
     assert "t=1" in r.headers["location"]
     tr, = journal(client, "source='transfer'")
@@ -343,7 +344,7 @@ def test_transfer_matching_across_imports_and_revert(client):
     assert client.get(f"/journal/csv/{b1}").status_code == 200  # Vorschau rechnet die Zuordnung neu
     wd = next((rc for rc in rows(client, b1).values() if rc.pair_ref), None)
     assert wd is not None and wd.pair_conf == "mittel"  # wieder nur ein Vorschlag
-    assert post(client, f"/journal/csv/{b1}/rows", **{f"pair_{wd.idx}": "1"}).status_code == 303
+    assert transfer_decision(client, b1, wd.idx, "1").status_code == 303
     r = post(client, f"/journal/csv/{b1}/commit")
     assert r.status_code == 303 and "t=1" in r.headers["location"]  # Transfer mit Ledger-Zugang erneut erkannt
 

@@ -1583,8 +1583,13 @@ def _choice_info(ctx: Any, rc: Any, rows: list[Any]) -> dict[str, Any]:
     ref = rc.pair_ref or ""
     partner: dict[str, Any] | None = None
     if rc.pair_alts:
+        from app.csvimport.service import ref_revs
+
         options = ["nopair", "skip"]
-        partner = {"kind": "alts", "text": f"{len(rc.pair_alts) + 1} mögliche Gegenbuchungen – keine eindeutig"}
+        # Stand aller angebotenen Journalpartner: „kein Transfer“ gilt genau diesen (N14)
+        js = sorted({str(x)[2:] for x in [ref, *rc.pair_alts] if str(x).startswith("j:")})
+        partner = {"kind": "alts", "text": f"{len(rc.pair_alts) + 1} mögliche Gegenbuchungen – keine eindeutig",
+                   "revs": ref_revs(ctx.db.conn, js)}
     elif ref.startswith("b:") and ref[2:].isdigit() and int(ref[2:]) in by_idx:
         p = by_idx[int(ref[2:])]
         partner = {"kind": "b", "ext": p.rec.ext_id, "basis": _rec_basis(p.rec),
@@ -1698,13 +1703,20 @@ def _validate_decisions(ctx: Any, a: Assessment, recs: list[Any]) -> None:
                                          _rec_basis(by_ext[p["ext"]]) != p.get("basis")):
                 why = "Gegenbuchung im Abruf hat sich geändert"
             elif (p.get("kind") in ("j", "imp") and _tx_basis(ctx, str(p.get("tx"))) != p.get("basis")) or (
-                    p.get("kind") == "j" and _partner_rev(ctx, str(p.get("tx"))) != p.get("rev")):
+                    p.get("kind") == "j" and _partner_rev(ctx, str(p.get("tx"))) != p.get("rev")) or (
+                    p.get("kind") == "alts" and _alts_revs(ctx, p) != (p.get("revs") or {})):
                 why = "Gegenbuchung hat sich geändert"
         d = {**d, "stamp": decision_stamp(d)}
         if why:
             a.stale.append({"key": key, "why": why, **d})
         else:
             a.decisions[key] = d
+
+
+def _alts_revs(ctx: Any, p: dict[str, Any]) -> dict[str, str]:
+    from app.csvimport.service import ref_revs
+
+    return ref_revs(ctx.db.conn, list((p.get("revs") or {}).keys()))
 
 
 def _partner_rev(ctx: Any, tx_id: str) -> str:
@@ -1781,7 +1793,20 @@ def _apply_decisions(ctx: Any, csv: Any, bid: int, a: Any) -> tuple[dict[int, st
             approved[rc.idx] = "include"
         elif ch == "nopair":
             approved[rc.idx] = "nopair"
-            if rc.pair_ref:
+            if p.get("kind") == "j" or (rc.pair_ref or "").startswith("j:"):
+                # „kein Transfer“ zu einem Journalpartner: derselbe Partner und dessen Stand aus der bestätigten
+                # Vorschau – wie bei „Transfer bestätigen“ bis in die Buchungstransaktion (N14); bei konkurrierenden
+                # Partnern der Stand genau des jetzt vorgeschlagenen aus den damals angebotenen
+                revs = {str(p.get("tx")): p.get("rev")} if p.get("kind") == "j" else dict(p.get("revs") or {})
+                tx = (rc.pair_ref or "")[2:] if (rc.pair_ref or "").startswith("j:") else ""
+                if not tx or not revs.get(tx):
+                    bad.append({"key": key, "why": "Der Partner, zu dem „kein Transfer“ entschieden wurde, passt im "
+                                                    "Zustand nach dem Ausblenden nicht (mehr) – bitte neu entscheiden"})
+                    continue
+                vals[f"pair_{rc.idx}"] = "0"
+                vals[f"pairrev_{rc.idx}"] = str(revs[tx])
+                want[rc.idx] = str(rc.pair_ref)
+            elif rc.pair_ref:
                 vals[f"pair_{rc.idx}"] = "0"
         elif ch == "pair":
             if p.get("kind") == "j":
@@ -1801,12 +1826,15 @@ def _apply_decisions(ctx: Any, csv: Any, bid: int, a: Any) -> tuple[dict[int, st
                 vals[f"pairrev_{rc.idx}"] = str(p.get("rev") or "-")
             approved[rc.idx] = "pair"
     if vals:
-        csv.set_rows(bid, vals)
+        saved = csv.set_rows(bid, vals)
         csv.evaluate(bid)
         now = {rc.idx: rc for rc in csv.rows(bid)}
         for i, ref in want.items():
-            if now[i].pair_ref != ref or now[i].pair_ok != 1:
-                bad.append({"key": now[i].rec.ext_id, "why": "Transferpaar ließ sich nicht wie entschieden bilden"})
+            ok = 1 if approved.get(i) == "pair" else 0
+            if now[i].pair_ref != ref or now[i].pair_ok != ok or saved["errors"]:
+                bad.append({"key": now[i].rec.ext_id,
+                            "why": "Transferentscheidung ließ sich nicht wie entschieden anwenden (Gegenbuchung "
+                                   "geändert)"})
     return approved, skip, bad
 
 

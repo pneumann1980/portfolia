@@ -186,8 +186,9 @@ def test_N11_confirmed_journal_transfer_is_executable_in_detail_preview(c, decis
                     "preview_http": c.get(f"/journal/csv/{bid}/preview?action=include&force=1").status_code}
 
 
-def _takeover_with_edit(config, api, monkeypatch, change="value", when="execute"):
-    """Übernahme mit bestätigtem Journalpartner; ein echter zweiter Thread ändert ihn an der gewählten Stelle."""
+def _takeover_with_edit(config, api, monkeypatch, change="value", when="execute", choice="pair"):
+    """Übernahme mit entschiedenem Journalpartner (``choice``: „pair“ bzw. „nopair“); ein echter zweiter Thread ändert
+    ihn an der gewählten Stelle (vor der Ausblendung, vor dem Anwenden der Entscheidungen, vor der Buchung)."""
     from app.diagnosis import actions as A
 
     client, sid = _without_counterpart(config, api)
@@ -195,7 +196,7 @@ def _takeover_with_edit(config, api, monkeypatch, change="value", when="execute"
     (target,) = _journal_deposits(client, ("2024-02-12T12:30:00Z", "Ledger", "0.001"))
     before = _all_state(client)
     a = staged(client, sid)
-    assert TK.decide(cx, sid, _row(a)["key"], "pair", a.token)["errors"] == []
+    assert TK.decide(cx, sid, _row(a)["key"], choice, a.token)["errors"] == []
     ready = TK.assess(cx, sid)
     assert ready.ok
     did, errors = [], []
@@ -226,6 +227,14 @@ def _takeover_with_edit(config, api, monkeypatch, change="value", when="execute"
             return real(svc, *args, **kwargs)
 
         monkeypatch.setattr(BA, "execute", wrapped)
+    elif when == "decisions":  # nach der Ausblendung, vor dem Anwenden der Entscheidungen im Prüf-Stapel
+        real_dec = TK._apply_decisions
+
+        def wrapped_dec(*args, **kwargs):
+            gate()
+            return real_dec(*args, **kwargs)
+
+        monkeypatch.setattr(TK, "_apply_decisions", wrapped_dec)
     else:  # vor der Ausblendung (nach der Bewertung der Übernahme)
         real_apply = A.apply_plan
 

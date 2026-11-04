@@ -86,3 +86,21 @@ def row_action(c: Any, bid: int, value: str) -> Any:
     if (m := _re.search(rf'name="rev_{idx}" value="([^"]*)"', page)) is not None:
         data[f"rev_{idx}"] = m.group(1)
     return c.post(f"/journal/csv/{bid}/row-action", data=data, follow_redirects=False)
+
+
+def shown_pair_rev(c: Any, bid: int, idx: int) -> str:
+    """Auf der Detailseite angezeigter Stand des Journal-Transferpartners einer Zeile (``pairrev_<Zeile>``)."""
+    import re as _re
+
+    page = c.get(f"/journal/csv/{bid}").text
+    m = _re.search(rf'name="pairrev_{idx}" value="([^"]*)"', page)
+    return m.group(1) if m is not None else ""
+
+
+def transfer_decision(c: Any, bid: int, idx: int, value: str) -> Any:
+    """Transferentscheidung wie im Browser: mit dem angezeigten Partnerstand (seit 0.93.0 Pflicht bei
+    Journalpartnern – ohne ihn wird die Entscheidung sichtbar abgelehnt)."""
+    data = {"csrf_token": c.token, f"pair_{idx}": value}
+    if rev := shown_pair_rev(c, bid, idx):
+        data[f"pairrev_{idx}"] = rev
+    return c.post(f"/journal/csv/{bid}/rows", data=data, follow_redirects=False)
