@@ -48,6 +48,7 @@ Seit 0.68.0 gibt es zwei Stufen: *belegt* (`takeover.PROOF`, Bitpanda) und *best
      „angewendet“ angezeigt. Ab 0.92.0: bei einem Journalpartner speichert die Entscheidung dessen Stand aus der
      bestätigten Vorschau; die Buchung prüft ihn in ihrer Transaktion – eine zwischenzeitliche Fremdänderung führt zur
      vollständigen Rücknahme des Laufs (die Änderung selbst bleibt), die Entscheidung erscheint als „verworfen“.
+     Ab 0.93.0 gilt das ebenso für „kein Transfer“ (auch bei konkurrierenden Partnern: Stand aller angebotenen).
    * **Zählung (ab 0.89.0, Bitpanda):** Einträge von `/operations` = ausgewertete Vorgänge + begründete Auslassungen,
      sonst gesperrt; fehlende Zählung gilt als unbekannt.
 3. **Vorschau** – Beweis, Bestand (jetzt · nach Übernahme · beobachtet), Wirkung: ausgeblendete und bleibende Buchungen,

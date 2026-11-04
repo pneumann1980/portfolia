@@ -353,3 +353,52 @@ nicht blockierend.
 * Der Probelauf der Übernahme bleibt prozesslokal zwischengespeichert; maßgeblich ist die Prüfung im echten Lauf.
 * Bestehender mypy-Bestand (s. o.) und die Grenzen der früheren Runden (konkurrierende Partner, reine EUR-Gebühr ohne
   Asset) gelten weiter.
+
+# Review vom 04.11.2026 zu 0.92.0 (Version 0.93.0)
+
+Grundlage: `Portfolia_Buchungen_pruefen_Review_092_2026-11-04.md` mit Nachweispaket (`test_review_092.py`, 7 Fälle,
+geprüft auf `023f11d`, 0.92.0). **Reproduktion auf `023f11d`: 3 Soll-Tests schlugen fehl** (N13 mit späterer Eingabe,
+N14 „kein Transfer“ in der Übernahme, N14 Transferformular ohne `pairrev_`), die 4 Kontrollfälle bestanden (N13 ohne
+spätere Eingabe, alter Einzelknopf nach neuer Quellidentität, N14 „Transfer bestätigen“, Formular mit Revisionsfeld).
+**Auf dem Endstand bestehen alle 7.** Die Fälle stehen mit unveränderten fachlichen Erwartungen in
+`tests/test_review_092.py`, ergänzt um eigene Fälle (insgesamt 44).
+
+| ID | Abgleich auf 023f11d | Ursache | Änderung | Nachweis | Verbleibende Grenze |
+| --- | --- | --- | --- | --- | --- |
+| **N13** Fehlerrücknahme überschreibt neuere Eingaben | bestätigt: nach abgelehnter Verknüpfung wurden „zurückgestellt“ und EUR-Wert 123 eines anderen Tabs auf leer gesetzt | `row_action` sicherte die Eingaben **aller** Zeilen und schrieb sie nach der Ablehnung unbedingt zurück; Sicherung, Speichern, Ausführen und Rücknahme waren getrennte Aufrufe | `set_rows` liest und schreibt die Eingaben in **einer** Schreibtransaktion und liefert den Rücknahmeauftrag nur der von diesem Aufruf **tatsächlich geänderten** Zeilen (vorher/geschrieben). `restore_inputs` setzt in einer Schreibtransaktion **feldweise** zurück – nur Felder, die dieser Aufruf geändert hat und die noch genau den von ihm geschriebenen Wert tragen; gebuchte/verknüpfte Zeilen bleiben unberührt. Die alte Gesamtsicherung (`inputs`) entfällt | Reviewfälle (mit/ohne spätere Eingabe); eigene: Entscheidung, EUR-Wert, Gebührenwert einzeln und zusammen auf einer anderen Zeile; Änderung desselben Felds derselben Zeile durch einen anderen Tab (bleibt, übrige eigene Felder zurück); eigene abgelehnte Eingaben ohne Fremdänderung vollständig zurück; wiederholte Rücknahme ändert nur noch eigene Werte; Transferbestätigung samt Partnerstand eines anderen Stapels bleibt | Ein anderer Aufruf, der zufällig **denselben** Wert in dasselbe Feld schreibt, ist nicht unterscheidbar – der Wert wird dann (gleichlautend) zurückgenommen. Die vom Speichern ausgelöste Neubewertung bleibt (abgeleitete Felder) |
+| **N14** Fehlende Partnerrevision durch aktuellen Stand ersetzt | bestätigt: (A) Übernahme mit „kein Transfer“ lief nach Änderung des Partners (55 → 777 €) durch; (B) Formular ohne `pairrev_` speicherte „ja“ mit dem **jetzigen** Stand, „Buchungen übernehmen“ führte den geänderten Partner zusammen | `set_rows` fiel bei fehlendem `pairrev_` auf `ref_revs(...)` (Stand beim Speichern) zurück; der `nopair`-Zweig der Übernahme gab keinen Partnerstand mit | Kein Rückfall mehr: Eine Transferentscheidung („ja“ oder „nein“) zu einem Journalpartner ohne bzw. mit leerem `pairrev_` wird **nicht gespeichert** und sichtbar gemeldet („… ohne angezeigten Stand der Gegenbuchung – nicht gespeichert“) – im Formular (Detailseite zeigt den Fehler) wie bei internen Aufrufern (`set_rows` gibt den Fehler zurück). Die Übernahme gibt bei **beiden** Entscheidungen Partnerkennung und Stand aus der bestätigten Vorschau mit; bei konkurrierenden Partnern speichert die Entscheidung die Stände aller angebotenen Journalpartner und prüft genau den jetzt vorgeschlagenen. Abweichung → abgelehnt, Übernahme vollständig kompensiert, Fremdänderung bleibt; die Entscheidung erscheint als „verworfen“ | Reviewfälle (A: pair/nopair, B: mit/ohne Feld); eigene: fehlendes, leeres und nur aus Leerzeichen bestehendes Feld bei „ja“ und „nein“ (6 Fälle, danach kein Transfer über „Buchungen übernehmen“); interner Aufruf ohne Stand; Übernahme mit „Transfer bestätigen“ und „kein Transfer“, Änderung von Wert, Konto, Menge, Gebühr, Löschstatus jeweils vor dem Anwenden der Entscheidungen und vor der Buchung (20 Fälle); neue Bestätigung nach Ablehnung → genau eine Übernahme → zweites Absenden abgelehnt → vollständige Rücknahme (beide Entscheidungen) | Formulare und Skripte, die Transferentscheidungen zu Journalpartnern ohne den angezeigten Stand absenden, werden abgelehnt (gewollt) |
+
+## Teststeuerung
+
+* Nebenläufigkeit: Wrapper um `BA._execute_tx`, `svc.restore_inputs`, `TK._apply_decisions` bzw. `BA.execute` lassen
+  einen echten zweiten Thread über die regulären Dienste schreiben und rufen danach den unveränderten Dienst auf.
+* **Angepasst:** `tests/test_csvimport.py::test_transfer_matching_across_imports_and_revert` und
+  `tests/test_wallets_evm.py::test_exchange_withdrawal_and_wallet_deposit_become_one_transfer` sendeten „ja“ zu einem
+  Journalpartner ohne Partnerstand. Sie verwenden jetzt `tests.helpers.transfer_decision` bzw. `shown_pair_rev` (Stand
+  von der gerenderten Detailseite); die fachlichen Erwartungen sind unverändert. `tests/test_review_091.py`:
+  `_takeover_with_edit` kennt zusätzlich die Entscheidung („pair“/„nopair“) und den Eingriffspunkt „vor dem Anwenden der
+  Entscheidungen“.
+
+## mypy
+
+Der CI-Schritt bleibt nur meldend – grün belegt keine Fehlerfreiheit. Lokal (Python 3.11, derselbe Aufruf wie in CI):
+siehe Tabelle unten; CI (Python 3.12) meldete für 0.92.0 333 Fehler in 61 Dateien.
+
+## Tests und Befehle (0.93.0)
+
+| Befehl | Ergebnis |
+| --- | --- |
+| `ruff check app tests scripts` | ohne Befund |
+| `python -m app validate examples/beispiel-import.zip` | 0 Fehler, 0 Warnungen, 124 Transaktionen |
+| Reviewfälle (`test_review_092.py`) auf `023f11d` | 3 fehlgeschlagen, 4 bestanden |
+| `tests/test_review_092.py` (44) auf `023f11d` | 18 fehlgeschlagen, 26 bestanden (Kontroll- und Sicherungsfälle, u. a. „Transfer bestätigen“ in der Übernahme und Änderungen, die schon 0.92.0 ablehnte) |
+| dieselben auf dem Endstand | 44 bestanden |
+| `mypy` wie in CI, lokal (Python 3.11) | 334 Fehler in 61 Dateien auf `023f11d` und auf dem Endstand – zeilenweise identisch; in den geänderten Modulen `csvimport/service.py`, `csvimport/module.py`, `datasources/takeover.py` 36 bestehende Fehler, unverändert. Keine neuen Typfehler, Bestand offen |
+| Volltest `TZ=Europe/Berlin pytest -q -x tests` (Worktree des Endstands) | 2229 Tests, davon 2226 bestanden und 3 übersprungen, 0 fehlgeschlagen (Exit-Code 0) |
+
+## Grenzen nach dem Review 0.92.0
+
+* N13: gleichlautende Fremdeingabe nicht unterscheidbar (s. o.); Eingaben werden weiterhin **vor** der Aktion
+  gespeichert (die Planung braucht sie) und bei Ablehnung kompensiert, nicht in derselben Transaktion wie die Aktion.
+* Die Grenzen der früheren Runden (konkurrierende Partner nur „kein Transfer“, reine EUR-Gebühr ohne Asset,
+  mypy-Bestand) gelten weiter.

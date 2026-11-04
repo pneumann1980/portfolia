@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 04.11.2026 · Version 0.92.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 04.11.2026 · Version 0.93.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,18 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.93.0 – Review „Buchungen prüfen“ 0.92.0: Rücknahme ohne Fremdverlust, Partnerstand ohne Rückfall
+
+Abgleich, Ursache, Änderung, Nachweis und Grenzen: [`BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](BUCHUNGEN_PRUEFEN_KORREKTUREN.md#review-vom-04112026-zu-0920-version-0930).
+3 der 7 Reviewfälle schlugen auf 0.92.0 fehl; alle 7 bestehen jetzt (insgesamt 44 Fälle in `tests/test_review_092.py`).
+
+* **N13:** Wird eine Einzelaktion abgelehnt, nimmt die Prüfseite nur die eigenen, noch unveränderten Eingaben zurück –
+  feldweise, in einer Schreibtransaktion; neuere Eingaben anderer Tabs (Entscheidung, EUR-Wert, Gebühr,
+  Transferbestätigung) bleiben.
+* **N14:** Eine Transferentscheidung zu einem Journalpartner ohne angezeigten Partnerstand wird nicht gespeichert und
+  sichtbar abgelehnt (kein Rückfall auf den jetzigen Stand). Die Quellenübernahme prüft „Transfer bestätigen“ und
+  „kein Transfer“ gleich – auch bei konkurrierenden Partnern.
 
 ## 0.92.0 – Review „Buchungen prüfen“ 0.91.0: Bestätigungen an den angezeigten Stand gebunden, Journaltransfer im Vorschauweg
 
