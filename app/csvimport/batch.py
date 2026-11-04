@@ -359,6 +359,37 @@ def rows_digest(rcs: Iterable[RowCtx]) -> str:
     return hashlib.sha256(data.encode()).hexdigest()[:24]
 
 
+def effect_rows(rows: list[RowCtx], event: str) -> list[RowCtx]:
+    """Wirkungsmenge einer Antwort zu einem Vorgang: seine offenen Zeilen und alle Transfer-Partnerzeilen im selben
+    Stapel, die eine Transferbestätigung mitbucht bzw. mitentscheidet."""
+    by = {rc.idx: rc for rc in rows}
+    own = [rc for rc in rows if (rc.rec.event_key or f"#{rc.idx}") == event and rc.open]
+    partners = [by[int(rc.pair_ref[2:])] for rc in own if (rc.pair_ref or "").startswith("b:")
+                and rc.pair_ref[2:].isdigit() and int(rc.pair_ref[2:]) in by]
+    return sorted({rc.idx: rc for rc in [*own, *partners]}.values(), key=lambda r: r.idx)
+
+
+def effect_digest(ctx: Any, rows: list[RowCtx], event: str) -> str:
+    """Prüfsumme des angezeigten Stands der **gesamten** Wirkungsmenge: eigene Zeilen, Partnerzeilen (Konto, Asset,
+    Menge, Gebühr, Einordnung, Status, Zuordnung) sowie der wirksame Zustand referenzierter Buchungen (Transferpartner
+    im Journal, Verknüpfungsziel – aus dem erfassten Bestand inkl. Änderungen in der App). Dieselbe Grundlage beim
+    Anzeigen und beim Schreiben."""
+    import dataclasses
+
+    eff = effect_rows(rows, event)
+    refs = sorted({str(rc.pair_ref)[2:] for rc in eff if (rc.pair_ref or "").startswith("j:")}
+                  | {str(t) for rc in eff for t in [(rc.match or {}).get("target"), *(rc.dup_of or [])] if t})
+    txs: dict[str, Any] = {}
+    if refs:
+        pf = ctx.recorded_portfolio()
+        want = set(refs)
+        txs = {t.tx_id: t for t in (pf.txs if pf is not None else []) if t.tx_id in want}
+    ref_state = [[t, sorted((k, str(v)) for k, v in dataclasses.asdict(txs[t]).items() if k != "seq")
+                  if t in txs else None] for t in refs]
+    data = json.dumps([[[rc.idx, row_state(rc)] for rc in eff], ref_state], default=str)
+    return hashlib.sha256(data.encode()).hexdigest()[:24]
+
+
 def _first_issue(m: Mapping[str, Any]) -> str:
     for d in m.get("diff") or []:
         if d.get("sev") == "relevant":
@@ -564,7 +595,7 @@ def _event_one_to_one(rc: RowCtx, rows: list[RowCtx], link_targets: Mapping[int,
 
 
 def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str, fingerprint: str,
-            force: bool = False, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
+            force: bool = False, params: Mapping[str, Any] | None = None, in_tx: Any = None) -> dict[str, Any]:
     """Stapelaktion ausführen – genau einmal je Vorschau (``token``) und nur, wenn die Vorschau noch gilt
     (``fingerprint``). Alles in einer Transaktion; danach neu bewerten."""
     if action not in ACTIONS:
@@ -661,6 +692,8 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
             c.execute("UPDATE import_action SET ops_json=?, summary_json=? WHERE id=?",
                       (json.dumps(ops, ensure_ascii=False), json.dumps(summary, ensure_ascii=False), aid))
             js._log(c, "import_batch", f"csv:{bid}", None, {"action": action, "id": aid, **p.counts()}, stamp)
+            if in_tx is not None:  # Besitzbezug des Aufrufers in derselben Transaktion wie die Buchungen
+                in_tx(c, aid)
         svc.evaluate(bid)
         svc.refresh_status(bid)
         set_selection(db, bid, selection(db, bid, svc.rows(bid)) - {i.rc.idx for i in p.todo})
@@ -821,5 +854,6 @@ def links_for(db: Any, tx_ids: Iterable[str]) -> dict[str, list[dict[str, Any]]]
 
 
 __all__ = ["ACTIONS", "CONFLICTS", "EFFECT_LABEL", "GROUPS", "Filters", "Plan", "actions", "change_selection",
+           "effect_digest", "effect_rows",
            "execute", "group_of", "group_state", "links_for", "new_token", "overview", "plan", "selection",
            "set_selection", "undo"]

@@ -461,13 +461,12 @@ def _plain_reason(reason: str) -> str:
     return "Eine Angabe fehlt oder ist ungültig." if "_" in reason else _first_sentence(reason)
 
 
-def _bind_rows(task: Task, rows: list[Any]) -> None:
+def _bind_rows(ctx: Any, task: Task, rows: list[Any]) -> None:
     """Die Antwort gilt genau für den angezeigten Stand des Vorgangs: Prüfsumme seiner offenen Zeilen (dieselbe
     Auswahl wie beim Antworten in ``assistant_web._stack_answer``)."""
-    from app.csvimport.batch import rows_digest
+    from app.csvimport.batch import effect_digest
 
-    event = task.ref.partition(":")[2]
-    task.payload["fp"] = rows_digest([rc for rc in rows if (rc.rec.event_key or f"#{rc.idx}") == event and rc.open])
+    task.payload["fp"] = effect_digest(ctx, rows, task.ref.partition(":")[2])
 
 
 def _transfer_case(ctx: Any, mine: list[Any], all_rows: list[Any]) -> dict[str, Any] | None:
@@ -547,7 +546,7 @@ def _row_detail(ctx: Any, task: Task) -> Task:
                    "geht es hier weiter.", recommended=not xfer["decidable"]),
             Answer("row:skip", "Gehört nicht in mein Depot", "Wird nicht gebucht; Portfolia fragt nicht wieder."),
             Answer("row:defer", "Weiß ich nicht", NO_CHANGE + " Der Vorgang wird zurückgestellt.")]
-        _bind_rows(task, csv_service(ctx).rows(it.batch_id))
+        _bind_rows(ctx, task, csv_service(ctx).rows(it.batch_id))
         return task
     if link_like:
         task.question = "Ist dieser Vorgang schon gebucht?"
@@ -564,7 +563,7 @@ def _row_detail(ctx: Any, task: Task) -> Task:
         task.context = f"{what}. Ein Gegenstück in deinen Buchungen gibt es nicht."
         task.answers = [Answer("row:include", "Ja, buchen", "Wird gebucht: " + (", ".join(it.legs) or what) + ".",
                                recommended=True)]
-    _bind_rows(task, csv_service(ctx).rows(it.batch_id))
+    _bind_rows(ctx, task, csv_service(ctx).rows(it.batch_id))
     task.answers += [
         Answer("row:skip", "Nicht buchen (gehört nicht in mein Depot)",
                "Wird nicht gebucht; Portfolia fragt bei diesem Vorgang nicht wieder."),

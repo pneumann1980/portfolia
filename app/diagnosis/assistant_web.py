@@ -145,7 +145,8 @@ def _log_extra(ctx: Any, rows: list[Any]) -> dict[str, Any]:
 
     db = ctx.db
     owner = {int(r["decision_id"]): int(r["source_id"]) for r in db.q(
-        "SELECT decision_id, source_id FROM ds_takeover WHERE status='applied' AND decision_id IS NOT NULL")}
+        "SELECT decision_id, source_id FROM ds_takeover WHERE status IN ('applied', 'undoing') AND decision_id IS NOT "
+        "NULL")}
     deps: dict[int, list[int]] = {}
     for d in rows:
         if d.status == "active" and d.action == "fix" and d.id not in owner:
@@ -522,15 +523,22 @@ def make_router() -> APIRouter:
         shown = str(form.get("x_fp") or "")
 
         def run() -> dict[str, Any]:
+            from app.csvimport.service import _LOCK as CSV_LOCK
+
+            with CSV_LOCK:  # Prüfung und Änderung unter derselben Sperre wie Eingaben und Stapelaktionen
+                return decide()
+
+        def decide() -> dict[str, Any]:
             svc.evaluate(bid)
             rows = svc.rows(bid)
             idxs = [rc.idx for rc in rows if (rc.rec.event_key or f"#{rc.idx}") == event and rc.open]
             if not idxs:
                 return {"errors": ["Der Vorgang ist schon entschieden oder hat sich geändert."]}
-            if shown and op in ("include", "link", "pair", "nopair") and \
-                    BA.rows_digest([rc for rc in rows if rc.idx in set(idxs)]) != shown:
-                return {"errors": ["Der Vorgang hat sich seit der Anzeige geändert (Betrag, Wert, Konto oder "
-                                   "Transferentscheidung) – bitte die neu angezeigten Angaben prüfen."]}
+            # Bindung an den angezeigten Stand der gesamten Wirkungsmenge (eigene Zeilen, Transferpartner, Journal)
+            if op in ("include", "link", "pair", "nopair") and BA.effect_digest(ctx, rows, event) != shown:
+                return {"errors": ["Der Vorgang oder seine Gegenbuchung hat sich seit der Anzeige geändert (Betrag, "
+                                   "Wert, Konto, Gebühr oder Transferzuordnung) – bitte die neu angezeigten Angaben "
+                                   "prüfen; es wurde nichts geändert."]}
             if op in ("skip", "defer"):
                 return BU.decide(svc, bid, idxs, op)
             if op in ("pair", "nopair"):  # Transferfrage beantworten (pair_ok wie im Prüf-Stapel), dann buchen
@@ -538,6 +546,8 @@ def make_router() -> APIRouter:
                 refs = [rc for rc in mine if (rc.pair_ref or "").startswith("b:") and not rc.pair_alts]
                 if not refs:
                     return {"errors": ["Dieser Transfer lässt sich nur in der Detailansicht klären."]}
+                touched = {rc.idx for rc in refs} | {int(rc.pair_ref[2:]) for rc in refs}
+                before = {rc.idx: rc.pair_ok for rc in rows if rc.idx in touched}
                 svc.set_rows(bid, {f"pair_{rc.idx}": "1" if op == "pair" else "0" for rc in refs})
                 svc.evaluate(bid)
                 rows = svc.rows(bid)
@@ -545,13 +555,19 @@ def make_router() -> APIRouter:
                 p = BA.plan(svc, bid, "include", want, True, rows)
                 if not p.todo or any(not it.act for it in p.items if it.rc.idx in want):
                     why = next((it.note for it in p.items if not it.act), "nicht buchbar")
-                    return {"errors": [f"Nicht gebucht: {why}. Die Transferentscheidung ist gespeichert."]}
+                    _restore_pairs(bid, before)  # keine halbe Entscheidung: Transferstand wie vorher
+                    return {"errors": [f"Nicht gebucht: {why}. Es wurde nichts geändert."]}
                 return BA.execute(svc, bid, "include", {i.rc.idx for i in p.todo}, token=BA.new_token(),
                                   fingerprint=p.fingerprint(), force=True)
             p = BA.plan(svc, bid, op, idxs, True, rows)  # ausdrückliche Antwort: auch bei abweichenden Angaben
             if not p.todo:
                 return {"errors": [p.items[0].note if p.items else "Nichts auszuführen."]}
             return BA.execute(svc, bid, op, idxs, token=BA.new_token(), fingerprint=p.fingerprint(), force=True)
+
+        def _restore_pairs(bid: int, before: dict[int, int | None]) -> None:
+            ctx.db.xmany("UPDATE csv_row SET pair_ok=? WHERE batch_id=? AND idx=?",
+                         [(v, bid, i) for i, v in before.items()])
+            svc.evaluate(bid)
 
         res = await run_in_threadpool(run)
         if res.get("errors"):

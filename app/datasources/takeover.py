@@ -1389,6 +1389,12 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False,
     st: dict[str, Any] = {"decision_id": None, "action_id": None, "bid": None}
 
     def rollback(why: str, detail: list[str], rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        # maßgeblich sind die in derselben Transaktion wie die Änderung gespeicherten Bezüge (auch wenn eine Methode
+        # nach ihrem Commit scheiterte und ihre Kennung nie zurückgab)
+        saved = db.q1("SELECT decision_id, action_id, batch_id FROM ds_takeover WHERE id=?", (rid,))
+        for key, col in (("decision_id", "decision_id"), ("action_id", "action_id"), ("bid", "batch_id")):
+            if st[key] is None and saved is not None and saved[col] is not None:
+                st[key] = int(saved[col])
         written = st["decision_id"] is not None or st["action_id"] is not None
         notes = _compensate(ctx, rid, st["decision_id"], st["action_id"], st["bid"])
         res_doc: dict[str, Any] = {"detail": detail[:40], "rollback_errors": notes,
@@ -1423,10 +1429,25 @@ def _fault(phase: str) -> None:
 _FAULTS: set[str] = set()
 
 
-def _compensate(ctx: Any, rid: int, decision_id: int | None, action_id: int | None, bid: int | None) -> list[str]:
-    """Geschriebenes in umgekehrter Reihenfolge zurücknehmen: Stapelaktion, Stapel, Ausblendung. Jeder erfolgreich
-    zurückgenommene Schritt wird sofort aus ``ds_takeover`` gelöscht; was nicht gelingt, bleibt mit seiner Kennung
-    gespeichert (erneuter Versuch über ``recover``). Bereits Zurückgenommenes gilt als erledigt (idempotent)."""
+def _run_actions(db: Any, action_id: int | None, bid: int | None) -> list[int]:
+    """Aktive Stapelaktionen eines Übernahmelaufs, neueste zuerst: die gespeicherte Buchungsaktion und alle weiteren
+    Aktionen auf dem eigenen Stapel des Laufs (Verknüpfen, Nicht übernehmen, Entscheidungen im Übernahmekontext)."""
+    ids = {int(action_id)} if action_id is not None else set()
+    if bid is not None:
+        ids |= {int(r["id"]) for r in db.q("SELECT id FROM import_action WHERE batch_id=?", (bid,))}
+    return sorted((i for i in ids if (db.q1("SELECT status FROM import_action WHERE id=?", (i,)) or
+                                      {"status": ""})["status"] == "active"), reverse=True)
+
+
+def _compensate(ctx: Any, rid: int, decision_id: int | None, action_id: int | None, bid: int | None,
+                keep: bool = False) -> list[str]:
+    """Geschriebenes in umgekehrter Reihenfolge zurücknehmen: Stapelaktionen des Laufs, Stapel, Ausblendung.
+
+    Idempotent und fortsetzbar: maßgeblich ist der dauerhafte Zustand der Teile (Aktion ``undone``, Stapel gelöscht,
+    Entscheidung nicht mehr aktiv) – bereits Zurückgenommenes wird übersprungen, ein erneuter Aufruf setzt beim
+    ersten offenen Teil fort. Ohne ``keep`` wird jede erfolgreich zurückgenommene Kennung sofort aus ``ds_takeover``
+    gelöscht (Abbruch der Übernahme); mit ``keep`` bleiben die Bezüge als Nachweis (Rückgängig einer angewendeten
+    Übernahme). Was nicht gelingt, steht in der Rückgabe."""
     from app.csvimport import batch as B
     from app.csvimport.service import csv_service
     from app.diagnosis import actions as A
@@ -1435,23 +1456,28 @@ def _compensate(ctx: Any, rid: int, decision_id: int | None, action_id: int | No
     db = ctx.db
     csv = csv_service(ctx)
     notes: list[str] = []
-    if action_id is not None:
+    def state(table: str, key: int) -> str:
+        return str((db.q1(f"SELECT status FROM {table} WHERE id=?", (key,)) or {"status": ""})["status"])
+
+    for aid in _run_actions(db, action_id, bid):
         try:
-            done = (db.q1("SELECT status FROM import_action WHERE id=?", (action_id,)) or {"status": ""})["status"]
-            errs = [] if done != "active" else list(B.undo(csv, action_id).get("errors") or [])
+            errs = list(B.undo(csv, aid).get("errors") or [])
         except Exception as e:
-            log.exception("Quellenübernahme %s: Rücknahme der Stapelaktion %s fehlgeschlagen", rid, action_id)
-            errs = [f"Buchungen der Stapelaktion #{action_id} nicht zurückgenommen ({type(e).__name__})"]
+            log.exception("Quellenübernahme %s: Rücknahme der Stapelaktion %s fehlgeschlagen", rid, aid)
+            # nach dem Commit gescheitert (z. B. Nachberechnung)? Dann ist der Teil zurückgenommen
+            errs = [] if state("import_action", aid) != "active" else [
+                f"Buchungen der Stapelaktion #{aid} nicht zurückgenommen ({type(e).__name__})"]
         if errs:
             notes += errs
-        else:
-            action_id = None
-            db.x("UPDATE ds_takeover SET action_id=NULL WHERE id=?", (rid,))
-    if bid is not None and action_id is None:
+            break
+    if not notes and action_id is not None and not keep:
+        db.x("UPDATE ds_takeover SET action_id=NULL WHERE id=?", (rid,))
+    if bid is not None and not notes:
         try:
-            if csv.batch(bid) is not None:
-                csv.discard(bid, rewind=False)
-            db.x("UPDATE ds_takeover SET batch_id=NULL WHERE id=?", (rid,))
+            if csv.batch(bid) is not None and not csv.discard(bid, rewind=False):
+                notes.append(f"Prüf-Stapel #{bid} enthält noch Buchungen und wurde nicht verworfen")
+            elif not keep:
+                db.x("UPDATE ds_takeover SET batch_id=NULL WHERE id=?", (rid,))
         except Exception as e:
             log.exception("Quellenübernahme %s: Verwerfen des Stapels %s fehlgeschlagen", rid, bid)
             notes.append(f"Prüf-Stapel #{bid} nicht verworfen ({type(e).__name__})")
@@ -1461,11 +1487,11 @@ def _compensate(ctx: Any, rid: int, decision_id: int | None, action_id: int | No
             errs = [] if done != "active" else list(A.undo(ctx, decision_id).errors)
         except Exception as e:
             log.exception("Quellenübernahme %s: Rücknahme der Ausblendung %s fehlgeschlagen", rid, decision_id)
-            errs = [f"Ausgeblendete Buchungen (Entscheidung #{decision_id}) nicht wiederhergestellt "
-                    f"({type(e).__name__})"]
+            errs = [] if state("diag_decision", decision_id) != "active" else [
+                f"Ausgeblendete Buchungen (Entscheidung #{decision_id}) nicht wiederhergestellt ({type(e).__name__})"]
         if errs:
             notes += errs
-        else:
+        elif not keep:
             db.x("UPDATE ds_takeover SET decision_id=NULL WHERE id=?", (rid,))
     elif decision_id is not None:
         notes.append(f"Ausgeblendete Buchungen (Entscheidung #{decision_id}) noch nicht wiederhergestellt")
@@ -1482,9 +1508,10 @@ RECOVER_FIRST = ("Eine frühere Übernahme wurde unterbrochen und ist noch nicht
 
 
 def needs_recovery(db: Any, sid: int) -> Any:
-    """Übernahme mit gespeichertem Teilzustand: abgebrochen (``running`` ohne laufenden Prozess) oder nach
-    unvollständiger Rücknahme (``failed``) – mit mindestens einer Kennung des Geschriebenen."""
-    r = db.q1("SELECT * FROM ds_takeover WHERE source_id=? AND status IN ('running', 'failed') AND "
+    """Übernahme mit gespeichertem Teilzustand: abgebrochen (``running`` ohne laufenden Prozess), nach
+    unvollständiger Rücknahme (``failed``) bzw. begonnenes, nicht abgeschlossenes Rückgängig (``undoing``) – mit
+    mindestens einer Kennung des Geschriebenen."""
+    r = db.q1("SELECT * FROM ds_takeover WHERE source_id=? AND status IN ('running', 'failed', 'undoing') AND "
               "(decision_id IS NOT NULL OR action_id IS NOT NULL OR batch_id IS NOT NULL) ORDER BY id DESC LIMIT 1",
               (sid,))
     if r is None or (r["status"] == "running" and sid in _RUNNING):
@@ -1503,6 +1530,8 @@ def recover(ctx: Any, sid: int) -> dict[str, Any]:
         r = needs_recovery(ctx.db, sid)
         if r is None:
             return {"errors": ["Keine unterbrochene Übernahme gespeichert."]}
+        if r["status"] == "undoing":  # begonnenes Rückgängig einer angewendeten Übernahme: dort fortsetzen
+            return undo(ctx, sid)
         ev = S._acquire(sid)
         if ev is None:
             return {"errors": [S.BUSY_TEXT]}
@@ -1536,7 +1565,8 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
 
     # 1. ausblenden -----------------------------------------------------------------------------------------
     if a.plan is not None and a.plan.ops:
-        res = A.apply_plan(ctx, a.finding, a.plan, a.plan.token, None)
+        res = A.apply_plan(ctx, a.finding, a.plan, a.plan.token, None, in_tx=lambda c, did: c.execute(
+            "UPDATE ds_takeover SET decision_id=? WHERE id=?", (did, rid)))
         if res.errors:
             db.x("UPDATE ds_takeover SET status='staged', message=?, donors_json=NULL WHERE id=?",
                  (res.errors[0][:500], rid))
@@ -1555,7 +1585,8 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
     try:
         bid = st["bid"] = csv.ingest(recs, source=f"sync:{prov}", profile=f"sync:{prov}", account=a.account,
                          label=f"{ds_name} · Quellenübernahme {datetime.now(UTC).strftime('%d.%m.%Y %H:%M')}",
-                         datasource_id=sid, payload=payload, options={"cutoff": ""}, append_to=None)
+                         datasource_id=sid, payload=payload, options={"cutoff": ""}, append_to=None,
+                         in_tx=lambda c, b: c.execute("UPDATE ds_takeover SET batch_id=? WHERE id=?", (b, rid)))
     except Exception as e:
         log.exception("Quellenübernahme: Auswertung fehlgeschlagen")
         return rollback(f"Auswertung der API-Vorgänge fehlgeschlagen ({type(e).__name__}).", [])
@@ -1587,7 +1618,8 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
             return rollback(f"{head} – bitte zuerst im Prüfstapel entscheiden.",
                             [f"Zeile {x['line']} ({x['when']} {x['what']}): {x['why']}" for x in info][:12], info)
         out = B.execute(csv, bid, "include", {i.rc.idx for i in p.todo}, token=B.new_token(),
-                        fingerprint=p.fingerprint(), params={"takeover": rid})
+                        fingerprint=p.fingerprint(), params={"takeover": rid},
+                        in_tx=lambda c, aid: c.execute("UPDATE ds_takeover SET action_id=? WHERE id=?", (aid, rid)))
         if out.get("errors"):
             return rollback("Buchen der API-Vorgänge nicht möglich.", list(out["errors"]))
         st["action_id"] = int(out["action_id"])
@@ -1678,24 +1710,25 @@ def _adjust_recs(a: Any) -> list[Any]:
 # ----------------------------------------------------------------------------------------------------
 
 def undo(ctx: Any, sid: int) -> dict[str, Any]:
-    """Übernahme als Ganzes zurücknehmen: zuerst die gebuchten API-Vorgänge, dann die ausgeblendeten Buchungen."""
-    from app.csvimport import batch as B
-    from app.csvimport.service import csv_service
+    """Übernahme als Ganzes zurücknehmen: zuerst die Stapelaktionen des Laufs (gebuchte API-Vorgänge, Verknüpfungen),
+    dann der Stapel, zuletzt die ausgeblendeten Buchungen.
+
+    Fortsetzbar: vor dem ersten Schritt steht der Lauf dauerhaft auf ``undoing``; bereits zurückgenommene Teile
+    erkennt die Kompensation an ihrem Zustand. Scheitert ein Schritt (Fehlerergebnis, Ausnahme, Prozessabbruch),
+    bleibt ``undoing`` mit allen Bezügen – ein erneuter Aufruf setzt fort. ``undone`` erst, wenn alles zurück ist."""
     from app.datasources import service as S
     from app.diagnosis import actions as A
-    from app.journal.service import journal_service
 
     db = ctx.db
     with _LOCK:
         r = latest(db, sid)
-        if r is None or r["status"] != "applied":
+        if r is None or r["status"] not in ("applied", "undoing"):
             return {"errors": ["Keine aktive Quellenübernahme."]}
         ev = S._acquire(sid)
         if ev is None:
             return {"errors": [S.BUSY_TEXT]}
         try:
             with S._INGEST_LOCK:
-                csv = csv_service(ctx)
                 dec = db.q1("SELECT id, status, ops_json FROM diag_decision WHERE id=?", (r["decision_id"],)) \
                     if r["decision_id"] else None
                 if dec is not None and dec["status"] == "active":
@@ -1704,27 +1737,16 @@ def undo(ctx: Any, sid: int) -> dict[str, Any]:
                         return {"errors": ["Rückgängig nicht möglich: spätere Korrekturen betreffen dieselben "
                                            "Buchungen (" + ", ".join(f"#{i}" for i in later) + "). Bitte zuerst diese "
                                            "zurücknehmen – es wurde nichts geändert."]}
-                notes: list[str] = []
-                if r["action_id"]:
-                    res = B.undo(csv, int(r["action_id"]))
-                    if res.get("errors"):
-                        return {"errors": res["errors"]}
-                    if res.get("changed"):
-                        notes.append(f"{res['changed']} Zeile(n) waren seit der Übernahme verändert und blieben "
-                                     "unberührt.")
-                if r["batch_id"] and csv.batch(int(r["batch_id"])) is not None:
-                    csv.discard(int(r["batch_id"]), rewind=False)
+                db.x("UPDATE ds_takeover SET status='undoing', message=? WHERE id=?",
+                     ("Rücknahme läuft …", r["id"]))
+                notes = _compensate(ctx, int(r["id"]), r["decision_id"], r["action_id"], r["batch_id"], keep=True)
+                if notes:
+                    text = ("Rücknahme unvollständig – bereits Zurückgenommenes bleibt zurückgenommen; bitte "
+                            "„Übernahme zurücknehmen“ erneut ausführen: " + "; ".join(notes))
+                    db.x("UPDATE ds_takeover SET message=? WHERE id=?", (text[:500], r["id"]))
+                    return {"errors": [text]}
                 db.x("UPDATE ds_takeover SET status='undone', undone_at=?, donors_json=NULL, message=? WHERE id=?",
-                     (_now(), "Zurückgenommen." + (" " + " ".join(notes) if notes else ""), r["id"]))
-                # erst nach dem Statuswechsel: sonst verweigert die Diagnose das Zurücknehmen der Ausblendung
-                if dec is not None and dec["status"] == "active":
-                    out = A.undo(ctx, int(dec["id"]))
-                    if out.errors:
-                        db.x("UPDATE ds_takeover SET status='applied', undone_at=NULL, message=? WHERE id=?",
-                             ("Teilweise zurückgenommen: " + " ".join(out.errors)[:400], r["id"]))
-                        return {"errors": ["Die API-Buchungen sind zurückgenommen, die ausgeblendeten Buchungen "
-                                           "ließen sich nicht wiederherstellen: " + " ".join(out.errors)]}
-                journal_service(ctx).after_change()
-                return {"errors": [], "notes": notes}
+                     (_now(), "Zurückgenommen.", r["id"]))
+                return {"errors": [], "notes": []}
         finally:
             S._release(sid)

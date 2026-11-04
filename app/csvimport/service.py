@@ -608,8 +608,10 @@ class CsvImportService:
     @_locked
     def ingest(self, recs: list[Rec], *, source: str, profile: str, account: str, label: str,
                datasource_id: int | None, payload: bytes, options: Mapping[str, Any] | None = None,
-               append_to: int | None = None, skipped: Mapping[str, int] | None = None) -> int:
+               append_to: int | None = None, skipped: Mapping[str, int] | None = None, in_tx: Any = None) -> int:
         """Normalisierte Vorgänge einer Datenquelle als Stapel (Art „sync“) anlegen und auswerten.
+
+        ``in_tx(c, batch_id)`` läuft in der Transaktion, die den Stapel anlegt (Besitzbezug des Aufrufers).
 
         ``payload`` (normalisierte Rohdaten) wird wie eine CSV-Datei komprimiert aufbewahrt – nachvollziehbar, ohne
         Zugangsdaten. Ohne Stichtag gilt wie beim CSV-Import das ``valuation_date`` des kuratierten Imports.
@@ -636,6 +638,8 @@ class CsvImportService:
             c.executemany("INSERT INTO csv_row(batch_id, idx, line, rec_json, status, event_key, event_line) "
                           "VALUES (?,?,?,?, 'new', ?,?)",
                           [(bid, i, r.line, rec_to_json(r), r.event_key, r.event_line) for i, r in enumerate(recs)])
+            if in_tx is not None:
+                in_tx(c, bid)
         self.evaluate(bid)
         return bid
 

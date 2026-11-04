@@ -1452,10 +1452,11 @@ def _after(ctx: Any, quotes: bool) -> None:
         source_service(ctx).changed()
 
 
-def apply_plan(ctx: Any, f: Finding, plan: Plan, token: str, rebuild: Any) -> Result:
+def apply_plan(ctx: Any, f: Finding, plan: Plan, token: str, rebuild: Any, in_tx: Any = None) -> Result:
     """Plan eines anderen Moduls übernehmen (z. B. Beleg ergänzt Buchung): ``rebuild()`` baut den Plan unter der Sperre
     neu (gleicher Datenstand wie die Vorschau, sonst Abbruch über ``token``); Protokoll und „Rückgängig“ wie bei
-    Diagnose-Korrekturen."""
+    Diagnose-Korrekturen. ``in_tx(c, decision_id)`` läuft in derselben Transaktion (z. B. Rücknahmebezug des
+    Aufrufers speichern: die Änderung ist nie ohne ihren Besitzer dauerhaft)."""
     with _LOCK:
         plan = rebuild() if rebuild is not None else plan
         if plan.errors:
@@ -1481,6 +1482,8 @@ def apply_plan(ctx: Any, f: Finding, plan: Plan, token: str, rebuild: Any) -> Re
                 did = int(cur.lastrowid)
                 js._log(c, "diagnose_apply", f"diagnose:{did}", None, {"finding": f.id, "option": plan.option.key,
                                                                          "changes": len(recs)}, stamp)
+                if in_tx is not None:
+                    in_tx(c, did)
         except Conflict as e:
             return Result(errors=[f"{e} Es wurde nichts geändert – bitte die Vorschau neu öffnen."])
         _after(ctx, False)
@@ -1745,14 +1748,26 @@ def _dependents(db: Any, decision_id: int, recs: list[dict[str, Any]]) -> list[i
     return out
 
 
+def _takeover_owned(db: Any, decision_id: int) -> bool:
+    """Gehört die Ausblendung zu einer Quellenübernahme, deren API-Buchungen noch bestehen? Dann ist sie nur gemeinsam
+    zurücknehmbar (angewendet bzw. noch aktive Stapelaktionen des Laufs – auch während einer Rücknahme)."""
+    for t in db.q("SELECT status, action_id, batch_id FROM ds_takeover WHERE decision_id=? AND status IN "
+                  "('applied', 'undoing', 'running', 'failed')", (decision_id,)):
+        if t["status"] == "applied":
+            return True
+        if db.q1("SELECT 1 FROM import_action WHERE status='active' AND (id=? OR batch_id=?)",
+                 (t["action_id"], t["batch_id"])) is not None:
+            return True
+    return False
+
+
 def undo(ctx: Any, decision_id: int) -> Result:
     """Korrektur als Ganzes zurücknehmen (in umgekehrter Reihenfolge; Konflikt → nichts wird geändert)."""
     with _LOCK:
         row = ctx.db.q1("SELECT * FROM diag_decision WHERE id=?", (decision_id,))
         if row is None or row["action"] != "fix" or row["status"] != "active":
             return Result(errors=["Diese Korrektur ist nicht (mehr) aktiv."])
-        if row["kind"] == "takeover" and ctx.db.q1("SELECT 1 FROM ds_takeover WHERE decision_id=? AND "
-                                                    "status='applied'", (decision_id,)) is not None:
+        if row["kind"] == "takeover" and _takeover_owned(ctx.db, decision_id):
             return Result(errors=["Diese Korrektur gehört zu einer Quellenübernahme (die ausgeblendeten Buchungen "
                                   "werden durch die API-Buchungen ersetzt) – bitte dort zurücknehmen: Einstellungen → "
                                   "Datenquellen → Quellenübernahme."])
