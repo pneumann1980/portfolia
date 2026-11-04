@@ -27,6 +27,7 @@
     <h2>Weitere Änderungen</h2>
     <p class="hint">Aus denselben Protokollen: übernommene bzw. entschiedene Vorgänge aus Prüf-Stapeln und Quellenübernahmen – je mit ihrem eigenen Rücknahmeweg.</p>
     {% if log.declined %}<ul class="plain-list">{% for d in log.declined %}<li>Quellenvorrang für <b>{{ d.name }}</b> abgelehnt{% if d.at %} am {{ d.at|datetime_de }}{% endif %} – der Import bleibt maßgeblich. <form method="post" action="/quality/assistent/vorrang/{{ d.sid }}/wieder" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Erneut fragen</button></form></li>{% endfor %}</ul>{% endif %}
+    {% if log.acks %}<h3>Zur Kenntnis genommene Integritätsbefunde</h3><ul class="plain-list">{% for x in log.acks %}<li><b>{{ x.title }}</b>{% if x.where %} <span class="hint">({{ x.where }})</span>{% endif %}{% if x.at %} – am {{ x.at|datetime_de }}{% endif %}{% if x.note %} <span class="hint">· {{ x.note }}</span>{% endif %} <form method="post" action="/quality/assistent/rueckgaengig" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="ia" value="{{ x.id }}"><input type="hidden" name="back" value="protokoll"><button class="btn sm ghost" type="submit">Zurücknehmen</button></form></li>{% endfor %}</ul>{% endif %}
     {% if log.acts or log.takeovers %}
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Wann</th><th>Was</th><th>Stand</th><th></th></tr></thead><tbody>
     {% for t in log.takeovers %}<tr>
@@ -43,7 +44,7 @@
         {% elif x.status == 'active' %}<form method="post" action="/quality/assistent/rueckgaengig"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="acts" value="{{ x.id }}"><input type="hidden" name="back" value="protokoll"><button class="btn sm ghost" type="submit">Zurücknehmen</button></form>{% endif %}</td>
     </tr>{% endfor %}
     </tbody></table></div>
-    {% elif not log.declined %}<p>Keine weiteren Änderungen.</p>{% endif %}
+    {% elif not log.declined and not log.acks %}<p>Keine weiteren Änderungen.</p>{% endif %}
   </section>
 
   <section class="card guide-danger" id="neustart">

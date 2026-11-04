@@ -291,3 +291,49 @@ def test_N02_link_answer_is_bound_to_the_target_booking(c, monkeypatch):
     loc = post(c, "/quality/assistent/antwort", shown).headers["location"]
     assert "err=" in loc
     assert not cx.db.q("SELECT 1 FROM tx_link WHERE batch_id=?", (bid,))
+
+
+# ---- N04 · Integritätsbestätigungen im gemeinsamen Protokoll -----------------------------------------------------
+
+def _ack_item(c, iid="ack-1", title="Bestand weicht von der Summe der Bewegungen ab"):
+    from app.diagnosis import guide as G
+    from app.diagnosis import integrity as I
+
+    cx = ctx(c)
+    item = I.Item(id=iid, category="bestand", severity="kritisch", title=title, cause_kind="rechenfehler",
+                  cause="Synthetische Abweichung.", impact="5 EUR", accounts=["Wallet K"], assets=["KAS"])
+    I.save(cx.db, I.Run(started_at="2025-01-01T00:00:00Z", items=[item]))
+    task = next(t for t in G.tasks(cx) if t.kind == "rechnung" and t.ref == iid)
+    loc = post(c, "/quality/assistent/antwort", {"typ": "rechnung", "ref": iid, "kid": task.kid,
+                                                 "a": "int:ack"}).headers["location"]
+    assert f"ia={iid}" in loc
+    return cx, item
+
+
+def test_N04_acknowledged_integrity_finding_is_listed_and_undoable_from_the_protocol(c):
+    from app.diagnosis import guide as G
+
+    cx, item = _ack_item(c)
+    assert not any(t.kind == "rechnung" and t.ref == item.id for t in G.tasks(cx))
+    page = c.get("/quality/assistent/protokoll").text  # unabhängiger Aufruf ohne Seitenkontext
+    assert item.title in page and "Wallet K" in page and f'name="ia" value="{item.id}"' in page
+    r = post(c, "/quality/assistent/rueckgaengig", {"ia": item.id, "back": "protokoll"})
+    q = parse_qs(urlsplit(r.headers["location"]).query)
+    assert r.headers["location"].startswith("/quality/assistent/protokoll") and "wieder offen" in q["msg"][0]
+    assert any(t.kind == "rechnung" and t.ref == item.id for t in G.tasks(cx))  # Befund wieder offen
+    assert item.title not in c.get("/quality/assistent/protokoll").text
+    again = post(c, "/quality/assistent/rueckgaengig", {"ia": item.id, "back": "protokoll"})
+    assert "schon zurückgenommen" in parse_qs(urlsplit(again.headers["location"]).query)["err"][0]
+
+
+def test_N04_acknowledgement_stays_understandable_after_a_newer_integrity_run(c):
+    from app.diagnosis import guide as G
+    from app.diagnosis import integrity as I
+
+    cx, item = _ack_item(c)
+    I.save(cx.db, I.Run(started_at="2025-02-01T00:00:00Z", items=[]))  # neuer Lauf meldet den Befund nicht mehr
+    acks = G.integrity_acks(cx)
+    assert acks[0]["title"] == item.title and "nicht mehr gemeldet" in acks[0]["note"]
+    # ältere Einträge ohne gespeicherte Bezeichnung werden weiter gelesen
+    cx.db.set_state(G.INTEGRITY_ACK_INFO_KEY, {})
+    assert G.integrity_acks(cx)[0]["title"].startswith("Integritätsbefund ")

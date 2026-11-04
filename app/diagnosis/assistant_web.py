@@ -166,7 +166,7 @@ def _log_extra(ctx: Any, rows: list[Any]) -> dict[str, Any]:
     by_takeover = {int(r["action_id"]) for r in db.q("SELECT action_id FROM ds_takeover WHERE status='applied' AND "
                                                        "action_id IS NOT NULL")}
     return {"owner": owner, "deps": deps, "acts": acts, "takeovers": takeovers, "act_owned": by_takeover,
-            "declined": G.declined_takeovers(ctx)}
+            "declined": G.declined_takeovers(ctx), "acks": G.integrity_acks(ctx)}
 
 
 def _go_log(**q: str) -> Response:
@@ -218,6 +218,9 @@ def _undo(ctx: Any, v: dict[str, str]) -> Response:
         return _go(err=" ".join(errs)) if errs else _go(msg="Zurückgenommen – die Buchung zählt wieder.", new=1)
     if v["ia"]:
         ok = G.unack_integrity(ctx, v["ia"])
+        if v["back"] == "protokoll":
+            return _to_log(msg="Zurückgenommen – der Befund ist wieder offen." if ok else "",
+                           err="" if ok else "Diese Antwort ist schon zurückgenommen.")
         return _go(msg="Zurückgenommen – die Aufgabe ist wieder offen.", new=1) if ok else \
             _go(err="Diese Antwort ist schon zurückgenommen.")
     if v["kl"]:  # Klärungsfall

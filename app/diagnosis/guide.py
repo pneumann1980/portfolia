@@ -675,6 +675,9 @@ def _integrity_tasks(ctx: Any, report: Any) -> list[Task]:
     return out
 
 
+INTEGRITY_ACK_INFO_KEY = "guide.integrity_ack_info"  # Befund-ID → {Bezeichnung, Zeitpunkt} fürs Protokoll
+
+
 def ack_integrity(ctx: Any, iid: str) -> bool:
     from app.diagnosis import integrity as I
 
@@ -685,6 +688,10 @@ def ack_integrity(ctx: Any, iid: str) -> bool:
     cur = dict(ctx.db.get_state(INTEGRITY_ACK_KEY) or {})
     cur[iid] = _integrity_fp(it)
     ctx.db.set_state(INTEGRITY_ACK_KEY, cur)
+    info = dict(ctx.db.get_state(INTEGRITY_ACK_INFO_KEY) or {})
+    where = " · ".join(x for x in (", ".join(it.accounts[:2]), ", ".join(it.assets[:3])) if x)
+    info[iid] = {"title": it.title, "where": where, "at": datetime.now(UTC).isoformat(timespec="seconds")}
+    ctx.db.set_state(INTEGRITY_ACK_INFO_KEY, info)
     return True
 
 
@@ -693,7 +700,33 @@ def unack_integrity(ctx: Any, iid: str) -> bool:
     if cur.pop(iid, None) is None:
         return False
     ctx.db.set_state(INTEGRITY_ACK_KEY, cur)
+    info = dict(ctx.db.get_state(INTEGRITY_ACK_INFO_KEY) or {})
+    if info.pop(iid, None) is not None:
+        ctx.db.set_state(INTEGRITY_ACK_INFO_KEY, info)
     return True
+
+
+def integrity_acks(ctx: Any) -> list[dict[str, Any]]:
+    """Zur Kenntnis genommene Integritätsbefunde fürs Protokoll – auch ältere Einträge ohne gespeicherte Bezeichnung
+    und Befunde, die ein neuerer Prüflauf nicht mehr meldet (dann mit Hinweis statt Titel des aktuellen Laufs)."""
+    from app.diagnosis import integrity as I
+
+    acked = dict(ctx.db.get_state(INTEGRITY_ACK_KEY) or {})
+    if not acked:
+        return []
+    info = dict(ctx.db.get_state(INTEGRITY_ACK_INFO_KEY) or {})
+    run = I.load(ctx.db)
+    items = {x.id: x for x in (run.items if run is not None else [])}
+    out = []
+    for iid, fp in acked.items():
+        it, meta = items.get(iid), info.get(iid) or {}
+        current = it is not None and _integrity_fp(it) == fp
+        title = meta.get("title") or (it.title if it is not None else f"Integritätsbefund {iid}")
+        note = "" if current else ("vom aktuellen Prüflauf nicht mehr gemeldet" if it is None else
+                                   "inzwischen geändert – wird wieder gefragt")
+        out.append({"id": iid, "title": title, "where": meta.get("where", ""), "at": meta.get("at", ""),
+                    "note": note})
+    return sorted(out, key=lambda x: str(x["at"]), reverse=True)
 
 
 # ----------------------------------------------------------------------------------------------------

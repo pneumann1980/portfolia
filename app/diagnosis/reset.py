@@ -270,7 +270,7 @@ def _clear_states(ctx: Any) -> None:
     for r in db.q("SELECT case_key FROM clarify_case WHERE status='zurueck'"):
         K.reopen(ctx, r["case_key"])
     db.set_state(RC.MARKS_KEY, {})
-    for key in (G.INTEGRITY_ACK_KEY, G.DECLINED_KEY, G.RECHECK_KEPT_KEY):
+    for key in (G.INTEGRITY_ACK_KEY, G.INTEGRITY_ACK_INFO_KEY, G.DECLINED_KEY, G.DECLINED_AT_KEY, G.RECHECK_KEPT_KEY):
         db.set_state(key, None)
 
 
