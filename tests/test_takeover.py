@@ -202,15 +202,20 @@ def test_incomplete_fetch_and_stale_fetch_block(config, master, api):
         c.__exit__(None, None, None)
 
 
-def test_failed_postcheck_rolls_everything_back(config, master, api):
-    """Die Simulation hält, die Auswertung bucht eine Zeile aber nicht (früher „dauerhaft ignoriert“): die Nachprüfung
-    am Bestand schlägt an, alles wird zurückgenommen – Import, Bestand und Prüf-Stapel wie vorher."""
+def test_failed_postcheck_rolls_everything_back(config, master, api, monkeypatch):
+    """Die Simulation hält, die Auswertung bucht eine Zeile aber nicht (früher „dauerhaft ignoriert“): schon die
+    Vorschau zeigt das über den Probelauf. Tritt es trotzdem erst beim Übernehmen auf, schlägt die Nachprüfung am
+    Bestand an und alles wird zurückgenommen – Import, Bestand und Prüf-Stapel wie vorher."""
     c, sid = started(config, api)
     try:
         ctx(c).db.x("INSERT INTO event_decision(event_key, decision, reason, decided_at) VALUES (?, 'ignore', 'test', "
                     "'2024-01-01T00:00:00Z')", (op_key(4),))
         a = staged(c, sid)
-        assert a.ok  # die Simulation kennt die Entscheidung nicht
+        assert not a.ok and [x.key for x in a.blockers] == ["probe"]  # Probelauf: Nachprüfung schlägt an
+        assert "Nachprüfung fehlgeschlagen" in next(x.detail for x in a.checks if x.key == "probe")
+        monkeypatch.setattr(TK, "probe", lambda ctx, sid, a, run=True: {"ok": True})  # Abweichung erst beim Übernehmen
+        a = staged(c, sid)
+        assert a.ok
         before, ids_before = holdings(c), ids(c)
         res = TK.apply(ctx(c), sid, a.token)
         assert res["errors"] and "Nachprüfung fehlgeschlagen" in res["errors"][0], res
@@ -220,9 +225,11 @@ def test_failed_postcheck_rolls_everything_back(config, master, api):
         assert t["status"] == "staged" and "Zurückgenommen" in t["message"]
         assert ctx(c).db.scalar("SELECT COUNT(*) FROM csv_batch WHERE datasource_id=?", (sid,)) == 0
         assert ctx(c).db.q1("SELECT status FROM diag_decision WHERE kind='takeover'")["status"] == "undone"
-        # nach Aufhebung der Entscheidung gelingt dieselbe Übernahme
+        # nach Aufhebung der Entscheidung gelingt dieselbe Übernahme (mit echtem Probelauf)
+        monkeypatch.undo()
         ctx(c).db.x("DELETE FROM event_decision WHERE event_key=?", (op_key(4),))
         a = TK.assess(ctx(c), sid)
+        assert a.ok, a.blockers
         assert TK.apply(ctx(c), sid, a.token)["errors"] == []
     finally:
         c.__exit__(None, None, None)

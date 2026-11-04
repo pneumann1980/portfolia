@@ -58,24 +58,22 @@ def test_rows_needing_a_decision_are_refused_before_booking_with_reason_and_bloc
     try:
         TK.run_fetch(ctx(c), sid)
         a = TK.assess(ctx(c), sid)
-        assert a.ok  # die Vorschau sieht keinen Grund – erst das Buchen klassifiziert die Zeile
+        # der Probelauf (dieselben Schreibphasen auf einer Kopie) zeigt den Grund schon in der Vorschau (R03)
+        assert not a.ok and [b.key for b in a.blockers] == ["rows"]
+        assert len(a.problems) == 1 and a.problems[0]["id"].startswith("row:") and a.problems[0]["id"].endswith("104#0")
+        assert "withdrawal" in a.problems[0]["detail"]  # Grund je Zeile, nicht leer
         before = {t.tx_id for t in ctx(c).recorded_portfolio().txs}
         res = TK.apply(ctx(c), sid, a.token)
-        assert res["errors"] and "Einzelentscheidung" in res["errors"][0] and "Zurückgenommen" in res["errors"][0]
-        assert any("Zeile 3" in e and "withdrawal" in e for e in res["errors"])  # Grund je Zeile, nicht leer
+        assert res["errors"] and "nicht erbracht" in res["errors"][0]  # abgelehnt, bevor etwas geschrieben wird
         assert not sync_txs(c) and {t.tx_id for t in ctx(c).recorded_portfolio().txs} == before  # nichts gebucht
         t = TK.latest(ctx(c).db, sid)
-        doc = json.loads(t["result_json"])
-        assert t["status"] == "staged" and doc["rolled_back"] and doc["rows"][0]["key"].endswith("104#0")
-        # unveränderter Datenstand: die Vorschau sperrt jetzt mit genau diesem Problem (stabile Kennung)
-        a2 = TK.assess(ctx(c), sid)
-        assert not a2.ok and [b.key for b in a2.blockers] == ["rows"]
-        assert [p["id"] for p in a2.problems] == ["row:" + doc["rows"][0]["key"]]
+        assert t["status"] == "staged" and t["batch_id"] is None and t["decision_id"] is None
         page = c.get(f"/settings/datasources/{sid}/uebernahme").text
-        assert "braucht eine Einzelentscheidung" in page and "Prüfstapel" in page
-        # Datenstand ändert sich (hier: irgendeine Zuordnung) → neuer Versuch wieder möglich, nichts verloren
+        assert "braucht eine Einzelentscheidung" in page and "Jetzt entscheiden" in page
+        # Datenstand ändert sich (hier: irgendeine Zuordnung) → neuer Probelauf, derselbe sachliche Grund bleibt
         csv_service(ctx(c)).set_symbol("XYZ@KRAKEN", None)
-        assert TK.assess(ctx(c), sid).ok
+        a3 = TK.assess(ctx(c), sid)
+        assert not a3.ok and [b.key for b in a3.blockers] == ["rows"]
     finally:
         c.__exit__(None, None, None)
 
@@ -141,10 +139,11 @@ def test_observed_missing_is_not_zero_and_counts_are_explained():
     obs, unmapped, delivered = TK._observed({"balances": [{"key": "EUR", "qty": "0"}, {"key": "BTC", "qty": "1"},
                                                           {"key": "XXX", "qty": "2"}]}, R(), "bitpanda")
     assert obs == {"BTC": D(1)} and unmapped == ["XXX"] and delivered == {"EUR", "BTC"}  # USD: nicht geliefert
-    a = SimpleNamespace(events=315, lines=323, skipped={"Bitpanda: stake": 2})
-    assert TK._counts({"operations": 317}, a) == {"api": 317, "events": 315, "lines": 323, "skipped": 2,
-                                                  "explained": True, "gap": 0}
-    assert TK._counts({"operations": 318}, a)["gap"] == 1
+    a = SimpleNamespace(events=315, lines=323, skipped={"Bitpanda: stake": 2}, provider="bitpanda")
+    got = TK._counts({"operations": 317}, a)
+    assert {k: got[k] for k in ("api", "events", "lines", "skipped", "explained", "gap", "state")} == {
+        "api": 317, "events": 315, "lines": 323, "skipped": 2, "explained": True, "gap": 0, "state": "ok"}
+    assert TK._counts({"operations": 318}, a)["gap"] == 1 and TK._counts({"operations": 318}, a)["state"] == "gap"
 
 
 def test_same_symbol_under_two_ids_is_shown_as_identity_question_without_merging():

@@ -655,6 +655,22 @@ def make_router() -> APIRouter:
                 " " + " ".join(res.get("notes") or []) if res.get("notes") else ""))
         return _back(request, _tk_url(sid, _kid(f.get("kid")), **{key: text}))
 
+    @router.post("/settings/datasources/{sid}/uebernahme/pruefstapel")
+    async def takeover_review(request: Request, sid: int) -> Response:
+        """Vorgänge mit Einzelentscheidung aus dem gespeicherten Vollabruf in den Prüf-Stapel (kein neuer Abruf) und
+        direkt den ersten davon öffnen."""
+        from app.datasources import takeover as TK
+
+        _takeover_ds(request, sid)
+        f = await request.form()
+        kid = _kid(f.get("kid"))
+        res = await run_in_threadpool(lambda: TK.to_review(get_ctx(request), sid, confirm=f.get("confirm") == "1",
+                                                           adjust=_adjust_of([str(v) for v in f.getlist("adjust")])))
+        if res["errors"]:
+            return _back(request, _tk_url(sid, kid, error=" ".join(res["errors"])))
+        q = {"ev": res["event"]} | ({"kid": kid} if kid else {})
+        return _back(request, f"/journal/csv/{res['bid']}?{urlencode(q)}#zeilen")
+
     @router.post("/settings/datasources/{sid}/uebernahme/verwerfen")
     async def takeover_discard(request: Request, sid: int) -> Response:
         from app.datasources import takeover as TK

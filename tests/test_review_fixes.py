@@ -492,3 +492,194 @@ def test_R11_legacy_shared_field_names_are_ignored(chain_client, monkeypatch):
     shown["p_tag"] = ["reward"]
     r = post(c, "/quality/assistent/antwort", shown)
     assert form_values(r.text)["ap.opt:adjust.tag"] == [""]
+
+
+# ---- R03 · Vorschau prüft denselben vollständigen Plan wie die Übernahme ----------------------------------------
+
+def _refusing_rows():
+    return [tx("K1", "2024-02-01T08:00:00Z", "deposit", to=("Bitpanda", "EUR", "500"), value="500"),
+            tx("K2", "2024-02-02T09:01:00Z", "buy", frm=("Bitpanda", "EUR", "250"), to=("Bitpanda", "BTC", "0.0055"),
+               value="251.5"),
+            tx("K3", "2024-02-12T12:00:00Z", "withdrawal", frm=("Bitpanda", "BTC", "0.001"), value="55"),
+            tx("L1", "2024-02-12T12:30:00Z", "deposit", to=("Ledger", "BTC", "0.001"), value="55")]
+
+
+def test_R03_preview_shows_the_blocker_before_any_write_and_offers_a_decision(config, master, api):
+    from app.datasources import service as DS
+
+    c, sid = started(config, api, rows=_refusing_rows())
+    try:
+        state = economic_state(c)
+        a = staged(c, sid)
+        assert not a.ok and [x.key for x in a.blockers] == ["rows"]  # vor jeder Änderung als blockiert erkennbar
+        assert "Einzelentscheidung" in a.blockers[0].label and "withdrawal" in a.blockers[0].detail
+        assert economic_state(c) == state and not sync_txs(c)  # der Probelauf ändert nichts
+        assert not DS.datasource_service(ctx(c)).pending_batches(sid)
+        res = TK.apply(ctx(c), sid, a.token)  # wird ohne Schreiben abgelehnt
+        assert res["errors"] and economic_state(c) == state
+        page = c.get(f"/settings/datasources/{sid}/uebernahme").text
+        assert "Jetzt entscheiden" in page and "In den Prüfstapel abrufen" not in page
+        calls = len(api.calls) if hasattr(api, "calls") else None
+        r = post(c, f"/settings/datasources/{sid}/uebernahme/pruefstapel", {})
+        loc = r.headers["location"]
+        assert r.status_code == 303 and loc.startswith("/journal/csv/") and "ev=" in loc
+        if calls is not None:
+            assert len(api.calls) == calls  # kein neuer Abruf beim Anbieter
+        detail = c.get(loc).text
+        assert detail.count('data-label="Datum"') == 1
+        # Entscheidung, die auch im Übernahmekontext gilt: Vorgang dauerhaft ignorieren → Plan wird neu bewertet
+        bid = int(urlsplit(loc).path.rsplit("/", 1)[1])
+        svc = csv_service(ctx(c))
+        (rc,) = [x for x in svc.rows(bid) if x.open]
+        assert svc.set_ignored(bid, rc.rec.event_key, True, "Test")
+        a2 = TK.assess(ctx(c), sid)
+        assert "rows" not in [x.key for x in a2.blockers]  # nicht mehr „Einzelentscheidung“ …
+        assert not a2.ok and economic_state(c) == state  # … aber ohne die Auszahlung stimmt der Bestand nicht
+        # erneut anfordern legt nichts doppelt ab
+        again = post(c, f"/settings/datasources/{sid}/uebernahme/pruefstapel", {})
+        assert again.status_code == 303
+        assert ctx(c).db.scalar("SELECT COUNT(*) FROM csv_row WHERE event_key=?", (rc.rec.event_key,)) == 1
+    finally:
+        c.__exit__(None, None, None)
+
+
+def test_R03_probe_is_cached_per_preview_and_data_state(config, master, api, monkeypatch):
+    c, sid = started(config, api)
+    try:
+        a = staged(c, sid)
+        assert a.ok and any(x.key == "probe" and x.ok for x in a.checks)
+        runs = []
+        real = TK._apply_steps
+        monkeypatch.setattr(TK, "_apply_steps", lambda *x, **k: runs.append(1) or real(*x, **k))
+        TK.assess(ctx(c), sid)
+        assert runs == []  # gleicher Stand: kein zweiter Probelauf
+        state = economic_state(c)
+        assert TK.apply(ctx(c), sid, a.token)["errors"] == []
+        assert runs == [1] and economic_state(c) != state  # nur die echte Übernahme
+    finally:
+        c.__exit__(None, None, None)
+
+
+# ---- R10 · Unerklärte Zählungsdifferenz blockiert ----------------------------------------------------------------
+
+def _bump_count(c, sid, delta: int, skipped: dict | None = None):
+    import json
+
+    row = TK.latest(ctx(c).db, sid)
+    meta = json.loads(row["meta_json"])
+    meta["coverage"]["operations"] += delta
+    if skipped is not None:
+        meta["skipped"] = skipped
+    ctx(c).db.x("UPDATE ds_takeover SET meta_json=? WHERE id=?", (json.dumps(meta), row["id"]))
+
+
+def test_R10_unexplained_count_gap_blocks(config, master, api):
+    c, sid = started(config, api)
+    try:
+        a = staged(c, sid)
+        assert a.ok and a.counts["state"] == "ok"
+        _bump_count(c, sid, +1)
+        a = TK.assess(ctx(c), sid)
+        assert a.counts["gap"] == 1 and not a.ok and [x.key for x in a.blockers] == ["count"]
+        state = economic_state(c)
+        assert TK.apply(ctx(c), sid, a.token)["errors"] and economic_state(c) == state
+    finally:
+        c.__exit__(None, None, None)
+
+
+def test_R10_documented_skips_and_multiline_events_are_counted_correctly(config, master, api):
+    c, sid = started(config, api)
+    try:
+        a = staged(c, sid)
+        assert a.lines >= a.events  # Mehrzeilenereignisse zählen als ein Vorgang
+        _bump_count(c, sid, +2, {"Bitpanda: interne Umbuchung zwischen Bitpanda-Wallets": 2})
+        a = TK.assess(ctx(c), sid)
+        assert a.counts["state"] == "ok" and a.ok, a.blockers  # begründete Auslassungen erklären die Differenz
+    finally:
+        c.__exit__(None, None, None)
+
+
+def test_R10_unknown_count_is_unknown_not_complete(config, master, api):
+    import json
+
+    c, sid = started(config, api)
+    try:
+        staged(c, sid)
+        row = TK.latest(ctx(c).db, sid)
+        meta = json.loads(row["meta_json"])
+        meta["coverage"].pop("operations", None)
+        ctx(c).db.x("UPDATE ds_takeover SET meta_json=? WHERE id=?", (json.dumps(meta), row["id"]))
+        a = TK.assess(ctx(c), sid)
+        chk = next(x for x in a.checks if x.key == "count")
+        assert a.counts["state"] == "unknown" and not chk.ok and not chk.blocking and "unbekannt" in chk.detail
+    finally:
+        c.__exit__(None, None, None)
+
+
+# ---- R02 · Ungeklärte Transfers haben einen ausführbaren Weg -----------------------------------------------------
+
+from tests.test_transfer_ambiguity import T0, T1, line, pairs, sheet  # noqa: E402
+
+
+def _xfer_task(c, bid, monkeypatch):
+    cx = c.app.state.ctx
+    task = next(t for t in G.tasks(cx) if t.kind == "zeile" and t.ref.startswith(f"{bid}:")
+                and any(rc.pair_ref for rc in csv_service(cx).rows(bid)
+                        if (rc.rec.event_key or f"#{rc.idx}") == t.ref.partition(":")[2]))
+    monkeypatch.setattr(G, "tasks", lambda ctx, hints=False: [task])
+    return task, form_values(c.get("/quality/assistent?new=1").text)
+
+
+def _xfer_sheet(c):
+    return pairs(c, sheet(line(T0, "withdrawal", wallet="Börse U", qty="1"),
+                          line(T1, "deposit", wallet="Wallet W", qty="0.999")))
+
+
+def test_R02_unclear_transfer_offers_only_executable_answers(c, monkeypatch):
+    out = _xfer_sheet(c)
+    assert all(r.transfer_unclear for r in out["rows"])
+    task, _ = _xfer_task(c, out["bid"], monkeypatch)
+    ids_ = [a.id for a in G.detail(c.app.state.ctx, task).answers]
+    assert "row:include" not in ids_  # wäre an der Schutzprüfung gescheitert
+    assert {"row:pair", "row:nopair", "go:open", "row:defer"} <= set(ids_)
+
+
+def test_R02_confirming_the_transfer_books_both_sides_together(c, monkeypatch):
+    cx = c.app.state.ctx
+    out = _xfer_sheet(c)
+    _task, shown = _xfer_task(c, out["bid"], monkeypatch)
+    shown["a"] = ["row:pair"]
+    loc = post(c, "/quality/assistent/antwort", shown).headers["location"]
+    assert "err=" not in loc, loc
+    rows = csv_service(cx).rows(out["bid"])
+    assert all(not rc.open for rc in rows) and any(rc.status == "merged" or rc.status == "committed" for rc in rows)
+    n = cx.db.scalar("SELECT COUNT(*) FROM journal_tx WHERE batch_id=? AND status='active'", (out["bid"],))
+    assert n == 1  # ein Transfer, keine zwei Einzelbuchungen
+
+
+def test_R02_rejecting_the_transfer_books_this_side_alone(c, monkeypatch):
+    cx = c.app.state.ctx
+    out = _xfer_sheet(c)
+    _, shown = _xfer_task(c, out["bid"], monkeypatch)
+    shown["a"] = ["row:nopair"]
+    loc = post(c, "/quality/assistent/antwort", shown).headers["location"]
+    assert "err=" not in loc, loc
+    rows = csv_service(cx).rows(out["bid"])
+    booked = [rc for rc in rows if not rc.open]
+    left = [rc for rc in rows if rc.open]
+    assert len(booked) == 1 and booked[0].status == "committed" and booked[0].pair_ok == 0
+    assert len(left) == 1 and not left[0].transfer_unclear  # die Gegenseite bleibt als eigene, klare Frage offen
+
+
+def test_R02_deferring_and_detail_view_are_complete_paths(c, monkeypatch):
+    cx = c.app.state.ctx
+    out = _xfer_sheet(c)
+    _, shown = _xfer_task(c, out["bid"], monkeypatch)
+    opened = dict(shown, a=["go:open"])
+    loc = post(c, "/quality/assistent/antwort", opened).headers["location"]
+    assert loc.startswith(f"/journal/csv/{out['bid']}?ev=")
+    page = c.get(loc).text
+    assert 'name="pair_' in page  # Bestätigen/Ablehnen in der Detailansicht
+    shown["a"] = ["row:defer"]
+    assert "err=" not in post(c, "/quality/assistent/antwort", shown).headers["location"]
+    assert any(rc.decision == "defer" for rc in csv_service(cx).rows(out["bid"]))

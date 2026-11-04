@@ -426,6 +426,33 @@ def _bind_rows(task: Task, rows: list[Any]) -> None:
     task.payload["fp"] = rows_digest([rc for rc in rows if (rc.rec.event_key or f"#{rc.idx}") == event and rc.open])
 
 
+def _transfer_case(ctx: Any, mine: list[Any], all_rows: list[Any]) -> dict[str, Any] | None:
+    """Offene Transferfrage eines Vorgangs (ungeklärter Vorschlag, konkurrierende Partner, Partner aus dem Journal bzw.
+    passende Gegenbuchung im Import). ``decidable``: hier mit Ja/Nein klärbar (genau ein Partner im selben Stapel);
+    sonst führt der Weg in die Detailansicht des Vorgangs."""
+    cand = [rc for rc in mine if rc.open and (rc.transfer_unclear or (rc.pair_ref or "").startswith("j:"))]
+    if not cand:
+        return None
+    by_idx = {rc.idx: rc for rc in all_rows}
+    rc = cand[0]
+    ref = rc.pair_ref or ""
+    if rc.pair_alts:
+        text = (f"Es gibt {len(rc.pair_alts) + (1 if ref else 0)} mögliche Gegenbuchungen – welche dazugehört, "
+                "lässt sich nur in der Detailansicht festlegen.")
+        return {"text": text, "decidable": False, "conf": rc.pair_conf}
+    if ref.startswith("b:") and (p := by_idx.get(int(ref[2:]))) is not None:
+        legs = ", ".join(x for x in [str(p.rec.account or ""), str(p.rec.label or p.rec.kind or "")] if x)
+        text = (f"Passende Gegenbuchung im selben Abruf: Zeile {p.line}" + (f" ({legs})" if legs else "")
+                + (" – Zuordnung sicher." if rc.pair_conf == "hoch" else " – Zuordnung nicht eindeutig belegt."))
+        return {"text": text, "decidable": p.open, "conf": rc.pair_conf}
+    if ref.startswith("j:"):
+        return {"text": "Passende Gegenbuchung ist eine vorhandene Buchung: " + _tx_text(ctx, ref[2:]) + ".",
+                "decidable": False, "conf": rc.pair_conf}
+    return {"text": "Im kuratierten Import gibt es eine passende Gegenbuchung" + (f" ({rc.counterpart})"
+                                                                                   if rc.counterpart else "") + ".",
+            "decidable": False, "conf": rc.pair_conf}
+
+
 def _row_detail(ctx: Any, task: Task) -> Task:
     from app.csvimport import model as M
     from app.csvimport import queue as Q
@@ -457,6 +484,26 @@ def _row_detail(ctx: Any, task: Task) -> Task:
             Answer("row:skip", "Nein, gehört nicht in mein Depot",
                    "Wird nicht gebucht; Portfolia fragt bei diesem Vorgang nicht wieder."),
             Answer("row:defer", "Weiß ich nicht", NO_CHANGE + " Der Vorgang wird zurückgestellt.")]
+        return task
+    xfer = _transfer_case(ctx, rows, csv_service(ctx).rows(it.batch_id))
+    if xfer is not None:  # möglicher Transfer: zuerst klären – „einfach buchen“ ließe die Schutzprüfung nicht zu
+        task.question = "Ist das ein Transfer zwischen deinen eigenen Konten?"
+        task.context = f"{what}. {xfer['text']}"
+        task.answers = []
+        if xfer["decidable"]:
+            task.answers += [
+                Answer("row:pair", "Ja, das ist ein Transfer – beide Seiten zusammen buchen",
+                       "Bestand wandert zwischen den Konten; Einstand und Haltedauer bleiben erhalten.",
+                       recommended=xfer["conf"] == "hoch"),
+                Answer("row:nopair", "Nein, das sind zwei eigene Vorgänge",
+                       "Dieser Vorgang wird allein gebucht; die mögliche Gegenbuchung wird danach einzeln gefragt.")]
+        task.answers += [
+            Answer("go:open", "Im Prüf-Stapel ansehen und dort entscheiden",
+                   "Öffnet genau diesen Vorgang mit dem Transfervorschlag (Bestätigen oder Ablehnen dort). Danach "
+                   "geht es hier weiter.", recommended=not xfer["decidable"]),
+            Answer("row:skip", "Gehört nicht in mein Depot", "Wird nicht gebucht; Portfolia fragt nicht wieder."),
+            Answer("row:defer", "Weiß ich nicht", NO_CHANGE + " Der Vorgang wird zurückgestellt.")]
+        _bind_rows(task, csv_service(ctx).rows(it.batch_id))
         return task
     if link_like:
         task.question = "Ist dieser Vorgang schon gebucht?"

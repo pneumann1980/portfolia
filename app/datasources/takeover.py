@@ -217,6 +217,49 @@ def run_fetch(ctx: Any, sid: int, rid: int | None = None) -> dict[str, Any]:
     return {"id": rid, "events": len(recs), "errors": []}
 
 
+def to_review(ctx: Any, sid: int, *, confirm: bool = False, adjust: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Vorgänge, die nur mit Einzelentscheidung buchbar sind, aus dem **gespeicherten** Vollabruf in einen Prüf-Stapel
+    der Quelle legen – ohne neuen Abruf beim Anbieter. Dort entscheiden (z. B. Transfer bestätigen, dauerhaft
+    ignorieren); danach bewertet die Vorschau den Plan neu. Bereits vorgelegte Vorgänge werden nicht doppelt abgelegt.
+
+    Ergebnis: ``bid`` (Stapel mit den Vorgängen), ``event`` (erster betroffener Vorgang), ``errors``."""
+    from app.csvimport.service import csv_service, rec_from_json, rec_to_json
+    from app.datasources import service as DSM
+
+    db = ctx.db
+    row = latest(db, sid)
+    ds = DSM.datasource_service(ctx).get(sid)
+    if row is None or ds is None or row["status"] != "staged" or not row["events_json"]:
+        return {"errors": ["Kein gespeicherter Vollabruf vorhanden."]}
+    a = assess(ctx, sid, confirm=confirm, adjust=adjust)
+    keys = [str(e.get("event") or "") for p in (a.problems if a is not None else []) if p.get("kind") == "row"
+            for e in p.get("events") or []]
+    keys = list(dict.fromkeys(k for k in keys if k))
+    if not keys:
+        return {"errors": ["Kein Vorgang braucht eine Einzelentscheidung."]}
+    recs = [r for r in (rec_from_json(json.dumps(d)) for d in json.loads(row["events_json"]))
+            if (r.event_key or "") in set(keys)]
+    svc = DSM.datasource_service(ctx)
+    csv = csv_service(ctx)
+    with DSM._INGEST_LOCK:
+        present = svc._present(sid, recs)
+        fresh = [r for r in recs if (r.event_key or "") not in present]
+        if fresh:
+            payload = ("[" + ",".join(rec_to_json(r) for r in fresh) + "]").encode()
+            bid = csv.ingest(fresh, source=f"sync:{ds.provider}", profile=f"sync:{ds.provider}", account=ds.account,
+                             label=f"{ds.name} · Einzelentscheidungen aus dem Vollabruf "
+                                   f"{datetime.now(UTC).strftime('%d.%m.%Y %H:%M')}",
+                             datasource_id=sid, payload=payload, append_to=svc._appendable(sid))
+        else:  # schon vorgelegt: den offenen Stapel mit dem ersten Vorgang öffnen
+            hit = db.q1("SELECT r.batch_id FROM csv_row r JOIN csv_batch b ON b.id=r.batch_id WHERE b.kind='sync' AND "
+                        "b.datasource_id=? AND b.status IN ('preview','partial') AND r.event_key=? ORDER BY r.batch_id "
+                        "DESC LIMIT 1", (sid, keys[0]))
+            if hit is None:
+                return {"errors": ["Die Vorgänge sind bereits entschieden – bitte die Vorschau neu laden."]}
+            bid = int(hit["batch_id"])
+    return {"bid": int(bid), "event": keys[0], "n": len(keys), "errors": []}
+
+
 def discard(ctx: Any, sid: int) -> bool:
     r = latest(ctx.db, sid)
     if r is None or r["status"] not in ("staged", "failed", "undone"):
@@ -420,15 +463,52 @@ def _last_refusal(db: Any, row: Any) -> dict[str, Any] | None:
     return res if isinstance(res, dict) and res.get("rows") else None
 
 
-def _counts(cov: dict[str, Any], a: Any) -> dict[str, Any]:
-    """API-Vorgänge → ausgewertete Vorgänge → Buchungszeilen, mit den bewusst nicht gebuchten dazwischen."""
+# Zähleinheit je Anbieter. Nur wo ``coverage.operations`` die Rohobjekte der API zählt und jedes Objekt genau ein
+# Ereignis (auch mehrzeilig) oder genau eine begründete Auslassung ergibt, ist die Zählung ein unabhängiger Beleg der
+# Vollständigkeit. Bei anderen Quellen ist die Zahl aus den Ereignissen selbst abgeleitet (kein Beleg) – sie wird nur
+# angezeigt. Wirtschaftliches Ereignis, technische Operation und Buchungszeile werden nie gegeneinander gerechnet.
+COUNT_UNIT = {"bitpanda": "Einträge von /operations (je Eintrag ein Vorgang oder eine begründete Auslassung)"}
+
+
+def _counts(cov: dict[str, Any], a: Any, meta: dict[str, Any] | None = None) -> dict[str, Any]:
+    """API-Vorgänge → ausgewertete Vorgänge → Buchungszeilen, mit den bewusst nicht gebuchten dazwischen.
+
+    ``state``: ``ok`` (Zählung erklärt), ``gap`` (unerklärte Differenz), ``unknown`` (Zählung fehlt bzw. gilt nur für
+    eine Etappe), ``na`` (Quelle ohne unabhängige Zählung)."""
     ops = cov.get("operations")
     skipped = sum(int(v or 0) for v in (a.skipped or {}).values())
-    out: dict[str, Any] = {"api": ops, "events": a.events, "lines": a.lines, "skipped": skipped}
+    out: dict[str, Any] = {"api": ops, "events": a.events, "lines": a.lines, "skipped": skipped,
+                           "unit": COUNT_UNIT.get(a.provider, ""), "state": "na"}
     if isinstance(ops, int):
         out["explained"] = ops == a.events + skipped
         out["gap"] = ops - a.events - skipped
+    if a.provider in COUNT_UNIT:
+        rounds = (meta or {}).get("rounds")
+        if not isinstance(ops, int) or (isinstance(rounds, int) and rounds > 1):
+            out["state"] = "unknown"  # mehrere Etappen: die Zählung beschreibt nur die letzte
+        else:
+            out["state"] = "ok" if out["gap"] == 0 else "gap"
     return out
+
+
+def _count_check(c: dict[str, Any]) -> Check | None:
+    """Vollständigkeit über die Vorgangszählung der Quelle (nur bei belastbarer Zähleinheit)."""
+    label = "Jeder von der API gemeldete Vorgang ist ausgewertet oder begründet ausgelassen"
+    if c["state"] == "ok":
+        return Check("count", label, True, f"{c['api']} {c['unit']}: {c['events']} ausgewertet, {c['skipped']} "
+                                           "begründet ausgelassen")
+    if c["state"] == "gap":
+        g = c["gap"]
+        return Check("count", label, False,
+                     f"Die API meldet {c['api']} Vorgänge ({c['unit']}); ausgewertet {c['events']}, begründet "
+                     f"ausgelassen {c['skipped']} – " + (f"{g} Vorgang/Vorgänge fehlen ohne Erklärung."
+                                                         if g > 0 else f"{-g} mehr ausgewertet als gemeldet.")
+                     + " Bitte erneut vollständig abrufen; besteht die Differenz weiter, ist die Auswertung der "
+                     "Quelle unvollständig.")
+    if c["state"] == "unknown":
+        return Check("count", label, False, "Zählung der Quelle unbekannt (nicht geliefert bzw. nur für einen Teil "
+                                            "des Abrufs) – nicht als vollständig belegt gewertet.", blocking=False)
+    return None
 
 
 _MAP = re.compile(r"Asset für „([^“]+)“ zuordnen|„([^“]+)“ bei .+ Asset zuordnen")
@@ -729,14 +809,17 @@ def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
                     "detail": f"jetzt {qty_exact(b['now'])}, nach Übernahme {qty_exact(b['after'])}, laut Quelle "
                               f"{_obs(b)}" + (" – würde negativ" if b["negative"] else ""),
                     "parts": a.breakdown.get(b["asset"], []) if a.breakdown else []})
-    for x in (refusal or {}).get("rows") or []:
-        out.append({"id": f"row:{x.get('key')}", "kind": "row", "title": "Vorgang braucht eine Einzelentscheidung",
-                    "detail": f"{x.get('when', '')} {x.get('what', '')}: {x.get('why', '')}".strip(),
-                    "events": [{"event": x.get("event", ""), "ext": x.get("key", ""), "line": x.get("line")}]})
+    out += [_row_problem(x) for x in (refusal or {}).get("rows") or []]
     if a.mode == "confirm" and not a.confirm:
         out.append({"id": "confirm", "kind": "confirm", "title": "Deine Bestätigung fehlt",
                     "detail": "Bestätige in Schritt 2, dass die Quelle die vollständige Historie des Kontos kennt."})
     return out
+
+
+def _row_problem(x: dict[str, Any]) -> dict[str, Any]:
+    return {"id": f"row:{x.get('key')}", "kind": "row", "title": "Vorgang braucht eine Einzelentscheidung",
+            "detail": f"{x.get('when', '')} {x.get('what', '')}: {x.get('why', '')}".strip(),
+            "events": [{"event": x.get("event", ""), "ext": x.get("key", ""), "line": x.get("line")}]}
 
 
 def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
@@ -1072,7 +1155,9 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
             why = "; ".join(f"{x.get('when', '')} {x.get('what', '')}: {x['why']}" for x in last["rows"][:4])
             a.checks.append(Check("rows", "Alle Vorgänge ohne Einzelentscheidung buchbar", False,
                                   f"{len(last['rows'])} Vorgänge brauchen eine Entscheidung im Prüfstapel: {why}"))
-    a.counts = _counts(cov, a)
+    a.counts = _counts(cov, a, meta)
+    if (cc := _count_check(a.counts)) is not None:
+        a.checks.append(cc)
     a.raw_check = dict((cov.get("balances") or {}).get("detail") or {})
     a.breakdown = {aid: sorted(((k, v) for k, v in d.items() if v), key=lambda x: x[0]) for aid, d in parts.items()}
     a.problems = _problems(a, lines, unmapped, prov, last if same else None)
@@ -1082,7 +1167,96 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
         "a": [[x["asset"], x["ts"], _fmt(x["amount"])] for x in a.adjustments]}, sort_keys=True)
     a.token = hashlib.sha256(fp.encode()).hexdigest()[:32]
     a.lines_by_ext = {ln.rec.ext_id: ln for ln in lines if ln.rec.ext_id}
+    # Probelauf: dieselben Schreibphasen wie die Übernahme auf einer Kopie der Datenbank – erst wenn alle übrigen
+    # Bedingungen erfüllt sind (sonst entscheidet ohnehin ein anderer Blocker) und nie während eines Laufs
+    if plan and not same and row["status"] == "staged" and a.ok:
+        pr = probe(ctx, sid, a, run=sid not in _RUNNING)  # während eines Laufs nur das gespeicherte Ergebnis
+        if pr is not None:
+            _probe_checks(a, pr)
     return a
+
+
+# ----------------------------------------------------------------------------------------------------
+# Probelauf (rein lesend für die echten Daten)
+# ----------------------------------------------------------------------------------------------------
+
+_SANDBOX = threading.local()
+
+
+def _probe_key(ctx: Any, a: Assessment) -> dict[str, Any]:
+    from app.diagnosis.actions import data_version
+
+    return {"rid": a.rid, "token": a.token, "dv": data_version(ctx.db)}
+
+
+def probe(ctx: Any, sid: int, a: Assessment, run: bool = True) -> dict[str, Any] | None:
+    """Probelauf der Übernahme: Ausblenden, Auswerten, vollständiger Buchungsplan, Buchen und Nachprüfung – mit
+    denselben Funktionen wie ``apply`` (``_apply_steps``), aber auf einer Kopie der Datenbank, die danach verworfen
+    wird. Ergebnis je Vorschau (Token) und Datenstand zwischengespeichert. Kurse kommen aus dem gemeinsamen Kursbestand.
+
+    Ergebnis: ``ok``, ``errors``, ``detail``, ``rows`` (Vorgänge, die nur mit Einzelentscheidung buchbar sind) bzw.
+    ``failed`` (Probelauf selbst nicht möglich)."""
+    import dataclasses
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from app.context import AppContext
+
+    key = _probe_key(ctx, a)
+    cache = ctx.db.get_state(f"takeover.probe.{sid}") or {}
+    if isinstance(cache, dict) and cache.get("key") == key:
+        return dict(cache.get("result") or {})
+    if not run:
+        return None
+    tmp = Path(tempfile.mkdtemp(prefix="probe-", dir=ctx.config.data_dir))
+    sb: Any = None
+    out: dict[str, Any] = {}
+    try:
+        ctx.db.backup_to(tmp / "app.sqlite")
+        sb = AppContext(dataclasses.replace(ctx.config, data_dir=tmp, scheduler_enabled=False, startup_jobs=False))
+        sb.prices, sb.store, sb.valuer = ctx.prices, ctx.store, ctx.valuer  # Kurse: kein zweiter Abruf
+
+        def rollback(why: str, detail: list[str], rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+            out.update(errors=[why], detail=list(detail)[:40], rows=list(rows or [])[:200])
+            return {"errors": [why]}
+
+        _SANDBOX.on = True
+        st: dict[str, Any] = {"decision_id": None, "action_id": None, "bid": None}
+        res = _apply_steps(sb, sid, a, a.rid, _years(sb), "Probelauf", rollback, st)
+        if res.get("errors") and not out:
+            out.update(errors=list(res["errors"]), detail=[], rows=[])
+        out["ok"] = not out.get("errors")
+    except Exception as e:
+        log.exception("Quellenübernahme %s: Probelauf nicht möglich", sid)
+        out = {"ok": False, "failed": True, "errors": [f"Probelauf nicht möglich ({type(e).__name__})"]}
+    finally:
+        _SANDBOX.on = False
+        if sb is not None:
+            sb.db.close_thread_conn()
+            sb.shutdown()
+        shutil.rmtree(tmp, ignore_errors=True)
+    if not out.get("failed"):
+        ctx.db.set_state(f"takeover.probe.{sid}", {"key": key, "result": out})
+    return out
+
+
+def _probe_checks(a: Assessment, pr: dict[str, Any]) -> None:
+    if pr.get("failed"):
+        a.checks.append(Check("probe", "Probelauf der Übernahme", False,
+                              "; ".join(pr.get("errors") or []) + " – beim Übernehmen wird erneut geprüft; bei einer "
+                              "Ablehnung bleibt nichts zurück.", blocking=False))
+        return
+    if pr.get("rows"):
+        rows = pr["rows"]
+        why = "; ".join(f"{x.get('when', '')} {x.get('what', '')}: {x['why']}" for x in rows[:4])
+        a.checks.append(Check("rows", "Alle Vorgänge ohne Einzelentscheidung buchbar (Probelauf)", False,
+                              f"{len(rows)} Vorgänge brauchen eine Entscheidung: {why}"))
+        a.problems += [_row_problem(x) for x in rows]
+        return
+    a.checks.append(Check("probe", "Probelauf: Ausblenden, Buchen und Nachprüfung gelingen vollständig",
+                          bool(pr.get("ok")), "; ".join([*(pr.get("errors") or []), *(pr.get("detail") or [])][:6])
+                          or "ohne Befund"))
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -1209,7 +1383,7 @@ def _apply(ctx: Any, sid: int, token: str, confirm: bool = False,
 
 def _fault(phase: str) -> None:
     """Testhaken: Fehler nach einer Schreibphase einspeisen (``hidden``, ``batch``, ``booked``, ``check``)."""
-    if phase in _FAULTS:
+    if phase in _FAULTS and not getattr(_SANDBOX, "on", False):
         raise RuntimeError(f"eingespeister Fehler nach Phase {phase}")
 
 

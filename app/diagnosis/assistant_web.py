@@ -467,7 +467,7 @@ def make_router() -> APIRouter:
                        gone=await run_in_threadpool(gone))
         bid_s, _, event = ref.partition(":")
         op = aid.split(":", 1)[1] if aid.startswith("row:") else ""
-        if not bid_s.isdigit() or op not in ("link", "include", "skip", "defer"):
+        if not bid_s.isdigit() or op not in ("link", "include", "skip", "defer", "pair", "nopair"):
             return _go(err="Unbekannte Antwort.")
         bid = int(bid_s)
 
@@ -479,12 +479,27 @@ def make_router() -> APIRouter:
             idxs = [rc.idx for rc in rows if (rc.rec.event_key or f"#{rc.idx}") == event and rc.open]
             if not idxs:
                 return {"errors": ["Der Vorgang ist schon entschieden oder hat sich geändert."]}
-            if shown and op in ("include", "link") and \
+            if shown and op in ("include", "link", "pair", "nopair") and \
                     BA.rows_digest([rc for rc in rows if rc.idx in set(idxs)]) != shown:
                 return {"errors": ["Der Vorgang hat sich seit der Anzeige geändert (Betrag, Wert, Konto oder "
                                    "Transferentscheidung) – bitte die neu angezeigten Angaben prüfen."]}
             if op in ("skip", "defer"):
                 return BU.decide(svc, bid, idxs, op)
+            if op in ("pair", "nopair"):  # Transferfrage beantworten (pair_ok wie im Prüf-Stapel), dann buchen
+                mine = [rc for rc in rows if rc.idx in set(idxs)]
+                refs = [rc for rc in mine if (rc.pair_ref or "").startswith("b:") and not rc.pair_alts]
+                if not refs:
+                    return {"errors": ["Dieser Transfer lässt sich nur in der Detailansicht klären."]}
+                svc.set_rows(bid, {f"pair_{rc.idx}": "1" if op == "pair" else "0" for rc in refs})
+                svc.evaluate(bid)
+                rows = svc.rows(bid)
+                want = set(idxs) | ({int(rc.pair_ref[2:]) for rc in refs} if op == "pair" else set())
+                p = BA.plan(svc, bid, "include", want, True, rows)
+                if not p.todo or any(not it.act for it in p.items if it.rc.idx in want):
+                    why = next((it.note for it in p.items if not it.act), "nicht buchbar")
+                    return {"errors": [f"Nicht gebucht: {why}. Die Transferentscheidung ist gespeichert."]}
+                return BA.execute(svc, bid, "include", {i.rc.idx for i in p.todo}, token=BA.new_token(),
+                                  fingerprint=p.fingerprint(), force=True)
             p = BA.plan(svc, bid, op, idxs, True, rows)  # ausdrückliche Antwort: auch bei abweichenden Angaben
             if not p.todo:
                 return {"errors": [p.items[0].note if p.items else "Nichts auszuführen."]}
@@ -494,7 +509,8 @@ def make_router() -> APIRouter:
         if res.get("errors"):
             return _go(err=" ".join(res["errors"][:3]))
         text = {"link": "Verknüpft – zählt nicht doppelt.", "include": "Gebucht.", "skip": "Wird nicht gebucht.",
-                "defer": "Zurückgestellt – nichts geändert."}[op]
+                "defer": "Zurückgestellt – nichts geändert.", "pair": "Als Transfer gebucht.",
+                "nopair": "Als eigener Vorgang gebucht – kein Transfer."}[op]
         return _go(msg=text, acts=str(res.get("action_id") or ""), gone=await run_in_threadpool(gone))
 
     async def _case_answer(ctx: Any, key: str, aid: str, form: Any, gone: Any) -> Response:

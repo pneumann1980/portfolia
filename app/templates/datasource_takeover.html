@@ -124,9 +124,8 @@
           </div>
         {% elif p.kind == 'row' or p.kind == 'line' %}
           <div class="tk-actions row" style="gap:8px;flex-wrap:wrap">
-            {% if pending %}<a class="btn sm" href="/journal/csv/{{ pending.id }}">Im Prüfstapel entscheiden</a>
-            {% else %}<form method="post" action="/settings/datasources/{{ ds.id }}/sync"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit" title="Normaler Abruf in den Prüfstapel – dort einzeln entscheiden (z. B. Transfer bestätigen)">In den Prüfstapel abrufen</button></form>{% endif %}
-            <span class="hint">Danach hier erneut übernehmen – geänderte Daten werden neu geprüft.</span>
+            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/pruefstapel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}{% if request.query_params.get('confirm') == '1' %}<input type="hidden" name="confirm" value="1">{% endif %}{% for x in request.query_params.getlist('adjust') %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}<button class="btn sm" type="submit" title="Aus dem gespeicherten Vollabruf – kein neuer Abruf beim Anbieter">Jetzt entscheiden</button></form>
+            <span class="hint">Öffnet den Vorgang im Prüf-Stapel (aus dem gespeicherten Abruf, ohne neuen Abruf): dort z. B. den Transfer bestätigen oder ablehnen bzw. den Vorgang dauerhaft ignorieren. Danach hier neu prüfen.</span>
           </div>
         {% elif p.kind == 'balance' %}
           {% set c = p.causes %}
