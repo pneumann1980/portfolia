@@ -177,7 +177,7 @@
             <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme#probleme" class="stack" style="gap:6px">{{ kidf() }}{% if confirmed %}<input type="hidden" name="confirm" value="1">{% endif %}
               {% set ids = c.dups|map(attribute='tx')|map(attribute='tx_id')|list %}{% for x in adjust_sel %}{% if not (x.startswith('drop:') and x[5:] in ids) %}<input type="hidden" name="adjust" value="{{ x }}">{% endif %}{% endfor %}
               <ul class="small">{% for d in c.dups %}<li>{{ d.tx.ts|date_de }} · {{ d.tx.type }} · {{ d.qty|qty_exact }} {{ p.symbol }} <span class="mono muted">{{ d.tx.tx_id }}</span>{% if d.lag %} <span class="hint">(API mit Versatz)</span>{% endif %}
-                {% if d.hideable %}<label class="check"><input type="checkbox" name="adjust" value="drop:{{ d.tx.tx_id }}"{% if ('drop:' ~ d.tx.tx_id) in adjust_sel %} checked{% endif %}> bei der Übernahme ausblenden</label>
+                {% if d.hideable %}<label class="check"><input type="checkbox" name="adjust" value="drop:{{ d.tx.tx_id }}"{% if ('drop:' ~ d.tx.tx_id) in adjust_sel %} checked{% endif %}> <span>bei der Übernahme ausblenden</span></label>
                 {% else %}<br><span class="hint">{{ d.why }} · <a href="/journal/{{ d.tx.tx_id }}/edit">Buchung ansehen</a></span>{% endif %}</li>{% endfor %}</ul>
               {% if c.dups|selectattr('hideable')|list %}<div><button class="btn sm" type="submit">Mit Ausblenden prüfen</button></div>{% endif %}
             </form>
@@ -199,7 +199,7 @@
             <details{% if adj['items']|length <= 6 %} open{% endif %}><summary>Ausgleichsbuchungen ({{ adj['items']|length }})</summary><ul class="small">{% for x in adj['items'][:40] %}<li>{{ x.amount|qty_exact }} {{ p.symbol }} – {{ x.window }}</li>{% endfor %}</ul></details>
             <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme#uebernehmen" class="stack" style="gap:6px">{{ kidf() }}{% if confirmed %}<input type="hidden" name="confirm" value="1">{% endif %}
               {% for x in adjust_sel if x != p.asset %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}
-              <label class="check"><input type="checkbox" name="adjust" value="{{ p.asset }}"> Ich bestätige: Für {{ p.symbol }} gilt der Bestand der Quelle. Die fehlenden Bewegungen werden als gekennzeichnete Ausgleichsbuchungen gebucht ({% if p.asset|upper == 'EUR' %}steuerlich neutral{% else %}Zu- bzw. Abgang ohne Gegenwert – die Wirkung auf die Steuerjahre wird gemessen und angezeigt{% endif %}); rückgängig mit der ganzen Übernahme.</label>
+              <label class="check"><input type="checkbox" name="adjust" value="{{ p.asset }}"> <span>Ich bestätige: Für {{ p.symbol }} gilt der Bestand der Quelle. Die fehlenden Bewegungen werden als gekennzeichnete Ausgleichsbuchungen gebucht ({% if p.asset|upper == 'EUR' %}steuerlich neutral{% else %}Zu- bzw. Abgang ohne Gegenwert – die Wirkung auf die Steuerjahre wird gemessen und angezeigt{% endif %}); rückgängig mit der ganzen Übernahme.</span></label>
               <div><button class="btn sm" type="submit">Mit Ausgleich prüfen</button></div>
             </form>
           </div>
@@ -235,7 +235,7 @@
   {% if scoped %}
   <section class="card">
     <div class="card-head"><h2>Zuordnungen nur für {{ ds.provider_label }}</h2></div>
-    <ul class="hint">{% for k, v in scoped %}<li><span class="mono">{{ k }}</span> → {{ v or 'ignoriert' }}
+    <ul class="hint wrap-any">{% for k, v in scoped %}<li><span class="mono">{{ k }}</span> → {{ v or 'ignoriert' }}
       <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnung-entfernen" class="inline" data-confirm="Zuordnung {{ k }} entfernen? Es wird nichts gebucht."><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="key" value="{{ k }}"><button class="btn sm ghost" type="submit">Entfernen</button></form></li>{% endfor %}</ul>
   </section>
   {% endif %}
@@ -245,7 +245,7 @@
     <div class="card-head"><h2>2 · {{ 'Beweis' if a.mode == 'proof' else 'Prüfung und Bestätigung' }}</h2> {% if a.ok %}<span class="badge good">{{ 'erbracht' if a.mode == 'proof' else 'bestätigt' }}</span>{% else %}<span class="badge crit">{{ 'nicht erbracht' if a.mode == 'proof' else 'offen' }}</span>{% endif %}</div>
     {% if a.mode == 'confirm' %}
     <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme" class="stack" style="gap:6px;margin-bottom:10px">{{ kidf() }}{% for x in adjust_sel %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}
-      <label class="check"><input type="checkbox" name="confirm" value="1"{% if confirmed %} checked{% endif %}> Ich bestätige: {{ ds.provider_label }} kennt für das Konto „{{ ds.account }}“ die <b>vollständige Historie</b> (der kuratierte Import darf ab dem ersten Ereignis der Quelle zurücktreten).</label>
+      <label class="check"><input type="checkbox" name="confirm" value="1"{% if confirmed %} checked{% endif %}> <span>Ich bestätige: {{ ds.provider_label }} kennt für das Konto „{{ ds.account }}“ die <b>vollständige Historie</b> (der kuratierte Import darf ab dem ersten Ereignis der Quelle zurücktreten).</span></label>
       <div><button class="btn sm" type="submit">Mit dieser Angabe prüfen</button></div>
     </form>
     {% endif %}
@@ -305,7 +305,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="token" value="{{ a.token }}">{% for x in a.adjust|sort %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}{% if a.confirm %}<input type="hidden" name="confirmed" value="1">{% endif %}
       {% if a.adjustments %}<div class="alert warn"><span class="icon">!</span><div>Mit bestätigtem Ausgleich: {{ a.adjustments|length }} gekennzeichnete Ausgleichsbuchung{{ 'en' if a.adjustments|length != 1 }} ({% for x in a.adjust|sort %}{{ x }}{{ ', ' if not loop.last }}{% endfor %}) werden mitgebucht.</div></div>{% endif %}
       {% if a.fillers %}<p class="hint">{{ a.fillers|length }} Import-Buchung{{ 'en' if a.fillers|length != 1 }} ohne Gegenstück füll{{ 'en' if a.fillers|length != 1 else 't' }} eine Lücke der API und bleib{{ 'en' if a.fillers|length != 1 else 't' }} bestehen (Liste unter „Bleibende Buchungen“).</p>{% endif %}
-      <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe Beweis, Bestand und Wirkung geprüft. {{ a.hide|length }} Buchungen werden ausgeblendet, die Vorgänge der API gebucht; weicht der Bestand danach ab, wird alles zurückgenommen.</label>
+      <label class="check"><input type="checkbox" name="confirm" value="1" required> <span>Ich habe Beweis, Bestand und Wirkung geprüft. {{ a.hide|length }} Buchungen werden ausgeblendet, die Vorgänge der API gebucht; weicht der Bestand danach ab, wird alles zurückgenommen.</span></label>
       <div><button class="btn primary" type="submit">API maßgeblich machen</button></div>
     </form>
     {% else %}

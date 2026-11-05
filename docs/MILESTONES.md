@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 05.11.2026 · Version 0.94.2 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 05.11.2026 · Version 0.94.3 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,16 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.94.3 – Quellenübernahme mobil: lange Kennungen und Bestätigungstexte
+
+* Liste „Zuordnungen nur für …“: lange Token-Kennungen (`SPM@PLS:0x…@PULSECHAIN`) ragten in der mobilen Ansicht
+  bis 519 px aus der Karte (Bildschirm 390 px) – sie brechen jetzt um.
+* Checkbox-Texte mit Hervorhebung („Ich bestätige: … **vollständige Historie** …“) zerfielen in schmale Spalten
+  (Flex-Container `.check`, jedes Textstück eine Spalte) – Text in einer Hülle; dieselbe Ursache auch bei
+  „Originalbelege lokal aufbewahren“ (Dokumente) und „Entscheidungsregeln anwenden“ (Autopilot) behoben.
+* Nachgemessen mit Chromium bei 390 px auf drei Zuständen der PulseChain-Übernahme (vorher 2–3 überstehende
+  Elemente, nachher keines); Regressionstests: Umbruchklasse der Liste und Vorlagenprüfung aller `.check`-Labels.
 
 ## 0.94.2 – Quellenübernahme Wallets/Chains: keine Sackgasse, nichts still ausgelassen
 

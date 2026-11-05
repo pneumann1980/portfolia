@@ -106,3 +106,30 @@ def test_wallet_takeover_proceeds_after_mapping_and_spam_and_undo_restores(clien
     back = post(c, f"/settings/datasources/{sid}/uebernahme/zurueck")
     assert back.status_code == 303 and not _wallet_txs(c)
     assert TK.latest(ctx(c).db, sid)["status"] == "undone"
+
+
+def test_long_provider_keys_wrap_on_phones(client, pulse):
+    """0.94.3: In der Liste „Zuordnungen nur für …“ ragten lange Kennungen (``SYM@PLS:0x…@PULSECHAIN``) in der mobilen
+    Ansicht aus der Karte – die Liste bricht jetzt beliebig um (``wrap-any``)."""
+    c = client
+    sid = _wallet_with_spam(c, pulse)
+    _map(c, sid, SPAM, action="spam")
+    page = c.get(f"/settings/datasources/{sid}/uebernahme").text
+    head = page.index("Zuordnungen nur für")
+    assert '<ul class="hint wrap-any">' in page[head:head + 400]
+
+
+def test_check_labels_wrap_mixed_text_in_one_element():
+    """``.check`` ist ein Flex-Container: Text neben ``<b>``/``<a>``/``<code>`` ohne Hülle wird je Stück eine eigene
+    Spalte (in der Übernahme zerfiel „Ich bestätige: … vollständige Historie …“ auf dem Handy in schmale Spalten)."""
+    import re
+    from pathlib import Path
+
+    bad = []
+    for f in Path("app/templates").rglob("*.html"):
+        s = f.read_text()
+        for m in re.finditer(r'<label class="check[^"]*">(.*?)</label>', s, re.S):
+            rest = re.sub(r"^\s*(\{%.*?%\}\s*)*<input[^>]*>", "", m.group(1), flags=re.S).strip()
+            if re.search(r"<(b|strong|a|code|em)\b", rest) and not rest.startswith("<span"):
+                bad.append(f"{f}:{s[:m.start()].count(chr(10)) + 1}")
+    assert not bad, bad

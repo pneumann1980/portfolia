@@ -90,7 +90,7 @@
   <div class="card-head"><h2>Einstellungen und Datenschutz</h2></div>
   <form method="post" action="/journal/documents/settings" class="stack" style="gap:8px">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label class="check"><input type="checkbox" name="keep_originals" value="1" {% if cfg.keep %}checked{% endif %}> Originalbelege lokal aufbewahren (unverändert, im Datenverzeichnis unter <code>documents/</code>) – nötig für Ausschnitt und Download</label>
+    <label class="check"><input type="checkbox" name="keep_originals" value="1" {% if cfg.keep %}checked{% endif %}> <span>Originalbelege lokal aufbewahren (unverändert, im Datenverzeichnis unter <code>documents/</code>) – nötig für Ausschnitt und Download</span></label>
     <label class="check"><input type="checkbox" name="ocr" value="1" {% if cfg.ocr %}checked{% endif %}> Lokale Texterkennung (Tesseract) für Screenshots und Scans</label>
     <label class="field" style="max-width:280px">Sprache der Texterkennung<select name="language">{% for k, l in langs.items() %}<option value="{{ k }}" {% if cfg.language == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
     <label class="check"><input type="checkbox" name="public_lookup" value="1" {% if cfg.public %}checked{% endif %}> Öffentliche Blockchain-Explorer erlauben (Bitcoin: mempool.space, Kaspa: api.kaspa.org)</label>
