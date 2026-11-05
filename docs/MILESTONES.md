@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 05.11.2026 · Version 0.95.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 05.11.2026 · Version 0.96.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,28 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.96.0 – Nachprüfung 0.95.0: Quellbelegung, Quellidentität, Lesestand der Caches, Ausgleichsregel, Lesepfad-Abhängigkeiten
+
+Zwölf zusätzliche Gegenproben (N26–N29, N21-Rest): vorher 5 bestanden / 7 fehlgeschlagen, jetzt 12 / 0; die 165
+Fälle aus 0.95.0 bleiben grün; 30 neue Repository-Fälle. Einzelheiten, Wegematrix, Testmatrix und Grenzen:
+[`BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](BUCHUNGEN_PRUEFEN_KORREKTUREN.md#nachprüfung-0950-fünf-offene-fehlerklassen-version-0960).
+
+* **N29 (P1) normaler Vorschlag bucht vorhandene Vorgänge erneut:** Quellbelegungen zählen nur mit ihrer Herkunft;
+  Belegung aus anderer Herkunft führt zur Prüfung statt zur Buchung; die Portfolia-Kennung `pf:<tx_id>` gilt als
+  dieselbe Buchung und hat Vorrang. Echter Rückimport von 120 Buchungen: 120 Verknüpfungen, 0 Neubuchungen (vorher
+  103 + 15).
+* **N28 Wiederherstellung:** technische Identität der Datenquellen (Adresse/Beobachtung statt Anzeigename); 38 von 38
+  Anbindungen (vorher 37).
+* **N26 Caches und Lesestand:** gemeinsame Regel für Identität (persistente Datenrevision), Aufbau (ein Lesestand),
+  Lesen (gleiche Revision) und Veröffentlichung (nie aus fremdem Snapshot oder Schreibtransaktion) für alle
+  Portfolio-, Ledger-, Bewertungs-, Historien-, Steuer-, Hinweis- und Datenqualitäts-Caches.
+* **N27 Ausgleichsregel:** Rücknahme stellt Werte und Kennung davor wieder her und folgt widerrufenen Kennungen
+  (Migration 39: `csv_input_hist`).
+* **N21-Rest:** Buchungsabhängigkeiten aus den Lesepfaden abgeleitet (u. a. Konten-/Asset-Zusammenführung, entfernte
+  Konten, Kontostammdaten, Asset-Änderungen, freigegebene Sparpläne, Quellbelegungen); Migration 39 mit bedingten
+  Triggern. Aktionen vor 0.95.0 ohne Besitzkennung werden nur mit Nachweis zurückgenommen, sonst mit Begründung
+  abgelehnt.
 
 ## 0.95.0 – Gesamtkorrektur „Buchungen prüfen“: ein Vertrag für Lesen, Binden, Schreiben, Besitz und Rücknahme
 

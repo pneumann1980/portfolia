@@ -668,3 +668,128 @@ Keine Erwartung geändert.
   Zeilennummer in einer bestehenden Meldung); in CI (Python 3.12) 333. Bestand offen, keine neuen Typfehler.
 * Die Prüfungen belegen beobachtetes Verhalten in den getesteten Wegen und Kombinationen – keine allgemeine
   Fehlerfreiheit.
+
+# Nachprüfung 0.95.0: fünf offene Fehlerklassen (Version 0.96.0)
+
+**Grundlage:** Nachprüfung vom 05.11.2026 auf 0.95.0 (`94cfbad`) mit zwölf zusätzlichen synthetischen Gegenproben
+(N26–N29, N21-Rest) und einer Prüfung am privaten Gesamtexport des Nutzers. Die Gegenproben liegen unverändert in
+`tests/external_096/` (Dateien umbenannt mit Präfix `test_ext096_`, damit sie nicht mit gleichnamigen
+Repository-Tests kollidieren; Lint-Regeln per `per-file-ignores`; keine Erwartung geändert).
+
+**Ausgangsbefund auf dem Branch (94cfbad):** 7 fehlgeschlagen, 5 bestanden – identisch mit dem Bericht.
+**Endstand:** 12/12 bestanden; zusätzlich 165/165 aus `tests/external_095` und 30 neue Repository-Fälle
+(`tests/test_review_096.py`).
+
+## Ursache und Korrektur je Befund
+
+| Befund | Ursache | Korrektur | Ort |
+| --- | --- | --- | --- |
+| **N29** (P1) normaler Vorschlag bucht vorhandene Vorgänge erneut | `_claimed()` wertete jede Quellverknüpfung als globale Belegung; ohne freien Kandidaten wurde eine Zeile zum „eigenen Vorgang“ (Aktion `include`) – eine *leere* freie Menge galt als Beweis für ein neues Ereignis | Belegung mit **Herkunft** (`tx_link.source`, `batch_id`): nur eine Belegung aus derselben Herkunft (derselbe Stapel bzw. dieselbe anbieterstabile Quelle `sync:*`/Anbieterprofil) macht die Zeile zum eigenen Vorgang; Belegung anderer Herkunft → **Prüfung**, nie automatisch buchen. **Kennung im gültigen Geltungsbereich:** Portfolia-Format `pf:<tx_id>` = genau diese Buchung (auch wenn bereits verknüpft); Kennungstreffer gehen in der Zuordnung vor – zwei verschiedene Portfolia-Kennungen gleicher Größe bleiben zwei Vorgänge. `assess_rows` nutzt die ungekürzte Dublettenliste (`dup_of` statt `dup_of[:5]`) | `assess._claimed`, `_own_record`, `_identity_target`, `_competing`, `_own_event` |
+| **N28** Wiederherstellung verliert eine Wallet-Anbindung | `_datasources()` erkannte Dubletten nur an Anbieter/Konto/Name und übersprang gleichnamige Quellen mit anderer Adresse | **Technische Identität** `ds_identity`: Anbieter, Art, Konto und normalisierte Adresse (EVM ohne Groß-/Kleinschreibung), ohne Adresse die Beobachtungskonfiguration (`watch_id` bzw. Adressen/Kontoschlüssel), sonst der Name; Zugangsdaten nie. Wiederholte Wiederherstellung bleibt dublettenfrei; nach dem Einspielen wird die Identitätsmenge gegen den Export gezählt (`datasources_missing`, Warnung im Protokoll – ohne Adressen). Abhängige Daten (Bestände, Rechercheereignisse) tragen im Export die Identität ihrer Quelle; ältere Exporte ohne sie werden nur bei eindeutigem Treffer zugeordnet | `fullexport.ds_identity`, `_datasources`, `_datasources_missing`, `_source_of` |
+| **N26** Portfolio-Caches umgehen den Lesestand | Schlüssel nur Import + prozesslokaler `overlay_version`; ein alter Snapshot las neue Portfolios bzw. veröffentlichte alte unter neuem Schlüssel | **Gemeinsame Cache-Regel** (`AppContext.read_state`): (1) Identität = persistente Datenrevision des Lesestands (`data_rev`) + prozesslokale Zähler; (2) Aufbau immer aus *einem* Lesestand (ohne laufende Transaktion eigener `db.snapshot`); (3) Lesen nur bei exakt gleicher Revision; (4) Veröffentlichen nur aus eigenem, frisch geöffnetem Lesestand – nie aus fremdem Snapshot oder Schreibtransaktion (ungeschriebene/zurückgerollte Stände). Gilt für Basis, Überlagerung, erfasstes Portfolio, Portfolio mit Schätzungen, Ledger, Bewertung, Historie; Steuer-, Hinweis- und Datenqualitäts-Cache über `cache_rev`/`may_publish` (veröffentlicht nur, wenn die Revision während der Berechnung unverändert blieb) | `context.py`, `tax/service._cached`, `assetchange/detect.hints`, `diagnosis/dq_web` |
+| **N27** zwei abgelehnte Einzelaktionen hinterlassen einen Wert | Die Rücknahme vergab eine **neue** Kennung und schützte so einen Wert, der selbst nur zu einer abgelehnten Aktion gehörte | **Ausgleichsregel:** `set_rows` legt je Schreibkennung den Stand davor (Werte + Kennung) in derselben Transaktion ab (`csv_input_hist`); `restore_inputs` stellt Werte **und** Kennung davor wieder her, vermerkt den Widerruf und folgt einer Kette widerrufener Kennungen bis zum letzten gültigen Stand. Spätere erfolgreiche Eingaben (neue Kennung, auch gleicher Wert, A → B → A) bleiben unberührt; wiederholte/verspätete Rücknahmen ändern nichts | `service.set_rows`, `restore_inputs`, Migration 39 |
+| **N21-Rest** Kontenzusammenführung fehlt im Buchungsvertrag | `BOOKING_TABLES` war eine Aufzählung; `account_merge` (und weitere Überlagerungen) fehlten | `BOOKING_TABLES` **aus den Lesepfaden abgeleitet**: alle Revisionstabellen außer Bestandsnachweisen (`reference_balance`, `ds_balance`) und Kursquellen-Zuordnung (`asset_source`). Neu gebunden: `account_merge`, `asset_merge`, `account_remove`, `account_meta`, `journal_import_link`, `tx_link`, `journal_event_alias`, `event_decision`, `asset_change`, freigegebene Sparplan-Ausführungen. Migration 39: bedingte Trigger für `asset_change` (ohne reine Hinweise) und `tx_estimate` (nur `confirmed`), reine Cache-Zähler `pf:plan`/`pf:tx_estimate` (nicht im fachlichen Datenstand). Vorschau (Datenstand/Tabellenstand vor der Bewertung) und Bindung (erste Anweisung der Schreibtransaktion) nutzen denselben Vertrag | `service.BOOKING_TABLES`, `db._migration_39`, `actions._VERSION_SQL` |
+| Historische Aktionen ohne Besitzkennung | Rücknahme per Wertvergleich – ein später gleich gesetzter Wert war nicht unterscheidbar | Rekonstruktion nur mit belastbarem Nachweis (Entscheidungsgruppe seit Einführung der Kennungen nie geschrieben, Kennung 0); sonst unverändert lassen und mit Begründung melden („Besitz nicht belegbar“) | `batch.undo`, `csv_batch.html` |
+
+## Wegematrix (0.96.0)
+
+| Weg | Lesestand / Cache | Abhängigkeiten (Bindung) | Schreibtransaktion | Eingabebesitz / Ausgleich | Wiederholung / Rücknahme | Nachweis |
+| --- | --- | --- | --- | --- | --- | --- |
+| Prüf-Stapel CSV/Sync: Stapelaktion (Vorschau → Ausführen) | Seite in `db.snapshot`; Portfolio-Caches nach Cache-Regel | Fingerabdruck + abgeleitete `BOOKING_TABLES` vor der Bewertung, `refs`/`pairs` | `batch._execute_tx` (Prüfung zuerst) | `ver_dec` je Entscheidung | Token gegen Doppelausführung; `batch.undo` nur bei eigener Kennung bzw. Nachweis | `test_ext096_followup` (Kontenzusammenführung), `test_account_overlays…`, `test_replay_…` |
+| Einzelknopf `row-action` | Vergleich + `rev_` aus demselben Lesestand (kein vergifteter Cache) | `expect_refs` + `BOOKING_TABLES` | `set_rows` → `batch.execute` | abgelehnt → `restore_inputs` mit Ausgleichsregel | zweite/späte Rücknahme wirkungslos | `test_next_render…`, `test_two_rejected…`, `test_two_rejected_actions_restore…` |
+| Stapel-Vorschau | `db.snapshot`, Caches nur bei gleicher Revision | wie Stapelaktion | – (nur lesend) | – | – | `test_snapshot_cache…` (warm/kalt) |
+| Zentrale Prüfung (mehrere Stapel) | je Stapel eigener Plan | je Stapel `BOOKING_TABLES` | `batch.execute` je Stapel | je Stapel | je Stapelaktion | `test_review_bulk`, `test_ext_*[bulk]` |
+| Assistent (Einzel-/Transfer-/Sammelantwort) | Aufgabe aus aktuellem Stand | über `batch.execute` | `set_rows` (Befehl) → `batch.execute` | abgelehnt → `restore_inputs` (Ausgleichsregel) | Protokoll-Rücknahme | `test_assistant_*`, `test_ext_*assistant*` |
+| Direkte Diagnosebuchung / Diagnoseaktionen | Datenstand `data_version` (jetzt inkl. `asset_change`, freigegebene Sparpläne) | `plan.version` | `apply` → `assert_version` zuerst | – | Diagnose-Rücknahme | `test_direct_diagnosis_booking…`, `test_revision_triggers…` |
+| Quellenübernahme (Bewertung, Probelauf, Buchen) | identische Einordnung in allen Schritten | Datenstand + Token | `_apply` → `batch.execute` | – | Kompensation | `test_ext_0942_additions`, `test_takeover_*` |
+| Älterer Commit-Weg / automatische Übernahme | – | `BOOKING_TABLES` vor der Bewertung | `service.commit` → `commit_apply` | – | Stapel-Rücknahme | `test_legacy_commit…` |
+| Wiederherstellung (Gesamtexport) | – | Identität der Datenquellen | eine Transaktion je Wiederherstellung | – | wiederholt dublettenfrei, fehlende Identitäten gezählt | `test_ext096_restore`, `test_export_restore_export_restore…`, `test_repeated_restore…` |
+
+## Testmatrix (`tests/test_review_096.py`, 30 Fälle)
+
+| Bereich | Fälle |
+| --- | --- |
+| N29 | 6 und 12 gleich große Kandidaten (über den früheren Kürzungen), alle bereits anderweitig verknüpft: Rückimport → 0 Buchungen, fremde Herkunft → Prüfung; echtes zweites Ereignis neben seinem Zwilling bleibt buchbar; mehr Zeilen als Buchungen ohne Kennung bleibt offen; Rückimport nach Neustart (kalte Caches); Herkunftsregeln (`_own_record`) |
+| N28 | Export → Wiederherstellung → Export → Wiederherstellung mit gleichnamigen Wallets (Identitäten und Bestände je Quelle); wiederholte Wiederherstellung in dieselbe Datenbank (auch andere Schreibweise der EVM-Adresse) ohne Dublette, fehlende Identität sichtbar gezählt; älterer Export ohne Quellidentität nur bei eindeutigem Treffer; Identität aus Beobachtungskonfiguration, nie aus Zugangsdaten |
+| N26 | Portfolio in einer zurückgerollten Schreibtransaktion wird nie veröffentlicht; Snapshot-Leser nutzt passenden Cache, veröffentlicht keinen alten Stand (Ledger eingeschlossen); Veröffentlichungsregel für Steuer-/Hinweis-Caches |
+| N27 | beide abgelehnt in beiden Reihenfolgen (inkl. wiederholter Rücknahme); A abgelehnt/B erfolgreich; A erfolgreich/B abgelehnt; späte Rücknahme gegen gleichen Wert und A → B → A; Widerrufskette; Eingaben ohne abgelegten Stand davor |
+| Historische Aktionen | Rücknahme mit Nachweis (Kennung 0); ohne Nachweis abgelehnt mit sichtbarer Begründung |
+| Abnahmefund | Entscheidung nach Abschluss des Stapels („done“) bleibt über das gerenderte Formular änderbar |
+| N21-Rest | Abhängigkeiten vollständig aus `REV_TABLES` abgeleitet; Trigger zählen nur wirksame Änderungen (Hinweis, Sparplan → nur Cache); Kontostammdaten und entfernte Konten zwischen Planung und Schreiben → 409; Migration 39 auf bestehender Datenbank |
+
+## Teststeuerung
+
+* `tests/test_review_095.py::test_action_logged_before_ownership_tokens_is_not_undone_by_value_alone` (vorher
+  `…still_undoes_by_value`): Die neue Anforderung verlangt für Aktionen ohne Besitzkennung einen belastbaren Nachweis;
+  der Test erwartet jetzt die begründete Ablehnung. Der Nachweisfall (Kennung 0) ist in `test_review_096` abgedeckt.
+  Dies ist die einzige geänderte Erwartung – sie wurde durch den Auftrag ausdrücklich verschärft, nicht abgeschwächt.
+* Keine Thread-Synchronisierung angepasst: die Gegenproben laufen unverändert; die Bindung bleibt die erste Anweisung
+  der Schreibtransaktion (der Zeitpunkt der konkurrierenden Änderung vor `_execute_tx` liegt vor dem Sperrerwerb).
+* Steuer-/Hinweis-Caches akzeptieren Kontext-Stubs ohne `cache_rev` (drei bestehende Steuertests verwenden einen
+  schlanken Stub) – für den echten Kontext gilt die Regel unverändert.
+
+## Zusätzlich bei der Abnahme gefunden
+
+* **Entscheidung nach Abschluss des Stapels nicht mehr änderbar** (Echtdaten-Abnahme): Nach der letzten Entscheidung
+  wechselt ein Stapel auf „done“; die Seite zeigt die Auswahl weiter an, lieferte den Eingabestand aber nur bei
+  „preview/partial“. Seit 0.95.0 (Pflicht-Eingabestand) wurde dadurch jede Änderung mit „bitte neu laden“ abgelehnt.
+  Korrektur: Eingabestand überall, wo offene Zeilen editierbar angezeigt werden (`module._batch_page`); Regression
+  `test_decision_stays_changeable_after_the_batch_is_complete` (schlägt ohne Korrektur fehl).
+
+## Reale Daten (Gesamtexport des Nutzers vom 05.11.2026)
+
+Ausschließlich im Arbeitsbereich außerhalb des Repositorys verarbeitet (frische, isolierte Installationen, Netzwerk
+gesperrt, Export unverändert – Prüfsumme vor/nach gleich). Skripte der Nachprüfung (`check_real_export.py`,
+`extend_real_export.py`, `probe_real_replay.py`) unverändert, dazu eine ergänzende Ablaufprüfung; hier nur aggregierte
+Werte.
+
+| Prüfung | 0.95.0 (Bericht / Vergleichslauf) | 0.96.0 |
+| --- | --- | --- |
+| Validierung | 6018 Transaktionen, 0 Fehler, 1 Warnung (u. a. Gebühren-EUR) | gleich – Gebühren-EUR-Hinweis bleibt sichtbar, kein Wert erfunden |
+| Wiederherstellung | 6018 Buchungen, 177 Assets, 34 Konten, **37 von 38** Datenquellen | 6018 / 177 / 34, **38 von 38** (Identitäten = Export) |
+| Wirtschaftlicher Zustand: 89 Bestände, 5284 Lots, 2887 Veräußerungen, Gebühren, Erträge, Steuer 2019–2026 | Prüfsummen | **identisch** (Prüfsummen gleich) |
+| Diagnose | 111 Befunde | 110 – entfallen ist genau „Bestand DOT: Verdacht“: mit 0.95.0 fehlte die zweite Polkadot-Anbindung samt beobachtetem Bestand (direkter Vergleichslauf beider Versionen auf demselben Export) |
+| 139 Seiten-/Detailaufrufe (Übersicht, Konten, Datenquellen, Steuerjahre, Buchungen, Assets, Diagnose) | HTTP 200 | HTTP 200, keine Tabelle verändert, wirtschaftlicher Zustand unverändert, wiederholt |
+| Export → Wiederherstellung → Export → Wiederherstellung | – | 6018 Buchungen, wirtschaftlich und diagnostisch gleich; 38 Quellidentitäten in beiden Instanzen gleich |
+| Unveränderter Rückimport (120 echte Buchungen), normaler Vorschlag ohne Freigabe | 103 Verknüpfungen + **15 Neubuchungen** (6018 → 6033) | **120 Verknüpfungen, 0 Neubuchungen** (6018 → 6018) |
+| Wiederholter Rückimport / nach Neustart | – | alle 120 Zeilen „bereits bekannt“, „Nichts auszuführen“, 0 Buchungen |
+| Stapelaktionen zurückstellen / auslassen / verknüpfen / übernehmen / Vorschlag, je mit Wiederholung und doppelter Rücknahme | verknüpfen 105, übernehmen 17 | zurückstellen 120, auslassen 120, verknüpfen **120**, übernehmen **0 geeignet**, Vorschlag 120 Verknüpfungen; Wiederholung ohne neue Aktion; wirtschaftlicher Zustand nach jeder Rücknahme exakt wie vorher |
+| Berechtigte Neubuchung (neue Kennung, andere Menge) | – | „übernehmen“ vorgeschlagen; mit fremder Kontostammdaten-Änderung zwischen Planung und Schreiben **409**, nichts gebucht; erneutes Absenden mit frischer Vorschau 303, +1 Buchung; Rücknahme → 6018 |
+| Eingaben über das gerenderte Formular | – | speichern 303; älteres Formular mit eigener Änderung abgelehnt; Zurücksetzen 303 (nach der Korrektur oben) |
+| Cache-Gegenproben (warm/kalt) an einer echten Buchung | beide falsch | beide korrekt: im Lesestand alter Wert, danach neuer Wert; nach Bereinigung wirtschaftlich gleich |
+
+Für N27 und N21-Rest gilt der synthetische Nachweis plus die Ablehnung/das erneute Absenden oben; ein weitergehender
+Echtdaten-Nachweis wird nicht behauptet.
+
+## Grenzen
+
+* Die Cache-Regel gilt für einen Anwendungsprozess (Portfolia läuft mit einem). Die Revisionen sind persistent und
+  würden prozessübergreifend dieselbe Identität liefern; eine Mehrprozesszusage wird aber nicht gegeben (nicht geprüft).
+* Builds außerhalb einer Transaktion öffnen einen eigenen Lesestand (verzögerte Lesetransaktion im WAL-Modus); Schreiber
+  werden nicht blockiert. In einer Schreibtransaktion gebaute Portfolios bleiben privat (pro Aufruf neu gebaut).
+* Herkunftsregel N29: nur anbieterstabile Quellen (`sync:*`, eingebaute Anbieterprofile) und derselbe Stapel gelten als
+  „dieselbe Herkunft“. Generische Formate (Portfolia-CSV ohne passende Kennung, Koinly-Universal) führen bei bereits
+  anderweitig verknüpften gleich großen Buchungen bewusst in die Prüfung statt zur Buchung.
+* Die Tabellenbindung bleibt grob: jede Änderung an einer der abgeleiteten Abhängigkeiten im Fenster zwischen
+  Bewertung und Schreiben lehnt ab („Vorschau neu öffnen“) – mit mehr Tabellen etwas häufiger als bisher.
+* Kursquellen-Zuordnungen (`asset_source`) und Bestandsnachweise sind bewusst keine Buchungsabhängigkeit.
+* Rücknahme von Stapelaktionen vor 0.95.0: nur mit Nachweis, sonst bleibt die Entscheidung stehen (begründet gemeldet).
+* Ausgleichsregel: Eingaben vor 0.96.0 haben keinen abgelegten Stand davor – ihre Rücknahme vergibt wie bisher eine
+  neue Kennung.
+* mypy: 334 Fehler in 61 Dateien auf `94cfbad` und auf dem Endstand (Python 3.11, Aufruf wie CI), inhaltlich identisch
+  (nur verschobene Zeilennummern). Bestand offen, keine neuen Typfehler.
+* Die Prüfungen belegen beobachtetes Verhalten in den getesteten Wegen und Kombinationen – keine allgemeine
+  Fehlerfreiheit.
+
+## Tests und Befehle (0.96.0)
+
+| Befehl | Ergebnis |
+| --- | --- |
+| `ruff check app tests scripts` | ohne Befund |
+| `python -m app validate examples/beispiel-import.zip` | 0 Fehler, 0 Warnungen, 124 Transaktionen |
+| `tests/external_096` (12) auf `94cfbad` | 7 fehlgeschlagen, 5 bestanden (wie im Bericht) |
+| dieselben auf dem Endstand | 12 bestanden |
+| `tests/external_095` (165) auf dem Endstand | 165 bestanden |
+| `tests/test_review_096.py` | 30 bestanden |
+| `mypy app/news app/jobs app/web app/health.py app/logging_setup.py --ignore-missing-imports` | 334 → 334 (identisch) |
+| Volltest `TZ=Europe/Berlin pytest -q tests` (Worktree des Endstands) | 2507 Tests: 2504 bestanden, 3 übersprungen, 0 fehlgeschlagen (Exit-Code 0) |

@@ -112,6 +112,16 @@ gleicher Buchungsart) aus der zugeordneten Import-Buchung (`CsvImportService._do
 (z. B. Kauf gegen EUR), gilt der Wert der API. Zuordnung der Gegenstücke: Anbieterkennung (UUID in Notiz/Quellkennung, Alias),
 sonst Asset, Richtung, Menge (±2 %, Gebühren werden je Quelle verschieden ausgewiesen) und Zeit (±36 h).
 
+## Identität der Datenquellen und Datenstand (ab 0.96.0)
+
+* **Wiederherstellung:** Datenquellen werden über ihre technische Identität abgeglichen (Anbieter, Art, Konto und
+  normalisierte Adresse bzw. Beobachtungskonfiguration; nur API-Zugänge ohne Adresse über den Namen) – zwei gleichnamige
+  Wallets mit verschiedener Adresse bleiben zwei Quellen. Wiederholtes Einspielen legt keine Dubletten an; fehlende
+  Identitäten werden nach dem Einspielen gegen den Export gezählt und protokolliert (ohne Adressen). Bestände und
+  Rechercheergebnisse hängen an der Identität ihrer Quelle. Zugangsdaten sind nie Teil von Export oder Identität.
+* **Datenstand der Übernahme:** Der Datenstand, an den Vorschau, Probelauf und Buchen gebunden sind, umfasst seit 0.96.0
+  auch Asset-Änderungen (Umbenennung/Umstellung, ohne reine Hinweise) und freigegebene Sparplan-Ausführungen.
+
 ## Grenzen (bewusst, in der Oberfläche sichtbar)
 
 * Bewiesen werden **Mengen**, nicht Werte. EUR-Werte stammen aus der API, dem ersetzten Import oder aus Kursen – steuerlich

@@ -1385,7 +1385,7 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > die nicht gebucht würden (z. B. ohne EUR-Wert), werden nie mehr still ausgelassen. **Ab 0.95.0** gilt ein
 > gemeinsamer Vertrag für alle Wege: Anzeige aus einem Lesestand, jede Buchung an Kandidaten, Zuordnungen und Assets
 > gebunden, Eingaben mit Besitzkennung (auch bei gleichem Wert), Rücknahmen nur eigener Änderungen, Gebühren bei der
-> Neueinordnung genau einmal. Formulare ohne Eingabestand (alte Tabs) werden mit „bitte neu laden“ abgelehnt. Korrekturen zum Review „Buchungen prüfen“: [`docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md).
+> Neueinordnung genau einmal. Formulare ohne Eingabestand (alte Tabs) werden mit „bitte neu laden“ abgelehnt. **Ab 0.96.0** bucht der normale Vorschlag einen unverändert rückimportierten Vorgang nie erneut (eine Verknüpfung mit einer anderen Quelle beweist kein neues Ereignis – im Zweifel Prüfung), die Wiederherstellung erhält gleichnamige Wallets mit verschiedener Adresse, Zwischenspeicher mischen nie Lesestände, zwei abgelehnte Einzelaktionen hinterlassen den Ausgangswert, und Kontenzusammenführungen u. ä. zwischen Vorschau und Buchen verlangen eine neue Vorschau. Korrekturen zum Review „Buchungen prüfen“: [`docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md).
 
 > **DKB-Dokumente (ab 0.36.0):** An einem DKB-Konto (*Einstellungen → Datenquellen*) richtet *DKB-Abruf einrichten* ein
 > Abrufprogramm ein (eigene Python-Umgebung im Datenordner, kein zweiter Container). Per Knopfdruck werden – nach Freigabe in
