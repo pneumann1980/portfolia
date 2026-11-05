@@ -572,3 +572,99 @@ Vollabruf (sonst „Nicht übernehmen“). Echte Sammelvorgänge (Liquidität, M
 ausgelassen. „EUR-Wert fehlt“ lässt sich in der Übernahme nicht durch Eingabe beheben – Kurse laden bzw. manuellen
 Kurs hinterlegen und neu prüfen, oder den Vorgang auslassen. Der normale Abruf (Prüfstapel) ordnet Sammelvorgänge
 nach einer Spam-Markierung nicht neu ein.
+
+# Gesamtkorrektur nach der Gesamtprüfung 0.94.2 (Version 0.95.0)
+
+**Grundlage:** Gesamtprüfung vom 05.11.2026 auf 0.94.2 (`4b0be37`), 165 externe Soll-Fälle, zehn Befunde (N25 P1,
+N13-Rest und N17–N24 P2). Die Fälle liegen unverändert in `tests/external_095/` (Dateinamen mit Präfix `test_ext_`,
+damit sie nicht mit den gleichnamigen Repository-Tests kollidieren; Lint-Regeln für das Verzeichnis per
+`per-file-ignores` – reine Ansteuerung, keine Erwartung geändert).
+
+**Ausgangsbefund auf dem Branch:** 0.94.3 (`7e8c54d`, gegenüber 0.94.2 nur Vorlagen geändert) – 45 fehlgeschlagen,
+120 bestanden; identisch mit dem Bericht.
+
+## Gemeinsame Lösung
+
+| Baustein | Inhalt | Ort |
+| --- | --- | --- |
+| Konsistenter Lesestand | `Database.snapshot()`: verzögerte Lesetransaktion (WAL) – alle Abfragen eines Formularaufbaus sehen denselben Stand; Schreiben darin bricht mit Fehler ab | `db.py`, `module._batch_page` |
+| Schreibvertrag der Eingaben | `set_rows` mit `_outcome`: Formular mit Eingabestand → unberührt übergehen / Konflikt ablehnen / gleicher Wert ausdrücklich → Besitz; Befehl ohne Formular → jede übergebene Gruppe ausdrücklich (neue Kennung auch bei gleichem Wert); `require_marks` für HTTP-Formulare; Transfereinheit Quelle + `b:`-Partner mit derselben Kennung | `service.set_rows`, `set_all` |
+| Bindung jeder Buchung | `BOOKING_TABLES` (Journal, Overrides, Importe, Konto-/Symbol-Zuordnungen, Journal-Assets) vor der Bewertung gelesen, als erste Anweisung der Schreibtransaktion geprüft – für **jede** Buchung/Verknüpfung, auch ohne erkannten Partner | `batch.execute`, `service.commit` |
+| Revisionsdomänen | Migration 38: Trigger-Zähler für `csv_account` und `journal_asset` (Datenstand, Vorschau-Cache, Bestätigungen, Schreibprüfung) | `db._migration_38` |
+| Besitz bei Rücknahmen | Stapelaktionen schreiben Entscheidungen mit eigener Kennung (`ver_dec`), `batch.undo` setzt nur zurück, solange sie noch trägt; ältere Aktionen ohne Kennung weiter per Wertvergleich | `batch._execute_tx`, `batch.undo` |
+| Ungekürzte Abhängigkeiten | Kandidaten (`pair_alts`) und Dubletten (`dup_of`) vollständig gespeichert; Anzeige darf zusammenfassen | `service._save` |
+| Kanonischer Anbieter | `identity.canonical_provider`: Quelle/Profil zuerst, Kontoname nur Rückfall | `identity`, `service._build`, `engine`, `note_identity_keys` |
+| Wirtschaftliche Erhaltung | Neueinordnung ersetzt das ganze Ereignis (Sammelzeile + eigene Gebührenzeile); `_conserved` prüft Rohbewegungen − einmal Gebühr == Wirkung der neuen Zeilen, sonst bleibt der Vorgang ungeklärt | `takeover._effective_recs` |
+| Typgerechte Kandidaten | „kein Transfer“ bei reinen `b:`-Mengen ohne Journalrevision anwendbar (Zusammensetzung geprüft) | `takeover._apply_decisions` |
+
+## Wegematrix
+
+| Weg | Gelesener Stand / Bindung | Schreibtransaktion | Besitz / Rücknahme | Nachweis |
+| --- | --- | --- | --- | --- |
+| Prüf-Stapel: Eingaben speichern (`/rows`) | Seite aus einem Lesestand; `iv_`, `pairrev_` Pflicht | `set_rows` (eine Transaktion) | Kennung je Gruppe, Transfereinheit; Formular ohne Stand abgelehnt | `test_ext_comprehensive` (Eingabe-/Formular-/Snapshot-Matrix), `test_review_095` |
+| Transferauswahl | `pairrev_` + `iv_` | `set_rows` | Quelle + Partner gemeinsam | `test_ext_hist_094`, `test_pair_ownership…` |
+| Sammelknöpfe (`bulk`) | Status je Zeile | `set_all` (eine Transaktion) | neue Kennung für alle Zeilen | `test_current_bulk_form…`, `test_bulk_button…` |
+| Auswahl, Vorschau, Stapelaktion | Fingerabdruck + `BOOKING_TABLES` + `refs/pairs` | `batch._execute_tx` | `ver_dec` je Entscheidung, Buchungen über `import_action` | `test_first_candidate…[batch]`, `test_mapping_changes…`, `test_audited_action_undo…` |
+| Einzelknopf (`row-action`) | `rev_` aus demselben Lesestand, `iv_` | `set_rows` → `batch.execute` | abgelehnt → `restore_inputs` (nur eigene) | `test_first_candidate…[row]`, `test_displayed_comparison…` |
+| Älterer Commit-Weg / automatische Übernahme | `BOOKING_TABLES` vor der Bewertung | `service.commit` → `commit_apply` | Stapel-Rücknahme | `test_legacy_commit…`, `test_first_candidate…[legacy]` |
+| Zentrale Prüfung (mehrere Stapel) | je Stapel eigener Plan/Fingerabdruck | `batch.execute` je Stapel (Teilabschluss je Stapel dokumentiert) | je Stapelaktion | `test_first_candidate…[bulk]`, `test_review_bulk` |
+| Assistent (Einzel-, Transfer-, Sammelantwort) | Aufgabe aus aktuellem Stand | `set_rows` (Befehl) → `batch.execute` | abgelehnt → `restore_inputs` | `test_assistant_confirmation…` (Kandidat/Konto/Symbol) |
+| Direkte Diagnosebuchung (`book_row`) | `plan.version` (Datenstand inkl. Konten/Assets) | `apply` → `assert_version` → `commit_apply` | Diagnose-Rücknahme | `test_direct_diagnosis_booking…` |
+| Quellenübernahme (Bewertung, Probelauf, Buchen) | `_effective_recs` identisch in Vorschau/Probelauf/Buchen; Token | `_apply` → `batch.execute` | Kompensation/Rücknahme der Übernahme | `test_ext_0942_additions`, `test_takeover_wallet_*` |
+| Übernahme: Zuordnen/Spam/Entfernen | kanonischer Anbieter | `set_symbol`/`delete_symbol` | Entfernen der Zuordnung | `test_wallet_source_identity…` |
+| Übernahme: Einzel-/Sammelentscheidung | Token der angezeigten Vorschau | `decide`/`decide_many` (eine Transaktion) | Entscheidung zurücknehmen (Stempel) | `test_new_bulk_takeover_entrypoint…` |
+| `commit_apply` (gemeinsam) | erreicht nur über `commit` (Tabellen), `_execute_tx` (Tabellen) und `_exec_book_row` (Datenstand) | – | – | siehe oben |
+
+## Befundzuordnung (Vorher → Nachher)
+
+| Befund | Ursache | Korrektur | Externe Fälle (Ausgangsstand → jetzt) |
+| --- | --- | --- | --- |
+| **N25** (P1) | Neueinordnung behielt die separate Gebührenzeile | Ereignis ganz ersetzen + Erhaltungsprüfung | 2 fehlgeschlagen → 0 (Gebühr 0.000021 PLS genau einmal) |
+| N13-Rest | gleicher Wert eines Befehls ohne Formular übersprungen; `set_all` ohne Kennung | `_outcome`, `set_all` mit Kennung | 5 → 0 |
+| N17 | Tabellenbindung nur bei vorhandenem Kandidaten | jede Buchung bindet `BOOKING_TABLES` | 7 → 0 |
+| N18 | Partner getrennt geprüft und gespiegelt | Transfereinheit in `set_rows` | 5 → 0 |
+| N19 | Anzeige und Kennungen aus verschiedenen Ständen | `Database.snapshot` in `_batch_page` | 5 → 0 |
+| N20 | `batch.undo` per Wertvergleich | `ver_dec`-Kennung je Aktion | 4 → 0 |
+| N21 | `csv_account`/`journal_asset` ohne Revision, Zuordnungen nicht gebunden | Migration 38, `BOOKING_TABLES` | 9 → 0 |
+| N22 | `pair_alts[:10]` | vollständige Mengen | 3 → 0 |
+| N23 | Kontoname vor Quelle | `canonical_provider` | 4 → 0 |
+| N24 | Journalrevision auch für reine `b:`-Mengen verlangt | Revision nur bei `j:`-Kandidaten | 1 → 0 |
+| **Summe** | | | **45 → 0; 165/165 bestanden** |
+
+Zusätzlich in dieser Runde: gleiche Rangfolge-Schwäche (Kontoname vor Quelle) in `note_identity_keys` und der
+Diagnoseprüfung der Anbieter-Kürzel (`engine`) – mit umgestellt; gekürzte Dublettenliste (`dup_of[:5]`) als weitere
+gekürzte Abhängigkeitsliste – vollständig gespeichert.
+
+## Reale Daten (Gesamtexport des Nutzers vom 05.11.2026)
+
+Nur im Arbeitsbereich verarbeitet, nicht im Repository. Eingespielt über den Wiederherstellungsweg der App in eine
+frische Instanz, je einmal mit 0.94.3 und 0.95.0:
+
+| Prüfung | 0.94.3 | 0.95.0 |
+| --- | --- | --- |
+| Wiederherstellung | angewendet (6018 Buchungen) | angewendet (6018 Buchungen) |
+| Buchungen, Bestände (89), Lots (5284), Veräußerungen (2887), Steuer 2021–2025, Diagnosebefunde | Prüfsummen | **identisch** |
+| 47 Seiten (Übersicht, Prüfen, Assistent, Fälle, Datenquellen, alle Übernahmeseiten) | HTTP 200, Lesen ändert nichts | HTTP 200, Lesen ändert nichts |
+| Prüf-Stapel aus 120 echten Buchungen (Dubletten): Seite, unverändertes Formular, Eingabe, Formular ohne Eingabestand, Auslassen, Verknüpfen (115), Buchen (5), dreifache Rücknahme | Formular ohne Stand gespeichert („letzter gewinnt“) | Formular ohne Stand abgelehnt; sonst gleich; wirtschaftlicher Zustand nach Rücknahme exakt wie vorher |
+
+## Umgestellte Testansteuerung
+
+HTTP-Teilformulare ohne Eingabestand werden jetzt abgelehnt. 15 Repository-Tests sendeten solche Teilformulare; sie
+verwenden jetzt `tests.helpers.marked()` (Eingabestand eines frisch geladenen Formulars) bzw. `transfer_decision()`.
+Keine Erwartung geändert.
+
+## Grenzen
+
+* `Database.snapshot` gilt je Thread/Verbindung und einen Prozess; mehrere Anwendungsprozesse sind nicht Gegenstand
+  der Zusage (Portfolia läuft mit einem Prozess).
+* Die Tabellenbindung ist bewusst grob: jede Änderung an Journal, Overrides, Importen, Zuordnungen oder Assets im
+  Millisekundenfenster zwischen Bewertung und Schreiben lehnt ab („Vorschau neu öffnen“).
+* Alte Tabs/Skripte ohne Eingabestand werden abgelehnt (gewollt); interne Befehle gelten als ausdrücklich.
+* Stapelaktionen vor 0.95.0 tragen keine Besitzkennung – ihre Rücknahme vergleicht weiter den Wert.
+* Echte Sammelvorgänge (Liquidität, Multi-Swap) bucht die Übernahme weiterhin nicht; „EUR-Wert fehlt“ lässt sich in
+  der Übernahme nicht eingeben. Gezielte Wahl eines bestimmten Partners und reine EUR-Gebühr ohne Asset bleiben
+  offene Produktwünsche.
+* mypy: 334 Fehler in 61 Dateien lokal auf Ausgangs- und Endstand, zeilenweise identisch (nur eine verschobene
+  Zeilennummer in einer bestehenden Meldung); in CI (Python 3.12) 333. Bestand offen, keine neuen Typfehler.
+* Die Prüfungen belegen beobachtetes Verhalten in den getesteten Wegen und Kombinationen – keine allgemeine
+  Fehlerfreiheit.

@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 05.11.2026 · Version 0.94.3 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 05.11.2026 · Version 0.95.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,24 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.95.0 – Gesamtkorrektur „Buchungen prüfen“: ein Vertrag für Lesen, Binden, Schreiben, Besitz und Rücknahme
+
+Gesamtprüfung 0.94.2 (165 externe Soll-Fälle, 10 Befunde): vorher 120 bestanden / 45 fehlgeschlagen, jetzt 165 / 0.
+Lösung, Wegematrix, Befundzuordnung mit Vorher/Nachher und Grenzen:
+[`BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](BUCHUNGEN_PRUEFEN_KORREKTUREN.md#gesamtkorrektur-nach-der-gesamtprüfung-0942-version-0950).
+
+* **N25 (P1) doppelte Netzwerkgebühr:** Neueinordnung eines Sammelvorgangs ersetzt das ganze Ereignis (auch die eigene
+  Gebührenzeile); unabhängige Erhaltungsprüfung gegen die Rohbewegungen.
+* **Schreibvertrag der Eingaben** (N13-Rest, N18): ausdrückliche Befehle übernehmen Besitz auch bei gleichem Wert,
+  Sammelknopf ebenso; HTTP-Formulare ohne Eingabestand werden abgelehnt; Quelle und Partnerzeile sind eine Einheit.
+* **Bindung jeder Buchung** (N17, N21): Kandidatenmenge auch leer, Konto-/Symbol-/Spam-Zuordnungen und Assets;
+  Migration 38 versioniert `csv_account` und `journal_asset`.
+* **Konsistenter Lesestand** (N19, `Database.snapshot`), **Besitz bei protokollierten Aktionen** (N20),
+  **ungekürzte Kandidaten/Dubletten** (N22), **kanonischer Anbieter** (N23), **„kein Transfer“ bei reinen
+  Stapel-Kandidaten** (N24).
+* Reale Daten (Gesamtexport des Nutzers, 6018 Buchungen): Wiederherstellung, Bestände, Lots, Veräußerungen, Steuer
+  2021–2025 und Diagnosebefunde vorher/nachher identisch; Prüf-Stapel mit 120 echten Buchungen bis zur Rücknahme.
 
 ## 0.94.3 – Quellenübernahme mobil: lange Kennungen und Bestätigungstexte
 
