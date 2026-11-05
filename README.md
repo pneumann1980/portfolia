@@ -1380,7 +1380,9 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > nur die eigenen Eingaben zurück. **Ab 0.94.0** erkennt Portfolia jede Datenänderung über persistente
 > Schreibrevisionen, bindet Transferentscheidungen an alle angebotenen Gegenbuchungen und schützt Eingaben anderer Tabs
 > über Besitzkennungen. **Ab 0.94.1** gelten Zuordnungen und „Als Spam ignorieren“ der Quellenübernahme bei Wallets
-> und Chains (z. B. PulseChain) auch für die Vorgänge, nicht nur für den Bestand. Korrekturen zum Review „Buchungen prüfen“: [`docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md).
+> und Chains (z. B. PulseChain) auch für die Vorgänge, nicht nur für den Bestand. **Ab 0.94.2** hat jeder nicht
+> buchbare Vorgang der Übernahme einen Ausweg („Nicht übernehmen“, Spam in Sammelvorgängen zuordenbar), und Vorgänge,
+> die nicht gebucht würden (z. B. ohne EUR-Wert), werden nie mehr still ausgelassen. Korrekturen zum Review „Buchungen prüfen“: [`docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md).
 
 > **DKB-Dokumente (ab 0.36.0):** An einem DKB-Konto (*Einstellungen → Datenquellen*) richtet *DKB-Abruf einrichten* ein
 > Abrufprogramm ein (eigene Python-Umgebung im Datenordner, kein zweiter Container). Per Knopfdruck werden – nach Freigabe in

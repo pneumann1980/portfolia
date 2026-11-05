@@ -359,6 +359,63 @@ def _fmt(q: Decimal) -> str:
     return format(q.normalize(), "f") if q else "0"
 
 
+def _effective_recs(ctx: Any, recs: list[Any], provider: str) -> list[Any]:
+    """Vorgänge, wie sie Vorschau, Probelauf und Übernahme bewerten: Sammelvorgänge einer Wallet („Mehrere Zu- und
+    Abgänge“), an denen ein für diese Quelle als Spam ignorierter Token beteiligt ist, werden ohne dessen Bewegungen
+    mit der Logik des Abrufs neu eingeordnet (z. B. Tausch statt ungeklärt). Die Zeilen erhalten Ereignis, Konto und
+    Kennungen wie beim Abruf (``<Ereignis>#<Unterkennung>``); die Nummern im Ereignis werden neu vergeben. Rein
+    lesend – ändert sich die Zuordnung, ändert sich die Bewertung (und mit ihr der Token der Vorschau)."""
+    from app.csvimport import model as M
+    from app.csvimport.service import SymbolResolver, csv_service, rec_from_json, rec_to_json
+    from app.datasources.wallet import reclassify
+
+    if not any(r.kind == M.REVIEW and isinstance((r.raw or {}).get("moves"), dict) for r in recs):
+        return recs
+    csv = csv_service(ctx)
+    resolver = SymbolResolver(csv.known_assets(), csv.saved_symbols())
+    out: list[Any] = []
+    changed: set[str] = set()
+    for r in recs:
+        info = (r.raw or {}).get("moves") if r.kind == M.REVIEW else None
+        if isinstance(info, dict):
+            drop = {str(m.get("asset")) for m in info.get("moves") or []
+                    if resolver.resolve_for(str(m.get("asset")), provider)[1] == "ignored"}
+            new = reclassify(r, drop) if drop else None
+            if new is not None:
+                key = r.event_key or ""
+                for x in new:
+                    x.event_key, x.line, x.account = r.event_key, r.line, r.account
+                    x.ext_id = f"{key}#{x.ext_id}" if key else x.ext_id
+                    x.aliases = list(r.aliases or [])
+                    x.label = x.label or r.label
+                # dieselbe Textform wie gespeicherte Abrufe (Mengen normalisiert) – Prüfsummen bleiben stabil
+                out += [rec_from_json(rec_to_json(x)) for x in new]
+                changed.add(key)
+                continue
+        out.append(r)
+    seq: dict[str, int] = defaultdict(int)
+    for x in out:  # laufende Nummer im Ereignis eindeutig halten
+        if (x.event_key or "") in changed:
+            x.event_line = seq[x.event_key or ""]
+            seq[x.event_key or ""] += 1
+    return out
+
+
+def _review_unmapped(rec: Any, resolver: Any, provider: str) -> list[str]:
+    """Nicht zugeordnete Token eines Sammelvorgangs – als Zuordnungsproblem anbieten (zuordnen oder als Spam
+    ignorieren), damit der Vorgang danach neu eingeordnet werden kann."""
+    info = (rec.raw or {}).get("moves")
+    if not isinstance(info, dict):
+        return []
+    out = []
+    for m in info.get("moves") or []:
+        asset = str(m.get("asset") or "")
+        aid, how, _key = resolver.resolve_for(asset, provider)
+        if aid is None and how in ("unknown", "ambiguous") and asset not in out:
+            out.append(asset)
+    return [f"Asset für „{x}“ zuordnen" for x in out]
+
+
 def _lines(ctx: Any, recs: list[Any], account: str, provider: str) -> tuple[list[Line], Any]:
     """Zeilen der Quelle durch dieselbe Abbildung wie beim Import schicken (keine zweite Nachbildung)."""
     from app.csvimport import model as M
@@ -376,6 +433,7 @@ def _lines(ctx: Any, recs: list[Any], account: str, provider: str) -> tuple[list
         row = None if r.kind == M.REVIEW else csv._build(rc, resolver, acc_map, batch, f"sync:{provider}", None)
         errors = list(rc.errors)
         if r.kind == M.REVIEW:
+            errors += _review_unmapped(r, resolver, provider)
             errors.append(r.note or "Deutung nicht eindeutig")
         elif r.ts_missing:
             errors.append("Zeitpunkt fehlt in den Daten der Quelle")
@@ -724,18 +782,21 @@ def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
     out: list[dict[str, Any]] = []
     maps: dict[str, dict[str, Any]] = {}
     other: list[Line] = []
+    decided = getattr(a, "decisions", None) or {}
     for ln in lines:
         if not ln.errors:
             continue
-        m = _MAP.search(ln.errors[0])
-        if m is None:
-            other.append(ln)
+        found = [m for e in ln.errors if (m := _MAP.search(e)) is not None]
+        if not found:
+            if not _skipped(ln, decided):
+                other.append(ln)
             continue
-        raw = (m.group(1) or m.group(2) or "").strip()
-        p = maps.setdefault(raw.upper(), {"id": "map:" + provider_key(raw, provider), "kind": "map", "symbol": raw,
-                                          "key": provider_key(raw, provider), "events": []})
-        p["events"].append({"event": ln.rec.event_key or "", "ext": ln.rec.ext_id or "", "ts": ln.rec.ts,
-                            "what": str(ln.rec.label or ln.rec.kind or ""), "line": ln.rec.line})
+        for m in found:  # jede fehlende Zuordnung der Zeile (z. B. beide Seiten eines Tauschs)
+            raw = (m.group(1) or m.group(2) or "").strip()
+            p = maps.setdefault(raw.upper(), {"id": "map:" + provider_key(raw, provider), "kind": "map",
+                                              "symbol": raw, "key": provider_key(raw, provider), "events": []})
+            p["events"].append({"event": ln.rec.event_key or "", "ext": ln.rec.ext_id or "", "ts": ln.rec.ts,
+                                "what": str(ln.rec.label or ln.rec.kind or ""), "line": ln.rec.line})
     for key in unmapped:  # Bestand der Quelle ohne Zuordnung (gleiche Kennung wie bei den Vorgängen)
         raw = key.split(";", 1)[0]
         maps.setdefault(raw.upper(), {"id": "map:" + provider_key(raw, provider), "kind": "map", "symbol": raw,
@@ -748,10 +809,14 @@ def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
         out.append(p)
     for ln in other:
         ident = ln.rec.ext_id or ln.rec.event_key or f"zeile:{ln.rec.line}"
+        # Ausweg ohne Raten: „nicht übernehmen“ (nur dieser Lauf) – der Vorgang wird nicht gebucht; die
+        # Bestandsprüfung bewertet die Übernahme ohne ihn. Einzeln buchen ist nicht möglich (nicht abbildbar).
+        opts = ["skip"] if ln.rec.ext_id else []
         out.append({"id": f"line:{ident}", "kind": "line", "title": "Vorgang nicht buchbar",
-                    "detail": ln.errors[0][:200], "events": [{"event": ln.rec.event_key or "", "ext": ln.rec.ext_id
-                                                              or "", "ts": ln.rec.ts, "line": ln.rec.line,
-                                                              "what": str(ln.rec.label or ln.rec.kind or "")}]})
+                    "detail": ln.errors[0][:200], "key": ln.rec.ext_id, "options": opts,
+                    "labels": {k: CHOICES[k] for k in opts}, "basis": _rec_basis(ln.rec), "partner": None,
+                    "events": [{"event": ln.rec.event_key or "", "ext": ln.rec.ext_id or "", "ts": ln.rec.ts,
+                                "line": ln.rec.line, "what": str(ln.rec.label or ln.rec.kind or "")}]})
     by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for b in a.balances:
         by_name[str(b["name"]).split(" (", 1)[0].upper()].append(b)
@@ -781,6 +846,14 @@ def _problems(a: Any, lines: list[Line], unmapped: list[str], provider: str,
     return out
 
 
+def _skipped(ln: Line, decided: dict[str, Any]) -> bool:
+    """Nicht buchbarer Vorgang (ohne fehlende Zuordnung), den der Nutzer für diesen Lauf nicht übernimmt."""
+    d = decided.get(ln.rec.ext_id or "") if ln.rec.ext_id else None
+    if not d:
+        return False
+    return d.get("choice") == "skip" and not any(_MAP.search(e) for e in ln.errors)
+
+
 def _row_problem(x: dict[str, Any]) -> dict[str, Any]:
     return {"id": f"row:{x.get('key')}", "kind": "row", "title": "Vorgang braucht eine Einzelentscheidung",
             "detail": f"{x.get('when', '')} {x.get('what', '')}: {x.get('why', '')}".strip(),
@@ -804,7 +877,7 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
     if row is None or ds is None or row["status"] not in ("staged", "running", "applied") or not row["events_json"]:
         return None
     meta = json.loads(row["meta_json"] or "{}")
-    recs = [rec_from_json(json.dumps(d)) for d in json.loads(row["events_json"])]
+    recs = _effective_recs(ctx, [rec_from_json(json.dumps(d)) for d in json.loads(row["events_json"])], ds.provider)
     account, prov = ds.account, ds.provider
     fetched = parse_iso(row["created_at"]) or datetime.now(UTC)
     a = Assessment(sid, account, prov, int(row["id"]), row["created_at"], datetime.now(UTC) - fetched)
@@ -1080,7 +1153,7 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
     conn = conn_mod.connector_for(prov)
     pag = (cov.get("pagination") or {})
     stale = a.age > MAX_AGE
-    bad = [ln for ln in lines if ln.errors]
+    bad = [ln for ln in lines if ln.errors and not _skipped(ln, a.decisions or {})]
     proof = a.mode == "proof"
     reported = ("; ".join(meta["gaps"][:3]) or "keine gemeldet") if meta.get("gaps") else "keine gemeldet"
     a.checks = [
@@ -1641,7 +1714,7 @@ def decide(ctx: Any, sid: int, key: str, choice: str, token: str, *, confirm: bo
         if a is None or a.token != token:
             return {"errors": ["Die Vorschau ist nicht mehr aktuell – bitte die Seite neu laden und erneut "
                                "entscheiden."]}
-        prob = next((p for p in a.problems if p.get("kind") == "row" and p.get("key") == key), None)
+        prob = next((p for p in a.problems if p.get("kind") in ("row", "line") and p.get("key") == key), None)
         if prob is None or choice not in (prob.get("options") or []):
             return {"errors": ["Diese Entscheidung ist für den Vorgang nicht (mehr) möglich."]}
         with db.transaction():  # Lesen-Ändern-Schreiben atomar und nur für den noch offenen, angezeigten Lauf
@@ -1653,6 +1726,37 @@ def decide(ctx: Any, sid: int, key: str, choice: str, token: str, *, confirm: bo
                           "what": prob.get("detail", ""), "at": _now(), "n": _next_n(db, sid, a.rid)}
             db.set_state(_dec_key(sid), {"rid": a.rid, "items": items, "n": items[key]["n"]})
     return {"errors": []}
+
+
+def decide_many(ctx: Any, sid: int, choice: str, token: str, *, confirm: bool = False,
+                adjust: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Dieselbe Antwort für alle in der angezeigten Vorschau (``token``) offenen Einzelentscheidungen, die sie anbieten
+    (z. B. alle prüfbedürftigen Tauschvorgänge „einzeln buchen“) – ausdrücklich vom Nutzer gewählt, in einer
+    Schreibtransaktion, nur für diesen Lauf. Danach gilt eine neue Vorschau mit neuem Probelauf, der weitere
+    Entscheidungen verlangen kann. Rückgabe: ``errors``, ``n`` (gespeicherte Entscheidungen)."""
+    if choice not in CHOICES:
+        return {"errors": ["Unbekannte Entscheidung."], "n": 0}
+    db = ctx.db
+    with _LOCK:
+        a = assess(ctx, sid, confirm=confirm, adjust=adjust)
+        if a is None or a.token != token:
+            return {"errors": ["Die Vorschau ist nicht mehr aktuell – bitte die Seite neu laden und erneut "
+                               "entscheiden."], "n": 0}
+        probs = [p for p in a.problems if p.get("kind") in ("row", "line") and p.get("key")
+                 and choice in (p.get("options") or [])]
+        if not probs:
+            return {"errors": ["Für keinen offenen Vorgang ist diese Entscheidung möglich."], "n": 0}
+        with db.transaction():
+            r = latest(db, sid)
+            if r is None or int(r["id"]) != a.rid or r["status"] != "staged":
+                return {"errors": [STALE_DECISION], "n": 0}
+            items = load_decisions(db, sid, a.rid)
+            n = _next_n(db, sid, a.rid)
+            for i, prob in enumerate(probs):
+                items[str(prob["key"])] = {"choice": choice, "basis": prob.get("basis"), "partner": prob.get("partner"),
+                                           "what": prob.get("detail", ""), "at": _now(), "n": n + i}
+            db.set_state(_dec_key(sid), {"rid": a.rid, "items": items, "n": n + len(probs) - 1})
+    return {"errors": [], "n": len(probs)}
 
 
 STALE_DECISION = ("Diese Entscheidung gehört zu einem anderen bzw. inzwischen geänderten Stand (neuer Abruf, geänderte "
@@ -1884,7 +1988,7 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
     # 2. Vorgänge der Quelle auswerten ----------------------------------------------------------------------------
     _msg(db, rid, "API-Vorgänge werden ausgewertet …")
     row = db.q1("SELECT events_json FROM ds_takeover WHERE id=?", (rid,))
-    recs = [rec_from_json(json.dumps(d)) for d in json.loads(row["events_json"])]
+    recs = _effective_recs(ctx, [rec_from_json(json.dumps(d)) for d in json.loads(row["events_json"])], a.provider)
     recs += _adjust_recs(a)  # bestätigter Ausgleich: gekennzeichnete Zeilen im selben Stapel (gemeinsam rückgängig)
     recs += _partner_recs(ctx, a)  # bestätigter Transfer mit ersetzter Import-Buchung: deren Seite im selben Stapel
     payload = ("[" + ",".join(rec_to_json(r) for r in recs) + "]").encode()
@@ -1920,6 +2024,26 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
     # Die Übernahme ist eine Entscheidung für alle Vorgänge: Zeilen, die der Prüfstapel nur mit Einzelentscheidung bucht
     # (möglicher Transfer, Dublette/Ergänzung, prüfbedürftig …), werden nicht still ausgelassen – vor jeder Buchung
     # abbrechen, mit Grund je Zeile (stabile Kennung), damit sie einzeln entschieden werden können.
+    # Vorgänge, die weder gebucht noch bewusst ausgelassen würden (z. B. EUR-Wert fehlt, ungeklärt, mögliche Dublette):
+    # nie still offen lassen – die Vorschau hat sie im Bestand gezählt. Vor jeder Buchung abbrechen, je Vorgang mit
+    # Grund und den im Übernahmekontext möglichen Entscheidungen.
+    from app.csvimport.service import DONE, STATUS_LABEL
+
+    left_open = [rc for rc in rest if rc.status not in DONE and rc.idx not in skip and rc.decision != "skip"]
+    if left_open:
+        info = []
+        for rc in left_open:
+            ci = _choice_info(ctx, rc, rows)
+            if rc.errors:  # nicht abbildbar bzw. unvollständig: nur „nicht übernehmen“ (oder Ursache beheben)
+                ci = {**ci, "options": ["skip"]}
+            why = (rc.errors or rc.warnings or [f"Status „{STATUS_LABEL.get(rc.status, rc.status)}“"])[0]
+            info.append({"key": rc.rec.ext_id or rc.rec.event_key or f"zeile:{rc.line}", "event": rc.rec.event_key
+                         or "", "line": rc.line, "when": rc.rec.ts.astimezone(UTC).strftime("%d.%m.%Y")
+                         if not rc.rec.ts_missing else "", "what": str(rc.rec.label or rc.rec.kind or ""),
+                         "why": why, **ci})
+        return rollback(f"{len(left_open)} API-Vorgänge würden nicht gebucht (z. B. EUR-Wert fehlt) – bitte je "
+                        "Vorgang auf der Übernahmeseite entscheiden oder die Ursache beheben (z. B. „Kurse laden“).",
+                        [f"Zeile {x['line']} ({x['when']} {x['what']}): {x['why']}" for x in info][:12], info)
     _msg(db, rid, f"{len(book)} Vorgänge werden gebucht …")
     if book:
         idxs = {rc.idx for rc in book}

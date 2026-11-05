@@ -206,8 +206,33 @@ def classify(tx: TxView) -> list[Rec]:
     * nur Abgänge → Abgang je Bewegung (Vertragsaufruf statt Überweisung: zur Prüfung, z. B. Staking/Bridge)
     * genau ein Asset hinein und eines hinaus → Tausch, immer zur Prüfung (Swap/Liquidität/Bridge)
     * mehrere Assets hinein und hinaus → ungeklärt (mit Aufstellung)
-    Die Gebühr hängt am ersten Abgang (sonst eigene Zeile)."""
+    Die Gebühr hängt am ersten Abgang (sonst eigene Zeile).
+
+    Bewegungen möglicher Spam-Token (``Move.spam``) werden getrennt eingeordnet – je Bewegung eine eigene Zeile zur
+    Prüfung –, damit ein beigelegter Werbe-Token einen Tausch nicht zum ungeklärten Sammelvorgang macht und als Spam
+    ignoriert werden kann, ohne den Rest der Transaktion zu blockieren."""
     moves = net_moves(tx.moves)
+    spam = [m for m in moves if m.spam]
+    if spam and not tx.failed:
+        rest = [m for m in moves if not m.spam]
+        split = classify(_with_moves(tx, rest)) if rest else []
+        sraw = {**tx.raw, "chain": tx.chain, "tx": tx.txid}
+        why = "möglicher Spam-Token ({}) – zuordnen oder ignorieren"
+        for m in spam:
+            if m.qty > 0:
+                r = Rec(line=0, ts=tx.ts, kind=M.DEPOSIT, txhash=tx.txid, raw=sraw, label=tx.label,
+                        review=why.format(m.spam), note=m.note, in_sym=m.asset, in_qty=m.qty)
+            else:
+                r = Rec(line=0, ts=tx.ts, kind=M.WITHDRAWAL, txhash=tx.txid, raw=sraw, label=tx.label,
+                        review=why.format(m.spam), note=m.note, out_sym=m.asset, out_qty=-m.qty)
+            r.ext_id = m.sub
+            split.append(r)
+        if not rest and tx.fee > 0:  # nur Spam bewegt: die vom Konto bezahlte Gebühr bleibt eine eigene Zeile
+            r = Rec(line=0, ts=tx.ts, kind=M.FEE, txhash=tx.txid, raw=sraw, label=tx.label, fee_sym=tx.fee_asset,
+                    fee_qty=tx.fee, note="Netzwerkgebühr")
+            r.ext_id = "fee"
+            split.append(r)
+        return split
     ins = [m for m in moves if m.qty > 0]
     outs = [m for m in moves if m.qty < 0]
     raw = {**tx.raw, "chain": tx.chain, "tx": tx.txid}
@@ -242,9 +267,11 @@ def classify(tx: TxView) -> list[Rec]:
                                               "prüfen"))
             return recs
         note = "; ".join(f"{'+' if m.qty > 0 else ''}{m.qty.normalize():f} {m.asset}" for m in moves)[:300]
-        recs.append(rec(M.REVIEW, "complex:" + sub_hash(*sorted(m.sub for m in moves)),
-                        note=f"Mehrere Zu- und Abgänge in einer Transaktion ({note}) – Vorgang manuell erfassen oder "
-                             "ignorieren"))
+        r = rec(M.REVIEW, "complex:" + sub_hash(*sorted(m.sub for m in moves)),
+                note=f"Mehrere Zu- und Abgänge in einer Transaktion ({note}) – Vorgang manuell erfassen oder "
+                     "ignorieren")
+        r.raw = {**raw, "moves": _moves_raw(tx)}  # für eine Neueinordnung ohne ignorierte Token (Übernahme)
+        recs.append(r)
         if fee:
             recs.append(rec(M.FEE, "fee", fee_sym=tx.fee_asset, fee_qty=fee, note="Netzwerkgebühr des Vorgangs"))
         return recs
@@ -265,6 +292,40 @@ def classify(tx: TxView) -> list[Rec]:
     if fee_left:
         recs.append(rec(M.FEE, "fee", fee_sym=tx.fee_asset, fee_qty=fee_left, note="Netzwerkgebühr"))
     return recs
+
+
+def _with_moves(tx: TxView, moves: list[Move]) -> TxView:
+    return TxView(tx.chain, tx.txid, tx.ts, moves, tx.fee, tx.fee_asset, tx.initiated, tx.failed, tx.plain, tx.hint,
+                  tx.label, tx.raw)
+
+
+def _moves_raw(tx: TxView) -> dict[str, Any]:
+    """Bewegungen und Rahmendaten einer Transaktion als Text (JSON-tauglich) – Grundlage von :func:`reclassify`."""
+    return {"v": 1, "moves": [{"asset": m.asset, "qty": f"{m.qty:f}", "sub": m.sub, "note": m.note, "spam": m.spam}
+                              for m in net_moves(tx.moves)],
+            "fee": f"{tx.fee:f}", "fee_asset": tx.fee_asset, "initiated": tx.initiated, "plain": tx.plain,
+            "hint": tx.hint}
+
+
+def reclassify(rec: Rec, drop: set[str]) -> list[Rec] | None:
+    """Sammelvorgang (``M.REVIEW`` aus :func:`classify`) ohne die Bewegungen der Assets ``drop`` (z. B. vom Nutzer
+    als Spam ignorierte Token) erneut einordnen – mit genau der Logik des Abrufs. ``None``: keine gespeicherten
+    Bewegungen (älterer Abruf) oder nichts zu entfernen. Die Zeilen tragen Unterkennungen (``ext_id``) wie beim Abruf;
+    Ereignis, Konto usw. setzt der Aufrufer."""
+    info = (rec.raw or {}).get("moves")
+    if rec.kind != M.REVIEW or not isinstance(info, dict) or info.get("v") != 1:
+        return None
+    moves = [Move(str(m["asset"]), Decimal(str(m["qty"])), str(m["sub"]), m.get("note"), m.get("spam"))
+             for m in info.get("moves") or []]
+    keep = [m for m in moves if m.asset not in drop]
+    if len(keep) == len(moves):
+        return None
+    raw = {k: v for k, v in (rec.raw or {}).items() if k != "moves"}
+    tx = TxView(str(raw.get("chain") or ""), str(rec.txhash or raw.get("tx") or ""), rec.ts, keep,
+                Decimal(str(info.get("fee") or "0")), str(info.get("fee_asset") or ""), bool(info.get("initiated")),
+                False, bool(info.get("plain", True)), info.get("hint"), rec.label,
+                {k: v for k, v in raw.items() if k not in ("chain", "tx")})
+    return classify(tx)
 
 
 def event(provider: str, txid: str, owner: str, ts: datetime, recs: list[Rec], label: str | None = None) \

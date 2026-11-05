@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 04.11.2026 · Version 0.94.1 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 05.11.2026 · Version 0.94.2 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,29 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.94.2 – Quellenübernahme Wallets/Chains: keine Sackgasse, nichts still ausgelassen
+
+Fehlerbild (PulseChain): Spam-Token ließen sich als Spam markieren, die Übernahme lief trotzdem nicht durch.
+Untersucht mit einem nachgestellten PulseChain-Konto (Fork-Eröffnung, Tausch mit beigelegtem Spam-Token, Airdrop-Spam,
+Token ohne Kurs). Vier Ursachen:
+
+* **Sammelvorgang ohne Ausweg:** Ein Tausch mit beigelegtem Spam-Token (−PLS, +HEX, +Spam) wurde „Mehrere Zu- und
+  Abgänge“. Die Karte „Vorgang nicht buchbar“ hatte keine Bedienung, der Spam-Token darin keine Zuordnungskarte.
+  Jetzt: (a) beim Abruf werden Bewegungen erkennbarer Spam-Token getrennt eingeordnet (der Tausch bleibt ein
+  Tausch); (b) unbekannte Token eines Sammelvorgangs erscheinen als Zuordnungskarte, nach „Als Spam ignorieren“
+  wird der Vorgang ohne sie mit derselben Logik neu eingeordnet; (c) jeder übrige nicht buchbare Vorgang bietet
+  „Nicht übernehmen (nur dieser Lauf)“.
+* **Still ausgelassene Vorgänge:** Vorgänge, die der Prüfstapel nicht bucht (z. B. „EUR-Wert fehlt“ bei Token ohne
+  Kurs, Fork-Eröffnung), blieben offen liegen, während die Übernahme „übernommen“ meldete (bestätigter Modus:
+  „nicht schlechter als vorher“). Jetzt bricht die Übernahme vorher ab und der Probelauf nennt sie in der Vorschau –
+  mit Grund und Entscheidung je Vorgang.
+* **Viele Einzelentscheidungen:** „Alle N: Einzeln buchen“ bzw. „Alle N: Nicht übernehmen“ als ausdrückliche
+  Sammelantwort (eine Transaktion, nur zur angezeigten Vorschau, nur dieser Lauf).
+* Nachweis: `tests/test_takeover_wallet_review.py` (8 Fälle, je Bedienweg bis Übernahme und Rücknahme).
+* Grenzen: Abrufe vor 0.94.2 enthalten keine gespeicherten Bewegungen – für die Neueinordnung nach Spam-Markierung
+  den Vollabruf neu starten. Echte Sammelvorgänge (z. B. Liquidität) bucht die Übernahme nicht; sie können nur
+  ausgelassen und im Journal selbst erfasst werden.
 
 ## 0.94.1 – Quellenübernahme Wallets/Chains: Zuordnung und „Als Spam ignorieren“ wirken auf die Vorgänge
 

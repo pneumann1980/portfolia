@@ -675,6 +675,26 @@ def make_router() -> APIRouter:
             [("adjust", x) for x in sorted(adjust)] + ([("kid", kid)] if kid else [])
         return _back(request, f"/settings/datasources/{sid}/uebernahme?{urlencode(q)}#entscheidungen")
 
+    @router.post("/settings/datasources/{sid}/uebernahme/entscheidung-alle")
+    async def takeover_decide_many(request: Request, sid: int) -> Response:
+        """Eine Antwort für alle offenen Einzelentscheidungen der angezeigten Vorschau, die sie anbieten."""
+        from app.datasources import takeover as TK
+
+        _takeover_ds(request, sid)
+        f = await request.form()
+        kid = _kid(f.get("kid"))
+        adjust = _adjust_of([str(v) for v in f.getlist("adjust")])
+        confirm = f.get("confirm") == "1"
+        choice = str(f.get("choice") or "")
+        res = await run_in_threadpool(lambda: TK.decide_many(get_ctx(request), sid, choice, str(f.get("token") or ""),
+                                                             confirm=confirm, adjust=adjust))
+        key, text = ("error", " ".join(res["errors"])) if res["errors"] else (
+            "msg", f"{res['n']} Entscheidung{'' if res['n'] == 1 else 'en'} „{TK.CHOICES.get(choice, choice)}“ "
+                   "gespeichert – die Vorschau ist neu geprüft (der Probelauf kann weitere verlangen).")
+        q: list[tuple[str, str]] = [(key, text)] + ([("confirm", "1")] if confirm else []) + \
+            [("adjust", x) for x in sorted(adjust)] + ([("kid", kid)] if kid else [])
+        return _back(request, f"/settings/datasources/{sid}/uebernahme?{urlencode(q)}#probleme")
+
     @router.post("/settings/datasources/{sid}/uebernahme/entscheidung/zurueck")
     async def takeover_undecide(request: Request, sid: int) -> Response:
         from app.datasources import takeover as TK

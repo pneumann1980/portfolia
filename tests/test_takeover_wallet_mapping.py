@@ -13,6 +13,7 @@ from decimal import Decimal
 from app.csvimport.service import csv_service
 from app.datasources import takeover as TK
 from tests.test_takeover import wait
+from tests.test_takeover_wallet_review import _decide_rows, priced  # noqa: F401  (Fixture)
 from tests.test_wallets_pulse_peaq import FORK, A, X, client, pulse, tx  # noqa: F401  (Fixtures)
 from tests.wallet_fakes import create_wallet, ctx, post
 
@@ -74,7 +75,7 @@ def test_spam_ignore_on_wallet_takeover_clears_problem_and_line_blocker_and_can_
     assert _maps(again) == ["PLS", SPAM] and SPAM in _blocked_lines(again)
 
 
-def test_wallet_takeover_proceeds_after_mapping_and_spam_and_undo_restores(client, pulse):
+def test_wallet_takeover_proceeds_after_mapping_and_spam_and_undo_restores(client, pulse, priced):
     c = client
     sid = _wallet_with_spam(c, pulse)
     loc = _map(c, sid, "PLS", action="new", new_id="PLS", new_name="PulseChain", new_class="crypto")
@@ -86,6 +87,7 @@ def test_wallet_takeover_proceeds_after_mapping_and_spam_and_undo_restores(clien
     assert "lines" not in {b.key for b in a.blockers}, [(b.key, b.detail) for b in a.blockers]
     assert "observed" not in {b.key for b in a.blockers}, [(b.key, b.detail) for b in a.blockers]
     assert [b.key for b in a.blockers] == ["fetch"]  # nur noch die Vollständigkeitsbestätigung fehlt
+    assert _decide_rows(c, sid) == 1  # Fork-Eröffnung: prüfbedürftig (0.94.2: nie still ausgelassen)
     page = c.get(f"/settings/datasources/{sid}/uebernahme?confirm=1").text  # Bedienweg: Bestätigung ankreuzen
     ok = TK.assess(ctx(c), sid, confirm=True)
     assert ok.ok, [(b.key, b.detail) for b in ok.blockers]

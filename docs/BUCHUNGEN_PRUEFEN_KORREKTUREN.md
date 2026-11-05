@@ -547,3 +547,28 @@ gebucht, Status „undone“).
 
 **Grenze:** Prüfstapel aus normalen Abrufen werden mit der Zuordnung erst bei der nächsten Bewertung neu aufgelöst;
 bereits gebuchte Vorgänge bleiben unverändert.
+
+# Nachtrag 0.94.2: Quellenübernahme ohne Sackgasse (PulseChain)
+
+**Befund (Nutzermeldung):** Spam-Token lassen sich als Spam markieren, die Übernahme läuft trotzdem nicht durch.
+
+**Untersuchung:** nachgestelltes PulseChain-Konto mit Fork-Eröffnung, Tausch über einen Router mit beigelegtem
+Spam-Token, Airdrop-Spam und Token ohne Kurs; Ausgabe aller Sperren und Probleme nach jedem Bedienschritt.
+
+| Ursache | Wirkung | Korrektur | Nachweis |
+| --- | --- | --- | --- |
+| Tausch mit beigelegtem Spam-Token → `M.REVIEW` „Mehrere Zu- und Abgänge“ | Zeilensperre ohne Bedienung; Spam-Token darin ohne Zuordnungskarte | Abruf: Spam-Bewegungen getrennt einordnen (`wallet.classify`); Sammelvorgänge speichern ihre Bewegungen | `test_spam_beside_a_swap…`, `test_spam_detected_by_name…` |
+| Vom Nutzer markierter Spam in einem Sammelvorgang | Vorgang bleibt ungeklärt | Übernahme: unbekannte Token als Zuordnungskarte; nach Spam-Markierung Neueinordnung ohne sie (`wallet.reclassify`, `takeover._effective_recs`) – Vorschau, Probelauf und Buchen identisch | `test_user_marked_spam_inside_a_swap…` |
+| Übrige nicht buchbare Vorgänge (`line`) | keine Bedienung | Entscheidung „Nicht übernehmen (nur dieser Lauf)“; Sperre entfällt nur dafür, Bestandsprüfung bleibt | `test_genuinely_complex_transaction…` |
+| Zeilen, die der Stapel nicht bucht (EUR-Wert fehlt, ungeklärt …) | still offen gelassen, Lauf „übernommen“ (bestätigter Modus) | Abbruch vor jeder Buchung mit Grund und Entscheidung je Vorgang; der Probelauf meldet es in der Vorschau | `test_rows_without_eur_value…` |
+| viele prüfbedürftige Tauschvorgänge | ein Klick und ein Probelauf je Vorgang | ausdrückliche Sammelantwort `decide_many` („Alle N: …“) | `test_one_answer_for_all…` |
+
+Zusätzlich: Mehrere fehlende Zuordnungen in einer Zeile (z. B. beide Seiten eines Tauschs) erscheinen jetzt alle als
+Karte, nicht nur die erste. Der Test aus 0.94.1 (`test_wallet_takeover_proceeds…`) lief vorher nur durch, weil die
+Fork-Eröffnung ohne Kurs still ausgelassen wurde; er verlangt jetzt die Entscheidung dazu.
+
+**Grenzen:** Abrufe vor 0.94.2 speichern die Bewegungen von Sammelvorgängen nicht – Neueinordnung erst nach neuem
+Vollabruf (sonst „Nicht übernehmen“). Echte Sammelvorgänge (Liquidität, Multi-Swap) werden nicht gebucht, nur
+ausgelassen. „EUR-Wert fehlt“ lässt sich in der Übernahme nicht durch Eingabe beheben – Kurse laden bzw. manuellen
+Kurs hinterlegen und neu prüfen, oder den Vorgang auslassen. Der normale Abruf (Prüfstapel) ordnet Sammelvorgänge
+nach einer Spam-Markierung nicht neu ein.

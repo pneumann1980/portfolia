@@ -110,6 +110,22 @@
     <div class="card-head"><h2>Probleme einzeln bearbeiten</h2><span class="badge warn">{{ a.problems|length }} offen</span></div>
     <p class="hint">Jedes Problem lässt sich für sich beheben. Gespeicherte Korrekturen (z. B. eine Zuordnung) bleiben erhalten, auch wenn andere Probleme noch offen sind – sie buchen nichts. Die Übernahme selbst bleibt gesperrt, bis alle Nachweise erbracht sind.</p>
     <ol class="tk-problems">
+    {% set open_dec = a.problems|selectattr('options')|list %}
+    {% if open_dec|length > 1 %}
+    {% set cnt = namespace(inc=0, skip=0) %}{% for p in open_dec %}{% if 'include' in p.options %}{% set cnt.inc = cnt.inc + 1 %}{% endif %}{% if 'skip' in p.options %}{% set cnt.skip = cnt.skip + 1 %}{% endif %}{% endfor %}
+    {% set n_inc, n_skip = cnt.inc, cnt.skip %}
+    <div class="tk-actions" id="alle-entscheiden">
+      <p><b>{{ open_dec|length }} Vorgänge brauchen eine Einzelentscheidung.</b> Du kannst jeden unten einzeln entscheiden oder – wenn du sie geprüft hast – allen dieselbe Antwort geben (nur dieser Lauf; der Probelauf prüft danach neu).</p>
+      <div class="row" style="gap:6px;flex-wrap:wrap">
+      {% for k, n in (('include', n_inc), ('skip', n_skip)) if n %}
+        <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/entscheidung-alle" class="inline" data-confirm="{{ n }} Vorgänge: „{{ choice_labels.get(k, k) }}“?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="token" value="{{ a.token }}">{% if a.confirm %}<input type="hidden" name="confirm" value="1">{% endif %}{% for x in a.adjust|sort %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}<input type="hidden" name="choice" value="{{ k }}">
+          <button class="btn sm{% if k == 'skip' %} ghost{% endif %}" type="submit">Alle {{ n }}: {{ choice_labels.get(k, k) }}</button>
+        </form>
+      {% endfor %}
+      </div>
+    </div>
+    {% endif %}
     {% for p in a.problems %}
       <li id="p-{{ loop.index }}" data-problem="{{ p.id }}">
         <div><b>{{ p.title }}</b> <span class="hint">{{ p.detail }}</span></div>
