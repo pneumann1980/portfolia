@@ -20,7 +20,7 @@ from app.csvimport.reader import CsvError, num, parse_ts, read_table, zone
 from app.csvimport.service import csv_service, rec_from_json, rec_to_json
 from app.jobs import tasks
 from app.main import build_app
-from tests.helpers import transfer_decision
+from tests.helpers import marked, transfer_decision
 
 D = Decimal
 DATA = Path(__file__).resolve().parent / "data" / "csv"
@@ -287,7 +287,7 @@ def test_upload_preview_commit_and_reimport_is_idempotent(client):
     assert len(txs) == 5 and all(t["tx_id"].startswith("PF-C-") and t["batch_id"] == bid for t in txs)
     assert csv_service(client.app.state.ctx).batch(bid)["status"] == "partial"
     # Wert nachtragen und die offene Zeile nachschieben
-    r = post(client, f"/journal/csv/{bid}/rows", **{f"val_{rs[12].idx}": "0,46"})
+    r = post(client, f"/journal/csv/{bid}/rows", **marked(client, bid, {f"val_{rs[12].idx}": "0,46"}))
     assert r.status_code == 303
     assert rows(client, bid)[12].status == "new"
     r = post(client, f"/journal/csv/{bid}/commit")

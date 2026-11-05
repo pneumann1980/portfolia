@@ -97,10 +97,25 @@ def shown_pair_rev(c: Any, bid: int, idx: int) -> str:
     return m.group(1) if m is not None else ""
 
 
+def marked(c: Any, bid: int, data: dict[str, Any]) -> dict[str, Any]:
+    """Eingaben wie aus einem frisch geladenen Formular: ergänzt je betroffener Zeile den angezeigten Eingabestand
+    (``iv_<Zeile>``) – seit 0.95.0 lehnt die Anwendung HTTP-Formulare ohne ihn ab („bitte neu laden“). Reine
+    Ansteuerung der Tests; die fachlichen Erwartungen bleiben unverändert."""
+    from app.csvimport.service import csv_service
+
+    marks = csv_service(c.app.state.ctx).input_marks(bid)
+    out = dict(data)
+    for k in data:
+        kind, _, num = str(k).partition("_")
+        if kind in ("dec", "val", "fee", "pair") and num.isdigit() and int(num) in marks:
+            out.setdefault(f"iv_{num}", marks[int(num)])
+    return out
+
+
 def transfer_decision(c: Any, bid: int, idx: int, value: str) -> Any:
     """Transferentscheidung wie im Browser: mit dem angezeigten Partnerstand (seit 0.93.0 Pflicht bei
-    Journalpartnern – ohne ihn wird die Entscheidung sichtbar abgelehnt)."""
-    data = {"csrf_token": c.token, f"pair_{idx}": value}
+    Journalpartnern – ohne ihn wird die Entscheidung sichtbar abgelehnt) und dem Eingabestand (seit 0.95.0)."""
+    data = marked(c, bid, {"csrf_token": c.token, f"pair_{idx}": value})
     if rev := shown_pair_rev(c, bid, idx):
         data[f"pairrev_{idx}"] = rev
     return c.post(f"/journal/csv/{bid}/rows", data=data, follow_redirects=False)

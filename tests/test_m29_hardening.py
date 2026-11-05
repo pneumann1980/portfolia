@@ -22,6 +22,7 @@ from app.diagnosis import stock as ST
 from app.diagnosis.engine import report_for
 from app.diagnosis.model import HoldingRow
 from app.journal.service import journal_service
+from tests.helpers import marked
 from tests.test_csvimport import post
 from tests.test_datasources import client, create_source, deposit, fake, sync  # noqa: F401
 from tests.test_diagnosis_research import ACC, approve, fin_fp, recon_findings, research, ts, world  # noqa: F401
@@ -153,7 +154,7 @@ def test_partially_decided_event_is_never_split(world):
     c, ctx, g = staged_multi(world)
     bid = ctx.db.scalar("SELECT batch_id FROM csv_row WHERE event_key='kraken:L4' LIMIT 1")
     fee_idx = ctx.db.scalar("SELECT idx FROM csv_row WHERE event_key='kraken:L4' ORDER BY idx DESC LIMIT 1")
-    assert post(c, f"/journal/csv/{bid}/rows", **{f"dec_{fee_idx}": "skip"}).status_code == 303
+    assert post(c, f"/journal/csv/{bid}/rows", **marked(c, bid, {f"dec_{fee_idx}": "skip"})).status_code == 303
     n0 = ctx.db.scalar("SELECT COUNT(*) FROM journal_tx WHERE status='active'")
     report = report_for(ctx)
     f = report.by_id(g.id) or next(x for x in report.findings if x.kind == "reconstruction")

@@ -32,11 +32,12 @@ from app.csvimport import review as RV
 from app.csvimport.events import derive_tx_hash, identity_keys, normalize_hash
 from app.csvimport.service import (
     _LOCK,
+    BOOKING_TABLES,
     STALE_REFS_TEXT,
     STATUS_LABEL,
-    TRANSFER_TABLES,
     RowCtx,
     StaleRefs,
+    _input_token,
     check_revs,
     check_tables,
     has_j_cands,
@@ -716,12 +717,14 @@ def execute(svc: Any, bid: int, action: str, idxs: Iterable[int], *, token: str,
         batch = svc.batch(bid)
         if batch is None or batch["status"] in ("mapping", "reverted"):
             return {"errors": ["Stapel nicht bearbeitbar."]}
-        tables0 = table_revs(db.conn, TRANSFER_TABLES)  # vor der Bewertung: Grundlage der Kandidatenmengen
+        tables0 = table_revs(db.conn, BOOKING_TABLES)  # vor der Bewertung: Kandidaten, Zuordnungen, Assets
         svc.evaluate(bid)
         rows = svc.rows(bid)
         p = plan(svc, bid, action, idxs, force, rows, approved)
-        transfer = any(has_j_cands(i.rc) or i.rc.counterpart for i in p.todo if i.act in ("include", "link"))
-        tables = tables0 if transfer else None
+        # jede Buchung/Verknüpfung bindet diese Grundlagen – auch ohne erkannten Partner (leere Menge, N17) und auch
+        # Konto-/Symbol-/Spam-Zuordnungen und Assets (N21)
+        booking = any(i.act in ("include", "link") for i in p.todo)
+        tables = tables0 if booking else None
         if p.fingerprint() != fingerprint:
             return {"errors": ["Die Vorschau ist nicht mehr aktuell (der Stapel wurde inzwischen neu bewertet oder "
                                "geändert). Bitte die Vorschau erneut öffnen."]}
@@ -774,6 +777,7 @@ def _execute_tx(svc: Any, db: Any, bid: int, action: str, token: str, force: boo
                 i.rc.idx for i in p.todo}), "force": force, **(params or {})}, ensure_ascii=False),
              stamp)).lastrowid)  # type: ignore[arg-type]
         seen_events: set[str] = set()
+        vtok: int | None = None
         for it in p.todo:
             rc = it.rc
             prev = {"status": rc.status, "decision": orig.get(rc.idx), "tx_id": rc.tx_id}
@@ -803,8 +807,11 @@ def _execute_tx(svc: Any, db: Any, bid: int, action: str, token: str, force: boo
                 ops["rows"][str(rc.idx)] = {**prev, "set": {"status": "linked", "tx_id": it.target}}
             elif it.act in ("skip", "defer", "reset", "include"):
                 dec = {"skip": "skip", "defer": "defer", "reset": None, "include": "include"}[it.act]
-                c.execute("UPDATE csv_row SET decision=? WHERE id=?", (dec, rc.id))
-                ops["rows"][str(rc.idx)] = {**prev, "set": {"decision": dec}}
+                # eigene Besitzkennung der Entscheidung (N20): die Rücknahme setzt nur zurück, solange die Gruppe noch
+                # genau diese Kennung trägt – spätere Eingaben (auch gleicher Wert, A → B → A) bleiben erhalten
+                vtok = vtok or _input_token(c)
+                c.execute("UPDATE csv_row SET decision=?, ver_dec=? WHERE id=?", (dec, vtok, rc.id))
+                ops["rows"][str(rc.idx)] = {**prev, "set": {"decision": dec, "ver_dec": vtok}}
             elif it.act == "ignore":
                 key = rc.rec.event_key or ""
                 if key not in seen_events:
@@ -927,9 +934,10 @@ def undo(svc: Any, action_id: int) -> dict[str, Any]:
             for lid in ops.get("links") or []:
                 c.execute("UPDATE tx_link SET status='undone', undone_at=? WHERE id=? AND status='active'",
                           (stamp, lid))
+            utok: int | None = None
             for idx, st in (ops.get("rows") or {}).items() if exists else ():
-                r = c.execute("SELECT id, status, decision, tx_id, messages FROM csv_row WHERE batch_id=? AND idx=?",
-                              (bid, int(idx))).fetchone()
+                r = c.execute("SELECT id, status, decision, tx_id, messages, ver_dec FROM csv_row WHERE batch_id=? "
+                              "AND idx=?", (bid, int(idx))).fetchone()
                 if r is None:
                     changed += 1
                     continue
@@ -940,12 +948,23 @@ def undo(svc: Any, action_id: int) -> dict[str, Any]:
                 if "decision" in want and r["decision"] != want["decision"]:
                     changed += 1
                     continue
+                # Besitz statt Wertvergleich (N20): seit 0.95.0 trägt die Aktion ihre Kennung; eine spätere
+                # Eingabe – auch derselbe Wert ausdrücklich gesetzt oder A → B → A – hat eine andere
+                if "ver_dec" in want and int(r["ver_dec"]) != int(want["ver_dec"]):
+                    changed += 1
+                    continue
                 msgs = json.loads(r["messages"] or "{}")
                 msgs.pop("linked", None)
                 status = st["status"] if "status" in want else r["status"]
                 tx_id = st.get("tx_id") if "status" in want else r["tx_id"]
-                c.execute("UPDATE csv_row SET status=?, decision=?, tx_id=?, messages=? WHERE id=?",
-                          (status, st.get("decision"), tx_id, json.dumps(msgs, ensure_ascii=False), r["id"]))
+                if "decision" in want:  # die Rücknahme ist selbst eine Änderung (neue Kennung)
+                    utok = utok or _input_token(c)
+                    c.execute("UPDATE csv_row SET status=?, decision=?, tx_id=?, messages=?, ver_dec=? WHERE id=?",
+                              (status, st.get("decision"), tx_id, json.dumps(msgs, ensure_ascii=False), utok,
+                               r["id"]))
+                else:
+                    c.execute("UPDATE csv_row SET status=?, decision=?, tx_id=?, messages=? WHERE id=?",
+                              (status, st.get("decision"), tx_id, json.dumps(msgs, ensure_ascii=False), r["id"]))
                 restored += 1
             c.execute("UPDATE import_action SET status='undone', undone_at=? WHERE id=?", (stamp, action_id))
             svc.journal._log(c, "import_batch_undo", f"csv:{bid}", None,

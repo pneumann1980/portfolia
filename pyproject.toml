@@ -1,6 +1,6 @@
 [project]
 name = "portfolia"
-version = "0.94.3"
+version = "0.95.0"
 description = "Self-hosted Portfolio-Dashboard (Aktien & Krypto) für Unraid/Docker – nur lesend, EUR-basiert, mit Steuer-Modul."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,6 +23,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S", "B"]
+# Externe Soll-Fälle der Gesamtprüfung 0.94.2 – unverändert übernommen (Fixture-Importe, Formatierung des Prüfers)
+"tests/external_095/*" = ["S", "B", "F401", "F811", "F841", "I001", "E501", "RUF059", "RUF100"]
 "scripts/*" = ["S"]
 
 [tool.ruff.lint.isort]

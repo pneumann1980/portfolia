@@ -15,6 +15,7 @@ import pytest
 
 from app.csvimport.service import csv_service
 from app.datasources.service import DataSourceService
+from tests.helpers import marked
 from tests.test_csvimport import create_unknown_assets, post
 from tests.test_importcheck import KOINLY_HEAD, _upload_csv
 from tests.test_journal import _client
@@ -92,7 +93,8 @@ def test_unmatched_row_in_a_competition_stays_open_instead_of_being_booked_as_si
     assert unpaired[0].line not in DataSourceService._auto_eligible(out["rows"]) and \
         unpaired[0].idx not in DataSourceService._auto_eligible(out["rows"])
     # offen heißt entscheidbar: als echter Einzelvorgang buchbar, wenn der Nutzer das so entscheidet
-    assert post(c, f"/journal/csv/{out['bid']}/rows", **{f"dec_{unpaired[0].idx}": "include"}).status_code == 303
+    data = marked(c, out['bid'], {f"dec_{unpaired[0].idx}": "include"})
+    assert post(c, f"/journal/csv/{out['bid']}/rows", **data).status_code == 303
 
 
 def test_equal_hash_with_exact_amount_is_the_only_automatic_case(c):
@@ -158,7 +160,7 @@ def test_similar_amount_and_time_alone_is_only_a_suggestion(c):
     assert "ohne Identitätsbeleg" in (w.pair_why or "") and w.transfer_unclear
     assert not DataSourceService._auto_eligible(out["rows"])
     # bestätigt wird er erst durch eine Entscheidung
-    post(c, f"/journal/csv/{out['bid']}/rows", **{f"pair_{w.idx}": "1"})
+    post(c, f"/journal/csv/{out['bid']}/rows", **marked(c, out['bid'], {f"pair_{w.idx}": "1"}))
     w2 = next(rc for rc in csv_service(c.app.state.ctx).rows(out["bid"]) if rc.idx == w.idx)
     assert w2.pair_ok == 1 and not w2.transfer_unclear
 

@@ -50,12 +50,11 @@ from app.csvimport import transfer_side as TS
 from app.csvimport.events import derive_event_key, derive_tx_hash, identity_keys, normalize_hash, source_ref_keys
 from app.csvimport.identity import (
     PROVIDER_LABEL,
+    canonical_provider,
     confirms,
     identity,
     note_identity_keys,
     provider_key,
-    provider_of,
-    source_provider,
     split_provider_key,
 )
 from app.csvimport.model import ParseOptions, Rec
@@ -1365,11 +1364,12 @@ class CsvImportService:
             return acc_map.get(n, n)
 
         # Anbieter des Vorgangs (Datenquelle, Profil, sonst Konto – z. B. Koinly-Wallet „Bitpanda“)
-        # Datenquellen ohne Symbol-Identität (Wallets, Chains): ihr Anbieter aus der Quellkennung, damit Zuordnungen
-        # der Quellenübernahme (``SYMBOL@PULSECHAIN``, auch „als Spam ignoriert“) auch für die Vorgänge gelten
-        provider = provider_of(source, batch["profile"], None) or provider_of(
-            None, None, acc(r.account) if r.kind != M.DIRECT or r.row is None
-            else (r.row.get("to_account") or r.row.get("from_account") or batch["account"])) or source_provider(source)
+        # Anbieter: die explizite Quellidentität hat Vorrang (Datenquelle ``sync:<anbieter>``, auch ohne eigene
+        # Symbol-Identität wie Wallets/Chains – Zuordnungen ``SYMBOL@PULSECHAIN`` gelten dann auch für die Vorgänge);
+        # der frei vergebene Kontoname ist nur Rückfall für Formate ohne Anbieter (z. B. Koinly-Wallet „Bitpanda“).
+        # Sonst überstimmt ein Konto „Ledger Bitpanda“ eine PulseChain-Quelle (N23).
+        provider = canonical_provider(source, batch["profile"], acc(r.account) if r.kind != M.DIRECT or r.row is None
+                                      else (r.row.get("to_account") or r.row.get("from_account") or batch["account"]))
 
         def res(raw: str | None) -> str | None:
             if not raw:
@@ -2155,11 +2155,12 @@ class CsvImportService:
             if not rc.open:
                 continue
             msgs = {"errors": rc.errors[:10], "warnings": rc.warnings[:10], "value_src": rc.value_src,
-                    "fee_src": rc.fee_src, "dup_of": rc.dup_of[:5], "dup_same": rc.dup_same_account,
+                    "fee_src": rc.fee_src, "dup_of": rc.dup_of, "dup_same": rc.dup_same_account,
                     "symbols": rc.symbols, "pair_why": rc.pair_why if rc.pair_ref or rc.pair_alts else None,
-                    "pair_alts": rc.pair_alts[:10] or None, "revision": rc.revision, "recon": rc.recon,
+                    # vollständige Kandidatenmenge (N22: gekürzt auf 10 erschienen unveränderte Stände verschieden)
+                    "pair_alts": rc.pair_alts or None, "revision": rc.revision, "recon": rc.recon,
                     "counterpart": rc.counterpart, "basis": rc.basis if rc.dup_of else None,
-                    "roles": {k: v for k, v in rc.roles.items() if k in rc.dup_of[:5]} or None, "match": rc.match}
+                    "roles": {k: v for k, v in rc.roles.items() if k in rc.dup_of} or None, "match": rc.match}
             data.append((json.dumps(rc.row, ensure_ascii=False) if rc.row is not None else None, rc.status,
                          json.dumps(msgs, ensure_ascii=False), rc.pair_ref, rc.pair_conf, rc.pair_ok,
                          rc.pair_rev,
@@ -2268,16 +2269,24 @@ class CsvImportService:
         return n
 
     @_locked
-    def set_rows(self, bid: int, form: Mapping[str, Any]) -> dict[str, Any]:
-        """Eingaben der Prüfseite speichern – je Gruppe (Entscheidung, EUR-Wert, Gebühr, Transferentscheidung samt
-        Partnerstand) mit eigener Schreibkennung.
+    def set_rows(self, bid: int, form: Mapping[str, Any], *, require_marks: bool = False) -> dict[str, Any]:
+        """Eingaben speichern – je Gruppe (Entscheidung, EUR-Wert, Gebühr, Transferentscheidung samt Partnerstand)
+        mit eigener Schreibkennung (Besitz). Gemeinsamer Schreibvertrag aller Eingabewege (0.95.0):
 
+        * **Formular mit Eingabestand** (``iv_<Zeile>``, aus demselben Lesestand wie die angezeigten Werte): ein
+          unverändert gelassenes Feld wird übergangen (auch wenn inzwischen anderswo gespeichert wurde); eine eigene
+          abweichende Änderung an einem inzwischen geänderten Feld wird sichtbar abgelehnt; wer bei veraltetem
+          Formular denselben Wert ausdrücklich setzt, übernimmt die Gruppe (neue Kennung).
+        * **Befehl ohne Formular** (interne Aufrufer, Assistent, Übernahme): jede übergebene Gruppe ist ausdrücklich
+          gesetzt – auch bei gleichem Wert erhält sie eine neue Kennung, eine ältere Rücknahme löscht sie nicht mehr
+          (N13-Rest).
+        * ``require_marks`` (HTTP-Formulare): eine Zeile mit Eingaben, aber ohne gültigen Eingabestand, wird nicht
+          gespeichert („bitte neu laden“) – kein Rückfall auf „letzter gewinnt“.
+        * **Transfereinheit** (N18): Die Entscheidung gilt der Zeile *und* ihrer Partnerzeile im selben Stapel
+          (``b:``). Wird die Zeile übergangen oder abgelehnt, bleibt der Partner unverändert; wird sie geschrieben
+          oder übernommen, erhält der Partner dieselbe Kennung und einen eigenen Rücknahmebezug.
         * Eine Transferentscheidung zu Journal-Kandidaten gilt nur zusammen mit dem angezeigten Stand der
-          Kandidatenmenge (``pairrev_<Zeile>``); fehlt er, wird sie sichtbar abgelehnt (kein Rückfall auf den jetzigen
-          Stand).
-        * Trägt das Formular den angezeigten Eingabestand (``iv_<Zeile>``), überschreibt ein veraltetes Formular keine
-          inzwischen anderswo gespeicherte Eingabe: unverändert gelassene Felder werden übergangen, eine eigene
-          abweichende Änderung wird sichtbar abgelehnt; wer denselben Wert ausdrücklich setzt, übernimmt die Gruppe.
+          Kandidatenmenge (``pairrev_<Zeile>``); fehlt er, wird sie sichtbar abgelehnt.
 
         Lesen und Schreiben in einer Schreibtransaktion. Rückgabe: ``errors`` und ``undo`` für :meth:`restore_inputs`.
         """
@@ -2289,6 +2298,7 @@ class CsvImportService:
                 "SELECT id, idx, line, status, decision, value_in, fee_in, pair_ok, pair_rev, ver_dec, ver_val, "
                 "ver_fee, ver_pair FROM csv_row WHERE batch_id=?", (bid,)).fetchall()}
             want: dict[int, dict[str, tuple[Any, ...]]] = {}
+            mirror: dict[int, int] = {}  # Zeile → Partnerzeile derselben Transfereinheit (``b:``)
             for key in form:
                 k = str(key)
                 if not k.startswith(("dec_", "val_", "fee_", "pair_")):
@@ -2324,47 +2334,68 @@ class CsvImportService:
                     grp["pair"] = (ok, rev)
                     if rc.pair_ref and rc.pair_ref.startswith("b:") and int(rc.pair_ref[2:]) in rows:
                         partner = rows[int(rc.pair_ref[2:])]
-                        if partner.open:
-                            want.setdefault(partner.id, {})["pair"] = (ok, partner.pair_rev)
-            tok = None
+                        if partner.open and partner.id != rc.id:
+                            mirror[rc.id] = partner.id
+            tok: int | None = None
+
+            def token() -> int:
+                nonlocal tok
+                tok = tok or _input_token(c)
+                return tok
+
+            def put(rid: int, g: str, vals: tuple[Any, ...], how: str) -> None:
+                cols = self._GROUPS[g]
+                old = tuple(cur[rid][x] for x in cols)
+                t = token()
+                if how == "write" and vals != old:
+                    c.execute(f"UPDATE csv_row SET {', '.join(f'{x}=?' for x in cols)}, ver_{g}=? WHERE id=?",
+                              [*vals, t, rid])
+                else:  # gleicher Wert ausdrücklich gesetzt: Gruppe gehört jetzt diesem Aufruf
+                    c.execute(f"UPDATE csv_row SET ver_{g}=? WHERE id=?", (t, rid))
+                undo.append((rid, g, old, t))
+
+            stale_form: set[int] = set()
             for rid, groups in want.items():
                 r = cur[rid]
-                marks = _parse_marks(str(form.get(f"iv_{r['idx']}") or ""))
+                raw_mark = str(form.get(f"iv_{r['idx']}") or "")
+                marks = _parse_marks(raw_mark)
+                if require_marks and not all(g in marks for g in groups):
+                    if rid not in stale_form:
+                        stale_form.add(rid)
+                        errors.append(f"Zeile {r['line']}: Formular ohne gültigen Eingabestand (älterer Tab bzw. "
+                                      "Skript) – nicht gespeichert. Bitte die Seite neu laden.")
+                    continue
                 for g, vals in groups.items():
-                    cols = self._GROUPS[g]
-                    old = tuple(r[x] for x in cols)
-                    ver = int(r[f"ver_{g}"])
-                    if g in marks:
-                        mver, mh = marks[g]
-                        untouched = _vh(vals) == mh  # abgesendet == angezeigt
-                        if mver != ver:  # inzwischen anderswo gespeichert
-                            if untouched:
-                                continue  # nicht angefasst: neuere Eingabe bleibt
-                            if vals != old:
-                                errors.append(f"Zeile {r['line']}: Eingabe wurde inzwischen an anderer Stelle "
-                                              "geändert – nicht überschrieben. Bitte die neu angezeigten Werte prüfen.")
-                                continue
-                            # derselbe Wert ausdrücklich gesetzt: Gruppe gehört jetzt diesem Aufruf (ohne Rücknahme)
-                            tok = tok or _input_token(c)
-                            c.execute(f"UPDATE csv_row SET ver_{g}=? WHERE id=?", (tok, rid))
-                            continue
-                        if untouched and vals == old:
-                            continue
-                    if vals == old:
+                    how = _outcome(vals, tuple(r[x] for x in self._GROUPS[g]), int(r[f"ver_{g}"]), marks.get(g))
+                    if how == "conflict":
+                        errors.append(f"Zeile {r['line']}: Eingabe wurde inzwischen an anderer Stelle geändert – "
+                                      "nicht überschrieben. Bitte die neu angezeigten Werte prüfen.")
                         continue
-                    tok = tok or _input_token(c)
-                    c.execute(f"UPDATE csv_row SET {', '.join(f'{x}=?' for x in cols)}, ver_{g}=? WHERE id=?",
-                              [*vals, tok, rid])
-                    undo.append((rid, g, old, tok))
+                    if how == "skip":
+                        continue  # unberührt bzw. unverändert: neuere bzw. eigene Eingabe bleibt
+                    put(rid, g, vals, how)
+                    if g == "pair" and rid in mirror:  # dieselbe Einheit: Partner folgt, mit derselben Kennung
+                        pid = mirror[rid]
+                        pr = cur[pid]
+                        put(pid, "pair", (vals[0], pr["pair_rev"]), "write")
         self.evaluate(bid)
         self.refresh_status(bid)
         return {"errors": errors, "undo": undo}
 
     @_locked
-    def set_all(self, bid: int, status: str, decision: str | None) -> None:
-        self.db.x("UPDATE csv_row SET decision=? WHERE batch_id=? AND status=?", (decision, bid, status))
+    def set_all(self, bid: int, status: str, decision: str | None) -> int:
+        """Sammelknopf (z. B. „Alle Dubletten auslassen“): ausdrücklicher Befehl für alle offenen Zeilen des Status –
+        jede erhält eine neue Besitzkennung, auch bei gleichem Wert (N13-Rest: eine ältere Rücknahme löscht sie nicht).
+        Rückgabe: Anzahl Zeilen."""
+        with self.db.transaction() as c:
+            ids = [int(r[0]) for r in c.execute("SELECT id FROM csv_row WHERE batch_id=? AND status=?",
+                                                (bid, status)).fetchall()]
+            if ids:
+                tok = _input_token(c)
+                c.executemany("UPDATE csv_row SET decision=?, ver_dec=? WHERE id=?", [(decision, tok, i) for i in ids])
         self.evaluate(bid)
         self.refresh_status(bid)
+        return len(ids)
 
     # -- Übernehmen ---------------------------------------------------------------------------------------
     @_locked
@@ -2374,7 +2405,7 @@ class CsvImportService:
         batch = self.batch(bid)
         if batch is None or batch["status"] in ("mapping", "reverted"):
             return {"errors": ["Stapel nicht übernehmbar."]}
-        tables = table_revs(self.db.conn, TRANSFER_TABLES)  # vor der Bewertung: Kandidatenmenge dieses Stands
+        tables = table_revs(self.db.conn, BOOKING_TABLES)  # vor der Bewertung: Grundlagen dieses Stands (N17/N21)
         self.evaluate(bid)
         rows = self._load(bid)
         plan = self.commit_plan(rows, only_idx)
@@ -2390,8 +2421,8 @@ class CsvImportService:
                    and rc.status in ("new", "duplicate") and rc.decision is None and not rc.include()]
         try:
             with self.db.transaction() as c:
-                transfer = any(has_j_cands(rc) or rc.counterpart for rc in plan["chosen"])
-                res = self.commit_apply(c, batch, rows, plan, only_idx, stamp, tables if transfer else None)
+                # jede Buchung bindet die Grundlagen – auch ohne erkannten Partner (leere Kandidatenmenge, N17)
+                res = self.commit_apply(c, batch, rows, plan, only_idx, stamp, tables)
                 if skipped:
                     c.executemany("UPDATE csv_row SET decision='skip' WHERE id=? AND decision IS NULL",
                                   [(rc.id,) for rc in skipped])
@@ -2804,6 +2835,11 @@ def refs_revision(conn: Any, refs: Iterable[str]) -> str:
 # Transferpartner: Kandidatenmenge einer Zeile (vorgeschlagener Partner + konkurrierende Möglichkeiten). Eine
 # Transferentscheidung („ja“/„nein“) gilt genau dieser Menge – Zusammensetzung und Inhalt aller Journal-Kandidaten.
 TRANSFER_TABLES = ("journal_tx", "tx_override", "imports")
+# Grundlagen jeder Buchung aus dem Prüf-Stapel (0.95.0, N17/N21): Transferkandidaten (auch die *leere* Menge – ein
+# erster neuer Kandidat zwischen Bewertung und Schreiben), Konto-/Symbol-/Spam-Zuordnungen und Assets (Klasse,
+# Bekanntheit). Gebunden vor der Bewertung, geprüft als erste Anweisung der Schreibtransaktion – grob, aber sicher:
+# jede Änderung dieser Tabellen im Millisekundenfenster lehnt ab, die Vorschau ist danach neu zu öffnen.
+BOOKING_TABLES = (*TRANSFER_TABLES, "csv_account", "csv_symbol", "journal_asset")
 
 
 def pair_cands(rc: RowCtx) -> list[str]:
@@ -2858,6 +2894,20 @@ def check_tables(conn: Any, expected: Mapping[str, int]) -> None:
 
 def _vh(vals: Iterable[Any]) -> str:
     return hashlib.sha256(json.dumps([None if v is None else str(v) for v in vals]).encode()).hexdigest()[:8]
+
+
+def _outcome(vals: tuple[Any, ...], old: tuple[Any, ...], ver: int, mark: tuple[int, str] | None) -> str:
+    """Schreibvertrag einer Eingabegruppe: ``skip`` (unberührt/unverändert), ``conflict`` (veraltetes Formular mit
+    eigener abweichender Änderung), ``own`` (gleicher Wert ausdrücklich gesetzt → neue Kennung) oder ``write``."""
+    if mark is None:  # Befehl ohne Formular: ausdrücklich gesetzt
+        return "own" if vals == old else "write"
+    mver, mh = mark
+    untouched = _vh(vals) == mh  # abgesendet == angezeigt
+    if mver != ver:  # inzwischen anderswo gespeichert
+        if untouched:
+            return "skip"
+        return "conflict" if vals != old else "own"
+    return "skip" if vals == old else "write"
 
 
 def _parse_marks(mark: str) -> dict[str, tuple[int, str]]:

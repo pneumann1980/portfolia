@@ -362,9 +362,14 @@ def _fmt(q: Decimal) -> str:
 def _effective_recs(ctx: Any, recs: list[Any], provider: str) -> list[Any]:
     """Vorgänge, wie sie Vorschau, Probelauf und Übernahme bewerten: Sammelvorgänge einer Wallet („Mehrere Zu- und
     Abgänge“), an denen ein für diese Quelle als Spam ignorierter Token beteiligt ist, werden ohne dessen Bewegungen
-    mit der Logik des Abrufs neu eingeordnet (z. B. Tausch statt ungeklärt). Die Zeilen erhalten Ereignis, Konto und
-    Kennungen wie beim Abruf (``<Ereignis>#<Unterkennung>``); die Nummern im Ereignis werden neu vergeben. Rein
-    lesend – ändert sich die Zuordnung, ändert sich die Bewertung (und mit ihr der Token der Vorschau)."""
+    mit der Logik des Abrufs neu eingeordnet (z. B. Tausch statt ungeklärt).
+
+    Neu eingeordnet wird das ganze Ereignis: die Sammelzeile *und* die beim Abruf dazu erzeugte eigene Gebührenzeile
+    (``<Ereignis>#fee``) werden ersetzt – die Neueinordnung enthält die Gebühr selbst (N25: sonst doppelt). Eine
+    unabhängige Erhaltungsprüfung vergleicht die Nettowirkung je Asset der neuen Zeilen mit den gespeicherten
+    Rohbewegungen (ohne die ignorierten) abzüglich der einmal bezahlten Gebühr; weicht sie ab, bleibt der Vorgang
+    unverändert ungeklärt (nie eine falsche Buchung). Die Zeilen erhalten Ereignis, Konto und Kennungen wie beim Abruf
+    (``<Ereignis>#<Unterkennung>``); die Nummern im Ereignis werden neu vergeben. Rein lesend."""
     from app.csvimport import model as M
     from app.csvimport.service import SymbolResolver, csv_service, rec_from_json, rec_to_json
     from app.datasources.wallet import reclassify
@@ -373,32 +378,73 @@ def _effective_recs(ctx: Any, recs: list[Any], provider: str) -> list[Any]:
         return recs
     csv = csv_service(ctx)
     resolver = SymbolResolver(csv.known_assets(), csv.saved_symbols())
-    out: list[Any] = []
-    changed: set[str] = set()
-    for r in recs:
+    replaced: dict[int, list[Any]] = {}  # Index der Sammelzeile → neue Zeilen
+    dropped: set[int] = set()  # ersetzte Gebührenzeilen desselben Ereignisses
+    for i, r in enumerate(recs):
         info = (r.raw or {}).get("moves") if r.kind == M.REVIEW else None
-        if isinstance(info, dict):
-            drop = {str(m.get("asset")) for m in info.get("moves") or []
-                    if resolver.resolve_for(str(m.get("asset")), provider)[1] == "ignored"}
-            new = reclassify(r, drop) if drop else None
-            if new is not None:
-                key = r.event_key or ""
-                for x in new:
-                    x.event_key, x.line, x.account = r.event_key, r.line, r.account
-                    x.ext_id = f"{key}#{x.ext_id}" if key else x.ext_id
-                    x.aliases = list(r.aliases or [])
-                    x.label = x.label or r.label
-                # dieselbe Textform wie gespeicherte Abrufe (Mengen normalisiert) – Prüfsummen bleiben stabil
-                out += [rec_from_json(rec_to_json(x)) for x in new]
-                changed.add(key)
-                continue
-        out.append(r)
+        if not isinstance(info, dict):
+            continue
+        drop = {str(m.get("asset")) for m in info.get("moves") or []
+                if resolver.resolve_for(str(m.get("asset")), provider)[1] == "ignored"}
+        new = reclassify(r, drop) if drop else None
+        if new is None:
+            continue
+        key = r.event_key or ""
+        for x in new:
+            x.event_key, x.line, x.account = r.event_key, r.line, r.account
+            x.ext_id = f"{key}#{x.ext_id}" if key else x.ext_id
+            x.aliases = list(r.aliases or [])
+            x.label = x.label or r.label
+        # dieselbe Textform wie gespeicherte Abrufe (Mengen normalisiert) – Prüfsummen bleiben stabil
+        new = [rec_from_json(rec_to_json(x)) for x in new]
+        if not _conserved(info, drop, new):
+            log.warning("Quellenübernahme: Neueinordnung von %s verworfen – Erhaltungsprüfung weicht ab", key)
+            continue
+        fee_ids = {f"{key}#fee"}
+        sib = [j for j, x in enumerate(recs) if j != i and (x.event_key or "") == key and x.kind == M.FEE
+               and x.ext_id in fee_ids and (x.txhash or "") == (r.txhash or "")]
+        replaced[i] = new
+        dropped.update(sib)
+    if not replaced:
+        return recs
+    out: list[Any] = []
+    changed = {recs[i].event_key or "" for i in replaced}
+    for i, r in enumerate(recs):
+        if i in dropped:
+            continue
+        out += replaced.get(i, [r])
     seq: dict[str, int] = defaultdict(int)
     for x in out:  # laufende Nummer im Ereignis eindeutig halten
         if (x.event_key or "") in changed:
             x.event_line = seq[x.event_key or ""]
             seq[x.event_key or ""] += 1
     return out
+
+
+def _effect(recs: list[Any]) -> dict[str, Decimal]:
+    """Nettowirkung je Asset auf das eigene Konto (Zugang +, Abgang und Gebühr −)."""
+    out: dict[str, Decimal] = defaultdict(Decimal)
+    for r in recs:
+        if r.in_sym and r.in_qty:
+            out[r.in_sym] += r.in_qty
+        if r.out_sym and r.out_qty:
+            out[r.out_sym] -= r.out_qty
+        if r.fee_sym and r.fee_qty:
+            out[r.fee_sym] -= r.fee_qty
+    return {a: q for a, q in out.items() if q}
+
+
+def _conserved(info: dict[str, Any], drop: set[str], new: list[Any]) -> bool:
+    """Unabhängige Erhaltungsprüfung einer Neueinordnung: Rohbewegungen ohne ignorierte Token minus genau einmal die
+    bezahlte Gebühr == Wirkung der neuen Zeilen (je Asset)."""
+    want: dict[str, Decimal] = defaultdict(Decimal)
+    for m in info.get("moves") or []:
+        if str(m.get("asset")) not in drop:
+            want[str(m.get("asset"))] += Decimal(str(m.get("qty") or "0"))
+    fee = Decimal(str(info.get("fee") or "0"))
+    if fee > 0:
+        want[str(info.get("fee_asset") or "")] -= fee
+    return {a: q for a, q in want.items() if q} == _effect(new)
 
 
 def _review_unmapped(rec: Any, resolver: Any, provider: str) -> list[str]:
@@ -1916,16 +1962,20 @@ def _apply_decisions(ctx: Any, csv: Any, bid: int, a: Any) -> tuple[dict[int, st
             if p.get("kind") in ("j", "alts") or has_j_cands(rc):
                 # „kein Transfer“ zu Journal-Kandidaten: genau die damals angebotene Kandidatenmenge und ihr Stand aus
                 # der bestätigten Vorschau – bis in die Buchungstransaktion (N14/N15). Zusammensetzung und Inhalt
-                # aller Kandidaten (auch der nicht vorgeschlagenen) werden geprüft.
+                # aller Kandidaten (auch der nicht vorgeschlagenen) werden geprüft. Reine Stapel-Kandidaten (``b:``)
+                # haben keine Journalrevision: dort zählt die Zusammensetzung, ihr Inhalt ist über den Stapel gebunden
+                # (N24 – sonst wäre die angebotene Antwort nie anwendbar).
                 cands = pair_cands(rc)
                 expect = [f"j:{p.get('tx')}"] if p.get("kind") == "j" else list(p.get("cands") or [])
-                if not p.get("rev") or cands != expect:
+                needs_rev = any(x.startswith("j:") for x in [*cands, *expect])
+                if (needs_rev and not p.get("rev")) or cands != expect:
                     bad.append({"key": key, "why": "Die Gegenbuchungen, zu denen „kein Transfer“ entschieden wurde, "
                                                     "passen im Zustand nach dem Ausblenden nicht (mehr) – bitte neu "
                                                     "entscheiden"})
                     continue
                 vals[f"pair_{rc.idx}"] = "0"
-                vals[f"pairrev_{rc.idx}"] = str(p["rev"])
+                if needs_rev:
+                    vals[f"pairrev_{rc.idx}"] = str(p["rev"])
                 want[rc.idx] = str(rc.pair_ref or "")
             elif rc.pair_ref:
                 vals[f"pair_{rc.idx}"] = "0"

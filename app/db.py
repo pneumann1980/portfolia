@@ -1089,13 +1089,17 @@ CREATE INDEX IF NOT EXISTS ix_news_tr_requested ON news_item(tr_requested_at);
 ALTER TABLE csv_row ADD COLUMN pair_rev TEXT;
 """),
     (37, None),  # Schreibrevisionen und Besitzkennungen – siehe _migration_37()
+    (38, None),  # Schreibrevisionen für Konto-Zuordnungen und Journal-Assets – siehe _migration_38()
 ]
 
 
 # Tabellen, deren Inhalt Vorschau, Prüfungen und Übernehmen bestimmt (wie ``actions.data_version``)
 REV_TABLES = ("journal_tx", "tx_override", "journal_import_link", "asset_source", "csv_symbol", "imports",
               "reference_balance", "ds_balance", "asset_merge", "account_merge", "account_remove", "account_meta",
-              "tx_link", "journal_event_alias", "event_decision")  # Importzeilen (``tx``) sind je Import unveränderlich
+              "tx_link", "journal_event_alias", "event_decision",
+              "csv_account", "journal_asset")  # Importzeilen (``tx``) sind je Import unveränderlich
+# seit Migration 38 mit Zähler (0.95.0, N21): Konto-Zuordnungen und Journal-Assets (Anlage, Klasse, Kursquelle)
+REV_TABLES_38 = ("csv_account", "journal_asset")
 # Eingabegruppen einer Prüf-Stapel-Zeile: Spalten → Versionsspalte (Besitzkennung der letzten Schreiboperation)
 INPUT_GROUPS = {"dec": ("decision",), "val": ("value_in",), "fee": ("fee_in",), "pair": ("pair_ok", "pair_rev")}
 
@@ -1108,11 +1112,7 @@ def _migration_37() -> str:
     out = ["CREATE TABLE IF NOT EXISTS data_rev (name TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0);",
            "INSERT OR IGNORE INTO data_rev(name, n) VALUES ('input', 0);",
            "INSERT OR IGNORE INTO data_rev(name, n) VALUES ('settings', 0);"]
-    for t in REV_TABLES:
-        out.append(f"INSERT OR IGNORE INTO data_rev(name, n) VALUES ('{t}', 0);")
-        for ev in ("INSERT", "UPDATE", "DELETE"):
-            out.append(f"CREATE TRIGGER IF NOT EXISTS rev_{t}_{ev.lower()} AFTER {ev} ON {t} BEGIN "
-                       f"UPDATE data_rev SET n = n + 1 WHERE name = '{t}'; END;")
+    out += _rev_triggers(tuple(t for t in REV_TABLES if t not in REV_TABLES_38))
     cond = {"INSERT": "NEW.key", "DELETE": "OLD.key", "UPDATE": "NEW.key"}
     for ev, k in cond.items():
         out.append(f"CREATE TRIGGER IF NOT EXISTS rev_settings_{ev.lower()} AFTER {ev} ON settings "
@@ -1128,6 +1128,23 @@ def _migration_37() -> str:
                    f"UPDATE csv_row SET ver_{g} = (SELECT n FROM data_rev WHERE name = 'input') "
                    "WHERE id = NEW.id; END;")
     return "\n".join(out)
+
+
+def _rev_triggers(tables: tuple[str, ...]) -> list[str]:
+    out = []
+    for t in tables:
+        out.append(f"INSERT OR IGNORE INTO data_rev(name, n) VALUES ('{t}', 0);")
+        for ev in ("INSERT", "UPDATE", "DELETE"):
+            out.append(f"CREATE TRIGGER IF NOT EXISTS rev_{t}_{ev.lower()} AFTER {ev} ON {t} BEGIN "
+                       f"UPDATE data_rev SET n = n + 1 WHERE name = '{t}'; END;")
+    return out
+
+
+def _migration_38() -> str:
+    """Schreibrevisionen (0.95.0, N21): Konto-Zuordnungen (``csv_account``) und Journal-Assets (``journal_asset``)
+    bestimmen Bewertung und Buchung eines Prüf-Stapels bzw. einer Diagnosebuchung mit – jede Änderung bewegt den
+    Datenstand (Vorschau-Cache, Bestätigungen) und die Tabellenrevision der Schreibprüfung."""
+    return "\n".join(_rev_triggers(REV_TABLES_38))
 
 
 class Database:
@@ -1185,7 +1202,8 @@ class Database:
             if version <= current or (target is not None and version > target):
                 continue
             script = (SCHEMA_FILE.read_text(encoding="utf-8") if sql == "__schema__" else
-                      _migration_37() if version == 37 else sql or "")
+                      _migration_37() if version == 37 else _migration_38() if version == 38
+                      else sql or "")
             log.info("DB-Migration auf Version %s", version)
             c.executescript("BEGIN;" + script + f";PRAGMA user_version={version};COMMIT;")
         # Laufende Jobs aus einem vorherigen Prozess sind nicht mehr aktiv.
@@ -1223,6 +1241,7 @@ class Database:
         return default if row is None or row[0] is None else row[0]
 
     def x(self, sql: str, params: Iterable[Any] | dict = ()) -> sqlite3.Cursor:
+        self._no_write_in_snapshot()
         t0 = time.perf_counter()
         try:
             with self._write_lock:
@@ -1238,8 +1257,33 @@ class Database:
             c.executemany(sql, rows)
 
     @contextlib.contextmanager
+    def snapshot(self) -> Iterator[sqlite3.Connection]:
+        """Konsistenter Lesestand (0.95.0, N19): verzögerte Lesetransaktion – im WAL-Modus sehen alle Abfragen dieses
+        Threads bis zum Ende denselben Stand, andere Schreiber werden nicht blockiert. Anzeige, Vergleich,
+        Revisionen und Eingabestände eines Formulars entstehen so aus *einem* Stand. Schreiben ist darin nicht
+        erlaubt (würde den Stand still verlassen bzw. scheitern) – ein Versuch bricht mit einem Fehler ab.
+        Innerhalb einer laufenden Transaktion läuft der Block in ihr mit."""
+        c = self.conn
+        if c.in_transaction:
+            yield c
+            return
+        c.execute("BEGIN DEFERRED")
+        self._local.snapshot = True
+        try:
+            c.execute("SELECT 1 FROM data_rev LIMIT 1").fetchall()  # Lesestand jetzt festlegen
+            yield c
+        finally:
+            self._local.snapshot = False
+            c.execute("COMMIT")
+
+    def _no_write_in_snapshot(self) -> None:
+        if getattr(self._local, "snapshot", False):
+            raise RuntimeError("Interne Annahme verletzt: Schreiben innerhalb eines Lesestands (snapshot)")
+
+    @contextlib.contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Schreibtransaktion (BEGIN IMMEDIATE). Verschachtelte Aufrufe laufen in der äußeren mit."""
+        self._no_write_in_snapshot()
         c = self.conn
         if c.in_transaction:
             yield c

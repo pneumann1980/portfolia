@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 from app.csvimport import queue as Q
 from app.csvimport import review as RV
 from app.csvimport.service import csv_service
+from tests.helpers import marked
 from tests.test_csvimport import journal, post
 from tests.test_datasources import batch_of as ds_batch_of
 from tests.test_datasources import create_source, deposit, fake, sync  # noqa: F401
@@ -118,7 +119,7 @@ def test_changed_batch_is_not_executed_others_are(client, config, api, fake):  #
     form = preview_form(html)
     # nach der Vorschau: in Stapel A eine Zeile zurückstellen (eigene Entscheidung hat Vorrang)
     rc = next(rc for rc in csv_service(ctx(c)).rows(bid_a) if RV.row_state(rc) == "sicher")
-    assert post(c, f"/journal/csv/{bid_a}/rows", **{f"dec_{rc.idx}": "defer"}).status_code == 303
+    assert post(c, f"/journal/csv/{bid_a}/rows", **marked(c, bid_a, {f"dec_{rc.idx}": "defer"})).status_code == 303
     n_tx = len(journal(c))
     r = post_multi(c, "/journal/pruefung/ausfuehren", {**form, "confirm": "1"})
     assert "1 von 2 ausgeführt" in r.text and "nicht mehr aktuell" in r.text

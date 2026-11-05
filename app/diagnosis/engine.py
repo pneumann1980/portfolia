@@ -32,7 +32,7 @@ from typing import Any
 from urllib.parse import quote
 
 from app.csvimport.events import identity_keys, normalize_hash, source_ref_keys
-from app.csvimport.identity import PROVIDER_LABEL, confirms, identity, note_identity_keys, provider_of
+from app.csvimport.identity import PROVIDER_LABEL, canonical_provider, confirms, identity, note_identity_keys
 from app.csvimport.reconcile import hashes_in
 from app.diagnosis.collect import JournalMeta, Observed, Snapshot
 from app.diagnosis.model import Finding, HoldingRow, Report, Scenario, TxRef
@@ -1230,7 +1230,7 @@ def _assets(idx: _Index, stats: dict[str, int]) -> list[Finding]:
             if not aid:
                 continue
             m = idx.meta.get(t.tx_id)
-            prov = provider_of(m.source if m is not None else None, None, acc)
+            prov = canonical_provider(m.source if m is not None else None, None, acc)
             if prov and identity(prov, idx.asset(aid).symbol):
                 prov_txs[(prov, aid)].append(t)
     for (prov, aid), txs in sorted(prov_txs.items()):

@@ -62,6 +62,14 @@ def source_provider(source: str | None) -> str | None:
     return prov or None
 
 
+def canonical_provider(source: str | None = None, profile: str | None = None,
+                       account: str | None = None) -> str | None:
+    """Kanonischer Anbieter eines Vorgangs (0.95.0, N23): explizite Quelle bzw. Profil zuerst – auch Anbieter ohne
+    eigene Symbol-Identität (``sync:pulsechain`` → ``pulsechain``) –, der frei vergebene Kontoname nur als Rückfall
+    für Formate ohne Anbieterangabe. Ein Konto „Ledger Bitpanda“ überstimmt so keine PulseChain-Quelle."""
+    return provider_of(source, profile, None) or source_provider(source) or provider_of(None, None, account)
+
+
 def provider_key(symbol: str, provider: str) -> str:
     """Kennung einer Zuordnung, die nur für diesen Anbieter gilt."""
     return f"{symbol.strip().upper()}@{provider.strip().upper()}"
@@ -95,7 +103,7 @@ def note_identity_keys(source: str | None, account: str | None, *texts: str | No
     API-Kennung ist deshalb dasselbe Ereignis. Koinly-eigene IDs (32 Hex-Zeichen ohne Bindestriche) zählen nicht."""
     from app.csvimport.events import uuid_key
 
-    prov = provider_of(source, None, account)
+    prov = canonical_provider(source, None, account)
     if prov not in UUID_PROVIDERS:
         return set()
     return {k for t in texts for m in _DASHED_UUID.findall(t or "") if (k := uuid_key(prov, m))}

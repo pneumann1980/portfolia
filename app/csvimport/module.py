@@ -205,30 +205,38 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
 
         outdated = datasource_service(ctx).outdated(int(b["datasource_id"]), bid)
     prof = svc.profile(b["profile"])
-    ov = svc.overview(bid) if b["status"] != "mapping" else {"counts": {}, "unknown": [], "unknown_old": [],
-                                                            "accounts": {}, "missing_price": {}, "pairs": [],
-                                                            "to_commit": 0, "total": 0, "by_idx": {}, "recon": None,
-                                                            "auto_symbols": []}
-    rows = list(ov["by_idx"].values())
-    flt = filters if filters is not None else BA.Filters.parse(request.query_params, FILTERS)
-    flt.status = status
-    sel = [rc for rc in rows if flt.test(rc)]
-    # Gruppen der Übersicht: Dubletten, Ergänzungen, neu, Widersprüche, komplexe Fälle; Erledigtes zuletzt
-    sel.sort(key=lambda rc: (not rc.open or rc.status in ("known", "ignored"), rc.status != "invalid",
-                             CAT_ORDER.get((rc.match or {}).get("cat", ""), 5), rc.idx))
-    offset = max(0, offset)
-    page = sel[offset:offset + PAGE]
-    chosen = BA.selection(ctx.db, bid, rows) if b["status"] in ("preview", "partial") else set()
-    review = BA.overview(rows)
     from app.csvimport import review as RV
-
-    funnel = RV.funnel(b, rows, json.loads(b["summary_json"] or "{}")) if b["status"] != "mapping" else None
-    actions = BA.actions(ctx.db, bid)
-    batch_accounts = sorted({a for rc in rows for a in (rc.rec.account, rc.rec.to_account) if a})
     from app.csvimport.compare import build as build_compare
 
-    compare = build_compare(ctx, page, "dieser Prüf-Stapel · " + (source_label(b["source"]) if b["kind"] == "sync"
-                                                                     else (prof.label if prof else b["profile"])))
+    # Ein konsistenter Lesestand (N19): angezeigte Werte, Vergleich, Revisionen der abhängigen Buchungen und
+    # Transferpartner sowie die Eingabestände des Formulars stammen aus demselben Stand – eine dazwischen gespeicherte
+    # Eingabe oder Buchungsänderung kann nicht alte Anzeige mit neuer Kennung kombinieren.
+    with ctx.db.snapshot():
+        ov = svc.overview(bid) if b["status"] != "mapping" else {"counts": {}, "unknown": [], "unknown_old": [],
+                                                                "accounts": {}, "missing_price": {}, "pairs": [],
+                                                                "to_commit": 0, "total": 0, "by_idx": {},
+                                                                "recon": None, "auto_symbols": []}
+        rows = list(ov["by_idx"].values())
+        flt = filters if filters is not None else BA.Filters.parse(request.query_params, FILTERS)
+        flt.status = status
+        sel = [rc for rc in rows if flt.test(rc)]
+        # Gruppen der Übersicht: Dubletten, Ergänzungen, neu, Widersprüche, komplexe Fälle; Erledigtes zuletzt
+        sel.sort(key=lambda rc: (not rc.open or rc.status in ("known", "ignored"), rc.status != "invalid",
+                                 CAT_ORDER.get((rc.match or {}).get("cat", ""), 5), rc.idx))
+        offset = max(0, offset)
+        page = sel[offset:offset + PAGE]
+        chosen = BA.selection(ctx.db, bid, rows) if b["status"] in ("preview", "partial") else set()
+        review = BA.overview(rows)
+        funnel = RV.funnel(b, rows, json.loads(b["summary_json"] or "{}")) if b["status"] != "mapping" else None
+        actions = BA.actions(ctx.db, bid)
+        batch_accounts = sorted({a for rc in rows for a in (rc.rec.account, rc.rec.to_account) if a})
+        compare = build_compare(ctx, page, "dieser Prüf-Stapel · " + (
+            source_label(b["source"]) if b["kind"] == "sync" else (prof.label if prof else b["profile"])))
+        # angezeigter Stand der abhängigen Buchungen je Zeile bzw. Journal-Transferpartner (Bindung der Einzelaktion
+        # und der Transferentscheidung an genau diese Anzeige) und Eingabestand der Formularfelder
+        row_revs = {rc.idx: BA.row_revision(ctx.db.conn, rc) for rc in page if rc.open and BA.row_refs(rc)}
+        pair_revs = {rc.idx: pair_cand_rev(ctx.db.conn, rc) or "" for rc in ov["pairs"] if has_j_cands(rc)}
+        input_marks = svc.input_marks(bid) if b["status"] in ("preview", "partial") else {}
     js = journal_service(ctx)
     known = js.known_assets()
     assets = sorted(known.values(), key=lambda a: (a.is_fiat, a.name.lower()))
@@ -255,11 +263,7 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         sel_count=len(chosen), batch_actions=BA.ACTIONS, filtered_n=len(sel),
         group_state=BA.group_state(rows, chosen), qs=_qs(flt, status),
         page_idx=[rc.idx for rc in page],
-        # angezeigter Stand der abhängigen Buchungen je Zeile bzw. Journal-Transferpartner (Bindung der Einzelaktion
-        # und der Transferentscheidung an genau diese Anzeige)
-        row_revs={rc.idx: BA.row_revision(ctx.db.conn, rc) for rc in page if rc.open and BA.row_refs(rc)},
-        pair_revs={rc.idx: pair_cand_rev(ctx.db.conn, rc) or "" for rc in ov["pairs"] if has_j_cands(rc)},
-        input_marks=svc.input_marks(bid) if b["status"] in ("preview", "partial") else {},
+        row_revs=row_revs, pair_revs=pair_revs, input_marks=input_marks,
         kind_label=M.KIND_LABEL, source_label=source_label,
         ds_exists=bool(b["datasource_id"] and ctx.db.scalar("SELECT 1 FROM data_source WHERE id=?",
                                                               (b["datasource_id"],))),
@@ -741,7 +745,8 @@ def make_router() -> APIRouter:
             raise HTTPException(404)
         f = await _form(request)
         key = str(f.get("ignore") or f.get("release") or "")
-        await run_in_threadpool(svc.set_rows, bid, f)  # übrige Eingaben der Seite nicht verlieren
+        # übrige Eingaben der Seite nicht verlieren
+        await run_in_threadpool(lambda: svc.set_rows(bid, f, require_marks=True))
         if not await run_in_threadpool(svc.set_ignored, bid, key, bool(f.get("ignore")),
                                        str(f.get("reason") or "vom Nutzer entschieden")):
             return _batch_page(request, bid, errors=["Vorgang nicht gefunden."])
@@ -780,7 +785,7 @@ def make_router() -> APIRouter:
             st, _, dec = bulk.partition(":")
             await run_in_threadpool(svc.set_all, bid, st, dec if dec in ("include", "skip") else None)
         else:
-            saved = await run_in_threadpool(svc.set_rows, bid, f)
+            saved = await run_in_threadpool(lambda: svc.set_rows(bid, f, require_marks=True))
             if saved["errors"]:  # z. B. Transferentscheidung ohne angezeigten Partnerstand (altes Formular)
                 return _batch_page(request, bid, errors=saved["errors"])
         return _back(request, _redir(bid, f, "rows"))
@@ -883,7 +888,8 @@ def make_router() -> APIRouter:
         if BA.row_refs(before[i]) and BA.row_revision(ctx.db.conn, before[i]) != shown:
             return _batch_page(request, bid, errors=[BA.STALE_REFS_TEXT])
         expect = BA.expected_revs(ctx.db.conn, [before[i]]) if shown else {}
-        saved = await run_in_threadpool(svc.set_rows, bid, f)  # übrige Eingaben der Seite nicht verlieren
+        # übrige Eingaben der Seite nicht verlieren
+        saved = await run_in_threadpool(lambda: svc.set_rows(bid, f, require_marks=True))
         if saved["errors"]:  # Eingabe ohne notwendige Bindung: nichts ausführen, eigene Eingaben zurücknehmen
             await run_in_threadpool(svc.restore_inputs, bid, saved["undo"])
             return _batch_page(request, bid, errors=saved["errors"])

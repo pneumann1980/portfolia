@@ -39,7 +39,7 @@ from app.db import Database
 from app.importer.zipbuilder import build_zip
 from app.jobs import tasks
 from app.main import build_app
-from tests.helpers import ASSETS, tx
+from tests.helpers import ASSETS, marked, tx
 from tests.test_csvimport import create_unknown_assets, journal, post, upload
 
 D = Decimal
@@ -1061,7 +1061,7 @@ def test_ignore_decision_persists_across_runs(client, api):
     bid = batch_of(sync(c, sid))
     create_unknown_assets(c, bid)
     rs = rows_by_key(c, bid)
-    post(c, f"/journal/csv/{bid}/rows", **{f"val_{rs[f'{op_key(2)}#1'].idx}": "0,40"})
+    post(c, f"/journal/csv/{bid}/rows", **marked(c, bid, {f"val_{rs[f'{op_key(2)}#1'].idx}": "0,40"}))
     r = post(c, f"/journal/csv/{bid}/ignore", ignore=op_key(11))
     assert r.status_code == 303
     rs = rows_by_key(c, bid)

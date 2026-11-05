@@ -14,7 +14,7 @@ from decimal import Decimal
 from app.csvimport import review as RV
 from app.csvimport.service import csv_service
 from app.ledger.engine import run_ledger
-from tests.helpers import ASSETS, portfolio, tx
+from tests.helpers import ASSETS, marked, portfolio, tx
 from tests.test_csvimport import client, create_unknown_assets, post, upload  # noqa: F401
 
 D = Decimal
@@ -74,7 +74,7 @@ def test_futures_export_via_mapping_needs_value_and_is_never_automatic(client):
         {"F1": "deposit", "F2": "withdrawal", "L1": "withdrawal", "P1": "deposit"}
     # ohne Kurs: EUR-Wert fehlt → unvollständig (nie 0 €)
     assert all(rc.status == "invalid" and any("EUR-Wert" in e for e in rc.errors) for rc in rows.values())
-    post(c, f"/journal/csv/{bid}/rows", **{f"val_{rc.idx}": "1" for rc in rows.values()})
+    post(c, f"/journal/csv/{bid}/rows", **marked(c, bid, {f"val_{rc.idx}": "1" for rc in rows.values()}))
     rows = list(csv_service(c.app.state.ctx).rows(bid))
     assert all(rc.status == "new" for rc in rows)
     assert all(RV.row_state(rc) == "offen" and rc.match["action"] == "review" for rc in rows)  # nie „sicher“

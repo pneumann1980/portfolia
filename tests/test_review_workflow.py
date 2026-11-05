@@ -25,6 +25,7 @@ from app.diagnosis import actions as DA
 from app.diagnosis.engine import _holding_finding
 from app.diagnosis.model import HoldingRow
 from app.main import build_app
+from tests.helpers import marked
 from tests.test_csvimport import create_unknown_assets, journal, post, upload
 from tests.test_datasources import batch_of, buy, client, create_source, deposit, fake, sync, ts  # noqa: F401
 
@@ -104,8 +105,8 @@ def test_03_partial_batch_shows_only_open_events(client, fake):  # noqa: F811
                                        buy("kraken:T2", "2024-06-02T10:00:00", "300", "0.005"),
                                        deposit("kraken:L1", "2024-05-30T09:00:00", "EUR", "1000")])
     rs = {rc.rec.event_key: rc for rc in csv_service(ctx(c)).rows(bid)}
-    r = post(c, f"/journal/csv/{bid}/rows", **{f"dec_{rs['kraken:T2'].idx}": "defer",
-                                                f"dec_{rs['kraken:L1'].idx}": "skip"})
+    r = post(c, f"/journal/csv/{bid}/rows", **marked(c, bid, {f"dec_{rs['kraken:T2'].idx}": "defer",
+                                                              f"dec_{rs['kraken:L1'].idx}": "skip"}))
     assert r.status_code == 303
     post(c, f"/journal/csv/{bid}/commit")
     assert status(c, bid) == "partial"
@@ -163,7 +164,8 @@ def test_06_manual_review_reaches_every_open_case(client, fake):  # noqa: F811
     fake.events = [unknown("kraken:U1", "2024-06-03T10:00:00")]
     b1 = batch_of(sync(c, sid))
     rs = csv_service(ctx(c)).rows(b1)
-    post(c, f"/journal/csv/{b1}/rows", **{f"dec_{rs[0].idx}": "defer"})  # bearbeitet → neuer Abruf, neuer Stapel
+    # bearbeitet → neuer Abruf, neuer Stapel
+    post(c, f"/journal/csv/{b1}/rows", **marked(c, b1, {f"dec_{rs[0].idx}": "defer"}))
     fake.events = [*fake.events, unknown("kraken:U2", "2024-06-04T10:00:00", sym="ZZQY")]
     b2 = batch_of(sync(c, sid))
     assert b2 != b1
@@ -183,13 +185,13 @@ def test_07_fully_known_file_closes_immediately(client):  # noqa: F811
     bid, _ = upload(c, "binance.csv")
     create_unknown_assets(c, bid)
     rs = {rc.line: rc for rc in csv_service(ctx(c)).rows(bid)}
-    post(c, f"/journal/csv/{bid}/rows", **{f"val_{rs[12].idx}": "0,46"})
+    post(c, f"/journal/csv/{bid}/rows", **marked(c, bid, {f"val_{rs[12].idx}": "0,46"}))
     post(c, f"/journal/csv/{bid}/commit")
     assert status(c, bid) in ("committed", "partial")
     left = RV.batch_summary(ctx(c).db, bid)
     if left.open:  # z. B. ungeklärte Zeilen der Datei: bewusst nicht übernehmen → Stapel schließt
         idxs = [rc.idx for rc in csv_service(ctx(c)).rows(bid) if RV.is_open(RV.row_state(rc))]
-        post(c, f"/journal/csv/{bid}/rows", **{f"dec_{i}": "skip" for i in idxs})
+        post(c, f"/journal/csv/{bid}/rows", **marked(c, bid, {f"dec_{i}": "skip" for i in idxs}))
     assert status(c, bid) == "committed"
     bid2, _ = upload(c, "binance.csv")
     assert status(c, bid2) == "done", RV.batch_summary(ctx(c).db, bid2)
@@ -208,7 +210,7 @@ def test_08_repeated_sync_does_not_reopen_closed_cases(client, fake):  # noqa: F
     sid, bid = synced_batch(c, fake, [buy("kraken:T1", "2024-06-01T10:00:00", "500", "0.01"),
                                       buy("kraken:T2", "2024-06-02T10:00:00", "300", "0.005")])
     rs = {rc.rec.event_key: rc for rc in csv_service(ctx(c)).rows(bid)}
-    post(c, f"/journal/csv/{bid}/rows", **{f"dec_{rs['kraken:T2'].idx}": "skip"})
+    post(c, f"/journal/csv/{bid}/rows", **marked(c, bid, {f"dec_{rs['kraken:T2'].idx}": "skip"}))
     post(c, f"/journal/csv/{bid}/commit")
     assert status(c, bid) == "committed"
     n_batches = ctx(c).db.scalar("SELECT COUNT(*) FROM csv_batch")
@@ -259,7 +261,7 @@ def test_10_bitpanda_like_counts_over_several_batches(client, fake):  # noqa: F8
                    unknown("kraken:U2", "2024-06-03T10:00:00")]
     b1 = batch_of(sync(c, sid))
     rs = csv_service(ctx(c)).rows(b1)
-    post(c, f"/journal/csv/{b1}/rows", **{f"dec_{rs[-1].idx}": "defer"})
+    post(c, f"/journal/csv/{b1}/rows", **marked(c, b1, {f"dec_{rs[-1].idx}": "defer"}))
     fake.events = [*fake.events, unknown("kraken:U3", "2024-06-04T10:00:00"),
                    unknown("kraken:U4", "2024-06-05T10:00:00")]
     b2 = batch_of(sync(c, sid))
@@ -327,12 +329,12 @@ def test_13_http_end_to_end_import_to_closed(client):  # noqa: F811
     assert "Prüfstand" in c.get(loc).text
     create_unknown_assets(c, bid)
     rs = {rc.line: rc for rc in csv_service(ctx(c)).rows(bid)}
-    post(c, f"/journal/csv/{bid}/rows", **{f"val_{rs[12].idx}": "0,46"})
+    post(c, f"/journal/csv/{bid}/rows", **marked(c, bid, {f"val_{rs[12].idx}": "0,46"}))
     r = post(c, f"/journal/csv/{bid}/commit")
     assert r.status_code == 303
     left = [rc for rc in csv_service(ctx(c)).rows(bid) if RV.is_open(RV.row_state(rc))]
     if left:
-        post(c, f"/journal/csv/{bid}/rows", **{f"dec_{rc.idx}": "skip" for rc in left})
+        post(c, f"/journal/csv/{bid}/rows", **marked(c, bid, {f"dec_{rc.idx}": "skip" for rc in left}))
     assert status(c, bid) == "committed"
     page = c.get(f"/journal/csv/{bid}").text
     assert "Prüfstand" in page and ">abgeschlossen<" in page
@@ -348,7 +350,7 @@ def test_14_decisions_persist_across_restart(config, fake):  # noqa: F811
         _sid, bid = synced_batch(c, fake, [unknown("kraken:U1", "2024-06-03T10:00:00"),
                                            unknown("kraken:U2", "2024-06-04T10:00:00", sym="ZZQY")])
         rs = csv_service(ctx(c)).rows(bid)
-        post(c, f"/journal/csv/{bid}/rows", **{f"dec_{rs[0].idx}": "defer", f"dec_{rs[1].idx}": "skip"})
+        post(c, f"/journal/csv/{bid}/rows", **marked(c, bid, {f"dec_{rs[0].idx}": "defer", f"dec_{rs[1].idx}": "skip"}))
         before = RV.batch_summary(ctx(c).db, bid)
     with TestClient(build_app(config, start_scheduler=False)) as c2:
         after = RV.batch_summary(ctx(c2).db, bid)
