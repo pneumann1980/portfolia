@@ -242,7 +242,8 @@ _LOCK = threading.Lock()
 
 
 def hints(ctx: Any) -> list[Hint]:
-    key = (getattr(ctx, "data_version", 0), getattr(ctx, "overlay_version", 0), version(), today_local())
+    rev = ctx.cache_rev() if hasattr(ctx, "cache_rev") else ""  # persistente Revision vor der Berechnung (N26)
+    key = (getattr(ctx, "data_version", 0), getattr(ctx, "overlay_version", 0), version(), today_local(), rev)
     with _LOCK:
         hit = _CACHE.get(id(ctx))
         if hit is not None and hit[0] == key:
@@ -252,6 +253,7 @@ def hints(ctx: Any) -> list[Hint]:
     except Exception as e:  # Hinweise dürfen keine Seite blockieren
         log.warning("Erkennung von Ticker-Änderungen fehlgeschlagen: %s", e)
         res = []
-    with _LOCK:
-        _CACHE[id(ctx)] = (key, res)
+    if not hasattr(ctx, "may_publish") or ctx.may_publish(rev):  # nie aus einem fremden/alten Lesestand
+        with _LOCK:
+            _CACHE[id(ctx)] = (key, res)
     return res

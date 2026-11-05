@@ -1090,6 +1090,7 @@ ALTER TABLE csv_row ADD COLUMN pair_rev TEXT;
 """),
     (37, None),  # Schreibrevisionen und Besitzkennungen – siehe _migration_37()
     (38, None),  # Schreibrevisionen für Konto-Zuordnungen und Journal-Assets – siehe _migration_38()
+    (39, None),  # Schreibrevisionen für Asset-Änderungen und Sparplan-Buchungen – siehe _migration_39()
 ]
 
 
@@ -1097,9 +1098,16 @@ ALTER TABLE csv_row ADD COLUMN pair_rev TEXT;
 REV_TABLES = ("journal_tx", "tx_override", "journal_import_link", "asset_source", "csv_symbol", "imports",
               "reference_balance", "ds_balance", "asset_merge", "account_merge", "account_remove", "account_meta",
               "tx_link", "journal_event_alias", "event_decision",
-              "csv_account", "journal_asset")  # Importzeilen (``tx``) sind je Import unveränderlich
+              "csv_account", "journal_asset",
+              "asset_change", "tx_estimate")  # Importzeilen (``tx``) sind je Import unveränderlich
 # seit Migration 38 mit Zähler (0.95.0, N21): Konto-Zuordnungen und Journal-Assets (Anlage, Klasse, Kursquelle)
 REV_TABLES_38 = ("csv_account", "journal_asset")
+# seit Migration 39 (0.96.0, N21-Rest/N26): Asset-Änderungen (Umbenennung/Umstellung, ohne reine Hinweise) und
+# freigegebene Sparplan-Ausführungen (erfasste Buchungen) – mit bedingten Triggern, siehe ``_migration_39``
+REV_TABLES_39 = ("asset_change", "tx_estimate")
+# Zähler, die nur die Identität der Portfolio-Zwischenspeicher bestimmen (nicht den fachlichen Datenstand von Vorschau
+# und Bestätigung): Sparplan-Schätzungen und Sparpläne ändern sich im Hintergrund, sind aber keine erfassten Buchungen.
+CACHE_ONLY_REVS = ("pf:plan", "pf:tx_estimate")
 # Eingabegruppen einer Prüf-Stapel-Zeile: Spalten → Versionsspalte (Besitzkennung der letzten Schreiboperation)
 INPUT_GROUPS = {"dec": ("decision",), "val": ("value_in",), "fee": ("fee_in",), "pair": ("pair_ok", "pair_rev")}
 
@@ -1112,7 +1120,7 @@ def _migration_37() -> str:
     out = ["CREATE TABLE IF NOT EXISTS data_rev (name TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0);",
            "INSERT OR IGNORE INTO data_rev(name, n) VALUES ('input', 0);",
            "INSERT OR IGNORE INTO data_rev(name, n) VALUES ('settings', 0);"]
-    out += _rev_triggers(tuple(t for t in REV_TABLES if t not in REV_TABLES_38))
+    out += _rev_triggers(tuple(t for t in REV_TABLES if t not in REV_TABLES_38 + REV_TABLES_39))
     cond = {"INSERT": "NEW.key", "DELETE": "OLD.key", "UPDATE": "NEW.key"}
     for ev, k in cond.items():
         out.append(f"CREATE TRIGGER IF NOT EXISTS rev_settings_{ev.lower()} AFTER {ev} ON settings "
@@ -1145,6 +1153,44 @@ def _migration_38() -> str:
     bestimmen Bewertung und Buchung eines Prüf-Stapels bzw. einer Diagnosebuchung mit – jede Änderung bewegt den
     Datenstand (Vorschau-Cache, Bestätigungen) und die Tabellenrevision der Schreibprüfung."""
     return "\n".join(_rev_triggers(REV_TABLES_38))
+
+
+def _migration_39() -> str:
+    """Schreibrevisionen (0.96.0, N21-Rest/N26). Bedingte Trigger, damit nur fachlich wirksame Änderungen den
+    Datenstand bewegen:
+
+    * ``asset_change`` – Umbenennungen/Umstellungen ändern Asset-Kennungen erfasster Buchungen; reine Hinweise
+      (``kind='hint'``, von der Erkennung angelegt/entfernt) zählen nicht.
+    * ``tx_estimate`` – nur freigegebene Sparplan-Ausführungen sind erfasste Buchungen (``status='confirmed'`` vor oder
+      nach der Änderung); jede Änderung bewegt zusätzlich den reinen Cache-Zähler ``pf:tx_estimate``.
+    * ``plan`` – nur Cache-Zähler ``pf:plan`` (Schätzungen hängen daran, keine erfassten Buchungen).
+
+    Dazu ``csv_input_hist`` (Ausgleichsregel überlappender abgelehnter Einzelaktionen, N27)."""
+    out = [f"INSERT OR IGNORE INTO data_rev(name, n) VALUES ('{n}', 0);" for n in (*REV_TABLES_39, *CACHE_ONLY_REVS)]
+    # Ausgleichsregel für Eingaben (N27): je Schreibkennung einer Eingabegruppe der Stand davor (Werte und Kennung),
+    # in derselben Transaktion wie die Eingabe; ``revoked_at`` gesetzt = von einer abgelehnten Einzelaktion
+    # zurückgenommen. Eine spätere Rücknahme, die auf eine widerrufene Kennung zurückführen würde, folgt der Kette.
+    out.append("""CREATE TABLE IF NOT EXISTS csv_input_hist (
+  row_id      INTEGER NOT NULL REFERENCES csv_row(id) ON DELETE CASCADE,
+  grp         TEXT NOT NULL,
+  token       INTEGER NOT NULL,
+  before_json TEXT NOT NULL,
+  before_ver  INTEGER NOT NULL,
+  revoked_at  TEXT,
+  PRIMARY KEY (row_id, grp, token)
+);""")
+    cond = {"asset_change": ("NEW.kind <> 'hint'", "OLD.kind <> 'hint'", "NEW.kind <> 'hint' OR OLD.kind <> 'hint'"),
+            "tx_estimate": ("NEW.status = 'confirmed'", "OLD.status = 'confirmed'",
+                            "NEW.status = 'confirmed' OR OLD.status = 'confirmed'")}
+    for t, (ins, dele, upd) in cond.items():
+        for ev, w in (("INSERT", ins), ("DELETE", dele), ("UPDATE", upd)):
+            out.append(f"CREATE TRIGGER IF NOT EXISTS rev_{t}_{ev.lower()} AFTER {ev} ON {t} WHEN {w} BEGIN "
+                       f"UPDATE data_rev SET n = n + 1 WHERE name = '{t}'; END;")
+    for t in ("plan", "tx_estimate"):
+        for ev in ("INSERT", "UPDATE", "DELETE"):
+            out.append(f"CREATE TRIGGER IF NOT EXISTS rev_pf_{t}_{ev.lower()} AFTER {ev} ON {t} BEGIN "
+                       f"UPDATE data_rev SET n = n + 1 WHERE name = 'pf:{t}'; END;")
+    return "\n".join(out)
 
 
 class Database:
@@ -1203,6 +1249,7 @@ class Database:
                 continue
             script = (SCHEMA_FILE.read_text(encoding="utf-8") if sql == "__schema__" else
                       _migration_37() if version == 37 else _migration_38() if version == 38
+                      else _migration_39() if version == 39
                       else sql or "")
             log.info("DB-Migration auf Version %s", version)
             c.executescript("BEGIN;" + script + f";PRAGMA user_version={version};COMMIT;")

@@ -794,9 +794,9 @@ def assess(rc: Any, books: Books, new_kind: str, source: str) -> dict[str, Any] 
     return out
 
 
-def assess_rows(ctx: Any, rows: list[Any], source: str, pf: Any) -> None:
+def assess_rows(ctx: Any, rows: list[Any], source: str, pf: Any, bid: int | None = None) -> None:
     """Alle offenen Zeilen eines Stapels bewerten (``RowCtx.match``)."""
-    ids = {t for rc in rows if rc.open for t in rc.dup_of[:5]}
+    ids = {t for rc in rows if rc.open for t in rc.dup_of}  # vollständig (N29/N22: keine fachliche Kürzung)
     books = Books(ctx, pf, ids)
     kind = source_kind(source)
     for rc in rows:
@@ -809,7 +809,7 @@ def assess_rows(ctx: Any, rows: list[Any], source: str, pf: Any) -> None:
                         "diff": [{"f": "struct", "sev": "relevant", "t": "Abgleich nicht auswertbar – bitte prüfen"}],
                         "why": "Fehler im Abgleich"}
     with contextlib.suppress(ArithmeticError, TypeError, ValueError, KeyError):  # nie die Auswertung blockieren
-        _competing(rows, books, kind, source, _claimed(ctx))
+        _competing(rows, books, kind, source, _claimed(ctx), bid)
     for rc in rows:
         if rc.match and rc.open:
             with contextlib.suppress(ArithmeticError, TypeError, ValueError, KeyError, AttributeError):
@@ -884,14 +884,69 @@ def recommend(rc: Any, rows: list[Any]) -> dict[str, Any] | None:
     return rec("choose", "Bitte prüfen – nicht eindeutig", f"{what}: {problem}", "", "warn", options=opts)
 
 
-def _claimed(ctx: Any) -> set[str]:
-    """Vorhandene Buchungen, die bereits mit einem Datensatz verknüpft sind (ganze Buchung): ein weiterer Datensatz
-    gleicher Größe ist dann ein eigener Vorgang, nicht derselbe."""
+def _claimed(ctx: Any) -> dict[str, list[tuple[str, int | None]]]:
+    """Vorhandene Buchungen, die bereits mit einem Datensatz verknüpft sind (ganze Buchung) – je Buchung die Quellen
+    und Stapel dieser Datensätze. Wer die Buchung belegt, entscheidet, was ein weiterer gleich großer Datensatz ist
+    (siehe :func:`_competing`)."""
+    out: dict[str, list[tuple[str, int | None]]] = {}
     try:
-        return {r["tx_id"] for r in ctx.db.q("SELECT DISTINCT tx_id FROM tx_link WHERE status='active' "
-                                             "AND COALESCE(role,'same')='same'")}
+        for r in ctx.db.q("SELECT tx_id, source, batch_id FROM tx_link WHERE status='active' "
+                          "AND COALESCE(role,'same')='same'"):
+            out.setdefault(r["tx_id"], []).append((str(r["source"] or ""), r["batch_id"]))
     except sqlite3.Error:
-        return set()
+        return {}
+    return out
+
+
+# Formate ohne eigenen Anbieter-Namensraum: beliebige Dateien landen unter derselben Quelle – „gleiche Quelle“ heißt
+# hier nicht „derselbe Anbieter“ (N29)
+_GENERIC_SOURCES = frozenset({"csv:portfolia", "csv:koinly_universal"})
+
+
+def _stable_source(source: str) -> bool:
+    """Quelle mit eigenem, stabilem Kennungsraum (Datenquelle bzw. eingebautes Anbieterprofil)."""
+    s = (source or "").strip().lower()
+    if s.startswith("sync:"):
+        return True
+    if not s.startswith("csv:") or s in _GENERIC_SOURCES:
+        return False
+    from app.csvimport.profiles import BUILTIN
+
+    return s[4:] in {getattr(p, "id", None) for p in BUILTIN}
+
+
+def _own_record(bid: int | None, source: str, claims: list[tuple[str, int | None]]) -> bool:
+    """Belegt nur ein Datensatz, der sicher ein *anderer* Vorgang derselben Herkunft ist? Dann ist eine weitere gleich
+    große Zeile ein eigener Vorgang: derselbe Stapel (eine Datei bzw. ein Abruf listet ein Ereignis einmal) oder
+    dieselbe anbieterstabile Quelle (deren Kennungen ein Ereignis nicht doppelt führen). Eine Belegung aus anderer
+    Herkunft beweist dagegen kein neues Ereignis – es kann derselbe Vorgang in anderer Darstellung sein."""
+    return bool(claims) and all((bid is not None and b == bid) or (src == source and _stable_source(source))
+                                for src, b in claims)
+
+
+def _own_event(rc: Any, ids: list[str]) -> None:
+    """Zeile als eigener Vorgang: die ähnlichen Buchungen gehören nachweislich zu anderen Datensätzen derselben
+    Herkunft (derselbe Stapel bzw. dieselbe anbieterstabile Quelle oder eine Kennung dieses Stapels)."""
+    neu = _neu(rc)
+    neu["conf"] = "mittel"
+    neu["action"] = "include" if rc.row is not None and not rc.errors else "review"
+    neu["hints"] = [f"ähnliche vorhandene Buchung{'en' if len(ids) > 1 else ''} {', '.join(ids[:3])} "
+                    "gehört/gehören bereits zu einem anderen Datensatz – vermutlich ein eigener Vorgang",
+                    *neu["hints"]]
+    neu["why"] = "gleich große Vorgänge: die ähnlichen Buchungen sind bereits zugeordnet"
+    rc.match = neu
+
+
+def _identity_target(rc: Any, source: str, ids: list[str]) -> str | None:
+    """Kennung im gültigen Geltungsbereich: Zeilen im Portfolia-Format tragen die Portfolia-Buchungskennung
+    (``pf:<tx_id>``). Ist genau diese Buchung ein Kandidat (gleiche Menge/Zeit), ist es dieselbe Buchung – auch wenn
+    sie schon mit einem anderen Datensatz verknüpft ist (Rückimport eines Exports, N29). Kennungen anderer Anbieter
+    werden nicht gleichgesetzt."""
+    ext = str(getattr(rc.rec, "ext_id", "") or "")
+    if (source or "").strip().lower() != "csv:portfolia" or not ext.startswith("pf:"):
+        return None
+    tid = ext[3:]
+    return tid if tid in ids else None
 
 
 _BIG = 1e9  # Kosten einer nicht zulässigen Paarung (Sekunden; weit über jedem echten Zeitabstand)
@@ -965,7 +1020,8 @@ def _reassess(rc: Any, target: str, books: Books, kind: str, source: str) -> dic
     return assess(alt, books, kind, source)
 
 
-def _competing(rows: list[Any], books: Books, kind: str, source: str, claimed: set[str]) -> None:
+def _competing(rows: list[Any], books: Books, kind: str, source: str,
+               claimed: dict[str, list[tuple[str, int | None]]], bid: int | None = None) -> None:
     """Mehrere offene Zeilen passen nur unscharf (gleiche Menge/Zeit, ohne Kennung oder Hash) auf dieselben
     vorhandenen Buchungen. Eine vorhandene Buchung kann höchstens eine dieser Zeilen sein – sonst gingen echte,
     gleich große Vorgänge verloren. Deshalb wird je Gruppe zugeordnet:
@@ -977,7 +1033,10 @@ def _competing(rows: list[Any], books: Books, kind: str, source: str, claimed: s
     * mehr Zeilen als Buchungen: höchstens so viele Zeilen sind Dubletten, der Rest sind eigene Vorgänge –
       welche Zeile welche ist, entscheidet der Nutzer (mit Vorschlag nach Zeitabstand, nie automatisch);
     * mehr Buchungen als Zeilen: Zuordnung nicht eindeutig → einzeln prüfen;
-    * bereits mit einem anderen Datensatz verknüpfte Buchungen zählen nicht mehr als Kandidaten.
+    * bereits mit einem anderen Datensatz verknüpfte Buchungen: nur eine Belegung aus derselben Herkunft (selber
+      Stapel bzw. dieselbe anbieterstabile Quelle) macht die Zeile zu einem eigenen Vorgang; eine Belegung aus anderer
+      Herkunft beweist kein neues Ereignis → Prüfung, nie automatisch buchen (N29). Trägt die Zeile die Kennung genau
+      dieser Buchung in ihrem Geltungsbereich (Portfolia-Format ``pf:<tx_id>``), ist es dieselbe Buchung.
     """
     elig: list[Any] = []
     cands: dict[int, list[str]] = {}
@@ -986,22 +1045,48 @@ def _competing(rows: list[Any], books: Books, kind: str, source: str, claimed: s
         if not m or not rc.open or m.get("basis") != "sig" or not m.get("target") or m.get("role") != "same":
             continue
         ids = list(dict.fromkeys(rc.dup_of))
-        free = [t for t in ids if t not in claimed and books.get(t).found and books.get(t).status is None
-                and (rc.roles.get(t) or "same") == "same"]
+        usable = [t for t in ids if books.get(t).found and books.get(t).status is None
+                  and (rc.roles.get(t) or "same") == "same"]
+        if (own := _identity_target(rc, source, usable)) is not None:  # dieselbe Buchung laut Kennung
+            elig.append(rc)
+            cands[rc.idx] = [own]
+            continue
+        free = [t for t in usable if t not in claimed]
         if len(free) == len(ids):
             pass
-        elif not free:  # alle ähnlichen Buchungen gehören schon zu anderen Datensätzen → eigener Vorgang
-            neu = _neu(rc)
-            neu["conf"] = "mittel"
-            neu["action"] = "include" if rc.row is not None and not rc.errors else "review"
-            neu["hints"] = [f"ähnliche vorhandene Buchung{'en' if len(ids) > 1 else ''} {', '.join(ids[:3])} "
-                            "gehört/gehören bereits zu einem anderen Datensatz – vermutlich ein eigener Vorgang",
-                            *neu["hints"]]
-            neu["why"] = "gleich große Vorgänge: die ähnlichen Buchungen sind bereits zugeordnet"
-            rc.match = neu
+        elif not free and any(not _own_record(bid, source, claimed.get(t, [])) for t in usable):
+            # belegt nur aus anderer Herkunft: derselbe Vorgang in anderer Darstellung oder ein eigener – nicht
+            # entscheidbar → Prüfung, keine automatische Buchung (ein leerer Rest freier Kandidaten beweist nichts)
+            m = dict(m)
+            m["conf"] = "niedrig"
+            m["action"] = "review"
+            m["hints"] = [f"ähnliche vorhandene Buchung{'en' if len(usable) > 1 else ''} {', '.join(usable[:3])} "
+                          "ist bereits mit einem Datensatz anderer Herkunft verknüpft – derselbe Vorgang in anderer "
+                          "Darstellung (verknüpfen) oder ein eigener (übernehmen)? Bitte prüfen.",
+                          *(m.get("hints") or [])]
+            m["why"] = "gleich große Buchung bereits anderweitig zugeordnet – nicht eindeutig"
+            rc.match = m
+            continue
+        elif not free:  # alle ähnlichen Buchungen gehören schon zu Datensätzen derselben Herkunft → eigener Vorgang
+            _own_event(rc, ids)
             continue
         elig.append(rc)
         cands[rc.idx] = free
+    # Kennungstreffer gehen vor: eine Buchung, die eine Zeile dieses Stapels laut Kennung *ist*, kann keine andere
+    # Zeile sein. Bleibt einer Zeile dadurch kein Kandidat, ist sie ein eigener Vorgang derselben Herkunft (zwei
+    # verschiedene Kennungen im Portfolia-Format = zwei Buchungen) – gleich große Vorgänge bleiben unterscheidbar.
+    fixed = {cands[rc.idx][0] for rc in elig if _identity_target(rc, source, cands[rc.idx]) is not None}
+    if fixed:
+        keep = []
+        for rc in elig:
+            if _identity_target(rc, source, cands[rc.idx]) is None:
+                rest = [t for t in cands[rc.idx] if t not in fixed]
+                if not rest:
+                    _own_event(rc, list(dict.fromkeys(rc.dup_of)))
+                    continue
+                cands[rc.idx] = rest
+            keep.append(rc)
+        elig = keep
     if not elig:
         return
     # Gruppen: Zeilen, die sich Kandidaten teilen

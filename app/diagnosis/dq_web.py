@@ -124,8 +124,10 @@ def _summary_cached(ctx: Any) -> tuple[int, int, int]:
     hit = _SUMMARY.get("v")
     if hit is not None and hit[0] == key and now - hit[1] < SUMMARY_TTL_S:
         return hit[2]
+    rev = ctx.cache_rev()
     val = G.summary(ctx)
-    _SUMMARY["v"] = (key, now, val)
+    if ctx.may_publish(rev):  # gemeinsame Cache-Regel (N26): nie aus einem fremden/alten Lesestand
+        _SUMMARY["v"] = (key, now, val)
     return val
 
 

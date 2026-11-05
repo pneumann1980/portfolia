@@ -34,6 +34,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import threading
 import uuid
@@ -140,14 +141,18 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
         # Recherche-Ergebnisse der Diagnose (M29): nur lesend gewonnene, noch ungebuchte Ereignisse; je Datenquelle
         # über Anbieter/Konto/Name zugeordnet (IDs ändern sich bei der Wiederherstellung); „im Prüf-Stapel“ = neu
         "diag_research_events": _rows(
-            db, "SELECT d.provider, d.account, d.name, e.event_key, e.ts, e.lines_json, "
+            db, "SELECT d.provider, d.account, d.name, d.kind AS source_kind, d.address AS source_address, "
+                "d.watch_json AS source_watch, "
+                "e.event_key, e.ts, e.lines_json, "
                 "CASE e.status WHEN 'staged' THEN 'new' ELSE e.status END AS status, e.created_at, e.decided_at "
                 "FROM diag_research_event e JOIN data_source d ON d.id = e.source_id ORDER BY e.id", drop=()),
         # beobachtete Bestände laut Anbieter (Soll/Ist-Abgleich) samt Zustand der Quelle – für die Auswertung von
         # Abweichungen außerhalb der App; wiederhergestellt werden nur die Bestände (der Abruf-Zustand gehört zur alten
         # Instanz)
         "ds_balances": _rows(
-            db, "SELECT d.provider, d.account, d.name, b.asset_key, b.qty, b.name AS asset_name, b.note, "
+            db, "SELECT d.provider, d.account, d.name, d.kind AS source_kind, d.address AS source_address, "
+                "d.watch_json AS source_watch, "
+                "b.asset_key, b.qty, b.name AS asset_name, b.note, "
                 "b.observed_at, d.status AS source_status, d.last_success_at AS source_last_success_at, "
                 "d.coverage_json AS source_coverage_json FROM ds_balance b JOIN data_source d ON d.id = b.source_id "
                 "ORDER BY d.id, b.asset_key", drop=()),
@@ -511,6 +516,10 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
         counts["plans"] = _upsert_plans(c, st.get("plans") or [])
         counts["plan_dismissed"] = _insert(c, "tx_estimate", st.get("plan_dismissed"), "OR IGNORE")
         counts["datasources"] = _datasources(c, st.get("datasources") or [], now)
+        counts["datasources_missing"] = _datasources_missing(c, st.get("datasources") or [])
+        if counts["datasources_missing"]:  # sichtbar statt still: Identität und Anzahl gegen den Export geprüft
+            log.warning("Wiederherstellung: %d Datenquelle(n) des Exports fehlen nach dem Abgleich",
+                        counts["datasources_missing"])
         counts["decisions"] = _insert(c, "event_decision", st.get("event_decisions"), "OR IGNORE")
         counts["aliases"] = _insert(c, "journal_event_alias", st.get("event_aliases"), "OR IGNORE")
         counts["links"] = _links(c, st.get("tx_links") or [])
@@ -749,13 +758,12 @@ def _research_events(c: Any, rows: list[Any]) -> int:
     for r in rows:
         if not isinstance(r, dict) or not r.get("event_key") or not r.get("lines_json"):
             continue
-        src = c.execute("SELECT id FROM data_source WHERE provider=? AND account IS ? AND name=?",
-                        (r.get("provider"), r.get("account"), r.get("name"))).fetchone()
-        if src is None:
+        sid = _source_of(c, r)
+        if sid is None:
             continue
         cur = c.execute("INSERT OR IGNORE INTO diag_research_event(source_id, event_key, ts, lines_json, status, "
                         "created_at, decided_at) VALUES (?,?,?,?,?,?,?)",
-                        (src["id"], r["event_key"], r.get("ts"), r["lines_json"],
+                        (sid, r["event_key"], r.get("ts"), r["lines_json"],
                          r.get("status") if r.get("status") in ("new", "dismissed") else "new",
                          r.get("created_at") or "", r.get("decided_at")))
         n += max(cur.rowcount, 0)
@@ -768,12 +776,11 @@ def _ds_balances(c: Any, rows: list[Any]) -> int:
     for r in rows:
         if not isinstance(r, dict) or not r.get("asset_key") or r.get("qty") is None:
             continue
-        src = c.execute("SELECT id FROM data_source WHERE provider=? AND account IS ? AND name=?",
-                        (r.get("provider"), r.get("account"), r.get("name"))).fetchone()
-        if src is None:
+        sid = _source_of(c, r)
+        if sid is None:
             continue
         cur = c.execute("INSERT OR IGNORE INTO ds_balance(source_id, asset_key, qty, name, note, observed_at) "
-                        "VALUES (?,?,?,?,?,?)", (src["id"], str(r["asset_key"]), str(r["qty"]), r.get("asset_name"),
+                        "VALUES (?,?,?,?,?,?)", (sid, str(r["asset_key"]), str(r["qty"]), r.get("asset_name"),
                                                  r.get("note"), r.get("observed_at") or ""))
         n += max(cur.rowcount, 0)
     return n
@@ -808,21 +815,80 @@ def _upsert_plans(c: Any, rows: list[dict[str, Any]]) -> int:
     return n
 
 
+def _addr_key(address: Any) -> str:
+    """Vergleichsform einer Adresse: ohne Leerraum; hexadezimale EVM-Adressen ohne Groß-/Kleinschreibung (andere
+    Formate – z. B. SS58, Base58 – unterscheiden Groß und Klein und bleiben unverändert)."""
+    a = re.sub(r"\s+", "", str(address or ""))
+    return a.lower() if a[:2].lower() == "0x" else a
+
+
+def ds_identity(r: Any) -> tuple[str, str, str, str]:
+    """Technische Identität einer Datenquelle (0.96.0, N28): Anbieter, Art, Konto und – bei Wallets – die
+    normalisierte Adresse; Wallets ohne Einzeladresse über ihre Beobachtungskonfiguration (stabile ``watch_id`` bzw.
+    Adressen/Kontoschlüssel); API-Zugänge ohne beides über ihren Namen. Der Anzeigename allein ist keine Identität: zwei
+    Wallets mit gleichem Namen und verschiedener Adresse bzw. Beobachtung sind zwei Quellen. Zugangsdaten gehören nie
+    zur Identität (``credential_ref`` ist nur ein Verweis und bleibt außen vor)."""
+    g = r.get if isinstance(r, dict) else (lambda k: r[k] if k in r.keys() else None)  # noqa: SIM118
+    addr = _addr_key(g("address"))
+    if addr:
+        tail = f"addr:{addr}"
+    else:
+        try:
+            w = json.loads(g("watch_json") or "{}")
+        except (TypeError, ValueError):
+            w = {}
+        w = w if isinstance(w, dict) else {}
+        keys = sorted({_addr_key(a) for a in [*(w.get("addresses") or []), *(w.get("xpubs") or [])] if a})
+        tail = (f"watch:{w['watch_id']}" if w.get("watch_id") else f"watch:{','.join(keys)}" if keys
+                else f"name:{g('name') or ''}")
+    return (str(g("provider") or ""), str(g("kind") or ""), str(g("account") or ""), tail)
+
+
+_DS_IDENT_SQL = "SELECT id, provider, kind, account, address, name, watch_json FROM data_source"
+
+
 def _datasources(c: Any, rows: list[dict[str, Any]], now: str) -> int:
-    """Datenquellen ohne Zugangsdaten (API-Keys neu eingeben); gleiche Anbieter/Konto/Name bleiben unberührt."""
+    """Datenquellen ohne Zugangsdaten (API-Keys neu eingeben). Abgeglichen wird über die technische Identität
+    (:func:`ds_identity`): eine bereits vorhandene gleiche Quelle bleibt unberührt (wiederholte Wiederherstellung),
+    gleichnamige Quellen mit anderer Adresse werden beide angelegt – keine Konfiguration geht still verloren."""
+    have = {ds_identity(dict(r)) for r in c.execute(_DS_IDENT_SQL)}
     n = 0
     for r in rows:
         if not isinstance(r, dict) or not r.get("provider") or not r.get("name"):
             continue
-        if c.execute("SELECT 1 FROM data_source WHERE provider=? AND account IS ? AND name=?",
-                     (r["provider"], r.get("account"), r["name"])).fetchone():
+        ident = ds_identity(r)
+        if ident in have:
             continue
         vals = {k: r.get(k) for k in DS_COLS}
         cols = [k for k, v in vals.items() if v is not None]
         c.execute(f"INSERT INTO data_source({', '.join(cols)}, status, created_at, updated_at) VALUES "
                   f"({', '.join('?' * len(cols))}, 'created', ?, ?)", [vals[k] for k in cols] + [now, now])
+        have.add(ident)
         n += 1
     return n
+
+
+def _datasources_missing(c: Any, rows: list[dict[str, Any]]) -> int:
+    """Abgleich nach der Wiederherstellung: Anzahl exportierter Quellen, deren Identität fehlt (sollte 0 sein)."""
+    have = {ds_identity(dict(r)) for r in c.execute(_DS_IDENT_SQL)}
+    want = {ds_identity(r) for r in rows if isinstance(r, dict) and r.get("provider") and r.get("name")}
+    return len(want - have)
+
+
+def _source_of(c: Any, r: dict[str, Any]) -> int | None:
+    """Quelle eines abhängigen Datensatzes: über die Identität (neuere Exporte mit Adresse), sonst – ältere Exporte –
+    über Anbieter/Konto/Name, aber nur bei genau einem Treffer (keine falsche Zuordnung bei Namensgleichheit)."""
+    if "source_address" in r or "source_kind" in r:
+        want = ds_identity({"provider": r.get("provider"), "kind": r.get("source_kind"), "account": r.get("account"),
+                            "address": r.get("source_address"), "name": r.get("name"),
+                            "watch_json": r.get("source_watch")})
+        for row in c.execute(_DS_IDENT_SQL + " WHERE provider=?", (r.get("provider"),)):
+            if ds_identity(dict(row)) == want:
+                return int(row["id"])
+        return None
+    hits = c.execute("SELECT id FROM data_source WHERE provider=? AND account IS ? AND name=?",
+                     (r.get("provider"), r.get("account"), r.get("name"))).fetchall()
+    return int(hits[0]["id"]) if len(hits) == 1 else None
 
 
 def _mappings(c: Any, rows: list[dict[str, Any]], now: str) -> int:

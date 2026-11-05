@@ -239,22 +239,33 @@ class TaxService:
 
     # -- Berechnung (gecacht) ------------------------------------------------------------------------------
     def _base(self) -> tuple:
+        # prozesslokale Zähler und die persistente Revision *vor* der Berechnung lesen (N26: ein Eintrag ist höchstens
+        # neuer als sein Schlüssel; veröffentlicht wird nur, wenn die Revision danach noch dieselbe ist)
         return (self.ctx.active_import_id(), self.ctx.prices.version, self.ctx.settings.version,
-                self.ctx.history_version, self.ctx.data_version, today_local())
+                self.ctx.history_version, self.ctx.data_version, today_local(), self._rev())
+
+    def _rev(self) -> str:
+        return self.ctx.cache_rev() if hasattr(self.ctx, "cache_rev") else ""  # Kontext ohne Lesestand (Stub)
+
+    def _may_publish(self, rev: str) -> bool:
+        return self.ctx.may_publish(rev) if hasattr(self.ctx, "may_publish") else True
 
     def _cached(self, key: tuple, fn: Any) -> Any:
-        """Cache nur für den aktuellen Datenstand – ändert sich Import, Kurse oder Einstellung, wird alles verworfen
-        (begrenzt den Speicher auf einen Ledger-Stand)."""
+        """Cache nur für den aktuellen Datenstand – ändert sich Import, Kurse, Einstellung oder die persistente
+        Datenrevision, wird alles verworfen (begrenzt den Speicher auf einen Ledger-Stand). Gemeinsame Cache-Regel
+        (``AppContext.read_state``): gelesen nur bei gleichem Stand; veröffentlicht nur außerhalb eines fremden
+        Lesestands bzw. einer Transaktion und nur, wenn sich die Revision während der Berechnung nicht geändert hat."""
         base = self._base()
         with self._lock:
-            if self._cache.get("__base__") != base:
-                self._cache = {"__base__": base}
-            if key in self._cache:
+            if self._cache.get("__base__") == base and key in self._cache:
                 return self._cache[key]
         val = fn()
-        with self._lock:
-            if self._cache.get("__base__") == base and len(self._cache) < 40:
-                self._cache[key] = val
+        if self._may_publish(base[-1]):
+            with self._lock:
+                if self._cache.get("__base__") != base:
+                    self._cache = {"__base__": base}
+                if len(self._cache) < 40:
+                    self._cache[key] = val
         return val
 
     def year_choices(self, inp: TaxInput | None, selected: int) -> dict[str, Any]:

@@ -10,15 +10,16 @@ import contextlib
 import dataclasses
 import json
 import logging
+import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime
 from typing import Any
 
 from app.analytics.history import History, compute_history, persist_snapshots
 from app.analytics.valuation import FlowValuer, Valuation, latest_update_time, net_invested, value_positions
 from app.config import Config
-from app.db import Database
+from app.db import Database, fallback
 from app.importer.loader import active_import_id, portfolio_from_db
 from app.ledger.engine import EngineOptions, LedgerResult, run_ledger
 from app.ledger.models import Portfolio
@@ -35,6 +36,28 @@ from app.util.http import Quota, SourceGuard, make_client
 from app.util.timeutil import iso, today_local
 
 log = logging.getLogger(__name__)
+
+# Revisionen aller Portfolio-Grundlagen (fachlicher Datenstand + reine Cache-Zähler ``pf:*``, ohne Prüf-Eingaben)
+_REV_SQL = "SELECT name, n FROM data_rev WHERE name <> 'input' ORDER BY name"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ReadState:
+    """Lesestand eines Cache-Aufbaus (0.96.0, N26)."""
+
+    rev: str  # persistente Revision aller Portfolio-Grundlagen
+    imports: str  # Revision der Importe (Basis-Portfolio; Importzeilen sind je Import unveränderlich)
+    publish: bool  # eigener, frisch geöffneter Lesestand → Ergebnis darf in prozessweite Caches
+
+
+def _revs(c: Any) -> tuple[str, str]:
+    try:
+        rows = c.execute(_REV_SQL).fetchall()
+    except sqlite3.OperationalError as e:  # Datenbank vor Migration 37 (nur in Migrationstests): keine Revisionen
+        fallback("Datenrevisionen (data_rev)", e, quiet=True)
+        return "", ""
+    rev = ",".join(f"{r[0]}:{r[1]}" for r in rows)
+    return rev, next((str(r[1]) for r in rows if r[0] == "imports"), "")
 
 
 class AppContext:
@@ -62,10 +85,11 @@ class AppContext:
         self.prices.catalog_path = catalog_path(self)  # Coin-Symbole für die Ersatzhistorie (nur lokaler Cache)
         self.valuer = FlowValuer(self.store, self.prices.series_for, self.settings)
         self._lock = threading.RLock()
-        self._base_pf: tuple[int, Portfolio] | None = None
-        self._rec: tuple[tuple[int, int], Portfolio | None] | None = None
-        self._eff: tuple[tuple[int, int], tuple[Portfolio | None, dict[str, Any]]] | None = None
-        self._pf: tuple[tuple[int, int], Portfolio] | None = None
+        self._tls = threading.local()  # Lesestand des laufenden Aufbaus je Thread (siehe read_state)
+        self._base_pf: tuple[tuple[int, str], Portfolio] | None = None
+        self._rec: tuple[tuple[int, int, str], Portfolio | None] | None = None
+        self._eff: tuple[tuple[int, int, str], tuple[Portfolio | None, dict[str, Any]]] | None = None
+        self._pf: tuple[tuple[int, int, str], Portfolio] | None = None
         self.overlay_version = 0
         self._ledgers: dict[tuple, LedgerResult] = {}
         self._vals: dict[tuple, Valuation] = {}
@@ -97,47 +121,96 @@ class AppContext:
         with contextlib.suppress(Exception):
             self.http.close()
 
+    # -- Lesestand und Zwischenspeicher (0.96.0, N26) ---------------------------------------------------------------
+    # Gemeinsame Regel für alle prozessweiten Portfolio-Caches (Basis, Überlagerung, erfasst, mit Schätzungen, Ledger,
+    # Bewertung, Historie; Steuer/Hinweise/Datenqualität über :meth:`cache_rev`/:meth:`may_publish`):
+    #  1. Identität: jeder Schlüssel enthält die persistente Datenrevision des Lesestands (``data_rev``, Trigger in
+    #     derselben Transaktion wie jede Änderung) – prozesslokale Zähler allein reichen nicht.
+    #  2. Aufbau: aus *einem* Lesestand. Ohne laufende Transaktion öffnet der Aufbau einen eigenen (``db.snapshot``),
+    #     sodass Revision und Daten zusammenpassen.
+    #  3. Lesen: ein Eintrag gilt nur bei exakt gleicher Revision – auch innerhalb eines fremden Lesestands.
+    #  4. Veröffentlichen: nur aus einem eigenen, frisch geöffneten Lesestand. In einem fremden Lesestand (Seite mit
+    #     ``db.snapshot``) oder einer Schreibtransaktion (ungeschriebene Änderungen, mögliche Rücknahme) bleibt das
+    #     Ergebnis privat – ein alter Stand kann so nie einen aktuellen Cache füllen oder verdrängen.
+    @contextlib.contextmanager
+    def read_state(self) -> Iterator[ReadState]:
+        cur = getattr(self._tls, "state", None)
+        if cur is not None:  # verschachtelter Aufruf im selben Lesestand
+            yield cur
+            return
+        c = self.db.conn
+        own = not c.in_transaction
+        with self.db.snapshot() if own else contextlib.nullcontext():
+            st = ReadState(*_revs(c), publish=own)
+            self._tls.state = st
+            try:
+                yield st
+            finally:
+                self._tls.state = None
+
+    def cache_rev(self) -> str:
+        """Persistente Revision aller Portfolio-Grundlagen im aktuellen Lesestand dieses Threads."""
+        st = getattr(self._tls, "state", None)
+        return st.rev if st is not None else _revs(self.db.conn)[0]
+
+    def may_publish(self, rev: str) -> bool:
+        """Darf ein unter ``rev`` berechnetes Ergebnis in einen prozessweiten Cache? Nur außerhalb jedes Lesestands
+        und jeder Transaktion und nur, wenn die festgeschriebene Revision noch dieselbe ist (sonst ein Mischstand)."""
+        if getattr(self._tls, "state", None) is not None or self.db.conn.in_transaction:
+            return False
+        return _revs(self.db.conn)[0] == rev
+
     # -- Portfolio & Ledger ------------------------------------------------------------------------
     def active_import_id(self) -> int | None:
         return active_import_id(self.db)
 
     def base_portfolio(self) -> Portfolio | None:
         """Nur der Import (maßgebliche Quelle) – ohne geschätzte/bestätigte Sparplan-Buchungen."""
-        iid = self.active_import_id()
-        if iid is None:
-            return None
-        with self._lock:
-            if self._base_pf is not None and self._base_pf[0] == iid:
-                return self._base_pf[1]
+        with self.read_state() as st:
+            iid = self.active_import_id()
+            if iid is None:
+                return None
+            key = (iid, st.imports)
+            with self._lock:
+                if self._base_pf is not None and self._base_pf[0] == key:
+                    return self._base_pf[1]
             pf = portfolio_from_db(self.db, iid)
-            self._base_pf = (iid, pf)
             if self.demo is not None:
                 self._seed_demo(pf)
+            if st.publish:
+                with self._lock:
+                    self._base_pf = (key, pf)
             return pf
 
     def effective_base(self) -> tuple[Portfolio | None, dict[str, Any]]:
         """Import mit den in der App vorgenommenen Änderungen/Löschungen (siehe :mod:`app.journal.overrides`) und
         dem Zustand je Änderung."""
-        base = self.base_portfolio()
-        key = ((base.import_id or 0) if base is not None else 0, self.overlay_version)
-        with self._lock:
-            if self._eff is not None and self._eff[0] == key:
-                return self._eff[1]
-        from app.journal.overrides import apply as apply_overrides
-        from app.journal.service import journal_asset_infos
+        with self.read_state() as st:
+            base = self.base_portfolio()
+            key = ((base.import_id or 0) if base is not None else 0, self.overlay_version, st.rev)
+            with self._lock:
+                if self._eff is not None and self._eff[0] == key:
+                    return self._eff[1]
+            from app.journal.overrides import apply as apply_overrides
+            from app.journal.service import journal_asset_infos
 
-        res = apply_overrides(self.db, base, journal_asset_infos(self.db))
-        with self._lock:
-            self._eff = (key, res)
-        return res
+            res = apply_overrides(self.db, base, journal_asset_infos(self.db))
+            if st.publish:
+                with self._lock:
+                    self._eff = (key, res)
+            return res
 
     def recorded_portfolio(self) -> Portfolio | None:
         """Erfasste Buchungen: Import + in der App erfasste Buchungen (Journal) + freigegebene Sparplan-Ausführungen.
 
         Funktioniert auch ohne Import (nur Journal). Grundlage der Sparplan-Erkennung und des Gesamtexports.
         """
+        with self.read_state() as st:
+            return self._recorded(st)
+
+    def _recorded(self, st: ReadState) -> Portfolio | None:
         raw = self.base_portfolio()
-        key = ((raw.import_id or 0) if raw is not None else 0, self.overlay_version)
+        key = ((raw.import_id or 0) if raw is not None else 0, self.overlay_version, st.rev)
         with self._lock:
             if self._rec is not None and self._rec[0] == key:
                 return self._rec[1]
@@ -175,16 +248,21 @@ class AppContext:
             pf = apply_meta(self.db, pf)  # selbst angelegte Konten und Stammdaten (Überlagerung über dem Import)
             if self.demo is not None and pf is not start:
                 self._seed_demo(pf)
-        with self._lock:
-            self._rec = (key, pf)
+        if st.publish:
+            with self._lock:
+                self._rec = (key, pf)
         return pf
 
     def portfolio(self) -> Portfolio | None:
         """Erfasste Buchungen plus Sparplan-Schätzungen (``Tx.flag`` = estimated) – Grundlage aller Ansichten."""
-        rec = self.recorded_portfolio()
+        with self.read_state() as st:
+            return self._portfolio(st)
+
+    def _portfolio(self, st: ReadState) -> Portfolio | None:
+        rec = self.recorded_portfolio()  # teilt den Lesestand (verschachtelt)
         if rec is None:
             return None
-        key = (rec.import_id or 0, self.overlay_version)
+        key = (rec.import_id or 0, self.overlay_version, st.rev)
         with self._lock:
             if self._pf is not None and self._pf[0] == key:
                 return self._pf[1]
@@ -201,8 +279,9 @@ class AppContext:
             hid = set().union(*hidden_ids(self.db).values()) if hidden_ids(self.db) else set()
             extra = filter_txs(extra, hid)
         pf = dataclasses.replace(rec, txs=[*rec.txs, *extra]) if extra else rec
-        with self._lock:
-            self._pf = (key, pf)
+        if st.publish:
+            with self._lock:
+                self._pf = (key, pf)
         return pf
 
     def invalidate_overlay(self) -> None:
@@ -258,18 +337,22 @@ class AppContext:
         )
 
     def ledger(self, scope: str | None = None, opts: EngineOptions | None = None) -> LedgerResult | None:
-        pf = self.portfolio()
-        if pf is None:
-            return None
-        opts = opts or self.engine_options(scope)
-        key = (pf.import_id, self.overlay_version, opts)
-        with self._lock:
-            res = self._ledgers.get(key)
-            if res is None:
-                res = run_ledger(pf, opts)
-                if len(self._ledgers) > 8:
-                    self._ledgers.clear()
-                self._ledgers[key] = res
+        with self.read_state() as st:
+            pf = self.portfolio()  # öffentliche Schnittstelle; teilt den Lesestand
+            if pf is None:
+                return None
+            opts = opts or self.engine_options(scope)
+            key = (pf.import_id, self.overlay_version, st.rev, opts)
+            with self._lock:
+                res = self._ledgers.get(key)
+            if res is not None:
+                return res
+            res = run_ledger(pf, opts)
+            if st.publish:
+                with self._lock:
+                    if len(self._ledgers) > 8:
+                        self._ledgers.clear()
+                    self._ledgers[key] = res
             return res
 
     def invalidate_data(self) -> None:
@@ -309,40 +392,46 @@ class AppContext:
         return None, None
 
     def valuation(self, selector: str | None = None) -> Valuation | None:
-        pf = self.portfolio()
-        led = self.ledger()
-        if pf is None or led is None:
-            return None
-        key = (pf.import_id, self.overlay_version, self.prices.version, self.settings.version, self.history_version,
-               selector)
-        with self._lock:
-            v = self._vals.get(key)
-            if v is not None:
-                return v
-        accounts, label = self.resolve_accounts(selector)
-        prices = self.price_infos(pf, led)
-        invested = net_invested(led, pf, self.valuer, accounts=accounts)
-        v = value_positions(pf, led, prices, invested, accounts=accounts, last_update=latest_update_time(prices),
-                            label=label)
-        with self._lock:
-            if len(self._vals) > 16:
-                self._vals.clear()
-            self._vals[key] = v
-        return v
+        # prozesslokale Zähler *vor* dem Lesestand lesen: ein Eintrag ist höchstens neuer als sein Schlüssel, nie älter
+        versions = (self.prices.version, self.settings.version, self.history_version)
+        with self.read_state() as st:
+            pf = self.portfolio()  # öffentliche Schnittstelle; teilt den Lesestand
+            led = self.ledger()
+            if pf is None or led is None:
+                return None
+            key = (pf.import_id, self.overlay_version, st.rev, *versions, selector)
+            with self._lock:
+                v = self._vals.get(key)
+                if v is not None:
+                    return v
+            accounts, label = self.resolve_accounts(selector)
+            prices = self.price_infos(pf, led)
+            invested = net_invested(led, pf, self.valuer, accounts=accounts)
+            v = value_positions(pf, led, prices, invested, accounts=accounts,
+                                last_update=latest_update_time(prices), label=label)
+            if st.publish:
+                with self._lock:
+                    if len(self._vals) > 16:
+                        self._vals.clear()
+                    self._vals[key] = v
+            return v
 
     def history(self) -> History | None:
-        pf = self.portfolio()
-        led = self.ledger()
-        if pf is None or led is None:
-            return None
-        key = (pf.import_id, self.overlay_version, self.history_version, self.settings.version, today_local())
-        with self._lock:
-            if self._hist is not None and self._hist[0] == key:
-                return self._hist[1]
-        hist = compute_history(pf, led, self.store, self.prices.series_for, self.valuer, settings=self.settings)
-        with self._lock:
-            self._hist = (key, hist)
-        return hist
+        versions = (self.history_version, self.settings.version, today_local())  # vor dem Lesestand (s. valuation)
+        with self.read_state() as st:
+            pf = self.portfolio()  # öffentliche Schnittstelle; teilt den Lesestand
+            led = self.ledger()
+            if pf is None or led is None:
+                return None
+            key = (pf.import_id, self.overlay_version, st.rev, *versions)
+            with self._lock:
+                if self._hist is not None and self._hist[0] == key:
+                    return self._hist[1]
+            hist = compute_history(pf, led, self.store, self.prices.series_for, self.valuer, settings=self.settings)
+            if st.publish:
+                with self._lock:
+                    self._hist = (key, hist)
+            return hist
 
     def history_with_live(self) -> History | None:
         """Historie, deren letzter Tag (heute) mit der Live-Bewertung überschrieben ist."""

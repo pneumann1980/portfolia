@@ -132,7 +132,7 @@ class Plan:
 # jüngster Zeitstempel je Tabelle, sekundengenau). Ein Index-Zugriff statt Zählungen – günstig bei jedem Seitenaufruf.
 # Rein aus der Datenbank: gilt prozessübergreifend und wird beim Übernehmen in der Schreibtransaktion erneut geprüft.
 _VERSION_SQL = ("SELECT (SELECT group_concat(name || ':' || n, ',') FROM "
-                "(SELECT name, n FROM data_rev WHERE name <> 'input' ORDER BY name))")
+                "(SELECT name, n FROM data_rev WHERE name <> 'input' AND name NOT LIKE 'pf:%' ORDER BY name))")
 
 
 def data_version(db: Any) -> str:

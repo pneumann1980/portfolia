@@ -236,7 +236,9 @@ def _batch_page(request: Request, bid: int, status: str = "", offset: int = 0, e
         # und der Transferentscheidung an genau diese Anzeige) und Eingabestand der Formularfelder
         row_revs = {rc.idx: BA.row_revision(ctx.db.conn, rc) for rc in page if rc.open and BA.row_refs(rc)}
         pair_revs = {rc.idx: pair_cand_rev(ctx.db.conn, rc) or "" for rc in ov["pairs"] if has_j_cands(rc)}
-        input_marks = svc.input_marks(bid) if b["status"] in ("preview", "partial") else {}
+        # Eingabestand überall dort, wo offene Zeilen editierbar angezeigt werden – auch nach der letzten
+        # Entscheidung (Stapel „done“): sonst lehnte ``require_marks`` jede Änderung mit „bitte neu laden“ ab
+        input_marks = svc.input_marks(bid) if b["status"] not in ("mapping", "reverted") else {}
     js = journal_service(ctx)
     known = js.known_assets()
     assets = sorted(known.values(), key=lambda a: (a.is_fiat, a.name.lower()))
@@ -918,7 +920,8 @@ def make_router() -> APIRouter:
             res = BA.undo(svc, aid)
             if res.get("errors"):
                 return _batch_page(request, bid, errors=res["errors"])
-            q = {"msg": "undo", "r": res["restored"], "c": res["changed"], "t": res["reverted"]}
+            q = {"msg": "undo", "r": res["restored"], "c": res["changed"], "t": res["reverted"],
+                 "u": res.get("unproven", 0)}
             return _back(request, f"/journal/csv/{bid}?{urlencode(q)}#verlauf")
 
         return await run_in_threadpool(work)

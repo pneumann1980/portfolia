@@ -60,6 +60,7 @@ from app.csvimport.identity import (
 from app.csvimport.model import ParseOptions, Rec
 from app.csvimport.profiles import BUILTIN, PROFILES, MappingProfile, Profile, detect, header_matcher
 from app.csvimport.reader import CsvError, read_table, zone
+from app.db import REV_TABLES
 from app.importer import contract as C
 from app.importer.validate import validate_tx_rows
 from app.journal.service import JournalService, _now, journal_service, source_label
@@ -1156,7 +1157,7 @@ class CsvImportService:
         self._transfers(bid, rows, pf, valuer)
         from app.csvimport.assess import assess_rows
 
-        assess_rows(self.ctx, open_rows, source, pf)
+        assess_rows(self.ctx, open_rows, source, pf, bid)
         self._carry_decisions(bid, source, open_rows)
         self._save(rows)
         self._save_recon(batch, rows, recon)
@@ -2245,24 +2246,50 @@ class CsvImportService:
 
     @_locked
     def restore_inputs(self, bid: int, snap: list[tuple[int, str, tuple[Any, ...], int]]) -> int:
-        """Eigene Eingaben einer abgelehnten Einzelaktion zurücknehmen. ``snap`` (aus :meth:`set_rows`): Zeile, Gruppe,
-        Werte davor, eigene Schreibkennung. Zurückgesetzt wird eine Gruppe nur, solange sie noch **genau diese**
-        Kennung trägt – jede spätere Schreiboperation (auch mit gleichem Wert, auch A → B → A) hat eine neue Kennung
-        und bleibt erhalten. Die Rücknahme ist selbst ein Schreibvorgang mit neuer Kennung: ein zweiter oder verspäteter
-        Rücknahmeauftrag findet nichts mehr. Prüfen und Schreiben in einer Schreibtransaktion. Rückgabe: Anzahl
-        zurückgesetzter Gruppen."""
+        """Eigene Eingaben einer abgelehnten Einzelaktion zurücknehmen (Ausgleich). ``snap`` (aus :meth:`set_rows`):
+        Zeile, Gruppe, Werte davor, eigene Schreibkennung.
+
+        Ausgleichsregel (0.96.0, N27): Die Rücknahme stellt den Stand *davor* vollständig wieder her – Werte **und**
+        deren Kennung (Herkunft; von :meth:`set_rows` in derselben Transaktion in ``csv_input_hist`` abgelegt) – und
+        vermerkt die eigene Kennung als widerrufen. Führt die Rücknahme auf eine selbst schon widerrufene Kennung
+        zurück (zweite, überlappende abgelehnte Aktion), folgt sie dieser Kette bis zum letzten nicht widerrufenen
+        Stand. So hinterlassen zwei abgelehnte Aktionen in beliebiger Reihenfolge den Ausgangswert, während jede
+        spätere erfolgreiche Eingabe (eigene neue Kennung – auch gleicher Wert oder A → B → A) unberührt bleibt. Eine
+        zweite oder verspätete Rücknahme findet ihre Kennung nicht mehr und ändert nichts. Prüfen und Schreiben in
+        einer Schreibtransaktion. Ohne abgelegten Stand davor (Eingabe vor 0.96.0) erhält die Rücknahme wie bisher
+        eine neue Kennung. Rückgabe: Anzahl zurückgesetzter Gruppen."""
         n = 0
+        stamp = datetime.now(UTC).isoformat(timespec="seconds")
         with self.db.transaction() as c:
             tok = None
             for rid, g, before, mine in snap:
                 cols = self._GROUPS[g]
                 cur = c.execute(f"SELECT ver_{g}, status FROM csv_row WHERE id=? AND batch_id=?",
                                 (rid, bid)).fetchone()
-                if cur is None or cur["status"] in CLOSED or int(cur[0]) != int(mine):
+                if cur is None:
                     continue
-                tok = tok or _input_token(c)
+                hist = c.execute("SELECT before_ver FROM csv_input_hist WHERE row_id=? AND grp=? AND token=?",
+                                 (rid, g, int(mine))).fetchone()
+                # Widerruf vermerken – auch wenn die Gruppe inzwischen anders belegt ist (spätere Kette)
+                c.execute("UPDATE csv_input_hist SET revoked_at=COALESCE(revoked_at, ?) WHERE row_id=? AND grp=? "
+                          "AND token=?", (stamp, rid, g, int(mine)))
+                if cur["status"] in CLOSED or int(cur[0]) != int(mine):
+                    continue
+                vals: tuple[Any, ...] = tuple(before)
+                ver: int | None = int(hist[0]) if hist is not None else None
+                seen = {int(mine)}
+                while ver is not None and ver not in seen:  # Kette widerrufener Vorgänger-Stände
+                    r = c.execute("SELECT before_json, before_ver FROM csv_input_hist WHERE row_id=? AND grp=? "
+                                  "AND token=? AND revoked_at IS NOT NULL", (rid, g, ver)).fetchone()
+                    if r is None:
+                        break
+                    seen.add(ver)
+                    vals, ver = tuple(json.loads(r[0])), int(r[1])
+                if ver is None:
+                    tok = tok or _input_token(c)
+                    ver = tok
                 c.execute(f"UPDATE csv_row SET {', '.join(f'{x}=?' for x in cols)}, ver_{g}=? WHERE id=?",
-                          [*before, tok, rid])
+                          [*vals, ver, rid])
                 n += 1
         self.evaluate(bid)
         self.refresh_status(bid)
@@ -2352,6 +2379,10 @@ class CsvImportService:
                               [*vals, t, rid])
                 else:  # gleicher Wert ausdrücklich gesetzt: Gruppe gehört jetzt diesem Aufruf
                     c.execute(f"UPDATE csv_row SET ver_{g}=? WHERE id=?", (t, rid))
+                # Stand davor (Werte und Kennung) für die Ausgleichsregel (N27), in derselben Transaktion
+                c.execute("INSERT OR REPLACE INTO csv_input_hist(row_id, grp, token, before_json, before_ver) "
+                          "VALUES (?,?,?,?,?)", (rid, g, t, json.dumps(list(old), default=str),
+                                                  int(cur[rid][f"ver_{g}"])))
                 undo.append((rid, g, old, t))
 
             stale_form: set[int] = set()
@@ -2839,7 +2870,14 @@ TRANSFER_TABLES = ("journal_tx", "tx_override", "imports")
 # erster neuer Kandidat zwischen Bewertung und Schreiben), Konto-/Symbol-/Spam-Zuordnungen und Assets (Klasse,
 # Bekanntheit). Gebunden vor der Bewertung, geprüft als erste Anweisung der Schreibtransaktion – grob, aber sicher:
 # jede Änderung dieser Tabellen im Millisekundenfenster lehnt ab, die Vorschau ist danach neu zu öffnen.
-BOOKING_TABLES = (*TRANSFER_TABLES, "csv_account", "csv_symbol", "journal_asset")
+# 0.96.0 (N21-Rest): aus den Lesepfaden abgeleitet statt aufgezählt – alle Überlagerungen des erfassten Portfolios
+# (``AppContext.recorded_portfolio``: Journal, Änderungen, Importverknüpfungen, Asset-/Kontenzusammenführung,
+# entfernte Konten, Kontostammdaten, Asset-Änderungen, freigegebene Sparplan-Ausführungen) und die Belegungen der
+# Bewertung (``tx_link`` für die Quellbelegung, N29; Ereignis-Aliase und -Entscheidungen). Nicht gebunden, weil für
+# Bewertung und Buchung ohne Wirkung: Bestandsnachweise (``reference_balance``, ``ds_balance``) und die
+# Kursquellen-Zuordnung (``asset_source`` – ändert nur die Bewertung in EUR, nie Konto, Asset, Menge oder Kandidaten).
+NON_BOOKING_REVS = ("reference_balance", "ds_balance", "asset_source")
+BOOKING_TABLES = (*TRANSFER_TABLES, *(t for t in REV_TABLES if t not in TRANSFER_TABLES + NON_BOOKING_REVS))
 
 
 def pair_cands(rc: RowCtx) -> list[str]:

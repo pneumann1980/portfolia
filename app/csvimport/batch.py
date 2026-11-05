@@ -921,7 +921,7 @@ def undo(svc: Any, action_id: int) -> dict[str, Any]:
         from app.journal.service import _now
 
         stamp = _now()
-        restored = changed = reverted = 0
+        restored = changed = reverted = unproven = 0
         exists = svc.batch(bid) is not None
         with db.transaction() as c:
             if ops.get("txs"):
@@ -953,6 +953,13 @@ def undo(svc: Any, action_id: int) -> dict[str, Any]:
                 if "ver_dec" in want and int(r["ver_dec"]) != int(want["ver_dec"]):
                     changed += 1
                     continue
+                # Aktion vor 0.95.0 (ohne Besitzkennung, 0.96.0): nur mit belastbarem Nachweis rekonstruieren – die
+                # Entscheidungsgruppe wurde seit Einführung der Schreibkennungen nie geschrieben (Kennung 0). Sonst ist
+                # nicht unterscheidbar, ob der gleiche Wert von dieser Aktion oder einer späteren Eingabe stammt
+                # → nicht zurücksetzen, mit Begründung melden.
+                if "decision" in want and "ver_dec" not in want and int(r["ver_dec"] or 0) != 0:
+                    unproven += 1
+                    continue
                 msgs = json.loads(r["messages"] or "{}")
                 msgs.pop("linked", None)
                 status = st["status"] if "status" in want else r["status"]
@@ -968,12 +975,14 @@ def undo(svc: Any, action_id: int) -> dict[str, Any]:
                 restored += 1
             c.execute("UPDATE import_action SET status='undone', undone_at=? WHERE id=?", (stamp, action_id))
             svc.journal._log(c, "import_batch_undo", f"csv:{bid}", None,
-                             {"id": action_id, "restored": restored, "changed": changed, "reverted": reverted}, stamp)
+                             {"id": action_id, "restored": restored, "changed": changed, "reverted": reverted,
+                              "unproven": unproven}, stamp)
         if exists:
             svc.evaluate(bid)
             svc.refresh_status(bid)
     svc.journal.after_change()
-    return {"restored": restored, "changed": changed, "reverted": reverted, "batch_id": bid, "errors": []}
+    return {"restored": restored, "changed": changed, "reverted": reverted, "unproven": unproven, "batch_id": bid,
+            "errors": []}
 
 
 # ----------------------------------------------------------------------------------------------------

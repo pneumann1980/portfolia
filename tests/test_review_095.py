@@ -168,7 +168,10 @@ def test_bulk_button_owns_its_decisions_against_an_older_restore(c):
 
 # -- N20: Rücknahme alter (vor 0.95.0 protokollierter) Aktionen ---------------------------------------------------
 
-def test_action_logged_before_ownership_tokens_still_undoes_by_value(c):
+def test_action_logged_before_ownership_tokens_is_not_undone_by_value_alone(c):
+    """Seit 0.96.0 (Nachprüfung 0.95.0): ohne protokollierte Besitzkennung nur mit belastbarem Nachweis zurücksetzen
+    (siehe ``tests/test_review_096.py``). Hier trägt die Zeile eine nicht protokollierte Kennung – gleicher Wert allein
+    beweist nichts → nicht zurückgesetzt, mit Begründung gezählt (früher: Wertvergleich)."""
     cx, svc, bid, mine, _other = _two_rows(c)
     p = BA.plan(svc, bid, "skip", {mine.idx})
     res = BA.execute(svc, bid, "skip", {mine.idx}, token=BA.new_token(), fingerprint=p.fingerprint())
@@ -176,8 +179,9 @@ def test_action_logged_before_ownership_tokens_still_undoes_by_value(c):
     for st in ops["rows"].values():  # Format vor 0.95.0: ohne Besitzkennung
         st["set"].pop("ver_dec", None)
     cx.db.x("UPDATE import_action SET ops_json=? WHERE id=?", (json.dumps(ops), res["action_id"]))
-    assert not BA.undo(svc, res["action_id"])["errors"]
-    assert cx.db.scalar("SELECT decision FROM csv_row WHERE id=?", (mine.id,)) is None
+    out = BA.undo(svc, res["action_id"])
+    assert not out["errors"] and out["unproven"] == 1
+    assert cx.db.scalar("SELECT decision FROM csv_row WHERE id=?", (mine.id,)) == "skip"
 
 
 # -- N21: Revisionsdomänen --------------------------------------------------------------------------------------
