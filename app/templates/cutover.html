@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Stichtag{% endblock %}
+{% block heading %}Stichtag: Neustart ab einem Datum{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/settings#ledger">← Einstellungen</a></p>
+  {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+  {% if saved %}<div class="alert good"><span class="icon">✓</span><div>{{ {'fixed': 'Stichtag festgeschrieben.', 'undone': 'Stichtag zurückgenommen – das Archiv ist wieder bearbeitbar.', 'approved': 'Eröffnungsstand freigegeben.', 'corrected': 'Korrektur gebucht.', 'correction_undone': 'Korrektur zurückgenommen.'}.get(saved, 'Gespeichert.') }}</div></div>{% endif %}
+  {% if st %}
+  <section class="card">
+    <div class="card-head"><h2>Stichtag {{ st.cutoff|date_de }} ist festgeschrieben</h2><span class="badge {{ 'good' if st.ok and not st.changed else 'crit' }}">{{ 'in Ordnung' if st.ok and not st.changed else 'prüfen' }}</span></div>
+    <p>Seit {{ st.created_at|datetime_de }}: Buchungen vor dem {{ st.cutoff|date_de }} bilden das Archiv und lassen sich nicht ändern; Prüfungen, Importe und Übernahmen betrachten nur noch die Zeit ab dem Stichtag. Depotwert, eingesetztes Kapital und Verlauf laufen weiter ab Depotstart. {{ st.approved }} Konten sind freigegeben.</p>
+    {% if st.changed %}
+    <div class="alert warn"><span class="icon">!</span><div><b>Der Eröffnungsstand hat sich seit der Freigabe verändert</b> (z. B. durch Zusammenführen von Konten oder Assets, einen geänderten Import oder eine Stichtag-Korrektur):
+      <form method="post" action="/settings/stichtag/freigabe"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <ul class="plain-list">{% for c in st.changed %}<li><label class="check"><input type="checkbox" name="account" value="{{ c.account }}" checked> <span><b>{{ c.account }}</b> – {{ c.why }}</span></label></li>{% endfor %}</ul>
+      <button class="btn sm" type="submit">Markierte Konten neu freigeben</button></form></div></div>
+    {% endif %}
+    <form method="post" action="/settings/stichtag/zurueck" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn ghost" type="submit" data-confirm="Stichtag zurücknehmen? Das Archiv ist danach wieder bearbeitbar; Buchungen bleiben unverändert.">Stichtag zurücknehmen</button></form>
+  </section>
+  {% endif %}
+  {% if not p.has_data %}<section class="card"><p class="hint">Noch keine Daten.</p></section>
+  {% else %}
+  {% if not st %}
+  <section class="card">
+    <div class="card-head"><h2>Stichtag wählen</h2></div>
+    <form method="get" action="/settings/stichtag" class="inline">
+      <label class="field">Erster aktiver Tag <input type="date" name="cutoff" value="{{ p.cutoff.isoformat() }}" required></label>
+      <button class="btn" type="submit">Vorschau berechnen</button>
+    </form>
+    <p class="hint">Alle Buchungen <b>vor</b> diesem Tag bilden das Archiv: Sie bleiben gespeichert und zählen für Depotwert und eingesetztes Kapital ab Depotstart, werden aber nicht mehr geprüft. Ab dem Stichtag rechnet Portfolia mit dem unten gezeigten <b>Eröffnungsstand</b> (offene Lots mit ihrem ursprünglichen Anschaffungsdatum und den Anschaffungskosten) plus allen Buchungen danach. Diese Vorschau ändert nichts.</p>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>Pflichtprüfungen</h2><span class="badge {{ 'good' if p.ok else 'crit' }}">{{ 'bestanden' if p.ok else 'gesperrt' }}</span></div>
+    <p class="hint">Eröffnungsstand + Buchungen ab dem {{ p.cutoff|date_de }} müssen dieselben Ergebnisse liefern wie die vollständige Berechnung über die gesamte Vorgeschichte.</p>
+    <ul class="plain-list">{% for c in p.checks %}<li><span class="badge {{ 'good' if c.ok else 'crit' }}">{{ 'gleich' if c.ok else 'abweichend' }}</span> {{ c.label }}{% if c.detail %} <span class="hint">– {{ c.detail }}</span>{% endif %}</li>{% endfor %}</ul>
+    <p class="hint">Depotwert, eingesetztes Kapital und Verlauf ab Depotstart werden weiter aus dem <b>vollständigen</b> Stand berechnet und ändern sich durch den Stichtag nicht.</p>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Archiv und aktiver Stand</h2></div>
+    <ul class="small">
+      <li>Archiv (vor dem {{ p.cutoff|date_de }}): <b>{{ p.overview.archive.txs }}</b> Buchungen{% if p.overview.archive.first %} · {{ p.overview.archive.first|date_de }} – {{ p.overview.archive.last|date_de }}{% endif %}, darunter <b>{{ p.overview.archive.corrections }}</b> Korrektur-/Rekonstruktionsbuchungen.</li>
+      <li>Aktiv (ab dem {{ p.cutoff|date_de }}): <b>{{ p.overview.archive.active_txs }}</b> Buchungen.</li>
+      <li>Eröffnungsstand: <b>{{ p.overview.n_lots }}</b> offene Lots, Anschaffungskosten zusammen <b>{{ p.overview.total_cost|eur }}</b> – Lot-Reihenfolge der Steuer: {{ p.scope_label }}{% if p.fiat_off %}; Fiat-Guthaben werden nicht geführt{% endif %}.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Eröffnungsstand je Konto</h2><span class="hint">{{ p.accounts|length }} Konten</span></div>
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Konto</th><th>Beleg zum {{ (p.cutoff|prev_day)|date_de }}</th><th class="num">Positionen</th><th class="num">Anschaffungskosten</th></tr></thead>
+      <tbody>{% for a in p.accounts %}<tr>
+        <td data-label="Konto">{{ a.account }}</td>
+        <td data-label="Beleg"><span class="badge {{ 'good' if a.status == 'belegt' else 'crit' if a.status == 'abweichung' else '' }}">{{ {'belegt': 'belegt', 'abweichung': 'Abweichung', 'ohne_beleg': 'ohne Beleg'}[a.status] }}</span>{% if a.refs %} <span class="hint">{{ a.refs }} Referenz{{ '' if a.refs == 1 else 'en' }}</span>{% endif %}</td>
+        <td class="num" data-label="Positionen">{{ a.positions }}</td><td class="num nowrap" data-label="Kosten">{{ a.cost|eur }}</td></tr>
+      {% else %}<tr><td colspan="4" class="hint">Kein Bestand zum Stichtag.</td></tr>{% endfor %}</tbody></table></div>
+    <details><summary>Positionen und Lots (Konto · Asset)</summary>
+      <div class="table-wrap cards-wrap"><table class="compact cards">
+        <thead><tr><th>Konto</th><th>Asset</th><th class="num">Lots</th><th class="num">Menge</th><th class="num">Anschaffungskosten</th><th>ältestes · jüngstes Lot</th></tr></thead>
+        <tbody>{% for r in p.overview.rows %}<tr><td data-label="Konto">{{ r.account }}</td><td data-label="Asset">{{ r.asset }}</td><td class="num" data-label="Lots">{{ r.lots }}</td><td class="num nowrap" data-label="Menge">{{ r.qty|qty_exact }}</td><td class="num nowrap" data-label="Kosten">{{ r.cost|eur }}</td><td class="nowrap" data-label="Lots von–bis">{{ r.first|date_de }} · {{ r.last|date_de }}</td></tr>{% endfor %}</tbody></table></div>
+    </details>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Belege zum {{ (p.cutoff|prev_day)|date_de }}</h2><span class="hint">{{ p.refs|length }} Referenzbestände</span></div>
+    {% if p.refs %}
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Konto</th><th>Asset</th><th class="num">Beleg</th><th class="num">Eröffnungsstand</th><th class="num">Differenz</th></tr></thead>
+      <tbody>{% for r in p.refs %}<tr {% if not r.ok and not r.dust %}class="row-changed"{% endif %}><td data-label="Konto">{{ r.account }}</td><td data-label="Asset">{{ r.asset }}</td><td class="num nowrap" data-label="Beleg">{{ r.reference|qty_exact }}</td><td class="num nowrap" data-label="Eröffnungsstand">{{ r.opening|qty_exact }}</td><td class="num nowrap" data-label="Differenz">{% if r.ok %}–{% else %}{{ r.diff|qty_exact }}{% if r.dust %} <span class="hint">(Staub)</span>{% endif %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<p class="hint">Keine Referenzbestände zu diesem Stichtag. Für Konten ohne Beleg gilt der berechnete Stand; ein Beleg (Jahresauszug) lässt sich unter „Bestandsnachweise“ erfassen.</p>{% endif %}
+  </section>
+
+  {% if p.overview.zero_cost or p.overview.estimated or p.overview.negatives or p.overview.crossing %}
+  <section class="card">
+    <div class="card-head"><h2>Auffälligkeiten im Eröffnungsstand</h2><span class="hint">nur Information</span></div>
+    {% if p.overview.negatives %}<div class="alert warn"><span class="icon">!</span><div><b>Negative Bestände:</b> {% for n in p.overview.negatives %}{{ n.account }} · {{ n.asset }} ({{ n.qty|qty_exact }}){% if not loop.last %}; {% endif %}{% endfor %}</div></div>{% endif %}
+    {% if p.overview.crossing %}<div class="alert warn"><span class="icon">!</span><div><b>Mögliche Übertragungen über den Stichtag</b> (Abgang ohne Gegenbuchung kurz davor, Zugang ohne Gegenbuchung kurz danach):<ul>{% for x in p.overview.crossing %}<li>{{ x.asset }}: {{ x.out_qty|qty_exact }} von {{ x.out_account }} ({{ x.out_date|date_de }}) → {{ x.in_qty|qty_exact }} auf {{ x.in_account }} ({{ x.in_date|date_de }})</li>{% endfor %}</ul></div></div>{% endif %}
+    {% if p.overview.zero_cost %}<details><summary>{{ p.overview.zero_cost|length }} Lots ohne Anschaffungskosten oder ohne Anschaffung</summary>
+      <div class="table-wrap cards-wrap"><table class="compact cards"><thead><tr><th>Konto</th><th>Asset</th><th class="num">Menge</th><th>Datum</th><th>Grund</th></tr></thead>
+      <tbody>{% for z in p.overview.zero_cost[:200] %}<tr><td data-label="Konto">{{ z.account }}</td><td data-label="Asset">{{ z.asset }}</td><td class="num nowrap" data-label="Menge">{{ z.qty|qty_exact }}</td><td data-label="Datum">{{ z.date|date_de }}</td><td data-label="Grund">{{ z.why }}</td></tr>{% endfor %}</tbody></table></div></details>{% endif %}
+    {% if p.overview.estimated %}<details><summary>{{ p.overview.estimated|length }} Lots aus geschätzten oder rekonstruierten Buchungen</summary>
+      <div class="table-wrap cards-wrap"><table class="compact cards"><thead><tr><th>Konto</th><th>Asset</th><th class="num">Menge</th><th class="num">Kosten</th><th>Grund</th></tr></thead>
+      <tbody>{% for z in p.overview.estimated[:200] %}<tr><td data-label="Konto">{{ z.account }}</td><td data-label="Asset">{{ z.asset }}</td><td class="num nowrap" data-label="Menge">{{ z.qty|qty_exact }}</td><td class="num nowrap" data-label="Kosten">{{ z.cost|eur }}</td><td data-label="Grund">{{ z.why }}</td></tr>{% endfor %}</tbody></table></div></details>{% endif %}
+    <p class="hint">Das ist reine Information und keine Hürde: Fehlerhafte Anschaffungskosten wirken nur dort auf die Steuer, wo ein Lot innerhalb eines Jahres nach Anschaffung verkauft wird.</p>
+  </section>
+  {% endif %}
+
+  <section class="card" id="korrekturen">
+    <div class="card-head"><h2>Stichtag-Korrekturen</h2><span class="hint">nur mit Beleg</span></div>
+    <p class="hint">Der berechnete Stand gilt. Eine Korrektur ist nur dort sinnvoll, wo ein Beleg zum {{ (p.cutoff|prev_day)|date_de }} zeigt, dass er nicht stimmt. Sie wird als gekennzeichnete Buchung <b>vor</b> dem Stichtag gebucht und lässt sich einzeln zurücknehmen. Zu wenig gebuchte Menge braucht das belegte Anschaffungsdatum und die belegten Kosten – ohne Beleg bleibt sie besser offen.</p>
+    {% for x in p.proposals %}<div class="alert {{ '' if x.dust else 'warn' }}"><span class="icon">{{ '·' if x.dust else '!' }}</span><div>
+      <b>{{ x.account }} · {{ x.asset }}</b>: Beleg {{ x.reference|qty_exact }}, berechnet {{ x.opening|qty_exact }} (Differenz {{ x.diff|qty_exact }}).
+      {% if x.dust %}<span class="hint">Staub – nur ausgewiesen, keine Korrektur.</span>
+      {% else %}<span class="hint">{{ x.evidence }}</span>
+      <a class="btn sm ghost" href="/settings/stichtag?cutoff={{ p.cutoff.isoformat() }}&amp;fa={{ x.account|urlencode }}&amp;fs={{ x.asset|urlencode }}&amp;fk={{ x.kind }}&amp;fq={{ x.qty|qty_exact|urlencode }}#korrektur-form">{{ 'Abgang ' if x.kind == 'remove' else 'Zugang ' }}vorbereiten</a>{% endif %}</div></div>
+    {% else %}<p class="hint">Keine Abweichungen zu Belegen zum Stichtag.</p>{% endfor %}
+
+    <h3 id="abgeleitet">Abgeleitete Vorschläge</h3>
+    <p class="hint">Belege <b>nach</b> dem Stichtag (Referenzbestand oder vollständig abgerufener Bestand der Quelle). Nur wo seit dem Stichtag keine Buchung auf Konto und Asset liegt, kann die Abweichung am Stichtag bestanden haben – dann gibt es einen als „abgeleitet“ gekennzeichneten Vorschlag. Liegen Buchungen dazwischen, zeigt die Seite nur mögliche Ursachen im aktiven Zeitraum. Gebucht wird nie automatisch.</p>
+    {% if p.derived is none %}<a class="btn sm ghost" href="/settings/stichtag?cutoff={{ p.cutoff.isoformat() }}&amp;derive=1#abgeleitet">Belege nach dem Stichtag auswerten</a>
+    {% else %}
+      {% for x in p.derived.proposals %}<div class="alert warn"><span class="icon">!</span><div>
+        <b>{{ x.account }} · {{ x.asset }}</b>: {{ x.kind_label }} {{ x.reference|qty_exact }} ({{ x.at|datetime_de }}), berechnet {{ x.computed|qty_exact }} (Differenz {{ x.diff|qty_exact }}). <span class="hint">{{ x.text }}</span>
+        <a class="btn sm ghost" href="/settings/stichtag?cutoff={{ p.cutoff.isoformat() }}&amp;fa={{ x.account|urlencode }}&amp;fs={{ x.asset|urlencode }}&amp;fk={{ x.kind }}&amp;fq={{ x.qty|qty_exact|urlencode }}&amp;fe={{ x.evidence|urlencode }}&amp;fm=derived#korrektur-form">{{ 'Abgang ' if x.kind == 'remove' else 'Zugang ' }}vorbereiten (abgeleitet)</a></div></div>
+      {% endfor %}
+      {% for x in p.derived.hints %}<div class="alert"><span class="icon">·</span><div>
+        <b>{{ x.account }} · {{ x.asset }}</b>: {{ x.kind_label }} {{ x.reference|qty_exact }} ({{ x.at|datetime_de }}), berechnet {{ x.computed|qty_exact }} (Differenz {{ x.diff|qty_exact }}), {{ x.window }} Buchung(en) seit dem Stichtag – <b>kein Vorschlag zum Stichtag</b>. <span class="hint">{{ x.text }}</span>
+        {% for t in x.tx_ids[:6] %}<a class="mono small" href="/journal?q={{ t|urlencode }}">{{ t }}</a> {% endfor %}</div></div>
+      {% endfor %}
+      {% if not p.derived.proposals and not p.derived.hints %}<p class="hint">Keine Abweichungen zu Belegen nach dem Stichtag.</p>{% endif %}
+    {% endif %}
+
+    {% if sim %}
+    <div class="alert good" id="wirkung"><span class="icon">i</span><div><b>Wirkung dieser Korrektur (noch nicht gebucht)</b>
+      <ul class="small"><li>Bestand zum Stichtag: {{ sim.balance_cutoff[0]|qty_exact }} → {{ sim.balance_cutoff[1]|qty_exact }}; heute: {{ sim.balance[0]|qty_exact }} → {{ sim.balance[1]|qty_exact }}</li><li>Offene Lots zum Stichtag: {{ sim.lots[0] }} → {{ sim.lots[1] }}; Anschaffungskosten {{ sim.cost[0]|eur }} → {{ sim.cost[1]|eur }}</li>
+      {% for y in sim.years %}<li>Veräußerungen {{ y.year }}: Erlös/Kosten {% if y.before %}{{ y.before[0]|eur }} / {{ y.before[1]|eur }}{% else %}–{% endif %} → {% if y.after %}{{ y.after[0]|eur }} / {{ y.after[1]|eur }}{% else %}–{% endif %}</li>{% else %}<li>Realisierte Ergebnisse: keine Änderung in einem Jahr.</li>{% endfor %}</ul></div></div>
+    {% endif %}
+
+    <form method="post" action="/settings/stichtag/korrektur" id="korrektur-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cutoff" value="{{ p.cutoff.isoformat() }}">
+      {% set fv = form or {} %}
+      <div class="grid-3">
+        <label class="field">Konto<select name="account">{% for a in p.all_accounts %}<option {% if (fv.account or request.query_params.get('fa')) == a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+        <label class="field">Asset<select name="asset">{% for a in p.pf_assets %}<option {% if (fv.asset or request.query_params.get('fs')) == a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+        <label class="field">Art<select name="kind"><option value="remove" {% if (fv.kind or request.query_params.get('fk')) == 'remove' %}selected{% endif %}>Abgang (zu viel gebucht)</option><option value="add" {% if (fv.kind or request.query_params.get('fk')) == 'add' %}selected{% endif %}>Zugang (zu wenig gebucht)</option></select></label>
+        <label class="field">Menge<input type="text" name="qty" inputmode="decimal" value="{{ fv.qty or request.query_params.get('fq') or '' }}" required></label>
+        <label class="field">Beleg / Begründung<input type="text" name="evidence" value="{{ fv.evidence or request.query_params.get('fe') or '' }}" placeholder="z. B. Depotauszug 31.12.2024"></label>
+      </div>
+      <fieldset><legend>Nur bei Zugang</legend><div class="grid-3">
+        <label class="field">Anschaffungsdatum (vor dem Stichtag)<input type="date" name="acq_date" value="{{ fv.acq_date or '' }}"></label>
+        <label class="field">Anschaffungskosten (EUR)<input type="text" name="cost_eur" inputmode="decimal" value="{{ fv.cost_eur or '' }}"></label>
+        <label class="field">Grundlage<select name="mode"><option value="evidence" {% if fv.mode not in ('cautious', 'derived') and request.query_params.get('fm') != 'derived' %}selected{% endif %}>belegtes Datum und belegte Kosten</option><option value="derived" {% if (fv.mode or request.query_params.get('fm')) == 'derived' %}selected{% endif %}>abgeleitet (Beleg nach dem Stichtag) mit Datum und Kosten</option><option value="cautious" {% if fv.mode == 'cautious' %}selected{% endif %}>vorsichtige Annahme: Anschaffung am Vortag zu 0 €</option></select></label></div>
+        <p class="hint">„Vorsichtig“ ist eine Annahme, keine Belegung: Die Haltefrist beginnt neu, ein Verkauf innerhalb eines Jahres wäre voll steuerpflichtig. Sie wird in der Notiz der Buchung so gekennzeichnet.</p></fieldset>
+      <button class="btn ghost" type="submit" name="do" value="preview">Wirkung zeigen</button>
+      <button class="btn" type="submit" name="do" value="book" data-confirm="Korrektur jetzt buchen? Sie lässt sich einzeln zurücknehmen.">Korrektur buchen</button>
+    </form>
+    {% if p.corrections %}
+    <h3>Gebuchte Korrekturen</h3>
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Konto · Asset</th><th>Art</th><th class="num">Menge</th><th>Grundlage</th><th>Beleg</th><th></th></tr></thead>
+      <tbody>{% for x in p.corrections %}<tr><td data-label="Position">{{ x.account }} · {{ x.asset_id }}</td><td data-label="Art">{{ 'Abgang' if x.kind == 'remove' else 'Zugang' }}</td><td class="num nowrap" data-label="Menge">{{ x.qty|qty_exact }}</td><td data-label="Grundlage">{{ modes.get(x.mode, x.mode) }}{% if x.acq_date %} · {{ x.acq_date|date_de }}, {{ x.cost_eur|eur }}{% endif %}</td><td data-label="Beleg">{{ x.evidence or '–' }}</td>
+        <td>{% if x.status == 'active' %}<form method="post" action="/settings/stichtag/korrektur/{{ x.id }}/zurueck" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cutoff" value="{{ p.cutoff.isoformat() }}"><button class="btn sm ghost" type="submit">Zurücknehmen</button></form>{% else %}<span class="badge">zurückgenommen</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+    {% endif %}
+  </section>
+
+  {% if not st %}
+  <section class="card" id="festschreiben">
+    <div class="card-head"><h2>Freigeben und festschreiben</h2><span class="badge {{ 'good' if p.ok else 'crit' }}">{{ 'bereit' if p.ok else 'gesperrt' }}</span></div>
+    <p>Mit dem Festschreiben wird das Archiv (alles vor dem {{ p.cutoff|date_de }}) geschützt und der Eröffnungsstand je Konto mit Prüfsumme protokolliert. Es ändert <b>keine</b> Buchung und ist jederzeit zurücknehmbar. Gib den Eröffnungsstand je Konto frei; Konten mit Abweichung zum Beleg sind <b>nicht</b> vorbelegt.</p>
+    <form method="post" action="/settings/stichtag/fixieren">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cutoff" value="{{ p.cutoff.isoformat() }}"><input type="hidden" name="token" value="{{ p.token }}">
+      <ul class="plain-list">{% for a in p.accounts %}<li><label class="check"><input type="checkbox" name="approve" value="{{ a.account }}" {% if a.status != 'abweichung' %}checked{% endif %}> <span><b>{{ a.account }}</b> <span class="badge {{ 'good' if a.status == 'belegt' else 'crit' if a.status == 'abweichung' else '' }}">{{ {'belegt': 'belegt', 'abweichung': 'Abweichung zum Beleg', 'ohne_beleg': 'ohne Beleg'}[a.status] }}</span> <span class="hint">{{ a.positions }} Position{{ '' if a.positions == 1 else 'en' }}, {{ a.cost|eur }}</span></span></label></li>{% endfor %}</ul>
+      <button class="btn" type="submit" {% if not p.ok %}disabled{% endif %} data-confirm="Stichtag {{ p.cutoff|date_de }} festschreiben? Das Archiv wird geschützt; das lässt sich jederzeit zurücknehmen.">Stichtag festschreiben</button>
+      {% if not p.ok %}<p class="hint">Gesperrt: Eine Pflichtprüfung ist nicht bestanden.</p>{% endif %}
+    </form>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>Veräußerungen ab Stichtag – beide Rechenwege</h2></div>
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Jahr</th><th class="num">vollständig: Teile · Erlös · Kosten</th><th class="num">aktiv: Teile · Erlös · Kosten</th><th>Vergleich</th></tr></thead>
+      <tbody>{% for t in p.tax %}<tr><td data-label="Jahr">{{ t.year }}</td>
+        <td class="num nowrap" data-label="vollständig">{% if t.full %}{{ t.full[0] }} · {{ t.full[1]|eur }} · {{ t.full[2]|eur }}{% else %}–{% endif %}</td>
+        <td class="num nowrap" data-label="aktiv">{% if t.active %}{{ t.active[0] }} · {{ t.active[1]|eur }} · {{ t.active[2]|eur }}{% else %}–{% endif %}</td>
+        <td data-label="Vergleich"><span class="badge {{ 'good' if t.equal else 'crit' }}">{{ 'gleich' if t.equal else 'abweichend' }}</span></td></tr>
+      {% else %}<tr><td colspan="4" class="hint">Keine Veräußerungen ab dem Stichtag.</td></tr>{% endfor %}</tbody></table></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Auswirkung auf Befunde</h2></div>
+    {% if p.impact %}
+      <p>Von {{ p.impact.total }} Hauptbefunden betreffen <b>{{ p.impact.dropped }}</b> nur die Zeit vor dem Stichtag und entfielen. Aufteilung: {% for k, n in p.impact.split.items() %}{{ {'nur_vor_stichtag': 'nur vor dem Stichtag', 'nur_ab_stichtag': 'nur ab dem Stichtag', 'beides': 'beide Zeiträume', 'ohne_buchung': 'ohne Buchungsbezug (z. B. Bestandsabweichung)'}[k] }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}.</p>
+    {% else %}<p class="hint">Die Zählung braucht eine vollständige Diagnose und dauert einen Moment. <a href="/settings/stichtag?cutoff={{ p.cutoff.isoformat() }}&amp;impact=1">Auswirkung berechnen</a></p>{% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

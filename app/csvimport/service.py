@@ -1000,6 +1000,12 @@ class CsvImportService:
                                                  for c in C.ISO_CURRENCIES if c not in assets}},
                         pf, today_local())
         cutoff = date.fromisoformat(opts["cutoff"]) if opts.get("cutoff") else None
+        from app.cutover import guard as cutover_guard
+
+        frozen = cutover_guard.cutoff_of(self.db)  # festgeschriebener Stichtag: Zeilen davor sind Archiv
+        floor = frozen - timedelta(days=1) if frozen is not None else None
+        if floor is not None:
+            cutoff = max(cutoff, floor) if cutoff is not None else floor
         known = {r["external_id"]: r for r in self.db.q(
             "SELECT external_id, status, tx_id, batch_id FROM journal_tx WHERE source=? AND external_id IS NOT NULL "
             "AND status <> 'reverted'", (source,))}
@@ -1106,6 +1112,10 @@ class CsvImportService:
             elif ext and ext in seen_ext:
                 rc.status, rc.basis = "known", "file_dup"
                 rc.warnings.insert(0, f"doppelte Zeile in der Datei (wie Zeile {seen_ext[ext]})")
+            elif floor is not None and rc.d <= floor:
+                rc.status = "before"
+                rc.warnings.insert(0, f"vor dem festgeschriebenen Stichtag {frozen:%d.%m.%Y} (Archiv) – wird nicht "
+                                      "übernommen")
             elif cutoff is not None and rc.d <= cutoff:
                 # bis zum Stichtag maßgeblich ist der kuratierte Import – keine Zuordnung oder Entscheidung nötig
                 rc.status = "before"

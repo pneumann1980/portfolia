@@ -160,6 +160,19 @@ class AccountInfo:
 
 
 @dataclass(slots=True)
+class OpeningState:
+    """Eröffnungsstand einer Berechnung ab einem Stichtag (0.98.0): offene Lots und Bestände zum Ende des Vortags des
+    ersten aktiven Tages. Der Ledger startet damit statt mit der gesamten Vorgeschichte; Anschaffungsdatum, -kosten und
+    Herkunft jedes Lots bleiben erhalten (der Stichtag ist kein neues Kaufdatum)."""
+
+    cutoff: date  # erster aktiver Tag; Buchungen davor gehören zum Archiv
+    lots: list[Any] = field(default_factory=list)  # ``app.ledger.engine.Lot``
+    balances: dict[tuple[str, str], Decimal] = field(default_factory=dict)  # (Konto, Asset) → Bestand
+    neg_reported: frozenset[tuple[str, str]] = frozenset()  # bereits gemeldete negative Bestände (keine Doppelmeldung)
+    cash: dict[str, bool] | None = None  # Cash-Führung je Konto aus der vollständigen Berechnung
+
+
+@dataclass(slots=True)
 class Portfolio:
     """Eingangsdaten eines Importstands."""
 
@@ -170,6 +183,7 @@ class Portfolio:
     manual_prices: dict[str, list[tuple[date, float]]] = field(default_factory=dict)
     holdings_check: list[dict[str, Any]] = field(default_factory=list)
     valuation_date: date | None = None
+    opening: OpeningState | None = None  # Berechnung ab Stichtag: Eröffnungsstand + ``txs`` ab dem Stichtag (0.98.0)
 
     def asset(self, asset_id: str) -> AssetInfo:
         a = self.assets.get(asset_id)

@@ -113,6 +113,17 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
             log.error("Fehlerseite konnte nicht erzeugt werden (ID %s): %s: %s", rid, type(e).__name__, e)
             return PlainTextResponse(f"Interner Fehler (ID {rid})", status_code=500)
 
+    from app.cutover.guard import Protected
+
+    @app.exception_handler(Protected)
+    async def protected(request: Request, exc: Exception) -> Response:
+        """Schreibzugriff auf das festgeschriebene Archiv (Stichtag): verständliche Ablehnung, nichts geändert."""
+        if request.url.path.startswith("/api/"):
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        return templates.TemplateResponse(request, "error.html", {
+            "code": 409, "message": str(exc), "active": None, "csrf_token": _csrf(request), "alerts": []},
+            status_code=409)
+
     @app.exception_handler(OverflowError)
     async def too_large(request: Request, exc: OverflowError) -> HTMLResponse:
         """Eine ID jenseits des SQLite-Wertebereichs (≥ 2⁶³) kann nicht existieren → 404 statt Serverfehler."""

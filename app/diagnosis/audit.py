@@ -140,9 +140,12 @@ def flows_by_family(idx: _Index) -> dict[tuple[str, str], dict[str, list[Any]]]:
     from app.diagnosis.engine import _effect
 
     out: dict[tuple[str, str], dict[str, list[Any]]] = defaultdict(dict)
+    skip_fiat = bool(getattr(idx.led.options, "fiat_off", False))
     for t in idx.txs:
         fam = family(idx, t)
         for k, v in _effect([t]).items():
+            if skip_fiat and idx.asset(k[1]).is_fiat:
+                continue
             slot = out[k].setdefault(fam, [ZERO, 0, t.ts, t.ts])
             slot[0] += v
             slot[1] += 1
@@ -159,8 +162,11 @@ def deltas(idx: _Index) -> dict[tuple[str, str], list[tuple[datetime, date, Deci
     from app.diagnosis.engine import _effect
 
     out: dict[tuple[str, str], list[tuple[datetime, date, Decimal, str]]] = defaultdict(list)
+    skip_fiat = bool(getattr(idx.led.options, "fiat_off", False))
     for t in idx.txs:
         for k, v in _effect([t]).items():
+            if skip_fiat and idx.asset(k[1]).is_fiat:
+                continue
             out[k].append((t.ts, t.date, v, t.tx_id))
     idx._deltas = out
     return out
@@ -263,6 +269,10 @@ def legs(idx: _Index, t: Tx) -> list[Leg]:
         return []
     fam = family(idx, t)
     out: list[Leg] = []
+    skip_fiat = bool(getattr(idx.led.options, "fiat_off", False))  # Fiat nicht geführt: keine Fiat-Beine (0.97.0)
+    if skip_fiat and ((t.from_asset and idx.asset(t.from_asset).is_fiat)
+                      or (t.to_asset and idx.asset(t.to_asset).is_fiat)):
+        return []
     if t.from_account and t.from_asset and t.from_qty:
         fee = t.fee_qty if t.fee_asset == t.from_asset and t.fee_qty else ZERO
         out.append(Leg(t, "out", t.from_account, t.from_asset, t.from_qty + fee, t.from_qty, fee, fam))

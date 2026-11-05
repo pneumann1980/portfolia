@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 05.11.2026 · Version 0.96.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 05.11.2026 · Version 0.101.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,25 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.101.0 – Stichtag: Fiat aus, Eröffnungsstand, Festschreiben, Archivschutz, ausgerichtete Wege, abgeleitete Vorschläge
+
+Fünf Stufen (0.97.0–0.101.0) in einem Release; Konzept, Regeln, Grenzen und Echtdaten-Abnahme:
+[`STICHTAG.md`](STICHTAG.md). 57 neue Tests (`tests/test_cutover_*.py`).
+
+* **0.97.0 Fiat überall aus:** Einstellung `ledger.fiat_off`; Engine, Diagnose und Bestandsabgleich führen keine
+  EUR/USD-Bestände; EUR-Werte bleiben; Vorschau vor dem Umschalten.
+* **0.98.0 Rechenkern:** Eröffnungsstand als Zustand der vollständigen Berechnung zum Ende von Stichtag − 1; die Engine
+  startet damit (`Portfolio.opening`); Gleichwertigkeit (Bestände, Lots, Veräußerungen, Erträge, Gebühren, Steuern,
+  Zahlungsströme, Meldungen, eingesetztes Kapital) in beiden Rechenweisen; Belegabgleich je Konto. Migration 40.
+* **0.99.0 Festschreiben:** Freigabe je Konto, Token gebunden an Stichtag und Datenstand, Schutz des Archivs in allen
+  Schreibwegen des Journals (HTTP 409), Korrekturen nur mit Beleg (Abgang ohne Gewinn/Verlust, Zugang mit belegtem
+  Datum/Kosten oder ausdrücklich „vorsichtig“), Rücknahme, Export/Wiederherstellung (abwärtskompatibel, idempotent).
+* **0.100.0 Wege ausgerichtet:** Diagnose und Gesamtprüfung führen Archiv-Befunde getrennt; CSV/Sync/Prüf-Stapel markieren
+  Zeilen vor dem Stichtag; Quellenübernahme mit Pflichtprüfung „Archiv unverändert“.
+* **0.101.0 Abgeleitete Vorschläge:** Belege nach dem Stichtag – Vorschlag zum Stichtag nur ohne Buchung dazwischen,
+  sonst Ursachenhinweise (offene Abgänge, fehlende Gebühren); nie automatisch gebucht.
+* **Reale Daten:** Festschreiben und Rücknahme wirtschaftlich identisch; Diagnose 110 → 75 offen + 35 Archiv.
 
 ## 0.96.0 – Nachprüfung 0.95.0: Quellbelegung, Quellidentität, Lesestand der Caches, Ausgleichsregel, Lesepfad-Abhängigkeiten
 

@@ -229,6 +229,8 @@ class Report:
     index: Any = field(default=None, repr=False, compare=False)  # Nachschlage-Index der Regeln (Buchungsanzeige)
     # Abweichungsfenster je (Konto, Asset) mit mindestens einem Referenzbestand (M29, rein lesend)
     traces: dict[tuple[str, str], Any] = field(default_factory=dict, repr=False, compare=False)
+    # Befunde nur zu Buchungen vor dem festgeschriebenen Stichtag (Archiv): nicht offen, nicht bearbeitbar
+    archived: list[Finding] = field(default_factory=list, repr=False, compare=False)
 
     def counts(self) -> dict[str, dict[str, int]]:
         out: dict[str, dict[str, int]] = {k: {} for k in KINDS}

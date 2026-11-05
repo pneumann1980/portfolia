@@ -51,7 +51,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from app.util.timeutil import iso, parse_iso
+from app.util.timeutil import iso, parse_iso, to_local_date
 from app.web.fmt import asset_label, qty_exact
 
 log = logging.getLogger(__name__)
@@ -908,6 +908,12 @@ def _row_problem(x: dict[str, Any]) -> dict[str, Any]:
             "events": [{"event": x.get("event", ""), "ext": x.get("key", ""), "line": x.get("line")}]}
 
 
+def _frozen_cutoff(db: Any) -> Any:
+    from app.cutover import guard
+
+    return guard.cutoff_of(db)
+
+
 def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
            adjust: frozenset[str] | set[str] = frozenset()) -> Assessment | None:
     """Beweis und Vorschau aus dem abgelegten Vollabruf (rein lesend). ``None``: kein abgelegter Abruf."""
@@ -1249,6 +1255,16 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
               "; ".join((cov.get("balances") or {}).get("examples") or [])[:300]
               or str((cov.get("balances") or {}).get("note") or "ohne Abweichung"), blocking=False),
     ]
+    frozen = _frozen_cutoff(db)
+    if frozen is not None:  # festgeschriebener Stichtag: das Archiv bleibt unverändert
+        arch_hide = [t for t in a.hide if t.date < frozen]
+        arch_new = [ln for ln in a.unmatched_new if ln.rec.ts is not None and to_local_date(ln.rec.ts) < frozen]
+        a.checks.append(Check(
+            "cutover", f"Archiv vor dem Stichtag {frozen:%d.%m.%Y} bleibt unverändert",
+            not (arch_hide or arch_new),
+            f"{len(arch_hide)} zu ersetzende Buchungen und {len(arch_new)} neue Vorgänge liegen vor dem Stichtag – "
+            "Stichtag zurücknehmen oder die Übernahme erst für Zeiträume ab dem Stichtag durchführen"
+            if arch_hide or arch_new else "keine Buchung vor dem Stichtag betroffen"))
     if plan:
         a.checks.append(Check("plan", "Alle ersetzten Buchungen lassen sich ausblenden",
                               not (a.plan and a.plan.errors), "; ".join(a.plan.errors[:3]) if a.plan else ""))

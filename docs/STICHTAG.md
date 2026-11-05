@@ -1,0 +1,155 @@
+# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.101.0)
+
+Stand: 05.11.2026 · Version 0.101.0
+
+Ein Stichtag (Standard 01.01.2025, in der App wählbar) teilt die Buchungen in ein **Archiv** (davor) und den **aktiven
+Zeitraum** (ab dem Stichtag). Steuer, Lots, Diagnose und Importe arbeiten ab dem Stichtag mit dem geprüften
+Eröffnungsstand; das Archiv bleibt vollständig erhalten, Depotwert, Verlauf und eingesetztes Kapital laufen weiter ab
+Depotstart. **Es wird nichts gelöscht.** Einstieg: *Einstellungen → Stichtag* (`/settings/stichtag`).
+
+## Die fünf Stufen
+
+| Stufe | Version | Inhalt |
+| --- | --- | --- |
+| 1 | 0.97.0 | **Fiat überall aus** (`ledger.fiat_off`): EUR/USD-Bestände werden nirgends geführt; EUR-Werte von Käufen, Verkäufen und Gebühren bleiben. Vorschau vor dem Umschalten (`/settings/fiat`), Diagnose und Bestandsabgleich ohne Fiat |
+| 2 | 0.98.0 | **Rechenkern und Vorschau:** Eröffnungsstand = Zustand der vollständigen Berechnung am Ende von Stichtag − 1 (Lots mit ursprünglichem Anschaffungsdatum und Kosten, Bestände, Cash-Führung). Gleichwertigkeitsprüfung „Archiv + aktiv = vollständig“ |
+| 3 | 0.99.0 | **Festschreiben** (eine Schreibtransaktion, gebunden an den angezeigten Datenstand), **Freigabe je Konto**, **Korrekturen nur mit Beleg**, **Rückgängig**, **Schutz des Archivs**, Export/Wiederherstellung |
+| 4 | 0.100.0 | **Alle Wege am Stichtag ausgerichtet:** Diagnose, Gesamtprüfung, CSV-Import/Sync/Prüf-Stapel, Quellenübernahme |
+| 5 | 0.101.0 | **Abgeleitete Vorschläge** aus Belegen nach dem Stichtag – nur wo sie belegt sind |
+
+## Eröffnungsstand und Gleichwertigkeit
+
+* Der Eröffnungsstand ist **kein neues Rechenergebnis**, sondern der Zustand der vollständigen Berechnung zum Ende des
+  Vortags (`OpeningState`: Lots, Bestände, gemeldete Fehlbestände, Cash-Führung). Die Engine startet damit und rechnet
+  nur die Buchungen ab dem Stichtag.
+* Vor dem Festschreiben müssen alle Pflichtprüfungen bestehen: Bestände heute, offene Lots (Menge, Kosten,
+  Anschaffungsdatum, Haltefrist), Veräußerungen, Erträge, Gebühren, einbehaltene Steuern, Zahlungsströme,
+  Ledger-Meldungen und das eingesetzte Kapital ab Depotstart – jeweils vollständig gegen aktiv. **Beide Rechenweisen**
+  (FIFO je Konto/Wallet für die Steuer, FIFO global für die App-Ansicht) werden geprüft; angezeigt wird der
+  steuerrelevante Stand.
+* Steuerjahre **vor** dem Stichtag bleiben aus den vollständigen Daten berechnet; der Stichtag ändert sie nicht.
+* Anschaffungskosten gelten wie in den Daten. Die Seite weist nur aus, wo ungenaue Kosten überhaupt steuerlich wirken
+  könnten (Lots, die innerhalb eines Jahres nach Anschaffung verkauft werden).
+
+## Festschreiben, Freigabe, Rücknahme
+
+1. **Vorschau** (`CS.preview`): Pflichtprüfungen, Eröffnungsstand je Konto, Belege (Referenzbestände zum Vortag),
+   Steuer-Prüfwerte, Auffälligkeiten (z. B. Übertragungen über den Stichtag).
+2. **Freigabe je Konto:** `belegt` (alle Referenzen zum Vortag passen), `abweichung`, `ohne_beleg`. Jedes Konto mit
+   Eröffnungsstand wird ausdrücklich freigegeben; ohne Beleg heißt: der berechnete Stand gilt. Prüfsumme je Konto.
+3. **Festschreiben:** Token aus Stichtag, Datenstand und Prüfsummen aller Konten; Datenstand wird als erste Anweisung
+   der Schreibtransaktion erneut geprüft. Es ändert **keine Buchung**, protokolliert Stichtag, Freigaben und
+   Prüfergebnis und schützt das Archiv. Höchstens ein aktiver Stichtag.
+4. **Rücknahme:** stellt den Zustand davor her (Archiv wieder bearbeitbar, alle Auswertungen über den vollen Stand).
+5. **Danach:** Verändert sich der Eröffnungsstand eines Kontos (Korrektur, Kontenzusammenführung, Asset-Änderung), zeigt
+   die Seite es an; erst nach ausdrücklicher erneuter Freigabe gilt der neue Stand.
+
+## Schutz des Archivs
+
+Buchungen **vor** dem Stichtag lassen sich nicht anlegen, ändern, löschen, zurücknehmen oder wiederherstellen. Ein
+einziger Ort entscheidet (`app/cutover/guard.py`, Vergleich in UTC gegen den Beginn des Stichtags in Ortszeit); alle
+Schreibwege des Journals rufen ihn auf (Anlegen, Bearbeiten, Status, Entkoppeln, Import-Bearbeitung/-Löschung/
+-Wiederherstellung/-Rückgängig). Über das Web erscheint eine verständliche Meldung (HTTP 409) mit Hinweis auf die
+Rücknahme. Nur der Stichtag-Dienst selbst darf mit `guard.allow()` Korrekturen zum Stichtag schreiben.
+
+### Wegematrix (Schreibwege → Schutz)
+
+| Weg | Schutz |
+| --- | --- |
+| Buchung anlegen / bearbeiten (`save`, `_insert`, `_update`) | `check_ts` für neuen und alten Zeitpunkt |
+| Löschen, Wiederherstellen, Status (`delete`, `restore`, `_set_status`) | `check_ts` auf den Zeitpunkt der Buchung |
+| Transfer entkoppeln (`unpair`) | `check_ts` |
+| Import-Buchung überlagern / ausblenden / zurückholen (`save_import`, `delete_import`, `restore_import`, `revert_import`) | `check_ts`; `save_import` meldet im Formular, die übrigen lehnen ab bzw. werden über den 409-Handler erklärt |
+| Diagnose-Korrekturen, Prüf-Stapel, Quellenübernahme, Assistent | laufen über dieselben Journal-Funktionen; die Übernahme prüft zusätzlich vorab |
+| Stichtag-Korrektur und deren Rücknahme | einziger Weg mit `guard.allow()` |
+| Wiederherstellung aus dem Gesamtexport | schreibt direkt in die Datenbank (Neueinrichtung/Übernahme), nicht über das Journal |
+
+Nicht geschützt, weil keine Buchungsdaten: Zuordnungen (Konten, Assets, Kursquellen), Referenzbestände, Entscheidungen
+ohne Datenänderung. Eine Zuordnung, die den Eröffnungsstand eines Kontos verändert (z. B. Kontenzusammenführung), erkennt
+die Seite über die Prüfsumme je Konto („Eröffnungsstand seit der Freigabe verändert“).
+
+## Korrekturen nur mit Beleg
+
+Grundsatz: **Der berechnete Stand gilt.** Ein Vorschlag entsteht nur, wo ein Referenzbestand zum Ende von Stichtag − 1
+abweicht (Staub < 1e-8 wird nur ausgewiesen). Eine Korrektur ist eine gewöhnliche, gekennzeichnete Buchung **vor** dem
+Stichtag, damit vollständige Berechnung und Eröffnungsstand übereinstimmen, und einzeln rücknehmbar. Vorab zeigt die
+Seite die Wirkung auf Bestand, Lots, Kosten und realisierte Ergebnisse je Jahr.
+
+| Fall | Buchung | Voraussetzung |
+| --- | --- | --- |
+| zu viel gebucht | Abgang zum Ende des Vortags, Tag `cutover_correction`: verbraucht die ältesten Lots, ist **weder Veräußerung noch Verlust noch Zahlungsstrom** | Beleg/Begründung; Menge ≤ Bestand zum Stichtag |
+| zu wenig gebucht, belegt | Zugang, Tag `opening_balance` | belegtes Anschaffungsdatum **vor** dem Stichtag, belegte Kosten, Beleg |
+| zu wenig gebucht, vorsichtig | Zugang am Vortag zu 0 € (Haltefrist beginnt neu) | ausdrücklich als Annahme gekennzeichnet |
+| zu wenig gebucht, ohne Beleg | **nichts** – bleibt offen | – |
+
+## Stufe 4: alle Wege am Stichtag ausgerichtet
+
+* **Diagnose:** Befunde, deren Buchungen **alle** vor dem Stichtag liegen, gelten als Archiv: nicht in den offenen
+  Listen, nicht im Assistenten, nicht in den Zählern (`Report.archived`, `stats["archiviert"]`). Ein Sammelbefund ist nur
+  Archiv, wenn alle seine Einzelvorgänge es sind. Befunde ohne Buchungsbezug (Bestände, Kurse, Quellen) und Befunde, die
+  Archiv **und** aktive Buchungen mischen, bleiben sichtbar.
+* **Gesamtprüfung:** Prüfpunkte mit ausschließlich Archiv-Buchungen erhalten den Status `archiviert` (zählen nicht als
+  offen).
+* **CSV-Import, Sync, Prüf-Stapel:** Zeilen vor dem Stichtag sind „vor Stichtag“ mit Hinweis „Archiv – wird nicht
+  übernommen“ (auch wenn der Stapel ohne eigenen Stichtag angelegt wurde). Erzwingen scheitert am Schutz.
+* **Quellenübernahme:** Eine zusätzliche Pflichtprüfung „Archiv vor dem Stichtag bleibt unverändert“ blockiert eine
+  Übernahme, die Buchungen vor dem Stichtag ersetzen oder neue Vorgänge davor anlegen würde.
+* **Bewertung, Verlauf, Export:** unverändert über den vollen Stand.
+
+## Stufe 5: abgeleitete Vorschläge (nur mit Beleg)
+
+Auf Wunsch (`?derive=1`, „Belege nach dem Stichtag auswerten“) vergleicht die Seite Belege **nach** dem Stichtag
+(Referenzbestände mit `as_of ≥ Stichtag`; vollständig abgerufene Bestände der Quellen mit Abweichung) mit dem berechneten
+Bestand zum Zeitpunkt des Belegs:
+
+* **Keine Buchung** auf Konto/Asset zwischen Stichtag und Beleg → die Abweichung kann nur schon am Stichtag bestanden
+  haben (Annahme: Quelle vollständig). Ergebnis: **abgeleiteter Vorschlag** (Abgang/Zugang), in Notiz und Protokoll als
+  „abgeleitet“ gekennzeichnet; ein Zugang braucht weiterhin Datum und Kosten.
+* **Buchungen dazwischen** → **kein Vorschlag zum Stichtag**, nur Hinweise auf Ursachen im aktiven Zeitraum: offene
+  Abgänge anderer Konten, deren Summe die Differenz erklärt (fehlender Zugang bzw. Verknüpfung als Transfer, z. B. mehrere
+  Übertragungen von einer Börse in eine Wallet), oder Abgänge ohne Gebühr, wenn bei der Quelle weniger liegt (fehlende
+  Gebühren). Die Behebung läuft über die gewohnten Wege.
+* Ohne Beleg nach dem Stichtag entsteht nichts. Gebucht wird nie automatisch.
+
+## Export und Wiederherstellung
+
+`state.json` des Gesamtexports enthält `cutovers` (mit Freigaben je Konto) und `cutover_corrections`. Die
+Wiederherstellung ist abwärtskompatibel (ältere Exporte kennen keine), idempotent (Stichtag + Zeitpunkt) und hält die
+Regel „höchstens ein aktiver Stichtag“: ist bereits einer aktiv, kommt der übernommene als `undone` hinein.
+
+## Reale Daten (Gesamtexport vom 05.11.2026, isolierte Kopie, kein Netz, nur Zählwerte)
+
+| Messwert | Ergebnis |
+| --- | --- |
+| Wirksame Buchungen / Archiv / aktiv | 6020 / 5535 / 485 |
+| Eröffnungslots zum 01.01.2025 | 241 |
+| Pflichtprüfungen (beide Rechenweisen, 18 Prüfungen) | alle bestanden |
+| Konten mit Eröffnungsstand | 30: 29 ohne Beleg, 1 mit Abweichung zum Beleg (DKB); 1 Vorschlag |
+| Festschreiben | fehlerfrei; Bestände, Lots, Veräußerungen und Zahlungsströme **identisch** |
+| Diagnose vorher / nachher | 110 Befunde → 75 offen + 35 Archiv (Summe unverändert) |
+| Schutz | Archiv geschützt, aktiver Zeitraum frei, Journal-Schreiben vor dem Stichtag abgelehnt |
+| Rücknahme | wirtschaftlich identisch zu vorher, 110 Befunde wie zuvor |
+| Abgeleitete Vorschläge | 0 Vorschläge, 1 Hinweis (DKB A40XUX, Ursache unbekannt: 3 Buchungen im Zeitraum) |
+| Laufzeit gesamt (Vorschau, Hinweise, Festschreiben, Diagnose, Rücknahme) | 8,4 s |
+
+## Grenzen
+
+* Die Eröffnungslots übernehmen die Anschaffungskosten der Daten. Die Seite prüft sie nicht gegen Belege; sie weist aus,
+  wo ungenaue Kosten steuerlich wirken könnten (Verkauf binnen eines Jahres).
+* Ein Befund, der Archiv- **und** aktive Buchungen mischt, bleibt sichtbar; seine Behebung kann am Schutz des Archivs
+  scheitern (verständliche Meldung; Rücknahme des Stichtags hebt den Schutz auf).
+* Abgeleitete Hinweise brauchen einen **frischen, vollständigen** Beleg (Abruf < 48 h ohne Lücke bzw. Referenzbestand).
+  Ältere Abrufe führen zu keinem Hinweis; die Ursachenspalte bleibt eine Vermutung aus den Daten, keine Prüfung beim
+  Anbieter.
+* Die Kontenfreigabe ist eine ausdrückliche Bestätigung des **berechneten** Stands, kein externer Beweis.
+* Keine steuerliche Beratung.
+
+## Tests und Befehle
+
+* `tests/test_cutover_fiat.py` (8), `test_cutover_core.py` (8), `test_cutover_page.py` (8), `test_cutover_fix.py` (18,
+  einschließlich Export/Wiederherstellung), `test_cutover_scope.py` (6), `test_cutover_takeover.py` (2),
+  `test_cutover_derive.py` (7).
+* Zusätzlich 192 zufällige Kombinationen für die Gleichwertigkeit (Voll gegen Eröffnungsstand + aktiv) in beiden
+  Rechenweisen.
+* `TZ=Europe/Berlin python -m pytest -q tests` · `ruff check app tests scripts` ·
+  `python -m app validate examples/beispiel-import.zip`.

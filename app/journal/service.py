@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from app import __version__
+from app.cutover import guard
 from app.importer import contract as C
 from app.importer.validate import validate_tx_rows
 from app.importer.zipbuilder import build_zip
@@ -389,6 +390,10 @@ class JournalService:
         form_json = json.dumps({k: str(data.get(k)).strip() for k in forms.FORM_FIELDS
                                 if data.get(k) not in (None, "")}, ensure_ascii=False)
         stamp = _now()
+        try:
+            guard.check_ts(self.db, *(iso(r["ts_utc"]) for r in parsed), *([existing["ts_utc"]] if existing else []))
+        except guard.Protected as e:  # festgeschriebenes Archiv (Stichtag): verständliche Ablehnung im Formular
+            return SaveResult(errors=[str(e)])
         with self.db.transaction() as c:
             if existing is None:
                 main_id = self._insert(c, parsed[0], draft.value_sources[0], form_json, stamp, None)
@@ -453,6 +458,7 @@ class JournalService:
                 log: bool = True, event_key: str | None = None, event_line: int | None = None,
                 tx_hash: str | None = None, datasource_id: int | None = None) -> str:
         vals = self._values(p, value_source)
+        guard.check_ts(self.db, vals["ts_utc"])  # Archiv ist festgeschrieben (Stichtag)
         prefix = tx_prefix(source)
         tmp = f"{prefix}NEU-{datetime.now(UTC).timestamp()}-{id(p)}"
         cols = ["tx_id", "source", "external_id", "group_ref", "status", *vals, "form_json", "created_at",
@@ -469,6 +475,7 @@ class JournalService:
     def _update(self, c: Any, row: Any, p: dict[str, Any], value_source: str | None, form_json: str | None,
                 stamp: str) -> None:
         vals = self._values(p, value_source)
+        guard.check_ts(self.db, row["ts_utc"], vals["ts_utc"])
         before = {k: row[k] for k in ("tx_id", *vals)}
         sets = ", ".join(f"{k}=?" for k in vals)
         c.execute(f"UPDATE journal_tx SET {sets}, form_json=COALESCE(?, form_json), updated_at=? WHERE id=?",
@@ -492,6 +499,7 @@ class JournalService:
         row = self.get(tx_id)
         if row is None or row["source"] != "transfer" or row["status"] not in ("active", "deleted"):
             return False
+        guard.check_ts(self.db, row["ts_utc"])
         stamp = _now()
         with self.db.transaction() as c:
             self.unpair_in(c, row, stamp)
@@ -523,6 +531,7 @@ class JournalService:
         row = self.get(tx_id)
         if row is None or row["status"] != old or row["group_ref"]:
             return False
+        guard.check_ts(self.db, row["ts_utc"])
         stamp = _now()
         with self.db.transaction() as c:
             for r in [row, *c.execute("SELECT * FROM journal_tx WHERE group_ref=? AND status=?", (tx_id, old))]:
@@ -584,6 +593,10 @@ class JournalService:
             rep, _ = validate_tx_rows([row], classes)
             return SaveResult(errors=list(dict.fromkeys(_strip(m.message) for m in rep.errors)))
         res = SaveResult(warnings=draft.warnings + [_strip(w) for w in warnings], tx_ids=[tx_id])
+        try:
+            guard.check_ts(self.db, orig.ts, new.ts)
+        except guard.Protected as e:
+            return SaveResult(errors=[str(e)])
         stamp = _now()
         prev = self.override(tx_id)
         with self.db.transaction() as c:
@@ -612,6 +625,7 @@ class JournalService:
         orig = self.import_tx(tx_id)
         if orig is None:
             return False
+        guard.check_ts(self.db, orig.ts)
         prev = self.override(tx_id)
         stamp = _now()
         with self.db.transaction() as c:
@@ -631,6 +645,9 @@ class JournalService:
         prev = self.override(tx_id)
         if prev is None or prev["action"] != "delete":
             return False
+        orig = self.import_tx(tx_id)
+        if orig is not None:
+            guard.check_ts(self.db, orig.ts)
         stamp = _now()
         with self.db.transaction() as c:
             if prev["row_json"]:
@@ -646,6 +663,9 @@ class JournalService:
         prev = self.override(tx_id)
         if prev is None:
             return False
+        orig = self.import_tx(tx_id)
+        if orig is not None:
+            guard.check_ts(self.db, orig.ts)
         stamp = _now()
         with self.db.transaction() as c:
             c.execute("DELETE FROM tx_override WHERE tx_id=?", (tx_id,))

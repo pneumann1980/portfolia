@@ -35,6 +35,12 @@
       <label class="check" style="align-self:end"><input type="checkbox" name="unmatched_flows" value="1" {% if s['ledger.unmatched_transfers_as_flows'] %}checked{% endif %}>
         Nicht zugeordnete Krypto-/Wertpapier-Zu- und Abgänge als externe Zahlungsströme (zum Marktwert)</label>
     </div>
+    <h3 style="margin-top:14px">Fiat-Guthaben (EUR/USD)</h3>
+    <p class="hint">Derzeit: <b>{% if s['ledger.fiat_off'] %}nicht geführt – nur Assets zählen{% else %}je Konto wie unten eingestellt{% endif %}</b>.
+      „Nicht geführt“ beseitigt Abweichungen durch Verrechnungskonten und doppelte Einzahlungen (z. B. Bitpanda, Scalable). Die EUR-Werte von Käufen und Verkäufen bleiben, die Steuer ändert sich nicht.
+      <a href="/settings/fiat">Wirkung ansehen und umschalten</a></p>
+    <h3 style="margin-top:14px">Stichtag</h3>
+    <p class="hint">Alles vor einem Stichtag einfrieren: Ab dann zählt der geprüfte Eröffnungsstand (Lots mit ihrem ursprünglichen Anschaffungsdatum) plus alle Buchungen danach; Depotwert und eingesetztes Kapital laufen weiter ab Depotstart. <a href="/settings/stichtag">Vorschau und Einrichtung</a></p>
     <h3 style="margin-top:14px">Cash-Führung je Konto</h3>
     <p class="hint">Konten <b>ohne</b> Cash-Führung behandeln Käufe als Einzahlung und Verkaufserlöse als Auszahlung (z. B. Depot, dessen Verrechnungskonto nicht im Ledger steht). „Automatisch“ erkennt Konten mit Fiat-Ein-/Auszahlungen als geführt.</p>
     <div class="table-wrap"><table><thead><tr><th>Konto</th><th>Erkannt</th><th>Einstellung</th></tr></thead><tbody>

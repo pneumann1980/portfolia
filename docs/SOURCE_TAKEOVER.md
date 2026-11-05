@@ -132,3 +132,11 @@ sonst Asset, Richtung, Menge (±2 %, Gebühren werden je Quelle verschieden ausg
 * Die Zuordnung der Gegenstücke (Spender, „ohne Gegenstück“) ist heuristisch und steuert nur Anzeige und Spender – nie den Beweis.
 * Verifiziert mit dem Mock der Referenz (`tests/test_takeover.py`), nicht mit einem echten Konto; die erste Übernahme am
   echten Konto sollte mit der Vorschau und einer Sicherung beginnen.
+
+## Festgeschriebener Stichtag (ab 0.100.0)
+
+Ist ein Stichtag festgeschrieben ([`STICHTAG.md`](STICHTAG.md)), kommt zu den Pflichtprüfungen eine weitere hinzu:
+**„Archiv vor dem Stichtag bleibt unverändert“**. Sie ist nicht erfüllt, wenn die Übernahme Buchungen vor dem Stichtag
+ersetzen (ausblenden) oder neue Vorgänge vor dem Stichtag anlegen würde; die Übernahme ist dann gesperrt, nichts wird
+verändert. Auswege: den Stichtag zurücknehmen oder die Quelle erst für Zeiträume ab dem Stichtag übernehmen. Ohne
+festgeschriebenen Stichtag erscheint die Prüfung nicht.

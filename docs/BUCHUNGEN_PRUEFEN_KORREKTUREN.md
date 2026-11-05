@@ -793,3 +793,11 @@ Echtdaten-Nachweis wird nicht behauptet.
 | `tests/test_review_096.py` | 30 bestanden |
 | `mypy app/news app/jobs app/web app/health.py app/logging_setup.py --ignore-missing-imports` | 334 → 334 (identisch) |
 | Volltest `TZ=Europe/Berlin pytest -q tests` (Worktree des Endstands) | 2507 Tests: 2504 bestanden, 3 übersprungen, 0 fehlgeschlagen (Exit-Code 0) |
+
+## Stichtag (ab 0.100.0)
+
+Mit festgeschriebenem Stichtag ([`STICHTAG.md`](STICHTAG.md)) führen Diagnose und Gesamtprüfung Befunde, deren Buchungen
+**alle** vor dem Stichtag liegen, getrennt als Archiv (nicht offen, nicht im Assistenten, nicht in den Zählern). Sammelbefunde
+sind nur Archiv, wenn alle Einzelvorgänge es sind; Befunde ohne Buchungsbezug und gemischte Befunde bleiben. CSV-Import,
+Sync und Prüf-Stapel markieren Zeilen vor dem Stichtag als „vor Stichtag“ (nicht übernommen); die Quellenübernahme hat eine
+zusätzliche Pflichtprüfung. Alle Buchungs-Schreibwege lehnen Änderungen vor dem Stichtag ab (HTTP 409 mit Erklärung).

@@ -21,6 +21,7 @@ DEFAULTS: dict[str, Any] = {
     "ledger.scope": "global",  # global | account
     "ledger.unmatched_transfers_as_flows": True,
     "ledger.cash_overrides": {},  # {konto: true|false}
+    "ledger.fiat_off": False,  # Fiat-Guthaben (EUR/USD …) nirgends führen – nur Assets (0.97.0)
     "performance.benchmarks": [
         {"id": "msci_world", "name": "MSCI World (iShares Core, EUNL)", "series": "yahoo:EUNL.DE"},
         {"id": "btc", "name": "Bitcoin (EUR)", "series": "yahoo:BTC-EUR"},

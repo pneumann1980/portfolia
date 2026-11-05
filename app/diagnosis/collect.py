@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from app.cutover import guard
 from app.ledger.engine import LedgerResult
 from app.ledger.models import Portfolio
 from app.prices.models import PriceInfo
@@ -148,6 +149,9 @@ class Snapshot:
     evidence: list[Any] = field(default_factory=list)
     # aktive Nutzerentscheidungen ohne Datenänderung je Befund: (Aktion, Prüfsumme) – dismiss | reject | defer
     marks: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # festgeschriebener Stichtag (0.100.0): Beginn des ersten aktiven Tages (UTC); Befunde, die nur Buchungen davor
+    # betreffen (Archiv), erscheinen nicht in den offenen Listen
+    cutoff_utc: datetime | None = None
 
 
 def _dec(v: Any) -> Decimal | None:
@@ -163,6 +167,9 @@ def collect(ctx: Any, now: datetime | None = None) -> Snapshot:
     pf = ctx.portfolio()
     led = ctx.ledger()
     snap = Snapshot(now=now, today=today_local(), pf=pf, ledger=led, settings=ctx.settings)
+    row = guard.active(ctx.db)
+    if row is not None:
+        snap.cutoff_utc = parse_iso(row["cutoff_utc"])
     if pf is not None and led is not None:
         snap.prices = ctx.price_infos(pf, led)
     base = ctx.base_portfolio()

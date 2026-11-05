@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Fiat-Guthaben{% endblock %}
+{% block heading %}Fiat-Guthaben (EUR/USD) nicht führen{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="hint"><a href="/settings#ledger">← Einstellungen</a></p>
+  {% if saved %}<div class="alert good"><span class="icon">✓</span><div>{% if saved == 'off' %}Fiat-Guthaben werden nicht mehr geführt – nur Assets zählen.{% else %}Fiat-Guthaben werden wieder je Konto geführt (Einstellung unter „Cash-Führung“).{% endif %}</div></div>{% endif %}
+  {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+  {% if not p.has_data %}<section class="card"><p class="hint">Noch keine Daten.</p></section>
+  {% else %}
+  <section class="card">
+    <div class="card-head"><h2>Was sich ändert</h2><span class="badge {{ 'good' if p.off_now else '' }}">{{ 'aktiv: nicht geführt' if p.off_now else 'derzeit: je Konto' }}</span></div>
+    <p>Mit dieser Einstellung zählen nur <b>Assets</b>. EUR/USD-Guthaben, reine Fiat-Ein- und Auszahlungen und deren Abgleich entfallen. Ein Kauf ist dann ein Zufluss, ein Verkauf ein Abfluss („eingesetztes Kapital“ = EUR-Wert der Käufe minus Verkaufserlöse). <b>Unverändert</b> bleiben die EUR-Werte von Käufen, Verkäufen und Gebühren – damit Anschaffungskosten, Gewinne und Steuer.</p>
+    <ul class="small">
+      <li>{{ p.fiat_txs }} reine Fiat-Buchungen (Ein-/Auszahlung, Fiat-Übertrag) bleiben gespeichert, haben aber keine Wirkung mehr.</li>
+      <li>Konten mit Cash-Führung heute: {{ p.cash_accounts|join(', ') if p.cash_accounts else 'keine' }}.</li>
+    </ul>
+    <h3>Prüfsummen: Assets bleiben gleich</h3>
+    <ul class="plain-list">{% for label, ok in p.checks %}<li><span class="badge {{ 'good' if ok else 'crit' }}">{{ 'gleich' if ok else 'abweichend' }}</span> {{ label }}</li>{% endfor %}</ul>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Eingesetztes Kapital – beide Rechenweisen</h2></div>
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Stand</th><th class="num">mit Fiat-Führung</th><th class="num">ohne (nur Assets)</th><th class="num">Unterschied</th></tr></thead>
+      <tbody>{% for r in p.rows %}<tr><td data-label="Stand">{{ r.label }}</td><td class="num nowrap" data-label="mit Fiat">{{ r.with_fiat|eur }}</td><td class="num nowrap" data-label="ohne Fiat">{{ r.without_fiat|eur }}</td><td class="num nowrap" data-label="Unterschied">{{ r.diff|eur }}</td></tr>{% endfor %}</tbody></table></div>
+    <p class="hint">Geld, das eingezahlt, aber nie investiert wurde, zählt ohne Fiat-Führung nicht mehr mit. Die Kurve „eingesetztes Kapital“ wird einheitlich ab Depotstart so berechnet.</p>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Fiat-Bestände, die entfallen</h2><span class="hint">{{ p.fiat_positions|length }} Position{{ '' if p.fiat_positions|length == 1 else 'en' }}</span></div>
+    <div class="table-wrap cards-wrap"><table class="compact cards">
+      <thead><tr><th>Konto</th><th>Währung</th><th class="num">Bestand laut Buchungen</th></tr></thead>
+      <tbody>{% for acc, a, q in p.fiat_positions %}<tr><td data-label="Konto">{{ acc }}</td><td data-label="Währung">{{ a }}</td><td class="num nowrap" data-label="Bestand">{{ q|qty_exact }}</td></tr>
+      {% else %}<tr><td colspan="3" class="hint">Keine Fiat-Bestände geführt.</td></tr>{% endfor %}</tbody></table></div>
+  </section>
+  <section class="card">
+    <form method="post" action="/settings/fiat" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% if p.off_now %}
+      <input type="hidden" name="fiat_off" value="0">
+      <button class="btn" type="submit">Fiat-Guthaben wieder je Konto führen</button>
+      {% else %}
+      <input type="hidden" name="fiat_off" value="1">
+      <button class="btn" type="submit" {% if not p.ok %}disabled{% endif %} data-confirm="Fiat-Guthaben nicht mehr führen? Das lässt sich hier jederzeit zurücknehmen.">Fiat-Guthaben nicht mehr führen</button>
+      {% endif %}
+    </form>
+    {% if not p.ok %}<p class="hint">Gesperrt: Die Prüfsummen weichen ab.</p>{% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

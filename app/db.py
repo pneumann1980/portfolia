@@ -1091,6 +1091,7 @@ ALTER TABLE csv_row ADD COLUMN pair_rev TEXT;
     (37, None),  # Schreibrevisionen und Besitzkennungen – siehe _migration_37()
     (38, None),  # Schreibrevisionen für Konto-Zuordnungen und Journal-Assets – siehe _migration_38()
     (39, None),  # Schreibrevisionen für Asset-Änderungen und Sparplan-Buchungen – siehe _migration_39()
+    (40, None),  # Stichtag: Eröffnungsstand, Freigaben, Korrekturen – siehe _migration_40()
 ]
 
 
@@ -1099,12 +1100,15 @@ REV_TABLES = ("journal_tx", "tx_override", "journal_import_link", "asset_source"
               "reference_balance", "ds_balance", "asset_merge", "account_merge", "account_remove", "account_meta",
               "tx_link", "journal_event_alias", "event_decision",
               "csv_account", "journal_asset",
-              "asset_change", "tx_estimate")  # Importzeilen (``tx``) sind je Import unveränderlich
+              "asset_change", "tx_estimate",
+              "cutover", "cutover_account", "cutover_correction")  # Importzeilen (``tx``) sind je Import unveränderlich
 # seit Migration 38 mit Zähler (0.95.0, N21): Konto-Zuordnungen und Journal-Assets (Anlage, Klasse, Kursquelle)
 REV_TABLES_38 = ("csv_account", "journal_asset")
 # seit Migration 39 (0.96.0, N21-Rest/N26): Asset-Änderungen (Umbenennung/Umstellung, ohne reine Hinweise) und
 # freigegebene Sparplan-Ausführungen (erfasste Buchungen) – mit bedingten Triggern, siehe ``_migration_39``
 REV_TABLES_39 = ("asset_change", "tx_estimate")
+# seit Migration 40 (0.99.0): Stichtag (Archiv/aktiv), Freigabe je Konto, Stichtag-Korrekturen
+REV_TABLES_40 = ("cutover", "cutover_account", "cutover_correction")
 # Zähler, die nur die Identität der Portfolio-Zwischenspeicher bestimmen (nicht den fachlichen Datenstand von Vorschau
 # und Bestätigung): Sparplan-Schätzungen und Sparpläne ändern sich im Hintergrund, sind aber keine erfassten Buchungen.
 CACHE_ONLY_REVS = ("pf:plan", "pf:tx_estimate")
@@ -1120,7 +1124,7 @@ def _migration_37() -> str:
     out = ["CREATE TABLE IF NOT EXISTS data_rev (name TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0);",
            "INSERT OR IGNORE INTO data_rev(name, n) VALUES ('input', 0);",
            "INSERT OR IGNORE INTO data_rev(name, n) VALUES ('settings', 0);"]
-    out += _rev_triggers(tuple(t for t in REV_TABLES if t not in REV_TABLES_38 + REV_TABLES_39))
+    out += _rev_triggers(tuple(t for t in REV_TABLES if t not in REV_TABLES_38 + REV_TABLES_39 + REV_TABLES_40))
     cond = {"INSERT": "NEW.key", "DELETE": "OLD.key", "UPDATE": "NEW.key"}
     for ev, k in cond.items():
         out.append(f"CREATE TRIGGER IF NOT EXISTS rev_settings_{ev.lower()} AFTER {ev} ON settings "
@@ -1249,7 +1253,7 @@ class Database:
                 continue
             script = (SCHEMA_FILE.read_text(encoding="utf-8") if sql == "__schema__" else
                       _migration_37() if version == 37 else _migration_38() if version == 38
-                      else _migration_39() if version == 39
+                      else _migration_39() if version == 39 else _migration_40() if version == 40
                       else sql or "")
             log.info("DB-Migration auf Version %s", version)
             c.executescript("BEGIN;" + script + f";PRAGMA user_version={version};COMMIT;")
@@ -1379,3 +1383,52 @@ class Database:
             self.conn.backup(dst)
         finally:
             dst.close()
+
+
+def _migration_40() -> str:
+    """Stichtag (0.99.0). ``cutover``: höchstens ein aktiver Stichtag (Buchungen vor ``cutoff`` = Archiv, ab ``cutoff``
+    = aktiv); ``cutover_account``: Freigabe des Eröffnungsstands je Konto mit Prüfsumme; ``cutover_correction``:
+    Stichtag-Korrekturen (eigene Buchungen mit Beleg bzw. gekennzeichneter Annahme, einzeln rücknehmbar)."""
+    out = [
+        """CREATE TABLE IF NOT EXISTS cutover (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  cutoff       TEXT NOT NULL,                      -- erster aktiver Tag (ISO-Datum, Ortszeit)
+  cutoff_utc   TEXT NOT NULL,                      -- Beginn dieses Tages in UTC (Vergleich mit ts_utc)
+  status       TEXT NOT NULL DEFAULT 'active',     -- active | undone
+  options_json TEXT NOT NULL,                      -- Rechenweise bei der Freigabe (scope, method, fiat_off)
+  fingerprint  TEXT NOT NULL,                      -- Prüfsumme des Eröffnungsstands (alle Konten)
+  summary_json TEXT,                               -- Zahlen bei der Freigabe
+  checks_json  TEXT,                               -- Pflichtprüfungen bei der Freigabe
+  created_at   TEXT NOT NULL,
+  undone_at    TEXT
+);""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_cutover_active ON cutover(status) WHERE status = 'active';",
+        """CREATE TABLE IF NOT EXISTS cutover_account (
+  cutover_id   INTEGER NOT NULL REFERENCES cutover(id) ON DELETE CASCADE,
+  account      TEXT NOT NULL,
+  status       TEXT NOT NULL,                      -- belegt | ohne_beleg | abweichung (bei der Freigabe)
+  fingerprint  TEXT NOT NULL,                      -- Prüfsumme der Lots/Bestände dieses Kontos
+  note         TEXT,
+  approved_at  TEXT NOT NULL,
+  PRIMARY KEY (cutover_id, account)
+);""",
+        """CREATE TABLE IF NOT EXISTS cutover_correction (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  cutoff       TEXT NOT NULL,                      -- Stichtag, zu dem die Korrektur gehört
+  account      TEXT NOT NULL,
+  asset_id     TEXT NOT NULL,
+  kind         TEXT NOT NULL,                      -- remove (Abgang ohne Gegenwert) | add (Zugang mit Anschaffung)
+  qty          TEXT NOT NULL,
+  acq_date     TEXT,                               -- add: Anschaffungsdatum
+  cost_eur     TEXT,                               -- add: Anschaffungskosten
+  mode         TEXT NOT NULL,                      -- evidence (belegt) | cautious (Annahme: Stichtag, 0 €) | derived
+  evidence     TEXT,                               -- Beleg bzw. Begründung
+  tx_id        TEXT,                               -- erzeugte Buchung
+  status       TEXT NOT NULL DEFAULT 'active',     -- active | undone
+  created_at   TEXT NOT NULL,
+  undone_at    TEXT
+);""",
+        "CREATE INDEX IF NOT EXISTS ix_cutover_correction ON cutover_correction(cutoff, status);",
+    ]
+    out += _rev_triggers(REV_TABLES_40)
+    return "\n".join(out)

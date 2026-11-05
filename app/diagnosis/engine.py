@@ -347,13 +347,50 @@ def diagnose(snap: Snapshot) -> Report:
                     seen.add(f.id)
                     findings.append(f)
         stats["reconstruction"] = len(seen)
+    findings, archived = split_archive(snap, findings)
+    if archived:
+        stats["archiviert"] = len(archived)
     findings.sort(key=lambda f: (*f.sort_key(), f.id))
     if snap.pf is not None:
         from app.diagnosis import audit as _audit
 
         _audit.case_states(snap, findings)
     return Report(findings=findings, holdings=holdings, generated_for=snap.today, stats=stats, snapshot=snap,
-                  index=idx, traces=traces)
+                  index=idx, traces=traces, archived=archived)
+
+
+def split_archive(snap: Snapshot, findings: list[Finding]) -> tuple[list[Finding], list[Finding]]:
+    """Festgeschriebener Stichtag: Befunde, deren Buchungen **alle** vor dem Stichtag liegen, gehören zum Archiv (nicht
+    mehr bearbeitbar) und stehen nicht in den offenen Listen. Ein Sammelbefund ist nur dann Archiv, wenn alle seine
+    Einzelvorgänge es sind; sonst bleibt er, und die Archiv-Einzelvorgänge werden aus seiner Liste genommen. Befunde
+    ohne Buchungsbezug (Bestände, Kurse, Quellen) bleiben unverändert."""
+    cut = snap.cutoff_utc
+    if cut is None:
+        return findings, []
+
+    def refs(f: Finding) -> list[Any]:
+        return [*f.txs, *(x for a, b, _w in f.pairs for x in (a, b))]
+
+    def own(f: Finding) -> bool:
+        r = refs(f)
+        return bool(r) and all(t.ts < cut for t in r)
+
+    by_id = {f.id: f for f in findings}
+    arch: set[str] = set()
+    for f in findings:
+        if not f.children and own(f):
+            arch.add(f.id)
+    for f in findings:  # Sammelbefund: alle Einzelvorgänge Archiv (und mindestens einer vorhanden)
+        kids = [by_id[c] for c in f.children if c in by_id]
+        if f.children and kids and all(k.id in arch for k in kids):
+            arch.add(f.id)
+    if not arch:
+        return findings, []
+    keep = [f for f in findings if f.id not in arch]
+    for f in keep:
+        if f.children:
+            f.children = [c for c in f.children if c not in arch]
+    return keep, [f for f in findings if f.id in arch]
 
 
 # ----------------------------------------------------------------------------------------------------

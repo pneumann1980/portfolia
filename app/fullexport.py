@@ -89,6 +89,16 @@ def _csv(cols: tuple[str, ...], rows: Any) -> bytes:
 # Export
 # ----------------------------------------------------------------------------------------------------
 
+def _cutover_rows(db: Any) -> list[dict[str, Any]]:
+    out = []
+    for r in db.q("SELECT * FROM cutover ORDER BY id"):
+        d = {k: r[k] for k in r.keys() if k != "id"}  # noqa: SIM118 – sqlite3.Row
+        d["accounts"] = _rows(db, "SELECT account, status, fingerprint, note, approved_at FROM cutover_account "
+                                  "WHERE cutover_id=? ORDER BY account", (r["id"],), drop=())
+        out.append(d)
+    return out
+
+
 def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
     """Zusatzdateien für den Gesamtexport (``tx_ids`` = exportierte Buchungen, für die Anbieter-IDs)."""
     db = ctx.db
@@ -156,6 +166,11 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
                 "b.observed_at, d.status AS source_status, d.last_success_at AS source_last_success_at, "
                 "d.coverage_json AS source_coverage_json FROM ds_balance b JOIN data_source d ON d.id = b.source_id "
                 "ORDER BY d.id, b.asset_key", drop=()),
+        # Stichtag (0.99.0): Festschreibung samt Freigaben je Konto und die gekennzeichneten Korrekturen
+        "cutovers": _cutover_rows(db),
+        "cutover_corrections": _rows(db, "SELECT cutoff, account, asset_id, kind, qty, acq_date, cost_eur, mode, "
+                                         "evidence, tx_id, status, created_at, undone_at FROM cutover_correction "
+                                         "ORDER BY id"),
         "watchlists": _rows(db, "SELECT name, position, is_default, created_at FROM watchlist ORDER BY id", drop=()),
         "watchlist_items": _rows(db, "SELECT w.name AS list_name, i.quote_source, i.quote_id, i.asset_class, "
                                      "i.asset_id, i.symbol, i.name, i.position, i.added_at FROM watchlist_item i "
@@ -551,6 +566,7 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
         counts["series_meta"] = _meta(c, extras.get(META))
         counts["watchlist"] = _watchlists(c, st.get("watchlists") or [], st.get("watchlist_items") or [], now)
         counts["taxdata"] = _taxdata(c, extras.get(TAXDATA), ctx.config.tax_data_dir / "uploads", now)
+        counts["cutover"] = _cutovers(c, st.get("cutovers") or [], st.get("cutover_corrections") or [])
         c.execute("INSERT INTO journal_log(at, action, ref, before_json, after_json) VALUES (?,?,?,?,?)",
                   (now, "restore_apply", f"import {import_id}", None, json.dumps(counts)))
         pending = bool(journal and journal.get("files"))
@@ -559,6 +575,42 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
         _put_state(c, f"restore.{import_id}", {"state": "incomplete" if pending else "applied", "at": now,
                                                "counts": counts, "restore_id": (journal or {}).get("id")})
     return counts
+
+
+def _cutovers(c: Any, rows: list[dict[str, Any]], corrections: list[dict[str, Any]]) -> int:
+    """Stichtag(e) wiederherstellen (ältere Exporte kennen keine). Gleicher Stichtag und Zeitpunkt = schon vorhanden.
+    Es gibt höchstens einen aktiven Stichtag: ist bereits einer aktiv, kommt der übernommene als „undone“ hinein."""
+    n = 0
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("cutoff") or not r.get("created_at"):
+            continue
+        if c.execute("SELECT 1 FROM cutover WHERE cutoff=? AND created_at=?",
+                     (r["cutoff"], r["created_at"])).fetchone():
+            continue
+        status = r.get("status") if r.get("status") in ("active", "undone") else "undone"
+        if status == "active" and c.execute("SELECT 1 FROM cutover WHERE status='active'").fetchone():
+            status = "undone"
+        cur = c.execute(
+            "INSERT INTO cutover(cutoff, cutoff_utc, status, options_json, fingerprint, summary_json, checks_json, "
+            "created_at, undone_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (r["cutoff"], r.get("cutoff_utc") or "", status, r.get("options_json") or "{}", r.get("fingerprint") or "",
+             r.get("summary_json"), r.get("checks_json"), r["created_at"],
+             r.get("undone_at") or (r["created_at"] if status == "undone" and r.get("status") == "active" else None)))
+        cid = int(cur.lastrowid)  # type: ignore[arg-type]
+        for a in r.get("accounts") or []:
+            c.execute("INSERT OR IGNORE INTO cutover_account(cutover_id, account, status, fingerprint, note, "
+                      "approved_at) VALUES (?,?,?,?,?,?)",
+                      (cid, a.get("account"), a.get("status") or "ohne_beleg", a.get("fingerprint") or "",
+                       a.get("note"), a.get("approved_at") or r["created_at"]))
+        n += 1
+    for k in corrections:
+        if not isinstance(k, dict) or (not k.get("tx_id") and k.get("status") == "active"):
+            continue
+        if c.execute("SELECT 1 FROM cutover_correction WHERE cutoff=? AND created_at=? AND account=? AND asset_id=?",
+                     (k.get("cutoff"), k.get("created_at"), k.get("account"), k.get("asset_id"))).fetchone():
+            continue
+        n += _insert(c, "cutover_correction", [k], "OR IGNORE")
+    return n
 
 
 def _put_state(c: Any, key: str, value: Any) -> None:

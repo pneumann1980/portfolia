@@ -61,7 +61,7 @@ CAUSES = {"rechenfehler": "nachgewiesener Rechenfehler", "nachgewiesen": "nachge
           "datenluecke": "Abweichung aus unvollständigen Quelldaten", "verdacht": "Verdacht",
           "hinweis": "Hinweis zur Einordnung"}
 CONFIDENCE = ("eindeutig", "hoch plausibel", "prüfbedürftig", "widersprüchlich")
-STATUSES = {"offen": "", "geprüft": "good", "korrigiert": "info", "verworfen": ""}
+STATUSES = {"offen": "", "geprüft": "good", "korrigiert": "info", "verworfen": "", "archiviert": ""}
 # Befunde des Abgleichs (Konfidenzstufe, Sammelbearbeitung)
 RECON_KINDS = frozenset({"duplicate", "transfer", "roundtrip"})
 INDEPENDENT_NOTE = "Unabhängige Buchung bestätigt"  # „verworfen“: Befund trifft nicht zu (Nutzerentscheidung)
@@ -584,6 +584,7 @@ def _run(ctx: Any, progress: Any | None) -> Run:
         items += timed("prices", lambda: check_prices(ctx, report, result.checks))
         items += timed("history", lambda: check_history(ctx, report, result.checks))
         _status(items, report, ctx.db)
+        _archive(items, snap)
         items += _corrected(ctx.db, {it.finding_id for it in items if it.finding_id})
         seen: set[str] = set()
         result.items = [it for it in items if not (it.id in seen or seen.add(it.id))]  # type: ignore[func-returns-value]
@@ -605,6 +606,18 @@ def _run(ctx: Any, progress: Any | None) -> Run:
         c = result.counts()
         progress.finish(result.ok, result=f"{c['open']} offene Befunde" if result.ok else result.error)
     return result
+
+
+def _archive(items: list[Item], snap: Any) -> None:
+    """Festgeschriebener Stichtag: Prüfpunkte, deren Buchungen alle vor dem Stichtag liegen, sind Archiv (nicht mehr
+    offen). Punkte ohne Buchungsbezug bleiben."""
+    cut = getattr(snap, "cutoff_utc", None)
+    if cut is None or snap.pf is None:
+        return
+    old = {t.tx_id for t in snap.pf.txs if t.ts < cut}
+    for it in items:
+        if it.status == "offen" and it.tx_ids and all(x in old for x in it.tx_ids):
+            it.status = "archiviert"
 
 
 def sort_key(it: Item) -> tuple[Any, ...]:

@@ -22,11 +22,11 @@ import itertools
 from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from app.importer import contract as C
-from app.ledger.models import Portfolio, Tx
+from app.ledger.models import OpeningState, Portfolio, Tx
 
 ZERO = Decimal(0)
 DUST = Decimal("1e-12")
@@ -44,6 +44,10 @@ class EngineOptions:
     tax_tags: frozenset[str] = frozenset({"withholding_tax", "tax"})
     unmatched_transfers_as_flows: bool = True
     cash_overrides: tuple[tuple[str, bool], ...] = ()  # (account, cash_tracked)
+    # Fiat-Guthaben (EUR/USD …) nirgends führen (0.97.0): nur Assets zählen. Käufe sind dann Zuflüsse, Verkäufe
+    # Abflüsse (wie bei jedem Konto ohne Cash-Führung); reine Fiat-Ein-/Auszahlungen bleiben ohne Wirkung. EUR-Werte
+    # von Käufen, Verkäufen und Gebühren (Anschaffungskosten, Erlöse) bleiben unverändert erhalten.
+    fiat_off: bool = False
     until: date | None = None  # nur Transaktionen bis einschließlich dieses Datums
     # Stichtage (Tagesende), zu denen der Lot-Bestand festgehalten wird (z. B. 31.12. für die Vorabpauschale)
     snapshot_dates: tuple[date, ...] = ()
@@ -228,6 +232,8 @@ class LedgerResult:
     tx_count: int = 0
     tx_by_asset: dict[str, list[str]] = field(default_factory=dict)
     lot_snapshots: dict[date, list[Lot]] = field(default_factory=dict)
+    # Zustand (Lots, Bestände, Cash-Führung) zu den Stichtagen – Grundlage des Eröffnungsstands (0.98.0)
+    state_snapshots: dict[date, OpeningState] = field(default_factory=dict)
 
     # -- Aggregationen -------------------------------------------------------------------------
     def holdings_by_asset(self) -> dict[str, Decimal]:
@@ -264,6 +270,8 @@ def detect_cash_accounts(pf: Portfolio, opts: EngineOptions) -> dict[str, bool]:
     Konten ohne Cash-Führung (typisch: Wertpapierdepot, dessen Verrechnungskonto nicht im Ledger
     steht) behandeln Käufe als Einzahlung und Verkaufserlöse als Auszahlung.
     """
+    if opts.fiat_off:
+        return dict.fromkeys(pf.all_accounts(), False)
     tracked: set[str] = set()
     for t in pf.txs:
         fa = pf.assets.get(t.from_asset) if t.from_asset else None
@@ -291,7 +299,15 @@ class _Engine:
     def __init__(self, pf: Portfolio, opts: EngineOptions) -> None:
         self.pf = pf
         self.opts = opts
-        self.cash = detect_cash_accounts(pf, opts)
+        op = pf.opening
+        # Cash-Führung: bei einer Berechnung ab Stichtag aus der vollständigen Berechnung (die Teilmenge der
+        # Buchungen allein erkennt sie sonst anders); ohne Fiat-Führung ohnehin überall aus
+        if op is not None and op.cash is not None and not opts.fiat_off:
+            self.cash = {**dict.fromkeys(pf.all_accounts(), False), **op.cash}
+            for acc, val in opts.cash_overrides:
+                self.cash[acc] = val
+        else:
+            self.cash = detect_cash_accounts(pf, opts)
         self.lots: dict[str, list[Lot]] = defaultdict(list)
         self.ids = itertools.count(1)
         self.bal: dict[tuple[str, str], Decimal] = defaultdict(lambda: ZERO)
@@ -306,6 +322,25 @@ class _Engine:
         self._neg_reported: set[tuple[str, str]] = set()
         self.tx_by_asset: dict[str, list[str]] = defaultdict(list)
         self._unmatched = 0
+        self.state_snaps: dict[date, OpeningState] = {}
+        if op is not None:
+            self._seed(op)
+
+    def _seed(self, op: OpeningState) -> None:
+        """Eröffnungsstand übernehmen: Lots in ihrer Reihenfolge (Anschaffungszeit, Ursprung) mit neuen Kennungen –
+        Herkunft, Anschaffungsdatum und -kosten bleiben; geteilte Lots behalten einen gemeinsamen Ursprung."""
+        roots: dict[int, int] = {}
+        for lot in sorted(op.lots, key=Lot.sort_key):
+            if lot.qty <= DUST:
+                continue
+            lid = next(self.ids)
+            root = roots.setdefault(lot.root_id, lid)
+            self._insert(Lot(lid, root, lot.asset, lot.account, lot.qty, lot.cost, lot.acq_ts, lot.acq_date,
+                             lot.acq_tx, lot.origin, lot.income_tag, lot.via))
+        for key, q in op.balances.items():
+            if q:
+                self.bal[key] = q
+        self._neg_reported = set(op.neg_reported)
 
     # -- Helfer ------------------------------------------------------------------------------
     def is_fiat(self, asset: str | None) -> bool:
@@ -698,6 +733,9 @@ class _Engine:
                 self.flow(tx, -amt if amt is not None else None, "withdrawal", fa, asset, -qty)
                 self.aflow(tx, asset, -amt if amt is not None else None, -qty, "withdrawal")
             return
+        if tag == "cutover_correction":  # Bestandskorrektur zum Stichtag: verbraucht Lots, ist aber weder Veräußerung
+            self.dispose(tx, asset, fa, qty, ZERO, "withdrawal")  # noch Verlust noch externer Zahlungsstrom
+            return
         if tag in ("lost", "stolen", "burn"):
             self.dispose(tx, asset, fa, qty, ZERO, "lost")
             return
@@ -723,6 +761,11 @@ class _Engine:
                for lst in self.lots.values() for lot in lst if lot.qty > DUST]
         out.sort(key=Lot.sort_key)
         return out
+
+    def _state(self, d: date) -> OpeningState:
+        """Zustand zum Ende des Tages ``d`` (Lots, Bestände, gemeldete negative Bestände, Cash-Führung)."""
+        return OpeningState(d + timedelta(days=1), self._snapshot(), {k: v for k, v in self.bal.items() if v},
+                            frozenset(self._neg_reported), dict(self.cash))
 
     def _outflows(self, t: Tx) -> list[tuple[str, str, Decimal]]:
         """Abgänge nicht-fiater Bestände einer Buchung: (Konto, Asset, Menge)."""
@@ -770,10 +813,13 @@ class _Engine:
         snapshots: dict[date, list[Lot]] = {}
         for t in self._same_time_order(txs):
             while pending and t.date > pending[0]:
-                snapshots[pending.pop(0)] = self._snapshot()
+                d0 = pending.pop(0)
+                snapshots[d0] = self._snapshot()
+                self.state_snaps[d0] = self._state(d0)
             self.process(t)
         for d in pending:
             snapshots[d] = self._snapshot()
+            self.state_snaps[d] = self._state(d)
         if self._unmatched:
             how = ("als externe Zahlungsströme zum Marktwert" if self.opts.unmatched_transfers_as_flows
                    else "ohne Zahlungsstrom")
@@ -800,6 +846,7 @@ class _Engine:
             tx_count=len(txs),
             tx_by_asset=dict(self.tx_by_asset),
             lot_snapshots=snapshots,
+            state_snapshots=self.state_snaps,
         )
 
 

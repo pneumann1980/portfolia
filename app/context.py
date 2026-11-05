@@ -94,6 +94,7 @@ class AppContext:
         self._ledgers: dict[tuple, LedgerResult] = {}
         self._vals: dict[tuple, Valuation] = {}
         self._hist: tuple[tuple, History | None] | None = None
+        self._derived: dict[tuple, Any] = {}  # abgeleitete Ergebnisse (z. B. Stichtag) – gleiche Cache-Regel wie oben
         self.data_version = 0
         self.history_version = 0
         self.scheduler: Any = None  # wird in main gesetzt
@@ -284,6 +285,22 @@ class AppContext:
                 self._pf = (key, pf)
         return pf
 
+    def derived(self, name: str, key: Any, fn: Callable[[], Any]) -> Any:
+        """Abgeleitetes Ergebnis (z. B. Stichtag-Modell) nach der Cache-Regel von :meth:`read_state`: gelesen nur bei
+        gleicher Datenrevision und gleichen Einstellungen; veröffentlicht nur aus eigenem Lesestand."""
+        rev = self.cache_rev()
+        full = (name, rev, self.overlay_version, self.settings.version, key)
+        with self._lock:
+            if full in self._derived:
+                return self._derived[full]
+        val = fn()
+        if self.may_publish(rev):
+            with self._lock:
+                if len(self._derived) > 12:
+                    self._derived.clear()
+                self._derived[full] = val
+        return val
+
     def invalidate_overlay(self) -> None:
         """Journal oder Sparplan-Schätzungen geändert: Ledger, Bewertung und Historie neu (Import bleibt gecacht)."""
         with self._lock:
@@ -294,6 +311,7 @@ class AppContext:
             self._ledgers.clear()
             self._vals.clear()
             self._hist = None
+            self._derived.clear()
             self.data_version += 1
             self.history_version += 1
         self._changed("overlay")
@@ -334,6 +352,7 @@ class AppContext:
             scope=scope or self.settings.get("ledger.scope", "global"),
             unmatched_transfers_as_flows=bool(self.settings.get("ledger.unmatched_transfers_as_flows", True)),
             cash_overrides=tuple(sorted((k, bool(v)) for k, v in overrides.items())),
+            fiat_off=bool(self.settings.get("ledger.fiat_off", False)),
         )
 
     def ledger(self, scope: str | None = None, opts: EngineOptions | None = None) -> LedgerResult | None:
@@ -364,6 +383,7 @@ class AppContext:
             self._ledgers.clear()
             self._vals.clear()
             self._hist = None
+            self._derived.clear()
             self.data_version += 1
         self._changed("data")
 
