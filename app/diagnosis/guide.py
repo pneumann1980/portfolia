@@ -1098,9 +1098,11 @@ def _case_exits(ctx: Any, task: Task) -> list[Answer]:
             caution = "Zugänge zu 0 €: die Haltefrist beginnt neu"
             if any(r["sold"] for r in rows):
                 caution += " – ab dem Stichtag wurde verkauft, das wirkt steuerlich"
+        token = ST.digest(rows)  # bindet die angezeigten Mengen und Belege (0.107.0, N34)
+        ST.remember_shown(ctx.db, task.kid, token)
         out.append(Answer("case:settle", "Auf den Bestand der Quelle ausgleichen",
                           f"Bucht am Vortag des Stichtags: {lines}. Einzeln rücknehmbar.", recommended=True,
-                          caution=caution))
+                          caution=caution, token=token))
     out.append(Answer("case:defer", "Kann ich nicht klären – so lassen",
                       "Nichts wird geändert. Der Fall ruht und öffnet sich erst wieder, wenn neue Belege vorliegen."))
     out.append(Answer("skip", "Später", NO_CHANGE))

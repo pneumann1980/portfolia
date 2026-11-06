@@ -818,3 +818,23 @@ Jede Aufgabe im Assistenten hat eine abschließende Antwort (Audit mit Beispiel-
 
 Offene Grenzen: veraltete Abrufe gleichen Werts verschwinden erst nach frischem Abruf oder „so lassen“; Bestände ohne Beleg
 lassen sich nicht ausgleichen.
+
+## Prüfung 0.106.0 (N30–N37, 0.107.0)
+
+Grundlage: unabhängige Prüfung von `9dd8980` mit 14 neuen Gegenproben (`tests/external_106/test_ext106_review.py`, unverändert
+übernommen) und den 13 Zusatzfällen der Nachprüfung 0.96.0 (`tests/external_106/test_ext106_followup.py`, ohne N33, siehe
+unten). Vor der Korrektur auf `9dd8980`: 6 bzw. 7 Fehlschläge reproduziert; danach alle bestanden.
+
+| Befund | Ursache | Korrektur | Nachweis |
+| --- | --- | --- | --- |
+| **N34** (P1) Bestätigung nicht an den angezeigten Ausgleich gebunden | Buchen plante aus aktuellen Belegen neu; das Formular trug nur Zeilenkennungen, der Assistent nur den Aufgabenbezug | Fingerabdruck je Ausgleichszeile (`settle.row_fp`: Lauf, Konto/Asset, Richtung, Menge, Rest, Beleg, Eröffnungsbestand) in Liste/Zusammenfassung (`fp_<Zeile>`) bzw. als Antwortschlüssel (`settle.digest`); Formulare ohne Fingerabdruck nur mit der zuletzt genau so gezeigten Zusammenfassung (einmal verwendbar); Abweichung → nichts buchen, 409 mit neuer Vorschau | 3 Gegenproben (6 Fälle), `tests/test_review_107.py` (Seite, eigener Zielbestand, Assistentenschlüssel) |
+| **N35** (P1) gleichzeitige Bestätigung gleicht doppelt aus | Zeilen einzeln ohne Prüfung des Planungsstands gebucht | Datenstand (`actions.data_version`) vor der Planung gelesen, `assert_version` als Erstes in **einer** Schreibtransaktion für alle Zeilen (`corrections.book`) | Gegenprobe mit zwei Threads an einer Barriere; `test_a_stale_version_books_nothing` |
+| **N36** (P2) Journal und Korrekturprotokoll nicht atomar | `js.save` bzw. `js.delete` in eigener Transaktion, Protokoll danach getrennt | `JournalService.save_in/delete_in/delete_import_in` (in der laufenden Transaktion, ohne Nacharbeiten); Buchung + Protokoll bzw. Entfernen + Status in einer Transaktion, je Zeile ein Sicherungspunkt; Nacharbeiten nach dem Commit | SQLite-Trigger-Gegenprobe (Anlegen/Rücknahme); `test_undo_keeps_booking_and_audit_together` |
+| **N37** (P1) altes Formular umgeht den festgeschriebenen Stichtag | Datum aus dem Formular vertraut, danach `guard.allow()` | `corrections.run_errors` vor jeder Archiv-Ausnahme (Korrektur, Ausgleich, Rücknahme, Vorschau) und erneut in der Transaktion; Vorbereitung ohne festgeschriebenen Stichtag unverändert | Gegenprobe; `test_corrections_of_another_cutoff_are_rejected_while_one_is_fixed` |
+| **N30** Wiederherstellung verliert mehrdeutige Bestandsbeobachtungen | Altexport ohne Quelladresse bei gleichnamigen Quellen: Beobachtung still übergangen, Zustand „übernommen“ | Nie raten: die Beobachtung steht mit Grund in `restore.<id>.gaps`, Zustand `applied_gaps` („Wiederherstellung mit Lücken“, Hinweis in Einstellungen/Übersicht), Zähler `ds_balances_unassigned` | Zusatzfall `legacy_ambiguous`; `test_restore_with_an_ambiguous_observation_is_reported_as_gap` |
+| **N31** Einstellungscache passt nicht zum SQL-Lesestand | prozessweiter Cache ohne Revision | Cache je Revision `data_rev['settings']`; im Lesestand gilt dessen Revision, in Schreibtransaktionen wird nichts zwischengespeichert, ein im Lesestand gebauter Eintrag verdrängt nie den aktuellen | 3 Zusatzfälle (none/warm/cold); `test_settings_read_in_a_write_transaction_are_not_cached` |
+| **N32** Stapelrücknahme belebt verworfene Eingaben | Rücknahme setzte den Wert davor mit **neuer** Kennung | Stapelaktion legt den Stand davor samt Kennung in `csv_input_hist` ab; die Rücknahme stellt Wert **und** Besitz wieder her und folgt widerrufenen Eingaben bis zum letzten gültigen Stand (`batch._restore_target`); Aktionen vor 0.107.0 wie bisher | 3 Dienst- + 1 HTTP-Zusatzfall |
+| **N33** Bewertung nach geänderter Kurszuordnung | – | **Regelentscheidung, kein Defekt:** bestätigt wird der in der Vorschau gezeigte EUR-Wert samt Herkunft (`value_source`); eine danach geänderte Kurszuordnung wirkt auf neue Planungen. Buchungen, Zuordnungen und Belege bleiben gebunden (Datenstand) | `test_n33_the_confirmed_valuation_is_booked_with_its_origin` |
+
+Nicht als Fehler gewertet (wie in der Prüfung): sichtbar abgelehnte Wiederholung, zurückgestellte Fälle, Bestand ohne
+Sollbeleg, dokumentierter Zugang zu 0 € mit Haltefrist-Neubeginn (eine Annahme, keine Bestätigung historischer Daten).

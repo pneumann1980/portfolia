@@ -1,6 +1,6 @@
 [project]
 name = "portfolia"
-version = "0.106.0"
+version = "0.107.0"
 description = "Self-hosted Portfolio-Dashboard (Aktien & Krypto) für Unraid/Docker – nur lesend, EUR-basiert, mit Steuer-Modul."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -27,6 +27,8 @@ ignore = [
 "tests/external_095/*" = ["S", "B", "F401", "F811", "F841", "I001", "E501", "RUF059", "RUF100"]
 # Externe Gegenproben der Nachprüfung 0.95.0 – unverändert übernommen
 "tests/external_096/*" = ["S", "B", "F401", "F811", "F841", "I001", "E501", "RUF059", "RUF100"]
+# Externe Gegenproben der Prüfung 0.106.0 – unverändert übernommen (N33 ausgenommen, siehe Datei)
+"tests/external_106/*" = ["S", "B", "F401", "F811", "F841", "I001", "E501", "RUF059", "RUF100"]
 "scripts/*" = ["S"]
 
 [tool.ruff.lint.isort]

@@ -1,0 +1,6 @@
+{# Wiederherstellung übernommen, einzelne Angaben nicht eindeutig zuordenbar (0.107.0). Erwartet: restore (fullexport.status). #}
+<div class="alert warn" id="restore-gaps" style="margin:8px 0"><span class="icon">!</span><div>
+  <b>Wiederherstellung mit Lücken</b>: {{ restore.gaps|length }} Bestandsbeobachtung(en) ließen sich keiner Datenquelle eindeutig zuordnen und wurden nicht übernommen (nichts geraten).
+  <ul class="hint">{% for g in restore.gaps[:5] %}<li><span>{{ g.name }}{% if g.account %} ({{ g.account }}){% endif %} · {{ g.asset_key }} {{ g.qty }} – {{ g.reason }}</span></li>{% endfor %}</ul>
+  <div class="hint">Beim nächsten Abruf der Quelle werden die Bestände neu erhoben; Buchungen sind nicht betroffen.</div>
+</div></div>

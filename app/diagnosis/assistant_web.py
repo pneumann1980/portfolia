@@ -286,7 +286,8 @@ def make_router() -> APIRouter:
             return RedirectResponse(with_kid(href, kid), status_code=303) if href else \
                 _go(err="Die Aufgabe besteht nicht mehr.")
         if aid in ("case:defer", "case:settle") and typ == "seite":  # Klärungsfall ohne vorbereitete Lösung
-            return await run_in_threadpool(_page_case_answer, ctx, kid, aid, gone)
+            token = str(form.get(f"t_{aid}") or "")
+            return await run_in_threadpool(_page_case_answer, ctx, kid, aid, gone, token)
         if not fid:
             return _go(err="Diese Antwort braucht einen Vorgang – die Aufgabe hat sich geändert, bitte neu laden.")
         if typ in ("erneut", "rechnung"):
@@ -332,9 +333,11 @@ def make_router() -> APIRouter:
         return _go(msg="Gespeichert und korrigiert." + note, done=res.decision_id,
                    gone=await run_in_threadpool(gone), sig=sig, sa=aid if not params else "", st=text)
 
-    def _page_case_answer(ctx: Any, kid: str, aid: str, gone: Any) -> Response:
+    def _page_case_answer(ctx: Any, kid: str, aid: str, gone: Any, token: str = "") -> Response:
         """„Kann ich nicht klären“ (Fall ruht) bzw. „Auf den Bestand der Quelle ausgleichen“ für einen Fall, dessen
-        Aufgabe nur eine Seite öffnet. Der Fall wird immer aus der Aufgabe bestimmt, nie aus dem Formular."""
+        Aufgabe nur eine Seite öffnet. Der Fall wird immer aus der Aufgabe bestimmt, nie aus dem Formular. Der Ausgleich
+        bucht nur, was angezeigt wurde (0.107.0, N34): Schlüssel der Antwort im Formular, sonst der zuletzt zu dieser
+        Aufgabe angezeigte Stand – weicht der jetzige Ausgleich ab, wird nichts gebucht."""
         from app.cutover import settle as ST
         from app.diagnosis import clarify as K
 
@@ -345,9 +348,10 @@ def make_router() -> APIRouter:
             res = K.defer(ctx, t.ref.split(":", 1)[1], "Im Assistenten: kann ich nicht klären")
             return _go(msg="Gespeichert: so lassen – der Fall ruht, bis neue Belege vorliegen." if res.ok else "",
                        err=" ".join(res.errors), gone=gone())
-        res2 = ST.settle_case(ctx, list(t.item.refs))
+        res2 = ST.settle_case(ctx, list(t.item.refs), expect=token or ST.shown(ctx.db, kid))
         if res2["errors"]:
             return _go(err=" ".join(res2["errors"]))
+        ST.forget_shown(ctx.db, kid)
         n = len(res2["done"])
         bad = f" {len(res2['failed'])} Zeile(n) ließen sich nicht buchen: {res2['failed'][0]['errors'][0]}" \
             if res2["failed"] else ""

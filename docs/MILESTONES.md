@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 06.11.2026 · Version 0.106.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 06.11.2026 · Version 0.107.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,21 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.107.0 – Prüfung 0.106.0: Bestätigungs- und Schreibvertrag
+
+Unabhängige Prüfung von 0.106.0: vier neue Fehlerklassen (N34–N37) und drei offene frühere Befunde (N30–N32).
+Details: [`STICHTAG.md`](STICHTAG.md#bestätigungs--und-schreibvertrag-01070),
+[`BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](BUCHUNGEN_PRUEFEN_KORREKTUREN.md#prüfung-01060-n30n37-01070).
+
+* **N34** gebucht wird nur der angezeigte Ausgleich (Fingerabdruck je Zeile, Schlüssel im Assistenten).
+* **N35** Datenstand in der Schreibtransaktion geprüft – gleichzeitige Bestätigungen buchen einmal.
+* **N36** Journal und Korrekturprotokoll atomar (Buchen und Rücknahme).
+* **N37** Korrekturen nur für den festgeschriebenen Stichtag.
+* **N30** Wiederherstellung meldet nicht zuordenbare Bestandsbeobachtungen („übernommen mit Lücken“) statt sie still zu verwerfen.
+* **N31** Einstellungen folgen dem SQL-Lesestand (Revision `settings`).
+* **N32** Rücknahme einer Stapelaktion stellt Wert *und* Besitz wieder her und belebt keine verworfene Eingabe.
+* **N33** als Regel dokumentiert (bestätigte Bewertung), kein Defekt.
 
 ## 0.106.0 – Stichtag: Ausweg für jeden Klärungsfall
 

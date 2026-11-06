@@ -50,7 +50,7 @@ def make_router() -> APIRouter:
               settle: bool = False, status: int = 200, result: dict[str, Any] | None = None,
               sform: dict[str, Any] | None = None, ssum: dict[str, Any] | None = None,
               errors: list[str] | None = None, saved: str | None = None, sim: dict[str, Any] | None = None,
-              form: dict[str, Any] | None = None) -> HTMLResponse:
+              form: dict[str, Any] | None = None, sfp: dict[str, str] | None = None) -> HTMLResponse:
         ctx = get_ctx(request)
         st = FX.state(ctx)  # aktiver Stichtag: dessen Datum gilt, nicht die Auswahl
         c = st["cutoff"] if st else CS.parse_cutoff(cutoff)
@@ -59,7 +59,7 @@ def make_router() -> APIRouter:
             pv = CS.preview(ctx, c, impact=impact, derive=derive, settle=settle)
         return render(request, "cutover.html", status_code=status, active="settings", p=pv, st=st,
                       errors=errors or [], saved=saved, sim=sim, form=form or {}, modes=CR.MODES, result=result,
-                      sform=sform or {}, ssum=ssum)
+                      sform=sform or {}, ssum=ssum, sfp=sfp or {})
 
     @router.get("/settings/stichtag", response_class=HTMLResponse)
     async def cutover_page(request: Request, cutoff: str | None = None, impact: str | None = None,
@@ -70,23 +70,39 @@ def make_router() -> APIRouter:
 
     @router.post("/settings/stichtag/ausgleich")
     async def cutover_settle(request: Request) -> Response:
+        """Vorschau („Auswahl prüfen“) zeigt die Zusammenfassung und merkt sich, was gezeigt wurde; Buchen bucht nur,
+        was genau so angezeigt wurde (Fingerabdruck je Zeile aus dem Formular bzw. der Zusammenfassung, 0.107.0)."""
         ctx = get_ctx(request)
         f = await request.form()
         c = CS.parse_cutoff(str(f.get("cutoff") or ""))
         form = {k: str(v) for k, v in f.items() if k != "csrf_token"}
         if form.get("do") != "book":  # Zusammenfassung zeigen, nichts buchen
             def preview_() -> HTMLResponse:
-                ms = CO.models(ctx, c)
+                errs = CR.run_errors(ctx.db, c)
+                ms = CO.models(ctx, c) if not errs else []
                 if not ms:
-                    return _page(request, c.isoformat(), settle=True, status=422, errors=["Keine Daten."])
+                    return _page(request, c.isoformat(), settle=True, status=409 if errs else 422,
+                                 errors=errs or ["Keine Daten."])
                 res = ST.resolve(ms[0], ST.plan(ctx, ms[0]), form)
-                return _page(request, c.isoformat(), settle=True, sform=form, ssum=res["summary"],
+                if not res["errors"]:
+                    ST.remember_preview(ctx.db, c, form, res["chosen"])
+                sfp = {r["id"]: r["fp"] for r in res["chosen"]}
+                return _page(request, c.isoformat(), settle=True, sform=form, ssum=res["summary"], sfp=sfp,
                              errors=res["errors"], status=422 if res["errors"] else 200)
             return await run_in_threadpool(preview_)
-        res = await run_in_threadpool(lambda: ST.apply_form(ctx, c, form))
+
+        def book_() -> Any:
+            expected, stored = ST.expected_for(ctx.db, c, form)
+            res = ST.apply_form(ctx, c, form, expected=expected)
+            if not res["errors"] and stored:
+                ST.forget_preview(ctx.db, c, form)  # eine gezeigte Zusammenfassung bestätigt genau eine Buchung
+            return res
+
+        res = await run_in_threadpool(book_)
         if res["errors"]:
+            status = 409 if res.get("changed") or CR.run_errors(ctx.db, c) else 422
             return await run_in_threadpool(lambda: _page(request, c.isoformat(), settle=True, sform=form,
-                                                         status=422, errors=res["errors"]))
+                                                         status=status, errors=res["errors"]))
         return await run_in_threadpool(lambda: _page(request, c.isoformat(), result=res))
 
     @router.post("/settings/stichtag/abruf")
@@ -145,8 +161,9 @@ def make_router() -> APIRouter:
               "acq_date": form.get("acq_date"), "cost_eur": form.get("cost_eur")}
         if form.get("do") == "preview":
             def sim_() -> HTMLResponse:
-                ms = CO.models(ctx, c)
-                v, errs = (None, ["Keine Daten."]) if not ms else CR.validate(ctx, ms[0], **kw)
+                errs0 = CR.run_errors(ctx.db, c)
+                ms = CO.models(ctx, c) if not errs0 else []
+                v, errs = (None, errs0 or ["Keine Daten."]) if not ms else CR.validate(ctx, ms[0], **kw)
                 sim = CR.simulate(ctx, ms[0], v) if v is not None else None
                 return _page(request, c.isoformat(), errors=errs, sim=sim, form=form,
                              status=200 if not errs else 422)

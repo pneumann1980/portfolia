@@ -120,23 +120,83 @@ DEFAULTS: dict[str, Any] = {
 
 
 class Settings:
+    """Einstellungen mit Zwischenspeicher, der dem SQL-Lesestand folgt (0.107.0, N31).
+
+    * Außerhalb jeder Transaktion gilt der zuletzt bekannte Stand (``_latest``); ein Neuaufbau liest Revision und Werte
+      aus *einem* Lesestand (``db.snapshot``), Schreiben verwirft ihn.
+    * Innerhalb eines Lesestands (``db.snapshot``) gilt genau dessen Revision (``data_rev['settings']``, Trigger in
+      derselben Transaktion wie jede Änderung): ein Wert, den ein anderer Schreiber inzwischen geändert hat, erscheint
+      dort nicht – und ein im Lesestand gebauter Eintrag verdrängt nie den aktuellen.
+    * In einer Schreibtransaktion (ungeschriebene, evtl. zurückgenommene Änderungen) wird nichts zwischengespeichert.
+    """
+
     def __init__(self, db: Database) -> None:
         self.db = db
-        self._cache: dict[str, Any] | None = None
+        self._latest: tuple[int, dict[str, Any]] | None = None
+        self._by_rev: dict[int, dict[str, Any]] = {}
         self._lock = threading.Lock()
         self.version = 0
 
+    @property
+    def _cache(self) -> dict[str, Any] | None:  # Altname (Tests, Diagnose): aktueller Stand außerhalb von Leseständen
+        latest = self._latest
+        return latest[1] if latest is not None else None
+
+    def _rows(self, c: Any) -> dict[str, Any]:
+        vals = copy.deepcopy(DEFAULTS)
+        for r in c.execute("SELECT key, value_json FROM settings"):
+            try:
+                vals[r["key"]] = json.loads(r["value_json"])
+            except ValueError:
+                continue
+        return vals
+
+    @staticmethod
+    def _rev(c: Any) -> int:
+        try:
+            row = c.execute("SELECT n FROM data_rev WHERE name='settings'").fetchone()
+        except Exception:  # sehr alte Datenbank ohne Revisionstabelle
+            return -1
+        return int(row[0]) if row is not None else -1
+
+    def _remember(self, rev: int, vals: dict[str, Any]) -> None:
+        self._by_rev[rev] = vals
+        while len(self._by_rev) > 4:
+            self._by_rev.pop(next(iter(self._by_rev)))
+
     def _load(self) -> dict[str, Any]:
+        c = self.db.conn
+        if c.in_transaction:
+            rev = self._rev(c)
+            with self._lock:
+                latest = self._latest
+                if latest is not None and latest[0] == rev:
+                    return latest[1]
+                if rev in self._by_rev:
+                    return self._by_rev[rev]
+            vals = self._rows(c)
+            if getattr(self.db._local, "snapshot", False) and rev >= 0:  # fester Lesestand: Eintrag gilt für rev
+                with self._lock:
+                    self._remember(rev, vals)
+            return vals
         with self._lock:
-            if self._cache is None:
-                vals = copy.deepcopy(DEFAULTS)
-                for r in self.db.q("SELECT key, value_json FROM settings"):
-                    try:
-                        vals[r["key"]] = json.loads(r["value_json"])
-                    except ValueError:
-                        continue
-                self._cache = vals
-            return self._cache
+            latest = self._latest
+        if latest is not None:
+            return latest[1]
+        gen = self.version
+        with self.db.snapshot() as sc:
+            rev, vals = self._rev(sc), self._rows(sc)
+        with self._lock:
+            if self.version == gen:  # inzwischen geschrieben: nicht als aktuellen Stand veröffentlichen
+                self._latest = (rev, vals)
+            if rev >= 0:
+                self._remember(rev, vals)
+        return vals
+
+    def _dropped(self) -> None:
+        with self._lock:
+            self._latest = None
+            self.version += 1
 
     def get(self, key: str, default: Any = None) -> Any:
         vals = self._load()
@@ -153,18 +213,14 @@ class Settings:
             "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at",
             (key, json.dumps(value, ensure_ascii=False), datetime.now(UTC).isoformat(timespec="seconds")),
         )
-        with self._lock:
-            self._cache = None
-            self.version += 1
+        self._dropped()
 
     def reload(self) -> None:
         """Zwischenspeicher verwerfen (nach direktem Schreiben in die Tabelle, z. B. Neueinrichtung aus Export)."""
         with self._lock:
-            self._cache = None
-            self.version += 1
+            self._by_rev.clear()
+        self._dropped()
 
     def reset(self, key: str) -> None:
         self.db.x("DELETE FROM settings WHERE key=?", (key,))
-        with self._lock:
-            self._cache = None
-            self.version += 1
+        self._dropped()

@@ -24,6 +24,7 @@ vorausgewählt) und ``normal``.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -128,7 +129,10 @@ def plan(ctx: Any, m: CO.Model) -> dict[str, Any]:
     for r in sorted(rows, key=lambda x: (x["account"], x["tier"] != "critical", x["asset"])):
         groups.setdefault(r["account"], []).append(r)
     cov = coverage(m, report, {(r["account"], r["asset"]) for r in rows})
-    return {"coverage": cov, "rows": rows,
+    run = run_key(ctx.db, m.cutoff)
+    for r in rows:
+        r["fp"] = row_fp(r, run)
+    return {"coverage": cov, "rows": rows, "_run": run,
             "groups": [{"account": a, "id": key_id(a, ""), "rows": rs} for a, rs in groups.items()],
             "n_add": sum(1 for r in rows if r["kind"] == "add"),
             "n_remove": sum(1 for r in rows if r["kind"] == "remove" and r["qty"] > 0),
@@ -137,6 +141,32 @@ def plan(ctx: Any, m: CO.Model) -> dict[str, Any]:
             "n_critical": sum(1 for r in rows if r["tier"] == "critical"),
             "n_stale": sum(1 for r in rows if r["stale"]), "day": m.cutoff - timedelta(days=1),
             "_prices": prices, "_sold": sold, "_txs": txs}
+
+
+def run_key(db: Any, cutoff: Any) -> str:
+    """Stichtagslauf, zu dem eine Anzeige gehört: festgeschriebener Lauf (Kennung) bzw. Vorbereitung je Datum."""
+    from app.cutover import guard
+
+    act = guard.active(db)
+    return f"lauf:{act['id']}:{act['cutoff']}" if act is not None else f"vorbereitung:{cutoff.isoformat()}"
+
+
+def _n(d: Any) -> str:
+    return format(Decimal(d).normalize(), "f") if d is not None else ""
+
+
+def row_fp(r: dict[str, Any], run: str) -> str:
+    """Fingerabdruck einer angezeigten Ausgleichszeile (0.107.0, N34): Lauf, Konto/Asset, Richtung, Menge, Rest, Beleg
+    (Menge, Quelle, Zeitpunkt bzw. eigener Zielbestand) und Eröffnungsbestand. Was bestätigt wird, ist genau das."""
+    when = "eigener Zielbestand" if r.get("custom") else (r["at"].isoformat() if r.get("at") else "")
+    payload = "\x00".join([run, r["account"], r["asset"], r["kind"], _n(r["qty"]), _n(r["rest"]), _n(r["reference"]),
+                           _n(r["opening"]), str(r.get("source") or ""), when])
+    return hashlib.sha256(payload.encode()).hexdigest()[:24]
+
+
+def digest(rows: list[dict[str, Any]]) -> str:
+    """Bestätigungsschlüssel einer Menge von Zeilen (Reihenfolge egal)."""
+    return hashlib.sha256("|".join(sorted(r["fp"] for r in rows)).encode()).hexdigest()[:24]
 
 
 def coverage(m: CO.Model, report: Any, listed: set[tuple[str, str]]) -> dict[str, Any]:
@@ -166,7 +196,10 @@ def custom_row(m: CO.Model, pl: dict[str, Any], row: dict[str, Any], target: Dec
     """Zeile für einen eigenen Zielbestand (heute): Differenz zum aktuellen Bestand der App."""
     ev = {"account": row["account"], "asset": row["asset"], "qty": target, "at": datetime.now(UTC),
           "kind": "Eigener Zielbestand", "source": "manuell", "stale": False, "custom": True}
-    return _row(m, pl["_prices"], pl["_sold"], pl["_txs"], (row["account"], row["asset"]), ev)
+    r = _row(m, pl["_prices"], pl["_sold"], pl["_txs"], (row["account"], row["asset"]), ev)
+    if r is not None:
+        r["fp"] = row_fp(r, pl.get("_run", ""))
+    return r
 
 
 def resolve(m: CO.Model, pl: dict[str, Any], form: Mapping[str, Any]) -> dict[str, Any]:
@@ -232,14 +265,64 @@ def summarize(chosen: list[dict[str, Any]], skipped: list[dict[str, Any]]) -> di
             "accounts": sorted({r["account"] for r in chosen})}
 
 
-def _book(ctx: Any, cutoff: Any, rows: list[dict[str, Any]], *, reapprove: bool) -> dict[str, Any]:
-    from app.cutover import fix as FX
+CHANGED = ("Der Ausgleich hat sich seit der Anzeige geändert – es wurde nichts gebucht. Bitte die neue Vorschau "
+           "prüfen und erneut bestätigen")
+UNCONFIRMED = ("Diese Auswahl wurde so nicht angezeigt (eigener Zielbestand oder veraltete Seite) – es wurde nichts "
+               "gebucht. Bitte zuerst „Auswahl prüfen“")
 
+
+def _row_text(r: dict[str, Any]) -> str:
+    from app.web.fmt import qty_short
+
+    what = "Abgang" if r["kind"] == "remove" else "Zugang"
+    return f"{r['asset']} auf {r['account']}: jetzt {what} {qty_short(r['qty'])} (Beleg {qty_short(r['reference'])})"
+
+
+def binding_errors(chosen: list[dict[str, Any]], expected: Mapping[str, str]) -> list[str]:
+    """Jede gewählte Zeile muss genau so bestätigt worden sein, wie sie jetzt gebucht würde (``expected``: Zeile →
+    angezeigter Fingerabdruck). Sonst nichts buchen – auch nicht die unveränderten Zeilen derselben Bestätigung."""
+    changed = [r for r in chosen if expected.get(r["id"]) and expected[r["id"]] != r["fp"]]
+    unseen = [r for r in chosen if not expected.get(r["id"])]
+    out = []
+    if changed:
+        out.append(f"{CHANGED}: " + "; ".join(_row_text(r) for r in changed[:4]) + ".")
+    if unseen:
+        out.append(f"{UNCONFIRMED}: " + "; ".join(_row_text(r) for r in unseen[:4]) + ".")
+    return out
+
+
+def _book(ctx: Any, cutoff: Any, rows: list[dict[str, Any]], *, reapprove: bool, m: CO.Model | None = None,
+          version: str | None = None) -> dict[str, Any]:
+    """Zeilen in **einer** Schreibtransaktion buchen, die zuerst den Datenstand ``version`` der Planung prüft
+    (0.107.0, N35): zwei gleichzeitige Bestätigungen derselben Planung buchen nur einmal; die zweite meldet den
+    geänderten Stand. Ohne ``m``/``version`` (Altaufrufe) wird hier geplant."""
+    from app.cutover import fix as FX
+    from app.diagnosis import actions as A
+
+    if m is None or version is None:
+        version = A.data_version(ctx.db)
+        ms = CO.models(ctx, cutoff)
+        if not ms:
+            return {"errors": ["Keine Daten vorhanden."], "done": [], "failed": []}
+        m = ms[0]
+    errs = CR.run_errors(ctx.db, cutoff)
+    if errs:
+        return {"errors": errs, "done": [], "failed": []}
     done: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+    items: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for r in rows:
-        res = CR.apply(ctx, cutoff, account=r["account"], asset=r["asset"], kind=r["kind"], qty=r["qty"],
-                       mode="settle", evidence=r["evidence"], refresh=False)
+        v, verrs = CR.validate(ctx, m, account=r["account"], asset=r["asset"], kind=r["kind"], qty=r["qty"],
+                               mode="settle", evidence=r["evidence"], acq_date=None, cost_eur=None)
+        if v is None:
+            failed.append({**r, "errors": verrs, "tx_id": None})
+        else:
+            items.append((r, v))
+    out = CR.book(ctx, cutoff, m, [v for _r, v in items], version, refresh=False) if items else {
+        "errors": [], "results": []}
+    if out["errors"]:
+        return {"errors": out["errors"], "done": [], "failed": []}
+    for (r, _v), res in zip(items, out["results"], strict=True):
         (failed if res["errors"] else done).append({**r, "errors": res["errors"], "tx_id": res.get("tx_id")})
     accounts = {d["account"] for d in done}
     re_ok = False
@@ -251,20 +334,97 @@ def _book(ctx: Any, cutoff: Any, rows: list[dict[str, Any]], *, reapprove: bool)
     return {"errors": [], "done": done, "failed": failed, "reapproved": re_ok}
 
 
-def apply_form(ctx: Any, cutoff: Any, form: Mapping[str, Any], *, reapprove: bool = True) -> dict[str, Any]:
-    """Entscheidungen des Formulars buchen (je Zeile eine Buchung; ein Fehler stoppt die übrigen Zeilen nicht)."""
+def apply_form(ctx: Any, cutoff: Any, form: Mapping[str, Any], *, reapprove: bool = True,
+               expected: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Entscheidungen des Formulars buchen (je Zeile eine Buchung; ein Fehler stoppt die übrigen Zeilen nicht).
+    ``expected`` (Zeile → angezeigter Fingerabdruck): nur buchen, wenn jede gewählte Zeile genau so angezeigt wurde."""
+    from app.diagnosis import actions as A
+
+    errs = CR.run_errors(ctx.db, cutoff)
+    if errs:
+        return {"errors": errs, "done": [], "failed": []}
+    version = A.data_version(ctx.db)  # vor der Planung lesen
     ms = CO.models(ctx, cutoff)
     if not ms:
         return {"errors": ["Keine Daten vorhanden."], "done": [], "failed": []}
-    res = resolve(ms[0], plan(ctx, ms[0]), form)
+    pl = plan(ctx, ms[0])
+    res = resolve(ms[0], pl, form)
     if res["errors"]:
         return {"errors": res["errors"], "done": [], "failed": []}
     if not res["chosen"]:
         return {"errors": ["Nichts zum Ausgleichen ausgewählt."], "done": [], "failed": []}
-    return _book(ctx, cutoff, res["chosen"], reapprove=reapprove)
+    if expected is not None:
+        berrs = binding_errors(res["chosen"], expected)
+        if berrs:
+            return {"errors": berrs, "done": [], "failed": [], "changed": True}
+    return _book(ctx, cutoff, res["chosen"], reapprove=reapprove, m=ms[0], version=version)
 
 
-def rows_for_case(ctx: Any, finding_ids: list[str]) -> list[dict[str, Any]]:
+# Bestätigte Anzeigen ohne Fingerabdruck im Formular (z. B. Zusammenfassung über „Auswahl prüfen“ in einem Formular
+# ohne versteckte Felder): je Formularinhalt bzw. Aufgabe der angezeigte Stand, einmal verwendbar.
+PREVIEW_KEY = "cutover.settle_previews"
+SHOWN_KEY = "cutover.case_settle_shown"
+_KEEP = 30
+
+
+def form_key(cutoff: Any, form: Mapping[str, Any]) -> str:
+    items = sorted((str(k), str(v)) for k, v in form.items()
+                   if str(k).startswith(("dec_", "acc_", "tgt_")) or k == "small_all")
+    return hashlib.sha256(json.dumps([str(cutoff), items]).encode()).hexdigest()[:24]
+
+
+def _remember(db: Any, key: str, name: str, value: Any) -> None:
+    try:
+        cur = dict(db.get_state(key) or {})
+        cur.pop(name, None)
+        cur[name] = value
+        db.set_state(key, dict(list(cur.items())[-_KEEP:]))
+    except Exception as e:  # nur Komfort für Formulare ohne Fingerabdruck – die Bindung selbst bleibt
+        log.debug("Angezeigter Ausgleich nicht gespeichert: %s", e)
+
+
+def _take(db: Any, key: str, name: str) -> Any:
+    cur = dict(db.get_state(key) or {})
+    return cur.get(name)
+
+
+def _forget(db: Any, key: str, name: str) -> None:
+    cur = dict(db.get_state(key) or {})
+    if cur.pop(name, None) is not None:
+        db.set_state(key, cur)
+
+
+def remember_preview(db: Any, cutoff: Any, form: Mapping[str, Any], chosen: list[dict[str, Any]]) -> None:
+    _remember(db, PREVIEW_KEY, form_key(cutoff, form), {r["id"]: r["fp"] for r in chosen})
+
+
+def expected_for(db: Any, cutoff: Any, form: Mapping[str, Any]) -> tuple[dict[str, str], bool]:
+    """Angezeigter Stand für eine Buchung: Fingerabdrücke aus dem Formular (``fp_<id>``, Liste bzw. Zusammenfassung)
+    oder – ohne solche Felder – die zuletzt mit genau diesem Formularinhalt gezeigte Zusammenfassung. Zweiter Wert:
+    stammt aus dem gespeicherten Stand (nach dem Buchen verbraucht)."""
+    fps = {str(k)[3:]: str(v) for k, v in form.items() if str(k).startswith("fp_") and v}
+    if fps:
+        return fps, False
+    return dict(_take(db, PREVIEW_KEY, form_key(cutoff, form)) or {}), True
+
+
+def forget_preview(db: Any, cutoff: Any, form: Mapping[str, Any]) -> None:
+    _forget(db, PREVIEW_KEY, form_key(cutoff, form))
+
+
+def remember_shown(db: Any, kid: str, value: str) -> None:
+    _remember(db, SHOWN_KEY, kid, value)
+
+
+def shown(db: Any, kid: str) -> str:
+    return str(_take(db, SHOWN_KEY, kid) or "")
+
+
+def forget_shown(db: Any, kid: str) -> None:
+    _forget(db, SHOWN_KEY, kid)
+
+
+def rows_for_case(ctx: Any, finding_ids: list[str], *, _m: Any = None) -> list[dict[str, Any]]:
     """Ausgleichszeilen (nur buchbare) zu den Positionen eines Klärungsfalls – leer ohne festgeschriebenen Stichtag oder
     ohne Beleg, der vom berechneten Bestand abweicht."""
     from app.cutover import guard
@@ -273,7 +433,7 @@ def rows_for_case(ctx: Any, finding_ids: list[str]) -> list[dict[str, Any]]:
     cutoff = guard.cutoff_of(ctx.db)
     if cutoff is None:
         return []
-    ms = CO.models(ctx, cutoff)
+    ms = [_m] if _m is not None else CO.models(ctx, cutoff)
     if not ms:
         return []
     report = report_for(ctx)
@@ -281,17 +441,27 @@ def rows_for_case(ctx: Any, finding_ids: list[str]) -> list[dict[str, Any]]:
     return [r for r in plan(ctx, ms[0])["rows"] if (r["account"], r["asset"]) in pos and r["qty"] > 0]
 
 
-def settle_case(ctx: Any, finding_ids: list[str]) -> dict[str, Any]:
+def settle_case(ctx: Any, finding_ids: list[str], *, expect: str | None = None) -> dict[str, Any]:
     """Alle abweichenden Positionen eines Klärungsfalls auf den Beleg ausgleichen (ausdrückliche Wahl der Person,
-    auch bei Zeilen, die in der Liste „kritisch“ wären)."""
+    auch bei Zeilen, die in der Liste „kritisch“ wären). ``expect``: Bestätigungsschlüssel der angezeigten Zeilen
+    (:func:`digest`) – weicht der jetzige Ausgleich davon ab, wird nichts gebucht (0.107.0, N34)."""
     from app.cutover import guard
+    from app.diagnosis import actions as A
 
     cutoff = guard.cutoff_of(ctx.db)
-    rows = rows_for_case(ctx, finding_ids)
-    if cutoff is None or not rows:
+    if cutoff is None:
         return {"errors": ["Für diesen Fall gibt es keinen Beleg, auf den sich ausgleichen ließe."], "done": [],
                 "failed": []}
-    return _book(ctx, cutoff, rows, reapprove=True)
+    version = A.data_version(ctx.db)  # vor der Planung lesen
+    ms = CO.models(ctx, cutoff)
+    rows = rows_for_case(ctx, finding_ids, _m=ms[0]) if ms else []
+    if not rows:
+        return {"errors": ["Für diesen Fall gibt es keinen Beleg, auf den sich ausgleichen ließe."], "done": [],
+                "failed": []}
+    if expect is not None and digest(rows) != expect:
+        return {"errors": [f"{CHANGED}: " + "; ".join(_row_text(r) for r in rows[:4]) + "."], "done": [],
+                "failed": [], "changed": True}
+    return _book(ctx, cutoff, rows, reapprove=True, m=ms[0], version=version)
 
 
 def apply(ctx: Any, cutoff: Any, ids: set[str], *, reapprove: bool = True) -> dict[str, Any]:

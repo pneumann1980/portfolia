@@ -810,8 +810,15 @@ def _execute_tx(svc: Any, db: Any, bid: int, action: str, token: str, force: boo
                 # eigene Besitzkennung der Entscheidung (N20): die Rücknahme setzt nur zurück, solange die Gruppe noch
                 # genau diese Kennung trägt – spätere Eingaben (auch gleicher Wert, A → B → A) bleiben erhalten
                 vtok = vtok or _input_token(c)
+                was = c.execute("SELECT decision, ver_dec FROM csv_row WHERE id=?", (rc.id,)).fetchone()
                 c.execute("UPDATE csv_row SET decision=?, ver_dec=? WHERE id=?", (dec, vtok, rc.id))
-                ops["rows"][str(rc.idx)] = {**prev, "set": {"decision": dec, "ver_dec": vtok}}
+                # Stand davor mit Kennung (0.107.0, N32): wie bei Einzeleingaben – die Rücknahme stellt Wert *und*
+                # Besitz wieder her und folgt dabei widerrufenen (abgelehnten) Eingaben bis zum letzten gültigen Stand
+                c.execute("INSERT OR REPLACE INTO csv_input_hist(row_id, grp, token, before_json, before_ver) "
+                          "VALUES (?,?,?,?,?)", (rc.id, "dec", vtok, json.dumps([was["decision"]]),
+                                                  int(was["ver_dec"] or 0)))
+                before = {"decision": was["decision"], "ver_dec": int(was["ver_dec"] or 0)}
+                ops["rows"][str(rc.idx)] = {**prev, "set": {"decision": dec, "ver_dec": vtok}, "before": before}
             elif it.act == "ignore":
                 key = rc.rec.event_key or ""
                 if key not in seen_events:
@@ -908,6 +915,25 @@ def _revert_txs(c: Any, svc: Any, bid: int, tx_ids: list[str], stamp: str) -> in
     return n
 
 
+def _restore_target(c: Any, row_id: int, before: dict[str, Any], own: int, stamp: str) -> tuple[Any, int]:
+    """Entscheidung, die die Rücknahme einer Stapelaktion wiederherstellt (0.107.0, N32): der Stand davor samt seiner
+    Kennung – war diese Eingabe inzwischen abgelehnt (widerrufen, siehe ``CsvService.restore_inputs``), deren Stand
+    davor, entlang der Kette bis zur letzten gültigen Eingabe. So belebt die Rücknahme nie eine verworfene Eingabe, und
+    eine spätere Ablehnung findet die wiederhergestellte Kennung vor. Die eigene Kennung gilt danach als widerrufen."""
+    c.execute("UPDATE csv_input_hist SET revoked_at=COALESCE(revoked_at, ?) WHERE row_id=? AND grp='dec' AND token=?",
+              (stamp, row_id, own))
+    dec, ver = before.get("decision"), int(before.get("ver_dec") or 0)
+    seen = {own}
+    while ver and ver not in seen:
+        r = c.execute("SELECT before_json, before_ver FROM csv_input_hist WHERE row_id=? AND grp='dec' AND token=? "
+                      "AND revoked_at IS NOT NULL", (row_id, ver)).fetchone()
+        if r is None:
+            break
+        seen.add(ver)
+        dec, ver = (json.loads(r[0]) or [None])[0], int(r[1])
+    return dec, ver
+
+
 def undo(svc: Any, action_id: int) -> dict[str, Any]:
     """Stapelaktion rückgängig machen. Zurückgesetzt wird nur, was seitdem unverändert ist; Buchungen werden wie
     beim Rückgängigmachen eines Imports zurückgenommen (Status „rückgängig gemacht“, nicht gelöscht)."""
@@ -964,7 +990,11 @@ def undo(svc: Any, action_id: int) -> dict[str, Any]:
                 msgs.pop("linked", None)
                 status = st["status"] if "status" in want else r["status"]
                 tx_id = st.get("tx_id") if "status" in want else r["tx_id"]
-                if "decision" in want:  # die Rücknahme ist selbst eine Änderung (neue Kennung)
+                if "decision" in want and "ver_dec" in want and isinstance(st.get("before"), dict):  # ab 0.107.0
+                    dec, ver = _restore_target(c, r["id"], st["before"], int(want["ver_dec"]), stamp)
+                    c.execute("UPDATE csv_row SET status=?, decision=?, tx_id=?, messages=?, ver_dec=? WHERE id=?",
+                              (status, dec, tx_id, json.dumps(msgs, ensure_ascii=False), ver, r["id"]))
+                elif "decision" in want:  # ältere Aktion: die Rücknahme ist selbst eine Änderung (neue Kennung)
                     utok = utok or _input_token(c)
                     c.execute("UPDATE csv_row SET status=?, decision=?, tx_id=?, messages=?, ver_dec=? WHERE id=?",
                               (status, st.get("decision"), tx_id, json.dumps(msgs, ensure_ascii=False), utok,

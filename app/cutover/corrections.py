@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import sqlite3
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
@@ -194,11 +195,111 @@ def simulate(ctx: Any, m: CO.Model, v: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+STALE = ("Der Datenstand hat sich seit der Anzeige geändert (z. B. durch eine andere Buchung, einen Abruf oder ein "
+         "zweites Absenden) – es wurde nichts gebucht. Bitte die Vorschau neu prüfen.")
+
+
+class _Abort(Exception):
+    """Abbruch in der Schreibtransaktion: alles dieser Transaktion wird zurückgenommen."""
+
+    def __init__(self, errors: list[str]) -> None:
+        super().__init__("; ".join(errors))
+        self.errors = errors
+
+
+def run_errors(db: Any, cutoff: date) -> list[str]:
+    """Bindung an den Stichtagslauf (0.107.0, N37): Ist ein Stichtag festgeschrieben, gelten Korrekturen und ihre
+    Rücknahme nur für **ihn** – ein veraltetes Formular mit anderem Datum darf die Archiv-Ausnahme nie öffnen. Ohne
+    festgeschriebenen Stichtag (Vorbereitung) ist jedes Datum erlaubt."""
+    act = guard.active(db)
+    return _run_mismatch(act["cutoff"] if act is not None else None, cutoff)
+
+
+def _run_mismatch(active: str | None, cutoff: date) -> list[str]:
+    if active is None or active == cutoff.isoformat():
+        return []
+    return [f"Festgeschrieben ist der Stichtag {date.fromisoformat(active):%d.%m.%Y}; die Korrektur gehörte zum "
+            f"{cutoff:%d.%m.%Y} (veraltete Seite). Es wurde nichts gebucht – bitte die Seite neu laden."]
+
+
+def _check_in(c: Any, cutoff: date, version: str) -> None:
+    """Als Erstes in der Schreibtransaktion: derselbe Datenstand wie bei der Prüfung (sonst hat ein gleichzeitiges
+    Absenden, eine Buchung oder ein Abruf die Grundlage verändert) und derselbe Stichtagslauf."""
+    from app.diagnosis import actions as A
+
+    try:
+        A.assert_version(c, version)
+    except A.Conflict as e:
+        raise _Abort([STALE]) from e
+    act = c.execute("SELECT cutoff FROM cutover WHERE status='active'").fetchone()
+    errs = _run_mismatch(act["cutoff"] if act is not None else None, cutoff)
+    if errs:
+        raise _Abort(errs)
+
+
+def _write(c: Any, js: Any, m: CO.Model, v: dict[str, Any], cutoff: date, stamp: str) -> dict[str, Any]:
+    """Buchung und Protokolleintrag in der laufenden Transaktion ``c`` (beides oder nichts)."""
+    res = js.save_in(c, _form(m, v))
+    if res.errors or not res.tx_ids:
+        raise _Abort(list(res.errors) or ["Buchung nicht möglich."])
+    cur = c.execute(
+        "INSERT INTO cutover_correction(cutoff, account, asset_id, kind, qty, acq_date, cost_eur, mode, evidence, "
+        "tx_id, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (cutoff.isoformat(), v["account"], v["asset"], v["kind"], str(v["qty"]),
+         v["acq"].isoformat() if v["acq"] else None, str(v["cost"]) if v["cost"] is not None else None, v["mode"],
+         v["evidence"], res.tx_ids[0], "active", stamp))
+    return {"errors": [], "id": int(cur.lastrowid), "tx_id": res.tx_ids[0]}  # type: ignore[arg-type]
+
+
+def book(ctx: Any, cutoff: date, m: CO.Model, items: list[dict[str, Any]], version: str, *,
+         refresh: bool = True) -> dict[str, Any]:
+    """Geprüfte Korrekturen ``items`` (aus :func:`validate` gegen das Modell ``m``) buchen – in **einer**
+    Schreibtransaktion, die zuerst Datenstand ``version`` und Stichtagslauf prüft (0.107.0, N35/N37). Je Zeile sind
+    Journalbuchung und Protokolleintrag atomar (N36): eine Zeile, die scheitert, hinterlässt nichts (Sicherungspunkt),
+    die übrigen bleiben. Rückgabe: ``errors`` (Abbruch vor jeder Buchung) und je Zeile ``results``."""
+    from app.journal.service import journal_service
+
+    js = journal_service(ctx)
+    stamp = iso(datetime.now(UTC)) or ""
+    results: list[dict[str, Any]] = []
+    try:
+        with guard.allow(), ctx.db.transaction() as c:
+            _check_in(c, cutoff, version)
+            for i, v in enumerate(items):
+                c.execute(f"SAVEPOINT cr{i}")
+                try:
+                    results.append(_write(c, js, m, v, cutoff, stamp))
+                except _Abort as e:
+                    c.execute(f"ROLLBACK TO cr{i}")
+                    results.append({"errors": e.errors})
+                except sqlite3.Error as e:  # z. B. Protokoll nicht schreibbar: die Zeile hinterlässt nichts
+                    c.execute(f"ROLLBACK TO cr{i}")
+                    log.warning("Stichtag-Korrektur %s %s auf %s nicht gespeichert: %s", v["qty"], v["asset"],
+                                v["account"], e)
+                    results.append({"errors": [f"Speichern fehlgeschlagen ({e}) – nichts gebucht."]})
+                c.execute(f"RELEASE cr{i}")
+    except _Abort as e:  # Zwischenspeicher veröffentlichen in einer Schreibtransaktion nichts (siehe context)
+        return {"errors": e.errors, "results": []}
+    if any(not r["errors"] for r in results):
+        js.after_change()
+        for v, r in zip(items, results, strict=True):
+            if not r["errors"]:
+                log.info("Stichtag-Korrektur %s: %s %s %s auf %s", cutoff, v["kind"], v["qty"], v["asset"],
+                         v["account"])
+        if refresh:  # Sammelwege (Ausgleich) aktualisieren einmal am Ende
+            after.refresh_cases(ctx)
+    return {"errors": [], "results": results}
+
+
 def apply(ctx: Any, cutoff: date, *, account: str, asset: str, kind: str, qty: Any, mode: str, evidence: str = "",
           acq_date: str | None = None, cost_eur: Any = None, refresh: bool = True) -> dict[str, Any]:
     """Korrektur buchen (eine Buchung vor dem Stichtag, einzeln rücknehmbar) und mitprotokollieren."""
-    from app.journal.service import journal_service
+    from app.diagnosis import actions as A
 
+    errs = run_errors(ctx.db, cutoff)
+    if errs:
+        return {"errors": errs}
+    version = A.data_version(ctx.db)  # vor dem Modell lesen: ändert sich danach etwas, scheitert die Prüfung
     ms = CO.models(ctx, cutoff)
     if not ms:
         return {"errors": ["Keine Daten vorhanden."]}
@@ -207,43 +308,43 @@ def apply(ctx: Any, cutoff: date, *, account: str, asset: str, kind: str, qty: A
                        acq_date=acq_date, cost_eur=cost_eur)
     if errs or v is None:
         return {"errors": errs}
-    js = journal_service(ctx)
-    with guard.allow():
-        res = js.save(_form(m, v))
-    if res.errors or not res.tx_ids:
-        return {"errors": list(res.errors) or ["Buchung nicht möglich."]}
-    stamp = iso(datetime.now(UTC))
-    with ctx.db.transaction() as c:
-        cur = c.execute(
-            "INSERT INTO cutover_correction(cutoff, account, asset_id, kind, qty, acq_date, cost_eur, mode, evidence, "
-            "tx_id, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            (cutoff.isoformat(), account, asset, v["kind"], str(v["qty"]), v["acq"].isoformat() if v["acq"] else None,
-             str(v["cost"]) if v["cost"] is not None else None, v["mode"], v["evidence"], res.tx_ids[0], "active",
-             stamp))
-    log.info("Stichtag-Korrektur %s: %s %s %s auf %s", cutoff, v["kind"], v["qty"], asset, account)
-    if refresh:  # Sammelwege (Ausgleich) aktualisieren einmal am Ende
-        after.refresh_cases(ctx)
-    return {"errors": [], "id": int(cur.lastrowid), "tx_id": res.tx_ids[0]}  # type: ignore[arg-type]
+    out = book(ctx, cutoff, m, [v], version, refresh=refresh)
+    if out["errors"]:
+        return {"errors": out["errors"]}
+    return out["results"][0]
 
 
 def undo(ctx: Any, cid: int) -> dict[str, Any]:
-    """Korrektur zurücknehmen: die erzeugte Buchung wird entfernt (umkehrbar wie jede gelöschte Buchung)."""
+    """Korrektur zurücknehmen: die erzeugte Buchung wird entfernt (umkehrbar wie jede gelöschte Buchung). Entfernen und
+    Statusänderung des Protokolls liegen in einer Transaktion (0.107.0, N36); nur für den festgeschriebenen Stichtag."""
     from app.journal.service import journal_service
 
     row = ctx.db.q1("SELECT * FROM cutover_correction WHERE id=?", (cid,))
     if row is None or row["status"] != "active":
         return {"errors": ["Korrektur nicht gefunden oder bereits zurückgenommen."]}
+    cutoff = date.fromisoformat(row["cutoff"])
+    errs = run_errors(ctx.db, cutoff)
+    if errs:
+        return {"errors": errs}
     js = journal_service(ctx)
-    with guard.allow():
-        if js.get(row["tx_id"]) is not None:
-            ok = js.delete(row["tx_id"])
-        else:  # nach einer Wiederherstellung steht die Buchung im Import
-            ok = js.delete_import(row["tx_id"])
-    if not ok:
-        return {"errors": ["Die zugehörige Buchung ließ sich nicht entfernen."]}
-    with ctx.db.transaction() as c:
-        c.execute("UPDATE cutover_correction SET status='undone', undone_at=? WHERE id=?",
-                  (iso(datetime.now(UTC)), cid))
+    try:
+        with guard.allow(), ctx.db.transaction() as c:
+            cur = c.execute("SELECT status, tx_id FROM cutover_correction WHERE id=?", (cid,)).fetchone()
+            if cur is None or cur["status"] != "active":  # gleichzeitig zurückgenommen
+                raise _Abort(["Korrektur nicht gefunden oder bereits zurückgenommen."])
+            act = c.execute("SELECT cutoff FROM cutover WHERE status='active'").fetchone()
+            errs = _run_mismatch(act["cutoff"] if act is not None else None, cutoff)
+            if errs:
+                raise _Abort(errs)
+            own = c.execute("SELECT 1 FROM journal_tx WHERE tx_id=?", (cur["tx_id"],)).fetchone() is not None
+            ok = js.delete_in(c, cur["tx_id"]) if own else js.delete_import_in(c, cur["tx_id"])  # sonst: Import
+            if not ok:
+                raise _Abort(["Die zugehörige Buchung ließ sich nicht entfernen."])
+            c.execute("UPDATE cutover_correction SET status='undone', undone_at=? WHERE id=?",
+                      (iso(datetime.now(UTC)), cid))
+    except _Abort as e:
+        return {"errors": e.errors}
+    js.after_change()
     after.refresh_cases(ctx)
     return {"errors": []}
 

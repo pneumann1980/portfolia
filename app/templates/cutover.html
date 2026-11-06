@@ -130,6 +130,7 @@
           {% if r.cause_text %}<p class="hint">{{ r.cause_text }}</p>{% elif r.window %}<p class="hint">{{ r.window }} Buchung(en) zwischen Stichtag und Beleg.</p>{% endif %}
           {% if r.since %}<p class="hint">Seit dem Beleg {{ r.since }} weitere Buchung(en): „nach Ausgleich“ kann vom Beleg abweichen.</p>{% endif %}
           <div class="settle-dec">
+            <input type="hidden" name="fp_{{ r.id }}" value="{{ sfp.get(r.id) or r.fp }}">
             <label class="field">Entscheidung <select name="dec_{{ r.id }}">{% for v, t in [('auto', 'Vorgabe (' ~ ('App behalten' if r.tier == 'critical' else 'ausgleichen') ~ ')'), ('settle', 'Auf den Beleg ausgleichen'), ('keep', 'App behalten (nichts buchen)'), ('custom', 'Eigener Zielbestand (heute)')] %}<option value="{{ v }}" {% if (sform.get('dec_' ~ r.id) or 'auto') == v %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></label>
             <label class="field">Zielbestand heute <input type="text" inputmode="decimal" name="tgt_{{ r.id }}" value="{{ sform.get('tgt_' ~ r.id) or '' }}" placeholder="nur bei „Eigener Zielbestand“"></label>
           </div>

@@ -362,13 +362,42 @@ class JournalService:
 
     # -- Buchungen speichern ----------------------------------------------------------------------------
     def save(self, data: Mapping[str, Any], tx_id: str | None = None) -> SaveResult:
-        kind = str(data.get("kind") or "")
         existing = self.get(tx_id) if tx_id else None
         if tx_id and (existing is None or not editable(existing)):
             return SaveResult(errors=["Buchung nicht gefunden oder nicht bearbeitbar."])
         if tx_id and self.in_import(tx_id):
             return SaveResult(errors=["Diese Buchung ist inzwischen im Import enthalten (gleiche ID) – Änderungen "
                                       "bitte im Import vornehmen."])
+        prep = self._prepare(data, existing)
+        if isinstance(prep, SaveResult):
+            return prep
+        res, parsed, draft, form_json, assets = prep
+        stamp = _now()
+        with self.db.transaction() as c:
+            self._write_rows(c, res, parsed, draft, form_json, existing, stamp)
+        self._after_change()
+        dups = self.duplicates()
+        for tid in res.tx_ids:
+            if tid in dups:
+                res.warnings.append(f"{tid} ähnelt der Import-Buchung {', '.join(dups[tid])} – bitte auf Dublette "
+                                    "prüfen.")
+        res.warnings += self._negative_balances(draft.rows, assets)
+        return res
+
+    def save_in(self, c: Any, data: Mapping[str, Any]) -> SaveResult:
+        """Neue Buchung in der **laufenden** Schreibtransaktion ``c`` anlegen (0.107.0, N36): Prüfung wie
+        :meth:`save`, aber ohne eigene Transaktion und ohne Nacharbeiten – der Aufrufer schreibt sein Protokoll in
+        dieselbe Transaktion und ruft nach dem Commit :meth:`after_change` auf."""
+        prep = self._prepare(data, None)
+        if isinstance(prep, SaveResult):
+            return prep
+        res, parsed, draft, form_json, _assets = prep
+        self._write_rows(c, res, parsed, draft, form_json, None, _now())
+        return res
+
+    def _prepare(self, data: Mapping[str, Any], existing: Any) -> Any:
+        """Formular prüfen: ``SaveResult`` mit Fehlern oder (Ergebnis, geprüfte Zeilen, Entwurf, Formular, Assets)."""
+        kind = str(data.get("kind") or "")
         assets = self.known_assets()
         price, fx = self._valuers()
         draft = forms.build(kind, data, assets, price, fx, today_local())
@@ -389,38 +418,32 @@ class JournalService:
                                                     if not (m.code == "fee_eur" and draft.warnings)])
         form_json = json.dumps({k: str(data.get(k)).strip() for k in forms.FORM_FIELDS
                                 if data.get(k) not in (None, "")}, ensure_ascii=False)
-        stamp = _now()
         try:
             guard.check_ts(self.db, *(iso(r["ts_utc"]) for r in parsed), *([existing["ts_utc"]] if existing else []))
         except guard.Protected as e:  # festgeschriebenes Archiv (Stichtag): verständliche Ablehnung im Formular
             return SaveResult(errors=[str(e)])
-        with self.db.transaction() as c:
-            if existing is None:
-                main_id = self._insert(c, parsed[0], draft.value_sources[0], form_json, stamp, None)
+        return res, parsed, draft, form_json, assets
+
+    def _write_rows(self, c: Any, res: SaveResult, parsed: list[Any], draft: Any, form_json: str, existing: Any,
+                    stamp: str) -> None:
+        if existing is None:
+            main_id = self._insert(c, parsed[0], draft.value_sources[0], form_json, stamp, None)
+        else:
+            main_id = existing["tx_id"]
+            self._update(c, existing, parsed[0], draft.value_sources[0], form_json, stamp)
+        res.tx_ids.append(main_id)
+        members = [] if existing is None else [dict(m) for m in c.execute(
+            "SELECT * FROM journal_tx WHERE group_ref=? AND status='active' ORDER BY id", (main_id,))]
+        for i, p in enumerate(parsed[1:], start=1):
+            if members:
+                m = members.pop(0)
+                self._update(c, m, p, draft.value_sources[i], None, stamp)
+                res.tx_ids.append(m["tx_id"])
             else:
-                main_id = existing["tx_id"]
-                self._update(c, existing, parsed[0], draft.value_sources[0], form_json, stamp)
-            res.tx_ids.append(main_id)
-            members = [] if existing is None else [dict(m) for m in c.execute(
-                "SELECT * FROM journal_tx WHERE group_ref=? AND status='active' ORDER BY id", (main_id,))]
-            for i, p in enumerate(parsed[1:], start=1):
-                if members:
-                    m = members.pop(0)
-                    self._update(c, m, p, draft.value_sources[i], None, stamp)
-                    res.tx_ids.append(m["tx_id"])
-                else:
-                    res.tx_ids.append(self._insert(c, p, draft.value_sources[i], None, stamp, main_id))
-            for m in members:  # nicht mehr benötigte Teilbuchungen (z. B. Quellensteuer entfernt)
-                c.execute("UPDATE journal_tx SET status='replaced', updated_at=? WHERE id=?", (stamp, m["id"]))
-                self._log(c, "delete", m["tx_id"], m, None, stamp)
-        self._after_change()
-        dups = self.duplicates()
-        for tid in res.tx_ids:
-            if tid in dups:
-                res.warnings.append(f"{tid} ähnelt der Import-Buchung {', '.join(dups[tid])} – bitte auf Dublette "
-                                    "prüfen.")
-        res.warnings += self._negative_balances(draft.rows, assets)
-        return res
+                res.tx_ids.append(self._insert(c, p, draft.value_sources[i], None, stamp, main_id))
+        for m in members:  # nicht mehr benötigte Teilbuchungen (z. B. Quellensteuer entfernt)
+            c.execute("UPDATE journal_tx SET status='replaced', updated_at=? WHERE id=?", (stamp, m["id"]))
+            self._log(c, "delete", m["tx_id"], m, None, stamp)
 
     def _negative_balances(self, rows: list[dict[str, str]], assets: Mapping[str, AssetInfo]) -> list[str]:
         """Hinweis, wenn ein Abgang den Bestand eines Kontos ins Minus drückt (fehlende frühere Buchung?)."""
@@ -535,17 +558,26 @@ class JournalService:
         return self._set_status(tx_id, "deleted", "active", "restore")
 
     def _set_status(self, tx_id: str, old: str, new: str, action: str) -> bool:
-        row = self.get(tx_id)
+        with self.db.transaction() as c:
+            ok = self._set_status_in(c, tx_id, old, new, action)
+        if ok:
+            self._after_change()
+        return ok
+
+    def _set_status_in(self, c: Any, tx_id: str, old: str, new: str, action: str) -> bool:
+        row = c.execute("SELECT * FROM journal_tx WHERE tx_id=?", (tx_id,)).fetchone()
         if row is None or row["status"] != old or row["group_ref"]:
             return False
         guard.check_ts(self.db, row["ts_utc"])
         stamp = _now()
-        with self.db.transaction() as c:
-            for r in [row, *c.execute("SELECT * FROM journal_tx WHERE group_ref=? AND status=?", (tx_id, old))]:
-                c.execute("UPDATE journal_tx SET status=?, updated_at=? WHERE id=?", (new, stamp, r["id"]))
-                self._log(c, action, r["tx_id"], None, None, stamp)
-        self._after_change()
+        for r in [row, *c.execute("SELECT * FROM journal_tx WHERE group_ref=? AND status=?", (tx_id, old))]:
+            c.execute("UPDATE journal_tx SET status=?, updated_at=? WHERE id=?", (new, stamp, r["id"]))
+            self._log(c, action, r["tx_id"], None, None, stamp)
         return True
+
+    def delete_in(self, c: Any, tx_id: str) -> bool:
+        """Eigene (nicht abgeglichene) Buchung in der laufenden Transaktion ``c`` löschen – ohne Nacharbeiten."""
+        return self._set_status_in(c, tx_id, "active", "deleted", "delete")
 
     # -- Buchungen des kuratierten Imports (Überlagerung, siehe app.journal.overrides) -------------------
     def import_tx(self, tx_id: str) -> Tx | None:
@@ -627,24 +659,30 @@ class JournalService:
 
     def delete_import(self, tx_id: str) -> bool:
         """Import-Buchung löschen (zählt nicht mehr, umkehrbar); eine bearbeitete Fassung bleibt gespeichert."""
+        with self.db.transaction() as c:
+            ok = self.delete_import_in(c, tx_id)
+        if ok:
+            self._after_change()
+        return ok
+
+    def delete_import_in(self, c: Any, tx_id: str) -> bool:
+        """Import-Buchung in der laufenden Transaktion ``c`` löschen – ohne Nacharbeiten."""
         from app.journal.overrides import import_row
 
         orig = self.import_tx(tx_id)
         if orig is None:
             return False
         guard.check_ts(self.db, orig.ts)
-        prev = self.override(tx_id)
+        prev = c.execute("SELECT * FROM tx_override WHERE tx_id=?", (tx_id,)).fetchone()
         stamp = _now()
-        with self.db.transaction() as c:
-            if prev is not None:
-                c.execute("UPDATE tx_override SET action='delete', updated_at=? WHERE tx_id=?", (stamp, tx_id))
-            else:
-                c.execute("INSERT INTO tx_override(tx_id, action, base_json, import_id, created_at, updated_at) "
-                          "VALUES (?, 'delete', ?, ?, ?, ?)",
-                          (tx_id, json.dumps(import_row(orig), ensure_ascii=False), self.ctx.active_import_id(),
-                           stamp, stamp))
-            self._log(c, "import_delete", tx_id, import_row(orig), None, stamp)
-        self._after_change()
+        if prev is not None:
+            c.execute("UPDATE tx_override SET action='delete', updated_at=? WHERE tx_id=?", (stamp, tx_id))
+        else:
+            c.execute("INSERT INTO tx_override(tx_id, action, base_json, import_id, created_at, updated_at) "
+                      "VALUES (?, 'delete', ?, ?, ?, ?)",
+                      (tx_id, json.dumps(import_row(orig), ensure_ascii=False), self.ctx.active_import_id(),
+                       stamp, stamp))
+        self._log(c, "import_delete", tx_id, import_row(orig), None, stamp)
         return True
 
     def restore_import(self, tx_id: str) -> bool:

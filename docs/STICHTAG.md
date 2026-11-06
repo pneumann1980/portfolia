@@ -1,6 +1,6 @@
-# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.106.0)
+# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.107.0)
 
-Stand: 06.11.2026 · Version 0.106.0
+Stand: 06.11.2026 · Version 0.107.0
 
 Ein Stichtag (Standard 01.01.2025, in der App wählbar) teilt die Buchungen in ein **Archiv** (davor) und den **aktiven
 Zeitraum** (ab dem Stichtag). Steuer, Lots, Diagnose und Importe arbeiten ab dem Stichtag mit dem geprüften
@@ -17,6 +17,7 @@ Depotstart. **Es wird nichts gelöscht.** Einstieg: *Einstellungen → Stichtag*
 | 4 | 0.100.0 | **Alle Wege am Stichtag ausgerichtet:** Diagnose, Gesamtprüfung, CSV-Import/Sync/Prüf-Stapel, Quellenübernahme |
 | 5 | 0.101.0 | **Abgeleitete Vorschläge** aus Belegen nach dem Stichtag – nur wo sie belegt sind |
 | + | 0.102.0 | **Ausgleich zum Stichtag** (alles glattziehen) und **Quellenübernahme ab dem Stichtag** |
+| + | 0.107.0 | **Gemeinsamer Bestätigungs- und Schreibvertrag:** gebucht wird nur der angezeigte Ausgleich, genau einmal, atomar und nur für den festgeschriebenen Stichtag |
 | + | 0.106.0 | **Ausweg für jeden Klärungsfall:** „Auf den Beleg ausgleichen“ bzw. „Kann ich nicht klären – so lassen“ im Assistenten; Archiv-Filter überall |
 | + | 0.105.0 | **Jedes Asset zum Stichtag gesetzt:** Rundungsreste im Ausgleich, Abdeckung, Archiv-Pläne ausgeschlossen, Meldung statt Fehlerseite |
 | + | 0.104.0 | **Klärungsfälle folgen dem Stichtag:** erledigte/archivierte Fälle erscheinen nicht mehr, Fortschritt im Fall, Nachlauf nach Stichtag-Aktionen |
@@ -168,6 +169,22 @@ liegen seit dem Beleg weitere Buchungen, steht ein Hinweis, dass „nach Ausglei
 **Eigener Zielbestand:** Du gibst den realen Bestand von heute ein; gebucht wird die Differenz zum Bestand der App von
 heute am Vortag des Stichtags (Abgang höchstens bis zum Eröffnungsbestand). Entspricht der Wert der App, entsteht keine
 Buchung; ungültige Eingaben werden abgelehnt, ohne zu buchen.
+
+### Bestätigungs- und Schreibvertrag (0.107.0)
+
+Unabhängige Prüfung von 0.106.0 (N34–N37). Für **alle** schreibenden Stichtag-Wege (Ausgleich auf der Einstellungsseite,
+„Auf den Bestand der Quelle ausgleichen“ im Assistenten, einzelne Korrektur, Rücknahme) gilt jetzt derselbe Vertrag:
+
+| Regel | Umsetzung |
+| --- | --- |
+| **Gebucht wird, was angezeigt wurde** (N34) | Jede Ausgleichszeile hat einen Fingerabdruck über Lauf, Konto/Asset, Richtung, Menge, Rest, Beleg (Menge, Quelle, Zeitpunkt bzw. eigener Zielbestand) und Eröffnungsbestand. Liste und Zusammenfassung tragen ihn im Formular (`fp_<Zeile>`), die Antwort im Assistenten als Schlüssel. Weicht der jetzige Ausgleich ab, wird **nichts** gebucht (HTTP 409) und die neue Vorschau gezeigt. Ein eigener Zielbestand muss über „Auswahl prüfen“ gezeigt worden sein. Formulare ohne Fingerabdruck gelten nur mit der zuletzt genau so gezeigten Zusammenfassung (einmal verwendbar). |
+| **Genau einmal** (N35) | Datenstand (`data_rev`) wird vor der Planung gelesen und als Erstes in der Schreibtransaktion geprüft. Zwei gleichzeitige Bestätigungen derselben Planung: die zweite bucht nichts und meldet den geänderten Stand. |
+| **Atomar** (N36) | Journalbuchung und Protokolleintrag („Gebuchte Korrekturen“) – bzw. Entfernen und Statusänderung bei der Rücknahme – liegen in **einer** Transaktion. Mehrere Zeilen einer Bestätigung: je Zeile ein Sicherungspunkt; eine scheiternde Zeile hinterlässt nichts, die übrigen bleiben. Nacharbeiten (Zwischenspeicher, Sparplan-Abgleich, Klärungsfälle, Neu-Freigabe) erst nach dem Commit. |
+| **Nur der festgeschriebene Stichtag** (N37) | Ist ein Stichtag festgeschrieben, lehnen Korrektur, Ausgleich und Rücknahme ein anderes Datum ab, **bevor** die Archiv-Ausnahme geöffnet wird; in der Transaktion wird der Lauf erneut geprüft. In der Vorbereitung (nichts festgeschrieben) bleibt jedes Datum erlaubt. |
+
+Präzisierung „Archiv bleibt unberührt“: Originalbuchungen vor dem Stichtag werden nie geändert. Ausgleich und Korrekturen
+**ergänzen** gekennzeichnete Buchungen am Vortag des Stichtags und verändern damit ausdrücklich den Eröffnungsstand
+(einzeln rücknehmbar). Ein Zugang zu 0 € ist eine Annahme und bestätigt keine historischen Anschaffungsdaten.
 
 ### Ausweg für jeden Klärungsfall (0.106.0)
 

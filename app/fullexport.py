@@ -308,7 +308,7 @@ def status(ctx: Any) -> dict[str, Any] | None:
         return None
     done = ctx.db.get_state(f"restore.{iid}") or {}
     out = {"import_id": iid, "summary": info, "state": done.get("state", "pending"), "at": done.get("at"),
-           "counts": done.get("counts")}
+           "counts": done.get("counts"), "gaps": done.get("gaps") or []}
     j = pending(ctx.db)
     if j is not None:  # unterbrochene Wiederherstellung (auch eines früheren Imports) hat Vorrang in der Anzeige
         out.update(state="incomplete", files_open=len(j.get("files") or []), error=j.get("error"),
@@ -560,7 +560,12 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
             c, "clarify_run", [{**r, "status": "restored"} if r.get("status") == "ok" and r.get("bulk_id") else r
                                for r in st.get("clarify_runs") or []], "OR IGNORE")
         counts["research"] = _research_events(c, st.get("diag_research_events") or [])
-        counts["ds_balances"] = _ds_balances(c, st.get("ds_balances") or [])
+        gaps: list[dict[str, Any]] = []
+        counts["ds_balances"] = _ds_balances(c, st.get("ds_balances") or [], gaps)
+        if gaps:
+            counts["ds_balances_unassigned"] = len(gaps)
+            log.warning("Wiederherstellung: %d Bestandsbeobachtung(en) keiner Datenquelle eindeutig zuzuordnen",
+                        len(gaps))
         counts["usage"] = _usage(c, extras.get(USAGE))
         counts["prices"] = _prices(c, extras.get(PRICES))
         counts["series_meta"] = _meta(c, extras.get(META))
@@ -571,10 +576,16 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
                   (now, "restore_apply", f"import {import_id}", None, json.dumps(counts)))
         pending = bool(journal and journal.get("files"))
         if pending:
-            _put_state(c, JOURNAL_KEY, {**(journal or {}), "counts": counts})
-        _put_state(c, f"restore.{import_id}", {"state": "incomplete" if pending else "applied", "at": now,
-                                               "counts": counts, "restore_id": (journal or {}).get("id")})
+            _put_state(c, JOURNAL_KEY, {**(journal or {}), "counts": counts, "gaps": gaps})
+        _put_state(c, f"restore.{import_id}", {"state": "incomplete" if pending else _applied(gaps), "at": now,
+                                               "counts": counts, "restore_id": (journal or {}).get("id"),
+                                               "gaps": gaps})
     return counts
+
+
+def _applied(gaps: list[dict[str, Any]]) -> str:
+    """Abschlusszustand: „übernommen“ bzw. „übernommen mit Lücken“ (nicht eindeutig zuordenbare Angaben)."""
+    return "applied_gaps" if gaps else "applied"
 
 
 def _cutovers(c: Any, rows: list[dict[str, Any]], corrections: list[dict[str, Any]]) -> int:
@@ -660,8 +671,9 @@ def _finish(ctx: Any, journal: dict[str, Any], counts: dict[str, int] | None = N
     counts["files"] = int(counts.get("files") or 0) + done
     with db.transaction() as c:
         c.execute("DELETE FROM app_state WHERE key=?", (JOURNAL_KEY,))
-        _put_state(c, f"restore.{iid}", {"state": "applied", "at": now, "counts": counts,
-                                         "restore_id": journal.get("id")})
+        gaps = list(journal.get("gaps") or [])
+        _put_state(c, f"restore.{iid}", {"state": _applied(gaps), "at": now, "counts": counts,
+                                         "restore_id": journal.get("id"), "gaps": gaps})
         c.execute("INSERT INTO journal_log(at, action, ref, before_json, after_json) VALUES (?,?,?,?,?)",
                   (now, "restore_files", f"import {iid}", None, json.dumps({"files": done, "id": journal.get("id")})))
     return done
@@ -822,14 +834,22 @@ def _research_events(c: Any, rows: list[Any]) -> int:
     return n
 
 
-def _ds_balances(c: Any, rows: list[Any]) -> int:
-    """Beobachtete Bestände je Datenquelle (Anbieter/Konto/Name) wieder ablegen; ältere Exporte kennen sie nicht."""
+def _ds_balances(c: Any, rows: list[Any], gaps: list[dict[str, Any]] | None = None) -> int:
+    """Beobachtete Bestände je Datenquelle (Anbieter/Konto/Name) wieder ablegen; ältere Exporte kennen sie nicht.
+    Eine Beobachtung, die sich keiner Quelle eindeutig zuordnen lässt (älterer Export ohne Quelladresse bei
+    gleichnamigen Quellen), wird nie geraten, aber auch nicht still verworfen (0.107.0, N30): sie steht in ``gaps`` und
+    die Wiederherstellung gilt als „übernommen mit Lücken“."""
     n = 0
     for r in rows:
         if not isinstance(r, dict) or not r.get("asset_key") or r.get("qty") is None:
             continue
         sid = _source_of(c, r)
         if sid is None:
+            if gaps is not None:
+                gaps.append({"what": "ds_balance", "provider": r.get("provider"), "account": r.get("account"),
+                             "name": r.get("name"), "asset_key": str(r["asset_key"]), "qty": str(r["qty"]),
+                             "observed_at": r.get("observed_at") or "",
+                             "reason": _source_gap_reason(c, r)})
             continue
         cur = c.execute("INSERT OR IGNORE INTO ds_balance(source_id, asset_key, qty, name, note, observed_at) "
                         "VALUES (?,?,?,?,?,?)", (sid, str(r["asset_key"]), str(r["qty"]), r.get("asset_name"),
@@ -941,6 +961,15 @@ def _source_of(c: Any, r: dict[str, Any]) -> int | None:
     hits = c.execute("SELECT id FROM data_source WHERE provider=? AND account IS ? AND name=?",
                      (r.get("provider"), r.get("account"), r.get("name"))).fetchall()
     return int(hits[0]["id"]) if len(hits) == 1 else None
+
+
+def _source_gap_reason(c: Any, r: dict[str, Any]) -> str:
+    if "source_address" in r or "source_kind" in r:
+        return "keine Datenquelle mit dieser Identität"
+    n = c.execute("SELECT COUNT(*) FROM data_source WHERE provider=? AND account IS ? AND name=?",
+                  (r.get("provider"), r.get("account"), r.get("name"))).fetchone()[0]
+    return (f"älterer Export ohne Quelladresse: {n} gleichnamige Quellen – Zuordnung nicht eindeutig" if n > 1
+            else "keine Datenquelle dieses Namens")
 
 
 def _mappings(c: Any, rows: list[dict[str, Any]], now: str) -> int:
