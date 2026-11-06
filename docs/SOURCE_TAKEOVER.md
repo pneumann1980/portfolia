@@ -133,10 +133,11 @@ sonst Asset, Richtung, Menge (±2 %, Gebühren werden je Quelle verschieden ausg
 * Verifiziert mit dem Mock der Referenz (`tests/test_takeover.py`), nicht mit einem echten Konto; die erste Übernahme am
   echten Konto sollte mit der Vorschau und einer Sicherung beginnen.
 
-## Festgeschriebener Stichtag (ab 0.100.0)
+## Festgeschriebener Stichtag (ab 0.100.0, überarbeitet 0.102.0)
 
-Ist ein Stichtag festgeschrieben ([`STICHTAG.md`](STICHTAG.md)), kommt zu den Pflichtprüfungen eine weitere hinzu:
-**„Archiv vor dem Stichtag bleibt unverändert“**. Sie ist nicht erfüllt, wenn die Übernahme Buchungen vor dem Stichtag
-ersetzen (ausblenden) oder neue Vorgänge vor dem Stichtag anlegen würde; die Übernahme ist dann gesperrt, nichts wird
-verändert. Auswege: den Stichtag zurücknehmen oder die Quelle erst für Zeiträume ab dem Stichtag übernehmen. Ohne
-festgeschriebenen Stichtag erscheint die Prüfung nicht.
+Ist ein Stichtag festgeschrieben ([`STICHTAG.md`](STICHTAG.md)), ersetzt die Übernahme Buchungen **erst ab dem Stichtag**:
+Buchungen davor bleiben („Archiv“, wie Buchungen vor dem ersten Ereignis der Quelle), Vorgänge der Quelle davor werden
+nicht gebucht und zählen in der Vorgangszählung als bewusst ausgelassen. Der Bestandsbeweis bleibt: Archiv plus Vorgänge
+ab dem Stichtag müssen den Bestand der Quelle ergeben; weicht er ab, ist der Eröffnungsstand die Ursache und der
+*Ausgleich zum Stichtag* die Lösung. Als Sicherung gibt es die Pflichtprüfung „Archiv vor dem Stichtag bleibt
+unverändert“ (nur bei festgeschriebenem Stichtag). Bis 0.101.0 war die Übernahme in diesem Fall gesperrt.

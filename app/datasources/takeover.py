@@ -283,6 +283,7 @@ class Assessment:
     ready: bool = False
     mode: str = ""  # proof | confirm
     confirm: bool = False  # Vollständigkeit vom Nutzer bestätigt (nur bei mode=confirm wirksam)
+    archived_events: int = 0  # Vorgänge der Quelle vor dem festgeschriebenen Stichtag (nicht gebucht)
     window_from: str | None = None  # Beginn der Quelle: davor bleibt der Import maßgeblich
     before: list[Any] = field(default_factory=list)  # Buchungen vor dem Beginn der Quelle (bleiben)
     delivered: set[str] = field(default_factory=set)  # Assets, für die die Quelle einen Bestand meldet (auch 0)
@@ -545,7 +546,7 @@ def _counts(cov: dict[str, Any], a: Any, meta: dict[str, Any] | None = None) -> 
     ``state``: ``ok`` (Zählung erklärt), ``gap`` (unerklärte Differenz), ``unknown`` (Zählung fehlt bzw. gilt nur für
     eine Etappe), ``na`` (Quelle ohne unabhängige Zählung)."""
     ops = cov.get("operations")
-    skipped = sum(int(v or 0) for v in (a.skipped or {}).values())
+    skipped = sum(int(v or 0) for v in (a.skipped or {}).values()) + a.archived_events  # Archiv: bewusst nicht gebucht
     out: dict[str, Any] = {"api": ops, "events": a.events, "lines": a.lines, "skipped": skipped,
                            "unit": COUNT_UNIT.get(a.provider, ""), "state": "na"}
     if isinstance(ops, int):
@@ -908,6 +909,13 @@ def _row_problem(x: dict[str, Any]) -> dict[str, Any]:
             "events": [{"event": x.get("event", ""), "ext": x.get("key", ""), "line": x.get("line")}]}
 
 
+def _frozen_cutoff_utc(db: Any) -> datetime | None:
+    from app.cutover import guard
+
+    row = guard.active(db)
+    return parse_iso(row["cutoff_utc"]) if row is not None else None
+
+
 def _frozen_cutoff(db: Any) -> Any:
     from app.cutover import guard
 
@@ -938,6 +946,11 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
     a.skipped = dict(meta.get("skipped") or {})
 
     lines, resolver = _lines(ctx, recs, account, prov)
+    frozen_utc = _frozen_cutoff_utc(db)
+    if frozen_utc is not None:  # festgeschriebener Stichtag: Vorgänge davor gehören zum Archiv und werden nicht gebucht
+        old = [ln for ln in lines if not ln.rec.ts_missing and ln.rec.ts < frozen_utc]
+        lines = [ln for ln in lines if ln.rec.ts_missing or ln.rec.ts >= frozen_utc]
+        a.archived_events = len({ln.rec.event_key or ln.rec.ext_id for ln in old})
     if row["status"] == "staged":  # nur Vorschauentscheidungen prüfen; angewendete sind Protokoll (N09)
         _validate_decisions(ctx, a, recs)
     else:
@@ -948,6 +961,8 @@ def assess(ctx: Any, sid: int, *, plan: bool = True, confirm: bool = False,
     a.first, a.last = (iso(times[0]), iso(times[-1])) if times else (None, None)
     # Zeitraum der Quelle: Buchungen davor (Import, Dateien) bleiben – die Quelle belegt nur, was sie selbst kennt
     cut = times[0] - WINDOW if times else None
+    if frozen_utc is not None:  # Archiv bleibt, ersetzt wird ab dem Stichtag (auch ohne Vorgänge ab dem Stichtag)
+        cut = frozen_utc if cut is None else max(cut, frozen_utc)
     a.window_from = iso(cut) if cut is not None else None
     observed, unmapped, a.delivered = _observed(meta, resolver, prov)
     a.observed = observed
@@ -2055,6 +2070,9 @@ def _apply_steps(ctx: Any, sid: int, a: Any, rid: int, years_before: Any, ds_nam
     _msg(db, rid, "API-Vorgänge werden ausgewertet …")
     row = db.q1("SELECT events_json FROM ds_takeover WHERE id=?", (rid,))
     recs = _effective_recs(ctx, [rec_from_json(json.dumps(d)) for d in json.loads(row["events_json"])], a.provider)
+    frozen_utc = _frozen_cutoff_utc(db)
+    if frozen_utc is not None:  # Archiv: Vorgänge vor dem Stichtag werden nicht gebucht (wie in der Vorschau)
+        recs = [r for r in recs if r.ts_missing or r.ts >= frozen_utc]
     recs += _adjust_recs(a)  # bestätigter Ausgleich: gekennzeichnete Zeilen im selben Stapel (gemeinsam rückgängig)
     recs += _partner_recs(ctx, a)  # bestätigter Transfer mit ersetzter Import-Buchung: deren Seite im selben Stapel
     payload = ("[" + ",".join(rec_to_json(r) for r in recs) + "]").encode()

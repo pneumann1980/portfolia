@@ -31,7 +31,8 @@ from app.util.timeutil import iso, local_tz, to_local_date
 
 log = logging.getLogger(__name__)
 ZERO = Decimal(0)
-MODES = {"evidence": "belegt", "cautious": "vorsichtig (Annahme: Anschaffung am Vortag zu 0 €)",
+MODES = {"settle": "Ausgleich auf den Bestand der Quelle (Zugang: Vortag, 0 €, Haltefrist beginnt neu)",
+         "evidence": "belegt", "cautious": "vorsichtig (Annahme: Anschaffung am Vortag zu 0 €)",
          "derived": "abgeleitet"}
 
 
@@ -73,10 +74,10 @@ def validate(ctx: Any, m: CO.Model, *, account: str, asset: str, kind: str, qty:
     q = _dec(qty)
     if kind not in ("remove", "add"):
         errs.append("Art der Korrektur fehlt.")
-    if mode not in ("evidence", "cautious", "derived"):
+    if mode not in ("evidence", "cautious", "derived", "settle"):
         errs.append("Bitte wählen: belegte Daten oder vorsichtige Annahme.")
-    if account not in pf.all_accounts():
-        errs.append("Konto unbekannt.")
+    if account not in pf.all_accounts() and not (mode == "settle" and kind == "add" and account.strip()):
+        errs.append("Konto unbekannt.")  # ein Ausgleich darf ein Konto ohne Buchungen (nur Datenquelle) anlegen
     if asset not in pf.assets or pf.asset(asset).is_fiat:
         errs.append("Asset unbekannt oder Fiat (wird nicht geführt).")
     if q is None or q <= 0:
@@ -94,9 +95,11 @@ def validate(ctx: Any, m: CO.Model, *, account: str, asset: str, kind: str, qty:
             errs.append(f"Bestand zum Stichtag ({have.normalize():f}) reicht für den Abgang nicht aus.")
         if not ev:
             errs.append("Bitte den Beleg bzw. die Begründung angeben.")
-        mode = "evidence" if mode != "derived" else mode
+        mode = "evidence" if mode not in ("derived", "settle") else mode
     else:
-        if mode == "cautious":
+        if mode in ("cautious", "settle"):
+            if mode == "settle" and not ev:
+                errs.append("Bitte den Beleg (Bestand der Quelle) angeben.")
             d, cost = m.cutoff - timedelta(days=1), ZERO
         else:
             try:
@@ -121,6 +124,15 @@ def _form(m: CO.Model, v: dict[str, Any]) -> dict[str, Any]:
     d, hhmm = _when(m.cutoff, v["kind"], v["acq"])
     base = {"kind": "expert", "date": d.isoformat(), "time": hhmm}
     c = f"{m.cutoff:%d.%m.%Y}"
+    if v["mode"] == "settle":
+        tail = "" if v["kind"] == "remove" else ", Haltefrist neu (0 €)"
+        note = f"Stichtag-Ausgleich {c}: {v['evidence']}"
+        note = note[:120 - len(tail)] + tail
+        if v["kind"] == "remove":
+            return {**base, "type": "withdrawal", "tag": "cutover_correction", "from_account": v["account"],
+                    "from_asset": v["asset"], "from_qty": str(v["qty"]), "value_eur": "0", "note": note}
+        return {**base, "type": "deposit", "tag": "opening_balance", "to_account": v["account"],
+                "to_asset": v["asset"], "to_qty": str(v["qty"]), "value_eur": "0", "note": note}
     if v["kind"] == "remove":
         note = (f"Stichtag-Korrektur {c}, {v['evidence']}" if v["mode"] == "derived"
                 else f"Stichtag-Korrektur {c}, Abgang laut Beleg: {v['evidence']}")

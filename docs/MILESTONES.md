@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 05.11.2026 · Version 0.101.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 06.11.2026 · Version 0.102.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,20 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.102.0 – Stichtag: Ausgleich (alles glattziehen), Quellenübernahme ab dem Stichtag, Journal-Kennungen
+
+Rückmeldung zu 0.101.0: Nach dem Festschreiben ließen sich fast alle Konten nicht mehr prüfen/übernehmen; die Übernahme
+war gesperrt („1 zu ersetzende Buchung liegt vor dem Stichtag“). Details: [`STICHTAG.md`](STICHTAG.md).
+
+* **Ausgleich zum Stichtag:** Sammelweg je Konto/Asset gegen den Bestand laut Beleg (Referenz oder Quelle): Abgang
+  (steuerlich neutral) bzw. Zugang am Vortag zu 0 € (Haltefrist beginnt neu, Verkäufe ab dem Stichtag markiert); Rest
+  oberhalb des Eröffnungsbestands ausgewiesen; Konten danach automatisch neu freigegeben; einzeln rücknehmbar.
+* **Quellenübernahme ab dem Stichtag:** ersetzt erst ab dem Stichtag, Archiv bleibt, Vorgänge davor zählen als bewusst
+  ausgelassen; ohne Vorgänge ab dem Stichtag bleibt das Fenster am Stichtag (vorher hätte es alle Buchungen erfasst).
+* **Journal-Kennungen:** neue Buchungen übernehmen nie eine im Import belegte Kennung (nach Wiederherstellung waren
+  sie sonst unsichtbar).
+* **Reale Daten:** 13 Ausgleichszeilen, alle gebucht, danach 0 Abweichungen; offene Befunde 75 → 64.
 
 ## 0.101.0 – Stichtag: Fiat aus, Eröffnungsstand, Festschreiben, Archivschutz, ausgerichtete Wege, abgeleitete Vorschläge
 

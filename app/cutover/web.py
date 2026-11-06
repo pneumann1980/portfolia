@@ -13,6 +13,7 @@ from app.cutover import corrections as CR
 from app.cutover import fiat as FI
 from app.cutover import fix as FX
 from app.cutover import service as CS
+from app.cutover import settle as ST
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -44,23 +45,37 @@ def make_router() -> APIRouter:
                           errors=res["errors"])
         return _back(request, "/settings/fiat?saved=" + ("off" if off else "on"))
 
-    def _page(request: Request, cutoff: str | None, *, impact: bool = False, derive: bool = False, status: int = 200,
+    def _page(request: Request, cutoff: str | None, *, impact: bool = False, derive: bool = False,
+              settle: bool = False, status: int = 200, result: dict[str, Any] | None = None,
               errors: list[str] | None = None, saved: str | None = None, sim: dict[str, Any] | None = None,
               form: dict[str, Any] | None = None) -> HTMLResponse:
         ctx = get_ctx(request)
         st = FX.state(ctx)  # aktiver Stichtag: dessen Datum gilt, nicht die Auswahl
         c = st["cutoff"] if st else CS.parse_cutoff(cutoff)
-        pv = st["preview"] if st else CS.preview(ctx, c, impact=impact, derive=derive)
-        if st and (impact or derive):
-            pv = CS.preview(ctx, c, impact=impact, derive=derive)
+        pv = st["preview"] if st else CS.preview(ctx, c, impact=impact, derive=derive, settle=settle)
+        if st and (impact or derive or settle):
+            pv = CS.preview(ctx, c, impact=impact, derive=derive, settle=settle)
         return render(request, "cutover.html", status_code=status, active="settings", p=pv, st=st,
-                      errors=errors or [], saved=saved, sim=sim, form=form or {}, modes=CR.MODES)
+                      errors=errors or [], saved=saved, sim=sim, form=form or {}, modes=CR.MODES, result=result)
 
     @router.get("/settings/stichtag", response_class=HTMLResponse)
     async def cutover_page(request: Request, cutoff: str | None = None, impact: str | None = None,
-                           saved: str | None = None, derive: str | None = None) -> HTMLResponse:
+                           saved: str | None = None, derive: str | None = None,
+                           settle: str | None = None) -> HTMLResponse:
         return await run_in_threadpool(lambda: _page(request, cutoff, impact=impact == "1", derive=derive == "1",
-                                                     saved=saved))
+                                                     settle=settle == "1", saved=saved))
+
+    @router.post("/settings/stichtag/ausgleich")
+    async def cutover_settle(request: Request) -> Response:
+        ctx = get_ctx(request)
+        f = await request.form()
+        c = CS.parse_cutoff(str(f.get("cutoff") or ""))
+        ids = {str(v) for v in f.getlist("sel")}
+        res = await run_in_threadpool(lambda: ST.apply(ctx, c, ids))
+        if res["errors"]:
+            return await run_in_threadpool(lambda: _page(request, c.isoformat(), settle=True, status=422,
+                                                         errors=res["errors"]))
+        return await run_in_threadpool(lambda: _page(request, c.isoformat(), result=res))
 
     @router.post("/settings/stichtag/fixieren")
     async def cutover_fix(request: Request) -> Response:

@@ -89,6 +89,33 @@
   </section>
   {% endif %}
 
+  <section class="card" id="ausgleich">
+    <div class="card-head"><h2>Ausgleich zum Stichtag</h2><span class="hint">alles glattziehen</span></div>
+    <p class="hint">Zieht je Konto und Asset die Abweichung zum Bestand laut Beleg (Referenzbestand oder Bestand der Quelle) mit <b>einer gekennzeichneten Buchung am {{ (p.cutoff|prev_day)|date_de }}</b> glatt – danach stimmen Berechnung und Beleg ab dem Stichtag überein. <b>Zu viel gebucht</b> wird als Abgang gebucht (steuerlich neutral, kein Gewinn, kein Verlust). <b>Zu wenig gebucht</b> wird als Zugang am Vortag zu 0&nbsp;€ gebucht: die Haltefrist beginnt neu, ein Verkauf binnen eines Jahres wäre voll steuerpflichtig – nur dort relevant, wo ab dem Stichtag verkauft wurde (in der Liste markiert). Jede Buchung ist einzeln rücknehmbar; bei festgeschriebenem Stichtag werden die betroffenen Konten danach neu freigegeben.</p>
+    {% if result %}
+    <div class="alert good"><span class="icon">i</span><div><b>{{ result.done|length }} Ausgleichsbuchung(en) gebucht.</b>{% if result.reapproved %} Betroffene Konten sind neu freigegeben.{% endif %}
+      {% if result.failed %}<ul class="small">{% for x in result.failed %}<li>{{ x.account }} · {{ x.asset }}: {{ x.errors[0] }}</li>{% endfor %}</ul>{% endif %}</div></div>
+    {% endif %}
+    {% if p.settle is none %}<a class="btn sm ghost" href="/settings/stichtag?cutoff={{ p.cutoff.isoformat() }}&amp;settle=1#ausgleich">Ausgleich vorbereiten</a>
+    {% elif not p.settle.rows %}<p class="hint">Kein Beleg nach dem Stichtag weicht vom berechneten Bestand ab – nichts auszugleichen.</p>
+    {% else %}
+    <p class="hint">{{ p.settle.n_remove }} Abgang/Abgänge, {{ p.settle.n_add }} Zugang/Zugänge{% if p.settle.n_sold %}, davon <b>{{ p.settle.n_sold }} mit Verkauf ab dem Stichtag</b>{% endif %}{% if p.settle.n_rest %}; {{ p.settle.n_rest }} nicht vollständig ausgleichbar (Rest liegt im aktiven Zeitraum){% endif %}.</p>
+    <form method="post" action="/settings/stichtag/ausgleich">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cutoff" value="{{ p.cutoff.isoformat() }}">
+      <div class="table-wrap cards-wrap"><table class="compact cards"><thead><tr><th></th><th>Konto · Asset</th><th>Art</th><th>Menge</th><th>Beleg</th><th>berechnet</th><th>Hinweis</th></tr></thead><tbody>
+      {% for r in p.settle.rows %}<tr>
+        <td data-label="Auswahl">{% if r.qty > 0 %}<input type="checkbox" name="sel" value="{{ r.id }}" checked aria-label="Ausgleich {{ r.account }} {{ r.asset }}">{% endif %}</td>
+        <td data-label="Konto · Asset"><b>{{ r.account }}</b> · {{ r.asset }}</td>
+        <td data-label="Art">{{ 'Abgang' if r.kind == 'remove' else 'Zugang (0 €)' }}</td>
+        <td data-label="Menge" class="num">{{ r.qty|qty_exact }}</td>
+        <td data-label="Beleg" class="num">{{ r.reference|qty_exact }} <span class="hint">{{ r.kind_label }}, {{ r.at|datetime_de }}{% if r.stale %} · nicht aktuell{% endif %}</span></td>
+        <td data-label="berechnet" class="num">{{ r.computed|qty_exact }}</td>
+        <td data-label="Hinweis" class="small">{% if r.sold %}<span class="badge warn">Verkauf ab Stichtag: Haltefrist neu</span> {% endif %}{% if r.rest > 0 %}<span class="badge crit">Rest {{ r.rest|qty_exact }} nicht am Stichtag ausgleichbar</span> {% endif %}{% if r.cause_text %}<span class="hint">{{ r.cause_text }}</span>{% elif r.window %}<span class="hint">{{ r.window }} Buchung(en) seit dem Stichtag</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+      <button class="btn" type="submit" data-confirm="Ausgleich jetzt buchen? Jede Buchung lässt sich einzeln zurücknehmen.">Ausgewählte ausgleichen{% if st %} und neu freigeben{% endif %}</button>
+    </form>
+    {% endif %}
+  </section>
+
   <section class="card" id="korrekturen">
     <div class="card-head"><h2>Stichtag-Korrekturen</h2><span class="hint">nur mit Beleg</span></div>
     <p class="hint">Der berechnete Stand gilt. Eine Korrektur ist nur dort sinnvoll, wo ein Beleg zum {{ (p.cutoff|prev_day)|date_de }} zeigt, dass er nicht stimmt. Sie wird als gekennzeichnete Buchung <b>vor</b> dem Stichtag gebucht und lässt sich einzeln zurücknehmen. Zu wenig gebuchte Menge braucht das belegte Anschaffungsdatum und die belegten Kosten – ohne Beleg bleibt sie besser offen.</p>

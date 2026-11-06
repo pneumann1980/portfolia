@@ -22,7 +22,8 @@ def parse_cutoff(raw: str | None, default: date | None = None) -> date:
         return default or DEFAULT_CUTOFF
 
 
-def preview(ctx: Any, cutoff: date, *, impact: bool = False, derive: bool = False) -> dict[str, Any]:
+def preview(ctx: Any, cutoff: date, *, impact: bool = False, derive: bool = False,
+            settle: bool = False) -> dict[str, Any]:
     """Alles für die Vorschau (nur lesend): Pflichtprüfungen, Eröffnungsstand je Konto, Belege, Auffälligkeiten."""
     ms = CO.models(ctx, cutoff)
     if not ms:
@@ -56,4 +57,9 @@ def preview(ctx: Any, cutoff: date, *, impact: bool = False, derive: bool = Fals
         from app.cutover import derive as DV
 
         out["derived"] = DV.derive(ctx, m)
+    out["settle"] = None
+    if settle:  # Ausgleich zum Stichtag (liest die Diagnose: auf Wunsch)
+        from app.cutover import settle as ST
+
+        out["settle"] = ST.plan(ctx, m)
     return out

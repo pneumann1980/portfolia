@@ -47,9 +47,10 @@ def _touches(t: Any, key: tuple[str, str]) -> bool:
             or (t.fee_asset == aid and (t.from_account or t.to_account) == acc))
 
 
-def evidence(ctx: Any, m: CO.Model, *, observed: bool = True) -> list[dict[str, Any]]:
+def evidence(ctx: Any, m: CO.Model, *, observed: bool = True, stale: bool = False) -> list[dict[str, Any]]:
     """Belege nach dem Stichtag: Referenzbestände (``as_of ≥ Stichtag``) und – falls gewünscht – vollständig
-    abgerufene Bestände der Quellen mit Abweichung (Diagnose, ``extern_diff``). Je (Konto, Asset) der jüngste Beleg."""
+    abgerufene Bestände der Quellen mit Abweichung (Diagnose, ``extern_diff``). Je (Konto, Asset) der jüngste Beleg.
+    ``stale``: auch Bestände älterer bzw. nicht bestätigter Abrufe (``extern_unsicher``), als solche gekennzeichnet."""
     from app.diagnosis.collect import references
 
     out: dict[tuple[str, str], dict[str, Any]] = {}
@@ -65,7 +66,9 @@ def evidence(ctx: Any, m: CO.Model, *, observed: bool = True) -> list[dict[str, 
         from app.diagnosis.engine import report_for
 
         for h in report_for(ctx).holdings:
-            if h.status != "extern_diff" or h.observed is None or h.observed_at is None:
+            if h.observed is None or h.observed_at is None:
+                continue
+            if h.status != "extern_diff" and not (stale and h.status == "extern_unsicher"):
                 continue
             at = h.observed_at if h.observed_at.tzinfo else h.observed_at.replace(tzinfo=UTC)
             key = (h.account, h.asset)
@@ -74,7 +77,7 @@ def evidence(ctx: Any, m: CO.Model, *, observed: bool = True) -> list[dict[str, 
             if key not in out or at > out[key]["at"]:
                 out[key] = {"account": h.account, "asset": h.asset, "qty": h.observed, "at": at,
                             "kind": "Bestand laut Quelle", "source": h.observed_by or "Datenquelle",
-                            "note": h.observed_state or ""}
+                            "note": h.observed_state or "", "stale": h.status != "extern_diff"}
     return sorted(out.values(), key=lambda e: (e["account"], e["asset"]))
 
 

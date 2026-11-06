@@ -466,7 +466,14 @@ class JournalService:
         cur = c.execute(f"INSERT INTO journal_tx({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                         (tmp, source, external_id, group_ref, status, *vals.values(), form_json, stamp, stamp,
                          batch_id, pair_refs, event_key, event_line, tx_hash, datasource_id))
-        tx_id = f"{prefix}{cur.lastrowid:06d}"
+        n = int(cur.lastrowid)  # type: ignore[arg-type]
+        tx_id = f"{prefix}{n:06d}"
+        # Kennungen aus dem Import (z. B. nach einer Wiederherstellung: ``PF-M-000002``) bleiben belegt – eine gleiche
+        # Kennung im Journal würde beim Einblenden stillschweigend übersprungen; ebenso keine doppelte Journal-Kennung
+        while c.execute("SELECT 1 FROM tx WHERE tx_id=? UNION ALL SELECT 1 FROM journal_tx WHERE tx_id=? AND id<>?",
+                        (tx_id, tx_id, cur.lastrowid)).fetchone():
+            n += 1
+            tx_id = f"{prefix}{n:06d}"
         c.execute("UPDATE journal_tx SET tx_id=? WHERE id=?", (tx_id, cur.lastrowid))
         if log:
             self._log(c, "create", tx_id, None, {"tx_id": tx_id, **vals}, stamp)

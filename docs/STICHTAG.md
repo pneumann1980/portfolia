@@ -1,6 +1,6 @@
-# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.101.0)
+# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.102.0)
 
-Stand: 05.11.2026 · Version 0.101.0
+Stand: 06.11.2026 · Version 0.102.0
 
 Ein Stichtag (Standard 01.01.2025, in der App wählbar) teilt die Buchungen in ein **Archiv** (davor) und den **aktiven
 Zeitraum** (ab dem Stichtag). Steuer, Lots, Diagnose und Importe arbeiten ab dem Stichtag mit dem geprüften
@@ -16,6 +16,7 @@ Depotstart. **Es wird nichts gelöscht.** Einstieg: *Einstellungen → Stichtag*
 | 3 | 0.99.0 | **Festschreiben** (eine Schreibtransaktion, gebunden an den angezeigten Datenstand), **Freigabe je Konto**, **Korrekturen nur mit Beleg**, **Rückgängig**, **Schutz des Archivs**, Export/Wiederherstellung |
 | 4 | 0.100.0 | **Alle Wege am Stichtag ausgerichtet:** Diagnose, Gesamtprüfung, CSV-Import/Sync/Prüf-Stapel, Quellenübernahme |
 | 5 | 0.101.0 | **Abgeleitete Vorschläge** aus Belegen nach dem Stichtag – nur wo sie belegt sind |
+| + | 0.102.0 | **Ausgleich zum Stichtag** (alles glattziehen) und **Quellenübernahme ab dem Stichtag** |
 
 ## Eröffnungsstand und Gleichwertigkeit
 
@@ -92,8 +93,12 @@ Seite die Wirkung auf Bestand, Lots, Kosten und realisierte Ergebnisse je Jahr.
   offen).
 * **CSV-Import, Sync, Prüf-Stapel:** Zeilen vor dem Stichtag sind „vor Stichtag“ mit Hinweis „Archiv – wird nicht
   übernommen“ (auch wenn der Stapel ohne eigenen Stichtag angelegt wurde). Erzwingen scheitert am Schutz.
-* **Quellenübernahme:** Eine zusätzliche Pflichtprüfung „Archiv vor dem Stichtag bleibt unverändert“ blockiert eine
-  Übernahme, die Buchungen vor dem Stichtag ersetzen oder neue Vorgänge davor anlegen würde.
+* **Quellenübernahme (ab 0.102.0):** Die Quelle ersetzt Buchungen **erst ab dem Stichtag**. Buchungen davor bleiben
+  (Archiv), Vorgänge der Quelle davor werden nicht gebucht und zählen in der Vorgangszählung als bewusst ausgelassen.
+  Die Pflichtprüfung „Archiv vor dem Stichtag bleibt unverändert“ bleibt als Sicherung. Der Bestandsbeweis gilt weiter:
+  Archiv + Vorgänge ab dem Stichtag müssen den Bestand der Quelle ergeben – sonst ist der Eröffnungsstand die Ursache und
+  der **Ausgleich zum Stichtag** die Lösung (vorher: Übernahme gesperrt, „1 zu ersetzende Buchung liegt vor dem
+  Stichtag“).
 * **Bewertung, Verlauf, Export:** unverändert über den vollen Stand.
 
 ## Stufe 5: abgeleitete Vorschläge (nur mit Beleg)
@@ -110,6 +115,34 @@ Bestand zum Zeitpunkt des Belegs:
   Übertragungen von einer Börse in eine Wallet), oder Abgänge ohne Gebühr, wenn bei der Quelle weniger liegt (fehlende
   Gebühren). Die Behebung läuft über die gewohnten Wege.
 * Ohne Beleg nach dem Stichtag entsteht nichts. Gebucht wird nie automatisch.
+
+## Ausgleich zum Stichtag (0.102.0): alles glattziehen
+
+*Einstellungen → Stichtag → Ausgleich zum Stichtag.* Je Konto und Asset mit Abweichung zum Beleg nach dem Stichtag
+(Referenzbestand, Bestand der Quelle – auch nicht mehr aktueller Abruf, dann als „nicht aktuell“ gekennzeichnet) bucht
+**eine** gekennzeichnete Buchung am Vortag des Stichtags die Differenz zum berechneten Bestand zum Zeitpunkt des Belegs.
+Danach stimmen Berechnung und Beleg überein.
+
+| Fall | Buchung | Wirkung |
+| --- | --- | --- |
+| Beleg < berechnet | Abgang (Tag `cutover_correction`), verbraucht die ältesten Lots | steuerlich neutral (kein Gewinn, kein Verlust, kein Zahlungsstrom) |
+| Beleg > berechnet | Zugang am Vortag zu **0 €** (Tag `opening_balance`) | **Haltefrist beginnt neu**; ein Verkauf binnen eines Jahres wäre voll steuerpflichtig – in der Vorschau markiert, wo ab dem Stichtag aus diesem Konto/Asset verkauft wurde |
+
+* Mehr als der Eröffnungsbestand lässt sich nicht am Stichtag abziehen; der Rest wird ausgewiesen (Ursache liegt im
+  aktiven Zeitraum, z. B. fehlende Gebühr).
+* Liegt eine Ursache nahe (offene Abgänge anderer Konten, Abgänge ohne Gebühr), steht sie in der Vorschau – es wird
+  nichts unterdrückt, aber auch nichts blockiert: alle Zeilen sind vorausgewählt.
+* Ein Zugang darf ein Konto anlegen, das nur als Datenquelle existiert (noch ohne Buchung); ein Abgang nicht.
+* Bei festgeschriebenem Stichtag werden die betroffenen Konten danach automatisch neu freigegeben. Jede Buchung ist
+  einzeln rücknehmbar (Gebuchte Korrekturen, Modus „Ausgleich“).
+* **Grenze:** Der Ausgleich ersetzt keinen Beleg. Er stellt fest, dass ab hier der externe Bestand gilt; die Ursache einer
+  Abweichung im aktiven Zeitraum bleibt damit ungeklärt (Hinweise in der Vorschau).
+
+### Journal-Kennungen nach Wiederherstellung (0.102.0)
+
+Neue Journal-Buchungen erhielten `Präfix + Zeilennummer`. Nach einer Wiederherstellung tragen Import-Buchungen bereits
+Kennungen wie `PF-M-000002`; eine gleiche Journal-Kennung wurde beim Einblenden stillschweigend übersprungen – die neue
+Buchung war unsichtbar. Das Journal vergibt jetzt nur noch Kennungen, die weder im Import noch im Journal vorkommen.
 
 ## Export und Wiederherstellung
 
@@ -131,6 +164,7 @@ Regel „höchstens ein aktiver Stichtag“: ist bereits einer aktiv, kommt der 
 | Rücknahme | wirtschaftlich identisch zu vorher, 110 Befunde wie zuvor |
 | Abgeleitete Vorschläge | 0 Vorschläge, 1 Hinweis (DKB A40XUX, Ursache unbekannt: 3 Buchungen im Zeitraum) |
 | Laufzeit gesamt (Vorschau, Hinweise, Festschreiben, Diagnose, Rücknahme) | 8,4 s |
+| **Ausgleich (0.102.0)** | 13 Zeilen (9 Zugänge, 4 Abgänge, davon 12 mit nicht aktuellem Abruf, 1 mit Verkauf ab Stichtag), alle 13 gebucht, danach 0 Abweichungen, Konten automatisch neu freigegeben, offene Diagnosebefunde 75 → 64; 24,5 s |
 
 ## Grenzen
 
@@ -148,7 +182,7 @@ Regel „höchstens ein aktiver Stichtag“: ist bereits einer aktiv, kommt der 
 
 * `tests/test_cutover_fiat.py` (8), `test_cutover_core.py` (8), `test_cutover_page.py` (8), `test_cutover_fix.py` (18,
   einschließlich Export/Wiederherstellung), `test_cutover_scope.py` (6), `test_cutover_takeover.py` (2),
-  `test_cutover_derive.py` (7).
+  `test_cutover_derive.py` (7), `test_cutover_settle.py` (7).
 * Zusätzlich 192 zufällige Kombinationen für die Gleichwertigkeit (Voll gegen Eröffnungsstand + aktiv) in beiden
   Rechenweisen.
 * `TZ=Europe/Berlin python -m pytest -q tests` · `ruff check app tests scripts` ·
