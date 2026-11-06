@@ -234,7 +234,7 @@ def build(ctx: Any, report: Report | None = None, *, granular: bool = False) -> 
     try:
         from app.diagnosis import recheck as RC
 
-        n_mark = len(RC.marks(ctx.db))
+        n_mark = len(RC.live_marks(ctx.db))
         if n_mark:
             items.append(WorkItem(key="erneut", tier="B", kind="gruppe",
                                   title=f"{n_mark} Buchung(en) zur erneuten Prüfung vorgemerkt",

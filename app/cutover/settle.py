@@ -264,6 +264,36 @@ def apply_form(ctx: Any, cutoff: Any, form: Mapping[str, Any], *, reapprove: boo
     return _book(ctx, cutoff, res["chosen"], reapprove=reapprove)
 
 
+def rows_for_case(ctx: Any, finding_ids: list[str]) -> list[dict[str, Any]]:
+    """Ausgleichszeilen (nur buchbare) zu den Positionen eines Klärungsfalls – leer ohne festgeschriebenen Stichtag oder
+    ohne Beleg, der vom berechneten Bestand abweicht."""
+    from app.cutover import guard
+    from app.diagnosis.engine import report_for
+
+    cutoff = guard.cutoff_of(ctx.db)
+    if cutoff is None:
+        return []
+    ms = CO.models(ctx, cutoff)
+    if not ms:
+        return []
+    report = report_for(ctx)
+    pos = {tuple(p) for fid in finding_ids if (f := report.by_id(fid)) is not None for p in f.positions}
+    return [r for r in plan(ctx, ms[0])["rows"] if (r["account"], r["asset"]) in pos and r["qty"] > 0]
+
+
+def settle_case(ctx: Any, finding_ids: list[str]) -> dict[str, Any]:
+    """Alle abweichenden Positionen eines Klärungsfalls auf den Beleg ausgleichen (ausdrückliche Wahl der Person,
+    auch bei Zeilen, die in der Liste „kritisch“ wären)."""
+    from app.cutover import guard
+
+    cutoff = guard.cutoff_of(ctx.db)
+    rows = rows_for_case(ctx, finding_ids)
+    if cutoff is None or not rows:
+        return {"errors": ["Für diesen Fall gibt es keinen Beleg, auf den sich ausgleichen ließe."], "done": [],
+                "failed": []}
+    return _book(ctx, cutoff, rows, reapprove=True)
+
+
 def apply(ctx: Any, cutoff: Any, ids: set[str], *, reapprove: bool = True) -> dict[str, Any]:
     """Ausgewählte Zeilen auf den Beleg ausgleichen (``ids`` = Zeilenkennungen)."""
     return apply_form(ctx, cutoff, {f"dec_{i}": "settle" for i in ids}, reapprove=reapprove)

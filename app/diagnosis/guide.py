@@ -30,7 +30,7 @@ from urllib.parse import urlencode
 from app.diagnosis import triage as TR
 from app.diagnosis import workplan as WP
 from app.util.timeutil import to_local_date
-from app.web.fmt import qty_exact
+from app.web.fmt import qty_exact, qty_short
 
 log = logging.getLogger(__name__)
 
@@ -742,7 +742,7 @@ def _recheck_tasks(ctx: Any) -> list[Task]:
     from app.diagnosis import recheck as RC
 
     out = []
-    marks = RC.marks(ctx.db)
+    marks = RC.live_marks(ctx.db)
     for tx_id, mk in sorted(marks.items(), key=lambda kv: str(kv[1].get("at") or "")):
         i = RC.info(ctx, tx_id, marks)
         answers = [Answer("re:keep", "Ja, sie stimmt – Vormerkung entfernen", NO_CHANGE + " Die Buchung bleibt.")]
@@ -931,18 +931,21 @@ def question_for(f: Any, rec: Any, report: Any) -> tuple[str, str, str, str, dic
         "yes": "Ja, bitte korrigieren", "no": "Nein, das ist in Ordnung so", "no_mark": "dismiss"}
 
 
-def _effect(ctx: Any, report: Any, f: Any, opt: Any) -> tuple[str, str]:
-    """(Wirkung als Satz, Vorschau-Token) einer Lösung ohne Eingaben – rechnet auf einer Kopie, ändert nichts."""
+def _effect(ctx: Any, report: Any, f: Any, opt: Any) -> tuple[str, str, bool]:
+    """(Wirkung als Satz, Vorschau-Token, am Archiv gescheitert) einer Lösung ohne Eingaben – rechnet auf einer Kopie,
+    ändert nichts. Scheitert der Plan am festgeschriebenen Stichtag, ist die Antwort nicht anzubieten."""
     from app.diagnosis import actions as A
 
     try:
         plan = A.build_plan(ctx, report, f, opt.key, {}, given=False)
+        if plan.archive_blocked:
+            return opt.summary, "", True
         if plan.errors or not plan.ops:
-            return opt.summary, ""
+            return opt.summary, "", False
         eff = A.preview(ctx, report, plan)
     except Exception as e:  # Vorschau darf die Frage nie verhindern
         log.debug("Vorschau im Assistenten nicht möglich: %s", e)
-        return opt.summary, ""
+        return opt.summary, "", False
     parts = [f"Bestand {p.asset} auf {p.account}: {_q(p.bal[0])} → {_q(p.bal[1])}" for p in eff.positions[:2]]
     parts += [f"Steuerjahr {y.year}: realisiert {y.realized[0]:.2f} € → {y.realized[1]:.2f} €" for y in eff.years[:2]
               if y.realized[0] != y.realized[1]]
@@ -950,7 +953,7 @@ def _effect(ctx: Any, report: Any, f: Any, opt: Any) -> tuple[str, str]:
         parts.append("die Aufgabe ist danach erledigt")
     for a, b in getattr(eff, "negative_new", [])[:1]:
         parts.append(f"⚠ danach negativer Bestand {b} auf {a}")
-    return ("; ".join(parts) or opt.summary), plan.token
+    return ("; ".join(parts) or opt.summary), plan.token, False
 
 
 def _chain_answer_useful(rec: Any, f: Any, report: Any) -> bool:
@@ -974,6 +977,8 @@ def detail(ctx: Any, task: Task) -> Task:
     if task.kind != "frage":
         if not task.answers:  # jede Aufgabe ist im Assistenten beantwortbar – mindestens „später“
             task.answers = [Answer("skip", "Später", NO_CHANGE)]
+        if task.kind == "seite" and task.item is not None and task.item.kind == "fall":
+            task.answers = _case_exits(ctx, task)
         return task
     from app.diagnosis.engine import report_for
     from app.diagnosis.recommend import recommend
@@ -992,10 +997,14 @@ def detail(ctx: Any, task: Task) -> Task:
         task.question = "Ist das für dich in Ordnung?"
         task.context = f"{f.title}. {_first_sentence(rec.text)}"
         texts["no"], texts["no_mark"] = "Ja, das ist in Ordnung so", "dismiss"
+    blocked: set[str] = set()  # Lösungen, die das Archiv vor dem Stichtag ändern würden: nicht anbieten
     if prim is not None:
-        eff, token = _effect(ctx, report, f, prim) if not prim.params else (prim.summary, "")
-        answers.append(Answer(f"opt:{prim.key}", texts["yes"] or prim.label, eff, recommended=not rec.conditional,
-                              params=list(prim.params), caution=prim.caution, token=token))
+        eff, token, arch = _effect(ctx, report, f, prim) if not prim.params else (prim.summary, "", False)
+        if arch:
+            blocked.add(prim.key)
+        else:
+            answers.append(Answer(f"opt:{prim.key}", texts["yes"] or prim.label, eff, recommended=not rec.conditional,
+                                  params=list(prim.params), caution=prim.caution, token=token))
     elif fixes:  # ohne Empfehlung: die naheliegende Korrektur als „Ja“ (Wirkung erst nach den Eingaben)
         o = fixes[0]
         yes = YES_WITHOUT_RECOMMENDATION.get(f.kind) or (f"Ja: {o.label}" if texts["yes"].startswith("Ja, bitte")
@@ -1015,7 +1024,7 @@ def detail(ctx: Any, task: Task) -> Task:
             "Portfolia fragt den Bestand bei früheren Blöcken ab (ohne Schlüssel, 1–5 Minuten) und findet den Tag, an "
             "dem er ohne Buchung gesprungen ist. Danach kommt diese Frage mit dem Ergebnis wieder.",
             recommended=prim is None))
-    used = {a.option for a in answers if a.option}
+    used = {a.option for a in answers if a.option} | blocked
     for o in fixes:
         if o.key not in used:
             answers.append(Answer(f"opt:{o.key}", o.label, o.summary, params=list(o.params), caution=o.caution,
@@ -1066,6 +1075,36 @@ def save_pass(db: Any, ref: str, skip: list[str]) -> None:
     all_[ref] = {"t": datetime.now(UTC).isoformat(timespec="seconds"), "skip": list(dict.fromkeys(skip))[:PASS_MAX]}
     keep = sorted(all_.items(), key=lambda kv: str((kv[1] or {}).get("t") or ""), reverse=True)[:PASS_KEEP]
     db.set_state(PASSES_STATE, dict(keep))
+
+
+def _case_exits(ctx: Any, task: Task) -> list[Answer]:
+    """Klärungsfall ohne vorbereitete Lösung: neben „ansehen“ und „später“ immer ein **Ausweg**: bei festgeschriebenem
+    Stichtag der Ausgleich auf den Bestand der Quelle (wenn es einen Beleg gibt), sonst – und zusätzlich – „kann ich
+    nicht klären“ (der Fall ruht bis zu neuen Belegen)."""
+    from app.cutover import settle as ST
+
+    out = [a for a in task.answers if a.id == "go:open"]
+    try:
+        rows = ST.rows_for_case(ctx, list(task.item.refs)) if task.item is not None else []
+    except Exception as e:  # der Ausgleich ist Zusatz – die übrigen Antworten bleiben
+        log.debug("Ausgleich für den Fall nicht berechenbar: %s", e)
+        rows = []
+    if rows:
+        lines = "; ".join(
+            f"{'Abgang' if r['kind'] == 'remove' else 'Zugang zu 0 €'} {qty_short(r['qty'])} {r['asset']} auf "
+            f"{r['account']} (Beleg {qty_short(r['reference'])})" for r in rows[:4])
+        caution = ""
+        if any(r["kind"] == "add" for r in rows):
+            caution = "Zugänge zu 0 €: die Haltefrist beginnt neu"
+            if any(r["sold"] for r in rows):
+                caution += " – ab dem Stichtag wurde verkauft, das wirkt steuerlich"
+        out.append(Answer("case:settle", "Auf den Bestand der Quelle ausgleichen",
+                          f"Bucht am Vortag des Stichtags: {lines}. Einzeln rücknehmbar.", recommended=True,
+                          caution=caution))
+    out.append(Answer("case:defer", "Kann ich nicht klären – so lassen",
+                      "Nichts wird geändert. Der Fall ruht und öffnet sich erst wieder, wenn neue Belege vorliegen."))
+    out.append(Answer("skip", "Später", NO_CHANGE))
+    return out
 
 
 def case_progress(ctx: Any, finding_id: str) -> tuple[str, int, int] | None:

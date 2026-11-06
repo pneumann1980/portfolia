@@ -801,3 +801,20 @@ Mit festgeschriebenem Stichtag ([`STICHTAG.md`](STICHTAG.md)) führen Diagnose u
 sind nur Archiv, wenn alle Einzelvorgänge es sind; Befunde ohne Buchungsbezug und gemischte Befunde bleiben. CSV-Import,
 Sync und Prüf-Stapel markieren Zeilen vor dem Stichtag als „vor Stichtag“ (nicht übernommen); die Quellenübernahme hat eine
 zusätzliche Pflichtprüfung. Alle Buchungs-Schreibwege lehnen Änderungen vor dem Stichtag ab (HTTP 409 mit Erklärung).
+
+## Ausgänge je Aufgabenart (ab 0.106.0)
+
+Jede Aufgabe im Assistenten hat eine abschließende Antwort (Audit mit Beispiel- und Echtdaten):
+
+| Aufgabe | Abschließende Antworten |
+| --- | --- |
+| Befund (`frage`) | Ja (Korrektur; nicht angeboten, wenn der Plan das Archiv ändern würde) · in Ordnung so · weiß ich nicht (zurückgestellt) |
+| Klärungsfall (`fall`, im Assistenten lösbar) | Vorschlag übernehmen · so lassen · zurückstellen |
+| Klärungsfall (`fall`, Seitenaufgabe) | **Auf den Beleg ausgleichen** (Stichtag) · **Kann ich nicht klären – so lassen** · ansehen · später |
+| Prüfstapel / Zeile | übernehmen · ablehnen · zurückstellen |
+| Vorgemerkt (`erneut`) | stimmt · zurücknehmen (Meldung bei Archiv) · später; Vormerkungen im Archiv entfallen |
+| Rechenprüfung (`rechnung`) | zur Kenntnis genommen |
+| Hinweise ohne Fehler | nur Lesen (keine Antwort, nicht im normalen Ablauf) |
+
+Offene Grenzen: veraltete Abrufe gleichen Werts verschwinden erst nach frischem Abruf oder „so lassen“; Bestände ohne Beleg
+lassen sich nicht ausgleichen.

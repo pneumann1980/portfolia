@@ -18,6 +18,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+from app.cutover import guard
 from app.diagnosis import actions as A
 from app.diagnosis import guide as G
 from app.diagnosis import reset as RS
@@ -284,6 +285,8 @@ def make_router() -> APIRouter:
             href = await run_in_threadpool(_href_of, ctx, kid) if kid else ""
             return RedirectResponse(with_kid(href, kid), status_code=303) if href else \
                 _go(err="Die Aufgabe besteht nicht mehr.")
+        if aid in ("case:defer", "case:settle") and typ == "seite":  # Klärungsfall ohne vorbereitete Lösung
+            return await run_in_threadpool(_page_case_answer, ctx, kid, aid, gone)
         if not fid:
             return _go(err="Diese Antwort braucht einen Vorgang – die Aufgabe hat sich geändert, bitte neu laden.")
         if typ in ("erneut", "rechnung"):
@@ -329,6 +332,28 @@ def make_router() -> APIRouter:
         return _go(msg="Gespeichert und korrigiert." + note, done=res.decision_id,
                    gone=await run_in_threadpool(gone), sig=sig, sa=aid if not params else "", st=text)
 
+    def _page_case_answer(ctx: Any, kid: str, aid: str, gone: Any) -> Response:
+        """„Kann ich nicht klären“ (Fall ruht) bzw. „Auf den Bestand der Quelle ausgleichen“ für einen Fall, dessen
+        Aufgabe nur eine Seite öffnet. Der Fall wird immer aus der Aufgabe bestimmt, nie aus dem Formular."""
+        from app.cutover import settle as ST
+        from app.diagnosis import clarify as K
+
+        t = next((x for x in G.tasks(ctx, hints=True) if x.kid == kid), None)
+        if t is None or t.item is None or t.item.kind != "fall":
+            return _go(err="Die Aufgabe besteht nicht mehr – bitte neu laden.")
+        if aid == "case:defer":
+            res = K.defer(ctx, t.ref.split(":", 1)[1], "Im Assistenten: kann ich nicht klären")
+            return _go(msg="Gespeichert: so lassen – der Fall ruht, bis neue Belege vorliegen." if res.ok else "",
+                       err=" ".join(res.errors), gone=gone())
+        res2 = ST.settle_case(ctx, list(t.item.refs))
+        if res2["errors"]:
+            return _go(err=" ".join(res2["errors"]))
+        n = len(res2["done"])
+        bad = f" {len(res2['failed'])} Zeile(n) ließen sich nicht buchen: {res2['failed'][0]['errors'][0]}" \
+            if res2["failed"] else ""
+        return _go(msg=f"{n} Ausgleichsbuchung(en) gebucht – einzeln rücknehmbar unter „Gebuchte Korrekturen“.{bad}",
+                   gone=gone())
+
     def _case_note(ctx: Any, fid: str) -> str:
         """Gehört der Befund zu einem Klärungsfall: Fortschritt im Fall (sonst ändert sich die Aufgabenzahl nicht)."""
         prog = G.case_progress(ctx, fid)
@@ -358,7 +383,10 @@ def make_router() -> APIRouter:
                 return _go(err="Die Buchung ist nicht mehr vorgemerkt.")
             return _go(msg="Gespeichert: die Buchung stimmt.", rm=ref, gone=gone())
         if typ == "erneut" and aid == "re:reopen":
-            res = RC.reopen(ctx, ref)
+            try:
+                res = RC.reopen(ctx, ref)
+            except guard.Protected as e:
+                return _go(err=str(e))
             if res["errors"]:
                 return _go(err=" ".join(res["errors"]))
             return _go(msg="Zurückgenommen – der Vorgang ist wieder bei den neuen Vorgängen.", ro=res["id"],

@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 06.11.2026 · Version 0.105.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 06.11.2026 · Version 0.106.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,16 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.106.0 – Stichtag: Ausweg für jeden Klärungsfall
+
+Rückmeldung zu 0.105.0: Vier Aufgaben („Diese Buchungen gehören vermutlich zusammen: …“) blieben offen, weil sie sich nicht
+klären ließen. Details: [`STICHTAG.md`](STICHTAG.md#ausweg-für-jeden-klärungsfall-0106-0).
+
+* **Jeder Klärungsfall hat zwei Ausgänge** im Assistenten: auf den Beleg ausgleichen (mit Stichtag) oder „Kann ich nicht klären – so lassen“.
+* **Archiv-Filter:** blockierte Antworten werden nicht angeboten; Vormerkungen vor dem Stichtag zählen nicht; Meldung statt Fehlerseite.
+* **Audit „Buchungen prüfen“:** jede normale Aufgabe (44 ohne, 18 mit Stichtag und Ausgleich) hat eine abschließende Antwort;
+  offen bleiben nur „Hinweise ohne Fehler“ (nur Lesen) sowie veraltete Abrufe bis zum frischen Abruf.
 
 ## 0.105.0 – Stichtag: jedes Asset gesetzt
 

@@ -222,3 +222,80 @@ def test_applying_into_the_archive_returns_a_message_not_an_error_page(cx, monke
     monkeypatch.setattr(A, "_exec", boom)
     res = A.apply(ctx, f.id, key, {}, plan.token)
     assert not res.ok and "festgeschrieben" in res.errors[0] and "nichts geändert" in res.errors[0]
+
+
+# ---------------------------------------------------------------- 0.106: Ausweg für jeden Klärungsfall / Archiv-Filter
+
+def _case_task(ctx, key):
+    return next((t for t in G.tasks(ctx) if t.key == f"fall:{key}"), None)
+
+
+def test_every_page_case_has_an_exit_defer_removes_it(cx):
+    ctx = cx.app.state.ctx
+    a, b = _ids(ctx)
+    _add_case(ctx, "kg-t7", [a, b], status="wartet_info")
+    t = _case_task(ctx, "kg-t7")
+    assert t is not None
+    t = G.detail(ctx, t)
+    ids = [x.id for x in t.answers]
+    assert "case:defer" in ids and "skip" in ids
+    assert "case:settle" not in ids  # ohne Stichtag kein Ausgleich
+    r = cx.post("/quality/assistent/antwort", data={"csrf_token": cx.token, "kid": t.kid, "a": "case:defer",
+                                                      "typ": "seite", "before": "5"}, follow_redirects=False)
+    assert r.status_code == 303
+    from urllib.parse import parse_qs, urlparse
+
+    msg = parse_qs(urlparse(r.headers["location"]).query).get("msg", [""])[0]
+    assert msg.startswith("Gespeichert")
+    assert _case_task(ctx, "kg-t7") is None  # zurückgestellt: keine Aufgabe mehr
+
+
+def test_archive_blocked_yes_answer_is_not_offered(cx, monkeypatch):
+    from app.diagnosis.recommend import recommend
+
+    ctx = cx.app.state.ctx
+    rep = report_for(ctx)
+    f = next(x for x in rep.findings if x.kind == "duplicate" and x.txs)
+    opt = next(o for o in recommend(rep, f).fixes if not o.params)
+    assert G._effect(ctx, rep, f, opt)[2] is False  # ohne Stichtag ausführbar
+    ctx.db.x("INSERT INTO cutover(cutoff, cutoff_utc, status, options_json, fingerprint, created_at) "
+             "VALUES (?,?,?,?,?,?)", ("2030-01-01", "2029-12-31T23:00:00Z", "active", "{}", "x", STAMP))
+    ctx.invalidate_data()
+    _eff, token, archive = G._effect(ctx, rep, f, opt)
+    assert archive is True and token == ""  # Archiv: kein Token, die Antwort wird nicht angeboten
+
+    t0 = next(t for t in G.tasks(ctx) if t.kind == "frage" and t.finding_id)  # Frage mit „Ja“ gesperrt: nur „so lassen“
+    monkeypatch.setattr(G, "_effect", lambda ctx_, rep_, f_, o: (o.summary, "", True))
+    ids = [a.id for a in G.detail(ctx, t0).answers]
+    assert not [i for i in ids if i.startswith("opt:") and i != "opt:set_quote_custom"] and "mark:defer" in ids
+
+
+def test_plan_flags_archive_block(cx):
+    from app.diagnosis.actions import build_plan
+    from app.diagnosis.recommend import recommend
+
+    ctx = cx.app.state.ctx
+    rep = report_for(ctx)
+    f = next(x for x in rep.findings if x.kind == "duplicate" and x.txs)
+    key = next(o.key for o in recommend(rep, f).fixes)
+    assert not build_plan(ctx, rep, f, key).archive_blocked
+    ctx.db.x("INSERT INTO cutover(cutoff, cutoff_utc, status, options_json, fingerprint, created_at) "
+             "VALUES (?,?,?,?,?,?)", ("2030-01-01", "2029-12-31T23:00:00Z", "active", "{}", "x", STAMP))
+    ctx.invalidate_data()
+    p = build_plan(ctx, rep, f, key)
+    assert p.archive_blocked and p.errors
+
+
+def test_recheck_marks_in_the_archive_are_not_open_tasks(cx):
+    from app.diagnosis import recheck as RC
+
+    ctx = cx.app.state.ctx
+    ctx.db.x("INSERT INTO journal_tx(tx_id, source, status, ts_utc, type, created_at, updated_at) "
+             "VALUES ('PF-C-T1','csv:x','active','2025-03-01T00:00:00Z','buy',?,?)", (STAMP, STAMP))
+    tx = {"tx_id": "PF-C-T1"}
+    ctx.db.set_state(RC.MARKS_KEY, {tx["tx_id"]: {"at": STAMP, "reason": "t"}})
+    assert tx["tx_id"] in RC.live_marks(ctx.db)
+    ctx.db.x("INSERT INTO cutover(cutoff, cutoff_utc, status, options_json, fingerprint, created_at) "
+             "VALUES (?,?,?,?,?,?)", ("2030-01-01", "2029-12-31T23:00:00Z", "active", "{}", "x", STAMP))
+    assert RC.live_marks(ctx.db) == {}  # liegt im Archiv: nichts mehr zu entscheiden
+    assert not G._recheck_tasks(ctx)

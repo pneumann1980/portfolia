@@ -36,6 +36,20 @@ def marks(db: Any) -> dict[str, dict[str, Any]]:
     return raw if isinstance(raw, dict) else {}
 
 
+def live_marks(db: Any) -> dict[str, dict[str, Any]]:
+    """Vormerkungen, die noch zu klären sind: bei festgeschriebenem Stichtag ohne Buchungen im Archiv (davor ist
+    nichts mehr zu entscheiden, die Buchung lässt sich weder zurücknehmen noch ändern)."""
+    m = marks(db)
+    if not m:
+        return m
+    from app.cutover import guard
+
+    if guard.cutoff_of(db) is None:
+        return m
+    ts = {r["tx_id"]: r["ts_utc"] for r in db.q("SELECT tx_id, ts_utc FROM journal_tx WHERE status='active'")}
+    return {k: v for k, v in m.items() if guard.is_protected(db, ts.get(k)) is None}
+
+
 def entries(db: Any) -> list[dict[str, Any]]:
     raw = db.get_state(LOG_KEY)
     return raw if isinstance(raw, list) else []

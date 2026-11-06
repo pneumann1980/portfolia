@@ -112,6 +112,7 @@ class Plan:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     version: str = ""  # Datenstand beim Planen (Buchungen, Überlagerungen, Abgleich, Zuordnungen, aktiver Import)
+    archive_blocked: bool = False  # scheitert nur am festgeschriebenen Stichtag (Archiv)
 
     @property
     def token(self) -> str:
@@ -902,6 +903,7 @@ def _check_archive(ctx: Any, st: Any, plan: Plan) -> None:
         if ts is not None and ts < cut:
             n += 1
     if n:
+        plan.archive_blocked = True
         plan.errors.append(f"Betrifft {n} Buchung(en) vor dem festgeschriebenen Stichtag {row['cutoff'][8:10]}."
                            f"{row['cutoff'][5:7]}.{row['cutoff'][:4]}: Das Archiv lässt sich nicht ändern. Bestände "
                            "zum Stichtag gleicht Einstellungen → Stichtag → Ausgleich aus; sonst den Stichtag "

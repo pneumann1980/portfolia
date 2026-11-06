@@ -1,6 +1,6 @@
-# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.105.0)
+# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.106.0)
 
-Stand: 06.11.2026 · Version 0.105.0
+Stand: 06.11.2026 · Version 0.106.0
 
 Ein Stichtag (Standard 01.01.2025, in der App wählbar) teilt die Buchungen in ein **Archiv** (davor) und den **aktiven
 Zeitraum** (ab dem Stichtag). Steuer, Lots, Diagnose und Importe arbeiten ab dem Stichtag mit dem geprüften
@@ -17,6 +17,7 @@ Depotstart. **Es wird nichts gelöscht.** Einstieg: *Einstellungen → Stichtag*
 | 4 | 0.100.0 | **Alle Wege am Stichtag ausgerichtet:** Diagnose, Gesamtprüfung, CSV-Import/Sync/Prüf-Stapel, Quellenübernahme |
 | 5 | 0.101.0 | **Abgeleitete Vorschläge** aus Belegen nach dem Stichtag – nur wo sie belegt sind |
 | + | 0.102.0 | **Ausgleich zum Stichtag** (alles glattziehen) und **Quellenübernahme ab dem Stichtag** |
+| + | 0.106.0 | **Ausweg für jeden Klärungsfall:** „Auf den Beleg ausgleichen“ bzw. „Kann ich nicht klären – so lassen“ im Assistenten; Archiv-Filter überall |
 | + | 0.105.0 | **Jedes Asset zum Stichtag gesetzt:** Rundungsreste im Ausgleich, Abdeckung, Archiv-Pläne ausgeschlossen, Meldung statt Fehlerseite |
 | + | 0.104.0 | **Klärungsfälle folgen dem Stichtag:** erledigte/archivierte Fälle erscheinen nicht mehr, Fortschritt im Fall, Nachlauf nach Stichtag-Aktionen |
 | + | 0.103.0 | **Ausgleich übersichtlich:** Vorher → Nachher, Gewichtung, Entscheidung je Zeile, eigener Zielbestand, Abruf, Zusammenfassung |
@@ -167,6 +168,27 @@ liegen seit dem Beleg weitere Buchungen, steht ein Hinweis, dass „nach Ausglei
 **Eigener Zielbestand:** Du gibst den realen Bestand von heute ein; gebucht wird die Differenz zum Bestand der App von
 heute am Vortag des Stichtags (Abgang höchstens bis zum Eröffnungsbestand). Entspricht der Wert der App, entsteht keine
 Buchung; ungültige Eingaben werden abgelehnt, ohne zu buchen.
+
+### Ausweg für jeden Klärungsfall (0.106.0)
+
+Rückmeldung zu 0.105.0: Vier Aufgaben („Diese Buchungen gehören vermutlich zusammen: DOGE-1 / XEN auf MetaMask (ETH), WKN:A40XUX
+auf DKB, SAVM auf MetaMask (ETH). Jetzt klären?“) blieben offen, weil die Person sie „so nicht klären“ kann.
+
+* **Befund zu den Fällen:** DOGE-1, XEN (ETH) und SAVM sind Rundungsreste bzw. nicht mehr aktuelle Abrufe (0.105.0 behandelt
+  sie im Ausgleich). WKN:A40XUX ist eine kritische Zeile (Beleg 4, berechnet 0 nach einer Ausbuchung) und braucht eine
+  Einzelentscheidung.
+* **Lücke dahinter:** Ein Klärungsfall mit fehlenden Angaben (`wartet_info`, `wartet_bestand`, `umfang`) war im Assistenten nur
+  „ansehen“ oder „später“ – keine Antwort beendete die Aufgabe. Jetzt hat jeder dieser Fälle zwei Ausgänge:
+  * **Auf den Beleg ausgleichen** (nur mit festgeschriebenem Stichtag und abweichendem Beleg): bucht die Ausgleichszeilen der
+    Positionen *dieses* Falls (auch kritische – ausdrückliche Wahl der Person), Konten werden neu freigegeben, Fälle nachgezogen.
+  * **Kann ich nicht klären – so lassen:** stellt den Fall zurück (`clarify.defer`); er kehrt bei geänderten Belegen oder nach der
+    Frist wieder.
+* **Archiv-Filter überall:** Antworten, deren Plan nur am festgeschriebenen Stichtag scheitert, werden nicht mehr angeboten
+  (Plan-Kennzeichen `archive_blocked`); Vormerkungen („erneut prüfen“) für Buchungen vor dem Stichtag zählen nicht mehr
+  als offen (`recheck.live_marks`); „Zurücknehmen“ einer solchen Buchung liefert eine Meldung statt der Fehlerseite.
+* **Grenzen:** Hinweise ohne Fehler (nur Lesen) haben keine Antwort; ein Befund wegen eines nicht mehr aktuellen Abrufs
+  (gleicher Wert, älter als 48 Stunden) verschwindet erst mit frischem Abruf oder „so lassen“; Bestände ohne Beleg lassen sich
+  nicht ausgleichen.
 
 ### Jedes Asset zum Stichtag gesetzt (0.105.0)
 

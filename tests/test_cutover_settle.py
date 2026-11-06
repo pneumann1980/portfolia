@@ -262,3 +262,49 @@ def test_coverage_counts_every_position(cx):
     assert cov["deviating"] == 1 and cov["matched"] == 1
     page = cx.get("/settings/stichtag?cutoff=2025-01-01&settle=1").text
     assert 'id="abdeckung"' in page and "weichen ab" in page
+
+
+def test_case_exit_settles_only_the_positions_of_the_case(cx):
+    from app.diagnosis.engine import report_for
+
+    ctx = cx.app.state.ctx
+    _ref(ctx, "Wallet", "ETH", "1.5", "2025-03-15")
+    _ref(ctx, "Börse", "BTC", "0.5", "2025-03-31")
+    assert ST.rows_for_case(ctx, ["f-x"]) == []  # ohne festgeschriebenen Stichtag kein Ausgleich
+    _fix_all(ctx)
+    rep = report_for(ctx)
+    fid = next(f.id for f in rep.findings if ("Wallet", "ETH") in {tuple(p) for p in f.positions})
+    rows = ST.rows_for_case(ctx, [fid])
+    assert [(r["account"], r["asset"]) for r in rows] == [("Wallet", "ETH")]  # nicht die BTC-Position
+    assert ST.rows_for_case(ctx, ["f-unbekannt"]) == []
+    res = ST.settle_case(ctx, [fid])
+    assert not res["errors"] and len(res["done"]) == 1
+    assert _holdings(ctx, "Wallet", "ETH") == D("1.5") and _holdings(ctx, "Börse", "BTC") == D("0.4")
+    assert ST.settle_case(ctx, [fid])["errors"]  # nichts mehr auszugleichen
+
+
+def test_assistant_offers_and_books_the_settle_exit_for_a_case(cx):
+    import json
+    from urllib.parse import parse_qs, urlparse
+
+    from app.diagnosis import guide as G
+    from app.diagnosis.engine import report_for
+
+    ctx = cx.app.state.ctx
+    _ref(ctx, "Wallet", "ETH", "1.5", "2025-03-15")
+    _fix_all(ctx)
+    fid = next(f.id for f in report_for(ctx).findings if ("Wallet", "ETH") in {tuple(p) for p in f.positions})
+    ctx.db.x("DELETE FROM clarify_case")
+    ctx.db.x("INSERT INTO clarify_case(case_key, kind, status, title, accounts_json, assets_json, finding_ids_json, "
+             "tx_ids_json, dims_json, state_json, evidence_fp, data_version, note, opened_count, created_at, "
+             "updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             ("kg-s1", "group", "wartet_info", "ETH auf Wallet", "[]", "[]", json.dumps([fid]), "[]", "{}",
+              json.dumps({"findings": [{"id": fid}]}), "fp", 1, "", 1, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+    t = G.detail(ctx, next(x for x in G.tasks(ctx) if x.key == "fall:kg-s1"))
+    ids = [a.id for a in t.answers]
+    assert "case:settle" in ids and "case:defer" in ids and ids.index("case:settle") < ids.index("case:defer")
+    r = cx.post("/quality/assistent/antwort", data={"csrf_token": cx.token, "kid": t.kid, "a": "case:settle",
+                                                      "typ": "seite", "before": "5"}, follow_redirects=False)
+    assert r.status_code == 303
+    msg = parse_qs(urlparse(r.headers["location"]).query).get("msg", [""])[0]
+    assert "Ausgleichsbuchung" in msg and _holdings(ctx, "Wallet", "ETH") == D("1.5")
