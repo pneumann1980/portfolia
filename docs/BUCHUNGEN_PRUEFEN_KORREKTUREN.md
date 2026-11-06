@@ -865,7 +865,7 @@ vollständige Rücknahme – inhaltlich gleich wie auf 0.106.0.
 | Befehl | Ergebnis |
 | --- | --- |
 | Gegenproben der Prüfung auf `9dd8980` (`test_review_106.py`, `test_review_096_followup.py`) | 6 bzw. 7 fehlgeschlagen (reproduziert) |
-| dieselben auf dem Endstand | 14/14 bzw. 12/12 bestanden; N33 als Regel (eigener Test) |
+| dieselben auf dem Endstand | 14/14 bzw. 12/13 bestanden; der verbleibende Fall ist N33 mit strikter Ablehnungserwartung – als Regel entschieden (bestätigte Bewertung, eigener Test). Im Repository `tests/external_106`: 25 Fälle ohne N33, alle bestanden |
 | `ruff check app tests scripts` | ohne Befund |
 | `python -m app validate examples/beispiel-import.zip` | 0 Fehler, 124 Transaktionen |
 | `mypy app/news app/jobs app/web app/health.py app/logging_setup.py --ignore-missing-imports` (wie CI) | 344 → 344, Meldungen identisch |
