@@ -144,6 +144,8 @@ def _case_item(c: dict[str, Any]) -> WorkItem:
         miss = dec.get("missing") or []
         if miss:
             effect = effect or "fehlt: " + "; ".join(str(m) for m in miss[:2])
+    if c.get("total_n", 0) > 1:  # Fortschritt im Fall: nach jeder Antwort sichtbar
+        effect = (effect + " · " if effect else "") + f"noch {c.get('open_n', 0)} von {c['total_n']} Befunden offen"
     return WorkItem(key=f"fall:{c['key']}", tier=tier, kind="zurueck" if tier == "C" else "fall",
                     title=c["title"], recommendation=rec, why=reason, effect=effect,
                     effort=CASE_EFFORT.get(status, ""), n=max(1, n_tx), href=f"/quality/klaerung/{c['key']}",
@@ -197,7 +199,7 @@ def build(ctx: Any, report: Report | None = None, *, granular: bool = False) -> 
     report = report or report_for(ctx)
     items: list[WorkItem] = []
     cases = K.stored_cases(ctx.db)
-    open_cases = [c for c in cases if c["status"] in K.OPEN_STATUSES or c["status"] == "zurueck"]
+    open_cases = TR.live_cases(ctx, cases, report)  # erledigte/archivierte Fälle erscheinen nicht mehr
     covered = {f["id"] for c in open_cases for f in ((c["state"] or {}).get("findings") or [])}
     items += [_case_item(c) for c in open_cases]
     tasks, hints = TR.split([f for f in TR.open_findings(ctx, report) if f.id not in covered])

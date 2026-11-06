@@ -19,6 +19,7 @@ from app.diagnosis import case_view as CV
 from app.diagnosis import clarify as K
 from app.diagnosis import derivatives as DV
 from app.diagnosis import stockconfirm as SC
+from app.diagnosis import triage as TR
 from app.diagnosis import windows as WN
 from app.diagnosis import windows_web as WW
 from app.diagnosis.engine import report_for
@@ -54,7 +55,7 @@ def make_router() -> APIRouter:
     def index(request: Request, msg: str = "", err: str = "") -> HTMLResponse:
         ctx = get_ctx(request)
         cases = K.stored_cases(ctx.db)
-        open_ = [c for c in cases if c["status"] in K.OPEN_STATUSES or c["status"] == "zurueck"]
+        open_ = TR.live_cases(ctx, cases)
         done = [c for c in cases if c["status"] == "geloest"]
         pf = ctx.recorded_portfolio()
         econ = DV.economics(pf.txs) if pf is not None else []

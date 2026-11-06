@@ -30,6 +30,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from app.cutover import after
 from app.cutover import core as CO
 from app.cutover import corrections as CR
 from app.cutover import derive as DV
@@ -205,12 +206,14 @@ def _book(ctx: Any, cutoff: Any, rows: list[dict[str, Any]], *, reapprove: bool)
     failed: list[dict[str, Any]] = []
     for r in rows:
         res = CR.apply(ctx, cutoff, account=r["account"], asset=r["asset"], kind=r["kind"], qty=r["qty"],
-                       mode="settle", evidence=r["evidence"])
+                       mode="settle", evidence=r["evidence"], refresh=False)
         (failed if res["errors"] else done).append({**r, "errors": res["errors"], "tx_id": res.get("tx_id")})
     accounts = {d["account"] for d in done}
     re_ok = False
     if reapprove and accounts and FX.state(ctx) is not None:
         re_ok = not FX.reapprove(ctx, accounts)["errors"]
+    if done and not re_ok:  # sonst hat die Neu-Freigabe bereits aktualisiert
+        after.refresh_cases(ctx)
     log.info("Stichtag-Ausgleich %s: %d gebucht, %d fehlgeschlagen", cutoff, len(done), len(failed))
     return {"errors": [], "done": done, "failed": failed, "reapproved": re_ok}
 

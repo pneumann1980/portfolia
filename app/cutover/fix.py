@@ -15,8 +15,8 @@ import threading
 from datetime import UTC, date, datetime, time
 from typing import Any
 
+from app.cutover import after, guard
 from app.cutover import core as CO
-from app.cutover import guard
 from app.util.timeutil import iso, local_tz
 
 log = logging.getLogger(__name__)
@@ -91,6 +91,7 @@ def fix(ctx: Any, cutoff: date, token: str, approved: set[str]) -> dict[str, Any
                       (stamp, "cutover_fix", f"cutover:{cid}", None, json.dumps({"cutoff": cutoff.isoformat(),
                                                                                   **summary})))
     ctx.invalidate_data()
+    after.refresh_cases(ctx)
     log.info("Stichtag %s festgeschrieben: %d Konten, %d Lots, Archiv %d Buchungen", cutoff, summary["accounts"],
              summary["lots"], summary["archive_txs"])
     return {"errors": [], "id": cid}
@@ -110,6 +111,7 @@ def undo(ctx: Any) -> dict[str, Any]:
             c.execute("INSERT INTO journal_log(at, action, ref, before_json, after_json) VALUES (?,?,?,?,?)",
                       (stamp, "cutover_undo", f"cutover:{row['id']}", None, json.dumps({"cutoff": row["cutoff"]})))
     ctx.invalidate_data()
+    after.refresh_cases(ctx)
     log.info("Stichtag %s zurückgenommen", row["cutoff"])
     return {"errors": []}
 
@@ -165,4 +167,5 @@ def reapprove(ctx: Any, accounts: set[str]) -> dict[str, Any]:
         fp = overall_fingerprint(list(pv["accounts"]))
         c.execute("UPDATE cutover SET fingerprint=? WHERE id=?", (fp, row["id"]))
     ctx.invalidate_data()
+    after.refresh_cases(ctx)
     return {"errors": []}

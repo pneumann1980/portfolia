@@ -1,6 +1,6 @@
-# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.103.0)
+# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.104.0)
 
-Stand: 06.11.2026 · Version 0.103.0
+Stand: 06.11.2026 · Version 0.104.0
 
 Ein Stichtag (Standard 01.01.2025, in der App wählbar) teilt die Buchungen in ein **Archiv** (davor) und den **aktiven
 Zeitraum** (ab dem Stichtag). Steuer, Lots, Diagnose und Importe arbeiten ab dem Stichtag mit dem geprüften
@@ -17,6 +17,7 @@ Depotstart. **Es wird nichts gelöscht.** Einstieg: *Einstellungen → Stichtag*
 | 4 | 0.100.0 | **Alle Wege am Stichtag ausgerichtet:** Diagnose, Gesamtprüfung, CSV-Import/Sync/Prüf-Stapel, Quellenübernahme |
 | 5 | 0.101.0 | **Abgeleitete Vorschläge** aus Belegen nach dem Stichtag – nur wo sie belegt sind |
 | + | 0.102.0 | **Ausgleich zum Stichtag** (alles glattziehen) und **Quellenübernahme ab dem Stichtag** |
+| + | 0.104.0 | **Klärungsfälle folgen dem Stichtag:** erledigte/archivierte Fälle erscheinen nicht mehr, Fortschritt im Fall, Nachlauf nach Stichtag-Aktionen |
 | + | 0.103.0 | **Ausgleich übersichtlich:** Vorher → Nachher, Gewichtung, Entscheidung je Zeile, eigener Zielbestand, Abruf, Zusammenfassung |
 
 ## Eröffnungsstand und Gleichwertigkeit
@@ -166,6 +167,28 @@ liegen seit dem Beleg weitere Buchungen, steht ein Hinweis, dass „nach Ausglei
 heute am Vortag des Stichtags (Abgang höchstens bis zum Eröffnungsbestand). Entspricht der Wert der App, entsteht keine
 Buchung; ungültige Eingaben werden abgelehnt, ohne zu buchen.
 
+### Klärungsfälle und Gesamtprüfung folgen dem Stand (0.104.0)
+
+Die Aufgaben „Bestände abgleichen“ u. a. sind gespeicherte **Klärungsfälle**. Sie wurden bisher nur bei einem Prüflauf bzw.
+durch den Autopiloten neu berechnet – Festschreiben, Ausgleich, Korrekturen und Rücknahme stießen das nicht an. Folge: Fälle,
+die erledigt oder nur noch Archiv waren, erschienen weiter, und eine Antwort „ist in Ordnung so“ auf einen Befund *im* Fall
+änderte die Aufgabenzahl nicht (ein Fall ist eine Aufgabe, solange er nicht ganz erledigt ist).
+
+* **Nur lebende Fälle:** Ein Fall zählt, solange mindestens einer seiner Befunde im aktuellen Bericht noch offen ist (nicht
+  erledigt, nicht als geprüft markiert, nicht im Archiv). Zurückgestellte Fälle und Fälle ohne Befundliste bleiben.
+  Gilt für Assistent, Arbeitsplan, Klärungsseite und die Zähler der Startseite.
+* **Fortschritt im Fall:** Die Aufgabe nennt „noch n von m Befunden offen“; nach einer Antwort steht in der Rückmeldung
+  „Im Fall … sind noch n von m Befunden offen“ bzw. „Der Fall … ist damit erledigt“.
+* **Nachlauf:** Nach Festschreiben, Rücknahme, Neu-Freigabe, Korrektur (und deren Rücknahme) und Ausgleich werden die Fälle
+  an den neuen Stand angepasst (`clarify.refresh`: ohne Recherche, ohne Übernahme von Lösungen, ohne Protokolleinträge;
+  im Betrieb im Hintergrund; der Ausgleich aktualisiert einmal am Ende, nicht je Zeile).
+* **Gesamtprüfung:** Die gespeicherte Prüfung wendet die Archiv-Kennzeichnung auch beim Lesen an; nach der Rücknahme des
+  Stichtags werden die Punkte wieder offen.
+* **Grenzen:** Fälle ohne Buchungsbezug (reine Bestandsabweichungen) bleiben sichtbar, solange der Bestand abweicht. Der
+  Nachlauf dauert auf großen Datenbeständen etwa 10–15 Sekunden (Hintergrund); bis er fertig ist, filtert die Anzeige bereits.
+* **Echtdaten (Kopie):** Nach Festschreiben und Ausgleich sanken die Aufgaben sofort von 34 auf 24 (offene Fälle 24 → 14);
+  vorher blieben sie stehen, davon 10 Fälle ohne noch offenen Befund und 2 mit ausschließlich Archiv-Buchungen.
+
 ### Journal-Kennungen nach Wiederherstellung (0.102.0)
 
 Neue Journal-Buchungen erhielten `Präfix + Zeilennummer`. Nach einer Wiederherstellung tragen Import-Buchungen bereits
@@ -211,7 +234,7 @@ Regel „höchstens ein aktiver Stichtag“: ist bereits einer aktiv, kommt der 
 
 * `tests/test_cutover_fiat.py` (8), `test_cutover_core.py` (8), `test_cutover_page.py` (8), `test_cutover_fix.py` (18,
   einschließlich Export/Wiederherstellung), `test_cutover_scope.py` (6), `test_cutover_takeover.py` (2),
-  `test_cutover_derive.py` (7), `test_cutover_settle.py` (11).
+  `test_cutover_derive.py` (7), `test_cutover_settle.py` (12), `test_cutover_cases.py` (8).
 * Zusätzlich 192 zufällige Kombinationen für die Gleichwertigkeit (Voll gegen Eröffnungsstand + aktiv) in beiden
   Rechenweisen.
 * `TZ=Europe/Berlin python -m pytest -q tests` · `ruff check app tests scripts` ·

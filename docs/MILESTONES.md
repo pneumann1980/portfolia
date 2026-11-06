@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 06.11.2026 · Version 0.103.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 06.11.2026 · Version 0.104.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,19 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.104.0 – Stichtag: Klärungsfälle folgen dem Stand
+
+Rückmeldung zu 0.103.0: Die Anzeige des Assistenten änderte sich nach „ist in Ordnung so“ nicht, und Datenqualität zeigte Fälle,
+die vor dem Stichtag relevant gewesen wären. Ursache: Gespeicherte Klärungsfälle wurden nur bei einem Prüflauf neu berechnet.
+Details: [`STICHTAG.md`](STICHTAG.md#klärungsfälle-und-gesamtprüfung-folgen-dem-stand-0104-0).
+
+* **Lebende Fälle:** erledigte, markierte oder nur noch archivierte Fälle erscheinen nicht mehr (Assistent, Arbeitsplan,
+  Klärungsseite, Zähler).
+* **Fortschritt im Fall:** „noch n von m Befunden offen“ in der Aufgabe und in der Rückmeldung nach einer Antwort.
+* **Nachlauf nach Stichtag-Aktionen:** `clarify.refresh` (ohne Recherche und ohne Übernahme), im Hintergrund.
+* **Gesamtprüfung:** Archiv-Kennzeichnung auch beim Lesen, nach Rücknahme wieder offen.
+* **Reale Daten:** Aufgaben nach Festschreiben und Ausgleich 34 → 24 (vorher unverändert), offene Fälle 24 → 14.
 
 ## 0.103.0 – Stichtag: Ausgleich übersichtlich und entscheidbar
 

@@ -23,8 +23,8 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from app.cutover import after, guard
 from app.cutover import core as CO
-from app.cutover import guard
 from app.ledger.engine import DUST, run_ledger
 from app.ledger.models import Tx
 from app.util.timeutil import iso, local_tz, to_local_date
@@ -195,7 +195,7 @@ def simulate(ctx: Any, m: CO.Model, v: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply(ctx: Any, cutoff: date, *, account: str, asset: str, kind: str, qty: Any, mode: str, evidence: str = "",
-          acq_date: str | None = None, cost_eur: Any = None) -> dict[str, Any]:
+          acq_date: str | None = None, cost_eur: Any = None, refresh: bool = True) -> dict[str, Any]:
     """Korrektur buchen (eine Buchung vor dem Stichtag, einzeln rücknehmbar) und mitprotokollieren."""
     from app.journal.service import journal_service
 
@@ -221,6 +221,8 @@ def apply(ctx: Any, cutoff: date, *, account: str, asset: str, kind: str, qty: A
              str(v["cost"]) if v["cost"] is not None else None, v["mode"], v["evidence"], res.tx_ids[0], "active",
              stamp))
     log.info("Stichtag-Korrektur %s: %s %s %s auf %s", cutoff, v["kind"], v["qty"], asset, account)
+    if refresh:  # Sammelwege (Ausgleich) aktualisieren einmal am Ende
+        after.refresh_cases(ctx)
     return {"errors": [], "id": int(cur.lastrowid), "tx_id": res.tx_ids[0]}  # type: ignore[arg-type]
 
 
@@ -242,6 +244,7 @@ def undo(ctx: Any, cid: int) -> dict[str, Any]:
     with ctx.db.transaction() as c:
         c.execute("UPDATE cutover_correction SET status='undone', undone_at=? WHERE id=?",
                   (iso(datetime.now(UTC)), cid))
+    after.refresh_cases(ctx)
     return {"errors": []}
 
 

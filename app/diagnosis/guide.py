@@ -27,6 +27,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlencode
 
+from app.diagnosis import triage as TR
 from app.diagnosis import workplan as WP
 from app.util.timeutil import to_local_date
 from app.web.fmt import qty_exact
@@ -293,9 +294,7 @@ def rest_overview(ctx: Any) -> dict[str, int]:
 
     summ = RV.active_summary(ctx.db)
     n_back = int(ctx.db.scalar("SELECT COUNT(*) FROM clarify_case WHERE status='zurueck'") or 0)
-    marks = ",".join("?" * len(K.OPEN_STATUSES))
-    n_wait = int(ctx.db.scalar(f"SELECT COUNT(*) FROM clarify_case WHERE status IN ({marks})",
-                               K.OPEN_STATUSES) or 0)
+    n_wait = sum(1 for c in TR.live_cases(ctx, K.stored_cases(ctx.db)) if c["status"] != "zurueck")
     return {"import_deferred": summ.events["zurueckgestellt"],
             "import_open": summ.open - summ.events["zurueckgestellt"],
             "findings_deferred": len(_deferred(ctx, report_for(ctx))),
@@ -1067,6 +1066,21 @@ def save_pass(db: Any, ref: str, skip: list[str]) -> None:
     all_[ref] = {"t": datetime.now(UTC).isoformat(timespec="seconds"), "skip": list(dict.fromkeys(skip))[:PASS_MAX]}
     keep = sorted(all_.items(), key=lambda kv: str((kv[1] or {}).get("t") or ""), reverse=True)[:PASS_KEEP]
     db.set_state(PASSES_STATE, dict(keep))
+
+
+def case_progress(ctx: Any, finding_id: str) -> tuple[str, int, int] | None:
+    """Fortschritt im Klärungsfall, zu dem der Befund gehört: (Titel, noch offene, alle Befunde) – ``None``, wenn der
+    Befund zu keinem gespeicherten Fall gehört. Dient der Rückmeldung nach einer Antwort („noch 3 von 5 offen“)."""
+    from app.diagnosis import clarify as K
+
+    for c in K.stored_cases(ctx.db):
+        if c["status"] not in K.OPEN_STATUSES and c["status"] != "zurueck":
+            continue
+        if any(f["id"] == finding_id for f in (c["state"] or {}).get("findings") or []):
+            live = next((x for x in TR.live_cases(ctx, [c]) if x["key"] == c["key"]), None)
+            total = len((c["state"] or {}).get("findings") or [])
+            return str(c["title"]), (live["open_n"] if live else 0), total
+    return None
 
 
 def step(ctx: Any, skip: list[str], *, hints: bool = False, focus: str = "") -> Step:

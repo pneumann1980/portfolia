@@ -40,6 +40,27 @@ def open_findings(ctx: Any, report: Report | None = None, *, cases: bool = False
     return [f for f in report.findings if f.id not in checked and (cases or f.parent is None)]
 
 
+def live_cases(ctx: Any, cases: list[dict[str, Any]], report: Report | None = None) -> list[dict[str, Any]]:
+    """Gespeicherte, noch offene Klärungsfälle (Status offen bzw. zurückgestellt), die noch etwas zu klären haben:
+    mindestens einer ihrer Befunde ist im aktuellen Bericht noch offen (nicht erledigt, nicht als geprüft markiert,
+    nicht im Archiv eines festgeschriebenen Stichtags). Die Fälle werden erst beim nächsten Klärungsdurchgang neu
+    berechnet – bis dahin würden erledigte Fälle sonst weiter erscheinen. Jeder Fall trägt ``open_n``/``total_n``
+    (offene bzw. alle Befunde). Zurückgestellte Fälle und Fälle ohne Befundliste bleiben unverändert."""
+    from app.diagnosis import clarify as K
+
+    open_ids = {f.id for f in open_findings(ctx, report, cases=True)}
+    out = []
+    for c in cases:
+        if not (c["status"] in K.OPEN_STATUSES or c["status"] == "zurueck"):
+            continue
+        fids = [f["id"] for f in (c["state"] or {}).get("findings") or []]
+        n_open = sum(1 for f in fids if f in open_ids)
+        if fids and c["status"] != "zurueck" and not n_open:
+            continue
+        out.append({**c, "open_n": n_open if fids else 0, "total_n": len(fids)})
+    return out
+
+
 def is_hint(f: Finding) -> bool:
     return f.status == "hinweis"
 

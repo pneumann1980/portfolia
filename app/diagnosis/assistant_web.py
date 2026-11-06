@@ -311,7 +311,8 @@ def make_router() -> APIRouter:
             res = await run_in_threadpool(A.mark, ctx, fid, action, "Antwort im Assistenten")
             if not res.ok:
                 return _go(err=" ".join(res.errors))
-            return _go(msg=MARK_TEXT.get(action, "Gespeichert."), done=res.decision_id,
+            note = await run_in_threadpool(_case_note, ctx, fid)
+            return _go(msg=MARK_TEXT.get(action, "Gespeichert.") + note, done=res.decision_id,
                        gone=await run_in_threadpool(gone), sig=sig, sa=aid, st=text)
         if not aid.startswith("opt:"):
             return _go(err="Unbekannte Antwort.")
@@ -324,8 +325,21 @@ def make_router() -> APIRouter:
         res = await run_in_threadpool(A.apply, ctx, fid, key, params, token)
         if not res.ok:
             return _go(err=" ".join(res.errors))
-        return _go(msg="Gespeichert und korrigiert.", done=res.decision_id, gone=await run_in_threadpool(gone),
-                   sig=sig, sa=aid if not params else "", st=text)
+        note = await run_in_threadpool(_case_note, ctx, fid)
+        return _go(msg="Gespeichert und korrigiert." + note, done=res.decision_id,
+                   gone=await run_in_threadpool(gone), sig=sig, sa=aid if not params else "", st=text)
+
+    def _case_note(ctx: Any, fid: str) -> str:
+        """Gehört der Befund zu einem Klärungsfall: Fortschritt im Fall (sonst ändert sich die Aufgabenzahl nicht)."""
+        prog = G.case_progress(ctx, fid)
+        if prog is None:
+            return ""
+        title, n_open, total = prog
+        if total <= 1:
+            return ""
+        if n_open <= 0:
+            return f" Der Fall „{title[:60]}“ ist damit erledigt."
+        return f" Im Fall „{title[:60]}“ sind noch {n_open} von {total} Befunden offen."
 
     def _href_of(ctx: Any, kid: str) -> str:
         t = next((t for t in G.tasks(ctx, hints=True) if t.kid == kid), None)

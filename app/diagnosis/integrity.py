@@ -620,6 +620,31 @@ def _archive(items: list[Item], snap: Any) -> None:
             it.status = "archiviert"
 
 
+def _archive_stored(ctx: Any, r: Run) -> None:
+    """Gespeicherte Prüfung an den aktuellen Stichtag anpassen: Punkte nur zu Buchungen vor dem Stichtag sind Archiv
+    (``archiviert``); nach der Rücknahme des Stichtags wieder offen. Punkte ohne Buchungsbezug bleiben."""
+    from app.cutover import guard
+    from app.util.timeutil import parse_iso
+
+    row = guard.active(ctx.db)
+    if row is None:
+        for it in r.items:
+            if it.status == "archiviert":
+                it.status = "offen"
+        return
+    cut = parse_iso(row["cutoff_utc"])
+    pf = ctx.portfolio()
+    if cut is None or pf is None:
+        return
+    old = {t.tx_id for t in pf.txs if t.ts < cut}
+    for it in r.items:
+        only_old = bool(it.tx_ids) and all(x in old for x in it.tx_ids)
+        if it.status == "offen" and only_old:
+            it.status = "archiviert"
+        elif it.status == "archiviert" and not only_old:
+            it.status = "offen"
+
+
 def sort_key(it: Item) -> tuple[Any, ...]:
     return (it.status != "offen", SEVERITY_ORDER.get(it.severity, 9), -(it.impact_eur or 0), it.category, it.title)
 
@@ -641,6 +666,7 @@ def refresh_status(ctx: Any, r: Run) -> Run:
     """Status gespeicherter Befunde mit den aktuellen Entscheidungen abgleichen (ohne neuen Prüflauf)."""
     marks = A.active_dismissals(ctx.db)
     fixes = A.active_fixes(ctx.db)
+    _archive_stored(ctx, r)
     for it in r.items:
         if not it.finding_id or it.status == "korrigiert":
             continue

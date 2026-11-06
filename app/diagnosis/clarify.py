@@ -1558,6 +1558,23 @@ def run(ctx: Any, trigger: str = "auto", *, force_apply: bool = False, research:
         _RUN.release()
 
 
+def refresh(ctx: Any) -> int | None:
+    """Gespeicherte Fälle an den aktuellen Datenstand anpassen – **ohne** Recherche, ohne Übernahme von Lösungen und
+    ohne Protokolleinträge (z. B. nach Festschreiben, Ausgleich oder Rücknahme des Stichtags). Läuft bereits ein
+    Durchgang, wird ein Folgelauf vorgemerkt (``None``)."""
+    if not _setting(ctx, "clarify.enabled", True):
+        return None
+    if not _RUN.acquire(blocking=False):
+        _FLAG["dirty"] = True
+        return None
+    try:
+        cases = analyse(ctx, report_for(ctx))
+        persist(ctx, cases)
+        return len(cases)
+    finally:
+        _RUN.release()
+
+
 def _one_round(ctx: Any, trigger: str, force_apply: bool, research: bool | None, summary: dict[str, Any]) -> None:
     report = report_for(ctx)
     cases = analyse(ctx, report)
