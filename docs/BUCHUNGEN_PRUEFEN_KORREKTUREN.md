@@ -838,3 +838,34 @@ unten). Vor der Korrektur auf `9dd8980`: 6 bzw. 7 Fehlschläge reproduziert; dan
 
 Nicht als Fehler gewertet (wie in der Prüfung): sichtbar abgelehnte Wiederholung, zurückgestellte Fälle, Bestand ohne
 Sollbeleg, dokumentierter Zugang zu 0 € mit Haltefrist-Neubeginn (eine Annahme, keine Bestätigung historischer Daten).
+
+### Beispiel- und Echtdaten (0.107.0)
+
+Nur Testkopien; Ergebnisse als Aggregate.
+
+| Prüfung | Beispieldaten (124 Buchungen) | Echtdaten (Export 05.11.2026, 6020 Buchungen) |
+| --- | --- | --- |
+| Festschreiben 01.01.2025 | ohne Fehler | ohne Fehler |
+| Ausgleichszeilen | 3 (synthetische Referenzbestände) | 21 |
+| Beleg nach der Anzeige geändert (N34) | abgelehnt, nichts gebucht | abgelehnt (Bestand der Quelle verändert), nichts gebucht |
+| Zwei gleichzeitige Bestätigungen (N35) | 1 / 0 gebucht | 4 / 0 gebucht, 4 aktive Korrekturen |
+| Wiederholung | „Nichts zum Ausgleichen“ | „Nichts zum Ausgleichen“ |
+| Altes Formular mit Stichtag 01.01.2024 (N37) | abgelehnt | abgelehnt |
+| Protokoll nicht schreibbar (N36) | Fehler gemeldet, wirtschaftlicher Zustand unverändert | ebenso |
+| Rücknahme aller Korrekturen und des Stichtags | wirtschaftlicher Zustand identisch | identisch, aktive Journalbuchungen unverändert |
+| Wiederherstellung des Exports (N30) | – | Zustand `applied_gaps`: 113 Beobachtungen übernommen, 1 gemeldet („2 gleichnamige Quellen – Zuordnung nicht eindeutig“), Hinweis in den Einstellungen |
+
+Prüfskripte der Prüfung auf dem Endstand (`check_real_export.py`, `check_cutover_real.py`): 139 Seiten HTTP 200, Lesen
+ändert nichts, CSV-Rückimport (120 bekannte Vorgänge) und Rücknahmen erhalten den Zustand; Stichtagsablauf mit Ausgleich
+16 gebucht / 0 fehlgeschlagen, Wiederholung ohne Wirkung, normale Aufgaben 43 → 28 → 12 (je mit abschließender Antwort),
+vollständige Rücknahme – inhaltlich gleich wie auf 0.106.0.
+
+### Tests und Befehle (0.107.0)
+
+| Befehl | Ergebnis |
+| --- | --- |
+| Gegenproben der Prüfung auf `9dd8980` (`test_review_106.py`, `test_review_096_followup.py`) | 6 bzw. 7 fehlgeschlagen (reproduziert) |
+| dieselben auf dem Endstand | 14/14 bzw. 12/12 bestanden; N33 als Regel (eigener Test) |
+| `ruff check app tests scripts` | ohne Befund |
+| `python -m app validate examples/beispiel-import.zip` | 0 Fehler, 124 Transaktionen |
+| `mypy app/news app/jobs app/web app/health.py app/logging_setup.py --ignore-missing-imports` (wie CI) | 344 → 344, Meldungen identisch |

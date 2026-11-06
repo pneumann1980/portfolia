@@ -7,11 +7,15 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
+import sqlite3
 import threading
 from datetime import UTC, datetime
 from typing import Any
 
 from app.db import Database
+
+log = logging.getLogger(__name__)
 
 DEFAULTS: dict[str, Any] = {
     # Darstellung
@@ -155,7 +159,8 @@ class Settings:
     def _rev(c: Any) -> int:
         try:
             row = c.execute("SELECT n FROM data_rev WHERE name='settings'").fetchone()
-        except Exception:  # sehr alte Datenbank ohne Revisionstabelle
+        except sqlite3.OperationalError as e:  # sehr alte Datenbank ohne Revisionstabelle: ohne Revisionsbezug
+            log.debug("Revision der Einstellungen nicht lesbar: %s", e)
             return -1
         return int(row[0]) if row is not None else -1
 

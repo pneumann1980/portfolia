@@ -671,7 +671,8 @@ def _finish(ctx: Any, journal: dict[str, Any], counts: dict[str, int] | None = N
     counts["files"] = int(counts.get("files") or 0) + done
     with db.transaction() as c:
         c.execute("DELETE FROM app_state WHERE key=?", (JOURNAL_KEY,))
-        gaps = list(journal.get("gaps") or [])
+        # Lücken aus dem Datenbankteil (im Journal bzw. im Zwischenstand „incomplete“ abgelegt)
+        gaps = list(journal.get("gaps") or (db.get_state(f"restore.{iid}") or {}).get("gaps") or [])
         _put_state(c, f"restore.{iid}", {"state": _applied(gaps), "at": now, "counts": counts,
                                          "restore_id": journal.get("id"), "gaps": gaps})
         c.execute("INSERT INTO journal_log(at, action, ref, before_json, after_json) VALUES (?,?,?,?,?)",

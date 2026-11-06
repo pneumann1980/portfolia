@@ -148,6 +148,25 @@ def test_restore_with_an_ambiguous_observation_is_reported_as_gap(c):
     assert "Wiederherstellung mit Lücken" in html and "KAS 12" in html
 
 
+def test_gaps_survive_the_file_step_of_a_restore(c):
+    """Wiederherstellung mit Dateien: der Abschluss (``_finish``) behält die Lücken des Datenbankteils bei."""
+    cx = c.app.state.ctx
+    base = {"provider": "ethereum", "kind": "wallet", "account": "Wallet K", "name": "Gleich", "enabled": 1,
+            "sync_interval_min": 1440, "auto_commit": 0}
+    state = {"datasources": [{**base, "address": "0x" + "1" * 40}, {**base, "address": "0x" + "2" * 40}],
+             "ds_balances": [{"provider": "ethereum", "account": "Wallet K", "name": "Gleich", "asset_key": "KAS",
+                              "qty": "12", "observed_at": "2026-11-05T06:00:00Z"}]}
+    iid = cx.active_import_id()
+    journal = {"id": "r107", "import_id": iid, "at": "2026-11-05T07:00:00Z", "attempts": 0,
+               "files": [{"name": "x", "target": "/nonexistent/none", "tmp": "/nonexistent/tmp", "bak": "/x",
+                          "sha": "0"}]}
+    FE._apply_db(cx, iid, state, {}, "2026-11-05T07:00:00Z", journal)
+    assert cx.db.get_state(f"restore.{iid}")["state"] == "incomplete"
+    FE._finish(cx, {**journal, "files": []})  # Dateien inzwischen ersetzt; Journal aus dem Speicher (ohne Lücken)
+    st = cx.db.get_state(f"restore.{iid}")
+    assert st["state"] == "applied_gaps" and len(st["gaps"]) == 1
+
+
 # ---------------------------------------------------------------------------------------------------------- N31
 
 def test_settings_read_in_a_write_transaction_are_not_cached(c):
