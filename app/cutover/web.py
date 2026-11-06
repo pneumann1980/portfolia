@@ -14,6 +14,7 @@ from app.cutover import fiat as FI
 from app.cutover import fix as FX
 from app.cutover import service as CS
 from app.cutover import settle as ST
+from app.datasources.service import datasource_service
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -47,6 +48,7 @@ def make_router() -> APIRouter:
 
     def _page(request: Request, cutoff: str | None, *, impact: bool = False, derive: bool = False,
               settle: bool = False, status: int = 200, result: dict[str, Any] | None = None,
+              sform: dict[str, Any] | None = None, ssum: dict[str, Any] | None = None,
               errors: list[str] | None = None, saved: str | None = None, sim: dict[str, Any] | None = None,
               form: dict[str, Any] | None = None) -> HTMLResponse:
         ctx = get_ctx(request)
@@ -56,7 +58,8 @@ def make_router() -> APIRouter:
         if st and (impact or derive or settle):
             pv = CS.preview(ctx, c, impact=impact, derive=derive, settle=settle)
         return render(request, "cutover.html", status_code=status, active="settings", p=pv, st=st,
-                      errors=errors or [], saved=saved, sim=sim, form=form or {}, modes=CR.MODES, result=result)
+                      errors=errors or [], saved=saved, sim=sim, form=form or {}, modes=CR.MODES, result=result,
+                      sform=sform or {}, ssum=ssum)
 
     @router.get("/settings/stichtag", response_class=HTMLResponse)
     async def cutover_page(request: Request, cutoff: str | None = None, impact: str | None = None,
@@ -70,12 +73,37 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         f = await request.form()
         c = CS.parse_cutoff(str(f.get("cutoff") or ""))
-        ids = {str(v) for v in f.getlist("sel")}
-        res = await run_in_threadpool(lambda: ST.apply(ctx, c, ids))
+        form = {k: str(v) for k, v in f.items() if k != "csrf_token"}
+        if form.get("do") != "book":  # Zusammenfassung zeigen, nichts buchen
+            def preview_() -> HTMLResponse:
+                ms = CO.models(ctx, c)
+                if not ms:
+                    return _page(request, c.isoformat(), settle=True, status=422, errors=["Keine Daten."])
+                res = ST.resolve(ms[0], ST.plan(ctx, ms[0]), form)
+                return _page(request, c.isoformat(), settle=True, sform=form, ssum=res["summary"],
+                             errors=res["errors"], status=422 if res["errors"] else 200)
+            return await run_in_threadpool(preview_)
+        res = await run_in_threadpool(lambda: ST.apply_form(ctx, c, form))
         if res["errors"]:
-            return await run_in_threadpool(lambda: _page(request, c.isoformat(), settle=True, status=422,
-                                                         errors=res["errors"]))
+            return await run_in_threadpool(lambda: _page(request, c.isoformat(), settle=True, sform=form,
+                                                         status=422, errors=res["errors"]))
         return await run_in_threadpool(lambda: _page(request, c.isoformat(), result=res))
+
+    @router.post("/settings/stichtag/abruf")
+    async def cutover_fetch(request: Request) -> Response:
+        """Bestände aller aktiven Datenquellen mit API abrufen (nur Bestandsabfrage, keine Buchungen)."""
+        ctx = get_ctx(request)
+        f = await request.form()
+        c = CS.parse_cutoff(str(f.get("cutoff") or ""))
+        back = f"/settings/stichtag?cutoff={c.isoformat()}&settle=1#ausgleich"
+        svc = datasource_service(ctx)
+        ids = [int(ds.id) for ds in svc.list() if ds.supported and ds.enabled]
+        res = await run_in_threadpool(lambda: svc.start_sync_many(ids, "Stichtag: Bestände abrufen", mode="check",
+                                                                  back=back))
+        if res.get("error"):
+            return await run_in_threadpool(lambda: _page(request, c.isoformat(), settle=True, status=409,
+                                                         errors=[res["error"]]))
+        return _back(request, "/settings/datasources")
 
     @router.post("/settings/stichtag/fixieren")
     async def cutover_fix(request: Request) -> Response:

@@ -90,8 +90,8 @@
   {% endif %}
 
   <section class="card" id="ausgleich">
-    <div class="card-head"><h2>Ausgleich zum Stichtag</h2><span class="hint">alles glattziehen</span></div>
-    <p class="hint">Zieht je Konto und Asset die Abweichung zum Bestand laut Beleg (Referenzbestand oder Bestand der Quelle) mit <b>einer gekennzeichneten Buchung am {{ (p.cutoff|prev_day)|date_de }}</b> glatt – danach stimmen Berechnung und Beleg ab dem Stichtag überein. <b>Zu viel gebucht</b> wird als Abgang gebucht (steuerlich neutral, kein Gewinn, kein Verlust). <b>Zu wenig gebucht</b> wird als Zugang am Vortag zu 0&nbsp;€ gebucht: die Haltefrist beginnt neu, ein Verkauf binnen eines Jahres wäre voll steuerpflichtig – nur dort relevant, wo ab dem Stichtag verkauft wurde (in der Liste markiert). Jede Buchung ist einzeln rücknehmbar; bei festgeschriebenem Stichtag werden die betroffenen Konten danach neu freigegeben.</p>
+    <div class="card-head"><h2>Ausgleich zum Stichtag</h2><span class="hint">Abweichungen zum Bestand der Quelle glattziehen</span></div>
+    <p class="hint"><b>Nach dem Buchen gilt:</b> Der Bestand ab dem Stichtag entspricht dem Beleg (Spalte „Beleg“). Dafür bucht je Zeile <b>eine gekennzeichnete Buchung am {{ (p.cutoff|prev_day)|date_de }}</b>. <b>Zu viel gebucht</b> wird als Abgang gebucht (steuerlich neutral). <b>Zu wenig gebucht</b> wird als Zugang zu 0&nbsp;€ gebucht: die Haltefrist beginnt neu, ein Verkauf binnen eines Jahres wäre voll steuerpflichtig – nur dort relevant, wo ab dem Stichtag verkauft wurde. Jede Buchung ist einzeln unter „Gebuchte Korrekturen“ rücknehmbar.</p>
     {% if result %}
     <div class="alert good"><span class="icon">i</span><div><b>{{ result.done|length }} Ausgleichsbuchung(en) gebucht.</b>{% if result.reapproved %} Betroffene Konten sind neu freigegeben.{% endif %}
       {% if result.failed %}<ul class="small">{% for x in result.failed %}<li>{{ x.account }} · {{ x.asset }}: {{ x.errors[0] }}</li>{% endfor %}</ul>{% endif %}</div></div>
@@ -99,19 +99,66 @@
     {% if p.settle is none %}<a class="btn sm ghost" href="/settings/stichtag?cutoff={{ p.cutoff.isoformat() }}&amp;settle=1#ausgleich">Ausgleich vorbereiten</a>
     {% elif not p.settle.rows %}<p class="hint">Kein Beleg nach dem Stichtag weicht vom berechneten Bestand ab – nichts auszugleichen.</p>
     {% else %}
-    <p class="hint">{{ p.settle.n_remove }} Abgang/Abgänge, {{ p.settle.n_add }} Zugang/Zugänge{% if p.settle.n_sold %}, davon <b>{{ p.settle.n_sold }} mit Verkauf ab dem Stichtag</b>{% endif %}{% if p.settle.n_rest %}; {{ p.settle.n_rest }} nicht vollständig ausgleichbar (Rest liegt im aktiven Zeitraum){% endif %}.</p>
-    <form method="post" action="/settings/stichtag/ausgleich">
+    {% set S = p.settle %}
+    <div class="settle-bar">
+      <form method="post" action="/settings/stichtag/abruf" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cutoff" value="{{ p.cutoff.isoformat() }}">
+        <button class="btn sm ghost" type="submit">Quellen jetzt abrufen</button></form>
+      <span class="hint">nur Bestandsabfrage, keine Buchungen · {{ S.n_stale }} von {{ S.rows|length }} Belegen nicht aktuell. Börsen ohne API bleiben beim letzten Beleg – dort „Eigener Zielbestand“ nutzen.</span>
+    </div>
+    <form method="post" action="/settings/stichtag/ausgleich" id="settle-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cutoff" value="{{ p.cutoff.isoformat() }}">
-      <div class="table-wrap cards-wrap"><table class="compact cards"><thead><tr><th></th><th>Konto · Asset</th><th>Art</th><th>Menge</th><th>Beleg</th><th>berechnet</th><th>Hinweis</th></tr></thead><tbody>
-      {% for r in p.settle.rows %}<tr>
-        <td data-label="Auswahl">{% if r.qty > 0 %}<input type="checkbox" name="sel" value="{{ r.id }}" checked aria-label="Ausgleich {{ r.account }} {{ r.asset }}">{% endif %}</td>
-        <td data-label="Konto · Asset"><b>{{ r.account }}</b> · {{ r.asset }}</td>
-        <td data-label="Art">{{ 'Abgang' if r.kind == 'remove' else 'Zugang (0 €)' }}</td>
-        <td data-label="Menge" class="num">{{ r.qty|qty_exact }}</td>
-        <td data-label="Beleg" class="num">{{ r.reference|qty_exact }} <span class="hint">{{ r.kind_label }}, {{ r.at|datetime_de }}{% if r.stale %} · nicht aktuell{% endif %}</span></td>
-        <td data-label="berechnet" class="num">{{ r.computed|qty_exact }}</td>
-        <td data-label="Hinweis" class="small">{% if r.sold %}<span class="badge warn">Verkauf ab Stichtag: Haltefrist neu</span> {% endif %}{% if r.rest > 0 %}<span class="badge crit">Rest {{ r.rest|qty_exact }} nicht am Stichtag ausgleichbar</span> {% endif %}{% if r.cause_text %}<span class="hint">{{ r.cause_text }}</span>{% elif r.window %}<span class="hint">{{ r.window }} Buchung(en) seit dem Stichtag</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
-      <button class="btn" type="submit" data-confirm="Ausgleich jetzt buchen? Jede Buchung lässt sich einzeln zurücknehmen.">Ausgewählte ausgleichen{% if st %} und neu freigeben{% endif %}</button>
+      <p class="hint"><b>{{ S.n_critical }} Zeile(n) einzeln entscheiden</b> (Verkauf ab dem Stichtag, Rest, große oder nicht bewertbare Differenz) – sie sind <b>nicht vorausgewählt</b>. {{ S.rows|length - S.n_critical - S.n_small }} normale Zeile(n) sind vorausgewählt{% if S.n_small %}; {{ S.n_small }} Kleinstbeträge (unter 1&nbsp;€) stehen unten gesammelt{% endif %}.</p>
+      {% for g in S.groups %}{% set shown = g.rows|rejectattr('tier', 'equalto', 'small')|list %}{% if shown %}
+      <details class="settle-acc" open>
+        <summary><b>{{ g.account }}</b> <span class="hint">{{ shown|length }} Zeile(n)</span>
+          <label class="settle-rule">Kontoregel <select name="acc_{{ g.id }}">{% for v, t in [('default', 'Vorgabe'), ('all', 'alle ausgleichen'), ('remove', 'nur Abgänge'), ('none', 'keine')] %}<option value="{{ v }}" {% if (sform.get('acc_' ~ g.id) or 'default') == v %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></label></summary>
+        {% for r in shown %}
+        <div class="settle-row tier-{{ r.tier }}">
+          <div class="settle-head"><b>{{ r.asset }}</b>
+            <span class="badge {{ 'info' if r.kind == 'remove' else 'warn' }}">{{ 'Abgang' if r.kind == 'remove' else 'Zugang zu 0 €' }}</span>
+            {% if r.sold %}<span class="badge warn">Verkauf ab Stichtag: Haltefrist neu</span>{% endif %}
+            {% if r.rest > 0 %}<span class="badge crit">Rest {{ r.rest|qty_short }} nicht am Stichtag ausgleichbar</span>{% endif %}
+            {% if r.stale %}<span class="badge">Beleg nicht aktuell</span>{% endif %}
+            {% if r.value is not none %}<span class="hint">Wert ≈ {{ r.value|eur }}</span>{% else %}<span class="hint">ohne Kurs bewertet</span>{% endif %}</div>
+          <dl class="settle-kv">
+            <div><dt>App heute</dt><dd>{{ r.now|qty_short }}</dd></div>
+            <div><dt>Beleg · {{ r.kind_label }}, {{ r.at|datetime_de }}</dt><dd>{{ r.reference|qty_short }}</dd></div>
+            <div><dt>Ausgleich am {{ (p.cutoff|prev_day)|date_de }}</dt><dd>{{ '−' if r.signed < 0 else '+' }}{{ r.qty|qty_short }}</dd></div>
+            <div><dt>App nach Ausgleich</dt><dd><b>{{ r.after|qty_short }}</b></dd></div>
+          </dl>
+          {% if r.cause_text %}<p class="hint">{{ r.cause_text }}</p>{% elif r.window %}<p class="hint">{{ r.window }} Buchung(en) zwischen Stichtag und Beleg.</p>{% endif %}
+          {% if r.since %}<p class="hint">Seit dem Beleg {{ r.since }} weitere Buchung(en): „nach Ausgleich“ kann vom Beleg abweichen.</p>{% endif %}
+          <div class="settle-dec">
+            <label class="field">Entscheidung <select name="dec_{{ r.id }}">{% for v, t in [('auto', 'Vorgabe (' ~ ('App behalten' if r.tier == 'critical' else 'ausgleichen') ~ ')'), ('settle', 'Auf den Beleg ausgleichen'), ('keep', 'App behalten (nichts buchen)'), ('custom', 'Eigener Zielbestand (heute)')] %}<option value="{{ v }}" {% if (sform.get('dec_' ~ r.id) or 'auto') == v %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></label>
+            <label class="field">Zielbestand heute <input type="text" inputmode="decimal" name="tgt_{{ r.id }}" value="{{ sform.get('tgt_' ~ r.id) or '' }}" placeholder="nur bei „Eigener Zielbestand“"></label>
+          </div>
+        </div>
+        {% endfor %}
+      </details>
+      {% endif %}{% endfor %}
+      {% set smalls = [] %}{% for g in S.groups %}{% for r in g.rows if r.tier == 'small' %}{% set _ = smalls.append(r) %}{% endfor %}{% endfor %}
+      {% if smalls %}
+      <details class="settle-acc">
+        <summary><b>Kleinstbeträge</b> <span class="hint">{{ smalls|length }} Zeile(n), Wert je unter 1 €</span>
+          <label class="check"><input type="checkbox" name="small_all" value="1" {% if not sform or sform.get('small_all') %}checked{% endif %}> <span>alle pauschal ausgleichen</span></label></summary>
+        <ul class="plain-list small">{% for r in smalls %}<li><b>{{ r.account }}</b> · {{ r.asset }}: {{ 'Abgang' if r.kind == 'remove' else 'Zugang' }} {{ r.qty|qty_short }} (App {{ r.now|qty_short }} → {{ r.after|qty_short }}, Beleg {{ r.reference|qty_short }}{% if r.stale %}, nicht aktuell{% endif %})</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+      {% if ssum %}
+      <div class="alert good" id="ausgleich-summe"><span class="icon">i</span><div><b>Zusammenfassung der Auswahl</b>
+        <ul class="small">
+          <li>{{ ssum.n }} Buchung(en): {{ ssum.n_remove }} Abgang/Abgänge (steuerlich neutral), {{ ssum.n_add }} Zugang/Zugänge zu 0&nbsp;€ (Haltefrist beginnt neu{% if ssum.value_add %}, Wert ≈ {{ ssum.value_add|eur }}{% endif %}).</li>
+          <li>{{ ssum.n_skipped }} Zeile(n) bleiben unverändert (App behalten).</li>
+          {% if ssum.n_sold %}<li><b>{{ ssum.n_sold }} Zugang/Zugänge mit Verkauf ab dem Stichtag</b> – die Haltefrist-Neubewertung wirkt steuerlich.</li>{% endif %}
+          {% if ssum.n_rest %}<li>{{ ssum.n_rest }} Zeile(n) mit nicht ausgleichbarem Rest (Ursache im aktiven Zeitraum).</li>{% endif %}
+          {% if ssum.n_unvalued %}<li>{{ ssum.n_unvalued }} ohne Kurs bewertet.</li>{% endif %}
+          {% if ssum.n_stale %}<li>{{ ssum.n_stale }} Beleg(e) nicht aktuell – vorher „Quellen jetzt abrufen“ erwägen.</li>{% endif %}
+          <li>Konten, die danach neu freigegeben werden: {{ ssum.accounts|join(', ') or '–' }}.</li></ul></div></div>
+      {% endif %}
+      <div class="settle-actions">
+        <button class="btn ghost" type="submit" name="do" value="preview">Auswahl prüfen (Zusammenfassung)</button>
+        <button class="btn" type="submit" name="do" value="book" data-confirm="Ausgleich jetzt buchen? Jede Buchung lässt sich einzeln zurücknehmen.">Ausgewählte buchen{% if st %} und Konten neu freigeben{% endif %}</button>
+      </div>
     </form>
     {% endif %}
   </section>

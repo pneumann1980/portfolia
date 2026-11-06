@@ -101,6 +101,19 @@ def qty_exact(v: Any) -> str:
     return sign + _group(int_part) + ("," + frac if frac else "")
 
 
+def qty_short(v: Any, digits: int = 8) -> str:
+    """Menge für enge Layouts: höchstens ``digits`` Nachkommastellen (Beträge unter 1: 12), ohne endende Nullen. Nur
+    Anzeige – gebucht und verglichen wird mit der exakten Menge (:func:`qty_exact`)."""
+    if v is None or v == "":
+        return "–"
+    d = Decimal(str(v))
+    places = 12 if abs(d) < 1 else digits
+    q = d.quantize(Decimal(1).scaleb(-places)) if d else d
+    if q == 0 and d != 0:  # kleiner als die Anzeigegenauigkeit: exakt zeigen statt „0“
+        return qty_exact(d)
+    return qty_exact(q)
+
+
 def asset_label(key: Any) -> str:
     """Token-Kennung ``SYMBOL@CHAIN:Contract`` lesbar kürzen (Symbol · Chain · Contract gekürzt); Anbieter-Kürzel
     ``SYMBOL@ANBIETER`` als „Symbol · Anbieter“."""
@@ -226,7 +239,7 @@ def register(env: Any) -> None:
     env.filters.update({
         "fromjson": fromjson,
         "num": num, "eur": eur, "eur_kpi": eur_kpi, "eur_compact": eur_compact, "pct": pct, "qty": qty, "price": price,
-        "qty_exact": qty_exact, "asset_label": asset_label, "token_link": token_link,
+        "qty_exact": qty_exact, "qty_short": qty_short, "asset_label": asset_label, "token_link": token_link,
         "tone": tone, "arrow": arrow, "date_de": date_de, "datetime_de": datetime_de, "rel_time": rel_time,
         "trading_day": trading_day, "prev_day": prev_day,
         "rel_time_iso": rel_time_iso, "duration": duration, "plain": plain_de,

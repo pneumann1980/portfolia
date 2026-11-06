@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 06.11.2026 · Version 0.102.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 06.11.2026 · Version 0.103.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,19 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.103.0 – Stichtag: Ausgleich übersichtlich und entscheidbar
+
+Rückmeldung zu 0.102.0: Die Tabelle war unübersichtlich, unklar blieb, welcher Stand nach der Übernahme gilt, und es gab
+keine Auswahl bzw. keinen Abgleich mit dem realen aktuellen Stand. Details: [`STICHTAG.md`](STICHTAG.md#bedienung-ab-0103-0).
+
+* **Vorher → Nachher je Zeile:** App heute, Beleg (Quelle, Zeitpunkt, „nicht aktuell“), Ausgleich am Vortag, App nach
+  Ausgleich; fester Satz „Nach dem Buchen gilt: Bestand ab Stichtag = Beleg“.
+* **Gewichtung nach EUR-Wert:** Kleinstbeträge (< 1 €) pauschal, normale Zeilen vorausgewählt, kritische Zeilen
+  (Verkauf ab Stichtag, Rest, ≥ 100 € oder unbewertet) **nicht vorausgewählt**.
+* **Entscheidung je Zeile und je Konto:** ausgleichen / App behalten / eigener Zielbestand (heute); Kontoregel.
+* **Quellen jetzt abrufen** (nur Bestandsabfrage), **Zusammenfassung vor dem Buchen**, Neu-Freigabe der Konten danach.
+* **Reale Daten:** 13 Zeilen (5/4/4), Voreinstellung bucht 9 und lässt die 4 kritischen unberührt.
 
 ## 0.102.0 – Stichtag: Ausgleich (alles glattziehen), Quellenübernahme ab dem Stichtag, Journal-Kennungen
 

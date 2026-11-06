@@ -1134,3 +1134,22 @@ details.adv h4 { margin: 12px 0 6px; font-size: 0.86rem; color: var(--ink-2); }
 .ytres .grow { flex: 1 1 220px; }
 .ytres .meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ytres .ytact { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-left: auto; }
+
+/* Stichtag: Ausgleich – Konto-Karten mit Vorher/Nachher */
+.settle-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+.settle-acc { border: 1px solid var(--border); border-radius: var(--radius-sm); margin: 10px 0; background: var(--surface); }
+.settle-acc > summary { cursor: pointer; padding: 10px 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.settle-rule { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 0.85rem; }
+.settle-row { border-top: 1px solid var(--border); padding: 10px 12px; }
+.settle-row.tier-critical { border-left: 3px solid var(--warn-mark); background: var(--warn-bg); }
+.settle-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.settle-kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; margin: 8px 0; }
+.settle-kv dt { color: var(--ink-2); font-size: 0.8rem; overflow-wrap: anywhere; }
+.settle-kv dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; min-width: 0; text-align: left; }
+.settle-kv > div { min-width: 0; }
+.settle-dec { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.settle-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+@media (min-width: 700px) {
+  .settle-kv { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .settle-dec { grid-template-columns: 1fr 1fr; }
+}

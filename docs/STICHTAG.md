@@ -1,6 +1,6 @@
-# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.102.0)
+# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.103.0)
 
-Stand: 06.11.2026 · Version 0.102.0
+Stand: 06.11.2026 · Version 0.103.0
 
 Ein Stichtag (Standard 01.01.2025, in der App wählbar) teilt die Buchungen in ein **Archiv** (davor) und den **aktiven
 Zeitraum** (ab dem Stichtag). Steuer, Lots, Diagnose und Importe arbeiten ab dem Stichtag mit dem geprüften
@@ -17,6 +17,7 @@ Depotstart. **Es wird nichts gelöscht.** Einstieg: *Einstellungen → Stichtag*
 | 4 | 0.100.0 | **Alle Wege am Stichtag ausgerichtet:** Diagnose, Gesamtprüfung, CSV-Import/Sync/Prüf-Stapel, Quellenübernahme |
 | 5 | 0.101.0 | **Abgeleitete Vorschläge** aus Belegen nach dem Stichtag – nur wo sie belegt sind |
 | + | 0.102.0 | **Ausgleich zum Stichtag** (alles glattziehen) und **Quellenübernahme ab dem Stichtag** |
+| + | 0.103.0 | **Ausgleich übersichtlich:** Vorher → Nachher, Gewichtung, Entscheidung je Zeile, eigener Zielbestand, Abruf, Zusammenfassung |
 
 ## Eröffnungsstand und Gleichwertigkeit
 
@@ -138,6 +139,33 @@ Danach stimmen Berechnung und Beleg überein.
 * **Grenze:** Der Ausgleich ersetzt keinen Beleg. Er stellt fest, dass ab hier der externe Bestand gilt; die Ursache einer
   Abweichung im aktiven Zeitraum bleibt damit ungeklärt (Hinweise in der Vorschau).
 
+### Bedienung (ab 0.103.0)
+
+1. **Quellen jetzt abrufen:** ruft die Bestände aller aktiven Datenquellen mit API ab (nur Bestandsabfrage, keine
+   Buchungen; Fortschritt unter *Datenquellen*, danach zurück zur Seite). Börsen ohne API bleiben beim letzten Beleg –
+   dort hilft der eigene Zielbestand.
+2. **Entscheiden:** Je Konto eine Karte (Kontoregel: *Vorgabe*, *alle ausgleichen*, *nur Abgänge*, *keine*), je Zeile
+   eine Entscheidung: *Vorgabe*, *Auf den Beleg ausgleichen*, *App behalten (nichts buchen)*, *Eigener Zielbestand
+   (heute)*. Eine Zeile entscheidet vor der Kontoregel.
+3. **Zusammenfassung** („Auswahl prüfen“, bucht nichts) und **Buchen**; bei festgeschriebenem Stichtag danach
+   automatische Neu-Freigabe der betroffenen Konten.
+
+Jede Zeile zeigt **App heute → Ausgleich am Vortag → App nach Ausgleich** und den Beleg (Quelle, Zeitpunkt, „nicht
+aktuell“). „App heute“ ist der Bestand heute, der berechnete Bestand zum Zeitpunkt des Belegs dient der Differenz;
+liegen seit dem Beleg weitere Buchungen, steht ein Hinweis, dass „nach Ausgleich“ vom Beleg abweichen kann.
+
+**Gewichtung** (nach EUR-Wert der Differenz, Kurse der App):
+
+| Gewicht | Kriterium | Voreinstellung |
+| --- | --- | --- |
+| Kleinstbetrag | Wert unter 1 € | in einer Sammelgruppe, ein Häkchen „alle pauschal ausgleichen“ (voreingestellt) |
+| normal | Wert 1 € bis unter 100 € | ausgleichen |
+| kritisch | Verkauf ab dem Stichtag, nicht ausgleichbarer Rest, Wert ab 100 € oder nicht bewertbar | **nicht vorausgewählt** (App behalten), einzeln entscheiden |
+
+**Eigener Zielbestand:** Du gibst den realen Bestand von heute ein; gebucht wird die Differenz zum Bestand der App von
+heute am Vortag des Stichtags (Abgang höchstens bis zum Eröffnungsbestand). Entspricht der Wert der App, entsteht keine
+Buchung; ungültige Eingaben werden abgelehnt, ohne zu buchen.
+
 ### Journal-Kennungen nach Wiederherstellung (0.102.0)
 
 Neue Journal-Buchungen erhielten `Präfix + Zeilennummer`. Nach einer Wiederherstellung tragen Import-Buchungen bereits
@@ -165,6 +193,7 @@ Regel „höchstens ein aktiver Stichtag“: ist bereits einer aktiv, kommt der 
 | Abgeleitete Vorschläge | 0 Vorschläge, 1 Hinweis (DKB A40XUX, Ursache unbekannt: 3 Buchungen im Zeitraum) |
 | Laufzeit gesamt (Vorschau, Hinweise, Festschreiben, Diagnose, Rücknahme) | 8,4 s |
 | **Ausgleich (0.102.0)** | 13 Zeilen (9 Zugänge, 4 Abgänge, davon 12 mit nicht aktuellem Abruf, 1 mit Verkauf ab Stichtag), alle 13 gebucht, danach 0 Abweichungen, Konten automatisch neu freigegeben, offene Diagnosebefunde 75 → 64; 24,5 s |
+| **Ausgleich mit Gewichtung (0.103.0)** | 13 Zeilen: 5 Kleinstbeträge, 4 normal, 4 kritisch (DKB A40XUX mit Verkauf, RIO, XEN, PEAQ); Voreinstellung bucht 9 (4 Abgänge, 5 Zugänge, Zugänge zusammen ≈ 6,91 € Wert), lässt die 4 kritischen unberührt; eigener Zielbestand für eine kritische Zeile gebucht; Konten neu freigegeben; 21,8 s |
 
 ## Grenzen
 
@@ -182,7 +211,7 @@ Regel „höchstens ein aktiver Stichtag“: ist bereits einer aktiv, kommt der 
 
 * `tests/test_cutover_fiat.py` (8), `test_cutover_core.py` (8), `test_cutover_page.py` (8), `test_cutover_fix.py` (18,
   einschließlich Export/Wiederherstellung), `test_cutover_scope.py` (6), `test_cutover_takeover.py` (2),
-  `test_cutover_derive.py` (7), `test_cutover_settle.py` (7).
+  `test_cutover_derive.py` (7), `test_cutover_settle.py` (11).
 * Zusätzlich 192 zufällige Kombinationen für die Gleichwertigkeit (Voll gegen Eröffnungsstand + aktiv) in beiden
   Rechenweisen.
 * `TZ=Europe/Berlin python -m pytest -q tests` · `ruff check app tests scripts` ·

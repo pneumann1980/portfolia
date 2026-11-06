@@ -10,7 +10,6 @@ import pytest
 
 from app.cutover import core as CO
 from app.cutover import fix as FX
-from app.cutover import service as CS
 from app.cutover import settle as ST
 from tests.helpers import ASSETS, tx
 from tests.test_cutover_fix import _fix_all, _rows
@@ -102,21 +101,102 @@ def test_nothing_selected_is_an_error_and_unknown_ids_are_ignored(cx):
     assert ctx.db.scalar("SELECT COUNT(*) FROM cutover_correction") == 0
 
 
-def test_page_and_post(cx):
+def _values(monkeypatch, **by_asset):
+    monkeypatch.setattr(ST, "_value", lambda prices, asset, qty: by_asset.get(asset))
+
+
+def _two_rows(ctx):
+    _ref(ctx, "Wallet", "ETH", "1.5", "2025-03-15")  # Abgang 0,5
+    _ref(ctx, "Börse", "BTC", "0.5", "2025-03-31")  # Zugang 0,1 (Verkauf ab dem Stichtag)
+    pl = _plan(ctx)
+    return pl, {r["asset"]: r for r in pl["rows"]}
+
+
+def test_rows_show_before_after_and_are_weighted(cx, monkeypatch):
     ctx = cx.app.state.ctx
-    _ref(ctx, "Wallet", "ETH", "1.5", "2025-03-15")
+    _values(monkeypatch, ETH=D("0.5"), BTC=D("50"))
+    _pl, by = _two_rows(ctx)
+    eth, btc = by["ETH"], by["BTC"]
+    assert eth["tier"] == "small" and btc["tier"] == "critical"  # BTC: Verkauf ab Stichtag
+    assert eth["now"] == D("2") and eth["after"] == D("1.5") and eth["signed"] == D("-0.5")
+    assert btc["now"] == D("0.4") and btc["after"] == D("0.5") and btc["signed"] == D("0.1")
+    _values(monkeypatch, ETH=D("50"), BTC=D("50"))
+    assert {r["asset"]: r["tier"] for r in _plan(ctx)["rows"]} == {"ETH": "normal", "BTC": "critical"}
+    _values(monkeypatch, ETH=D("500"), BTC=None)
+    tiers = {r["asset"]: r["tier"] for r in _plan(ctx)["rows"]}
+    assert tiers == {"ETH": "critical", "BTC": "critical"}  # ≥ 100 € bzw. unbewertet
+
+
+def test_defaults_rules_and_overrides(cx, monkeypatch):
+    ctx = cx.app.state.ctx
+    _values(monkeypatch, ETH=D("0.5"), BTC=D("50"))
+    m = CO.models(ctx, CUT)[0]
+    pl, by = _two_rows(ctx)
+    eid, bid = by["ETH"]["id"], by["BTC"]["id"]
+    ids = lambda res: {r["asset"] for r in res["chosen"]}  # noqa: E731
+    assert ids(ST.resolve(m, pl, {})) == set()  # Kleinstbetrag nicht pauschal, BTC kritisch
+    assert ids(ST.resolve(m, pl, {"small_all": "1"})) == {"ETH"}  # Kleinstbeträge pauschal
+    assert ids(ST.resolve(m, pl, {f"dec_{bid}": "settle"})) == {"BTC"}  # kritisch nur auf ausdrücklichen Wunsch
+    g_eth = next(g["id"] for g in pl["groups"] if g["account"] == "Wallet")
+    g_btc = next(g["id"] for g in pl["groups"] if g["account"] == "Börse")
+    assert ids(ST.resolve(m, pl, {f"acc_{g_btc}": "all"})) == {"BTC"}
+    assert ids(ST.resolve(m, pl, {f"acc_{g_btc}": "remove", f"acc_{g_eth}": "remove"})) == {"ETH"}
+    assert ids(ST.resolve(m, pl, {f"acc_{g_btc}": "all", f"dec_{bid}": "keep"})) == set()  # Zeile schlägt Kontoregel
+    res = ST.resolve(m, pl, {f"dec_{eid}": "settle", f"dec_{bid}": "settle"})
+    sm = res["summary"]
+    assert (sm["n"], sm["n_add"], sm["n_remove"], sm["n_sold"], sm["n_skipped"]) == (2, 1, 1, 1, 0)
+    assert sm["accounts"] == ["Börse", "Wallet"] and sm["value_add"] == D("50") * 0 + D("50")
+
+
+def test_custom_target_compares_with_the_app_balance_of_today(cx, monkeypatch):
+    ctx = cx.app.state.ctx
+    _values(monkeypatch, ETH=D("50"), BTC=D("50"))
+    m = CO.models(ctx, CUT)[0]
+    pl, by = _two_rows(ctx)
+    eid = by["ETH"]["id"]
+    res = ST.resolve(m, pl, {f"dec_{eid}": "custom", f"tgt_{eid}": "1,25"})  # App heute: 2 → Abgang 0,75
+    (r,) = res["chosen"]
+    assert (r["kind"], r["qty"], r["custom"]) == ("remove", D("0.75"), True) and r["evidence"].startswith("Eigener")
+    res = ST.resolve(m, pl, {f"dec_{eid}": "custom", f"tgt_{eid}": "2"})  # entspricht der App: nichts zu buchen
+    assert not res["chosen"] and not res["errors"]
+    res = ST.resolve(m, pl, {f"dec_{eid}": "custom", f"tgt_{eid}": "abc"})
+    assert res["errors"] and not res["chosen"]
+    out = ST.apply_form(ctx, CUT, {f"dec_{eid}": "custom", f"tgt_{eid}": "1.25"})
+    assert len(out["done"]) == 1 and _holdings(ctx, "Wallet", "ETH") == D("1.25")
+    assert ctx.db.q1("SELECT mode FROM cutover_correction WHERE status='active'")["mode"] == "settle"
+
+
+def test_page_preview_and_book(cx, monkeypatch):
+    ctx = cx.app.state.ctx
+    _values(monkeypatch, ETH=D("50"), BTC=D("50"))
+    _pl, by = _two_rows(ctx)
+    eid, bid = by["ETH"]["id"], by["BTC"]["id"]
     plain = cx.get("/settings/stichtag?cutoff=2025-01-01")
-    assert "Ausgleich vorbereiten" in plain.text and 'name="sel"' not in plain.text
+    assert "Ausgleich vorbereiten" in plain.text and "settle-row" not in plain.text
     page = cx.get("/settings/stichtag?cutoff=2025-01-01&settle=1")
-    assert page.status_code == 200 and 'name="sel"' in page.text and "Ausgewählte ausgleichen" in page.text
-    (r,) = _plan(ctx)["rows"]
-    empty = cx.post("/settings/stichtag/ausgleich", data={"csrf_token": cx.token, "cutoff": "2025-01-01"})
-    assert empty.status_code == 422
-    ok = cx.post("/settings/stichtag/ausgleich", data={"csrf_token": cx.token, "cutoff": "2025-01-01",
-                                                          "sel": r["id"]})
+    assert page.status_code == 200 and page.text.count('class="settle-row') == 2
+    for text in ("Quellen jetzt abrufen", "Auswahl prüfen", "App nach Ausgleich"):
+        assert text in page.text
+    assert "1 Zeile(n) einzeln entscheiden" in page.text
+    base = {"csrf_token": cx.token, "cutoff": "2025-01-01", f"dec_{eid}": "settle", f"dec_{bid}": "keep"}
+    prev = cx.post("/settings/stichtag/ausgleich", data={**base, "do": "preview"})
+    assert prev.status_code == 200 and "Zusammenfassung der Auswahl" in prev.text and "1 Buchung(en)" in prev.text
+    assert ctx.db.scalar("SELECT COUNT(*) FROM cutover_correction") == 0  # Vorschau bucht nichts
+    bad = cx.post("/settings/stichtag/ausgleich", data={**base, "do": "book", f"dec_{eid}": "custom",
+                                                          f"tgt_{eid}": "x"})
+    assert bad.status_code == 422 and ctx.db.scalar("SELECT COUNT(*) FROM cutover_correction") == 0
+    nothing = cx.post("/settings/stichtag/ausgleich", data={"csrf_token": cx.token, "cutoff": "2025-01-01",
+                                                              "do": "book", f"dec_{eid}": "keep",
+                                                              f"dec_{bid}": "keep"})
+    assert nothing.status_code == 422 and "Nichts zum Ausgleichen" in nothing.text
+    ok = cx.post("/settings/stichtag/ausgleich", data={**base, "do": "book"})
     assert ok.status_code == 200 and "1 Ausgleichsbuchung(en) gebucht" in ok.text
-    assert _holdings(ctx, "Wallet", "ETH") == D("1.5")
-    assert CS.preview(ctx, CUT)["settle"] is None
+    assert _holdings(ctx, "Wallet", "ETH") == D("1.5") and _holdings(ctx, "Börse", "BTC") == D("0.4")  # BTC behalten
+
+
+def test_fetch_balances_without_sources_is_a_clear_error(cx):
+    r = cx.post("/settings/stichtag/abruf", data={"csrf_token": cx.token, "cutoff": "2025-01-01"})
+    assert r.status_code == 409 and "Keine aktiven Konten" in r.text
 
 
 def test_new_journal_ids_never_collide_with_import_ids(cfg):
@@ -148,3 +228,12 @@ def test_settle_may_create_an_account_that_only_exists_as_a_data_source(cx):
     _v, errs2 = CR.validate(ctx, m, account="Neues Wallet", asset="ETH", kind="remove", qty="1", mode="settle",
                             evidence="x", acq_date=None, cost_eur=None)
     assert errs2  # Abgang von einem unbekannten Konto bleibt abgelehnt
+
+
+def test_qty_short_shortens_for_display_only():
+    from app.web.fmt import qty_exact, qty_short
+
+    assert qty_short(D("140972020.943557387337366832")) == "140.972.020,94355739"
+    assert qty_short(D("0.0002482232140055")) == "0,000248223214"  # unter 1: 12 Stellen
+    assert qty_short(D("0.000000000000001")) == qty_exact(D("0.000000000000001"))  # nie zu „0“ kürzen
+    assert qty_short(D("2")) == "2" and qty_short(None) == "–" and qty_short(D("-0.5")) == "-0,5"
