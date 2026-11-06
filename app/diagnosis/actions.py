@@ -31,6 +31,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from app.cutover import guard
 from app.db import fallback
 from app.diagnosis.collect import JournalMeta
 from app.diagnosis.engine import diagnose, report_for
@@ -872,8 +873,39 @@ def build_plan(ctx: Any, report: Report, f: Finding, option_key: str,
         plan.errors.append("Unbekannte Lösung.")
     if not plan.ops and not plan.errors:
         plan.errors.append("Keine Änderung ausgewählt.")
+    if plan.ops and not plan.errors:
+        _check_archive(ctx, st, plan)
     plan.warnings = list(dict.fromkeys(plan.warnings))
     return plan
+
+
+ARCHIVE_OPS = ("hide", "cover", "create", "amend", "stage", "book_row")
+
+
+def _check_archive(ctx: Any, st: Any, plan: Plan) -> None:
+    """Festgeschriebener Stichtag: Ein Plan, der Buchungen vor dem Stichtag ändert, anlegt oder ausblendet, ist nicht
+    ausführbar. Das steht schon in der Vorschau (und schließt Lösungsvorschläge der Klärung aus) – nicht erst beim
+    Buchen als Fehlerseite. Bestände zum Stichtag gleicht der Ausgleich unter *Einstellungen → Stichtag* aus."""
+    from app.cutover import guard
+    from app.util.timeutil import parse_iso
+
+    row = guard.active(ctx.db)
+    cut = parse_iso(row["cutoff_utc"]) if row is not None else None
+    if cut is None:
+        return
+    n = 0
+    for op in plan.ops:
+        if op.kind not in ARCHIVE_OPS:
+            continue
+        t = op.tx or (st.tx(op.target) if op.kind in ("hide", "cover", "amend", "stage") else None)
+        ts = t.ts if t is not None else (op.ref.ts if op.ref is not None else None)
+        if ts is not None and ts < cut:
+            n += 1
+    if n:
+        plan.errors.append(f"Betrifft {n} Buchung(en) vor dem festgeschriebenen Stichtag {row['cutoff'][8:10]}."
+                           f"{row['cutoff'][5:7]}.{row['cutoff'][:4]}: Das Archiv lässt sich nicht ändern. Bestände "
+                           "zum Stichtag gleicht Einstellungen → Stichtag → Ausgleich aus; sonst den Stichtag "
+                           "zurücknehmen.")
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -1468,6 +1500,8 @@ def apply_plan(ctx: Any, f: Finding, plan: Plan, token: str, rebuild: Any, in_tx
                     in_tx(c, did)
         except Conflict as e:
             return Result(errors=[f"{e} Es wurde nichts geändert – bitte die Vorschau neu öffnen."])
+        except guard.Protected as e:  # Archiv eines festgeschriebenen Stichtags: Meldung statt Fehlerseite
+            return Result(errors=[f"{e} Es wurde nichts geändert."])
         _after(ctx, False)
         return Result(ok=True, decision_id=did, message=f"Übernommen: {plan.option.label}. Rückgängig unter "
                                                         "„Datenqualität → Entscheidungen und Korrekturen“.")
@@ -1545,6 +1579,8 @@ def apply(ctx: Any, finding_id: str, option_key: str, params: Mapping[str, list[
                         {"finding": f.id, "option": plan.option.key, "changes": len(recs)}, stamp)
         except Conflict as e:
             return Result(errors=[f"{e} Es wurde nichts geändert – bitte die Vorschau neu öffnen."])
+        except guard.Protected as e:  # Archiv eines festgeschriebenen Stichtags: Meldung statt Fehlerseite
+            return Result(errors=[f"{e} Es wurde nichts geändert."])
         _after(ctx, plan.touches_quotes)
         log.info("Diagnose-Korrektur %s übernommen: %s / %s (%d Änderungen)", did, f.id, plan.option.key, len(recs))
         return Result(ok=True, decision_id=did,
@@ -1773,6 +1809,8 @@ def undo(ctx: Any, decision_id: int) -> Result:
                 c.execute("UPDATE diag_decision SET status='undone', undone_at=? WHERE id=?", (stamp, decision_id))
                 js._log(c, "diagnose_undo", f"diagnose:{decision_id}", None, {"notes": notes}, stamp)
         except Conflict as e:
+            return Result(errors=[f"Rückgängig nicht möglich: {e} Es wurde nichts geändert."])
+        except guard.Protected as e:
             return Result(errors=[f"Rückgängig nicht möglich: {e} Es wurde nichts geändert."])
         _after(ctx, any(r["kind"] in ("quote", "unmap") for r in recs))
         _reevaluate(ctx, recs)

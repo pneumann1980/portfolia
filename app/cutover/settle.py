@@ -63,7 +63,11 @@ def _value(prices: dict[str, Any], asset: str, qty: Decimal) -> Decimal | None:
 
 def _tier(r: dict[str, Any]) -> str:
     v = r["value"]
-    if r["sold"] or r["rest"] > 0 or v is None or v >= BIG_EUR:
+    if r["rest"] > 0:  # nicht (vollständig) am Stichtag ausgleichbar: immer einzeln ansehen
+        return "critical"
+    if r.get("dust"):  # Rundungsrest: nie kritisch, auch ohne Kurs
+        return "small"
+    if r["sold"] or v is None or v >= BIG_EUR:
         return "critical"
     return "small" if v < SMALL_EUR else "normal"
 
@@ -75,7 +79,7 @@ def _row(m: CO.Model, prices: dict[str, Any], sold: set[tuple[str, str]], txs: l
     have_open = m.state.balances.get(key, ZERO)
     computed = have_open + sum((DV._effect(t, key) for t in window), ZERO)
     diff = ev["qty"] - computed
-    if diff == 0 or abs(diff) <= CO.STAUB_QTY:
+    if diff == 0:  # auch Rundungsreste (< 1e-8) werden ausgeglichen: jedes Asset soll zum Beleg „gesetzt“ sein
         return None
     kind = "remove" if diff < 0 else "add"
     qty = abs(diff)
@@ -94,6 +98,7 @@ def _row(m: CO.Model, prices: dict[str, Any], sold: set[tuple[str, str]], txs: l
         "sold": kind == "add" and key in sold, "restart": kind == "add",
         "now": now, "after": now + signed, "signed": signed,
         "since": sum(1 for t in txs if t.ts > ev["at"] and DV._touches(t, key)),
+        "dust": abs(diff) <= CO.STAUB_QTY,
         "value": _value(prices, key[1], qty + rest), "custom": bool(ev.get("custom"))}
     row["tier"] = _tier(row)
     return row
@@ -109,7 +114,10 @@ def plan(ctx: Any, m: CO.Model) -> dict[str, Any]:
         log.debug("Kurse für den Ausgleich nicht verfügbar: %s", e)
         prices = {}
     rows: list[dict[str, Any]] = []
-    for ev in DV.evidence(ctx, m, observed=True, stale=True):
+    from app.diagnosis.engine import report_for
+
+    report = report_for(ctx)
+    for ev in DV.evidence(ctx, m, observed=True, stale=True, report=report):
         key = (ev["account"], ev["asset"])
         if m.pf_full.asset(ev["asset"]).is_fiat:
             continue
@@ -119,7 +127,9 @@ def plan(ctx: Any, m: CO.Model) -> dict[str, Any]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for r in sorted(rows, key=lambda x: (x["account"], x["tier"] != "critical", x["asset"])):
         groups.setdefault(r["account"], []).append(r)
-    return {"rows": rows, "groups": [{"account": a, "id": key_id(a, ""), "rows": rs} for a, rs in groups.items()],
+    cov = coverage(m, report, {(r["account"], r["asset"]) for r in rows})
+    return {"coverage": cov, "rows": rows,
+            "groups": [{"account": a, "id": key_id(a, ""), "rows": rs} for a, rs in groups.items()],
             "n_add": sum(1 for r in rows if r["kind"] == "add"),
             "n_remove": sum(1 for r in rows if r["kind"] == "remove" and r["qty"] > 0),
             "n_rest": sum(1 for r in rows if r["rest"] > 0), "n_sold": sum(1 for r in rows if r["sold"]),
@@ -127,6 +137,29 @@ def plan(ctx: Any, m: CO.Model) -> dict[str, Any]:
             "n_critical": sum(1 for r in rows if r["tier"] == "critical"),
             "n_stale": sum(1 for r in rows if r["stale"]), "day": m.cutoff - timedelta(days=1),
             "_prices": prices, "_sold": sold, "_txs": txs}
+
+
+def coverage(m: CO.Model, report: Any, listed: set[tuple[str, str]]) -> dict[str, Any]:
+    """Wie viele Bestände (Konto · Asset) sind belegt? ``matched``: Beleg stimmt (Quelle bzw. Referenz),
+    ``deviating``: weicht ab (steht im Ausgleich), ``written_off``: Quelle zeigt bewusst ausgebuchte Menge,
+    ``unverified``: kein Beleg – dort gilt der berechnete Stand (Quellen abrufen oder Referenzbestand erfassen)."""
+    pf = m.pf_full
+    held = {k for k, v in m.led_full.balances.items() if v > CO.DUST and not pf.asset(k[1]).is_fiat}
+    status = {(h.account, h.asset): h.status for h in report.holdings}
+    out = {"matched": 0, "deviating": 0, "written_off": 0, "unverified": 0, "unverified_list": []}
+    for k in sorted(held):
+        stt = status.get(k, "")
+        if k in listed:
+            out["deviating"] += 1
+        elif stt in ("extern_ok", "ref_ok"):
+            out["matched"] += 1
+        elif stt == "extern_ausgebucht":
+            out["written_off"] += 1
+        else:
+            out["unverified"] += 1
+            out["unverified_list"].append(k)
+    out["total"] = len(held)
+    return out
 
 
 def custom_row(m: CO.Model, pl: dict[str, Any], row: dict[str, Any], target: Decimal) -> dict[str, Any] | None:

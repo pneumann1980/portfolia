@@ -25,6 +25,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.cutover import guard
 from app.diagnosis import actions as A
 from app.diagnosis.integrity import RECON_KINDS, confidence_of
 from app.diagnosis.model import Finding, Report
@@ -255,6 +256,8 @@ def execute(ctx: Any, finding_ids: list[str], token: str, *, include_review: boo
                         {"findings": [it.finding.id for it in bp.ready], "decisions": ids}, stamp)
         except A.Conflict as e:
             return BulkResult(errors=[f"{e} Es wurde nichts geändert – bitte die Vorschau neu öffnen."])
+        except guard.Protected as e:
+            return BulkResult(errors=[f"{e} Es wurde nichts geändert."])
         A._after(ctx, any(it.plan is not None and it.plan.touches_quotes for it in bp.ready))
         log.info("Sammelkorrektur %s übernommen: %d Befunde", bulk_id, len(ids))
         return BulkResult(ok=True, bulk_id=bulk_id, decision_ids=ids,
@@ -282,6 +285,8 @@ def undo(ctx: Any, bulk_id: str) -> BulkResult:
                 js._log(c, "diagnose_bulk_undo", f"bulk:{bulk_id}", None, {"decisions": [r["id"] for r in rows]},
                         stamp)
         except A.Conflict as e:
+            return BulkResult(errors=[f"Rückgängig nicht möglich: {e} Es wurde nichts geändert."])
+        except guard.Protected as e:
             return BulkResult(errors=[f"Rückgängig nicht möglich: {e} Es wurde nichts geändert."])
         A._after(ctx, False)
         return BulkResult(ok=True, bulk_id=bulk_id, decision_ids=[int(r["id"]) for r in rows],

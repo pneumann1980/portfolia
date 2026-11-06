@@ -237,3 +237,28 @@ def test_qty_short_shortens_for_display_only():
     assert qty_short(D("0.0002482232140055")) == "0,000248223214"  # unter 1: 12 Stellen
     assert qty_short(D("0.000000000000001")) == qty_exact(D("0.000000000000001"))  # nie zu „0“ kürzen
     assert qty_short(D("2")) == "2" and qty_short(None) == "–" and qty_short(D("-0.5")) == "-0,5"
+
+
+def test_rounding_residues_are_settled_too_and_never_critical(cx, monkeypatch):
+    ctx = cx.app.state.ctx
+    _values(monkeypatch, ETH=None, BTC=D("50"))  # ETH ohne Kurs: normalerweise kritisch
+    _ref(ctx, "Wallet", "ETH", "2.00000000000002", "2025-03-15")  # berechnet 2: Rest 2e-14
+    (r,) = [x for x in _plan(ctx)["rows"] if x["asset"] == "ETH"]
+    assert r["dust"] and r["kind"] == "add" and r["qty"] == D("0.00000000000002") and r["tier"] == "small"
+    m = CO.models(ctx, CUT)[0]
+    res = ST.resolve(m, _plan(ctx), {"small_all": "1"})
+    assert {x["asset"] for x in res["chosen"]} == {"ETH"}
+    assert len(ST.apply_form(ctx, CUT, {"small_all": "1"})["done"]) == 1
+    assert _holdings(ctx, "Wallet", "ETH") == D("2.00000000000002") and not [
+        x for x in _plan(ctx)["rows"] if x["asset"] == "ETH"]
+
+
+def test_coverage_counts_every_position(cx):
+    ctx = cx.app.state.ctx
+    _ref(ctx, "Wallet", "ETH", "1.5", "2025-03-15")  # weicht ab
+    _ref(ctx, "Börse", "BTC", "0.4", "2025-03-31")  # stimmt
+    cov = _plan(ctx)["coverage"]
+    assert cov["total"] == cov["matched"] + cov["deviating"] + cov["written_off"] + cov["unverified"]
+    assert cov["deviating"] == 1 and cov["matched"] == 1
+    page = cx.get("/settings/stichtag?cutoff=2025-01-01&settle=1").text
+    assert 'id="abdeckung"' in page and "weichen ab" in page

@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from app.cutover import guard
 from app.db import fallback
 from app.diagnosis import actions as A
 from app.diagnosis import bulk as B
@@ -1410,6 +1411,8 @@ def apply_hypothesis(ctx: Any, case_key: str, hyp_id: str, trigger: str = "manua
                 js._log(c, "klaerung_uebernommen", f"klaerung:{bulk_id}", None,
                         {"case": case.key, "hyp": hyp.id, "decisions": ids, "authorization": authorization}, stamp)
         except A.Conflict as e:
+            return Result(errors=[f"{e} Es wurde nichts geändert."])
+        except guard.Protected as e:  # Archiv eines festgeschriebenen Stichtags
             return Result(errors=[f"{e} Es wurde nichts geändert."])
         A._after(ctx, any(c.plan.touches_quotes for c in hyp.cands))
         # Nachprüfung noch unter der Sperre: geprüft wird genau der eigene Stand, kein paralleler Eingriff der

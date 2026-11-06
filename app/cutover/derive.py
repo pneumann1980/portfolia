@@ -47,7 +47,8 @@ def _touches(t: Any, key: tuple[str, str]) -> bool:
             or (t.fee_asset == aid and (t.from_account or t.to_account) == acc))
 
 
-def evidence(ctx: Any, m: CO.Model, *, observed: bool = True, stale: bool = False) -> list[dict[str, Any]]:
+def evidence(ctx: Any, m: CO.Model, *, observed: bool = True, stale: bool = False,
+             report: Any = None) -> list[dict[str, Any]]:
     """Belege nach dem Stichtag: Referenzbestände (``as_of ≥ Stichtag``) und – falls gewünscht – vollständig
     abgerufene Bestände der Quellen mit Abweichung (Diagnose, ``extern_diff``). Je (Konto, Asset) der jüngste Beleg.
     ``stale``: auch Bestände älterer bzw. nicht bestätigter Abrufe (``extern_unsicher``), als solche gekennzeichnet."""
@@ -65,7 +66,7 @@ def evidence(ctx: Any, m: CO.Model, *, observed: bool = True, stale: bool = Fals
     if observed:
         from app.diagnosis.engine import report_for
 
-        for h in report_for(ctx).holdings:
+        for h in (report or report_for(ctx)).holdings:
             if h.observed is None or h.observed_at is None:
                 continue
             if h.status != "extern_diff" and not (stale and h.status == "extern_unsicher"):

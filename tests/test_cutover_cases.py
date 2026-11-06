@@ -175,3 +175,50 @@ def test_stored_integrity_run_follows_the_cutoff_when_read(cx):
     ctx.invalidate_data()
     I.refresh_status(ctx, r)
     assert [it.status for it in r.items] == ["offen", "offen", "offen"]
+
+
+def test_plans_touching_the_archive_are_not_executable_and_say_so(cx):
+    from app.diagnosis.actions import build_plan
+
+    ctx = cx.app.state.ctx
+    rep = report_for(ctx)
+    f = next(x for x in rep.findings if x.kind == "duplicate" and x.txs)
+    from app.diagnosis.recommend import recommend
+
+    opts = [o.key for o in recommend(rep, f).fixes]
+    assert opts
+    plans = [build_plan(ctx, rep, f, k) for k in opts]
+    assert any(p.ops and not p.errors for p in plans)  # ohne Stichtag ausführbar
+    ctx.db.x("INSERT INTO cutover(cutoff, cutoff_utc, status, options_json, fingerprint, created_at) "
+             "VALUES (?,?,?,?,?,?)", ("2025-07-01", "2025-06-30T22:00:00Z", "active", "{}", "x", STAMP))
+    ctx.invalidate_data()
+    rep2 = report_for(ctx)
+    f2 = rep2.by_id(f.id)
+    if f2 is None:  # reiner Archiv-Befund: erscheint gar nicht mehr (Stufe 4)
+        assert f.id in {a.id for a in rep2.archived}
+        return
+    for k in opts:
+        p = build_plan(ctx, rep2, f2, k)
+        if p.ops:
+            assert p.errors and "festgeschriebenen Stichtag" in p.errors[0]
+
+
+def test_applying_into_the_archive_returns_a_message_not_an_error_page(cx, monkeypatch):
+    from app.cutover import guard
+    from app.diagnosis import actions as A
+
+    ctx = cx.app.state.ctx
+    rep = report_for(ctx)
+    f = next(x for x in rep.findings if x.kind == "duplicate" and x.txs)
+    from app.diagnosis.recommend import recommend
+
+    key = next(o.key for o in recommend(rep, f).fixes)
+    plan = A.build_plan(ctx, rep, f, key)
+    assert not plan.errors
+
+    def boom(*a, **k):
+        raise guard.Protected("Der Stichtag 01.01.2025 ist festgeschrieben.")
+
+    monkeypatch.setattr(A, "_exec", boom)
+    res = A.apply(ctx, f.id, key, {}, plan.token)
+    assert not res.ok and "festgeschrieben" in res.errors[0] and "nichts geändert" in res.errors[0]

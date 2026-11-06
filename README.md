@@ -1387,7 +1387,7 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > gebunden, Eingaben mit Besitzkennung (auch bei gleichem Wert), Rücknahmen nur eigener Änderungen, Gebühren bei der
 > Neueinordnung genau einmal. Formulare ohne Eingabestand (alte Tabs) werden mit „bitte neu laden“ abgelehnt. **Ab 0.96.0** bucht der normale Vorschlag einen unverändert rückimportierten Vorgang nie erneut (eine Verknüpfung mit einer anderen Quelle beweist kein neues Ereignis – im Zweifel Prüfung), die Wiederherstellung erhält gleichnamige Wallets mit verschiedener Adresse, Zwischenspeicher mischen nie Lesestände, zwei abgelehnte Einzelaktionen hinterlassen den Ausgangswert, und Kontenzusammenführungen u. ä. zwischen Vorschau und Buchen verlangen eine neue Vorschau. Korrekturen zum Review „Buchungen prüfen“: [`docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md`](docs/BUCHUNGEN_PRUEFEN_KORREKTUREN.md).
 >
-> **Stichtag (0.97.0–0.104.0):** *Einstellungen → Stichtag* teilt die Buchungen in ein Archiv (vor dem gewählten Tag,
+> **Stichtag (0.97.0–0.105.0):** *Einstellungen → Stichtag* teilt die Buchungen in ein Archiv (vor dem gewählten Tag,
 > Standard 01.01.2025) und den aktiven Zeitraum. Steuer, Lots, Diagnose und Importe arbeiten mit dem geprüften
 > Eröffnungsstand (Lots mit ursprünglichem Anschaffungsdatum und Kosten); Depotwert, Verlauf und eingesetztes Kapital
 > laufen weiter ab Depotstart, nichts wird gelöscht. Fiat (EUR/USD) lässt sich überall ausschalten, das Festschreiben
@@ -1398,7 +1398,9 @@ Buchung bliebe, hängt nur von der Kennung ab, nicht von der Reihenfolge in der 
 > (kritische Zeilen nicht vorausgewählt), mit Entscheidung je Zeile und Konto, eigenem Zielbestand, Abruf der Quellen und
 > Zusammenfassung vor dem Buchen. **Ab 0.104.0** folgen die gespeicherten Klärungsfälle dem Stichtag: erledigte oder nur noch archivierte Fälle
 > erscheinen nicht mehr, der Fortschritt im Fall wird gezeigt, und nach Stichtag-Aktionen werden die Fälle im Hintergrund
-> aktualisiert. Konzept, Regeln und Grenzen: [`docs/STICHTAG.md`](docs/STICHTAG.md).
+> aktualisiert. **Ab 0.105.0** gleicht der Ausgleich auch Rundungsreste aus und zeigt die Abdeckung je Bestand; Lösungen der
+> Diagnose, die das Archiv ändern würden, sind schon in der Vorschau ausgeschlossen (Meldung statt Fehlerseite). Konzept,
+> Regeln und Grenzen: [`docs/STICHTAG.md`](docs/STICHTAG.md).
 
 > **DKB-Dokumente (ab 0.36.0):** An einem DKB-Konto (*Einstellungen → Datenquellen*) richtet *DKB-Abruf einrichten* ein
 > Abrufprogramm ein (eigene Python-Umgebung im Datenordner, kein zweiter Container). Per Knopfdruck werden – nach Freigabe in

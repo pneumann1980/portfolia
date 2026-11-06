@@ -1,6 +1,6 @@
 # Meilensteine: Entscheidungen, Grenzen, offene Fragen
 
-Stand: 06.11.2026 · Version 0.104.0 · Branch `claude/portfolia-dashboard-s9p6zr`
+Stand: 06.11.2026 · Version 0.105.0 · Branch `claude/portfolia-dashboard-s9p6zr`
 
 Reihenfolge: oben die Meilensteine M1–M5, danach die Versionseinträge (neueste zuerst) und am Ende die Entscheidungen und offenen Fragen.
 Die Befunde der Projektanalyse und ihre Behebung (0.60.0–0.65.0): [`PROJEKTANALYSE.md`](PROJEKTANALYSE.md), [`ARBEITSPLAN.md`](ARBEITSPLAN.md).
@@ -1428,6 +1428,17 @@ Commits und Tests: `docs/FINANCIAL_INTEGRITY_IMPLEMENTATION_REPORT.md`.
   behoben: Abdeckung des kuratierten Imports, Rundungs-/Gebührentoleranz der Gruppen, Fallanalyse aller Positionen).
 * **Grenzen:** native Futures-Exporte von MEXC/Bybit/Pionex nicht verifiziert (Spaltenzuordnung); Derivate ohne
   automatische steuerliche Einordnung; Docker-Build nur in CI.
+
+## 0.105.0 – Stichtag: jedes Asset gesetzt
+
+Rückmeldung zu 0.104.0: Aufgaben wie „SAVM auf MetaMask (ETH)“ erschienen weiter und endeten beim Klären in einem 409.
+Details: [`STICHTAG.md`](STICHTAG.md#jedes-asset-zum-stichtag-gesetzt-0105-0).
+
+* **Ausgleich vollständig:** auch Rundungsreste (Kleinstbeträge, nie kritisch); nicht ausgleichbarer Rest immer einzeln.
+* **Abdeckung je Bestand** (stimmt / weicht ab / ausgebucht / ohne Beleg) auf der Ausgleichsseite.
+* **Pläne ins Archiv nicht ausführbar:** Fehler schon in der Vorschau, Kandidaten der Klärung scheiden aus.
+* **Meldung statt Fehlerseite** bei Schreibversuchen ins Archiv (Diagnose, Klärung, Sammelaktionen).
+* **Reale Daten:** 21 Ausgleichszeilen (davon 8 Rundungsreste), danach 5 zur Einzelentscheidung, Aufgaben 24 → 17.
 
 ## 0.104.0 – Stichtag: Klärungsfälle folgen dem Stand
 

@@ -107,7 +107,8 @@
     </div>
     <form method="post" action="/settings/stichtag/ausgleich" id="settle-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cutoff" value="{{ p.cutoff.isoformat() }}">
-      <p class="hint"><b>{{ S.n_critical }} Zeile(n) einzeln entscheiden</b> (Verkauf ab dem Stichtag, Rest, große oder nicht bewertbare Differenz) – sie sind <b>nicht vorausgewählt</b>. {{ S.rows|length - S.n_critical - S.n_small }} normale Zeile(n) sind vorausgewählt{% if S.n_small %}; {{ S.n_small }} Kleinstbeträge (unter 1&nbsp;€) stehen unten gesammelt{% endif %}.</p>
+      {% set cv = S.coverage %}<p class="hint" id="abdeckung"><b>Abdeckung:</b> {{ cv.total }} Bestände (Konto · Asset) – {{ cv.matched }} stimmen mit dem Beleg überein, <b>{{ cv.deviating }} weichen ab (stehen in dieser Liste, auch Rundungsreste)</b>{% if cv.written_off %}, {{ cv.written_off }} von der Quelle bewusst als ausgebucht gezeigt{% endif %}, {{ cv.unverified }} ohne Beleg{% if cv.unverified %} (dort gilt der berechnete Stand – „Quellen jetzt abrufen“ bzw. einen Referenzbestand erfassen){% endif %}.</p>
+    <p class="hint"><b>{{ S.n_critical }} Zeile(n) einzeln entscheiden</b> (Verkauf ab dem Stichtag, Rest, große oder nicht bewertbare Differenz) – sie sind <b>nicht vorausgewählt</b>. {{ S.rows|length - S.n_critical - S.n_small }} normale Zeile(n) sind vorausgewählt{% if S.n_small %}; {{ S.n_small }} Kleinstbeträge (unter 1&nbsp;€) stehen unten gesammelt{% endif %}.</p>
       {% for g in S.groups %}{% set shown = g.rows|rejectattr('tier', 'equalto', 'small')|list %}{% if shown %}
       <details class="settle-acc" open>
         <summary><b>{{ g.account }}</b> <span class="hint">{{ shown|length }} Zeile(n)</span>

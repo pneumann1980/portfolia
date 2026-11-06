@@ -1,6 +1,6 @@
-# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.104.0)
+# Stichtag: ab einem Tag sauber weiterführen (0.97.0 – 0.105.0)
 
-Stand: 06.11.2026 · Version 0.104.0
+Stand: 06.11.2026 · Version 0.105.0
 
 Ein Stichtag (Standard 01.01.2025, in der App wählbar) teilt die Buchungen in ein **Archiv** (davor) und den **aktiven
 Zeitraum** (ab dem Stichtag). Steuer, Lots, Diagnose und Importe arbeiten ab dem Stichtag mit dem geprüften
@@ -17,6 +17,7 @@ Depotstart. **Es wird nichts gelöscht.** Einstieg: *Einstellungen → Stichtag*
 | 4 | 0.100.0 | **Alle Wege am Stichtag ausgerichtet:** Diagnose, Gesamtprüfung, CSV-Import/Sync/Prüf-Stapel, Quellenübernahme |
 | 5 | 0.101.0 | **Abgeleitete Vorschläge** aus Belegen nach dem Stichtag – nur wo sie belegt sind |
 | + | 0.102.0 | **Ausgleich zum Stichtag** (alles glattziehen) und **Quellenübernahme ab dem Stichtag** |
+| + | 0.105.0 | **Jedes Asset zum Stichtag gesetzt:** Rundungsreste im Ausgleich, Abdeckung, Archiv-Pläne ausgeschlossen, Meldung statt Fehlerseite |
 | + | 0.104.0 | **Klärungsfälle folgen dem Stichtag:** erledigte/archivierte Fälle erscheinen nicht mehr, Fortschritt im Fall, Nachlauf nach Stichtag-Aktionen |
 | + | 0.103.0 | **Ausgleich übersichtlich:** Vorher → Nachher, Gewichtung, Entscheidung je Zeile, eigener Zielbestand, Abruf, Zusammenfassung |
 
@@ -167,6 +168,29 @@ liegen seit dem Beleg weitere Buchungen, steht ein Hinweis, dass „nach Ausglei
 heute am Vortag des Stichtags (Abgang höchstens bis zum Eröffnungsbestand). Entspricht der Wert der App, entsteht keine
 Buchung; ungültige Eingaben werden abgelehnt, ohne zu buchen.
 
+### Jedes Asset zum Stichtag gesetzt (0.105.0)
+
+Rückmeldung zu 0.104.0: Es erschienen noch Aufgaben („Diese Buchungen gehören vermutlich zusammen: SAVM auf MetaMask (ETH)“), die
+beim Stichtag ausgeglichen sein müssten; „Jetzt klären?“ endete in einer Fehlerseite (HTTP 409).
+
+* **Ursache:** Der Ausgleich ließ **Rundungsreste** (unter 1e-8, z. B. SAVM: 2·10⁻¹¹ gegenüber der Quelle) bewusst aus. Die
+  Diagnose führt sie weiter als Abweichung; ihr Lösungsvorschlag wollte eine Buchung von 2024 ändern – das Archiv ist geschützt.
+* **Ausgleich vollständig:** Jede Abweichung zum Beleg wird ausgeglichen, auch Rundungsreste (Gruppe *Kleinstbeträge*,
+  nie kritisch, auch ohne Kurs). Nicht (vollständig) am Stichtag ausgleichbare Zeilen (Rest oberhalb des Eröffnungsbestands) sind
+  immer „kritisch“ und einzeln zu entscheiden.
+* **Abdeckung:** Die Seite zeigt, wie viele Bestände (Konto · Asset) mit dem Beleg übereinstimmen, wie viele abweichen (und
+  in der Liste stehen), wie viele die Quelle bewusst als ausgebucht zeigt und wie viele **ohne Beleg** sind (dort gilt der
+  berechnete Stand; „Quellen jetzt abrufen“ bzw. Referenzbestand erfassen).
+* **Pläne ins Archiv sind nicht ausführbar:** Jede Lösung der Diagnose/Klärung, die Buchungen vor dem Stichtag ändern, anlegen
+  oder ausblenden würde, hat einen Fehler in der Vorschau („Betrifft n Buchung(en) vor dem festgeschriebenen Stichtag …
+  Bestände gleicht der Ausgleich aus“); in Klärungsfällen scheidet der Kandidat damit aus.
+* **Sicherheitsnetz:** Ein Schreibversuch ins Archiv aus Diagnose, Klärung und Sammelaktionen liefert eine Meldung („Es wurde
+  nichts geändert“) statt der Fehlerseite.
+* **Grenze:** Bestände ohne Beleg lassen sich nicht ausgleichen (kein Sollwert). Ein Befund wegen eines *nicht mehr aktuellen*
+  Abrufs (gleicher Wert, älter als 48 Stunden) verschwindet erst mit einem frischen Abruf („Quellen jetzt abrufen“).
+* **Echtdaten (Kopie):** Ausgleich 21 Zeilen (davon 8 Rundungsreste; vorher 13), danach nur 5 zur Einzelentscheidung;
+  Aufgaben nach Ausgleich 17 (vorher 24); der Fall SAVM entfällt; Abdeckung: 86 Bestände, 10 stimmen, 17 weichen ab, 59 ohne Beleg.
+
 ### Klärungsfälle und Gesamtprüfung folgen dem Stand (0.104.0)
 
 Die Aufgaben „Bestände abgleichen“ u. a. sind gespeicherte **Klärungsfälle**. Sie wurden bisher nur bei einem Prüflauf bzw.
@@ -234,7 +258,7 @@ Regel „höchstens ein aktiver Stichtag“: ist bereits einer aktiv, kommt der 
 
 * `tests/test_cutover_fiat.py` (8), `test_cutover_core.py` (8), `test_cutover_page.py` (8), `test_cutover_fix.py` (18,
   einschließlich Export/Wiederherstellung), `test_cutover_scope.py` (6), `test_cutover_takeover.py` (2),
-  `test_cutover_derive.py` (7), `test_cutover_settle.py` (12), `test_cutover_cases.py` (8).
+  `test_cutover_derive.py` (7), `test_cutover_settle.py` (14), `test_cutover_cases.py` (10).
 * Zusätzlich 192 zufällige Kombinationen für die Gleichwertigkeit (Voll gegen Eröffnungsstand + aktiv) in beiden
   Rechenweisen.
 * `TZ=Europe/Berlin python -m pytest -q tests` · `ruff check app tests scripts` ·
