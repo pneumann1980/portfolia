@@ -546,7 +546,7 @@ def _counts(cov: dict[str, Any], a: Any, meta: dict[str, Any] | None = None) -> 
     ``state``: ``ok`` (Zählung erklärt), ``gap`` (unerklärte Differenz), ``unknown`` (Zählung fehlt bzw. gilt nur für
     eine Etappe), ``na`` (Quelle ohne unabhängige Zählung)."""
     ops = cov.get("operations")
-    skipped = sum(int(v or 0) for v in (a.skipped or {}).values()) + a.archived_events  # Archiv: bewusst nicht gebucht
+    skipped = sum(int(v or 0) for v in (a.skipped or {}).values()) + int(getattr(a, "archived_events", 0))
     out: dict[str, Any] = {"api": ops, "events": a.events, "lines": a.lines, "skipped": skipped,
                            "unit": COUNT_UNIT.get(a.provider, ""), "state": "na"}
     if isinstance(ops, int):
