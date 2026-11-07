@@ -104,7 +104,7 @@ def _run(ctx: Any, prog: Any | None, clarify: bool) -> dict[str, Any]:
                               lambda: csv_service(ctx).reevaluate_open())
         failed = int(out["stapel"].get("failed") or 0)
         if failed:
-            return fail(f"{failed} von {out['stapel'].get('batches', 0)} Prüfstapeln konnten nicht neu bewertet werden.")
+            return fail(f"{failed} von {out['stapel'].get('batches', 0)} Prüfstapeln nicht neu bewertet.")
         report = _step(prog, "chk_diag", "Buchungen, Bestände und Befunde berechnen", lambda: report_for(ctx))
         integ = _step(prog, "chk_integrity", "Bestände, FIFO, Dubletten, Kurse, Steuerdaten", lambda: I.run(ctx, None))
         if not integ.ok:
