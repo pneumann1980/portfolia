@@ -36,7 +36,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from app.db import fallback
-from app.diagnosis.model import LOSS_CLASS, Finding, HoldingRow, Scenario
+from app.diagnosis.model import LOSS_CLASS, Finding, HoldingRow, Scenario, holdings_tol
 from app.ledger.models import Tx
 from app.web.fmt import eur
 
@@ -207,8 +207,7 @@ def _family_last(idx: _Index, acc: str) -> dict[str, datetime]:
 # Hilfen
 # ----------------------------------------------------------------------------------------------------
 
-def _tol(v: Decimal) -> Decimal:
-    return max(Decimal("1e-8"), abs(v) * Decimal("1e-9"))
+_tol = holdings_tol
 
 
 def _eq(a: Decimal, b: Decimal) -> bool:

@@ -35,7 +35,7 @@ from app.csvimport.events import identity_keys, normalize_hash, source_ref_keys
 from app.csvimport.identity import PROVIDER_LABEL, canonical_provider, confirms, identity, note_identity_keys
 from app.csvimport.reconcile import hashes_in
 from app.diagnosis.collect import JournalMeta, Observed, Snapshot
-from app.diagnosis.model import Finding, HoldingRow, Report, Scenario, TxRef
+from app.diagnosis.model import Finding, HoldingRow, Report, Scenario, TxRef, holdings_tol
 from app.importer import contract as C
 from app.ledger.engine import DUST, REALIZED_KINDS, Disposal, DisposalPart, Lot
 from app.ledger.models import AssetInfo, Tx
@@ -2023,8 +2023,7 @@ def _rename_trades(idx: _Index, stats: dict[str, int]) -> list[Finding]:
 # Bestandsabgleich
 # ----------------------------------------------------------------------------------------------------
 
-def _tol(v: Decimal) -> Decimal:
-    return max(Decimal("1e-8"), abs(v) * Decimal("1e-9"))
+_tol = holdings_tol
 
 
 WRITEOFF_TAGS = ("lost", "stolen", "burn")

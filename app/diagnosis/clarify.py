@@ -50,7 +50,7 @@ from app.diagnosis import bulk as B
 from app.diagnosis import derivatives as DV
 from app.diagnosis import triage as TR
 from app.diagnosis.engine import diagnose, report_for
-from app.diagnosis.model import Finding, Report
+from app.diagnosis.model import Finding, Report, holdings_tol
 from app.diagnosis.recommend import recommend
 from app.ledger.engine import DUST, LedgerResult, run_ledger
 
@@ -495,7 +495,7 @@ def _issue_keys(led: LedgerResult) -> set[tuple[Any, ...]]:
 def _rounded(diff: Decimal, ref: Decimal) -> Decimal:
     """Rundungsrest der Quelle (Koinly 3–9, Explorer 18 Nachkommastellen) gilt als erfüllt – gleiche Toleranz wie der
     Bestandsvergleich der Diagnose (1e-8 bzw. 1e-9 relativ), nie darüber hinaus."""
-    return ZERO if abs(diff) <= max(Decimal("1e-8"), abs(ref) * Decimal("1e-9")) else diff
+    return ZERO if abs(diff) <= holdings_tol(ref) else diff
 
 
 def _stock_points(rep: Report, positions: set[tuple[str, str]]) -> dict[str, list[Decimal]]:

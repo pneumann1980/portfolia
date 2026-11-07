@@ -259,3 +259,8 @@ class Report:
     def top(self) -> list[Finding]:
         """Befunde ohne Einzelvorgänge (Übersicht)."""
         return [f for f in self.findings if f.parent is None]
+
+
+def holdings_tol(v: Decimal) -> Decimal:
+    """Toleranz des Bestandsvergleichs (Diagnose, Prüfbericht, Klärung): absolut 1e-8, relativ 1e-9 – eine Regel."""
+    return max(Decimal("1e-8"), abs(v) * Decimal("1e-9"))
