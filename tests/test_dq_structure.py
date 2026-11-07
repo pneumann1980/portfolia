@@ -76,7 +76,6 @@ def test_granular_plan_lists_each_finding_and_hints_are_tier_c(cfg):
 
 
 
-
 def test_checkrun_fails_if_any_import_batch_cannot_be_reevaluated(cfg, monkeypatch):
     """Eine unvollständige Neubewertung darf nicht als abgeschlossener Prüflauf erscheinen."""
     from types import SimpleNamespace

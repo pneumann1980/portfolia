@@ -138,6 +138,7 @@ def _run(ctx: Any, prog: Any | None, clarify: bool) -> dict[str, Any]:
     prog.finish(True, result=f"A {c['A']} · B {c['B']} · C {c['C']}")
     return out
 
+
 def job_run(ctx: Any) -> dict[str, Any]:
     prog = job_progress(ctx, JOB, LABEL, unit="Schritte", phases=PHASES)
     return run(ctx, prog)
