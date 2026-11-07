@@ -68,3 +68,14 @@ def test_skipped_autocheck_is_rescheduled_when_data_changed(c, monkeypatch):
     cx.settings.set("ledger.unmatched_transfers_as_flows", False)  # fachliche Änderung direkt nach dem Lauf
     assert AC.job_run(cx) == {"skipped": "letzter Lauf zu jung"}
     assert sched.calls and sched.calls[-1][0] == AC.JOB and 0 < sched.calls[-1][1] <= AC.MIN_GAP_S + AC.DEBOUNCE_S
+
+
+def test_start_page_shows_an_incomplete_run_over_http(c):
+    """PR #3 über den HTTP-Weg: die Startseite „Prüfen“ zeigt den fehlgeschlagenen Lauf und die letzte erfolgreiche
+    Berechnung, nicht „Alles geprüft“."""
+    cx = c.app.state.ctx
+    cx.db.set_state(CR.STATE_KEY, {"ok": False, "error": "Integritätsprüfung veraltet",
+                                   "finished_at": "2026-11-07T10:00:00Z", "last_ok_at": "2026-11-06T10:00:00Z"})
+    page = c.get("/quality/plan").text
+    assert "Prüfung nicht vollständig" in page and "Integritätsprüfung veraltet" in page
+    assert "Letzte erfolgreiche Berechnung" in page and "Alles geprüft" not in page
