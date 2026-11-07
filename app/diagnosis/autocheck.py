@@ -38,10 +38,25 @@ def _skip_reason(ctx: Any) -> str:
     return ""
 
 
+def _behind(ctx: Any) -> bool:
+    """Ist das letzte Prüfergebnis älter als der Datenstand (Änderung während oder kurz nach einem Lauf)?"""
+    from app.diagnosis import actions as A
+    from app.diagnosis import integrity as I
+
+    run = I.load(ctx.db)
+    return run is None or not run.ok or run.stale or (bool(run.version) and run.version != A.data_version(ctx.db))
+
+
 def job_run(ctx: Any) -> dict[str, Any]:
     why = _skip_reason(ctx)
     if why:
         log.debug("Auto-Prüfung übersprungen: %s", why)
+        # Übersprungen, weil gerade ein Lauf/Import läuft oder der letzte zu jung ist: ist der Datenstand neuer als das
+        # Ergebnis, später nachholen – sonst bliebe die Prüfung bis zur nächsten Änderung still veraltet
+        if why != "ausgeschaltet" and ctx.scheduler is not None and _behind(ctx):
+            last = parse_iso(str(CR.previous(ctx.db).get("finished_at") or ""))
+            wait = MIN_GAP_S - (datetime.now(UTC) - last).total_seconds() if last is not None else 0
+            ctx.scheduler.debounce(JOB, max(DEBOUNCE_S, min(wait + 1, MIN_GAP_S + DEBOUNCE_S)))
         return {"skipped": why}
     prog = job_progress(ctx, CR.JOB, CR.LABEL, unit="Schritte", phases=CR.PHASES)
     try:

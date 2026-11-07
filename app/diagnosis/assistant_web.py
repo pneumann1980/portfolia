@@ -121,9 +121,10 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
         if n:
             batch = {**same, "n": n}
     rest = G.rest_overview(ctx) if st.task is None else {}
+    incomplete = G.incomplete_check(ctx) if st.task is None else ""
     declined = G.declined_takeovers(ctx) if st.task is None else []
     resp = render(request, "guide.html", active="quality", step=st, task=st.task, title=G.TITLE, rest=rest,
-                  rest_n=sum(rest.values()), declined=declined,
+                  rest_n=sum(rest.values()), declined=declined, incomplete=incomplete,
                   pos=G.theme_position(st), msg=msg, err=err, errors=errors or [], undo=undo, gone=gone,
                   chosen=chosen, values=values or {}, values_for=chosen if values is not None else "",
                   hints=show_hints, batch=batch, **_common())

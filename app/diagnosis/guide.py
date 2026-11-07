@@ -285,6 +285,21 @@ def reopen_takeover(ctx: Any, sid: int) -> bool:
     return True
 
 
+def incomplete_check(ctx: Any) -> str:
+    """Grund, warum „Alles geprüft“ nicht gilt, obwohl keine Aufgabe offen ist (I10/I15): der letzte Prüflauf bzw. die
+    letzte Integritätsprüfung ist fehlgeschlagen – ihre Ergebnisse fehlen dann in den Aufgaben. Sonst leer."""
+    from app.diagnosis import checkrun as CR
+    from app.diagnosis import integrity as I
+
+    last = CR.previous(ctx.db)
+    if last and last.get("ok") is False:
+        return str(last.get("error") or "Ein Prüfschritt ist fehlgeschlagen.")
+    run = I.load(ctx.db)
+    if run is not None and not run.ok:
+        return f"Integritätsprüfung fehlgeschlagen: {run.error or 'unbekannter Fehler'}"
+    return ""
+
+
 def rest_overview(ctx: Any) -> dict[str, int]:
     """Fachlich noch offene Arbeit außerhalb der aktuell vorgelegten Fragen – aus den vorhandenen Zuständen (zentrale
     Importprüfung, „Weiß ich nicht“-Befunde, Klärungsfälle), keine eigene Definition von „offen“."""
