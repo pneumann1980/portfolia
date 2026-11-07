@@ -87,14 +87,31 @@ def _run(ctx: Any, prog: Any | None, clarify: bool) -> dict[str, Any]:
     out: dict[str, Any] = {"ok": True, "error": "", "applied": 0, "cases": 0}
     if prog is None:
         prog = job_progress(ctx, JOB, LABEL, unit="Schritte", phases=PHASES)
+
+    def fail(message: str) -> dict[str, Any]:
+        # Die letzte erfolgreiche Auswertung bleibt als Vergleichsbasis erhalten. Der Fehlversuch bekommt einen
+        # eigenen Zeitstempel, damit auch ein im Hintergrund gestarteter Lauf sichtbar und abgeschlossen ist.
+        last_ok_at = before.get("last_ok_at") or (before.get("finished_at") if before.get("ok", True) else "")
+        out.update(ok=False, error=message[:300], finished_at=iso(datetime.now(UTC)),
+                   duration_s=round((datetime.now(UTC) - started).total_seconds(), 1),
+                   keys=before.get("keys") or {}, last_ok_at=last_ok_at)
+        ctx.db.set_state(STATE_KEY, {**before, **out})
+        prog.finish(False, result=out["error"])
+        return out
+
     try:
         out["stapel"] = _step(prog, "chk_stapel", "Importierte Vorgänge erneut mit den Buchungen abgleichen",
                               lambda: csv_service(ctx).reevaluate_open())
+        failed = int(out["stapel"].get("failed") or 0)
+        if failed:
+            return fail(f"{failed} von {out['stapel'].get('batches', 0)} Prüfstapeln konnten nicht neu bewertet werden.")
         report = _step(prog, "chk_diag", "Buchungen, Bestände und Befunde berechnen", lambda: report_for(ctx))
         integ = _step(prog, "chk_integrity", "Bestände, FIFO, Dubletten, Kurse, Steuerdaten", lambda: I.run(ctx, None))
-        out["integrity_open"] = integ.counts()["open"] if integ.ok else None
         if not integ.ok:
-            out["error"] = integ.error
+            return fail(f"Integritätsprüfung fehlgeschlagen: {integ.error or 'unbekannter Fehler'}")
+        if integ.stale:
+            return fail("Integritätsprüfung veraltet: Die Daten haben sich während der Prüfung geändert.")
+        out["integrity_open"] = integ.counts()["open"]
         if clarify:
             res = _step(prog, "chk_clarify", "Fälle untersuchen (lokal, ohne Abrufe)",
                         lambda: K.run(ctx, "manual", research=False))
@@ -105,20 +122,21 @@ def _run(ctx: Any, prog: Any | None, clarify: bool) -> dict[str, Any]:
         plan = _step(prog, "chk_plan", "Arbeitsplan erstellen", lambda: WP.build(ctx, report))
     except Exception as e:
         log.exception("Prüflauf fehlgeschlagen")
-        out.update(ok=False, error=f"{type(e).__name__}: {e}"[:300])
-        prog.finish(False, result=out["error"])
-        return out
+        return fail(f"{type(e).__name__}: {e}")
+
     keys = {i.key: i.title for i in plan.items if i.tier != "C"}
     old = before.get("keys") or {}
-    out.update(counts=plan.counts, keys=keys, finished_at=iso(datetime.now(UTC)), state=plan.state,
+    had_success = bool(before.get("last_ok_at") or (before.get("finished_at") if before.get("ok", True) else ""))
+    finished_at = iso(datetime.now(UTC))
+    out.update(counts=plan.counts, keys=keys, finished_at=finished_at, last_ok_at=finished_at, state=plan.state,
                duration_s=round((datetime.now(UTC) - started).total_seconds(), 1),
-               new=[t for k, t in keys.items() if k not in old] if before else [],
-               gone=[t for k, t in old.items() if k not in keys] if before else [], first=not before)
+               new=[t for k, t in keys.items() if k not in old] if had_success else [],
+               gone=[t for k, t in old.items() if k not in keys] if had_success else [],
+               first=not had_success)
     ctx.db.set_state(STATE_KEY, out)
     c = plan.counts
     prog.finish(True, result=f"A {c['A']} · B {c['B']} · C {c['C']}")
     return out
-
 
 def job_run(ctx: Any) -> dict[str, Any]:
     prog = job_progress(ctx, JOB, LABEL, unit="Schritte", phases=PHASES)

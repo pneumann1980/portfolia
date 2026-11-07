@@ -2,7 +2,10 @@
    Knöpfe. Ohne Fachbegriffe – die Stufen A/B/C und alle Einzelfälle stehen unter Experten → Alle Fälle. #}
 <div id="dq-plan" class="stack">
   <section class="card dq-start" aria-labelledby="dq-start-h">
-    {% if plan.state == 'ungeprueft' %}
+    {% if last and last.ok is defined and not last.ok %}
+      <h2 id="dq-start-h">Prüfung nicht vollständig</h2>
+      <p>Mindestens ein Prüfschritt ist fehlgeschlagen. Die angezeigten Aufgaben sind möglicherweise nicht vollständig.</p>
+    {% elif plan.state == 'ungeprueft' %}
       <h2 id="dq-start-h">Noch nicht geprüft</h2>
       <p>Portfolia rechnet deine Buchungen einmal durch (nur auf diesem Gerät, ohne Abrufe) und stellt dir danach Fragen zu allem, was nicht zusammenpasst.</p>
     {% elif not assist_n %}
@@ -25,7 +28,10 @@
       <form method="post" action="/quality/pruefen" class="inline" data-wait><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/quality"><button class="btn {{ 'primary' if plan.state == 'ungeprueft' else 'ghost' }}" type="submit" title="Alles neu durchrechnen – lokal, ohne Abrufe">Neu berechnen</button></form>
     </div>
     {% if plan.stale and not auto_check %}<div class="alert warn"><span class="icon">!</span><div>Seit der letzten Berechnung haben sich deine Daten geändert, und die automatische Nachprüfung ist aus. „Neu berechnen“ bringt alles auf den aktuellen Stand.</div></div>{% endif %}
-    {% if last and last.finished_at %}
+    {% if last and last.ok is defined and not last.ok %}
+      <div class="alert warn" role="alert"><span class="icon">!</span><div>Letzter Prüflauf fehlgeschlagen: {{ last.error }}. Bitte erneut prüfen.</div></div>
+      {% if last.last_ok_at %}<p class="hint">Letzte erfolgreiche Berechnung: {{ last.last_ok_at|datetime_de }}</p>{% endif %}
+    {% elif last and last.finished_at %}
       <p class="hint">Zuletzt berechnet: {{ last.finished_at|datetime_de }}{% if not last.first %} · seitdem {{ last.new|length }} neu, {{ last.gone|length }} erledigt{% endif %}{% if last.applied %} · automatisch korrigiert: {{ last.applied }}{% endif %}</p>
       {% if last.new or last.gone %}<details class="vk-table"><summary class="hint">Was hat sich geändert?</summary>
         <ul class="plain-list">{% for t in last.new %}<li>neu: {{ t }}</li>{% endfor %}{% for t in last.gone %}<li>erledigt: {{ t }}</li>{% endfor %}</ul></details>{% endif %}

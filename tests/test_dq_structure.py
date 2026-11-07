@@ -75,6 +75,60 @@ def test_granular_plan_lists_each_finding_and_hints_are_tier_c(cfg):
     assert all(i.tier == "C" for i in g.items if i.kind == "befund" and i.recommendation.startswith("Kein Handlungs"))
 
 
+
+
+def test_checkrun_fails_if_any_import_batch_cannot_be_reevaluated(cfg, monkeypatch):
+    """Eine unvollständige Neubewertung darf nicht als abgeschlossener Prüflauf erscheinen."""
+    from types import SimpleNamespace
+
+    ctx = ctx_for(cfg, usdt_double_out())
+    monkeypatch.setattr(CR, "csv_service", lambda _ctx: SimpleNamespace(
+        reevaluate_open=lambda: {"batches": 3, "failed": 1, "before": 2, "after": 2}))
+
+    def must_not_continue(*_args, **_kwargs):
+        raise AssertionError("Nach einem fehlgeschlagenen Stapel darf die Prüfung nicht fortfahren.")
+
+    monkeypatch.setattr(CR, "report_for", must_not_continue)
+    result = CR.run(ctx, clarify=False)
+    assert result["ok"] is False and "1 von 3" in result["error"]
+    assert CR.previous(ctx.db)["ok"] is False
+    progress = ctx.job_status()[CR.JOB]["progress"]
+    assert progress["running"] is False and progress["pct"] < 100
+
+
+def test_checkrun_fails_on_integrity_error_and_preserves_last_success(cfg, monkeypatch):
+    """Ein intern abgefangener Integritätsfehler darf weder einen Erfolg melden noch die Historie löschen."""
+    from types import SimpleNamespace
+
+    ctx = ctx_for(cfg, usdt_double_out())
+    before = CR.run(ctx, clarify=False)
+    assert before["ok"] is True
+    monkeypatch.setattr(CR.I, "run", lambda *_args: SimpleNamespace(
+        ok=False, stale=False, error="Testfehler", counts=lambda: {"open": 0}))
+
+    def must_not_continue(*_args, **_kwargs):
+        raise AssertionError("Nach einer fehlgeschlagenen Integritätsprüfung darf keine Klärung starten.")
+
+    monkeypatch.setattr(CR.WP, "build", must_not_continue)
+    result = CR.run(ctx, clarify=False)
+    assert result["ok"] is False and "Testfehler" in result["error"]
+    last = CR.previous(ctx.db)
+    assert last["ok"] is False and last["last_ok_at"] == before["finished_at"]
+    assert last["keys"] == before["keys"]
+
+
+def test_checkrun_refuses_stale_integrity_result(cfg, monkeypatch):
+    """Auch eine technisch fehlerfreie, aber veraltete Integritätsauswertung ist keine fertige Prüfung."""
+    from types import SimpleNamespace
+
+    ctx = ctx_for(cfg, usdt_double_out())
+    monkeypatch.setattr(CR.I, "run", lambda *_args: SimpleNamespace(
+        ok=True, stale=True, error="", counts=lambda: {"open": 0}))
+    result = CR.run(ctx, clarify=False)
+    assert result["ok"] is False and "veraltet" in result["error"]
+    assert CR.previous(ctx.db)["ok"] is False
+
+
 def test_checkrun_reports_changes_and_never_fetches(cfg, monkeypatch):
     ctx = ctx_for(cfg, usdt_double_out())
     calls: list[str] = []
