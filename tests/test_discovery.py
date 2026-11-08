@@ -572,3 +572,11 @@ def test_settings_export_and_entry_links(app_client):
     assert exp.headers["content-disposition"].startswith("attachment") and data["companies"][0]["ticker"] == "ALPH"
     assert data["analyses"][0]["result"]["scores"]["quality"]["max"] == 100
     assert "/discovery" in c.get("/").text  # Navigation
+
+
+@pytest.mark.parametrize(("raw", "eur"), [("1.000", 1000.0), ("1.000,50", 1000.5), ("2500", 2500.0), ("99.5", 99.5),
+                                          ("abc", 1000.0), ("-5", 0.0), ("1.000.000.000", 10_000_000.0)])
+def test_amount_parsing_german_format(raw, eur):
+    from app.discovery.web import _amount
+
+    assert _amount(raw) == eur

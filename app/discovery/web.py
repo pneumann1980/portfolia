@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -41,10 +42,15 @@ def _back(target: str, **q: Any) -> RedirectResponse:
 
 
 def _amount(v: Any) -> float:
+    """Betrag in EUR aus der Eingabe (deutsch „1.000,50“, „1.000“ oder „1000.5“); 0 … 10 Mio."""
+    t = str(v or "").strip().replace(" ", "").replace("€", "")
+    if "," in t:
+        t = t.replace(".", "").replace(",", ".")
+    elif re.fullmatch(r"\d{1,3}(\.\d{3})+", t):
+        t = t.replace(".", "")
     try:
-        return max(0.0, min(10_000_000.0, float(str(v).replace(".", "").replace(",", ".")) if "," in str(v)
-                            else float(v)))
-    except (TypeError, ValueError):
+        return max(0.0, min(10_000_000.0, float(t)))
+    except ValueError:
         return FIT.DEFAULT_AMOUNT
 
 

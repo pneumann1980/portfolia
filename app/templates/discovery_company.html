@@ -159,7 +159,7 @@
   <p class="hint">Hypothetischer Kauf über {{ s.amount|eur }} – <b>keine Buchung, keine Order</b>. Portfolio-Daten verlassen das Gerät nicht (keine Übergabe an KI-Anbieter).</p>
   {% if s.total_before <= 0 %}<div class="alert"><span class="icon">i</span><div>Kein bewertetes Portfolio – Gewichte und Überschneidungen sind nicht aussagekräftig.</div></div>{% endif %}
   {% if s.held %}<div class="alert warn"><span class="icon">!</span><div>Bereits im Portfolio: {% for h in s.held %}{{ h.name }} ({{ h.value|eur }}){{ ', ' if not loop.last }}{% endfor %} – die Simulation stockt diese Position auf.</div></div>{% endif %}
-  <div class="kpis">
+  <div class="kpis disc-kpis">
     <div class="kpi"><div class="label">Portfolio vorher → nachher</div><div class="value">{{ s.total_before|eur_compact }} → {{ s.total_after|eur_compact }}</div></div>
     <div class="kpi"><div class="label">Gewicht der Position</div><div class="value">{{ s.new_weight|pct(1, false) }}</div></div>
     <div class="kpi"><div class="label">Top-5-Konzentration</div><div class="value">{{ s.top5_before|pct(1, false) }} → {{ s.top5_after|pct(1, false) }}</div></div>
