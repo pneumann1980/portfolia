@@ -294,18 +294,26 @@ def performance(request: Request, period: str = "1J", scope: str = "total", star
     assets = scope_assets(ctx, scope)
     s = P.total_series(hist) if assets is None else P.group_series(hist, assets)
     rows = []
+    # Kennzahlen je tatsächlich ermittelten Grenzen (Startindex, Endindex, ab Depotstart) – nur für diesen Aufruf:
+    # derselbe Zeitraum (z. B. der gewählte Standardzeitraum oder gleiche eigene Grenzen) wird einmal berechnet
+    done: dict[tuple[int, int, bool], dict[str, Any]] = {}
+
+    def metrics_for(a: int, b: int, inc: bool) -> dict[str, Any]:
+        if (a, b, inc) not in done:
+            done[(a, b, inc)] = P.metrics(hist, s, a, b, inc)
+        return dict(done[(a, b, inc)])  # Kopie: die Auswahl wird unten ergänzt
+
     for key in P.PERIODS:
         a, b, inc = P.bounds(hist, key)
-        m = P.metrics(hist, s, a, b, inc)
-        rows.append({"key": key, "label": P.PERIOD_LABELS[key], **m})
+        rows.append({"key": key, "label": P.PERIOD_LABELS[key], **metrics_for(a, b, inc)})
     sd, ed = parse_d(start), parse_d(end)
     if sd or ed:
         a, b, inc = P.bounds(hist, start=sd, end=ed)
-        sel = P.metrics(hist, s, a, b, inc)
+        sel = metrics_for(a, b, inc)
         sel_label = f"{(sd or hist.start).strftime('%d.%m.%Y')} – {(ed or hist.dates[-1]).strftime('%d.%m.%Y')}"
     else:
         a, b, inc = P.bounds(hist, period)
-        sel = P.metrics(hist, s, a, b, inc)
+        sel = metrics_for(a, b, inc)
         sel_label = P.PERIOD_LABELS.get(period.upper(), period)
     sel["quality"] = P.valuation_state(hist, a, b, assets)
     est = {k: v for k, v in hist.estimated_days.items() if v and (assets is None or k in assets)}
