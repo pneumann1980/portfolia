@@ -138,7 +138,7 @@ Anzeige zufällige Einmal-Token des Prüfstapels.
     Werte mit der unabhängigen Berechnung überein.
   - Fehlende Kurse (Kurslücke über 8 Monate) liefern identische Werte.
 
-Gesamtlauf `TZ=Europe/Berlin pytest -q tests`: ERGEBNIS_VOLLTEST. `ruff check app tests scripts` meldet keinen Befund.
+Gesamtlauf `TZ=Europe/Berlin pytest -q tests`: 2.710 bestanden, 3 übersprungen (erwartet), 0 Fehler, Exit-Code 0, Laufzeit 1.361 s (2.713 Tests laut JUnit-Bericht; Abweichung zur historischen Zahl 2.683 = neue Tests dieses und vorheriger Änderungen). `ruff check app tests scripts` meldet keinen Befund.
 mypy (CI-Umfang plus geänderte Module) findet vorher und nachher 359 Befunde, darunter keinen neuen. Dieser Wert ist
 mit einer anderen mypy-Version gemessen als die historischen 344.
 
