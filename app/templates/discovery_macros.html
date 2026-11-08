@@ -1,0 +1,71 @@
+{# Gemeinsame Bausteine für Discovery-Seiten #}
+{% macro origin(o) -%}
+  {%- if o == 'reported' -%}<span class="badge good" title="direkt aus einem eingereichten Bericht bzw. vom Datenanbieter">berichtet</span>
+  {%- elif o == 'derived' -%}<span class="badge info" title="deterministisch aus berichteten Werten berechnet">berechnet</span>
+  {%- elif o == 'estimated' -%}<span class="badge warn" title="Modell- oder KI-Schätzung bzw. Annahme">geschätzt</span>
+  {%- else -%}<span class="badge crit" title="kein belastbarer Wert">fehlt</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro money(v, ccy='') -%}
+  {%- if v is none -%}–
+  {%- elif v|abs >= 1e12 -%}{{ (v / 1e12)|num(2) }} Bio. {{ ccy }}
+  {%- elif v|abs >= 1e9 -%}{{ (v / 1e9)|num(2) }} Mrd. {{ ccy }}
+  {%- elif v|abs >= 1e6 -%}{{ (v / 1e6)|num(1) }} Mio. {{ ccy }}
+  {%- else -%}{{ v|num(0) }} {{ ccy }}{%- endif -%}
+{%- endmacro %}
+
+{% macro val(v, fmt, ccy='') -%}
+  {%- if v is none or v == '' -%}<span class="muted">–</span>
+  {%- elif fmt == 'pct' -%}{{ v|pct(1, false) }}
+  {%- elif fmt == 'money' -%}{{ money(v, ccy) }}
+  {%- elif fmt == 'x' -%}{{ v|num(1) }}×
+  {%- elif fmt == 'num' -%}{{ v|num(2) if v is number else v }}
+  {%- else -%}{{ v }}{%- endif -%}
+{%- endmacro %}
+
+{% macro src(id) -%}<a class="badge" href="#src-{{ id|replace(':', '-') }}" title="Quelle {{ id }}">{{ id if id|length < 8 else 'SEC ' ~ id[4:14] ~ '…' }}</a>{%- endmacro %}
+
+{% macro scorechip(s, label=None) -%}
+  {%- if s and s.total is not none -%}
+    <span class="disc-chip {{ 'incomplete' if not s.complete }}" title="{{ label or '' }} {{ s.total|num(0) }} von {{ s.max|num(0) }} Punkten{{ ' – unvollständig (Datenabdeckung unter 70 %)' if not s.complete }}">
+      <b>{{ s.total|num(0) }}</b><span class="hint">/{{ s.max|num(0) }}</span>{% if not s.complete %} <span class="badge warn">unvollst.</span>{% endif %}</span>
+  {%- else -%}<span class="muted">–</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro criterion(c, ccy) %}
+<details class="disc-crit" id="k-{{ c.key }}">
+  <summary>
+    <span class="disc-crit-title">{{ c.label }}</span>
+    <span class="disc-crit-pts">{% if c.points is not none %}<b>{{ c.points|num(1) }}</b> von {{ c.max|num(0) }}{% else %}<span class="badge crit">nicht bewertet</span> 0 von {{ c.max|num(0) }}{% endif %}</span>
+    <span class="meter disc-meter {{ 'crit' if c.points is none }}"><div style="width:{{ ((c.points or 0) / c.max * 100)|round(0) }}%"></div></span>
+    <span class="badge">{{ {'rule': 'Regel', 'ai': 'KI (belegt)', 'mixed': 'Regel + KI'}[c.kind] }}</span>
+  </summary>
+  <div class="disc-crit-body">
+    <dl class="kv">
+      <dt>1. Definition</dt><dd>{{ c.definition }}</dd>
+      <dt>2. Bewertungsskala</dt><dd><ul class="plain-list">{% for s in c.scale %}<li>{{ s }}</li>{% endfor %}</ul></dd>
+      <dt>3. Maximalpunkte</dt><dd>{{ c.max|num(0) }}</dd>
+      <dt>4. Vergebene Punkte</dt><dd>{% if c.points is not none %}{{ c.points|num(1) }}{% else %}0 (nicht bewertet){% endif %}
+        {% for p in c.parts %}<div class="hint">{{ p.art }}-Teil: {{ p.points|num(1) if p.points is not none else 'nicht bewertet' }} von {{ p.max|num(0) }}</div>{% endfor %}</dd>
+      <dt>5. Fakten und Kennzahlen</dt><dd>{% if c.facts %}<table class="compact disc-facts"><tbody>
+        {% for f in c.facts %}<tr><td>{{ f.label }}</td><td class="num nowrap">{{ val(f.value, f.fmt, ccy) }}</td><td>{{ origin(f.origin) }}</td><td class="hint">{{ f.period }}{% if f.source %} {{ src(f.source) }}{% endif %}{% if f.note %}<div>{{ f.note }}</div>{% endif %}</td></tr>{% endfor %}
+        </tbody></table>{% else %}<span class="muted">keine</span>{% endif %}</dd>
+      <dt>6. Berechnung / Regel</dt><dd>{{ c.rule or '–' }}</dd>
+      <dt>7. Begründung</dt><dd>{{ c.reason or '–' }}</dd>
+      <dt>8. Quellen</dt><dd>{% for s in c.sources %}{{ src(s) }} {% else %}{% if c.kind == 'rule' %}<span class="hint">siehe Fakten (Herkunft je Wert)</span>{% else %}<span class="badge crit">keine Belege</span>{% endif %}{% endfor %}</dd>
+      <dt>9. Gegenargumente</dt><dd>{% if c.counter %}<ul class="plain-list">{% for x in c.counter %}<li>{{ x }}</li>{% endfor %}</ul>{% else %}<span class="muted">keine genannt</span>{% endif %}</dd>
+      <dt>10. Konfidenz</dt><dd>{% if c.confidence is not none %}{{ c.confidence|pct(0, false) }}{% elif c.kind == 'rule' and c.points is not none %}deterministisch (Datenqualität siehe Herkunft){% else %}–{% endif %}</dd>
+      <dt>11. Fehlende Informationen</dt><dd>{% if c.missing %}<ul class="plain-list">{% for x in c.missing %}<li>{{ x }}</li>{% endfor %}</ul>{% else %}<span class="muted">keine</span>{% endif %}</dd>
+    </dl>
+  </div>
+</details>
+{% endmacro %}
+
+{% macro scorecard(s, ccy, open=false) %}
+<details class="card disc-score" id="score-{{ s.key }}" {{ 'open' if open }}>
+  <summary class="card-head"><h2>{{ s.label }}: {{ s.total|num(1) }} von {{ s.max|num(0) }} Punkten</h2>
+    <span class="hint">Datenabdeckung {{ s.coverage|pct(0, false) }}{% if not s.complete %} · <span class="badge warn">unvollständig</span>{% endif %}</span></summary>
+  <p class="hint">Gesamtscore = Summe der Teilpunkte ({% for c in s.criteria %}{{ (c.points or 0)|num(1) }}{{ ' + ' if not loop.last }}{% endfor %} = {{ s.total|num(1) }}). Nicht bewertete Kriterien zählen 0 Punkte.</p>
+  {% for c in s.criteria %}{{ criterion(c, ccy) }}{% endfor %}
+</details>
+{% endmacro %}

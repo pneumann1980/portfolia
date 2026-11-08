@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% from "discovery_macros.html" import origin, money, val, src, scorechip, scorecard with context %}
+{% block title %}{{ co.name }} – Discovery{% endblock %}
+{% block heading %}<a href="/discovery" class="hint">Discovery</a> › {{ co.ticker }}{% endblock %}
+{% set m = res.market if res else {} %}
+{% set ccy = (res.fundamentals.currency if res else '') or '' %}
+{% block content %}
+{% if msg %}<div class="alert good"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+{% if err %}<div class="alert crit"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+
+<section class="card disc-head">
+  <div class="card-head">
+    <div>
+      <h2 style="margin:0">{{ co.name }} <span class="badge">{{ co.ticker }}</span>{% if co.tickers|length > 1 %} <span class="hint">weitere Listings: {{ co.tickers|reject('equalto', co.ticker)|join(', ') }}</span>{% endif %}</h2>
+      <div class="hint">{{ co.exchange or 'Börse unbekannt' }} · {{ co.sector or '–' }}{% if co.industry %} · {{ co.industry }}{% endif %}{% if co.country %} · {{ co.country }}{% endif %}{% if co.cik %} · SEC-CIK {{ co.cik }}{% endif %}
+        · Status: <b>{{ statuses[co.status] }}</b></div>
+    </div>
+    <div class="row" style="gap:6px;flex-wrap:wrap">
+      <form method="post" action="/discovery/c/{{ co.id }}/analyse" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit">{{ 'Analyse aktualisieren' if an else 'Analyse erstellen' }}</button></form>
+      {% if an %}<form method="post" action="/discovery/c/{{ co.id }}/analyse" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="force" value="1"><button class="btn sm ghost" type="submit" title="auch ohne neue Daten eine neue Version erstellen">Trotzdem neu erstellen</button></form>{% endif %}
+      <form method="post" action="/discovery/c/{{ co.id }}/watchlist" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Zur Watchlist</button></form>
+      {% for st, label in [('beobachten', 'Beobachten'), ('zurueckgestellt', 'Zurückstellen'), ('verworfen', 'Verwerfen'), ('neu', 'Status zurücksetzen')] if st != co.status %}
+      <form method="post" action="/discovery/c/{{ co.id }}/status" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="{{ st }}"><button class="btn sm ghost" type="submit">{{ label }}</button></form>{% endfor %}
+    </div>
+  </div>
+  {% if not an %}
+    <p class="hint">Noch keine Analyse. „Analyse erstellen“ lädt Kennzahlen (SEC EDGAR), Kurs und Stammdaten (Yahoo Finance){% if ai_on %} und erstellt den KI-Teil (Geschäftsmodell, These, Gegenhypothese, qualitative Kriterien){% else %}; die KI ist aus – qualitative Kriterien bleiben unbewertet{% endif %}.</p>
+  {% else %}
+  <div class="kpis disc-kpis">
+    <div class="kpi"><div class="label">Kurs</div><div class="value">{{ m.price|num(2) if m.price else '–' }} {{ m.ccy or '' }}</div><div class="sub">{{ m.at|datetime_de if m.at else 'kein Kurs' }}{% if m.stale %} · <span class="badge warn">veraltet</span>{% endif %} · {{ m.source or '' }}</div></div>
+    <div class="kpi"><div class="label">Marktkapitalisierung</div><div class="value">{{ money(m.market_cap, m.ccy) }}</div><div class="sub">{{ origin(m.market_cap_origin) }}</div></div>
+    <div class="kpi"><div class="label">Analyse vom</div><div class="value">{{ an.created_at|datetime_de }}</div><div class="sub">{{ an.trigger }}{% if an.provider %} · KI: {{ an.provider }} {{ an.model }}{% else %} · ohne KI{% endif %} · Berechnung v{{ an.calc_version }}</div></div>
+    <div class="kpi"><div class="label">Datenabdeckung / Konfidenz</div><div class="value">{{ res.data_coverage|pct(0, false) }} / {{ (an.confidence or 0)|pct(0, false) }}</div><div class="sub">Kernkennzahlen der letzten 5 Jahre</div></div>
+  </div>
+  <div class="disc-scores">
+    {% for k, label in [('disruption', 'Disruption'), ('quality', 'Quality'), ('garp', 'Growth/GARP'), ('nash', 'Fundamental (Nash-inspiriert)'), ('valuation', 'Valuation')] %}
+    <a class="disc-score-tile" href="#score-{{ k }}"><span class="label">{{ label }}</span>{{ scorechip(res.scores[k], label) }}</a>{% endfor %}
+    {% if fit %}<a class="disc-score-tile" href="#fit"><span class="label">Portfolio-Fit ({{ amount|num(0) }} €)</span>{{ scorechip(fit.score, 'Portfolio-Fit') }}</a>{% endif %}
+  </div>
+  <p class="hint">Jeder Score ist eigenständig und die Summe seiner aufklappbaren Kriterien. „unvollst.“ = weniger als 70 % der Maximalpunkte konnten bewertet werden (fehlende Daten zählen 0 Punkte, nichts wird geschätzt). Keine Kaufempfehlung.</p>
+  {% if an.id != versions[0].id %}<div class="alert warn"><span class="icon">!</span><div>Ältere Version vom {{ an.created_at|datetime_de }} – <a href="/discovery/c/{{ co.id }}">aktuelle Version anzeigen</a></div></div>{% endif %}
+  {% if res.ai_meta and res.ai_meta.error %}<div class="alert warn"><span class="icon">i</span><div>KI-Teil nicht erstellt: {{ res.ai_meta.error }}. Regelbasierte Kriterien sind bewertet, qualitative bleiben offen.</div></div>{% endif %}
+  {% for e in res.errors %}<div class="alert warn"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
+  {% endif %}
+</section>
+
+{% if res %}
+<nav class="seg disc-toc" aria-label="Abschnitte">
+  <a href="#geschaeft">Geschäftsmodell</a><a href="#these">These</a><a href="#gegen">Gegenhypothese</a><a href="#score-disruption">Scorecards</a><a href="#fundamental">Fundamentaldaten</a><a href="#bewertung">Bewertung</a><a href="#fit">Portfolio-Fit</a><a href="#meilensteine">Meilensteine</a><a href="#quellen">Quellen</a><a href="#versionen">Versionen</a>
+</nav>
+
+<section class="card" id="geschaeft">
+  <div class="card-head"><h2>Geschäftsmodell</h2>{% for b in res.business.belege or [] %}{{ src(b) }} {% endfor %}</div>
+  {% set b = res.business %}
+  {% if b.was %}
+  {% if b.hinweis %}<p class="hint">{{ b.hinweis }}</p>{% endif %}
+  <dl class="kv">
+    <dt>Was macht das Unternehmen?</dt><dd>{{ b.was }}</dd>
+    {% if b.produkte %}<dt>Produkte und Dienstleistungen</dt><dd><ul class="plain-list">{% for p in b.produkte %}<li>{{ p }}</li>{% endfor %}</ul></dd>{% endif %}
+    {% if b.kunden %}<dt>Kunden</dt><dd>{{ b.kunden }}</dd>{% endif %}
+    {% if b.erloesmodell %}<dt>Wie verdient es Geld?</dt><dd>{{ b.erloesmodell }}</dd>{% endif %}
+    {% if b.besonderheit %}<dt>Was ist besonders?</dt><dd>{{ b.besonderheit }}</dd>{% endif %}
+    {% if b.wettbewerber %}<dt>Wettbewerber</dt><dd><ul class="plain-list">{% for w in b.wettbewerber %}<li><b>{{ w.name }}</b>: {{ w.vergleich }}</li>{% endfor %}</ul></dd>{% endif %}
+    {% if b.langfristig %}<dt>Warum langfristig außergewöhnlich?</dt><dd>{{ b.langfristig }} <span class="badge warn">Einschätzung</span></dd>{% endif %}
+  </dl>
+  {% else %}<p class="hint">Keine Beschreibung verfügbar (weder KI-Analyse noch Profil des Datenanbieters).</p>{% endif %}
+</section>
+
+<div class="grid-2">
+<section class="card" id="these">
+  <div class="card-head"><h2>Investment-These</h2><span class="badge warn">KI-Einschätzung, belegt</span></div>
+  {% if res.thesis and res.thesis.text %}
+  <p>{{ res.thesis.text }}</p>
+  {% if res.thesis.treiber %}<h3>Wachstumstreiber und Evidenz</h3><ul class="plain-list">{% for t in res.thesis.treiber %}<li><b>{{ t.treiber }}</b> – {{ t.evidenz }} {% for s in t.belege %}{{ src(s) }} {% else %}<span class="badge crit">ohne Beleg</span>{% endfor %}</li>{% endfor %}</ul>{% endif %}
+  {% else %}<p class="hint">Keine These – sie entsteht nur mit KI und belegten Quellen. {{ res.ai_meta.error if res.ai_meta else '' }}</p>{% endif %}
+</section>
+<section class="card" id="gegen">
+  <div class="card-head"><h2>Gegenhypothese</h2><span class="badge warn">KI-Einschätzung, belegt</span></div>
+  {% if res.counter and res.counter.text %}
+  <p>{{ res.counter.text }}</p>
+  {% if res.counter.punkte %}<ul class="plain-list">{% for p in res.counter.punkte %}<li><b>{{ p.risiko }}</b> – {{ p.begruendung }} {% for s in p.belege %}{{ src(s) }} {% endfor %}</li>{% endfor %}</ul>{% endif %}
+  {% else %}<p class="hint">Keine Gegenhypothese ohne KI-Teil. Regelbasierte Gegenargumente stehen an den Kriterien.</p>{% endif %}
+  {% if res.uncertainties %}<h3>Unsicherheiten</h3><ul class="plain-list">{% for u in res.uncertainties %}<li>{{ u }}</li>{% endfor %}</ul>{% endif %}
+  {% if res.ai_check and (res.ai_check.n_entfernt or res.ai_check.verworfene_quellen) %}<p class="hint">Prüfung der KI-Antwort: {{ res.ai_check.n_entfernt }} Satz/Sätze mit unbelegten Zahlen entfernt{% if res.ai_check.verworfene_quellen %}, unbekannte Quellenangaben verworfen: {{ res.ai_check.verworfene_quellen|join(', ') }}{% endif %}.</p>{% endif %}
+</section>
+</div>
+
+{{ scorecard(res.scores.disruption, ccy, true) }}
+{{ scorecard(res.scores.quality, ccy) }}
+{{ scorecard(res.scores.garp, ccy) }}
+<section class="card hint" style="margin-top:-4px">Tom-Nash-inspirierte Scorecard: Die Originalkriterien und -gewichte von Tom Nashs 125-Punkte-Scorecard sind nicht öffentlich belastbar dokumentiert (nur hinter seiner Plattform). Portfolia verwendet eigene Kriterien in Anlehnung an die öffentlich genannten Themen und eigene Gewichte (125 Punkte) – siehe docs/DISCOVERY_INTELLIGENCE.md.</section>
+{{ scorecard(res.scores.nash, ccy) }}
+
+{% set fu = res.fundamentals %}
+<section class="card" id="fundamental">
+  <div class="card-head"><h2>Fundamentaldaten</h2><span class="hint">Berichtswährung {{ fu.currency or '–' }} · Quelle SEC EDGAR (XBRL) · Geschäftsjahr = Periodenende</span></div>
+  {% for n in fu.notes %}<div class="alert"><span class="icon">i</span><div>{{ n }}</div></div>{% endfor %}
+  {% if fu.years %}
+  {% set rows = [('revenue','money'),('revenue_growth','pct'),('gross_profit','money'),('gross_margin','pct'),('operating_income','money'),('op_margin','pct'),('net_income','money'),('net_margin','pct'),('ocf','money'),('capex','money'),('fcf','money'),('fcf_margin','pct'),('cash','money'),('liquidity','money'),('debt','money'),('net_cash','money'),('equity','money'),('roic','pct'),('rnd_ratio','pct'),('shares_diluted','num0'),('dilution','pct'),('current_ratio','x')] %}
+  <div class="table-wrap"><table class="compact disc-fund">
+    <thead><tr><th>Kennzahl</th>{% for y in fu.years %}<th class="num">{{ y }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for key, f in rows %}{% set r = fu.rows.get(key, {}) %}
+      <tr><th scope="row">{{ labels.get(key, key) }}</th>
+        {% for y in fu.years %}{% set v = r.get(y) %}
+        <td class="num nowrap {{ 'disc-o-' ~ (v.origin if v else 'missing') }}" title="{% if v %}{{ {'reported':'berichtet','derived':'berechnet','estimated':'geschätzt','missing':'fehlt'}[v.origin] }}{% if v.tag %} · {{ v.tag }}{% endif %}{% if v.form %} · {{ v.form }} eingereicht {{ v.filed }}{% endif %}{% if v.formula %} · {{ v.formula }}{% endif %}{% if v.note %} · {{ v.note }}{% endif %}{% else %}fehlt{% endif %}">
+          {%- if v and v.v is not none -%}{%- if f == 'num0' -%}{{ (v.v / 1e6)|num(0) }} Mio.{%- else -%}{{ val(v.v, f) }}{%- endif -%}{%- if v.note and 'korrigiert' in v.note %} <span class="badge warn" title="{{ v.note }}">korr.</span>{% endif %}{%- else -%}<span class="muted">–</span>{%- endif -%}
+        </td>{% endfor %}</tr>{% endfor %}
+    </tbody></table></div>
+  <p class="hint">Farbe der Zelle: <span class="disc-o-reported">berichtet</span> · <span class="disc-o-derived">berechnet</span> · <span class="disc-o-estimated">geschätzt</span> · <span class="disc-o-missing">fehlt</span>. Element, Formular, Einreichungsdatum und Formel stehen im Tooltip der Zelle. Beträge in {{ fu.currency or 'Berichtswährung' }}. Fehlende Jahre werden nicht aufgefüllt.</p>
+  <div class="grid-2">{{ bars(fu, "revenue", "Umsatz") }}{{ bars(fu, "fcf", "Free Cashflow") }}{{ bars(fu, "operating_income", "Operatives Ergebnis") }}{{ bars(fu, "shares_diluted", "Aktien (verwässert, Ø)", "Stück") }}</div>
+  {% if fu.quarter %}<h3>Letztes Quartal</h3><div class="table-wrap"><table class="compact"><thead><tr><th>Kennzahl</th><th>Periode</th><th class="num">Wert</th><th class="num">Vorjahresquartal</th><th class="num">Veränderung</th><th>Quelle</th></tr></thead><tbody>
+    {% for k, q in fu.quarter.items() %}<tr><td>{{ labels.get(k, k) }}</td><td>{{ q.value.period }}</td><td class="num">{{ money(q.value.v, fu.currency) }}</td><td class="num">{{ money(q.prior.v, fu.currency) if q.prior else '–' }}</td><td class="num">{{ q.yoy|pct(1) if q.yoy is defined else '–' }}</td><td>{{ q.value.form }} {{ q.value.filed }} {{ origin('reported') }}</td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+  {% if fu.corrections %}<h3>Nachträgliche Korrekturen</h3><ul class="plain-list">{% for c in fu.corrections %}<li>{{ labels.get(c.concept, c.concept) }} {{ c.period }}: ursprünglich {{ money(c.first, fu.currency) }} ({{ c.first_filed }}), jetzt {{ money(c.last, fu.currency) }} ({{ c.last_filed }})</li>{% endfor %}</ul>{% endif %}
+  {% else %}<p class="hint">Keine Fundamentaldaten – nur US-Emittenten mit SEC-XBRL-Berichten werden unterstützt.</p>{% endif %}
+</section>
+
+{% set sc = res.scenarios %}
+<section class="card" id="bewertung">
+  <div class="card-head"><h2>Aktienbewertung</h2><span class="hint">Kurs {{ m.price|num(2) if m.price else '–' }} {{ m.ccy or '' }} · Multiplikatoren auf Basis des letzten Geschäftsjahres</span></div>
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Kennzahl</th><th class="num">Wert</th><th>Herkunft</th></tr></thead><tbody>
+    <tr><td>KGV (letztes Geschäftsjahr)</td><td class="num">{{ val(m.pe, 'x') }}</td><td>{{ origin('derived' if m.pe else 'missing') }} Marktkap. / Nettoergebnis</td></tr>
+    <tr><td>Forward-KGV</td><td class="num">{{ val(m.forward_pe, 'x') }}</td><td>{{ origin('estimated' if m.forward_pe else 'missing') }} Analystenkonsens (Yahoo)</td></tr>
+    <tr><td>EV/Umsatz</td><td class="num">{{ val(m.ev_sales, 'x') }}</td><td>{{ origin('derived' if m.ev_sales else 'missing') }} (Marktkap. − Nettofinanzposition) / Umsatz</td></tr>
+    <tr><td>EV/EBIT</td><td class="num">{{ val(m.ev_ebit, 'x') }}</td><td>{{ origin('derived' if m.ev_ebit else 'missing') }} EBIT = operatives Ergebnis (EBITDA ohne Abschreibungsdaten nicht berechnet)</td></tr>
+    <tr><td>Kurs/Free Cashflow</td><td class="num">{{ val(m.p_fcf, 'x') }}</td><td>{{ origin('derived' if m.p_fcf else 'missing') }}</td></tr>
+    <tr><td>Free-Cashflow-Rendite</td><td class="num">{{ val(m.fcf_yield, 'pct') }}</td><td>{{ origin('derived' if m.fcf_yield is not none else 'missing') }}</td></tr>
+    <tr><td>PEG (KGV ÷ Umsatzwachstum %)</td><td class="num">{{ val(m.peg, 'num') }}</td><td>{{ origin('derived' if m.peg else 'missing') }}</td></tr>
+    <tr><td>EV/Umsatz ÷ Wachstum %</td><td class="num">{{ val(m.growth_adj_ev_sales, 'num') }}</td><td>{{ origin('derived' if m.growth_adj_ev_sales else 'missing') }}</td></tr>
+  </tbody></table></div>
+  {% for n in m.notes or [] %}<p class="hint">{{ n }}</p>{% endfor %}
+  {% if sc.available %}
+  <h3>Szenarien bis Jahr {{ sc.years }} <span class="badge warn">Modellannahmen, keine Prognose</span></h3>
+  <div class="table-wrap"><table class="compact"><thead><tr><th></th><th class="num">Konservativ</th><th class="num">Basis</th><th class="num">Optimistisch</th></tr></thead><tbody>
+    {% set cs = sc.cases %}
+    <tr><td>Startwachstum (fällt auf {{ sc.terminal_g|pct(0, false) }})</td>{% for k in ['konservativ','basis','optimistisch'] %}<td class="num">{{ cs[k].g|pct(1, false) }}</td>{% endfor %}</tr>
+    <tr><td>Ziel-FCF-Marge</td>{% for k in ['konservativ','basis','optimistisch'] %}<td class="num">{{ cs[k].marge|pct(1, false) }}</td>{% endfor %}</tr>
+    <tr><td>Kurs/FCF im Jahr {{ sc.years }}</td>{% for k in ['konservativ','basis','optimistisch'] %}<td class="num">{{ cs[k].multiplikator|num(0) }}×</td>{% endfor %}</tr>
+    <tr><td>Verwässerung p. a.</td>{% for k in ['konservativ','basis','optimistisch'] %}<td class="num">{{ cs[k].verwaesserung|pct(1, false) }}</td>{% endfor %}</tr>
+    <tr><td>Umsatz Jahr {{ sc.years }}</td>{% for k in ['konservativ','basis','optimistisch'] %}<td class="num">{{ money(cs[k].umsatz_5, m.ccy) }}</td>{% endfor %}</tr>
+    <tr><td>Free Cashflow Jahr {{ sc.years }}</td>{% for k in ['konservativ','basis','optimistisch'] %}<td class="num">{{ money(cs[k].fcf_5, m.ccy) }}</td>{% endfor %}</tr>
+    <tr><td><b>Wert je Aktie Jahr {{ sc.years }}</b></td>{% for k in ['konservativ','basis','optimistisch'] %}<td class="num"><b>{{ cs[k].wert_je_aktie_5|num(2) if cs[k].wert_je_aktie_5 else '–' }} {{ m.ccy }}</b></td>{% endfor %}</tr>
+    <tr><td>Barwert heute ({{ sc.discount|pct(0, false) }} p. a.)</td>{% for k in ['konservativ','basis','optimistisch'] %}<td class="num">{{ cs[k].barwert_je_aktie|num(2) if cs[k].barwert_je_aktie else '–' }} {{ m.ccy }}</td>{% endfor %}</tr>
+    <tr><td>Rendite p. a. ab Kurs {{ sc.price|num(2) }}</td>{% for k in ['konservativ','basis','optimistisch'] %}<td class="num">{{ cs[k].rendite_pa|pct(1) if cs[k].rendite_pa is not none else 'Wert ≤ 0' }}</td>{% endfor %}</tr>
+  </tbody></table></div>
+  <p><b>Eingepreistes Startwachstum:</b> {% if sc.implied_growth is not none %}{{ sc.implied_growth|pct(1, false) }} p. a. (bei Basismarge und Basismultiplikator ergibt dieses Wachstum einen Barwert in Höhe des Kurses){% else %}außerhalb −30 % … +150 % – Kurs mit dem Basismodell nicht erklärbar{% endif %}.</p>
+  <details class="box"><summary>Annahmen</summary><dl class="kv">{% for k, v in sc.assumptions.items() %}<dt>{{ k|capitalize }}</dt><dd>{{ v }}</dd>{% endfor %}</dl></details>
+  {% else %}<p class="hint">Szenarien nicht berechenbar: {{ sc.reason }}.</p>{% endif %}
+</section>
+{{ scorecard(res.scores.valuation, ccy) }}
+
+{% if fit %}
+<section class="card" id="fit">
+  <div class="card-head"><h2>Portfolio-Fit (lokal berechnet)</h2>
+    <form method="get" action="/discovery/c/{{ co.id }}#fit" class="row" style="gap:6px"><label class="sr-only" for="betrag">Betrag</label>
+      {% for b in [500, 1000, 2500] %}<a class="btn sm {{ 'primary' if amount == b }}" href="/discovery/c/{{ co.id }}?betrag={{ b }}{{ '&a=' ~ an.id if an.id != versions[0].id }}#fit">{{ b }} €</a>{% endfor %}
+      <input id="betrag" name="betrag" inputmode="decimal" value="{{ amount|num(0) }}" style="width:7em">{% if an.id != versions[0].id %}<input type="hidden" name="a" value="{{ an.id }}">{% endif %}<button class="btn sm" type="submit">Simulieren</button></form></div>
+  {% set s = fit.sim %}
+  <p class="hint">Hypothetischer Kauf über {{ s.amount|eur }} – <b>keine Buchung, keine Order</b>. Portfolio-Daten verlassen das Gerät nicht (keine Übergabe an KI-Anbieter).</p>
+  {% if s.total_before <= 0 %}<div class="alert"><span class="icon">i</span><div>Kein bewertetes Portfolio – Gewichte und Überschneidungen sind nicht aussagekräftig.</div></div>{% endif %}
+  {% if s.held %}<div class="alert warn"><span class="icon">!</span><div>Bereits im Portfolio: {% for h in s.held %}{{ h.name }} ({{ h.value|eur }}){{ ', ' if not loop.last }}{% endfor %} – die Simulation stockt diese Position auf.</div></div>{% endif %}
+  <div class="kpis disc-kpis">
+    <div class="kpi"><div class="label">Portfolio vorher → nachher</div><div class="value">{{ s.total_before|eur_compact }} → {{ s.total_after|eur_compact }}</div></div>
+    <div class="kpi"><div class="label">Gewicht der Position</div><div class="value">{{ s.new_weight|pct(1, false) }}</div></div>
+    <div class="kpi"><div class="label">Top-5-Konzentration</div><div class="value">{{ s.top5_before|pct(1, false) }} → {{ s.top5_after|pct(1, false) }}</div></div>
+    <div class="kpi"><div class="label">Konzentration (HHI)</div><div class="value">{{ s.hhi_before|num(3) }} → {{ s.hhi_after|num(3) }}</div><div class="sub">Summe der quadrierten Gewichte</div></div>
+  </div>
+  <div class="grid-2">
+    {% for key, title in [('sector', 'Branche'), ('ccy', 'Währung'), ('country', 'Land'), ('class', 'Anlageklasse')] %}
+    <div><h3>{{ title }}: vorher → nachher</h3><table class="compact"><tbody>
+      {% set after = s[key ~ '_after'] %}{% set before = s[key ~ '_before'] %}
+      {% for k, v in after.items() %}{% if loop.index <= 8 %}<tr><td>{{ k }}{% if (key == 'sector' and k == co.sector) or (key == 'country' and k == co.country) or (key == 'ccy' and k == m.ccy) %} <span class="badge info">Kandidat</span>{% endif %}</td><td class="num">{{ (before.get(k) or 0)|pct(1, false) }}</td><td class="num">→ {{ v|pct(1, false) }}</td></tr>{% endif %}{% endfor %}
+    </tbody></table></div>{% endfor %}
+  </div>
+  {% if s.same_sector %}<p class="hint">Gleiche Branche gehalten: {% for x in s.same_sector %}{{ x.name }} ({{ x.weight|pct(1, false) }}){{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+  <p class="hint">{{ s.etf_note }}. Branchenangaben liegen für {{ (s.coverage_sector or 0)|pct(0, false) }} des Portfoliowerts vor.</p>
+</section>
+{{ scorecard(fit.score, ccy) }}
+{% endif %}
+
+<section class="card" id="meilensteine">
+  <div class="card-head"><h2>Beobachtbare Meilensteine</h2></div>
+  {% if milestones %}<div class="table-wrap"><table class="compact"><thead><tr><th>Meilenstein</th><th>prüft</th><th>Kennzahl / Schwelle</th><th>bis</th><th>Status</th></tr></thead><tbody>
+    {% for x in milestones %}<tr><td>{{ x.text }}</td><td>{{ 'bestätigt die These' if x.kind == 'bestaetigt' else 'widerlegt die These' }}</td><td>{% if x.metric %}{{ labels.get(x.metric, x.metric) }} {{ x.op }} {{ x.threshold|pct(0, false) if x.metric in pct_keys else money(x.threshold, ccy) }}{% else %}<span class="hint">manuell prüfen</span>{% endif %}</td><td>{{ x.due or '–' }}</td>
+      <td>{% if x.status == 'erfuellt' %}<span class="badge good">erfüllt</span>{% elif x.status == 'verfehlt' %}<span class="badge crit">verfehlt</span>{% else %}<span class="badge">offen</span>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div><p class="hint">Meilensteine mit Kennzahl werden bei jeder neuen Analyse automatisch gegen die jüngsten SEC-Daten geprüft.</p>
+  {% else %}<p class="hint">Noch keine Meilensteine (entstehen mit dem KI-Teil der Analyse).</p>{% endif %}
+</section>
+
+<section class="card" id="signale">
+  <div class="card-head"><h2>Discovery-Signale</h2></div>
+  {% if signals %}<div class="table-wrap"><table class="compact"><thead><tr><th>Datum</th><th>Art</th><th>Signal</th><th class="num">Quellen</th><th class="num">Stärke</th></tr></thead><tbody>
+    {% for s in signals %}<tr><td class="nowrap">{{ (s.published_at or s.observed_at)[:10] }}</td><td>{{ s.kind }}</td><td>{% if s.url %}<a href="{{ s.url }}" rel="noopener noreferrer" target="_blank">{{ s.title }}</a>{% else %}{{ s.title }}{% endif %}{% if s.detail %}<div class="hint">{{ s.detail[:300] }}</div>{% endif %}{% if s.source_name %}<div class="hint">{{ s.source_name }}</div>{% endif %}</td><td class="num">{{ s.n_sources }}</td><td class="num">{{ s.strength|num(2) }}</td></tr>{% endfor %}
+  </tbody></table></div><p class="hint">Je Ereignis höchstens ein Signal; mehrere Artikel desselben Ereignisses zählen nur als verschiedene Quellen (höchstens 4).</p>
+  {% else %}<p class="hint">Keine Signale.</p>{% endif %}
+</section>
+
+<section class="card" id="quellen">
+  <div class="card-head"><h2>Quellenverzeichnis</h2><span class="hint">IDs werden in Kriterien, These und Tabellen zitiert</span></div>
+  <div class="table-wrap"><table class="compact"><thead><tr><th>ID</th><th>Quelle</th><th>Dokument</th><th>Veröffentlicht</th><th>Abgerufen</th><th>Fundstelle</th></tr></thead><tbody>
+    {% for s in res.sources %}<tr id="src-{{ s.id|replace(':', '-') }}"><td class="nowrap"><b>{{ s.id }}</b></td><td>{{ s.name }}<div class="hint">{{ s.kind }}</div></td><td>{% if s.url %}<a href="{{ s.url }}" rel="noopener noreferrer" target="_blank">{{ s.title }}</a>{% else %}{{ s.title }}{% endif %}{% if s.excerpt %}<details><summary class="hint">Auszug</summary><p class="hint">{{ s.excerpt }}…</p></details>{% endif %}</td><td class="nowrap">{{ s.published or '–' }}</td><td class="nowrap">{{ s.retrieved or '–' }}</td><td>{{ s.locator or '' }}{% if s.period %} · Periode {{ s.period }}{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="hint">Quellenangaben stammen ausschließlich aus Portfolia (SEC-Abruf, Kursablage, News-Pipeline) – die KI kann nur diese IDs zitieren; erfundene Angaben werden verworfen.</p>
+</section>
+{% endif %}
+
+<section class="card" id="versionen">
+  <div class="card-head"><h2>Frühere Bewertungen</h2>{% if versions|length >= 2 %}<a class="btn sm" href="/discovery/c/{{ co.id }}/vergleich">Letzte zwei vergleichen</a>{% endif %}</div>
+  {% if versions %}<div class="table-wrap"><table class="compact"><thead><tr><th>Version</th><th>Auslöser</th><th class="num">Disruption</th><th class="num">Quality</th><th class="num">GARP</th><th class="num">Fundamental</th><th class="num">Valuation</th><th class="num">Abdeckung</th><th></th></tr></thead><tbody>
+    {% for v in versions %}<tr><td class="nowrap"><a href="/discovery/c/{{ co.id }}?a={{ v.id }}">{{ v.created_at|datetime_de }}</a>{% if an and v.id == an.id %} <span class="badge info">angezeigt</span>{% endif %}</td><td>{{ v.trigger }}{% if v.provider %} · {{ v.provider }}{% endif %}</td><td class="num">{{ v.disruption|num(0) }}</td><td class="num">{{ v.quality|num(0) }}</td><td class="num">{{ v.garp|num(0) }}</td><td class="num">{{ v.nash|num(0) }}</td><td class="num">{{ v.valuation|num(0) }}</td><td class="num">{{ (v.coverage or 0)|pct(0, false) }}</td>
+      <td>{% if not loop.first %}<a class="btn sm ghost" href="/discovery/c/{{ co.id }}/vergleich?a={{ v.id }}&b={{ versions[0].id }}">mit aktueller vergleichen</a>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="hint">Noch keine Analyse.</p>{% endif %}
+</section>
+{% endblock %}

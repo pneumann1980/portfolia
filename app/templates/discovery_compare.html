@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "discovery_macros.html" import money with context %}
+{% block title %}Vergleich {{ co.ticker }}{% endblock %}
+{% block heading %}<a href="/discovery" class="hint">Discovery</a> › <a href="/discovery/c/{{ co.id }}" class="hint">{{ co.ticker }}</a> › Vergleich{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="card-head"><h2>Analyseversionen vergleichen</h2></div>
+  <form method="get" action="/discovery/c/{{ co.id }}/vergleich" class="row" style="gap:6px;flex-wrap:wrap">
+    <label class="field">Ältere Version<select name="a">{% for v in versions %}<option value="{{ v.id }}" {{ 'selected' if cmp and v.id == cmp.a.id }}>{{ v.created_at|datetime_de }} ({{ v.trigger }})</option>{% endfor %}</select></label>
+    <label class="field">Neuere Version<select name="b">{% for v in versions %}<option value="{{ v.id }}" {{ 'selected' if cmp and v.id == cmp.b.id }}>{{ v.created_at|datetime_de }} ({{ v.trigger }})</option>{% endfor %}</select></label>
+    <div class="row"><button class="btn" type="submit">Vergleichen</button></div>
+  </form>
+  {% if not cmp %}<p class="hint">Für einen Vergleich sind mindestens zwei Analyseversionen nötig.</p>{% endif %}
+</section>
+{% if cmp %}
+<section class="card">
+  <div class="card-head"><h2>Scores</h2><span class="hint">{{ cmp.a.created_at|datetime_de }} → {{ cmp.b.created_at|datetime_de }}</span></div>
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Score</th><th class="num">vorher</th><th class="num">nachher</th><th class="num">Δ</th><th>geänderte Kriterien</th></tr></thead><tbody>
+  {% for s in cmp.scores %}<tr><td>{{ s.label }}</td><td class="num">{{ s.a|num(1) if s.a is not none else '–' }}</td><td class="num">{{ s.b|num(1) }}</td><td class="num">{% if s.a is not none %}<span class="delta {{ (s.b - s.a)|tone }}">{{ (s.b - s.a)|num(1, true) }}</span>{% endif %}</td>
+    <td>{% for c in s.criteria %}<div>{{ c.label }}: {{ c.a|num(1) if c.a is not none else 'n. b.' }} → {{ c.b|num(1) if c.b is not none else 'n. b.' }} von {{ c.max|num(0) }} <span class="hint">{{ c.reason[:160] }}</span></div>{% else %}<span class="muted">unverändert</span>{% endfor %}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="hint">Kurs: {{ cmp.price[0]|num(2) if cmp.price[0] else '–' }} → {{ cmp.price[1]|num(2) if cmp.price[1] else '–' }}</p>
+</section>
+<div class="grid-2">
+<section class="card"><div class="card-head"><h2>Veränderte Kennzahlen</h2></div>
+  {% if cmp.metrics %}<table class="compact"><tbody>{% for m in cmp.metrics %}<tr><td>{{ m.label }}</td><td class="num">{{ (m.a|pct(1, false) if m.pct else money(m.a)) if m.a is not none else '–' }}</td><td class="num">→ {{ (m.b|pct(1, false) if m.pct else money(m.b)) if m.b is not none else '–' }}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="hint">Keine Änderungen der jüngsten Kennzahlen.</p>{% endif %}
+</section>
+<section class="card"><div class="card-head"><h2>Nachträglich korrigierte Daten</h2></div>
+  {% if cmp.corrected %}<ul class="plain-list">{% for c in cmp.corrected %}<li>{{ c.label }} {{ c.period }}: {{ money(c.a) }} → {{ money(c.b) }} <span class="hint">(eingereicht {{ c.filed }})</span></li>{% endfor %}</ul>{% else %}<p class="hint">Keine Korrekturen bereits berichteter Perioden.</p>{% endif %}
+</section>
+<section class="card"><div class="card-head"><h2>Neue Ereignisse und Signale</h2></div>
+  {% if cmp.signals %}<ul class="plain-list">{% for s in cmp.signals %}<li>{{ (s.published_at or s.observed_at)[:10] }} · {{ s.title }} <span class="hint">({{ s.kind }})</span></li>{% endfor %}</ul>{% else %}<p class="hint">Keine neuen Signale zwischen den Versionen.</p>{% endif %}
+</section>
+<section class="card"><div class="card-head"><h2>Annahmen und Risiken</h2></div>
+  <h3>Meilensteine der älteren Version</h3>
+  {% if cmp.milestones %}<ul class="plain-list">{% for x in cmp.milestones %}<li>{{ x.text }} – {% if x.status == 'erfuellt' %}<span class="badge good">bestätigt/erfüllt</span>{% elif x.status == 'verfehlt' %}<span class="badge crit">verfehlt</span>{% else %}<span class="badge">offen</span>{% endif %}</li>{% endfor %}</ul>{% else %}<p class="hint">Keine Meilensteine.</p>{% endif %}
+  <h3>Neu hinzugekommene Risiken</h3>
+  {% if cmp.new_risks %}<ul class="plain-list">{% for p in cmp.new_risks %}<li><b>{{ p.risiko }}</b> – {{ p.begruendung }}</li>{% endfor %}</ul>{% else %}<p class="hint">Keine neuen Risiken in der Gegenhypothese.</p>{% endif %}
+</section>
+</div>
+{% endif %}
+{% endblock %}

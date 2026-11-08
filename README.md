@@ -248,6 +248,13 @@ Ausprobieren ohne Internet: `DEMO_MODE=true` (deutlich gekennzeichnete synthetis
   Reihenfolge, Detailansicht mit Kursverlauf und „Position erstellen“ (öffnet die normale Kauferfassung, legt nichts
   ohne Speichern an). Datenmodell für mehrere Listen vorbereitet. Indizes (`^GSPC` = S&P 500, `^GDAXI`) und
   Devisen/Futures (`EURUSD=X`, `GC=F`) über Yahoo; Indizes zeigen den Stand in Punkten und sind nicht kaufbar.
+* **Discovery & Intelligence (ab 0.108.0, *Discovery*):** findet börsennotierte Unternehmen außerhalb des Portfolios
+  (News-Analyse, optional KI-Themen entlang von Wertschöpfungsketten, manuelle Eingabe), prüft jede Identität gegen das
+  SEC-Verzeichnis und erstellt je Unternehmen einen Research-Bericht: Geschäftsmodell, Investment-These und
+  Gegenhypothese (KI, nur mit belegten Quellen), getrennte Scores (Disruption, Quality, Growth/GARP,
+  Tom-Nash-inspiriert, Valuation) mit aufklappbaren Kriterien, Fundamentaldaten aus SEC EDGAR mit Herkunft je Wert,
+  drei Bewertungsszenarien, lokal berechneter Portfolio-Fit mit Kauf-Simulation (keine Buchung), Versionen und
+  Vergleich. Keine Kaufempfehlung. Einzelheiten: [`docs/DISCOVERY_INTELLIGENCE.md`](docs/DISCOVERY_INTELLIGENCE.md).
 
 ---
 

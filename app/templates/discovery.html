@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% from "discovery_macros.html" import scorechip with context %}
+{% block title %}Discovery{% endblock %}
+{% block heading %}Discovery-Radar{% endblock %}
+{% block content %}
+{% if msg %}<div class="alert good"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+{% if err %}<div class="alert crit"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+
+<section class="card">
+  <div class="card-head">
+    <h2>Neue Investmentideen <span class="badge">{{ n_total }}</span></h2>
+    <div class="row" style="gap:6px;flex-wrap:wrap">
+      <form method="post" action="/discovery/run" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit">Discovery-Lauf starten</button></form>
+      <form method="post" action="/discovery/add" class="row" style="gap:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="sr-only" for="disc-q">Ticker oder Firmenname</label><input id="disc-q" name="q" placeholder="Ticker oder Firmenname" maxlength="120" required>
+        <button class="btn" type="submit">Aufnehmen</button></form>
+    </div>
+  </div>
+  <p class="hint">Portfolia sucht in der eigenen News-Analyse nach börsennotierten Unternehmen – auch außerhalb des Portfolios –{% if ai_on %}, leitet mit der KI Themen entlang von Wertschöpfungsketten ab{% endif %} und prüft jede Identität gegen das SEC-Verzeichnis (private Firmen, Tochtergesellschaften und SPACs werden nicht aufgenommen). Scores sind getrennt und einzeln aufschlüsselbar; sie sind Research-Ergebnisse, keine Kaufempfehlung.</p>
+  <p class="hint">KI: {% if ai_on %}an – heute noch {{ ai_left[0] }}, im Monat noch {{ ai_left[1] }} Discovery-Aufrufe{% else %}aus (qualitative Kriterien, These und Gegenhypothese entstehen nur mit KI){% endif %}.
+  {% if last_run %} Letzter Lauf: {{ last_run.started_at|datetime_de }}{% set st = last_run.stats_json|fromjson %}{% if st %} · {{ st.mentions }} Nennungen, {{ st.new_companies }} neue Unternehmen, {{ st.signals }} Signale{% if st.unresolved %} · {{ st.unresolved|length }} nicht börsennotiert/nicht aufgelöst{% endif %}{% if st.ambiguous %} · {{ st.ambiguous|length }} mehrdeutig{% endif %}{% endif %}.{% endif %}</p>
+  {% if last_run and (last_run.stats_json|fromjson or {}).get('unresolved') %}<details class="box"><summary>Nicht aufgenommene Nennungen des letzten Laufs</summary><p class="hint">{{ (last_run.stats_json|fromjson).unresolved|join(', ') }}</p>{% set amb = (last_run.stats_json|fromjson).ambiguous %}{% if amb %}<p class="hint">Mehrdeutig: {{ amb|join(', ') }}</p>{% endif %}{% for r in (last_run.stats_json|fromjson).rejected or [] %}<p class="hint">{{ r }}</p>{% endfor %}</details>{% endif %}
+  <details class="box"><summary>Einstellungen, Grenzen und Export</summary>
+    <form method="post" action="/discovery/einstellungen" class="form-grid" style="margin-top:8px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="check"><input type="checkbox" name="enabled" value="1" {{ 'checked' if cfg.enabled }}> Täglicher Discovery-Lauf (06:47)</label>
+      <label class="check"><input type="checkbox" name="ai" value="1" {{ 'checked' if cfg.ai }}> KI für Analysen verwenden (Anbieter und Tagesbudget wie unter Einstellungen → KI)</label>
+      <label class="check"><input type="checkbox" name="themes" value="1" {{ 'checked' if cfg.themes }}> KI-Themen entlang von Wertschöpfungsketten</label>
+      <label class="field">Discovery-KI-Aufrufe je Tag<input name="ai_calls_per_day" inputmode="numeric" value="{{ cfg.ai_calls_per_day }}"></label>
+      <label class="field">Discovery-KI-Aufrufe je Monat<input name="ai_calls_per_month" inputmode="numeric" value="{{ cfg.ai_calls_per_month }}"></label>
+      <label class="field">Neue Unternehmen je Lauf<input name="max_new_per_run" inputmode="numeric" value="{{ cfg.max_new_per_run }}"></label>
+      <label class="field">Automatische Analysen je Lauf<input name="auto_analyse_per_run" inputmode="numeric" value="{{ cfg.auto_analyse_per_run }}"></label>
+      <label class="field">Meldungen der letzten … Tage<input name="news_days" inputmode="numeric" value="{{ cfg.news_days }}"></label>
+      <label class="field">SEC-Kontakt (User-Agent, z. B. „Name name@example.org“)<input name="sec_user_agent" maxlength="200" value="{{ cfg.sec_user_agent or '' }}"></label>
+      <div class="row"><button class="btn" type="submit">Speichern</button></div>
+    </form>
+    <p class="hint">Die SEC verlangt einen aussagekräftigen User-Agent mit Kontakt (Fair-Access-Regeln); Portfolia sendet höchstens 2 Anfragen je Sekunde und speichert Antworten zwischen. <a href="/discovery/export.json">Discovery-Daten exportieren (JSON)</a> – in der Datensicherung (Datenbank) sind sie ohnehin enthalten.</p>
+  </details>
+</section>
+
+<section class="card disc-filters">
+  <div class="seg" role="group" aria-label="Kategorie">
+    <a class="{{ 'active' if not cat }}" href="/discovery?sort={{ sort }}">Alle offenen</a>
+    {% for k, label in cats.items() %}<a class="{{ 'active' if cat == k }}" href="/discovery?cat={{ k }}&sort={{ sort }}" title="{{ label }}">{{ label }} <span class="badge">{{ counts[k] }}</span></a>{% endfor %}
+  </div>
+  <form method="get" action="/discovery" class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px">
+    {% if cat %}<input type="hidden" name="cat" value="{{ cat }}">{% endif %}
+    <label class="sr-only" for="disc-sort">Sortierung</label>
+    <select id="disc-sort" name="sort" data-autosubmit>{% for k, v in sorts.items() %}<option value="{{ k }}" {{ 'selected' if k == sort }}>Sortiert nach {{ v }}</option>{% endfor %}</select>
+    <label class="sr-only" for="disc-filter">Suche</label><input id="disc-filter" type="search" name="q" value="{{ q }}" placeholder="Name oder Ticker filtern">
+    <label class="check"><input type="checkbox" name="alle" value="1" {{ 'checked' if alle }} data-autosubmit> auch zurückgestellte, verworfene und gehaltene</label>
+    <noscript><button class="btn sm" type="submit">Anwenden</button></noscript>
+  </form>
+  <p class="hint">Kategorien entstehen aus offengelegten Regeln (siehe Doku): z. B. „Early Disruptor“ = Disruption ≥ 55 (vollständig) bei noch negativer FCF-Marge oder operativer Marge ≤ 5 %; „Hidden Champion“ = Marktkapitalisierung &lt; 10 Mrd. USD, Quality ≥ 60 und wenig Berichterstattung (≤ 3 Quellen) – nie allein wegen geringer Größe.</p>
+</section>
+
+{% if cards %}
+<div class="disc-cards">
+{% for c in cards %}
+  <article class="card disc-card">
+    <div class="disc-card-head">
+      <div><a href="/discovery/c/{{ c.id }}"><b>{{ c.name }}</b></a> <span class="badge">{{ c.ticker }}</span>
+        <div class="hint">{{ c.sector or 'Branche unbekannt' }}{% if c.held %} · <span class="badge good">im Portfolio</span>{% endif %}{% if c.status != 'neu' %} · <span class="badge info">{{ statuses[c.status] }}</span>{% endif %}</div></div>
+      <div class="hint nowrap">{% if c.analysed_at %}Analyse {{ c.analysed_at|datetime_de }}{% else %}<span class="badge warn">noch nicht analysiert</span>{% endif %}</div>
+    </div>
+    {% if c.business %}<p class="disc-card-biz">{{ c.business }}</p>{% endif %}
+    <div class="disc-card-scores">
+      {% for k, label in [('disruption', 'Disruption'), ('quality', 'Quality'), ('garp', 'Growth'), ('valuation', 'Valuation')] %}
+      <div><span class="label">{{ label }}</span>{{ scorechip(c.scores.get(k), label) }}</div>{% endfor %}
+      {% if c.fit is not none %}<div><span class="label">Portfolio-Fit (1.000 €)</span><b>{{ c.fit|num(0) }}</b><span class="hint">/100</span></div>{% endif %}
+    </div>
+    {% if c.cats %}<div class="disc-tags">{% for k in c.cats %}<span class="badge info">{{ cats[k] }}</span> {% endfor %}</div>{% endif %}
+    <dl class="kv disc-card-kv">
+      <dt>Wichtigstes Signal</dt><dd>{% if c.signal %}{{ c.signal.title }} <span class="hint">({{ c.signal.kind }}, {{ c.signal.n_sources }} Quelle{{ 'n' if c.signal.n_sources != 1 }})</span>{% else %}–{% endif %}</dd>
+      <dt>Wichtigstes Gegenargument</dt><dd>{{ c.counter or '–' }}</dd>
+      <dt>Datenqualität</dt><dd>{% if c.coverage is not none %}{{ c.coverage|pct(0, false) }} der Kernkennzahlen vorhanden{% else %}–{% endif %}</dd>
+    </dl>
+    <div class="row" style="gap:6px;flex-wrap:wrap">
+      <a class="btn sm primary" href="/discovery/c/{{ c.id }}">Analyse öffnen</a>
+      <form method="post" action="/discovery/c/{{ c.id }}/watchlist" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Zur Watchlist</button></form>
+      {% if c.status != 'beobachten' %}<form method="post" action="/discovery/c/{{ c.id }}/status" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="beobachten"><input type="hidden" name="back" value="/discovery"><button class="btn sm ghost" type="submit">Beobachten</button></form>{% endif %}
+      {% if c.status != 'zurueckgestellt' %}<form method="post" action="/discovery/c/{{ c.id }}/status" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="zurueckgestellt"><input type="hidden" name="back" value="/discovery"><button class="btn sm ghost" type="submit">Zurückstellen</button></form>{% endif %}
+    </div>
+  </article>
+{% endfor %}
+</div>
+{% else %}
+<section class="card"><p class="hint">{% if n_total %}Keine Unternehmen in dieser Auswahl.{% else %}Noch keine Kandidaten. „Discovery-Lauf starten“ wertet die analysierten Meldungen aus; einzelne Unternehmen lassen sich über Ticker oder Namen direkt aufnehmen.{% endif %}</p></section>
+{% endif %}
+{% endblock %}
