@@ -60,8 +60,7 @@ def test_nash125_has_13_criteria_and_125_points():
     assert [c.label for c in sc.criteria] == ["Cash vs. Debt", "Revenue Growth", "Operating Margin", "Short Interest",
                                               "Institutional Ownership", "Scalability", "5-Year Return vs. S&P 500",
                                               "Competitive Moat", "CEO Quality", "Recession Resistance",
-                                              "Secular Trend", "Product / Mission Criticality",
-                                              "Talent / Culture Quality"]
+                                              "Secular Trend", "Company Culture", "Talent"]
     d = sc.to_dict()
     assert sc.total == S.recompute(d)  # reproduzierbar aus den gespeicherten Teilpunkten
     pts = {c.key: c.points for c in sc.criteria}

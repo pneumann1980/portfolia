@@ -104,7 +104,7 @@
     <div><span class="label">Einordnung</span><b>{{ band.label }}</b>{% if band.note %}<span class="hint">{{ band.note }}</span>{% endif %}</div>
     <div><span class="label">Bewertete Kriterien</span><b>{{ nsc.criteria|selectattr('points', 'ne', none)|list|length }} von 13</b><span class="hint">möglich: {{ pts(band.lo) }}–{{ pts(band.hi) }}</span></div>
   </div>
-  <p class="hint">Bereiche laut öffentlicher Erläuterung: 100–125 Exceptional, 75 bis unter 100 Watchlist, unter 75 niedrige Priorität. Die Einordnung ist eine Interpretation der Nash-Scorecard und <b>keine Kaufempfehlung</b>; bei fehlenden Kriterien wird sie nur angezeigt, wenn sie unabhängig von den fehlenden Punkten feststeht.
+  <p class="hint">Bereiche laut öffentlicher Erläuterung: 125 „once-in-a-lifetime“, 100–125 Exceptional, etwa 75 bis unter 100 Watchlist, darunter schwache Kandidaten. Tom Nash empfiehlt im Video, statt eines nicht als Exceptional eingestuften Einzelwerts den S&P 500 zu kaufen – das ist seine Aussage, keine Empfehlung von Portfolia. Die Einordnung ist eine Interpretation der Nash-Scorecard und <b>keine Kaufempfehlung</b>; bei fehlenden Kriterien wird sie nur angezeigt, wenn sie unabhängig von den fehlenden Punkten feststeht.
     Herkunft je Regel: {{ prov('belegt') }} {{ prov('auftrag') }} {{ prov('annahme') }}. Quellen der Methode: <a href="{{ nash_src[0] }}" rel="noopener noreferrer" target="_blank">Video</a>, <a href="{{ nash_src[1] }}" rel="noopener noreferrer" target="_blank">öffentliche Zusammenfassung</a>; Details in docs/DISCOVERY_INTELLIGENCE.md.</p>
 </section>
 {{ scorecard(nsc, ccy, true) }}

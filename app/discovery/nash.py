@@ -8,7 +8,9 @@ Belegstand (Einzelheiten und Quellen: ``docs/DISCOVERY_INTELLIGENCE.md``, Abschn
 * ``belegt`` – Regel in einer öffentlichen Wiedergabe des Videos „The UNTHINKABLE is About to Happen to Stocks (but
   most will invest wrong)“ (youtube.com/watch?v=6pm5KqQw6RI, Zusammenfassung youtubesummary.com/summary/6pm5KqQw6RI)
   ausdrücklich genannt: Cash vs. Debt, Revenue Growth, Operating Margin, 5-Year Return vs. S&P 500 (Stufen 5 und 10),
-  Score-Bereiche, Scalability als Vergleich Umsatz- gegen Kostenwachstum.
+  Score-Bereiche, Scalability als Vergleich Umsatz- gegen Kostenwachstum; die 13 Kriterien selbst (Moat, CEO Quality,
+  Recession Resistance, Secular Trend, Company Culture, Talent). Die Wiedergabe ist eine KI-Zusammenfassung, kein
+  wörtliches Transkript.
 * ``auftrag`` – Kriterium in der Quelle genannt, Schwellen nur aus der Auftragsvorgabe (nicht in einer zugänglichen
   Primärquelle verifiziert): Short Interest, Institutional Ownership, Maximalpunkte je Kriterium.
 * ``annahme`` – Portfolia-Interpretation, wo die Quelle schweigt (z. B. Lücke zwischen 0 und 10 % Mehrrendite,
@@ -51,15 +53,18 @@ AI_CRITERIA: dict[str, tuple[str, float, str]] = {
     "trend": ("Secular Trend", 10.0,
               "Profitiert das Geschäft von einer langfristigen, belegten Entwicklung (z. B. KI, Elektrifizierung, "
               "Digitalisierung) – nicht nur von einem Zyklus?"),
-    "kritikalitaet": ("Product / Mission Criticality", 10.0,
-                      "Wie unverzichtbar ist das Produkt für die Kunden (Kernprozess, schwer ersetzbar) bzw. wie "
-                      "zentral ist die Mission für zahlende Kunden?"),
-    "talent": ("Talent / Culture Quality", 10.0,
-               "Belege für die Fähigkeit, Fachkräfte zu gewinnen und zu halten, und für eine leistungsfähige "
-               "Unternehmenskultur."),
+    "kultur": ("Company Culture", 10.0,
+               "Belegte Merkmale einer leistungsfähigen Unternehmenskultur (z. B. Gründer-/Eigentümerprägung, "
+               "Innovations- und Umsetzungskultur, Mitarbeiterbindung) – und Gegenanzeichen."),
+    "talent": ("Talent", 10.0,
+               "Belege für die Fähigkeit, herausragende Fachkräfte (Ingenieure, Forscher, Führungskräfte) zu gewinnen "
+               "und zu halten."),
 }
+# Struktur laut öffentlicher Zusammenfassung des Videos: 7 Kennzahlen + Moat, CEO, Recession, Trends, Culture, Talent
+# = 13 Kriterien. „Product / Mission Criticality“ (nur in der Auftragsvorgabe) ist dort nicht genannt und entfällt.
 AI_LEVELS = {0: "schwach / nicht erfüllt", 1: "teilweise erfüllt", 2: "klar erfüllt"}
-BANDS = (("exceptional", 100.0, "Exceptional (100–125)"), ("watchlist", 75.0, "Watchlist (75 bis unter 100)"),
+BANDS = (("exceptional", 100.0, "Exceptional (100–125; 125 = „once-in-a-lifetime“)"),
+         ("watchlist", 75.0, "Watchlist (75 bis unter 100)"),
          ("niedrig", 0.0, "Unter 75 – niedrige Priorität / No-Go nach der Methode"))
 
 
@@ -277,7 +282,7 @@ def _ai(key: str, ai: dict[str, Any] | None) -> Criterion:
 def nash125(fu: Fundamentals, ai: dict[str, Any] | None, market: dict[str, Any]) -> Score:
     cs = [_cash_debt(fu), _growth(fu), _margin(fu), _short(market), _institutional(market), _scalability(fu),
           _relative_return(market)]
-    cs += [_ai(k, ai) for k in ("moat", "ceo", "rezession", "trend", "kritikalitaet", "talent")]
+    cs += [_ai(k, ai) for k in ("moat", "ceo", "rezession", "trend", "kultur", "talent")]
     return Score("nash125", LABEL, cs)
 
 

@@ -295,10 +295,17 @@ Junge Unternehmen werden nicht ausgeschlossen. Fehlender Gewinn, negativer FCF, 
 | Zusammenfassung [youtubesummary.com/summary/6pm5KqQw6RI](https://youtubesummary.com/summary/6pm5KqQw6RI) | „125-point test“; Cash vs. Debt (0/5/10), Revenue Growth (< 10 / 10–20 / > 20 %), Operating Margin (< 10 / 10–25 / > 25 %), Scalability (Umsatz- vs. Kostenwachstum, Beispiele), 5-Year vs. S&P 500 (> 20 % besser: 10; 10–20 %: 5; schlechter: 0), Short Interest und Institutional Ownership (ohne Schwellen), Moat, CEO, Recession Resilience, langfristige Trends, Kultur, Talent; Bereiche 100–125 exceptional, ~75–100 Watchlist, darunter schwach | öffentlich, Sekundärquelle |
 | Tom Nash auf X ([Status 1766765502553112868](https://x.com/iamtomnash/status/1766765502553112868)), ROIC Academy Lecture #59 ([Patreon](https://www.patreon.com/posts/lecture-59-stock-134653136)) | Ankündigung einer Scorecard bzw. Lektion | Inhalt nicht öffentlich / hinter Bezahlschranke – nicht verwendet |
 
-Die Bezeichnung „Original“ wird nicht verwendet: Die Primärquelle war nicht vollständig zugänglich. Geschützte
-Schulungsinhalte wurden nicht verwendet. Unterschied in der Benennung: Die Zusammenfassung nennt „company culture,
-talent“ und keine „Product/Mission Criticality“; die Rekonstruktion folgt der 13-Kriterien-Liste der Auftragsvorgabe
-(12 × 10 + 5 = 125 Punkte) und kennzeichnet die Abweichung.
+Die Bezeichnung „Original“ wird nicht verwendet: Die Primärquelle war nicht vollständig zugänglich, die öffentliche
+Wiedergabe ist eine KI-Zusammenfassung (kein wörtliches Transkript). Geschützte Schulungsinhalte wurden nicht
+verwendet.
+
+**Entscheidung zur Struktur:** Die Auftragsvorgabe nannte als qualitative Kriterien u. a. „Product / Mission
+Criticality“ und „Talent / Culture Quality“. Die öffentliche Wiedergabe nennt dagegen „competitive moat, CEO quality,
+resilience in recessions, long-term trends such as AI, company culture, and talent“ – zusammen mit den sieben
+Kennzahl-Kriterien ergibt das **genau 13 Kriterien, wenn Kultur und Talent getrennt zählen**; „Product / Mission
+Criticality“ kommt nicht vor. Portfolia folgt der belegten Fassung: **Company Culture** und **Talent** als getrennte
+Kriterien, „Product / Mission Criticality“ entfällt. Die Maximalpunkte je Kriterium (12 × 10 + Recession Resistance 5 =
+125) nennt die Wiedergabe nicht; sie stammen aus der Auftragsvorgabe und gehen rechnerisch auf.
 
 ### 9.2 Die 13 Kriterien
 
@@ -318,8 +325,8 @@ der Auftragsvorgabe, nicht verifiziert; **Annahme** = Portfolia-Interpretation.
 | CEO Quality | 10 | dto. | dto. | dto. |
 | Recession Resistance | 5 | KI-Stufe 0/1/2 → 0/2,5/5 | dto. | dto. |
 | Secular Trend | 10 | KI-Stufe 0/1/2 → 0/5/10 | dto. | dto. |
-| Product / Mission Criticality | 10 | dto. | Kriterium nur in der Auftragsvorgabe | dto. |
-| Talent / Culture Quality | 10 | dto. | belegt (Kultur, Talent) | dto. |
+| Company Culture | 10 | dto. | Kriterium belegt, Stufen Annahme | dto. |
+| Talent | 10 | dto. | Kriterium belegt, Stufen Annahme | dto. |
 
 Qualitative Kriterien: Bewertung nur mit mindestens einem Beleg (Quellen-ID); Stufe 2 nur mit **wörtlich in der
 Quelle gefundener Belegstelle** (≥ 15 Zeichen) und Konfidenz ≥ 0,5, sonst Stufe 1. Ohne Beleg bleibt das Kriterium
@@ -327,8 +334,10 @@ Quelle gefundener Belegstelle** (≥ 15 Zeichen) und Konfidenz ≥ 0,5, sonst St
 
 ### 9.3 Einordnung
 
-Bereiche laut Quelle: 100–125 Exceptional, 75 bis unter 100 Watchlist, unter 75 niedrige Priorität / No-Go nach der
-Methode. Bei fehlenden Kriterien wird die Spanne `erreichte Punkte … erreichte Punkte + Maximum der fehlenden`
+Bereiche laut Quelle: 125 „once-in-a-lifetime“, 100–125 Exceptional, etwa 75–100 Watchlist, darunter schwache
+Kandidaten (Portfolia: unter 75 niedrige Priorität / No-Go nach der Methode). Laut Video empfiehlt Tom Nash, statt
+eines nicht als Exceptional eingestuften Einzelwerts den S&P 500 zu kaufen – die Seite nennt das als seine Aussage,
+nicht als Empfehlung von Portfolia. Bei fehlenden Kriterien wird die Spanne `erreichte Punkte … erreichte Punkte + Maximum der fehlenden`
 berechnet; eine Einordnung erscheint nur, wenn die ganze Spanne in einem Bereich liegt, sonst „Nicht bestimmbar“ mit
 Spanne. Die Kategorie „Nash 100+“ erfordert gesicherte ≥ 100 Punkte. Die Einordnung ist eine Interpretation der
 Scorecard, **keine Kaufempfehlung**.
@@ -660,9 +669,11 @@ Ergebnis:
 - **Live-KI-Abnahme ausstehend:** Ohne Schlüssel in der Entwicklungsumgebung wurden alle KI-Schritte nur mit
   kontrollierten Attrappen geprüft. Ob das konfigurierte Modell (z. B. gemini-3.5-flash-lite) die Schemata zuverlässig
   einhält, zeigt erst der Echtbetrieb – das Protokoll nennt dann Fehlerklasse und Position.
-- **Tom Nash 125:** Primärquelle nicht abrufbar; Short Interest/Institutional Ownership und Maximalpunkte nach
-  Auftragsvorgabe, Stufen von Scalability und den qualitativen Kriterien sind Portfolia-Annahmen (je Kriterium
-  gekennzeichnet). Das Kriterium „Product / Mission Criticality“ ist in der zugänglichen Wiedergabe nicht genannt.
+- **Tom Nash 125:** Primärquelle nicht abrufbar, nur eine KI-Zusammenfassung des Videos; Schwellen für Short
+  Interest/Institutional Ownership und die Maximalpunkte je Kriterium nach Auftragsvorgabe, Stufen von Scalability
+  und den qualitativen Kriterien sind Portfolia-Annahmen (je Kriterium gekennzeichnet). Ob „mehr als 20 % besser als
+  der S&P 500“ Prozentpunkte der kumulierten Rendite oder ein relatives Verhältnis meint, ist nicht belegt (Portfolia:
+  Prozentpunkte). Kultur und Talent als getrennte Kriterien folgen aus der Zählung der Wiedergabe (13 Kriterien).
 - Belegstellen-Prüfung zeigt, dass ein Zitat in der Quelle steht – nicht, dass es das Kriterium inhaltlich trägt.
 - Frames-Vorauswahl ist eine Näherung (Kalenderjahr statt Geschäftsjahr, nur US-GAAP-Elemente); IFRS-Emittenten
   (20-F) und Banken/Versicherungen fallen dort meist unter „ohne Daten“ und werden nur über andere Wege gefunden.

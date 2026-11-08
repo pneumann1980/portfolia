@@ -42,7 +42,7 @@ from app.util.timeutil import iso, today_local
 log = logging.getLogger(__name__)
 
 PROMPT_VERSION = 2  # Teilanalysen (0.109); Version 1 = ein Gesamtaufruf (0.108)
-PART_VERSIONS = {"bericht": 2, "disruption": 2, "nash": 1}
+PART_VERSIONS = {"bericht": 2, "disruption": 2, "nash": 2}  # nash 2: Culture und Talent getrennt
 PARTS = {"bericht": "Geschäftsmodell, These und Gegenhypothese", "disruption": "Qualitative Disruption-Kriterien",
          "nash": "Qualitative Tom-Nash-Kriterien"}
 THEME_PROMPT_VERSION = 2
