@@ -29,6 +29,7 @@ NAV = [
     ("dashboard", "/", "Übersicht", "home"),
     ("positions", "/positions", "Positionen", "list"),
     ("watchlist", "/watchlist", "Watchlist", "eye"),
+    ("discovery", "/discovery", "Discovery", "radar"),
     ("journal", "/journal", "Buchungen", "book"),
     ("accounts", "/accounts", "Konten", "list"),
     ("plans", "/plans", "Sparpläne", "repeat"),

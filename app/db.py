@@ -1092,6 +1092,116 @@ ALTER TABLE csv_row ADD COLUMN pair_rev TEXT;
     (38, None),  # Schreibrevisionen für Konto-Zuordnungen und Journal-Assets – siehe _migration_38()
     (39, None),  # Schreibrevisionen für Asset-Änderungen und Sparplan-Buchungen – siehe _migration_39()
     (40, None),  # Stichtag: Eröffnungsstand, Freigaben, Korrekturen – siehe _migration_40()
+    (41, """
+-- Discovery & Intelligence (0.108.0): eigenständige Research-Daten. Keine Verbindung zu Buchungen, Ledger oder Steuer;
+-- bewusst nicht in REV_TABLES (ändern weder Diagnose-Datenstand noch Portfolio-Zwischenspeicher).
+CREATE TABLE IF NOT EXISTS disc_company (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  cik          INTEGER,                         -- SEC Central Index Key (US-Emittenten), sonst NULL
+  ticker       TEXT NOT NULL,                   -- Haupt-Ticker (Großbuchstaben)
+  exchange     TEXT,
+  yahoo_symbol TEXT,                            -- Kursreihe yahoo:<Symbol> (gemeinsame Kursablage)
+  name         TEXT NOT NULL,
+  sector       TEXT,
+  industry     TEXT,
+  country      TEXT,
+  sic          TEXT,
+  listed       INTEGER NOT NULL DEFAULT 1,      -- 1 = börsennotiert nachgewiesen
+  status       TEXT NOT NULL DEFAULT 'neu',     -- neu | beobachten | zurueckgestellt | verworfen
+  origin       TEXT NOT NULL,                   -- news | ki | manuell | sec
+  note         TEXT,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_disc_company_ticker ON disc_company(ticker);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_disc_company_cik ON disc_company(cik) WHERE cik IS NOT NULL;
+CREATE TABLE IF NOT EXISTS disc_alias (
+  kind       TEXT NOT NULL,                     -- name | ticker | former_name
+  value_norm TEXT NOT NULL,
+  company_id INTEGER NOT NULL REFERENCES disc_company(id) ON DELETE CASCADE,
+  value      TEXT NOT NULL,
+  PRIMARY KEY (kind, value_norm, company_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS disc_signal (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id   INTEGER NOT NULL REFERENCES disc_company(id) ON DELETE CASCADE,
+  kind         TEXT NOT NULL,                   -- nachricht | thema | fundamental | manuell
+  title        TEXT NOT NULL,
+  detail       TEXT,
+  origin       TEXT NOT NULL,                   -- news | sec | ki | manuell
+  ref          TEXT,                            -- Ereignis-/Meldungs-ID bzw. SEC-Accession
+  url          TEXT,
+  source_name  TEXT,
+  n_sources    INTEGER NOT NULL DEFAULT 1,      -- verschiedene Quellen desselben Ereignisses (nicht Artikelzahl)
+  direction    TEXT,                            -- positiv | negativ | neutral | unklar
+  strength     REAL NOT NULL DEFAULT 0,         -- 0..1, Regel siehe docs/DISCOVERY_INTELLIGENCE.md
+  published_at TEXT,
+  observed_at  TEXT NOT NULL,
+  fp           TEXT NOT NULL UNIQUE             -- Dublettenschutz: Unternehmen + Ereignis
+);
+CREATE INDEX IF NOT EXISTS ix_disc_signal_company ON disc_signal(company_id, observed_at);
+CREATE TABLE IF NOT EXISTS disc_fact (
+  company_id   INTEGER NOT NULL REFERENCES disc_company(id) ON DELETE CASCADE,
+  concept      TEXT NOT NULL,                   -- Portfolia-Kennzahl (revenue, gross_profit …)
+  tag          TEXT NOT NULL,                   -- XBRL-Element (us-gaap:Revenues …)
+  unit         TEXT NOT NULL,
+  period_start TEXT,
+  period_end   TEXT NOT NULL,
+  fy           INTEGER,
+  fp           TEXT,
+  form         TEXT,
+  value        REAL NOT NULL,
+  filed        TEXT NOT NULL,
+  accn         TEXT NOT NULL,
+  PRIMARY KEY (company_id, concept, period_end, period_start, accn)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS disc_analysis (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id     INTEGER NOT NULL REFERENCES disc_company(id) ON DELETE CASCADE,
+  created_at     TEXT NOT NULL,
+  calc_version   INTEGER NOT NULL,
+  prompt_version INTEGER,
+  provider       TEXT,
+  model          TEXT,
+  trigger        TEXT NOT NULL,                 -- manuell | automatisch | neu
+  disruption     REAL,
+  quality        REAL,
+  garp           REAL,
+  nash           REAL,
+  valuation      REAL,
+  coverage       REAL,
+  confidence     REAL,
+  input_hash     TEXT NOT NULL,
+  result_json    TEXT NOT NULL                  -- vollständiger, reproduzierbarer Bericht (Kriterien, Daten, Quellen)
+);
+CREATE INDEX IF NOT EXISTS ix_disc_analysis_company ON disc_analysis(company_id, id);
+CREATE TABLE IF NOT EXISTS disc_milestone (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id  INTEGER NOT NULL REFERENCES disc_company(id) ON DELETE CASCADE,
+  analysis_id INTEGER NOT NULL REFERENCES disc_analysis(id) ON DELETE CASCADE,
+  text        TEXT NOT NULL,
+  kind        TEXT NOT NULL,                    -- bestaetigt | widerlegt (welche These der Meilenstein prüft)
+  metric      TEXT,                             -- maschinell prüfbar: Kennzahl (revenue_growth …)
+  op          TEXT,                             -- >= | <=
+  threshold   REAL,
+  due         TEXT,
+  status      TEXT NOT NULL DEFAULT 'offen',    -- offen | erfuellt | verfehlt
+  checked_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS disc_ai_usage (
+  day           TEXT PRIMARY KEY,
+  calls         INTEGER NOT NULL DEFAULT 0,
+  input_tokens  INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS disc_run (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind        TEXT NOT NULL,                    -- discovery | refresh | analyse
+  started_at  TEXT NOT NULL,
+  finished_at TEXT,
+  stats_json  TEXT
+);
+"""),
 ]
 
 
