@@ -1,4 +1,11 @@
-# Discovery & Intelligence (0.108.0)
+# Discovery & Intelligence (0.109.0 – „Discovery & Intelligence 2.0“)
+
+**Neu in 0.109:** eigenständige Scorecard **Tom Nash 125 – Public Reconstruction v1** (die bisherige 125-Punkte-Systematik
+heißt jetzt **Portfolia Fundamental v1**), vollständig sichtbarer **KI-Researchstatus**, persistente **Research-Jobs**
+mit Knöpfen und Fortschritt, gezieltes **Nachholen fehlender KI-Teile**, eine **Discovery Engine** mit drei
+Suchwegen unabhängig von der News-Pipeline (KI-gestützte Themen/Wertschöpfungsketten, fundamentale Wendepunkte im
+SEC-Universum, mögliche Marktfehlbewertungen), klassisches PEG, Bewertungsprofile, Gesamtrendite gegenüber dem
+S&P 500, Export/Wiederherstellung der Discovery-Daten im Gesamtexport.
 
 Research-Modul: Es entdeckt börsennotierte Unternehmen, bewertet sie in getrennten, vollständig aufschlüsselbaren
 Scorecards und prüft den Fit zum eigenen Portfolio lokal. Es ist **kein** Kaufsignal-Generator. Es erzeugt keine
@@ -12,7 +19,7 @@ Fünf Stufen, jede mit eigenem Ergebnis:
 |---|---|---|
 | Discovery | Welche Unternehmen sind auffällig? | Kandidaten und Signale |
 | Disruption | Wie groß ist das Potenzial des Geschäftsmodells? | Disruption Score (100) |
-| Fundamental Validation | Was zeigen die Zahlen? | Quality (100), Growth/GARP (100), Tom-Nash-inspiriert (125) |
+| Fundamental Validation | Was zeigen die Zahlen? | Quality (100), Growth/GARP (100), Tom Nash 125 (Public Reconstruction v1), Portfolia Fundamental v1 (125) |
 | Valuation | Was ist eingepreist? | Multiplikatoren, 3 Szenarien, eingepreistes Wachstum, Valuation Score (100) |
 | Portfolio Fit | Passt es zum eigenen Depot? | Kauf-Simulation, Portfolio-Fit (100), nur lokal |
 
@@ -21,7 +28,12 @@ und zugleich teuer, günstig und zugleich konzentrationserhöhend.
 
 Seiten:
 
-- `/discovery`: Radar mit Kategorien, Sortierung, Suche, Lauf starten, manuell aufnehmen, Einstellungen, Export.
+- `/discovery`: Research starten (KI-Discovery, Fundamentalscreening, vollständiger Lauf), KI-Researchstatus,
+  Research-Jobs, Suchfortschritt, Radar mit Kategorien, Sortierung, Suche, manuell aufnehmen, Einstellungen/Zeitplan.
+- `POST /discovery/start/{ki_discovery|screening|voll|news}`: startet einen Hintergrund-Job (Dublettenschutz).
+- `/discovery/status`, `/discovery/jobs/{id}`, `/discovery/c/{id}/status`: HTMX-Teilansichten, die sich selbst
+  aktualisieren, solange Jobs laufen.
+- `/discovery/protokoll?job=`: Ausführungsprotokoll (Jobs, Kandidaten, KI-Aufrufe ohne Prompt-Inhalt).
 - `/discovery/c/{id}`: Unternehmensanalyse (stabiler Link). `?a=<Version>` zeigt eine frühere Version,
   `?betrag=` setzt den simulierten Kaufbetrag.
 - `/discovery/t/{Ticker}`: stabiler Link je Ticker. Er wird aus Watchlist und Positionsdetail verlinkt.
@@ -30,7 +42,10 @@ Seiten:
 
 Aktionen:
 
-- Analyse erstellen bzw. aktualisieren; „Trotzdem neu erstellen“ erzwingt eine neue Version.
+- Unternehmen: „KI-Analyse starten“ (alle drei KI-Teile neu), „Fehlende KI-Teile ergänzen“ (nur fehlende/ungültige
+  Teile), „Fundamentaldaten aktualisieren“ (SEC und Kurse neu laden, keine KI), „Vollanalyse aktualisieren“ (Daten neu,
+  veraltete und fehlende KI-Teile neu), „Analysehistorie anzeigen“. Jeder Knopf startet einen Job; ein zweiter Klick
+  startet keinen zweiten.
 - Zur Watchlist hinzufügen.
 - Beobachten, Zurückstellen, Verwerfen, Status zurücksetzen.
 - Kaufbetrag simulieren.
@@ -51,6 +66,11 @@ Aktionen:
 | `ai.py` | KI-Analyse und Themen über das vorhandene `AiGateway`; Validierung; Discovery-Budget |
 | `signals.py` | Signale aus News-Analyse, KI-Themen, Fundamentaldaten |
 | `service.py` | Ablauf: aufnehmen, Discovery-Lauf, Analyse (historisiert), Vergleich, Radar |
+| `nash.py` | Tom Nash 125 – Public Reconstruction v1 (13 Kriterien, Belegstand je Regel, Einordnung) |
+| `jobs.py` | persistente Research-Jobs (Dublettenschutz, Fortschritt, Neustart, Zeitüberschreitung) |
+| `universe.py` | Research-Universum, EDGAR-Tagesindex, SEC-Frames-Vorauswahl, Bestätigung, Fehlbewertung |
+| `engine.py` | Job-Abläufe, mehrstufige KI-Discovery, Zeitplan, KI-Researchstatus |
+| `backup.py` | Discovery-Daten im Gesamtexport und ihre Wiederherstellung |
 | `web.py`, `charts.py`, `text.py` | Routen, Inline-SVG-Balken, deutsche Zahlenformate |
 
 Wiederverwendet werden:
@@ -74,6 +94,17 @@ Datenmodell (Migration 41), alle Tabellen mit Präfix `disc_`:
 | `disc_ai_usage` | Discovery-KI-Aufrufe je Tag |
 | `disc_run` | Discovery-Läufe mit Statistik |
 
+Migration 42 (0.109) ergänzt:
+
+| Tabelle/Spalte | Inhalt |
+|---|---|
+| `disc_analysis.nash125`, `.fundamental_v1`, `.ai_state`, `.parts_json`, `.job_id` | Tom Nash 125, Portfolia Fundamental v1 (= bisherige Spalte `nash`, nur benannt), KI-Zustand der Version, Zustand je KI-Teil, auslösender Job |
+| `disc_job` | Research-Jobs: Art, Auslöser, Slot (eindeutig solange aktiv), Status, Schritt, Fortschritt, Ergebnis, Fehlerklasse/-text, Prozesskennung, Zeiten |
+| `disc_ai_call` | jeder KI-Aufruf: Job, Unternehmen, Arbeitsschritt, Anbieter, Modell, Prompt-Version, Eingabe-Fingerabdruck, Status, Tokens, Kosten (nur wenn verlässlich), Fehler |
+| `disc_ai_part` | KI-Teilanalysen je Unternehmen (bericht, disruption, nash) mit Status, Fingerabdruck, Ergebnis |
+| `disc_universe` | Research-Universum (CIK, Ticker, Börse, Größenklasse, jüngste Einreichung, Vorauswahl, Zustand, Begründung) |
+| `disc_candidate` | Kandidaten je Suchlauf und Suchweg (neu/bekannt/verworfen) mit Begründung, Thema, Priorität, Belegen |
+
 Die Tabellen gehören **nicht** zu den Revisionstabellen (keine Trigger). Discovery-Schreibvorgänge ändern weder
 den Diagnose-Datenstand noch die Portfolio-Zwischenspeicher; ein Test prüft das. Kurse und Stammdaten werden nicht
 doppelt gespeichert, sondern liegen in der gemeinsamen Kursablage (Reihe `yahoo:<Ticker>`).
@@ -88,6 +119,9 @@ doppelt gespeichert, sondern liegen in der gemeinsamen Kursablage (Reihe `yahoo:
 | SEC Geschäftsbericht (10-K/20-F) | „Item 1. Business“ als Text | amtlich | wie oben; Cache 30 Tage; nur Abschnitt, gekürzt |
 | Yahoo Finance (vorhandene Anbindung) | Kurs, Marktkapitalisierung, Forward-KGV, institutioneller Anteil, Short Interest, Sektor, Profil | inoffizielle Schnittstelle, nicht garantiert | nur Ticker werden übertragen, Rate-Limit 1/s, Info höchstens wöchentlich |
 | Portfolia-News-Pipeline | analysierte Meldungen, Ereignisse | wie News-Analyse | keine zusätzlichen Abrufe |
+| SEC XBRL `frames` | ein Wert je Emittent, Element und Kalenderjahr (Vorauswahl über das ganze Universum mit ≈ 15 Anfragen) | amtlich; Geschäftsjahre werden dem nächstliegenden Kalenderjahr zugeordnet (Näherung) | wie oben; Cache 7 Tage |
+| EDGAR-Tagesindex (`daily-index/form.YYYYMMDD.idx`) | neue 10-K/10-Q/20-F/40-F je Tag | amtlich | wie oben; Cache 60 Tage |
+| Yahoo Finance, bereinigte Tageskurse (`auto_adjust`) | Gesamtrendite (Splits, Dividenden) der Aktie und des S&P 500 Total Return Index (^SP500TR, ersatzweise SPY) | inoffizielle Schnittstelle | nur Ticker; je Tag und Symbol einmal |
 | Manuelle Eingabe | Ticker oder Name | – | – |
 
 Bewusst nicht verwendet werden kostenpflichtige Datenanbieter, Scraping von Investor-Relations-Seiten oder
@@ -96,44 +130,59 @@ werden nicht geschätzt.
 
 ## 4. Discovery-Methodik
 
-Täglicher Lauf (06:47) bzw. „Discovery-Lauf starten“:
+Drei eigenständige Suchwege plus Nachrichten. Jeder Weg ist ein Job mit eigenem Zeitplan (`discovery.auto.<schritt>`:
+0 = aus, 24 = täglich, 168 = wöchentlich) und kann per Knopf gestartet werden.
 
-1. **News-Nennungen:** In `news_analysis.result_json` stehen „betroffene“ Werte der Art `aktie` der letzten
-   `discovery.news_days` Tage (Standard 14). Sie werden je (Name, Ereignis) gruppiert; das Ereignis stammt aus
-   `news_event`, ohne Ereignis gilt die einzelne Meldung.
-2. **Identität:** Siehe Abschnitt 5. Nicht auflösbare (private, nicht US-registrierte) und mehrdeutige Namen werden
-   gezählt und im Radar unter „nicht aufgenommen“ gelistet, aber nicht übernommen.
-3. **Dubletten:** Je Unternehmen und Ereignis entsteht höchstens ein Signal (`fp` UNIQUE). Weitere Artikel erhöhen nur
-   `n_sources` (verschiedene Quellen).
-4. **Stärke:** `Bedeutung × min(1; 0,4 + 0,15 × min(Quellen; 4))`. Eine einzelne Meldung ergibt höchstens 0,55 ×
-   Bedeutung. Viele Kopien zählen nicht mehr als 4 Quellen.
-5. **Themen (KI, optional):** Wichtige Ereignisse der letzten 7 Tage (Kategorie Unternehmen/Branche/Regulierung,
-   Bedeutung ≥ 0,5, höchstens 25) gehen an die KI. Sie leitet Themen und Unternehmen entlang der Wertschöpfungskette
-   ab: Anbieter, Zulieferer, Infrastruktur, Nutznießer. Jedes Thema braucht Ereignis-IDs als Beleg. Jeder Ticker muss
-   im SEC-Verzeichnis existieren und zum Namen passen.
-6. **Fundamentale Frühsignale** (deterministisch bei jeder Analyse):
-   - Umsatzwachstum beschleunigt (≥ 15 % und +10 Prozentpunkte zum Vorjahr);
-   - Bruttomarge +3 Prozentpunkte;
-   - Free Cashflow erstmals positiv.
-7. **Begrenzung und Priorisierung:**
-   - höchstens `discovery.max_new_per_run` neue Unternehmen (Standard 10);
-   - danach `discovery.auto_analyse_per_run` Analysen (Standard 2) für die stärksten neuen Signale.
+**A. Technology & Business Model Discovery (KI, Job `ki_discovery`)** – mehrstufig, zwei KI-Aufrufe plus Vertiefung:
 
-Kategorien im Radar (Regeln, keine Bauchentscheidung):
+1. *Ausgangsbelege* (deterministisch): bis zu 25 Emittenten mit den stärksten fundamentalen Wendepunkten aus dem
+   Universum (IDs `B1…`, gemischt nach Größenklassen) und – wenn `discovery.themes` an ist – wichtige Meldungen (`E…`).
+2. *Themen und Wertschöpfungsketten* (KI-Aufruf „themen“): höchstens 4 Themen; Fakten (nur mit Beleg-IDs) strikt
+   getrennt von der Hypothese; je Wertschöpfungsstufe (direkt, Zulieferer, Infrastruktur, Software,
+   Schlüsseltechnologie) Unternehmen mit Name und Ticker; Thema ohne gültigen Beleg wird verworfen.
+3. *Identität* (deterministisch): jeder Vorschlag gegen das SEC-Verzeichnis – Ticker und Name müssen zusammenpassen;
+   private, nicht registrierte, nur außerbörslich (OTC) gehandelte und SPACs werden mit Grund verworfen; Dubletten
+   zusammengeführt.
+4. *Discovery-These* (KI-Aufruf „thesen“, bis `discovery.ki_companies` Unternehmen): Besonderheit, Erlösmodell,
+   belegte Nachfrage, langfristige Chance, Vorteile, Widerlegung – Belege als wörtliche Zitate aus dem 10-K-Auszug,
+   maschinell geprüft; ohne gefundenes Zitat höchstens Stufe 1.
+5. *Discovery-Priorität* (nur Auswahl): KI-Stufen Chance/Besonderheit/Nachfrage je 0–2 × 7,5 (45) + Datenqualität
+   (geprüfte Belegstelle 10, SEC-Umsatz 5) + Neuheit 15 + unabhängige Evidenz (Wendepunkt im Screening 15, mehrere
+   Ausgangsbelege 10) = höchstens 100. Kein Ersatz für die Scores.
+6. *Fundamentale Validierung*: Analyse im Modus „daten“ (alle Regelkriterien, keine KI).
+7. *Vertiefte KI-Analyse* der `discovery.auto_analyse_per_run` besten Kandidaten (3 Aufrufe je Unternehmen), nur wenn
+   das Budget reicht.
+8. *Speicherung*: Signal „KI-Discovery: Thema“, Kandidaten (neu / bereits bekannt / verworfen mit Grund), Themen samt
+   Fakten, Hypothese und Gegenargument im Job-Ergebnis.
+
+**B. Fundamental Inflection Discovery (ohne KI, Job `screening`)** – siehe Abschnitt 5a.
+
+**C. Market Mispricing Discovery (ohne KI, Teil von `screening`)** – für bestätigte Wendepunkte: Rendite über 12
+Monate gegenüber dem S&P 500 (bereinigte Kurse). Liegt die Aktie ≥ 15 Prozentpunkte zurück, wird auf Merkmale einer
+Value Trap geprüft: Umsatz wächst nicht, FCF-Marge sinkt um mehr als 2 Pp., Verwässerung ≥ 10 % p. a., Nettoschulden
+ohne positiven FCF. Ohne Merkmale → Signal „Mögliche Marktfehlbewertung“ (positiv); mit Merkmalen → Signal „Kursrückstand
+– Merkmale einer Value Trap“ (negativ, keine Kategorie). Ein fallender Kurs allein ist nie ein Signal.
+
+**Nachrichten-Discovery (Job `news`)** – wie bis 0.108: News-Nennungen → Identität → Dubletten → Signale
+(Stärke `Bedeutung × min(1; 0,4 + 0,15 × min(Quellen; 4))`), höchstens `discovery.max_new_per_run` neue Unternehmen.
+
+**Vollständiger Lauf (Job `voll`)**: Nachrichten → Screening → KI-Discovery; jeder Teil mit eigenen Grenzen, ein
+Fehler bricht die anderen nicht ab.
+
+Kategorien im Radar (offengelegte Regeln):
 
 | Kategorie | Regel |
 |---|---|
-| Neue Entdeckungen | aufgenommen in den letzten 14 Tagen, Status „neu“ |
-| Early Disruptors | Disruption vollständig und ≥ 55 **und** FCF-Marge ≤ 0 oder operative Marge ≤ 5 % |
-| Hidden Champions | Marktkapitalisierung < 10 Mrd. USD **und** Quality vollständig ≥ 60 **und** ≤ 3 Nachrichtenquellen insgesamt (nie allein wegen Größe) |
-| Quality | Quality vollständig ≥ 70 |
-| Growth/GARP | Growth/GARP vollständig ≥ 65 |
-| Fundamentale Verbesserungen | Fundamentalsignal in den letzten 180 Tagen |
-| Zu beobachten | Status „beobachten“ |
-| Bereits im Portfolio | gehaltene Position mit gleichem Ticker oder Namen |
+| Neue Entdeckungen | von einem Suchweg (nicht manuell) in den letzten 14 Tagen aufgenommen, Status „neu“ |
+| Disruptive Geschäftsmodelle | Disruption vollständig bewertet und ≥ 55 |
+| Fundamentale Wendepunkte | Signal „wendepunkt“ oder „fundamental“ (nicht negativ) in den letzten 180 Tagen |
+| Mögliche Marktfehlbewertungen | Signal „fehlbewertung“ mit positiver Richtung (keine Value-Trap-Merkmale) |
+| Quality / Growth/GARP | vollständig bewertet und ≥ 70 bzw. ≥ 65 |
+| Nash 100+ | Tom Nash 125 **gesichert** ≥ 100 (fehlende Kriterien könnten nur Punkte hinzufügen) |
+| Zu beobachten / Bereits im Portfolio | Status „beobachten“ / gehaltene Position mit gleichem Ticker oder Namen |
 
-Sortierung: nach jedem Score, nach Portfolio-Fit (1.000 €) oder nach Aktualität des jüngsten Signals. Es gibt keine
-Bevorzugung nach Bekanntheit oder Größe.
+Sortierung: nach jedem Score (vollständige Bewertungen vor unvollständigen), Portfolio-Fit, Aktualität oder
+Discovery-Priorität. Keine Favoriten, keine Bevorzugung nach Bekanntheit.
 
 ## 5. Identifikation neuer Unternehmen
 
@@ -148,6 +197,30 @@ Bevorzugung nach Bekanntheit oder Größe.
 - **Private Firmen, Tochtergesellschaften:** nicht im Verzeichnis, also „nicht aufgelöst“. Tochtergesellschaften
   werden nicht automatisch der Mutter zugeordnet, weil sonst Fehlzuordnungen drohen.
 - **SPACs:** SIC 6770 („Blank Checks“) wird abgelehnt.
+
+## 5a. Research-Universum und Fundamentalscreening
+
+1. **Universum** (`disc_universe`): alle Emittenten an Nasdaq, NYSE, CBOE und TXSE aus dem SEC-Verzeichnis, eine
+   Zeile je CIK (Hauptticker); OTC und Emittenten ohne Börse bleiben außen vor; nicht mehr gelistete werden inaktiv.
+   Abgleich höchstens wöchentlich.
+2. **Neue Einreichungen**: EDGAR-Tagesindex der letzten 7 Tage (10-K, 10-Q, 20-F, 40-F, 10-K/A, 10-KT) → `filed_seen`.
+   Ein bereits bestätigter oder verworfener Emittent wird nur nach einer neuen Einreichung erneut geprüft.
+3. **Vorauswahl** (ganzes Universum): SEC-Frames für Umsatz (drei Elemente in Vorrangreihenfolge), operatives
+   Ergebnis, operativen Cashflow, Investitionen und verwässerte Aktien der letzten drei Kalenderjahre. Merkmale (Punkte):
+   Wachstumsbeschleunigung ≥ 15 % und +10 Pp. (3, +1 bei ≥ 30 %), Margenverbesserung ≥ 5 Pp. (2), Übergang zur
+   Profitabilität (3), FCF von negativ auf positiv (2), operativer Hebel: Umsatz > 10 % und ≥ 5 Pp. schneller als die
+   Gesamtkosten (2), FCF-Marge +10 Pp. (1); Gegenanzeichen: Umsatz −10 % (−3), Marge −10 Pp. (−2), Verwässerung ≥ 15 %
+   (−2). Vorauswahl ab 4 Punkten und Umsatz ≥ `discovery.min_revenue_musd` (Standard 20 Mio. USD).
+4. **Bestätigung** (je Lauf `discovery.screen_batch`, Standard 20): vollständige `companyfacts`, exakte
+   Geschäftsjahre, dieselben Regeln; Auswahl abwechselnd je Größenklasse (groß ≥ 10 Mrd., mittel 1–10 Mrd., klein
+   0,1–1 Mrd., Mikro), innerhalb nach Punkten und jüngster Einreichung. Bestätigt → Unternehmen, Signal „Fundamentaler
+   Wendepunkt“, Kandidat; sonst verworfen mit Begründung. Der Fortschritt steht je Emittent in der Datenbank – ein
+   abgebrochener Lauf setzt beim nächsten Mal fort.
+5. **Fehlbewertung**: Abschnitt 4, Weg C.
+
+Fortschritt auf `/discovery`: Größe des Universums, berechnete Vorauswahl, ausstehende Bestätigungen, geprüfte
+Emittenten (bestätigt/verworfen), Kandidaten der letzten 30 Tage (je Unternehmen einmal), analysierte Unternehmen,
+ausstehende KI-Analysen, Fehler – nur gezählte Werte.
 
 ## 6. Disruption Score (100 Punkte)
 
@@ -212,34 +285,62 @@ Bevorzugung nach Bekanntheit oder Größe.
 Junge Unternehmen werden nicht ausgeschlossen. Fehlender Gewinn, negativer FCF, kurze Historie, Cash Burn
 (Reichweite), Verwässerung und Bruttomarge sind einzelne, sichtbare Kriterien.
 
-## 9. Tom-Nash-inspirierte Fundamentalanalyse (125 Punkte)
+## 9. Tom Nash 125 – Public Reconstruction v1 und Portfolia Fundamental v1
 
-**Recherche:** Tom Nash kündigt eine „Company Scorecard“ für seine Plattform Stock MVP an
-([X, März 2024](https://x.com/iamtomnash/status/1766765502553112868)); eine „Stock Evaluation Scorecard“ gibt es als
-Lektion hinter einer Bezahlschranke ([Patreon](https://www.patreon.com/posts/lecture-59-stock-134653136)). Kriterien,
-Gewichte und Schwellen sind **nicht öffentlich belastbar dokumentiert**. Portfolia übernimmt daher keine angeblichen
-Originalregeln.
+### 9.1 Quellenlage
 
-Die Portfolia-Scorecard verwendet die im Auftrag genannten Themen als Kriterien. Gewichte und Schwellen sind eigene
-Festlegungen, Gesamtsumme 125:
+| Quelle | Inhalt | Zugang |
+|---|---|---|
+| Video „The UNTHINKABLE is About to Happen to Stocks (but most will invest wrong)“, [youtube.com/watch?v=6pm5KqQw6RI](https://www.youtube.com/watch?v=6pm5KqQw6RI) | Primärquelle | aus der Entwicklungsumgebung nicht abrufbar (YouTube sperrt Cloud-IP-Adressen; Transkript nicht verfügbar) |
+| Zusammenfassung [youtubesummary.com/summary/6pm5KqQw6RI](https://youtubesummary.com/summary/6pm5KqQw6RI) | „125-point test“; Cash vs. Debt (0/5/10), Revenue Growth (< 10 / 10–20 / > 20 %), Operating Margin (< 10 / 10–25 / > 25 %), Scalability (Umsatz- vs. Kostenwachstum, Beispiele), 5-Year vs. S&P 500 (> 20 % besser: 10; 10–20 %: 5; schlechter: 0), Short Interest und Institutional Ownership (ohne Schwellen), Moat, CEO, Recession Resilience, langfristige Trends, Kultur, Talent; Bereiche 100–125 exceptional, ~75–100 Watchlist, darunter schwach | öffentlich, Sekundärquelle |
+| Tom Nash auf X ([Status 1766765502553112868](https://x.com/iamtomnash/status/1766765502553112868)), ROIC Academy Lecture #59 ([Patreon](https://www.patreon.com/posts/lecture-59-stock-134653136)) | Ankündigung einer Scorecard bzw. Lektion | Inhalt nicht öffentlich / hinter Bezahlschranke – nicht verwendet |
 
-| Kriterium | Max | Art | Regel |
-|---|---|---|---|
-| Umsatzwachstum | 15 | Regel | CAGR: ≥ 30 % 15; ≥ 20 % 12; ≥ 12 % 9; ≥ 6 % 5; ≥ 0 2 |
-| Operative Margen | 10 | Regel | ≥ 25 % 10; ≥ 15 % 8; ≥ 8 % 5; ≥ 0 2 |
-| Bilanz und Verschuldung | 10 | Regel | Nettoschulden/FCF: Nettoliquidität 10; ≤ 1 8; ≤ 2 6; ≤ 3 3 |
-| Liquidität | 10 | Regel | Reichweite (6) + Current Ratio (4) |
-| Historische Aktienperformance | 10 | Regel | Kurs-CAGR bis 5 J. (split-bereinigt, Handelswährung): ≥ 25 % 10; ≥ 15 % 8; ≥ 8 % 5; ≥ 0 2 |
-| Wettbewerbsvorteile | 15 | KI | Stufe |
-| Managementqualität | 10 | KI | Stufe |
-| Institutionelle Beteiligung | 5 | Regel | 40–90 % 5; 20–40 % oder > 90 % 3; < 20 % 1 (Yahoo) |
-| Short Interest | 5 | Regel | ≤ 3 % 5; ≤ 6 % 4; ≤ 10 % 2; ≤ 20 % 1 (Yahoo) |
-| Skalierbarkeit | 10 | KI | Stufe |
-| Langfristige Branchentrends | 10 | KI | Stufe |
-| Relevanz der Produkte | 10 | KI | Stufe |
-| Organisation und Talent | 5 | KI | Stufe |
+Die Bezeichnung „Original“ wird nicht verwendet: Die Primärquelle war nicht vollständig zugänglich. Geschützte
+Schulungsinhalte wurden nicht verwendet. Unterschied in der Benennung: Die Zusammenfassung nennt „company culture,
+talent“ und keine „Product/Mission Criticality“; die Rekonstruktion folgt der 13-Kriterien-Liste der Auftragsvorgabe
+(12 × 10 + 5 = 125 Punkte) und kennzeichnet die Abweichung.
 
-Grenzen der Vergleichbarkeit: Das Ergebnis ist nicht mit Tom Nashs eigener Bewertung vergleichbar.
+### 9.2 Die 13 Kriterien
+
+Herkunft der Regel: **belegt** = in der öffentlichen Wiedergabe genannt; **Auftrag** = Kriterium belegt, Schwellen aus
+der Auftragsvorgabe, nicht verifiziert; **Annahme** = Portfolia-Interpretation.
+
+| Kriterium | Max | Regel | Herkunft | Daten |
+|---|---|---|---|---|
+| Cash vs. Debt | 10 | Liquidität ≥ 2 × Schulden 10; > Schulden 5; sonst 0 (keine Schulden berichtet: als 0 angesetzt, sichtbar) | belegt | SEC: Kasse + kurzfristige Anlagen; Finanzverbindlichkeiten |
+| Revenue Growth | 10 | < 10 % 0; 10–20 % 5; > 20 % 10 | belegt (Messzeitraum Geschäftsjahr: Annahme) | SEC |
+| Operating Margin | 10 | < 10 % 0; 10–25 % 5; > 25 % 10 | belegt | SEC |
+| Short Interest | 10 | < 5 % 10; 5 bis < 10 % 5; ≥ 10 % 0 | Auftrag | Yahoo `shortPercentOfFloat` |
+| Institutional Ownership | 10 | < 30 % 0; 30–60 % 5; > 60 % 10 | Auftrag | Yahoo `heldPercentInstitutions` |
+| Scalability | 10 | Umsatzwachstum − Wachstum der operativen Aufwendungen ≥ 5 Pp. 10; > 0 5; ≤ 0 0 | Vergleich belegt, Stufen Annahme | SEC: `OperatingExpenses`, sonst Bruttogewinn − operatives Ergebnis, sonst Umsatz − operatives Ergebnis |
+| 5-Year Return vs. S&P 500 | 10 | Mehrrendite > 20 Pp. 10; 10–20 Pp. 5; darunter 0 (0–10 Pp.: Annahme, Quelle schweigt) | belegt | Gesamtrendite (dividenden- und splitbereinigt) über identische Handelstage; S&P 500 Total Return Index, ersatzweise SPY; nur USD; < 5 Jahre Historie → unbewertet |
+| Competitive Moat | 10 | KI-Stufe 0/1/2 → 0/5/10 | Kriterium belegt, Stufen Annahme | Geschäftsbericht, Profil, Kennzahlen |
+| CEO Quality | 10 | dto. | dto. | dto. |
+| Recession Resistance | 5 | KI-Stufe 0/1/2 → 0/2,5/5 | dto. | dto. |
+| Secular Trend | 10 | KI-Stufe 0/1/2 → 0/5/10 | dto. | dto. |
+| Product / Mission Criticality | 10 | dto. | Kriterium nur in der Auftragsvorgabe | dto. |
+| Talent / Culture Quality | 10 | dto. | belegt (Kultur, Talent) | dto. |
+
+Qualitative Kriterien: Bewertung nur mit mindestens einem Beleg (Quellen-ID); Stufe 2 nur mit **wörtlich in der
+Quelle gefundener Belegstelle** (≥ 15 Zeichen) und Konfidenz ≥ 0,5, sonst Stufe 1. Ohne Beleg bleibt das Kriterium
+**unbewertet** (0 Punkte, als fehlend gezählt) – es wird nichts aufgefüllt.
+
+### 9.3 Einordnung
+
+Bereiche laut Quelle: 100–125 Exceptional, 75 bis unter 100 Watchlist, unter 75 niedrige Priorität / No-Go nach der
+Methode. Bei fehlenden Kriterien wird die Spanne `erreichte Punkte … erreichte Punkte + Maximum der fehlenden`
+berechnet; eine Einordnung erscheint nur, wenn die ganze Spanne in einem Bereich liegt, sonst „Nicht bestimmbar“ mit
+Spanne. Die Kategorie „Nash 100+“ erfordert gesicherte ≥ 100 Punkte. Die Einordnung ist eine Interpretation der
+Scorecard, **keine Kaufempfehlung**.
+
+### 9.4 Portfolia Fundamental v1 und Historisierung
+
+Die bis 0.108 als „Tom-Nash-inspiriert“ bezeichnete eigene Systematik bleibt unverändert als **Portfolia Fundamental v1**
+erhalten (Kriterien und Gewichte wie bisher: Umsatzwachstum 15, Margen 10, Bilanz 10, Liquidität 10, Kurs-CAGR 10,
+Wettbewerbsvorteile 15, Management 10, Institutionelle 5, Short Interest 5, Skalierbarkeit 10, Trends 10, Relevanz 10,
+Organisation 5). Ältere Versionen werden beim Lesen nur umbenannt (`nash` → `fundamental_v1`, alte Bezeichnung
+sichtbar), nicht neu berechnet; Migration 42 kopiert die Spalte `nash` nach `fundamental_v1`. Tom Nash 125 entsteht
+nur für Versionen ab 0.109 (`nash125`, Methodenkennung im Bericht).
 
 ## 10. Valuation Score (100 Punkte) und Szenarien
 
@@ -252,7 +353,9 @@ Devisenkurs umgerechnet):
 | EV | Marktkapitalisierung − Nettofinanzposition |
 | EV/Umsatz, EV/EBIT | EV geteilt durch Umsatz bzw. operatives Ergebnis |
 | Kurs/FCF, FCF-Rendite | Marktkapitalisierung / FCF bzw. Kehrwert |
-| PEG | KGV ÷ (Umsatzwachstum × 100) |
+| PEG (klassisch, ab 0.109) | KGV ÷ (Ø jährliches Wachstum des verwässerten Ergebnisses je Aktie über bis zu 3 Jahre × 100); nur bei positivem EPS am Anfang und Ende |
+| KGV ÷ Umsatzwachstum | umsatzbasiertes PEG-Analogon (bis 0.108 fälschlich „PEG“ genannt) – nur Ersatz, wenn kein klassisches PEG berechenbar ist, und so beschriftet |
+| Gesamtrendite 5 J. | Aktie und S&P 500 über identische Handelstage, dividenden- und splitbereinigt (für Tom Nash 125) |
 | Forward-KGV | Yahoo, Analystenkonsens („geschätzt“) |
 
 EBITDA wird nicht berechnet, weil Abschreibungen nicht einheitlich verfügbar sind.
@@ -263,16 +366,17 @@ EBITDA wird nicht berechnet, weil Abschreibungen nicht einheitlich verfügbar si
 |---|---|
 | Startwachstum | Basis = Mittel aus Jahreswachstum und 3-J.-CAGR, begrenzt auf −10 % … 50 %; konservativ × 0,5; optimistisch × 1,4 (≤ 80 %); fällt linear auf 4 % im Jahr 5 |
 | Ziel-FCF-Marge | profitabel: Ø FCF-Marge (× 0,8 / × 1 / × 1,2, höchstens 60 % der Bruttomarge, nie unter Basis); sonst 15 / 25 / 35 % der Bruttomarge |
-| Kurs/FCF im Jahr 5 | 15 / 22 / 30 |
+| Bewertungsprofil (ab 0.109) | nach Unternehmensart, nicht je Unternehmen: **profitables Wachstum** (FCF-Marge > 2 %, Startwachstum ≥ 8 %): Kurs/FCF 15 / 22 / 30, Diskontierung 9 %; **reif** (FCF positiv, < 8 %): 10 / 14 / 18, 8 %; **früh** (ohne nachhaltigen FCF): 15 / 22 / 30, 11 % (höheres Ausführungsrisiko) |
+| Kurs/FCF im Jahr 5 | nach Profil (siehe oben) |
 | Verwässerung p. a. | Ø der letzten Jahre (0–8 %) +1 / 0 / −1 Pp. |
 | Nettofinanzposition | unverändert (vereinfacht) |
-| Diskontierung | 9 % p. a. (Annahme) |
+| Diskontierung | nach Profil 8 / 9 / 11 % p. a. (Annahme) |
 
 **Rechenweg:**
 
 - Wert je Aktie_5 = (FCF_5 × Multiplikator + Nettofinanzposition) / Aktien_5.
 - Rendite p. a. = (Wert_5 / Kurs)^(1/5) − 1.
-- Barwert = Wert_5 / 1,09^5.
+- Barwert = Wert_5 / (1 + Diskontierung des Profils)^5.
 
 Das **eingepreiste Startwachstum** ist das g, bei dem der Barwert im Basismodell dem Kurs entspricht (Bisektion,
 −30 % … +150 %). Liegt es außerhalb dieser Spanne, wird das angezeigt.
@@ -282,7 +386,7 @@ Das **eingepreiste Startwachstum** ist das g, bei dem der Barwert im Basismodell
 | Kriterium | Max | Regel |
 |---|---|---|
 | Bewertungsniveau | 30 | profitabel: FCF-Rendite ≥ 6 % 30; ≥ 4 % 24; ≥ 2,5 % 16; ≥ 1,5 % 9; ≥ 0,5 % 4; sonst EV/Umsatz ≤ 2 30; ≤ 4 22; ≤ 7 14; ≤ 12 7; ≤ 20 3 |
-| Wachstum relativ zur Bewertung | 25 | PEG ≤ 1 25; ≤ 1,5 19; ≤ 2 12; ≤ 3 5 (ohne positives KGV: EV/Umsatz je Wachstumspunkt ≤ 0,2 25 …) |
+| Wachstum relativ zur Bewertung | 25 | klassisches PEG ≤ 1 25; ≤ 1,5 19; ≤ 2 12; ≤ 3 5; ersatzweise KGV ÷ Umsatzwachstum (gleiche Stufen, eigene Bezeichnung); ohne positives KGV: EV/Umsatz je Wachstumspunkt ≤ 0,2 25 … |
 | Erwartete Rendite (Basis) | 25 | ≥ 15 % 25; ≥ 10 % 19; ≥ 6 % 12; ≥ 2 % 6 |
 | Unsicherheit | 10 | Spannweite (opt. − kons.) / Basis: ≤ 60 % 10; ≤ 100 % 7; ≤ 150 % 4; sonst 1; Datenabdeckung < 70 % → höchstens 3 |
 | Finanzielle Risiken | 10 | Nettoliquidität 10; Nettoschulden ≤ 2 J. FCF 7; ≤ 4 J. 4; sonst 1; bei negativem FCF 0 |
@@ -352,51 +456,92 @@ Weitere Regeln:
 - **Währungen:** Es werden keine Währungen vermischt; mehrere Berichtswährungen werden vermerkt.
 - **Fehlende Jahre** werden nie aufgefüllt.
 
-## 14. KI-Integration
+## 14. KI-Integration und KI-Steuerung
 
-Es gibt keine zweite Infrastruktur: Aufrufe laufen über `AiGateway.generate` (Claude oder Gemini laut Einstellung),
-mit JSON-Modus.
+Es gibt keine zweite Infrastruktur: Aufrufe laufen über `AiGateway.generate` (Claude oder Gemini laut
+`llm.provider`, Modell laut `llm.model` bzw. `llm.gemini_model`), JSON-Modus, Budgets und Pausen des Gateways.
 
-**Unternehmensanalyse** (eine Anfrage je Analyse):
+**Teilanalysen** (je Unternehmen, einzeln gespeichert in `disc_ai_part`, einzeln nachholbar):
 
-- Eingabe: Firmendaten, „Item 1. Business“ (S1), berechnete Kennzahlen (K), Unternehmensprofil (Y) und bis zu 8
-  Meldungen (N1…).
-- Ausgabe: Geschäftsmodell, These mit Treibern, Gegenhypothese, 12 qualitative Kriterien (Stufe, Begründung, Belege,
-  Gegenargumente, Fehlendes, Konfidenz), Meilensteine, Unsicherheiten.
+| Teil | Inhalt | Prüfung |
+|---|---|---|
+| `bericht` | Geschäftsmodell, These mit Treibern, Gegenhypothese, Kernrisiko, Meilensteine, Unsicherheiten | Pflichtteile, Längen, unbekannte Quellen-IDs verworfen, Sätze mit unbelegten Zahlen entfernt |
+| `disruption` | 12 qualitative Kriterien (Stufen 0–4) für Disruption, Quality, GARP, Portfolia Fundamental v1 | Stufen, Belege, Kappung (siehe 6) |
+| `nash` | 6 qualitative Tom-Nash-Kriterien (Stufen 0–2) mit Belegstellen | Zitat wörtlich im gesendeten Quelltext? (normalisierte Leerzeichen/Anführungszeichen, ≥ 15 Zeichen) |
 
-**Prüfung** (`ai.validate`):
+Kleine Modelle lieferten in 0.108 teils „KI-Antwort ist kein gültiges JSON“ (eine große Antwort). Abhilfe: drei
+kleinere Antworten, ein klarer Formathinweis im Systemtext und eine tolerante Auswertung (`parse_lenient`:
+Zeilenumbrüche in Zeichenketten, Code-Zäune, überzählige Kommas) – Inhalte werden nie verändert. Bleibt die Antwort
+ungültig, steht im Protokoll Fehlerklasse „json“ mit Position.
 
-- Längen, Aufzählungen und Stufen 0–4 werden geprüft.
-- Unbekannte Quellen-IDs werden verworfen und gezählt.
-- URLs der KI werden nie übernommen.
-- Sätze mit Zahlen ab 3 Ziffern, die in keiner Quelle stehen, werden entfernt und gezählt.
-- Meilenstein-Schwellen außerhalb plausibler Bereiche werden nicht maschinell geprüft.
-- Fehlen These, Gegenhypothese oder Geschäftsmodell, wird die Antwort verworfen; die Analyse wird dann ohne KI-Teil
-  gespeichert.
+**Status** (`/discovery`, Abschnitt „KI-Researchstatus“; je Unternehmen „KI-Researchstatus dieser Firma“): KI
+global an/aus, KI für Discovery, Anbieter und **tatsächlich verwendetes Modell**, Schlüssel vorhanden (nie der
+Inhalt), Anbieterzustand (verfügbar, pausiert bis, gestört), letzter erfolgreicher und letzter fehlgeschlagener
+Aufruf, Zeitplan mit nächstem Lauf, laufende Jobs, Tages- und Monatskontingent mit Restmenge und Tokens. Je
+Unternehmen: Zustand je KI-Teil (vollständig, veraltet, noch nicht erstellt, ungültig, Anbieterfehler, Kontingent,
+pausiert, nicht konfiguriert, keine Quellen), Zeitpunkt, Anbieter/Modell, letzter Versuch und Fehlergrund.
 
-**Prompt-Injection:** Quellen stehen als JSON-Zeichenketten im Nutzerteil. Der Systemtext erklärt sie zu
-unvertrauenswürdigen Daten; die Antwort wird nur als Text angezeigt.
+**Arbeitsschritte und Zustände:** Jobs `ki_discovery`, `screening`, `voll`, `news`, `analyse`, `beobachtet` mit den
+Zuständen geplant, läuft, abgeschlossen, teilweise abgeschlossen, übersprungen, fehlgeschlagen, Kontingent erschöpft,
+KI nicht konfiguriert, unterbrochen – jeweils mit konkretem Grund.
+
+**Knöpfe → Abläufe:**
+
+| Knopf | Ablauf | KI-Aufrufe |
+|---|---|---|
+| KI-Discovery starten | Weg A (Abschnitt 4) | 2 + 3 je vertiefter Analyse |
+| Fundamentalscreening starten | Wege B und C | 0 |
+| Vollständigen Discovery-Lauf starten | Nachrichten → Screening → KI-Discovery | wie KI-Discovery |
+| KI-Analyse starten | alle drei Teile neu | 3 |
+| Fehlende KI-Teile ergänzen | nur Teile ohne gültiges Ergebnis | 0–3 |
+| Fundamentaldaten aktualisieren | SEC und Kurse neu (Cache umgangen), Scores neu, keine KI | 0 |
+| Vollanalyse aktualisieren | Daten neu, veraltete (andere Eingabe/Promptversion) und fehlende Teile neu | 0–3 |
+
+Kein Knopf blockiert: Der Job wird angelegt und an den Scheduler übergeben (Pool `discovery` für lange Läufe, Pool
+`interactive` für Unternehmensanalysen – Vorrang für manuelle Arbeit); die Seite zeigt Job-ID, Schritt, Ergebnis und
+Fehlergrund und fragt per HTMX alle 2–4 s nach, solange der Job läuft. Ohne Scheduler (Tests,
+`scheduler_enabled = false`) läuft der Job im Anfrage-Thread.
+
+**Kein Doppelstart:** eindeutiger Teilindex `disc_job(slot) WHERE status IN ('geplant','laeuft')` – gilt für
+gleichzeitige Klicks, Scheduler und Knopf. **Neustart:** Jobs anderer Prozesse werden beim Start als „unterbrochen“
+markiert (Grund sichtbar); laufende Jobs ohne Lebenszeichen seit 45 Minuten ebenfalls. Screening setzt am
+gespeicherten Fortschritt fort.
+
+**Nachholen (Fehlerbehebung zu 0.108):** Bis 0.108 wurde der Eingabe-Hash geprüft, *bevor* die KI angesprochen wurde –
+eine Analyse ohne KI-Teil galt bei unveränderten Daten als „unverändert“, der KI-Teil wurde nie nachgeholt. Jetzt
+werden die KI-Teile nach Modus geplant und vor dem Hash-Vergleich erstellt; der Hash enthält die IDs der verwendeten
+KI-Teile. Ein nachgeholter Teil erzeugt immer eine neue Version, gültige Teile werden wiederverwendet. Automatische
+Läufe wiederholen fehlgeschlagene Teile frühestens nach 24 Stunden.
+
+**Prompt-Injection:** Quellen stehen als JSON-Zeichenketten im Nutzerteil; der Systemtext erklärt sie zu
+unvertrauenswürdigen Daten; Antworten werden nur als Text angezeigt.
 
 ## 15. KI-Kosten
 
-- Die Discovery hat eigene Grenzen zusätzlich zum Gateway-Budget: `discovery.ai_calls_per_day` (Standard 6) und
-  `discovery.ai_calls_per_month` (60), protokolliert in `disc_ai_usage`.
-- Die Ausgabelänge ist begrenzt (`discovery.ai_max_output_tokens` 6000), Quellen werden gekürzt (9.000 Zeichen je
-  Quelle).
-- Es gibt keinen Anbieter- oder Modellwechsel; Pausen und Kontingentfehler des Gateways gelten.
-- Bei Fehler, Zeitüberschreitung oder erschöpftem Budget wird die Analyse ohne KI-Teil gespeichert und der Grund
-  angezeigt.
-- Eine manuelle Einzelanalyse ist jederzeit möglich, aber an dieselben Grenzen gebunden.
-- Automatische Läufe analysieren höchstens `discovery.auto_analyse_per_run` Unternehmen.
-- Unveränderte Eingaben erzeugen keine neue Version und keinen KI-Aufruf (Eingabe-Hash aus Kennzahlen, Quellen,
-  Kurs-Tag sowie Prompt- und Berechnungsversion).
+- Eigene Grenzen zusätzlich zum Gateway-Budget: `discovery.ai_calls_per_day` (Standard 12) und
+  `discovery.ai_calls_per_month` (150), Verbrauch je Tag in `disc_ai_usage` (Aufrufe, Tokens).
+- Jeder Aufruf steht mit Arbeitsschritt, Job, Unternehmen, Anbieter, Modell, Prompt-Version, Eingabe-Fingerabdruck,
+  Status, Tokens und sicherer Fehlermeldung in `disc_ai_call` (ohne Prompt-Inhalt, ohne Schlüssel); einsehbar unter
+  `/discovery/protokoll`.
+- **Kosten in Euro werden nicht angezeigt**, weil sie nicht verlässlich bestimmbar sind (Gemini: Free Tier oder
+  Abrechnung je Google-Projekt; Claude: Preise nicht sicher bekannt). Angezeigt werden Aufrufe und Tokens; `cost_usd`
+  bleibt leer.
+- Vor jedem Start zeigt die Oberfläche Anbieter, Modell, voraussichtliche Aufrufzahl und Restbudget. Manuelle Knöpfe
+  umgehen keine Grenze; es gibt keinen automatischen Wechsel auf ein anderes Modell oder einen anderen Anbieter.
+- Konservative Standards: Screening-Stapel 20, 1 vertiefte KI-Analyse je Lauf, KI-Discovery wöchentlich, bis zu 6
+  Unternehmen je KI-Discovery, Ausgabelänge 6000 Tokens, Quelltexte gekürzt (9.000 Zeichen je Quelle, 3.000 je
+  Unternehmen in der KI-Discovery).
 
 ## 16. Datenschutz
 
-- An die KI gehen nur öffentliche Unternehmensdaten.
-- Nie an die KI gehen Konten, Wallets, Transaktionen, Mengen, Werte oder Gewichte; ein Test prüft die Nutzlast.
+- An die KI gehen nur öffentliche Unternehmensdaten (Name, Ticker, Börse, Branche, Land, Auszüge aus SEC-Berichten,
+  berechnete Kennzahlen, Meldungstitel) bzw. in der KI-Discovery öffentliche Ausgangsbelege (SEC-Kennzahlen,
+  Meldungen).
+- Nie an die KI gehen Konten, Wallets, Transaktionen, Mengen, Bestandswerte, Gewichte oder die Liste gehaltener Werte;
+  Tests prüfen die Nutzlast aller Teilanalysen und der KI-Discovery mit einem präparierten Depot.
 - An die SEC gehen nur CIK bzw. feste Pfade; an Yahoo nur Ticker.
-- Portfolio-Fit und Simulation werden ausschließlich lokal berechnet.
+- Portfolio-Fit und Simulation werden ausschließlich lokal berechnet; die Neuheit eines Kandidaten (Portfolio,
+  Watchlist) wird lokal bestimmt.
 
 ## 17. Historisierung
 
@@ -419,40 +564,76 @@ Der Vergleich zeigt:
 Meilensteine mit Kennzahl werden bei jeder Analyse automatisch geprüft: „erfüllt“ sofort, „verfehlt“ nach der
 Fälligkeit.
 
-## 18. Tests
+**Seit 0.109** zusätzlich je Version: KI-Zustand (`ai_state`), Zustand je KI-Teil (`parts_json`), Eingabe-
+Fingerabdrücke, auslösender Job, Modus, Methodenkennung „Tom Nash 125 – Public Reconstruction v1“ und Einordnung.
+Ältere Versionen bleiben unverändert lesbar.
 
-`tests/test_discovery.py` mit 21 Tests auf synthetischen Daten, ohne Netzwerk und ohne echte KI. Geprüft werden:
+**Export und Wiederherstellung:** Der Gesamtexport (`state.json` → `discovery`) enthält Unternehmen, Aliasse,
+Signale, alle Analyseversionen, Meilensteine, KI-Teile, Kandidaten, Jobs, KI-Protokoll und Verbrauch. Die
+Wiederherstellung läuft in derselben Transaktion wie die übrigen Zusatzdaten: Unternehmen werden über CIK bzw. Ticker
+zugeordnet, IDs neu vergeben und Verweise umgeschrieben; wiederholbar ohne Dubletten; aktive Jobs des alten Systems
+werden als „unterbrochen“ übernommen. Nicht enthalten: Research-Universum und SEC-Zwischenspeicher (werden aus
+öffentlichen Daten neu aufgebaut). `/discovery/export.json` bleibt eine Ansicht, kein Wiederherstellungsweg.
 
-- **Fundamentaldaten:** Herkunft, Lücken, Restatements, `as_of`, negative Werte, Split nur mit Nachweis (Sprung beim
-  Börsengang bleibt), jüngstes Quartal mit Wechsel des XBRL-Elements, gemischte Währungen.
-- **Identität:** Ticker, Name, Präfix, mehrdeutig, privat, Mehrfachlisting, falscher Ticker zum Namen, SPAC.
-- **Scorecards:**
-  - Summe = Score, reproduzierbar, Maximalwerte;
-  - Kappung ohne Beleg und bei niedriger Konfidenz;
-  - ohne KI unvollständig;
-  - junge Unternehmen bleiben bewertbar.
-- **Bewertung:** Szenarien geordnet, Annahmen vorhanden, eingepreistes Wachstum reproduziert den Kurs, fehlende Daten
-  und Währungen.
-- **KI:**
-  - erfundene Quellen und unbelegte Zahlen werden entfernt;
-  - ungültige Antworten werden abgelehnt;
-  - Injection-Text bleibt Daten;
-  - Datenschutz der Nutzlast;
-  - Budgetgrenze;
-  - Zeitüberschreitung führt zu einer Analyse ohne KI.
-- **App-Ebene:**
-  - Aufnahme, Analyse, Detailseite (alle Abschnitte), stabiler Ticker-Link;
-  - Version unverändert bzw. erzwungen, Vergleich;
-  - Status, Watchlist, Radar-Filter und -Sortierung, Einstellungen, Export;
-  - Discovery-Lauf mit Ereignis-Dubletten, privaten und mehrdeutigen Namen;
-  - Meilensteinprüfung.
-- **Portfolio-Fit:** leeres Portfolio, Beispielportfolio, bereits gehalten, 50-%-Kauf, keine Buchung.
-- **Sonstiges:** Migration ohne Revisionstrigger; Diagnose-Datenstand nach Analyse unverändert.
+## 18. Tests und Abnahme
+
+`tests/test_discovery.py` (29 Tests) und `tests/test_discovery2.py` (38 Tests), synthetische Daten, ohne Netzwerk
+und ohne echte KI-Aufrufe (kontrollierte Attrappen des Gateways). Neu in 0.109 geprüft:
+
+- **Tom Nash 125:** 13 Kriterien, Maximalpunkte (12 × 10 + 5), Summe reproduzierbar, Schwellen an allen Grenzen
+  (0/5/10), Cash vs. Debt (ohne Schulden, > Schulden, ≥ 2 ×), Institutionelle, Scalability, Mehrrendite inkl.
+  Lücke 0–10 Pp., fehlende Werte → unbewertet, Recession Resistance höchstens 5, Belegpflicht und Kappung qualitativer
+  Kriterien, Einordnung nur wenn bestimmbar, Gesamtrendite über identische Zeiträume, kurze Historie, ältere Methode
+  nur umbenannt (nicht neu berechnet), Migration.
+- **KI-Steuerung:** KI global aus, Schlüssel fehlt, Discovery-KI aus, Tages- und Monatsgrenze, Anbieter pausiert,
+  Statusanzeige (Anbieter/Modell aus der Konfiguration, kein Schlüssel im HTML), vollständige, teilweise und
+  nachgeholte Analysen (früherer „unverändert“-Fehler), nur fehlgeschlagener Teil wird wiederholt, Wiederverwendung
+  gültiger Teile, veraltete Teile, tolerantes JSON, Belegstellen-Prüfung.
+- **Jobs:** Doppelklick, vier gleichzeitige Anfragen → ein Job, genau einmalige Ausführung, Fehler mit Klasse und Text,
+  Neustart mit offenen Jobs, Zeitüberschreitung, Routen und HTMX-Abfrage (aktiv/beendet), Unternehmens-Knöpfe,
+  Zeitplan (Schritt aus/an, Pool, automatischer Auslöser).
+- **Discovery Engine:** Universum nur Hauptbörsen, Tagesindex, Vorauswahl über Frames, negative Signale nie
+  vorausgewählt, Bestätigung in Stapeln mit Fortsetzung, SPAC verworfen, Fehlbewertung vs. Value Trap vs. kein
+  Rückstand, KI-Discovery ohne Meldungen (Unternehmen außerhalb der News-Pipeline), Identitätsprüfung (falscher
+  Ticker, privat, nur OTC, Dublette), Thema ohne Beleg verworfen, Priorität, Signale, Kandidaten, Zuordnung jedes
+  KI-Aufrufs zum Job, zweiter Lauf ohne künstliche Neuentdeckungen, KI aus/Kontingent, Vollauf bei Teilausfällen.
+- **Bewertung:** klassisches PEG vs. umsatzbasiertes Analogon, Bewertungsprofile; **Export/Restore**: Rundreise,
+  Wiederholbarkeit, Formatprüfung; **Datenschutz**: präpariertes Depot erscheint in keiner KI-Nutzlast.
+
+### Abnahme 0.109 mit echten Daten (08.11.2026)
+
+Über die Weboberfläche eines lokal gestarteten Servers mit Scheduler, echten SEC- und Yahoo-Daten. **Kein echter
+KI-Schlüssel in der Entwicklungsumgebung** – KI-Schritte wurden mit einem *kontrollierten Mock* des Gateways
+geprüft (Modellname „MOCK-kontrolliert (kein Live-Modell)“ im Protokoll). **Die Live-Abnahme mit Gemini/Claude steht
+aus.**
+
+| Test | Ergebnis |
+|---|---|
+| Fundamentalscreening (Knopf) | Antwort des Knopfs nach 0,01 s, Job im Hintergrund; Universum 6.067 Emittenten; Vorauswahl 3.543 bewertet, 489 vorausgewählt, 2.524 ohne Umsatzangaben in den Frames, 655 mit Gegenanzeichen; Stapel 20: 20 bestätigt, 20 neu (u. a. Lumentum, Alnylam, Boeing, NIO, Vertex, Comstock, Keros); Größenmix groß/mittel/klein/Mikro; Fehlbewertung: 3 möglich (Keros, Alnylam, Sound Group), 8 Value Traps (z. B. Expand Energy: Verwässerung 53 % durch Fusion; Boeing: Verwässerung und Nettoschulden) |
+| Fehler im ersten Lauf | negative Umsatzwerte in den Frames ließen die Größenklasse abstürzen, Fehlermeldung war leer – behoben, Test ergänzt |
+| Tom Nash 125 (3 Unternehmen) | siehe unten; alle numerischen Kriterien gegen SEC/Yahoo-Werte nachvollzogen |
+| Manuelle KI-Analyse (Mock) | Job startet, Anbieter/Modell aus der Konfiguration, 3 protokollierte Aufrufe mit Tokens, neue Version „vollständig“, 6 von 6 Belegstellen wörtlich im 10-K gefunden |
+| Unvollständige KI-Analyse | KI aus → Job „KI nicht konfiguriert“ mit Grund, Version ohne KI-Teil; KI an → „Fehlende KI-Teile ergänzen“ erstellt die drei Teile und eine neue Version |
+| Eigenständige Discovery | 20 Kandidaten aus dem Screening, keiner aus der News-Pipeline (keine Meldungen im Abnahme-System) |
+| Full Research (Alnylam) | Wendepunkt-Signal → Fehlbewertungs-Signal → Fundamentaldaten → Tom Nash 125 (50, möglich 50–105) → Valuation 39/100: eingepreistes Startwachstum 124 % p. a., Basisszenario −10,7 % p. a. – die Bewertung widerspricht der „möglichen Fehlbewertung“; beides steht nebeneinander |
+
+Tom Nash 125, numerische Kriterien (Stand 08.11.2026; qualitative Kriterien ohne Live-KI unbewertet):
+
+| Kriterium | NVIDIA (GJ bis 25.01.2026) | Rocket Lab (GJ 2025) | Lumentum (GJ bis 27.06.2026) | Quelle | Sicherheit |
+|---|---|---|---|---|---|
+| Cash vs. Debt | 50,1 Mrd. / 8,5 Mrd. = 5,9× → 10 | 1,02 Mrd. / 0,15 Mrd. = 6,7× → 10 | 2,74 Mrd. / 0,04 Mrd. → 10 | SEC companyfacts | Regel belegt |
+| Revenue Growth | +65,5 % → 10 | +38,0 % → 10 | +83,2 % → 10 | SEC | Regel belegt |
+| Operating Margin | 60,4 % → 10 | −38,0 % → 0 | 17,4 % → 5 | SEC | Regel belegt |
+| Short Interest | 1,3 % → 10 | 7,6 % → 5 | 8,6 % → 5 | Yahoo | Schwellen unverifiziert |
+| Institutional Ownership | 71,5 % → 10 | 62,5 % → 10 | 95,6 % → 10 | Yahoo | Schwellen unverifiziert |
+| Scalability | Umsatz +65,5 % vs. Kosten +40,7 % → 10 | +38,0 % vs. +42,5 % → 0 | +83,2 % vs. +14,2 % → 10 | SEC (`OperatingExpenses`) | Stufen = Annahme |
+| 5-Year Return vs. S&P 500 | +509 % vs. +68 % → 10 | +255 % vs. +68 % → 10 | +491 % vs. +68 % → 10 | Yahoo (bereinigt), ^SP500TR, 08.11.2021–06.11.2026 | Regel belegt |
+| Summe (13 Kriterien) | 70, möglich 70–125, „nicht bestimmbar“ | 45, möglich 45–100 | 60, möglich 60–115 | | |
 
 **Historische Fallstudie** (Phase N, nur regelbasierte Kriterien, Daten bis zum Stichtag eingereicht über
 `as_of`, ohne KI und ohne damalige Kurse):
 
-| Unternehmen, Stichtag | Daten | Wachstum | Brutto- / op. Marge | Quality | Growth | Nash (Regel) | Entwicklung danach |
+| Unternehmen, Stichtag | Daten | Wachstum | Brutto- / op. Marge | Quality | Growth | Fundamental v1 (Regel) | Entwicklung danach |
 |---|---|---|---|---|---|---|---|
 | NVIDIA, 30.04.2016 | 6 GJ | 7 % | 56 % / 15 % | 48,5 | 33 | 27 | Umsatz-CAGR 46 % über 10 J., op. Marge 60 % |
 | Palantir, 31.03.2021 | 3 GJ | 47 % | 68 % / −107 % | 34 | 35 | 33 | CAGR 33 % über 5 J., op. Marge 32 % |
@@ -476,18 +657,20 @@ Ergebnis:
 
 ## 19. Bekannte Grenzen
 
-- Fundamentaldaten nur für SEC-registrierte Emittenten. Europäische und asiatische Unternehmen ohne SEC-Bericht
-  bleiben ohne Kennzahlen.
-- Yahoo ist eine inoffizielle Schnittstelle. Marktkapitalisierung, Forward-KGV, institutioneller Anteil und Short
-  Interest können fehlen oder veraltet sein.
-- Identität ist konservativ: Kurznamen (z. B. „Google“ statt „Alphabet“) und Tochtergesellschaften werden oft nicht
-  aufgelöst und nur gelistet.
-- Discovery aus News hängt von der vorhandenen News-Analyse ab (KI an, Quellen konfiguriert). Ohne KI entstehen nur
-  manuelle Kandidaten und Fundamentalsignale.
-- Qualitative Kriterien (≈ 2/3 der Disruption-Punkte) gibt es nur mit KI. Ohne KI sind Disruption und
-  Nash-inspirierte Scores unvollständig.
-- Szenarien sind vereinfachte Multiplikatormodelle (konstante Nettofinanzposition, feste Multiplikatoren).
-  Unternehmen mit hohen Bewertungen liegen oft außerhalb des erklärbaren Bereichs.
-- Peer-Vergleiche der Multiplikatoren sind noch nicht umgesetzt (keine verlässliche Peer-Gruppe ohne Zusatzdaten).
-- ETF-Durchschau fehlt (keine Bestandteildaten).
-- Historische Validierung nur qualitativ (siehe 18).
+- **Live-KI-Abnahme ausstehend:** Ohne Schlüssel in der Entwicklungsumgebung wurden alle KI-Schritte nur mit
+  kontrollierten Attrappen geprüft. Ob das konfigurierte Modell (z. B. gemini-3.5-flash-lite) die Schemata zuverlässig
+  einhält, zeigt erst der Echtbetrieb – das Protokoll nennt dann Fehlerklasse und Position.
+- **Tom Nash 125:** Primärquelle nicht abrufbar; Short Interest/Institutional Ownership und Maximalpunkte nach
+  Auftragsvorgabe, Stufen von Scalability und den qualitativen Kriterien sind Portfolia-Annahmen (je Kriterium
+  gekennzeichnet). Das Kriterium „Product / Mission Criticality“ ist in der zugänglichen Wiedergabe nicht genannt.
+- Belegstellen-Prüfung zeigt, dass ein Zitat in der Quelle steht – nicht, dass es das Kriterium inhaltlich trägt.
+- Frames-Vorauswahl ist eine Näherung (Kalenderjahr statt Geschäftsjahr, nur US-GAAP-Elemente); IFRS-Emittenten
+  (20-F) und Banken/Versicherungen fallen dort meist unter „ohne Daten“ und werden nur über andere Wege gefunden.
+- Einmalerlöse (z. B. Lizenzzahlungen bei Biotech) können Wendepunkte vortäuschen; die Regeln bereinigen das nicht.
+- Fundamentaldaten nur für SEC-registrierte Emittenten; Nicht-US-Unternehmen ohne SEC-Bericht bleiben ohne Kennzahlen.
+- Yahoo ist eine inoffizielle Schnittstelle; Marktdaten, Short Interest und bereinigte Kurse können fehlen.
+- Gesamtrendite vs. S&P 500 nur für in USD gehandelte Aktien mit mindestens 5 Jahren Historie.
+- Identität ist konservativ (Kurznamen, Tochtergesellschaften); KI-Vorschläge mit falschem Ticker werden verworfen.
+- Szenarien sind vereinfachte Multiplikatormodelle; Profile nach Unternehmensart ersetzen keine Peer-Analyse.
+- ETF-Durchschau fehlt; historische Validierung nur qualitativ (siehe 18).
+- Das Research-Universum gehört nicht zum Gesamtexport (wird neu aufgebaut; Screening-Fortschritt beginnt von vorn).

@@ -196,13 +196,13 @@ def test_scores_are_sums_and_reproducible_and_capped_without_evidence():
     market = V.market_metrics(fu, {"price": 50.0, "ccy": "USD", "market_cap": 5e9, "fx": 1.0, "inst_pct": 0.7,
                                    "short_pct": 0.02, "price_cagr_5y": 0.2})
     for sc in (S.disruption(fu, ai_levels()), S.quality(fu, ai_levels()), S.garp(fu, ai_levels(), market),
-               S.nash(fu, ai_levels(), market)):
+               S.fundamental_v1(fu, ai_levels(), market)):
         d = sc.to_dict()
         assert sc.total == S.recompute(d) == round(sum(c["points"] or 0 for c in d["criteria"]), 1)
         assert all(c["max"] > 0 and (c["points"] is None or 0 <= c["points"] <= c["max"]) for c in d["criteria"])
         assert all(c["definition"] and c["scale"] for c in d["criteria"])
     assert S.disruption(fu, None).max == 100 and S.quality(fu, None).max == 100
-    assert S.garp(fu, None, market).max == 100 and S.nash(fu, None, market).max == 125
+    assert S.garp(fu, None, market).max == 100 and S.fundamental_v1(fu, None, market).max == 125
     no_src = S.disruption(fu, ai_levels(4, belege=[]))
     tech = next(c for c in no_src.criteria if c.key == "d_technologie")
     assert tech.points == pytest.approx(12 / 4) and "gekappt" in tech.reason  # ohne Beleg höchstens Stufe 1
@@ -306,11 +306,11 @@ class FakeSec:
                                                      for li in [Listing(li.cik, li.tickers[0], li.name,
                                                                         li.exchanges[0])]])
         mp.setattr(SecClient, "retrieved_at", lambda s, k, key: None)
-        mp.setattr(SecClient, "submissions", lambda s, cik: {
+        mp.setattr(SecClient, "submissions", lambda s, cik, fresh=False: {
             "sic": self._sic.get(cik, "3559"), "sicDescription": "Special Industry Machinery", "formerNames": [
                 {"name": "Old Alpha Co"}], "addresses": {"business": {"stateOrCountry": "CA"}}})
-        mp.setattr(SecClient, "facts", lambda s, cik: self._facts[cik])
-        mp.setattr(SecClient, "business_section", lambda s, cik: (
+        mp.setattr(SecClient, "facts", lambda s, cik, fresh=False: self._facts[cik])
+        mp.setattr(SecClient, "business_section", lambda s, cik, limit=14000: (
             "Alpha sells robots. Revenue was 742 million dollars in 2025. " * 3,
             {"form": "10-K", "accn": "0000-2025", "filed": "2026-02-15", "period": "2025-12-31",
              "url": "https://www.sec.gov/Archives/edgar/data/1/00002025/a.htm"}))
@@ -327,8 +327,14 @@ def fake_quote(price: float = 40.0, mcap: float = 4.4e9) -> Any:
 
 @pytest.fixture
 def app_client(config, monkeypatch):
+    yield from make_client(config, monkeypatch)
+
+
+def make_client(config, monkeypatch):
+    """Testclient mit synthetischen SEC-Daten und Kursen (auch für tests/test_discovery2.py)."""
     FakeSec({1: grower(), 2: burner(), 4: grower(), 5: burner()}, sic={5: "6770"}).install(monkeypatch)
     monkeypatch.setattr(SV, "_quote", fake_quote())
+    monkeypatch.setattr(SV, "_adj_history", lambda ctx, sym: [])  # keine Kursabrufe im Test
     app = build_app(config, start_scheduler=False)
     with TestClient(app) as c:
         c.get("/settings")
@@ -351,17 +357,22 @@ def test_manual_add_analyse_detail_page_and_versions(app_client, monkeypatch):
     cid = int(r.headers["location"].split("/c/")[1].split("?")[0])
     assert _add(c, "Gamma Acquisition").headers["location"].startswith("/discovery?err=")  # SPAC abgelehnt
     assert "nicht" in _add(c, "OpenAI").headers["location"] or "err=" in _add(c, "OpenAI").headers["location"]
-    r = c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token}, follow_redirects=False)
-    assert "Neue+Analyseversion" in r.headers["location"]
+    r = c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token, "mode": "daten"}, follow_redirects=False)
+    assert "abgeschlossen" in r.headers["location"] and "job=" in r.headers["location"]
     page = c.get(f"/discovery/c/{cid}").text
-    for needle in ("Geschäftsmodell", "Investment-These", "Gegenhypothese", "Disruption:", "Quality:",
-                   "Growth / GARP:", "Fundamental (Tom-Nash-inspiriert):", "Valuation:", "Portfolio-Fit",
-                   "Quellenverzeichnis", 'id="src-S1"', "1. Definition", "11. Fehlende Informationen",
-                   "Eingepreistes Startwachstum", "Alpha Robotics builds industrial robots."):
+    for needle in ("Investment-Überblick", "KI-Researchstatus dieser Firma", "Geschäftsmodell", "Investment-These",
+                   "Gegenhypothese", "Tom Nash 125", "Disruption:", "Quality:", "Growth / GARP:",
+                   "Portfolia Fundamental v1:", "Valuation:", "Portfolio-Fit", "Quellenverzeichnis", 'id="src-S1"',
+                   "1. Definition", "11. Fehlende Informationen", "Eingepreistes Startwachstum",
+                   "Alpha Robotics builds industrial robots.", "Fehlende KI-Teile ergänzen",
+                   "Vollanalyse aktualisieren", "Fundamentaldaten aktualisieren", "KI-Analyse starten",
+                   "Analysehistorie anzeigen"):
         assert needle in page, needle
+    assert "Fundamental (Tom-Nash-inspiriert):" not in page  # alte Bezeichnung nur noch als Erklärung
     assert c.get("/discovery/t/ALPH", follow_redirects=False).headers["location"] == f"/discovery/c/{cid}"
     assert "noch nicht im Discovery-Radar" in c.get("/discovery/t/ZZZZ").text
-    again = c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token}, follow_redirects=False)
+    again = c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token, "mode": "daten"},
+                   follow_redirects=False)
     assert "unver%C3%A4ndert" in again.headers["location"]
     c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token, "force": "1"})
     vs = SV.analyses(ctx.db, cid)
@@ -379,7 +390,7 @@ def test_manual_add_analyse_detail_page_and_versions(app_client, monkeypatch):
 def test_actions_status_watchlist_and_radar_filters(app_client):
     c = app_client
     cid = int(_add(c, "ALPH").headers["location"].split("/c/")[1].split("?")[0])
-    c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token})
+    c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token, "mode": "daten"})
     radar = c.get("/discovery").text
     assert "Alpha Robotics" in radar and "Analyse öffnen" in radar
     c.post(f"/discovery/c/{cid}/status", data={"csrf_token": c.token, "status": "zurueckgestellt"})
@@ -437,42 +448,68 @@ def test_discovery_run_dedupes_events_and_skips_private_and_ambiguous(app_client
     assert SG.strength(1.0, 50) == SG.strength(1.0, SG.MAX_SOURCES)  # viele Kopien zählen nicht mehr
 
 
+def nash_answer(level: int = 2, quote: str = "Alpha sells robots. Revenue was 742 million dollars") -> dict[str, Any]:
+    from app.discovery import nash as NASH
+
+    return {"kriterien": {k: {"stufe": level, "konfidenz": 0.8, "begruendung": "belegt",
+                              "belege": [{"id": "S1", "zitat": quote}], "gegenargumente": ["Wettbewerb"],
+                              "fehlend": [], "datenqualitaet": "gut"} for k in NASH.AI_CRITERIA}}
+
+
+def fake_parts(seen: list[tuple[str, str]], *, bericht: Any = None, nash: Any = None) -> Any:
+    """KI-Attrappe: antwortet je Teilanalyse (erkannt am Systemtext) – keine echten Aufrufe."""
+    def gen(self, system, user, schema, max_tokens, json_mode=False):
+        part = "bericht" if system == AI.SYSTEM_BERICHT else "disruption" if system == AI.SYSTEM_DISRUPTION else \
+            "nash" if system == AI.SYSTEM_NASH else "andere"
+        seen.append((part, user))
+        if part == "bericht":
+            data = bericht if bericht is not None else ai_answer()
+        elif part == "disruption":
+            data = {"kriterien": ai_answer()["kriterien"]}
+        else:
+            data = nash if nash is not None else nash_answer()
+        text = data if isinstance(data, str) else json.dumps(data)
+        return AiResult(text, 1000, 800, "gemini", "gemini-test")
+    return gen
+
+
 def test_ai_analysis_privacy_budget_and_failure(app_client, monkeypatch):
     c = app_client
     ctx = c.app.state.ctx
     ctx.settings.set("llm.enabled", True)
-    monkeypatch.setattr(AI, "enabled", lambda ctx: True)
-    seen: list[str] = []
-
-    def fake_generate(self, system, user, schema, max_tokens, json_mode=False):
-        seen.append(user)
-        return AiResult(json.dumps(ai_answer()), 1000, 800, "gemini", "gemini-test")
-
-    monkeypatch.setattr("app.news.ai.AiGateway.generate", fake_generate)
+    monkeypatch.setattr("app.news.ai.AiGateway.key_present", lambda self, provider=None: True)
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr("app.news.ai.AiGateway.generate", fake_parts(seen))
     cid = int(_add(c, "ALPH").headers["location"].split("/c/")[1].split("?")[0])
-    res = SV.analyse_company(ctx, cid)
-    assert res["status"] == "ok" and not res["ai_error"]
+    res = SV.analyse_company(ctx, cid, mode="ki")
+    assert res["status"] == "ok" and not res["ai_error"] and res["ai_state"] == "vollstaendig"
+    assert sorted(p for p, _ in seen) == ["bericht", "disruption", "nash"]  # drei getrennte Teilanalysen
     an = SV.analysis(ctx.db, cid)
     assert an["provider"] == "gemini" and an["result"]["thesis"]["text"]
     assert an["result"]["scores"]["disruption"]["coverage"] == 1.0
+    nash = an["result"]["scores"]["nash125"]
+    assert all(c_["points"] is not None for c_ in nash["criteria"] if c_["kind"] == "ai")
     assert ctx.db.scalar("SELECT COUNT(*) FROM disc_milestone WHERE company_id=?", (cid,)) == 2
-    payload = json.loads(seen[0])
-    assert set(payload) == {"unternehmen", "quellen"}
-    assert set(payload["unternehmen"]) <= {"name", "ticker", "exchange", "sector", "industry", "country"}
-    for forbidden in ("Depot", "Wallet", "qty", "Gewicht", "Konto"):
-        assert forbidden not in seen[0]
-    # Budget: Tagesgrenze 1 → kein weiterer Aufruf
-    ctx.settings.set("discovery.ai_calls_per_day", 1)
-    r2 = SV.analyse_company(ctx, cid, force=True)
-    assert "Tagesgrenze" in r2["ai_error"] and len(seen) == 1
-    ctx.settings.set("discovery.ai_calls_per_day", 10)
+    assert ctx.db.scalar("SELECT COUNT(*) FROM disc_ai_call WHERE company_id=? AND status='ok'", (cid,)) == 3
+    for _p, user in seen:
+        payload = json.loads(user)
+        assert set(payload) == {"unternehmen", "quellen"}
+        assert set(payload["unternehmen"]) <= {"name", "ticker", "exchange", "sector", "industry", "country"}
+        for forbidden in ("Depot", "Wallet", "qty", "Gewicht", "Konto"):
+            assert forbidden not in user
+    # Budget: Tagesgrenze erreicht → kein weiterer Aufruf, Zustand „budget“, Analyse ohne neue KI-Teile
+    ctx.settings.set("discovery.ai_calls_per_day", 3)
+    r2 = SV.analyse_company(ctx, cid, mode="ki", force=True)
+    assert "Tagesgrenze" in r2["ai_error"] and len(seen) == 3
+    ctx.settings.set("discovery.ai_calls_per_day", 20)
 
     def boom(self, *a, **k):
         raise AiUnavailable("Gemini: Zeitüberschreitung")
 
     monkeypatch.setattr("app.news.ai.AiGateway.generate", boom)
-    r3 = SV.analyse_company(ctx, cid, force=True)
-    assert r3["status"] == "ok" and "Zeitüberschreitung" in r3["ai_error"]  # Analyse ohne KI-Teil gespeichert
+    r3 = SV.analyse_company(ctx, cid, mode="ki", force=True)
+    assert r3["status"] == "ok" and "Zeitüberschreitung" in r3["ai_error"]  # Analyse ohne neuen KI-Teil gespeichert
+    assert r3["ai_state"] == "vollstaendig"  # frühere gültige Teile bleiben in Gebrauch
     assert len(SV.analyses(ctx.db, cid)) == 3
 
 
@@ -544,7 +581,8 @@ def test_business_section_extraction_skips_table_of_contents():
 def test_migration_tables_and_no_revision_triggers(db):
     names = {r["name"] for r in db.q("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'disc_%'")}
     assert names >= {"disc_company", "disc_alias", "disc_signal", "disc_fact", "disc_analysis", "disc_milestone",
-                     "disc_ai_usage", "disc_run"}
+                     "disc_ai_usage", "disc_run", "disc_job", "disc_ai_call", "disc_ai_part", "disc_universe",
+                     "disc_candidate"}
     trig = db.q("SELECT sql FROM sqlite_master WHERE type='trigger' AND sql LIKE '%disc_%'")
     assert not trig  # Discovery-Tabellen lösen keine Datenrevision aus
 
@@ -571,6 +609,7 @@ def test_settings_export_and_entry_links(app_client):
     data = exp.json()
     assert exp.headers["content-disposition"].startswith("attachment") and data["companies"][0]["ticker"] == "ALPH"
     assert data["analyses"][0]["result"]["scores"]["quality"]["max"] == 100
+    assert data["analyses"][0]["result"]["scores"]["nash125"]["max"] == 125
     assert "/discovery" in c.get("/").text  # Navigation
 
 

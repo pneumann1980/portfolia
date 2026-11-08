@@ -27,7 +27,8 @@ def _ctx(config):
 def test_news_jobs_run_in_their_own_pool(config):
     s = Scheduler(_ctx(config))
     s.setup_default_jobs()
-    assert s.pool_sizes == {"default": 3, "news": 2, "interactive": 2, "wave": 1}
+    assert s.pool_sizes == {"default": 3, "news": 2, "interactive": 2, "wave": 1, "discovery": 1}
+    assert s._executor["discovery_task"] == "discovery"  # lange Research-Läufe verdrängen keine Kern-/News-Jobs
     for name in NEWS_JOBS:
         assert s.sched.get_job(name) is not None or name == "news_rematch"
         assert s._executor[name] == "news", name
