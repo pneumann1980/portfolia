@@ -30,7 +30,10 @@ FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
 ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/{doc}"
 ALLOWED_HOSTS = ("www.sec.gov", "data.sec.gov")
 MIN_INTERVAL_S = 0.5
-CACHE_TTL = {"tickers": 7 * 86400, "submissions": 86400, "facts": 86400, "doc": 30 * 86400}
+CACHE_TTL = {"tickers": 7 * 86400, "submissions": 86400, "facts": 86400, "doc": 30 * 86400, "frames": 7 * 86400,
+             "index": 60 * 86400}
+FRAMES_URL = "https://data.sec.gov/api/xbrl/frames/{tax}/{tag}/{unit}/{period}.json"
+INDEX_URL = "https://www.sec.gov/Archives/edgar/daily-index/{y}/QTR{q}/form.{ymd}.idx"
 MAX_DOC_BYTES = 12_000_000
 DEFAULT_UA = f"Portfolia/{__version__} self-hosted research (contact not configured)"
 
@@ -62,10 +65,11 @@ class SecClient:
         self.cache = cache_dir or (ctx.config.data_dir / "cache" / "sec")
 
     # -- Transport ------------------------------------------------------------------------------------------------
-    def _get(self, url: str, kind: str, key: str, *, binary: bool = False) -> Any:
+    def _get(self, url: str, kind: str, key: str, *, binary: bool = False, fresh: bool = False) -> Any:
+        """Abruf mit Plattencache. ``fresh``: Cache-Laufzeit ignorieren (gezielte Aktualisierung durch den Nutzer)."""
         path = self.cache / kind / (re.sub(r"[^A-Za-z0-9._-]", "_", key) + (".bin" if binary else ".json.gz"))
         ttl = CACHE_TTL[kind]
-        if path.exists() and time.time() - path.stat().st_mtime < ttl:
+        if not fresh and path.exists() and time.time() - path.stat().st_mtime < ttl:
             return self._read(path, binary)
         host = url.split("/")[2]
         if host not in ALLOWED_HOSTS:
@@ -117,11 +121,30 @@ class SecClient:
                 continue
         return out
 
-    def submissions(self, cik: int) -> dict[str, Any]:
-        return self._get(SUBMISSIONS_URL.format(cik=cik), "submissions", f"CIK{cik:010d}")
+    def submissions(self, cik: int, fresh: bool = False) -> dict[str, Any]:
+        return self._get(SUBMISSIONS_URL.format(cik=cik), "submissions", f"CIK{cik:010d}", fresh=fresh)
 
-    def facts(self, cik: int) -> dict[str, Any]:
-        return self._get(FACTS_URL.format(cik=cik), "facts", f"CIK{cik:010d}")
+    def facts(self, cik: int, fresh: bool = False) -> dict[str, Any]:
+        return self._get(FACTS_URL.format(cik=cik), "facts", f"CIK{cik:010d}", fresh=fresh)
+
+    def frame(self, tag: str, period: str, unit: str = "USD", tax: str = "us-gaap") -> list[dict[str, Any]]:
+        """Ein Wert je Emittent für ein Element und einen Kalenderzeitraum (``CY2025`` bzw. ``CY2025Q4I``) –
+        die SEC ordnet Geschäftsjahre dem nächstliegenden Kalenderzeitraum zu (Näherung für das Screening)."""
+        data = self._get(FRAMES_URL.format(tax=tax, tag=tag, unit=unit, period=period), "frames",
+                         f"{tax}_{tag}_{unit}_{period}")
+        return list(data.get("data") or [])
+
+    def daily_index(self, day: str) -> list[tuple[str, int, str]]:
+        """Einreichungen eines Tages (Formular, CIK, Datum) aus dem EDGAR-Tagesindex; Wochenenden/Feiertage → []."""
+        y, m, d = day.split("-")
+        url = INDEX_URL.format(y=y, q=(int(m) - 1) // 3 + 1, ymd=f"{y}{m}{d}")
+        raw = self._get(url, "index", f"form_{y}{m}{d}", binary=True)
+        out = []
+        for line in raw.decode("latin-1").splitlines():
+            mt = _IDX_LINE.match(line)
+            if mt:
+                out.append((mt.group(1).strip(), int(mt.group(2)), mt.group(3)))
+        return out
 
     # -- Geschäftsbericht -----------------------------------------------------------------------------------------
     def latest_annual(self, cik: int) -> dict[str, Any] | None:
@@ -169,6 +192,7 @@ def html_to_text(raw: bytes) -> str:
     return re.sub(r"\n\s*\n+", "\n\n", text).strip()
 
 
+_IDX_LINE = re.compile(r"^(\S+(?: \S+)?)\s{2,}.+?\s{2,}(\d{1,10})\s+(\d{8})\s+edgar/")
 _ITEM1 = re.compile(r"(?im)^\s*item\s*1\.?\s*[\-–—:]?\s*business\b")
 _ITEM1A = re.compile(r"(?im)^\s*item\s*1a\.?\s*[\-–—:]?\s*risk\s+factors\b")
 

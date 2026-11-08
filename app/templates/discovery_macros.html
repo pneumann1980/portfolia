@@ -25,11 +25,27 @@
 
 {% macro src(id) -%}<a class="badge" href="#src-{{ id|replace(':', '-') }}" title="Quelle {{ id }}">{{ id if id|length < 8 else 'SEC ' ~ id[4:14] ~ '…' }}</a>{%- endmacro %}
 
+{% macro pts(v) -%}{{ v|num(0 if v == v|round(0) else 1) }}{%- endmacro %}
+
 {% macro scorechip(s, label=None) -%}
   {%- if s and s.total is not none -%}
-    <span class="disc-chip {{ 'incomplete' if not s.complete }}" title="{{ label or '' }} {{ s.total|num(0) }} von {{ s.max|num(0) }} Punkten{{ ' – unvollständig (Datenabdeckung unter 70 %)' if not s.complete }}">
-      <b>{{ s.total|num(0) }}</b><span class="hint">/{{ s.max|num(0) }}</span>{% if not s.complete %} <span class="badge warn">unvollst.</span>{% endif %}</span>
+    <span class="disc-chip {{ 'incomplete' if not s.complete }}" title="{{ label or '' }} {{ pts(s.total) }} von {{ s.max|num(0) }} Punkten{{ ' – unvollständig (Datenabdeckung unter 70 %)' if not s.complete }}">
+      <b>{{ pts(s.total) }}</b><span class="hint">/{{ s.max|num(0) }}</span>{% if not s.complete %} <span class="badge warn">unvollst.</span>{% endif %}</span>
   {%- else -%}<span class="muted">–</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro jobstate(status, label) -%}
+  <span class="badge {{ {'abgeschlossen': 'good', 'laeuft': 'info', 'geplant': 'info', 'teilweise': 'warn', 'uebersprungen': '', 'fehlgeschlagen': 'crit', 'kontingent': 'warn', 'ki_fehlt': 'warn', 'unterbrochen': 'crit'}.get(status, '') }}">{{ label or status }}</span>
+{%- endmacro %}
+
+{% macro partstate(status, label) -%}
+  <span class="badge {{ {'ok': 'good', 'veraltet': 'warn', 'fehlt': '', 'ungueltig': 'crit', 'fehler': 'crit', 'budget': 'warn', 'pausiert': 'warn', 'aus': 'warn', 'keine_quellen': 'warn'}.get(status, '') }}">{{ label or status }}</span>
+{%- endmacro %}
+
+{% macro prov(p) -%}
+  {%- if p == 'belegt' -%}<span class="badge good" title="Regel in einer öffentlichen Wiedergabe der Methode belegt">Regel belegt</span>
+  {%- elif p == 'auftrag' -%}<span class="badge warn" title="Kriterium belegt; Schwellen aus der Auftragsvorgabe, nicht in einer Primärquelle verifiziert">Schwellen unverifiziert</span>
+  {%- else -%}<span class="badge info" title="Portfolia-Interpretation – die öffentliche Quelle nennt keine Regel">Portfolia-Annahme</span>{%- endif -%}
 {%- endmacro %}
 
 {% macro criterion(c, ccy) %}
@@ -38,7 +54,7 @@
     <span class="disc-crit-title">{{ c.label }}</span>
     <span class="disc-crit-pts">{% if c.points is not none %}<b>{{ c.points|num(1) }}</b> von {{ c.max|num(0) }}{% else %}<span class="badge crit">nicht bewertet</span> 0 von {{ c.max|num(0) }}{% endif %}</span>
     <span class="meter disc-meter {{ 'crit' if c.points is none }}"><div style="width:{{ ((c.points or 0) / c.max * 100)|round(0) }}%"></div></span>
-    <span class="badge">{{ {'rule': 'Regel', 'ai': 'KI (belegt)', 'mixed': 'Regel + KI'}[c.kind] }}</span>
+    <span class="row" style="gap:4px"><span class="badge">{{ {'rule': 'Regel', 'ai': 'KI (belegt)', 'mixed': 'Regel + KI'}[c.kind] }}</span>{% for p in c.parts if p.prov %}{{ prov(p.prov) }}{% endfor %}</span>
   </summary>
   <div class="disc-crit-body">
     <dl class="kv">
@@ -46,7 +62,8 @@
       <dt>2. Bewertungsskala</dt><dd><ul class="plain-list">{% for s in c.scale %}<li>{{ s }}</li>{% endfor %}</ul></dd>
       <dt>3. Maximalpunkte</dt><dd>{{ c.max|num(0) }}</dd>
       <dt>4. Vergebene Punkte</dt><dd>{% if c.points is not none %}{{ c.points|num(1) }}{% else %}0 (nicht bewertet){% endif %}
-        {% for p in c.parts %}<div class="hint">{{ p.art }}-Teil: {{ p.points|num(1) if p.points is not none else 'nicht bewertet' }} von {{ p.max|num(0) }}</div>{% endfor %}</dd>
+        {% for p in c.parts if p.max is defined %}<div class="hint">{{ p.art }}-Teil: {{ p.points|num(1) if p.points is not none else 'nicht bewertet' }} von {{ p.max|num(0) }}</div>{% endfor %}</dd>
+      {% for p in c.parts if p.text is defined %}<dt>{{ p.art }}</dt><dd>{% if p.prov %}{{ prov(p.prov) }} {% endif %}{{ p.text }}</dd>{% endfor %}
       <dt>5. Fakten und Kennzahlen</dt><dd>{% if c.facts %}<table class="compact disc-facts"><tbody>
         {% for f in c.facts %}<tr><td>{{ f.label }}</td><td class="num nowrap">{{ val(f.value, f.fmt, ccy) }}</td><td>{{ origin(f.origin) }}</td><td class="hint">{{ f.period }}{% if f.source %} {{ src(f.source) }}{% endif %}{% if f.note %}<div>{{ f.note }}</div>{% endif %}</td></tr>{% endfor %}
         </tbody></table>{% else %}<span class="muted">keine</span>{% endif %}</dd>
@@ -61,10 +78,12 @@
 </details>
 {% endmacro %}
 
-{% macro scorecard(s, ccy, open=false) %}
+{% macro scorecard(s, ccy, open=false, note='') %}
 <details class="card disc-score" id="score-{{ s.key }}" {{ 'open' if open }}>
   <summary class="card-head"><h2>{{ s.label }}: {{ s.total|num(1) }} von {{ s.max|num(0) }} Punkten</h2>
     <span class="hint">Datenabdeckung {{ s.coverage|pct(0, false) }}{% if not s.complete %} · <span class="badge warn">unvollständig</span>{% endif %}</span></summary>
+  {% if note %}<p class="hint">{{ note }}</p>{% endif %}
+  {% if s.legacy_label %}<p class="hint">In dieser älteren Version hieß die Scorecard „{{ s.legacy_label }}“ – gleiche Methode, nur eindeutig benannt (nicht neu berechnet).</p>{% endif %}
   <p class="hint">Gesamtscore = Summe der Teilpunkte ({% for c in s.criteria %}{{ (c.points or 0)|num(1) }}{{ ' + ' if not loop.last }}{% endfor %} = {{ s.total|num(1) }}). Nicht bewertete Kriterien zählen 0 Punkte.</p>
   {% for c in s.criteria %}{{ criterion(c, ccy) }}{% endfor %}
 </details>

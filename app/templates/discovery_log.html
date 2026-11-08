@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "discovery_macros.html" import jobstate, partstate with context %}
+{% block title %}Discovery-Protokoll{% endblock %}
+{% block heading %}<a href="/discovery" class="hint">Discovery</a> › Ausführungsprotokoll{% endblock %}
+{% block content %}
+<div class="stack disc-page">
+{% if jb %}
+<section class="card">
+  <div class="card-head"><h2>Job #{{ jb.id }} · {{ jb.kind_label }}</h2>{{ jobstate(jb.status, jb.status_label) }}</div>
+  <dl class="kv">
+    <dt>Auslöser</dt><dd>{{ jb.trigger }}{% if jb.company_id %} · <a href="/discovery/c/{{ jb.company_id }}">Unternehmen öffnen</a>{% endif %}</dd>
+    <dt>Zeit</dt><dd>angelegt {{ jb.created_at|datetime_de }}{% if jb.started_at %} · gestartet {{ jb.started_at|datetime_de }}{% endif %}{% if jb.finished_at %} · beendet {{ jb.finished_at|datetime_de }}{% endif %}</dd>
+    <dt>Letzter Schritt</dt><dd>{{ jb.step or '–' }}</dd>
+    {% if jb.error %}<dt>Fehler</dt><dd class="disc-err">{{ jb.error_class or '' }}: {{ jb.error }}</dd>{% endif %}
+    {% if jb.params %}<dt>Parameter</dt><dd><code>{{ jb.params|tojson }}</code></dd>{% endif %}
+  </dl>
+  {% set r = jb.result %}
+  {% if r.themen %}<h3>Themen (KI)</h3>{% for t in r.themen %}<details class="box"><summary><b>{{ t.thema }}</b> · Ausgangsbelege {{ t.belege|join(', ') }}</summary>
+    <p><b>Fakten:</b></p><ul class="plain-list">{% for f in t.fakten %}<li>{{ f.text }} <span class="hint">({{ f.belege|join(', ') }})</span></li>{% endfor %}</ul>
+    <p><b>Hypothese</b> <span class="badge warn">Einschätzung</span>: {{ t.hypothese }}</p><p><b>Gegenargument:</b> {{ t.gegenargument }}</p></details>{% endfor %}{% endif %}
+  {% if cands %}<h3>Kandidaten dieses Laufs</h3><div class="table-wrap"><table class="compact"><thead><tr><th>Unternehmen</th><th>Suchweg</th><th>Thema</th><th>Ergebnis</th><th class="num">Priorität</th><th>Begründung</th></tr></thead><tbody>
+    {% for k in cands %}<tr><td>{% if k.company_id %}<a href="/discovery/c/{{ k.company_id }}">{{ k.name }}</a>{% else %}{{ k.name }}{% endif %} <span class="hint">{{ k.ticker or '' }}</span></td><td>{{ k.path }}</td><td>{{ k.theme or '–' }}</td><td>{{ {'neu': 'neu entdeckt', 'bekannt': 'bereits bekannt', 'verworfen': 'verworfen'}.get(k.status, k.status) }}</td><td class="num">{{ k.priority|num(1) if k.priority is not none else '–' }}</td><td class="hint">{{ k.reason }}</td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+  <details class="box"><summary>Ergebnis (Rohdaten)</summary><pre class="disc-pre">{{ r|tojson(indent=1) }}</pre></details>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="card-head"><h2>KI-Aufrufe{% if jb %} dieses Jobs{% endif %}</h2><span class="hint">ohne Prompt-Inhalt und ohne Schlüssel; Kosten: {{ st.cost }}</span></div>
+  {% if calls %}<div class="table-wrap"><table class="compact"><thead><tr><th>Zeit</th><th>Job</th><th>Schritt</th><th>Anbieter / Modell</th><th>Prompt</th><th>Eingabe-Fingerabdruck</th><th>Status</th><th class="num">Tokens ein/aus</th><th>Fehler</th></tr></thead><tbody>
+    {% for c in calls %}<tr><td class="nowrap">{{ c.started_at|datetime_de }}</td><td>{% if c.job_id %}<a href="/discovery/protokoll?job={{ c.job_id }}">#{{ c.job_id }}</a>{% else %}–{% endif %}</td><td>{{ c.step }}{% if c.company_id %} <a class="hint" href="/discovery/c/{{ c.company_id }}">Firma</a>{% endif %}</td><td>{{ c.provider or '–' }} <span class="hint">{{ c.model or '' }}</span></td><td>v{{ c.prompt_version }}</td><td><code>{{ c.input_fp }}</code></td><td>{{ partstate(c.status, c.status) }}</td><td class="num">{{ c.input_tokens|num(0) }} / {{ c.output_tokens|num(0) }}</td><td class="hint">{{ c.error_class or '' }} {{ c.error or '' }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="hint">Keine KI-Aufrufe.</p>{% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Jobs</h2></div>
+  {% if jobs %}<div class="table-wrap"><table class="compact"><thead><tr><th>Job</th><th>Art</th><th>Auslöser</th><th>Status</th><th>Angelegt</th><th>Beendet</th><th>Fehler</th></tr></thead><tbody>
+    {% for j in jobs %}<tr><td><a href="/discovery/protokoll?job={{ j.id }}">#{{ j.id }}</a></td><td>{{ j.kind_label }}</td><td>{{ j.trigger }}</td><td>{{ jobstate(j.status, j.status_label) }}</td><td class="nowrap">{{ j.created_at|datetime_de }}</td><td class="nowrap">{{ j.finished_at|datetime_de if j.finished_at else '–' }}</td><td class="hint">{{ j.error or '' }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="hint">Noch keine Jobs.</p>{% endif %}
+</section>
+</div>
+{% endblock %}

@@ -522,10 +522,14 @@ def disruption(fu: Fundamentals, ai: dict[str, Any] | None) -> Score:
 
 
 # ----------------------------------------------------------------------------------------------------------------
-# Tom-Nash-inspirierte Scorecard (125 Punkte)
+# Portfolia Fundamental v1 (125 Punkte) – die bis 0.108 als „Tom-Nash-inspiriert“ bezeichnete eigene Systematik.
+# Unverändert erhalten (Historisierung); sie ist NICHT die Methode von Tom Nash (siehe ``nash125``).
 # ----------------------------------------------------------------------------------------------------------------
 
-def nash(fu: Fundamentals, ai: dict[str, Any] | None, market: dict[str, Any]) -> Score:
+FUNDAMENTAL_V1_LABEL = "Portfolia Fundamental v1"
+
+
+def fundamental_v1(fu: Fundamentals, ai: dict[str, Any] | None, market: dict[str, Any]) -> Score:
     cs: list[Criterion] = []
     g3 = cagr(fu, "revenue", 3)
     if g3.v is None:
@@ -591,4 +595,4 @@ def nash(fu: Fundamentals, ai: dict[str, Any] | None, market: dict[str, Any]) ->
                            "Wie unverzichtbar sind die Produkte für zahlende Kunden?", ai, "produktrelevanz"))
     cs.append(ai_criterion("n_organisation", "Organisation und Talentgewinnung", 5,
                            "Belege für die Fähigkeit, Fachkräfte zu gewinnen und zu halten.", ai, "organisation"))
-    return Score("nash", "Fundamental (Tom-Nash-inspiriert)", cs)
+    return Score("fundamental_v1", FUNDAMENTAL_V1_LABEL, cs)

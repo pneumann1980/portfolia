@@ -1202,6 +1202,111 @@ CREATE TABLE IF NOT EXISTS disc_run (
   stats_json  TEXT
 );
 """),
+    (42, """
+-- Discovery & Intelligence 2.0 (0.109.0): Tom Nash 125 (Public Reconstruction v1) neben „Portfolia Fundamental v1“
+-- (die bisherige 125-Punkte-Methode, Spalte ``nash`` – unverändert, nur eindeutig benannt), KI-Teilanalysen,
+-- persistente Jobs, KI-Aufrufprotokoll, Research-Universum und Kandidaten. Weiterhin ohne Bezug zu Buchungen.
+ALTER TABLE disc_analysis ADD COLUMN nash125 REAL;
+ALTER TABLE disc_analysis ADD COLUMN fundamental_v1 REAL;
+ALTER TABLE disc_analysis ADD COLUMN ai_state TEXT;   -- vollstaendig | teilweise | fehlt | ungueltig | budget | aus …
+ALTER TABLE disc_analysis ADD COLUMN parts_json TEXT;  -- Zustand je KI-Teil zum Zeitpunkt der Version
+ALTER TABLE disc_analysis ADD COLUMN job_id INTEGER;
+UPDATE disc_analysis SET fundamental_v1 = nash WHERE fundamental_v1 IS NULL;  -- gleiche Methode, kein Neuberechnen
+CREATE TABLE IF NOT EXISTS disc_job (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind         TEXT NOT NULL,                   -- ki_discovery | screening | voll | news | analyse | beobachtet
+  trigger      TEXT NOT NULL,                   -- manuell | automatisch
+  company_id   INTEGER,
+  slot         TEXT NOT NULL,                   -- Dublettenschutz: höchstens ein aktiver Job je Slot
+  params_json  TEXT,
+  status       TEXT NOT NULL,                   -- geplant | laeuft | abgeschlossen | teilweise | uebersprungen |
+                                                -- fehlgeschlagen | kontingent | ki_fehlt | unterbrochen
+  step         TEXT,
+  progress_json TEXT,
+  result_json  TEXT,
+  error_class  TEXT,
+  error        TEXT,
+  worker       TEXT,                            -- Prozesskennung (Neustart erkennt verwaiste Jobs)
+  created_at   TEXT NOT NULL,
+  started_at   TEXT,
+  finished_at  TEXT,
+  heartbeat_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_disc_job_active ON disc_job(slot) WHERE status IN ('geplant', 'laeuft');
+CREATE INDEX IF NOT EXISTS ix_disc_job_company ON disc_job(company_id, id);
+CREATE TABLE IF NOT EXISTS disc_ai_call (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id         INTEGER,
+  company_id     INTEGER,
+  step           TEXT NOT NULL,                 -- bericht | disruption | nash | themen | thesen
+  provider       TEXT,
+  model          TEXT,
+  prompt_version INTEGER,
+  input_fp       TEXT,                          -- Fingerabdruck der Eingabe (kein Prompt-Inhalt)
+  status         TEXT NOT NULL,                 -- ok | ungueltig | fehler | budget | pausiert | aus
+  input_tokens   INTEGER NOT NULL DEFAULT 0,
+  output_tokens  INTEGER NOT NULL DEFAULT 0,
+  cost_usd       REAL,                          -- nur wenn verlässlich bestimmbar, sonst NULL
+  error_class    TEXT,
+  error          TEXT,
+  result_ref     TEXT,
+  started_at     TEXT NOT NULL,
+  finished_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_disc_ai_call_job ON disc_ai_call(job_id);
+CREATE INDEX IF NOT EXISTS ix_disc_ai_call_company ON disc_ai_call(company_id, id);
+CREATE TABLE IF NOT EXISTS disc_ai_part (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id     INTEGER NOT NULL REFERENCES disc_company(id) ON DELETE CASCADE,
+  part           TEXT NOT NULL,                 -- bericht | disruption | nash
+  status         TEXT NOT NULL,                 -- ok | ungueltig | fehler | budget | aus | keine_quellen
+  input_fp       TEXT,
+  prompt_version INTEGER,
+  provider       TEXT,
+  model          TEXT,
+  result_json    TEXT,
+  error          TEXT,
+  call_id        INTEGER,
+  created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_disc_ai_part ON disc_ai_part(company_id, part, id);
+CREATE TABLE IF NOT EXISTS disc_universe (
+  cik          INTEGER PRIMARY KEY,
+  ticker       TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  exchange     TEXT,
+  active       INTEGER NOT NULL DEFAULT 1,      -- 0 = nicht mehr im SEC-Verzeichnis
+  size_bucket  TEXT,                            -- gross | mittel | klein | mikro (nach Umsatz)
+  filed_seen   TEXT,                            -- jüngste erkannte 10-K/10-Q/20-F-Einreichung (Tagesindex)
+  pre_at       TEXT,                            -- Vorauswahl (SEC Frames) zuletzt berechnet
+  pre_score    REAL,
+  pre_json     TEXT,
+  state        TEXT NOT NULL DEFAULT 'offen',   -- offen | vorauswahl | bestaetigt | verworfen | keine_daten | fehler
+  reason       TEXT,
+  verified_at  TEXT,
+  company_id   INTEGER,
+  added_at     TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_disc_universe_state ON disc_universe(state, pre_score);
+CREATE TABLE IF NOT EXISTS disc_candidate (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id        INTEGER,
+  path          TEXT NOT NULL,                  -- ki | wendepunkt | fehlbewertung | news
+  theme         TEXT,
+  name          TEXT,
+  ticker        TEXT,
+  cik           INTEGER,
+  company_id    INTEGER,
+  status        TEXT NOT NULL,                  -- neu | bekannt | verworfen
+  reason        TEXT,
+  priority      REAL,
+  evidence_json TEXT,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_disc_candidate_job ON disc_candidate(job_id);
+CREATE INDEX IF NOT EXISTS ix_disc_candidate_company ON disc_candidate(company_id);
+"""),
 ]
 
 

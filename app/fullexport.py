@@ -5,7 +5,8 @@ Löschungen in der App, Journal, freigegebene Sparplan-Ausführungen), Assets mi
 Bestände und manuelle Kurse. Was der Datenvertrag nicht abbildet, liegt im Ordner ``portfolia/`` der ZIP-Datei
 (andere Werkzeuge ignorieren ihn; Prüfsummen im Manifest unter ``extra_files``):
 
-* ``state.json`` – Einstellungen, Kursquellen-Zuordnungen samt Status (auch abgelehnte Vorschläge),
+* ``state.json`` – Einstellungen, Kursquellen-Zuordnungen samt Status (auch abgelehnte Vorschläge), Discovery-Daten
+  (Unternehmen, Analyseversionen, KI-Teile, Kandidaten, Jobs, KI-Protokoll),
   Sparplan-Wahl und verworfene Ausführungen, Datenquellen (ohne Zugangsdaten), „dauerhaft ignoriert“,
   Anbieter-IDs der Buchungen, CSV-Zuordnungen (Symbole, Konten, eigene Formate), Kennungen gelöschter CSV- und
   Sync-Buchungen (damit sie nicht erneut importiert werden) und Befunde der Diagnose, die als „geprüft“ markiert
@@ -175,6 +176,8 @@ def collect(ctx: Any, tx_ids: set[str]) -> dict[str, bytes]:
         "watchlist_items": _rows(db, "SELECT w.name AS list_name, i.quote_source, i.quote_id, i.asset_class, "
                                      "i.asset_id, i.symbol, i.name, i.position, i.added_at FROM watchlist_item i "
                                      "JOIN watchlist w ON w.id = i.list_id ORDER BY i.list_id, i.position", drop=()),
+        # Discovery & Intelligence (0.109): Unternehmen, Analysen, KI-Teile, Kandidaten, Jobs, KI-Protokoll
+        "discovery": _discovery_collect(db),
     }
     out = {
         STATE: json.dumps(state, ensure_ascii=False, sort_keys=True, indent=1).encode("utf-8"),
@@ -353,6 +356,8 @@ def validate(extras: dict[str, bytes], st: dict[str, Any]) -> list[str]:
         v = st.get(key)
         if v is not None and not (isinstance(v, list) and all(isinstance(x, dict) for x in v)):
             errs.append(f"{key}: unerwartetes Format")
+    if st.get("discovery") is not None and not isinstance(st.get("discovery"), dict):
+        errs.append("discovery: unerwartetes Format")
     raw = extras.get(TAXDATA)
     if raw:
         try:
@@ -572,6 +577,7 @@ def _apply_db(ctx: Any, import_id: int, st: dict[str, Any], extras: dict[str, by
         counts["watchlist"] = _watchlists(c, st.get("watchlists") or [], st.get("watchlist_items") or [], now)
         counts["taxdata"] = _taxdata(c, extras.get(TAXDATA), ctx.config.tax_data_dir / "uploads", now)
         counts["cutover"] = _cutovers(c, st.get("cutovers") or [], st.get("cutover_corrections") or [])
+        counts["discovery"] = _discovery_restore(c, st.get("discovery"))
         c.execute("INSERT INTO journal_log(at, action, ref, before_json, after_json) VALUES (?,?,?,?,?)",
                   (now, "restore_apply", f"import {import_id}", None, json.dumps(counts)))
         pending = bool(journal and journal.get("files"))
@@ -857,6 +863,18 @@ def _ds_balances(c: Any, rows: list[Any], gaps: list[dict[str, Any]] | None = No
                                                  r.get("note"), r.get("observed_at") or ""))
         n += max(cur.rowcount, 0)
     return n
+
+
+def _discovery_collect(db: Any) -> dict[str, Any]:
+    from app.discovery.backup import collect as disc_collect
+
+    return disc_collect(db)
+
+
+def _discovery_restore(c: Any, data: Any) -> int:
+    from app.discovery.backup import restore as disc_restore
+
+    return disc_restore(c, data)
 
 
 def _insert(c: Any, table: str, rows: Any, mode: str) -> int:

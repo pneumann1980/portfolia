@@ -13,6 +13,10 @@ Szenario-Modell (5 Jahre, je Szenario):
 
 Eingepreistes Wachstum: das g, bei dem der Barwert im Basisszenario (Marge und Multiplikator der Basis) dem Kurs
 entspricht (Bisektion).
+
+Bewertungsprofile (seit 0.109, nach Unternehmensart – keine firmenspezifischen Regeln): Multiplikatoren und
+Diskontierung hängen davon ab, ob das Unternehmen nachhaltig Free Cashflow erzielt und wie schnell es wächst
+(:data:`PROFILES`). Das Profil steht mit seinen Annahmen am Ergebnis.
 """
 
 from __future__ import annotations
@@ -27,7 +31,15 @@ from app.discovery.text import G, P
 YEARS = 5
 TERMINAL_G = 0.04
 DISCOUNT = 0.09
-MULTIPLES = {"konservativ": 15.0, "basis": 22.0, "optimistisch": 30.0}
+MULTIPLES = {"konservativ": 15.0, "basis": 22.0, "optimistisch": 30.0}  # Profil „wachstum“ (bis 0.108 für alle)
+PROFILES: dict[str, dict[str, Any]] = {
+    "wachstum": {"label": "Profitables Wachstum (FCF positiv, Startwachstum ≥ 8 %)", "discount": 0.09,
+                 "multiples": MULTIPLES},
+    "reif": {"label": "Reifes Unternehmen (FCF positiv, Startwachstum < 8 %)", "discount": 0.08,
+             "multiples": {"konservativ": 10.0, "basis": 14.0, "optimistisch": 18.0}},
+    "frueh": {"label": "Noch ohne nachhaltigen Free Cashflow (höheres Ausführungsrisiko)", "discount": 0.11,
+              "multiples": MULTIPLES},
+}
 
 
 def _safe_div(a: float | None, b: float | None) -> float | None:
@@ -42,7 +54,9 @@ def market_metrics(fu: Fundamentals, quote: dict[str, Any]) -> dict[str, Any]:
     ``quote``: price, ccy, at, market_cap (Handelswährung), fx (Faktor Berichtswährung → Handelswährung, 1 bei gleicher
     Währung), forward_pe, inst_pct, short_pct, price_cagr_5y, price_cagr_period, source."""
     m: dict[str, Any] = {k: quote.get(k) for k in ("price", "ccy", "at", "forward_pe", "inst_pct", "short_pct",
-                                                   "price_cagr_5y", "price_cagr_period", "source", "fx", "stale")}
+                                                   "price_cagr_5y", "price_cagr_period", "source", "fx", "stale",
+                                                   "tr_5y", "spx_tr_5y", "tr_period", "tr_note", "tr_bench_note",
+                                                   "tr_missing")}
     fx = quote.get("fx")
     rev, ni, oi, fcf = (fu.latest(k).v for k in ("revenue", "net_income", "operating_income", "fcf"))
     nc = fu.latest("net_cash").v
@@ -74,13 +88,31 @@ def market_metrics(fu: Fundamentals, quote: dict[str, Any]) -> dict[str, Any]:
     })
     g = fu.latest("revenue_growth").v
     m["growth_adj_ev_sales"] = (m["ev_sales"] / (g * 100)) if m.get("ev_sales") and g and g > 0 else None
-    m["peg"] = (m["pe"] / (g * 100)) if m.get("pe") and g and g > 0 else None
+    # Bis 0.108 hieß diese Kennzahl „PEG“ – sie nutzt aber Umsatz- statt Gewinnwachstum (kein klassisches PEG)
+    m["pe_rev_growth"] = (m["pe"] / (g * 100)) if m.get("pe") and g and g > 0 else None
+    eg, eg_period = eps_cagr(fu)
+    m["eps_growth"], m["eps_growth_period"] = eg, eg_period
+    m["peg"] = (m["pe"] / (eg * 100)) if m.get("pe") and eg and eg > 0 else None  # klassisch: Gewinnwachstum je Aktie
     m["notes"] = notes
     return m
 
 
-def _project(rev0: float, g: float, margin: float, multiple: float, net_cash: float, shares: float, dil: float
-             ) -> dict[str, Any]:
+def eps_cagr(fu: Fundamentals, years: int = 3) -> tuple[float | None, str]:
+    """Durchschnittliches jährliches Wachstum des verwässerten Ergebnisses je Aktie (beide Endwerte > 0)."""
+    ys = [y for y in fu.years if fu.get("eps", y).v is not None]
+    if len(ys) < 2:
+        return None, ""
+    end = ys[-1]
+    start = ys[-1 - years] if len(ys) > years else ys[0]
+    a, b = fu.get("eps", start).v, fu.get("eps", end).v
+    n = fu.years.index(end) - fu.years.index(start)
+    if not a or not b or a <= 0 or b <= 0 or n < 1:
+        return None, ""
+    return (b / a) ** (1 / n) - 1, f"{start}–{end}"
+
+
+def _project(rev0: float, g: float, margin: float, multiple: float, net_cash: float, shares: float, dil: float,
+             discount: float = DISCOUNT) -> dict[str, Any]:
     rev, path = rev0, []
     for t in range(1, YEARS + 1):
         gt = g + (TERMINAL_G - g) * (t - 1) / (YEARS - 1)
@@ -92,7 +124,7 @@ def _project(rev0: float, g: float, margin: float, multiple: float, net_cash: fl
     per_share = equity5 / shares5 if shares5 > 0 else None
     return {"pfad": path, "umsatz_5": rev, "fcf_5": fcf5, "eigenkapitalwert_5": equity5, "aktien_5": shares5,
             "wert_je_aktie_5": per_share,
-            "barwert_je_aktie": per_share / (1 + DISCOUNT) ** YEARS if per_share is not None else None}
+            "barwert_je_aktie": per_share / (1 + discount) ** YEARS if per_share is not None else None}
 
 
 def scenarios(fu: Fundamentals, market: dict[str, Any]) -> dict[str, Any]:
@@ -125,41 +157,47 @@ def scenarios(fu: Fundamentals, market: dict[str, Any]) -> dict[str, Any]:
         margin_rule = "noch keine nachhaltige FCF-Marge: Ziel-FCF-Marge = Anteil der Bruttomarge (15 % / 25 % / 35 %)"
     else:
         return {"available": False, "reason": "weder FCF-Marge noch Bruttomarge für eine Zielmarge vorhanden"}
+    prof_key = "frueh" if not profitable else "wachstum" if g_base >= 0.08 else "reif"
+    prof = PROFILES[prof_key]
+    mult, disc = prof["multiples"], prof["discount"]
     dils = [x for x in fu.series("dilution")[-3:] if x is not None]
     d_base = max(0.0, min(0.08, sum(dils) / len(dils))) if dils else 0.02
     growths = {"konservativ": g_base * 0.5 if g_base > 0 else g_base - 0.05, "basis": g_base,
                "optimistisch": min(0.8, g_base * 1.4) if g_base > 0 else g_base + 0.05}
     dil = {"konservativ": d_base + 0.01, "basis": d_base, "optimistisch": max(0.0, d_base - 0.01)}
-    out: dict[str, Any] = {"available": True, "years": YEARS, "discount": DISCOUNT, "terminal_g": TERMINAL_G,
+    out: dict[str, Any] = {"available": True, "years": YEARS, "discount": disc, "terminal_g": TERMINAL_G,
                            "price": price, "ccy": market.get("ccy"), "profitable": profitable,
+                           "profile": prof_key, "profile_label": prof["label"],
                            "assumptions": {
                                "wachstum": f"Startwachstum Basis = Mittel aus letztem Jahreswachstum und 3-J.-CAGR "
                                            f"({P(g_base)}), begrenzt auf −10 % … 50 %; konservativ × 0,5, "
                                            f"optimistisch × 1,4; fällt linear auf {P(TERMINAL_G, 0)} im Jahr {YEARS}",
                                "marge": margin_rule,
+                               "profil": f"{prof['label']} – Multiplikatoren und Diskontierung nach Profil",
                                "multiplikator": "Kurs/FCF im Jahr 5: " + " / ".join(f"{k} {G(v)}"
-                                                                                  for k, v in MULTIPLES.items()),
+                                                                                  for k, v in mult.items()),
                                "verwaesserung": f"Ø Veränderung der Aktienanzahl ({P(d_base)}, 0–8 %); konservativ "
                                                 "+1 Pp., optimistisch −1 Pp.",
                                "nettofinanzposition": "heutige Nettofinanzposition bleibt unverändert (vereinfacht)",
-                               "diskontierung": f"Barwert mit {P(DISCOUNT, 0)} p. a. (geforderte Rendite, Annahme)"},
+                               "diskontierung": f"Barwert mit {P(disc, 0)} p. a. (geforderte Rendite nach Profil, "
+                                                "Annahme)"},
                            "cases": {}}
     for k in ("konservativ", "basis", "optimistisch"):
-        res = _project(rev_c, growths[k], margins[k], MULTIPLES[k], nc_c, shares, dil[k])
+        res = _project(rev_c, growths[k], margins[k], mult[k], nc_c, shares, dil[k], disc)
         ps = res["wert_je_aktie_5"]
-        res.update({"g": growths[k], "marge": margins[k], "multiplikator": MULTIPLES[k], "verwaesserung": dil[k],
+        res.update({"g": growths[k], "marge": margins[k], "multiplikator": mult[k], "verwaesserung": dil[k],
                     "rendite_pa": ((ps / price) ** (1 / YEARS) - 1) if ps and ps > 0 else None})
         out["cases"][k] = res
-    out["implied_growth"] = implied_growth(rev_c, margins["basis"], MULTIPLES["basis"], nc_c, shares, dil["basis"],
-                                           price)
+    out["implied_growth"] = implied_growth(rev_c, margins["basis"], mult["basis"], nc_c, shares, dil["basis"],
+                                           price, disc)
     return out
 
 
 def implied_growth(rev: float, margin: float, multiple: float, net_cash: float, shares: float, dil: float,
-                   price: float) -> float | None:
+                   price: float, discount: float = DISCOUNT) -> float | None:
     """Startwachstum, bei dem der Barwert im Basismodell dem Kurs entspricht (−30 % … +150 %); ``None`` außerhalb."""
     def pv(g: float) -> float:
-        return _project(rev, g, margin, multiple, net_cash, shares, dil)["barwert_je_aktie"] or 0.0
+        return _project(rev, g, margin, multiple, net_cash, shares, dil, discount)["barwert_je_aktie"] or 0.0
 
     lo, hi = -0.30, 1.50
     if pv(lo) > price or pv(hi) < price:
@@ -195,11 +233,23 @@ def valuation_score(fu: Fundamentals, market: dict[str, Any], scen: dict[str, An
                         higher_better=False, rule="Stufen von EV/Umsatz", missing="Marktdaten fehlen", unit="×"))
     if market.get("peg") is not None:
         cs.append(_rule("v_wachstum", "Wachstum relativ zur Bewertung (PEG)", 25,
-                        "KGV / Umsatzwachstum in Prozent (Umsatz statt Gewinnwachstum: robuster bei Sondereffekten).",
+                        "Klassisches PEG: KGV ÷ durchschnittliches Wachstum des Ergebnisses je Aktie in Prozent.",
                         market.get("peg"), [(1.0, 25), (1.5, 19), (2.0, 12), (3.0, 5)], "num",
                         [Fact("KGV", market.get("pe"), "x", "derived", source="markt"),
-                         Fact("PEG (Umsatz)", market.get("peg"), "num", "derived")], higher_better=False,
-                        rule="KGV ÷ (Wachstum × 100)"))
+                         Fact("Wachstum Ergebnis je Aktie p. a.", market.get("eps_growth"), "pct", "derived",
+                              market.get("eps_growth_period", "")),
+                         Fact("PEG", market.get("peg"), "num", "derived")], higher_better=False,
+                        rule="KGV ÷ (EPS-Wachstum × 100)",
+                        counter=["Gewinnwachstum schwankt stark bei Sondereffekten"]))
+    elif market.get("pe_rev_growth") is not None:
+        cs.append(_rule("v_wachstum", "Wachstum relativ zur Bewertung (KGV ÷ Umsatzwachstum)", 25,
+                        "Umsatzbasiertes PEG-Analogon (kein klassisches PEG): KGV ÷ Umsatzwachstum in Prozent – nur, "
+                        "wenn kein positives Gewinnwachstum je Aktie berechenbar ist.",
+                        market.get("pe_rev_growth"), [(1.0, 25), (1.5, 19), (2.0, 12), (3.0, 5)], "num",
+                        [Fact("KGV", market.get("pe"), "x", "derived", source="markt"),
+                         Fact("KGV ÷ Umsatzwachstum", market.get("pe_rev_growth"), "num", "derived")],
+                        higher_better=False, rule="KGV ÷ (Umsatzwachstum × 100)",
+                        counter=["Umsatzwachstum ist kein Gewinnwachstum – bei sinkenden Margen zu günstig"]))
     else:
         cs.append(_rule("v_wachstum", "Wachstum relativ zur Bewertung (EV/Umsatz je Wachstumspunkt)", 25,
                         "EV/Umsatz ÷ Umsatzwachstum in Prozent (ohne positives KGV).",
@@ -278,3 +328,26 @@ def price_cagr(rows: list[tuple[str, float]]) -> tuple[float | None, str]:
 
 def finite(x: Any) -> bool:
     return isinstance(x, int | float) and math.isfinite(x)
+
+
+def total_return(stock: list[tuple[str, float]], bench: list[tuple[str, float]], years: int = 5
+                 ) -> dict[str, Any]:
+    """Kumulierte Gesamtrendite von Aktie und Vergleichsindex über exakt denselben Zeitraum.
+
+    Eingaben: (Datum, dividenden- und splitbereinigter Schlusskurs), aufsteigend. Start = erster gemeinsamer
+    Handelstag ab Ende − ``years`` Jahre; die Aktie muss bis höchstens 10 Tage nach diesem Stichtag zurückreichen."""
+    from datetime import date, timedelta
+
+    if len(stock) < 2 or len(bench) < 2:
+        return {"missing": "Kurshistorie fehlt"}
+    end = min(stock[-1][0], bench[-1][0])
+    target = (date.fromisoformat(end) - timedelta(days=round(years * 365.25))).isoformat()
+    if stock[0][0] > (date.fromisoformat(target) + timedelta(days=10)).isoformat():
+        return {"missing": f"Kurshistorie beginnt erst {stock[0][0]} – weniger als {years} Jahre"}
+    sd = {d: v for d, v in stock if v and v > 0}
+    bd = {d: v for d, v in bench if v and v > 0}
+    common = sorted(d for d in sd if d in bd and target <= d <= end)
+    if len(common) < 2:
+        return {"missing": "kein gemeinsamer Zeitraum mit dem Vergleichsindex"}
+    a, b = common[0], common[-1]
+    return {"tr": sd[b] / sd[a] - 1, "bench": bd[b] / bd[a] - 1, "period": f"{a}–{b}"}
