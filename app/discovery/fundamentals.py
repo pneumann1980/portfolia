@@ -75,6 +75,9 @@ LABELS = {
     "shares_diluted": "Aktien (verwässert, Ø)", "dilution": "Veränderung Aktienanzahl", "roic": "ROIC",
     "rnd": "Forschung & Entwicklung", "rnd_ratio": "F&E-Quote", "sbc": "Aktienbasierte Vergütung",
     "current_ratio": "Current Ratio", "income_tax": "Ertragsteuern", "pretax_income": "Ergebnis vor Steuern",
+    "cost_of_revenue": "Umsatzkosten", "debt_total": "Finanzverbindlichkeiten (gesamt)",
+    "debt_noncurrent": "Langfristige Finanzverbindlichkeiten", "debt_current": "Kurzfristige Finanzverbindlichkeiten",
+    "assets_current": "Umlaufvermögen", "liabilities_current": "Kurzfristige Verbindlichkeiten",
 }
 PCT = {"revenue_growth", "gross_margin", "op_margin", "net_margin", "fcf_margin", "dilution", "roic", "rnd_ratio"}
 ASSUMED_TAX = 0.21  # Annahme, wenn der effektive Steuersatz nicht ableitbar ist (US-Bundessteuersatz)

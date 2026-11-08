@@ -580,3 +580,7 @@ def test_amount_parsing_german_format(raw, eur):
     from app.discovery.web import _amount
 
     assert _amount(raw) == eur
+
+
+def test_every_concept_has_a_german_label():
+    assert set(F.CONCEPTS) <= set(F.LABELS)
