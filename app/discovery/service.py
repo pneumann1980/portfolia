@@ -275,6 +275,9 @@ def _quote(ctx: Any, co: dict[str, Any], fu: F.Fundamentals) -> dict[str, Any]:
     try:
         md.refresh([series])
     except Exception as e:  # Marktdaten sind Zusatz – die Analyse läuft ohne Kurs weiter (Bewertung „fehlt“)
+        from app.db import fallback
+
+        fallback(f"Discovery-Kursabruf {series}", e)
         q["error"] = f"Kursabruf: {type(e).__name__}"
     _extra_info(ctx, sym, series)
     _history(ctx, series)

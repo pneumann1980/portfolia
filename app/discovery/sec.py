@@ -154,7 +154,10 @@ def html_to_text(raw: bytes) -> str:
 
     try:
         doc = lh.fromstring(raw)
-    except Exception:
+    except Exception as e:
+        from app.db import fallback
+
+        fallback("SEC-Geschäftsbericht (HTML)", e)
         return ""
     for el in doc.xpath("//script|//style|//ix:header", namespaces={"ix": "http://www.xbrl.org/2013/inlineXBRL"}):
         el.getparent().remove(el)
