@@ -1,0 +1,11 @@
+{% from "discovery_macros.html" import jobstate with context %}
+<div class="alert {{ 'good' if jb.status == 'abgeschlossen' else 'crit' if jb.status in ('fehlgeschlagen', 'unterbrochen') else 'warn' if not jb.active else '' }} disc-jobline" id="job-{{ jb.id }}"{% if jb.active %} hx-get="/discovery/jobs/{{ jb.id }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <span class="icon">{{ '…' if jb.active else '✓' if jb.status == 'abgeschlossen' else '!' }}</span>
+  <div>
+    <b>Job #{{ jb.id }} · {{ jb.kind_label }}</b> {{ jobstate(jb.status, jb.status_label) }}
+    {% if jb.active %}<div>{{ jb.step or 'wartet auf freien Platz im Hintergrund' }}</div>
+    {% else %}<div class="hint">beendet {{ jb.finished_at|datetime_de if jb.finished_at else '' }}{% if jb.result.ai_state %} · KI-Zustand: {{ jb.result.ai_state }}{% endif %}{% if jb.result.status == 'unchanged' %} · keine neuen Daten oder KI-Teile (Version unverändert){% endif %}</div>{% endif %}
+    {% if jb.error %}<div class="disc-err">Grund: {{ jb.error }}</div>{% endif %}
+    <div class="hint"><a href="/discovery/protokoll?job={{ jb.id }}">Details und KI-Aufrufe</a>{% if not jb.active %} · <a href="">Seite neu laden</a>{% endif %}</div>
+  </div>
+</div>

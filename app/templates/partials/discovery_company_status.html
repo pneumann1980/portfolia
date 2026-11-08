@@ -1,0 +1,25 @@
+{% from "discovery_macros.html" import jobstate, partstate with context %}
+<section class="card" id="ki-firma"{% if active_jobs %} hx-get="/discovery/c/{{ co.id }}/status" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  <div class="card-head"><h2>KI-Researchstatus dieser Firma</h2>
+    {% set ast = res.ai_state if res else 'fehlt' %}
+    <span class="badge {{ 'good' if ast == 'vollstaendig' else 'warn' }}">{{ ai_states.get(ast, ast) }}</span></div>
+  {% for j in active_jobs %}<div class="alert"><span class="icon">…</span><div><b>Job #{{ j.id }} läuft:</b> {{ j.step or 'wartet auf freien Platz im Hintergrund' }} {{ jobstate(j.status, j.status_label) }}</div></div>{% endfor %}
+  <div class="table-wrap"><table class="compact"><thead><tr><th>KI-Teil</th><th>Zustand</th><th>Erstellt</th><th>Anbieter / Modell</th><th>Letzter Versuch</th></tr></thead><tbody>
+    {% for p in parts.values() %}<tr><td>{{ p.label }}</td><td>{{ partstate(p.status, p.status_label) }}</td><td class="nowrap">{{ p.at|datetime_de if p.at and p.ok_id else '–' }}</td><td>{{ p.provider or '–' }}{% if p.model %} <span class="hint">{{ p.model }}</span>{% endif %}</td>
+      <td>{% if p.last_attempt %}<span class="nowrap">{{ p.last_attempt|datetime_de }}</span> {{ partstate(p.last_status, p.last_status) }}{% else %}–{% endif %}{% if p.error %}<div class="hint disc-err">{{ p.error }}</div>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="hint">Verfügbar: heute noch {{ [st.day.left, 0]|max }} von {{ st.day.limit }}, im Monat noch {{ [st.month.left, 0]|max }} von {{ st.month.limit }} Discovery-Aufrufen · {{ 'Google Gemini' if st.provider == 'gemini' else 'Claude' }} {{ st.model }}{% if not st.usable %} · <b>{{ st.reason }}</b>{% endif %}.
+    Eine vollständige KI-Analyse braucht 3 Aufrufe (Bericht, Disruption, Nash); „Fehlende KI-Teile ergänzen“ nur so viele, wie Teile fehlen.</p>
+  <div class="disc-actions">
+    <form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="ki"><button class="btn primary" type="submit" {{ 'disabled' if active_jobs or not st.usable }} title="{{ modes.ki }}">KI-Analyse starten</button></form>
+    <form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="ergaenzen"><button class="btn" type="submit" {{ 'disabled' if active_jobs or not st.usable }} title="{{ modes.ergaenzen }}">Fehlende KI-Teile ergänzen</button></form>
+    <form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="daten"><button class="btn" type="submit" {{ 'disabled' if active_jobs }} title="{{ modes.daten }}">Fundamentaldaten aktualisieren</button></form>
+    <form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="voll"><button class="btn" type="submit" {{ 'disabled' if active_jobs }} title="{{ modes.voll }}">Vollanalyse aktualisieren</button></form>
+    <a class="btn ghost" href="#versionen">Analysehistorie anzeigen</a>
+  </div>
+  <details class="box"><summary>Was die Knöpfe tun</summary><dl class="kv">{% for k, v in modes.items() if k != 'auto' %}<dt>{{ {'daten': 'Fundamentaldaten aktualisieren', 'ergaenzen': 'Fehlende KI-Teile ergänzen', 'ki': 'KI-Analyse starten', 'voll': 'Vollanalyse aktualisieren'}[k] }}</dt><dd>{{ v }}</dd>{% endfor %}</dl>
+    <p class="hint">Jeder Knopf startet einen Hintergrund-Job (keine blockierende Anfrage); ein zweiter Klick startet keinen zweiten Job. Gültige KI-Teile werden nicht neu erzeugt, außer bei „KI-Analyse starten“.</p></details>
+  {% if calls %}<details class="box"><summary>KI-Aufrufe für dieses Unternehmen ({{ calls|length }})</summary><div class="table-wrap"><table class="compact"><thead><tr><th>Zeit</th><th>Schritt</th><th>Modell</th><th>Status</th><th class="num">Tokens</th><th>Fehler</th></tr></thead><tbody>
+    {% for c in calls %}<tr><td class="nowrap">{{ c.started_at|datetime_de }}</td><td>{{ c.step }}</td><td>{{ c.model or '–' }}</td><td>{{ partstate(c.status, c.status) }}</td><td class="num">{{ (c.input_tokens + c.output_tokens)|num(0) }}</td><td class="hint">{{ c.error or '' }}</td></tr>{% endfor %}
+  </tbody></table></div></details>{% endif %}
+</section>
