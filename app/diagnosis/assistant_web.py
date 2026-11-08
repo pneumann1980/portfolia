@@ -99,40 +99,42 @@ def _page(request: Request, *, msg: str = "", err: str = "", skip: str = "", new
         if x not in skipped:
             skipped.append(x)
     G.save_pass(ctx.db, ref, skipped)
-    st = G.step(ctx, skipped, hints=show_hints, focus=focus)
-    if st.task is not None and chosen and chosen not in {a.id for a in st.task.answers}:
-        chosen = ""  # Antwort gehört zu einer anderen (inzwischen erledigten) Aufgabe
-    undo = None
-    if done:
-        row = ctx.db.q1("SELECT id, action, status, title FROM diag_decision WHERE id=?", (done,))
-        if row is not None and row["status"] == "active":
-            undo = {"d": row["id"]}
-    elif acts and all(x.isdigit() for x in acts.split(",")):
-        undo = {"acts": acts}
-    elif kl and kl.isalnum():
-        undo = {"kl": kl}
-    elif dids and all(x.isdigit() for x in dids.split(",")):
-        undo = {"dids": dids}
-    else:  # vorgemerkte Buchung bzw. Rechenprüfung
-        undo = next(({k: v} for k, v in (more or {}).items() if v and _SAFE.fullmatch(v)), None)
-    batch = None
-    if same and same.get("sig") and same.get("sa"):  # „für alle gleich beantworten“ anbieten
-        n = len(G.similar(ctx, same["sig"], same["sa"]))
-        if n:
-            batch = {**same, "n": n}
-    rest = G.rest_overview(ctx) if st.task is None else {}
-    incomplete = G.incomplete_check(ctx) if st.task is None else ""
-    declined = G.declined_takeovers(ctx) if st.task is None else []
-    resp = render(request, "guide.html", active="quality", step=st, task=st.task, title=G.TITLE, rest=rest,
-                  rest_n=sum(rest.values()), declined=declined, incomplete=incomplete,
-                  pos=G.theme_position(st), msg=msg, err=err, errors=errors or [], undo=undo, gone=gone,
-                  chosen=chosen, values=values or {}, values_for=chosen if values is not None else "",
-                  hints=show_hints, batch=batch, **_common())
-    if st.task is None:
-        _clear(resp)
-    else:
-        _set(resp, st.task.kid, ref, show_hints)
-    return resp
+    # Liste, Frage, „für alle gleich“ und Restübersicht dieser Seite: eine Diagnose (Schreiben davor: save_pass)
+    with G.page_scope(ctx):
+        st = G.step(ctx, skipped, hints=show_hints, focus=focus)
+        if st.task is not None and chosen and chosen not in {a.id for a in st.task.answers}:
+            chosen = ""  # Antwort gehört zu einer anderen (inzwischen erledigten) Aufgabe
+        undo = None
+        if done:
+            row = ctx.db.q1("SELECT id, action, status, title FROM diag_decision WHERE id=?", (done,))
+            if row is not None and row["status"] == "active":
+                undo = {"d": row["id"]}
+        elif acts and all(x.isdigit() for x in acts.split(",")):
+            undo = {"acts": acts}
+        elif kl and kl.isalnum():
+            undo = {"kl": kl}
+        elif dids and all(x.isdigit() for x in dids.split(",")):
+            undo = {"dids": dids}
+        else:  # vorgemerkte Buchung bzw. Rechenprüfung
+            undo = next(({k: v} for k, v in (more or {}).items() if v and _SAFE.fullmatch(v)), None)
+        batch = None
+        if same and same.get("sig") and same.get("sa"):  # „für alle gleich beantworten“ anbieten
+            n = len(G.similar(ctx, same["sig"], same["sa"]))
+            if n:
+                batch = {**same, "n": n}
+        rest = G.rest_overview(ctx) if st.task is None else {}
+        incomplete = G.incomplete_check(ctx) if st.task is None else ""
+        declined = G.declined_takeovers(ctx) if st.task is None else []
+        resp = render(request, "guide.html", active="quality", step=st, task=st.task, title=G.TITLE, rest=rest,
+                      rest_n=sum(rest.values()), declined=declined, incomplete=incomplete,
+                      pos=G.theme_position(st), msg=msg, err=err, errors=errors or [], undo=undo, gone=gone,
+                      chosen=chosen, values=values or {}, values_for=chosen if values is not None else "",
+                      hints=show_hints, batch=batch, **_common())
+        if st.task is None:
+            _clear(resp)
+        else:
+            _set(resp, st.task.kid, ref, show_hints)
+        return resp
 
 
 def _to_log(**q: str) -> Response:

@@ -144,9 +144,10 @@ def make_router() -> APIRouter:
         """Startseite „Prüfen“: offene Aufgaben des Assistenten je Thema (eine Zählung), letzter Prüflauf, Knöpfe –
         wird nachgeladen, damit die Seite sofort steht. Die Stufen A/B/C stehen unter Experten → Alle Fälle."""
         ctx = get_ctx(request)
-        plan = WP.build(ctx)
+        with G.page_scope(ctx):  # eine Diagnose für Arbeitsplan und Aufgabenzählung dieses Aufrufs
+            plan = WP.build(ctx, G.scoped_report(ctx))
+            n, themes, minutes = G.overview(ctx)
         last = CR.previous(ctx.db)
-        n, themes, minutes = G.overview(ctx)
         return render(request, "partials/dq_plan.html", plan=plan, last=last, assist_n=n, assist_min=minutes,
                       themes=themes, top=max([t["n"] for t in themes] or [1]), assist_title=G.TITLE,
                       auto_check=bool(ctx.settings.get(AC.SETTING, True)))

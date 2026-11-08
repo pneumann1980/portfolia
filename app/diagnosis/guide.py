@@ -18,9 +18,12 @@ nur auf Wunsch (``hints=True``).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import re
+import threading
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -159,11 +162,81 @@ def _theme_of(item: Any, report: Any) -> str:
     return "pruefung"
 
 
-def tasks(ctx: Any, *, hints: bool = False) -> list[Task]:
-    """Offene Aufgaben in Bearbeitungsreihenfolge (Thema, dann Wirkung). Ohne Vorschau – zum Zählen und Wählen."""
+@dataclass
+class PageReport:
+    """Diagnosebericht eines Seitenaufrufs samt Datenstand, aus dem er entstand (vor dem Aufbau gelesen)."""
+
+    report: Any
+    version: str
+
+
+def _report_version(db: Any) -> str:
+    """Stand der Eingaben, die eine Antwort im Assistenten ändern kann: Datenstand (Buchungen, Einstellungen, Belege,
+    Stichtag …) und Diagnose-Entscheidungen (ausblenden, zurückstellen, zurücknehmen)."""
+    from app.diagnosis import actions as A
+
+    dec = db.q1("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m, COALESCE(SUM(status='active'), 0) AS a "
+                "FROM diag_decision")
+    return f"{A.data_version(db)}|{dec['n']}:{dec['m']}:{dec['a']}"
+
+
+def page_report(ctx: Any, page: PageReport | None = None) -> PageReport:
+    """Bericht für diesen Seitenaufruf: ``page`` weiterverwenden, solange :func:`_report_version` unverändert ist, sonst
+    neu (Stand vor dem Aufbau gelesen – eine Änderung währenddessen führt beim nächsten Zugriff zu neuem Bericht)."""
     from app.diagnosis.engine import report_for
 
-    report = report_for(ctx)
+    version = _report_version(ctx.db)
+    if page is not None and page.version == version:
+        return page
+    return PageReport(report_for(ctx), version)
+
+
+_SCOPE = threading.local()
+
+
+@contextlib.contextmanager
+def page_scope(ctx: Any) -> Iterator[None]:
+    """Ein Seitenaufruf, eine Diagnose: innerhalb des Blocks verwenden Aufgabenliste, Frage, „für alle gleich“ und
+    Restübersicht denselben Bericht – erzeugt beim ersten Bedarf, bei jeder Verwendung gegen den Datenstand geprüft
+    (geändert → neu). Nur dieser Thread und nur bis zum Ende des Blocks; kein prozessweiter Zwischenspeicher.
+    Verschachtelte Blöcke teilen den äußeren."""
+    if getattr(_SCOPE, "ctx", None) is ctx:
+        yield
+        return
+    prev = (getattr(_SCOPE, "ctx", None), getattr(_SCOPE, "page", None))
+    _SCOPE.ctx, _SCOPE.page = ctx, None
+    try:
+        yield
+    finally:
+        _SCOPE.ctx, _SCOPE.page = prev
+
+
+def scoped_report(ctx: Any) -> Any:
+    """Diagnosebericht: im :func:`page_scope` der gemeinsame (Datenstand geprüft), sonst ein neuer."""
+    if getattr(_SCOPE, "ctx", None) is not ctx:
+        from app.diagnosis.engine import report_for
+
+        return report_for(ctx)
+    _SCOPE.page = page_report(ctx, _SCOPE.page)
+    return _SCOPE.page.report
+
+
+def _report(ctx: Any, report: Any) -> Any:
+    return report if report is not None else scoped_report(ctx)
+
+
+def _report_if_scoped(ctx: Any, report: Any) -> Any:
+    """Bericht nur weiterreichen, wenn er schon vorliegt (Argument oder Seitenbereich) – sonst ``None``: der Aufgerufene
+    entscheidet selbst, ob er eine Diagnose braucht (z. B. erst bei festgeschriebenem Stichtag)."""
+    if report is not None or getattr(_SCOPE, "ctx", None) is not ctx:
+        return report
+    return scoped_report(ctx)
+
+
+def tasks(ctx: Any, *, hints: bool = False, report: Any = None) -> list[Task]:
+    """Offene Aufgaben in Bearbeitungsreihenfolge (Thema, dann Wirkung). Ohne Vorschau – zum Zählen und Wählen.
+    ``report``: Diagnosebericht desselben Datenstands (sonst wird er erzeugt)."""
+    report = _report(ctx, report)
     plan = WP.build(ctx, report, granular=True)
     later = _deferred(ctx, report)
     out: list[Task] = []
@@ -300,19 +373,19 @@ def incomplete_check(ctx: Any) -> str:
     return ""
 
 
-def rest_overview(ctx: Any) -> dict[str, int]:
+def rest_overview(ctx: Any, report: Any = None) -> dict[str, int]:
     """Fachlich noch offene Arbeit außerhalb der aktuell vorgelegten Fragen – aus den vorhandenen Zuständen (zentrale
     Importprüfung, „Weiß ich nicht“-Befunde, Klärungsfälle), keine eigene Definition von „offen“."""
     from app.csvimport import review as RV
     from app.diagnosis import clarify as K
-    from app.diagnosis.engine import report_for
 
+    report = _report(ctx, report)
     summ = RV.active_summary(ctx.db)
     n_back = int(ctx.db.scalar("SELECT COUNT(*) FROM clarify_case WHERE status='zurueck'") or 0)
-    n_wait = sum(1 for c in TR.live_cases(ctx, K.stored_cases(ctx.db)) if c["status"] != "zurueck")
+    n_wait = sum(1 for c in TR.live_cases(ctx, K.stored_cases(ctx.db), report) if c["status"] != "zurueck")
     return {"import_deferred": summ.events["zurueckgestellt"],
             "import_open": summ.open - summ.events["zurueckgestellt"],
-            "findings_deferred": len(_deferred(ctx, report_for(ctx))),
+            "findings_deferred": len(_deferred(ctx, report)),
             "cases_deferred": n_back, "cases_waiting": n_wait}
 
 
@@ -330,13 +403,17 @@ def signature(f: Any) -> str:
 
 def similar(ctx: Any, sig: str, aid: str, limit: int = BATCH_LIMIT) -> list[str]:
     """Offene Befund-Fragen mit gleichem Muster, auf die dieselbe Antwort passt. Korrekturen nur, wenn sie dort die
-    unbedingte Empfehlung ohne Eingaben sind; Entscheidungen ohne Datenänderung passen immer."""
-    from app.diagnosis.engine import report_for
+    unbedingte Empfehlung ohne Eingaben sind; Entscheidungen ohne Datenänderung passen immer. Aufgabenliste und
+    Empfehlungen beruhen auf einer Diagnose (:func:`page_scope`)."""
+    with page_scope(ctx):
+        return _similar(ctx, scoped_report(ctx), sig, key=aid.split(":", 1)[1] if aid.startswith("opt:") else "",
+                        limit=limit)
+
+
+def _similar(ctx: Any, report: Any, sig: str, *, key: str, limit: int) -> list[str]:
     from app.diagnosis.recommend import recommend
 
-    report = report_for(ctx)
     out: list[str] = []
-    key = aid.split(":", 1)[1] if aid.startswith("opt:") else ""
     for t in tasks(ctx):
         if t.kind != "frage":
             continue
@@ -592,20 +669,19 @@ def _row_detail(ctx: Any, task: Task) -> Task:
 # Klärungsfall mit vorbereiteter Lösung
 # ----------------------------------------------------------------------------------------------------
 
-def _case_detail(ctx: Any, task: Task) -> Task:
+def _case_detail(ctx: Any, task: Task, report: Any = None) -> Task:
     import json
 
     from app.diagnosis import clarify as K
 
-    case = next(iter(K.analyse(ctx, only=task.ref)), None)
+    report = _report(ctx, report)
+    case = next(iter(K.analyse(ctx, report, only=task.ref)), None)
     dec = case.decision if case is not None else None
     hyp = dec.hyp if dec is not None else None
     if case is None or hyp is None or dec is None or dec.kind != "apply":
         return _page_task(task.item, task.theme) if task.item is not None else task
-    from app.diagnosis.engine import report_for
     from app.diagnosis.recommend import recommend
 
-    report = report_for(ctx)
     f0 = case.findings[0] if case.findings else None
     yes, no, tip = "Ja, so übernehmen", "Nein, das passt nicht", ""
     task.heading = "Zusammenhängende Buchungen · " + ", ".join(case.accounts[:2])
@@ -981,24 +1057,24 @@ def _chain_answer_useful(rec: Any, f: Any, report: Any) -> bool:
     return facts.chain_capable(d.get("account", ""), d.get("asset", ""))
 
 
-def detail(ctx: Any, task: Task) -> Task:
-    """Frage, Antworten und Wirkung der empfohlenen Antwort einer Aufgabe."""
+def detail(ctx: Any, task: Task, report: Any = None) -> Task:
+    """Frage, Antworten und Wirkung der empfohlenen Antwort einer Aufgabe. ``report``: Diagnosebericht desselben
+    Datenstands (sonst wird er erzeugt – nur dort, wo die Aufgabenart ihn braucht)."""
     if task.kind == "stapel":
         return _stack_detail(ctx, task)
     if task.kind == "zeile":
         return _row_detail(ctx, task)
     if task.kind == "fall":
-        return _case_detail(ctx, task)
+        return _case_detail(ctx, task, report)
     if task.kind != "frage":
         if not task.answers:  # jede Aufgabe ist im Assistenten beantwortbar – mindestens „später“
             task.answers = [Answer("skip", "Später", NO_CHANGE)]
         if task.kind == "seite" and task.item is not None and task.item.kind == "fall":
-            task.answers = _case_exits(ctx, task)
+            task.answers = _case_exits(ctx, task, report)
         return task
-    from app.diagnosis.engine import report_for
     from app.diagnosis.recommend import recommend
 
-    report = report_for(ctx)
+    report = _report(ctx, report)
     f = report.by_id(task.finding_id)
     if f is None:
         return task
@@ -1092,7 +1168,7 @@ def save_pass(db: Any, ref: str, skip: list[str]) -> None:
     db.set_state(PASSES_STATE, dict(keep))
 
 
-def _case_exits(ctx: Any, task: Task) -> list[Answer]:
+def _case_exits(ctx: Any, task: Task, report: Any = None) -> list[Answer]:
     """Klärungsfall ohne vorbereitete Lösung: neben „ansehen“ und „später“ immer ein **Ausweg**: bei festgeschriebenem
     Stichtag der Ausgleich auf den Bestand der Quelle (wenn es einen Beleg gibt), sonst – und zusätzlich – „kann ich
     nicht klären“ (der Fall ruht bis zu neuen Belegen)."""
@@ -1100,7 +1176,8 @@ def _case_exits(ctx: Any, task: Task) -> list[Answer]:
 
     out = [a for a in task.answers if a.id == "go:open"]
     try:
-        rows = ST.rows_for_case(ctx, list(task.item.refs)) if task.item is not None else []
+        rows = ST.rows_for_case(ctx, list(task.item.refs), report=_report_if_scoped(ctx, report)) \
+            if task.item is not None else []
     except Exception as e:  # der Ausgleich ist Zusatz – die übrigen Antworten bleiben
         log.debug("Ausgleich für den Fall nicht berechenbar: %s", e)
         rows = []
@@ -1140,7 +1217,13 @@ def case_progress(ctx: Any, finding_id: str) -> tuple[str, int, int] | None:
 
 
 def step(ctx: Any, skip: list[str], *, hints: bool = False, focus: str = "") -> Step:
-    """Nächste Aufgabe; ``focus`` (kid) hält eine gerade beantwortete Aufgabe fest (z. B. nach einem Eingabefehler)."""
+    """Nächste Aufgabe; ``focus`` (kid) hält eine gerade beantwortete Aufgabe fest (z. B. nach einem Eingabefehler).
+    Liste und Frage beruhen auf **einer** Diagnose (:func:`page_scope`)."""
+    with page_scope(ctx):
+        return _step(ctx, skip, hints=hints, focus=focus)
+
+
+def _step(ctx: Any, skip: list[str], *, hints: bool, focus: str) -> Step:
     ts = tasks(ctx, hints=hints)
     skipped = set(skip) - {focus}
     todo = [t for t in ts if t.kid not in skipped]
@@ -1158,9 +1241,10 @@ def step(ctx: Any, skip: list[str], *, hints: bool = False, focus: str = "") -> 
     return Step(detail(ctx, cur) if cur is not None else None, pos, len(ts), len(ts) - len(todo), themes)
 
 
-def overview(ctx: Any) -> tuple[int, list[dict[str, Any]], int]:
+def overview(ctx: Any, report: Any = None) -> tuple[int, list[dict[str, Any]], int]:
     """(Aufgaben, offene Aufgaben je Thema in Bearbeitungsreihenfolge, geschätzte Minuten) – für die Startseite."""
-    ts = tasks(ctx)
+    with page_scope(ctx):
+        ts = tasks(ctx) if report is None else tasks(ctx, report=report)
     themes = [{"key": k, "label": label, "text": text, "n": n} for k, label, text in THEMES
               if (n := sum(1 for t in ts if t.theme == k))]
     return len(ts), themes, (max(1, round(len(ts) * MIN_PER_TASK)) if ts else 0)

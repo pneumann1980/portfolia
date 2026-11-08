@@ -105,7 +105,7 @@ def _row(m: CO.Model, prices: dict[str, Any], sold: set[tuple[str, str]], txs: l
     return row
 
 
-def plan(ctx: Any, m: CO.Model) -> dict[str, Any]:
+def plan(ctx: Any, m: CO.Model, report: Any = None) -> dict[str, Any]:
     """Vorschau des Ausgleichs (rein lesend): je Konto/Asset mit Abweichung eine Zeile, nach Konto gegliedert."""
     txs = [t for t in m.pf_full.txs if t.date >= m.cutoff and t.flag != "estimated"]
     sold = {(d.account, d.asset) for d in m.led_full.disposals if d.date >= m.cutoff}
@@ -117,7 +117,7 @@ def plan(ctx: Any, m: CO.Model) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     from app.diagnosis.engine import report_for
 
-    report = report_for(ctx)
+    report = report if report is not None else report_for(ctx)
     for ev in DV.evidence(ctx, m, observed=True, stale=True, report=report):
         key = (ev["account"], ev["asset"])
         if m.pf_full.asset(ev["asset"]).is_fiat:
@@ -424,7 +424,7 @@ def forget_shown(db: Any, kid: str) -> None:
     _forget(db, SHOWN_KEY, kid)
 
 
-def rows_for_case(ctx: Any, finding_ids: list[str], *, _m: Any = None) -> list[dict[str, Any]]:
+def rows_for_case(ctx: Any, finding_ids: list[str], *, _m: Any = None, report: Any = None) -> list[dict[str, Any]]:
     """Ausgleichszeilen (nur buchbare) zu den Positionen eines Klärungsfalls – leer ohne festgeschriebenen Stichtag oder
     ohne Beleg, der vom berechneten Bestand abweicht."""
     from app.cutover import guard
@@ -436,9 +436,9 @@ def rows_for_case(ctx: Any, finding_ids: list[str], *, _m: Any = None) -> list[d
     ms = [_m] if _m is not None else CO.models(ctx, cutoff)
     if not ms:
         return []
-    report = report_for(ctx)
+    report = report if report is not None else report_for(ctx)
     pos = {tuple(p) for fid in finding_ids if (f := report.by_id(fid)) is not None for p in f.positions}
-    return [r for r in plan(ctx, ms[0])["rows"] if (r["account"], r["asset"]) in pos and r["qty"] > 0]
+    return [r for r in plan(ctx, ms[0], report)["rows"] if (r["account"], r["asset"]) in pos and r["qty"] > 0]
 
 
 def settle_case(ctx: Any, finding_ids: list[str], *, expect: str | None = None) -> dict[str, Any]:
