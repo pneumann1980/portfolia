@@ -33,6 +33,7 @@ CONCEPTS: dict[str, tuple[bool, tuple[str, ...]]] = {
                                "ifrs-full:CostOfSales")),
     "gross_profit": (True, ("us-gaap:GrossProfit", "ifrs-full:GrossProfit")),
     "operating_income": (True, ("us-gaap:OperatingIncomeLoss", "ifrs-full:ProfitLossFromOperatingActivities")),
+    "opex_reported": (True, ("us-gaap:OperatingExpenses",)),
     "pretax_income": (True, (
         "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
         "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethod"
@@ -78,8 +79,11 @@ LABELS = {
     "cost_of_revenue": "Umsatzkosten", "debt_total": "Finanzverbindlichkeiten (gesamt)",
     "debt_noncurrent": "Langfristige Finanzverbindlichkeiten", "debt_current": "Kurzfristige Finanzverbindlichkeiten",
     "assets_current": "Umlaufvermögen", "liabilities_current": "Kurzfristige Verbindlichkeiten",
+    "opex_reported": "Operative Aufwendungen (berichtet)", "opex": "Operative Aufwendungen",
+    "opex_growth": "Wachstum der operativen Aufwendungen", "eps": "Ergebnis je Aktie (verwässert)",
 }
-PCT = {"revenue_growth", "gross_margin", "op_margin", "net_margin", "fcf_margin", "dilution", "roic", "rnd_ratio"}
+PCT = {"revenue_growth", "gross_margin", "op_margin", "net_margin", "fcf_margin", "dilution", "roic", "rnd_ratio",
+       "opex_growth"}
 ASSUMED_TAX = 0.21  # Annahme, wenn der effektive Steuersatz nicht ableitbar ist (US-Bundessteuersatz)
 
 
@@ -357,6 +361,19 @@ def _derive(fu: Fundamentals) -> None:
                                      formula="Liquidität − Finanzverbindlichkeiten",
                                      note="" if debt.v is not None else "Verbindlichkeiten nicht berichtet: als 0 "
                                      "angesetzt"))
+        # Operative Aufwendungen (für „Scalability“): berichtet (us-gaap:OperatingExpenses), sonst Bruttogewinn −
+        # operatives Ergebnis (= Vertrieb, Verwaltung, F&E …), sonst Umsatz − operatives Ergebnis (inkl. Herstellkosten)
+        ox, oi_y = g("opex_reported", y), g("operating_income", y)
+        if ox.v is not None:
+            put("opex", y, Value(ox.v, "reported", ox.unit, y, ox.tag, ox.form, ox.filed, ox.accn))
+        elif gp.v is not None and oi_y.v is not None:
+            put("opex", y, Value(gp.v - oi_y.v, "derived", ccy, y, formula="Bruttogewinn − operatives Ergebnis"))
+        elif rev.v is not None and oi_y.v is not None:
+            put("opex", y, Value(rev.v - oi_y.v, "derived", ccy, y, formula="Umsatz − operatives Ergebnis",
+                                 note="Gesamtkosten inkl. Herstellkosten (keine Aufteilung berichtet)"))
+        sh, ni_y = g("shares_diluted", y), g("net_income", y)
+        if sh.v and sh.v > 0 and ni_y.v is not None:
+            put("eps", y, Value(ni_y.v / sh.v, "derived", ccy, y, formula="Nettoergebnis / Aktien (verwässert, Ø)"))
         put("current_ratio", y, _ratio(g("assets_current", y), g("liabilities_current", y),
                                        "Umlaufvermögen / kurzfristige Verbindlichkeiten"))
         # ROIC = NOPAT / investiertes Kapital; NOPAT = operatives Ergebnis × (1 − Steuersatz); investiertes Kapital =
@@ -383,7 +400,9 @@ def _derive(fu: Fundamentals) -> None:
             put("revenue_growth", y, _growth(g("revenue", prev), rev, "Umsatz / Umsatz Vorjahr − 1"))
             put("dilution", y, _growth(g("shares_diluted", prev), g("shares_diluted", y),
                                        "Aktien (verwässert) / Vorjahr − 1"))
+            put("opex_growth", y, _growth(g("opex", prev), g("opex", y), "Operative Aufwendungen / Vorjahr − 1"))
         else:
+            put("opex_growth", y, Value(None, "missing", note="kein Vorjahr im Betrachtungszeitraum"))
             put("revenue_growth", y, Value(None, "missing", note="kein Vorjahr im Betrachtungszeitraum"))
             put("dilution", y, Value(None, "missing", note="kein Vorjahr im Betrachtungszeitraum"))
 
