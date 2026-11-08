@@ -30,7 +30,8 @@ log = logging.getLogger(__name__)
 
 STATUSES = {"neu": "Neu", "beobachten": "Beobachten", "zurueckgestellt": "Zurückgestellt", "verworfen": "Verworfen"}
 SETTINGS = {"discovery.enabled": True, "discovery.news_days": 14, "discovery.max_new_per_run": 10,
-            "discovery.auto_analyse_per_run": 2, "discovery.themes": True, "discovery.ai": True}
+            "discovery.auto_analyse_per_run": 2, "discovery.themes": True, "discovery.ai": True,
+            "discovery.sec_user_agent": ""}
 SORTS = {"disruption": "Disruption", "quality": "Quality", "garp": "Growth/GARP", "nash": "Fundamental",
          "valuation": "Bewertungsattraktivität", "fit": "Portfolio-Fit", "signal": "Aktualität der Signale"}
 CATEGORIES = {

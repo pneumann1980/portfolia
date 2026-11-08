@@ -61,7 +61,9 @@ def make_router() -> APIRouter:
         return render(request, "discovery.html", active="discovery", cards=data["cards"], cat=cat, sort=sort, q=q,
                       alle=alle, cats=SV.CATEGORIES, counts=SV.category_counts(every), sorts=SV.SORTS,
                       last_run=data["last_run"], msg=msg, err=err, ai_on=AI.enabled(ctx), ai_left=budget.left(),
-                      n_total=len(every), statuses=SV.STATUSES)
+                      n_total=len(every), statuses=SV.STATUSES,
+                      cfg={k.split(".", 1)[1]: SV.setting(ctx, k) for k in SV.SETTINGS}
+                      | {k.split(".", 1)[1]: ctx.settings.get(k, v) for k, v in AI.DEFAULTS.items()})
 
     @router.post(BASE + "/add")
     async def add(request: Request) -> Response:
@@ -87,6 +89,40 @@ def make_router() -> APIRouter:
             return _back(BASE, err=str(stats["skipped"]))
         return _back(BASE, msg=f"Discovery-Lauf: {stats['mentions']} Nennungen geprüft, {stats['new_companies']} neue "
                                f"Unternehmen, {stats['signals']} neue Signale.")
+
+    @router.post(BASE + "/einstellungen")
+    async def save_settings(request: Request) -> Response:
+        ctx = get_ctx(request)
+        form = await request.form()
+        for key, lo, hi in (("discovery.ai_calls_per_day", 0, 100), ("discovery.ai_calls_per_month", 0, 3000),
+                            ("discovery.max_new_per_run", 0, 50), ("discovery.auto_analyse_per_run", 0, 10),
+                            ("discovery.news_days", 1, 90)):
+            try:
+                ctx.settings.set(key, max(lo, min(hi, int(str(form.get(key.split(".", 1)[1], "")).strip()))))
+            except ValueError:
+                return _back(BASE, err=f"Ungültiger Wert für {key.split('.', 1)[1]}.")
+        for key in ("discovery.enabled", "discovery.ai", "discovery.themes"):
+            ctx.settings.set(key, form.get(key.split(".", 1)[1]) == "1")
+        ua = " ".join(str(form.get("sec_user_agent", "")).split())[:200]
+        ctx.settings.set("discovery.sec_user_agent", ua)
+        return _back(BASE, msg="Discovery-Einstellungen gespeichert.")
+
+    @router.get(BASE + "/export.json")
+    def export(request: Request) -> Response:
+        """Discovery-Nutzerdaten (Unternehmen, Status, Signale, Analyseversionen, Meilensteine) als JSON."""
+        import json
+
+        ctx = get_ctx(request)
+        db = ctx.db
+        data = {"companies": [dict(r) for r in db.q("SELECT * FROM disc_company ORDER BY id")],
+                "aliases": [dict(r) for r in db.q("SELECT * FROM disc_alias")],
+                "signals": [dict(r) for r in db.q("SELECT * FROM disc_signal ORDER BY id")],
+                "analyses": [{**{k: v for k, v in dict(r).items() if k != "result_json"},
+                              "result": json.loads(r["result_json"])}
+                             for r in db.q("SELECT * FROM disc_analysis ORDER BY id")],
+                "milestones": [dict(r) for r in db.q("SELECT * FROM disc_milestone ORDER BY id")]}
+        return Response(json.dumps(data, ensure_ascii=False, indent=1, default=str), media_type="application/json",
+                        headers={"Content-Disposition": 'attachment; filename="portfolia-discovery.json"'})
 
     @router.get(BASE + "/t/{ticker}", response_class=HTMLResponse)
     def by_ticker(request: Request, ticker: str) -> Response:

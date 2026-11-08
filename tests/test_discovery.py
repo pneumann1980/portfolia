@@ -430,7 +430,8 @@ def test_discovery_run_dedupes_events_and_skips_private_and_ambiguous(app_client
     sigs = ctx.db.q("SELECT * FROM disc_signal WHERE kind='nachricht' ORDER BY id")
     assert len(sigs) == 2  # drei Artikel desselben Ereignisses = ein Signal
     e7 = next(s for s in sigs if s["ref"].startswith("E7:"))
-    assert e7["n_sources"] == 2 and e7["strength"] == SG.strength(0.8, 2) and sorted(e7["ref"][3:].split(",")) == ["1", "2", "3"]
+    assert e7["n_sources"] == 2 and e7["strength"] == SG.strength(0.8, 2)
+    assert sorted(e7["ref"][3:].split(",")) == ["1", "2", "3"]
     again = SV.run_discovery(ctx, themes=False, analyse=False)
     assert again["signals"] == 0 and ctx.db.scalar("SELECT COUNT(*) FROM disc_signal WHERE kind='nachricht'") == 2
     assert SG.strength(1.0, 50) == SG.strength(1.0, SG.MAX_SOURCES)  # viele Kopien zählen nicht mehr
@@ -547,3 +548,27 @@ def test_migration_tables_and_no_revision_triggers(db):
     trig = db.q("SELECT sql FROM sqlite_master WHERE type='trigger' AND sql LIKE '%disc_%'")
     assert not trig  # Discovery-Tabellen lösen keine Datenrevision aus
 
+
+
+def test_settings_export_and_entry_links(app_client):
+    c = app_client
+    ctx = c.app.state.ctx
+    r = c.post("/discovery/einstellungen", data={"csrf_token": c.token, "ai_calls_per_day": "3",
+                                                 "ai_calls_per_month": "999999", "max_new_per_run": "5",
+                                                 "auto_analyse_per_run": "1", "news_days": "7", "ai": "1",
+                                                 "sec_user_agent": "Test  test@example.org"}, follow_redirects=False)
+    assert r.status_code == 303 and "gespeichert" in r.headers["location"]
+    s = ctx.settings
+    assert s.get("discovery.ai_calls_per_day") == 3 and s.get("discovery.ai_calls_per_month") == 3000
+    assert s.get("discovery.enabled") is False and s.get("discovery.ai") is True
+    assert s.get("discovery.sec_user_agent") == "Test test@example.org"
+    bad = c.post("/discovery/einstellungen", data={"csrf_token": c.token, "ai_calls_per_day": "x"},
+                 follow_redirects=False)
+    assert "err=" in bad.headers["location"]
+    cid = int(_add(c, "ALPH").headers["location"].split("/c/")[1].split("?")[0])
+    SV.analyse_company(ctx, cid)
+    exp = c.get("/discovery/export.json")
+    data = exp.json()
+    assert exp.headers["content-disposition"].startswith("attachment") and data["companies"][0]["ticker"] == "ALPH"
+    assert data["analyses"][0]["result"]["scores"]["quality"]["max"] == 100
+    assert "/discovery" in c.get("/").text  # Navigation

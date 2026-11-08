@@ -6,7 +6,8 @@
     <div style="flex:1;min-width:0">
       <h1 style="font-size:1.2rem">{{ a.name }}</h1>
       <div class="hint">{{ a.symbol }}{% if a.wkn %} · WKN {{ a.wkn }}{% endif %}{% if a.isin %} · {{ a.isin }}{% endif %} · {{ a.category_label }}
-        {% if series %} · Quelle {{ series.split(':')[0]|replace('cg','CoinGecko')|replace('yahoo','Yahoo')|replace('demo','Demo') }}{% endif %}</div>
+        {% if series %} · Quelle {{ series.split(':')[0]|replace('cg','CoinGecko')|replace('yahoo','Yahoo')|replace('demo','Demo') }}{% endif %}
+        {% if a.is_security and a.quote_source == 'yahoo' and a.quote_id and not a.quote_id.startswith('^') %} · <a href="/discovery/t/{{ a.quote_id.split('.')[0]|urlencode }}">Unternehmensanalyse</a>{% endif %}</div>
       {% set tc = a.extra.get('ticker_change') %}
       {% if tc %}<div class="hint">Umbenannt{% if tc.since %} am {{ tc.since|date_de }}{% endif %} (bisher {{ tc.old_quote }}{% if tc.old_name and tc.old_name != a.name %}, „{{ tc.old_name }}“{% endif %}) · <a href="/changes?asset={{ aid_q }}">Änderungen</a></div>{% endif %}
       {% set th = ticker_hint(a.asset_id) if not a.is_fiat else none %}

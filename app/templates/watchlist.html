@@ -35,6 +35,7 @@
         <td data-label="Verlauf">{{ spark(it) }}</td>
         <td class="nowrap actions">
           <a class="btn sm ghost" href="/watchlist/item/{{ it.id }}">Details</a>
+          {% if it.quote_source == 'yahoo' and not it.is_index %}<a class="btn sm ghost" href="/discovery/t/{{ it.sym|urlencode }}" title="Unternehmensanalyse (Discovery)">Analyse</a>{% endif %}
           {% if not it.is_index %}<form method="post" action="/watchlist/item/{{ it.id }}/position" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit" title="Kauf erfassen (normale Buchungserfassung)">Position erstellen</button></form>{% endif %}
           {% if sort == 'manual' %}
           <form method="post" action="/watchlist/item/{{ it.id }}/move" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="dir" value="up"><button class="icon-btn" type="submit" aria-label="nach oben" title="nach oben" {{ 'disabled' if loop.first }}>↑</button></form>
