@@ -274,10 +274,10 @@ def _split_adjust(fu: Fundamentals) -> None:
         if c["concept"] == "shares_diluted" and c["first"] > 0:
             r = c["last"] / c["first"]
             for k in SPLIT_RATIOS:
-                for factor in (float(k), 1 / k):
-                    if abs(r / factor - 1) <= 0.03:
-                        confirmed.add(factor)
-                        c["split"] = factor
+                for cand in (float(k), 1 / k):
+                    if abs(r / cand - 1) <= 0.03:
+                        confirmed.add(cand)
+                        c["split"] = cand
     fu.corrections = [c for c in fu.corrections if "split" not in c]  # Split ist keine inhaltliche Korrektur
     if not confirmed:
         return

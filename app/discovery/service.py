@@ -52,7 +52,7 @@ def sec(ctx: Any) -> SecClient:
 
 
 def now_iso() -> str:
-    return iso(datetime.now(UTC))
+    return iso(datetime.now(UTC)) or ""
 
 
 # ------------------------------------------------------------------------------------------------------------
@@ -475,7 +475,7 @@ def analyse_company(ctx: Any, cid: int, *, trigger: str = "manuell", force: bool
     if not business.get("was") and info.get("longBusinessSummary"):
         business = {"was": str(info["longBusinessSummary"])[:1200], "belege": ["Y"], "origin": "reported",
                     "hinweis": "Unternehmensbeschreibung des Datenanbieters (keine KI-Analyse verfügbar)"}
-    result = {
+    result: dict[str, Any] = {
         "company": {k: co.get(k) for k in ("id", "cik", "ticker", "tickers", "exchange", "name", "sector", "industry",
                                            "country", "sic")},
         "as_of": as_of, "trigger": trigger, "calc_version": S.CALC_VERSION, "ai_meta": ai_meta, "errors": errors,
@@ -686,11 +686,11 @@ def radar(ctx: Any, *, cat: str = "", sort: str = "disruption", q: str = "", sho
         cards = [c for c in cards if ql in c["name"].lower() or ql in c["ticker"].lower()]
     if sort == "fit":
         for c in cards:
-            co = company(db, int(c["id"]))
-            if co is not None and c["analysed_at"]:
-                co["ccy"] = c["ccy"]
-                sim = FIT.simulate(ctx, co)
-                c["fit"] = FIT.score(ctx, co, sim, (None, 0)).total
+            fco = company(db, int(c["id"]))
+            if fco is not None and c["analysed_at"]:
+                fco["ccy"] = c["ccy"]
+                sim = FIT.simulate(ctx, fco)
+                c["fit"] = FIT.score(ctx, fco, sim, (None, 0)).total
     key = {"signal": lambda c: c["last_signal"] or "", "fit": lambda c: c["fit"] if c["fit"] is not None else -1}
     if sort in key:
         cards.sort(key=key[sort], reverse=True)

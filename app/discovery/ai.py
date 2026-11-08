@@ -166,6 +166,10 @@ def _checked(text: str, src_digits: set[str], removed: list[str]) -> str:
     return " ".join(keep).strip()
 
 
+def _obj(v: Any) -> dict[str, Any]:
+    return v if isinstance(v, dict) else {}
+
+
 def validate(obj: Any, sources: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Antwort prüfen und bereinigen; ``None``, wenn These, Gegenhypothese oder Geschäftsmodell fehlen."""
     if not isinstance(obj, dict):
@@ -180,9 +184,7 @@ def validate(obj: Any, sources: list[dict[str, Any]]) -> dict[str, Any] | None:
     def txt(v: Any, limit: int) -> str:
         return _checked(_text(v, limit), digits, removed)
 
-    gm = obj.get("geschaeftsmodell") if isinstance(obj.get("geschaeftsmodell"), dict) else {}
-    th = obj.get("these") if isinstance(obj.get("these"), dict) else {}
-    ge = obj.get("gegenhypothese") if isinstance(obj.get("gegenhypothese"), dict) else {}
+    gm, th, ge = (_obj(obj.get(k)) for k in ("geschaeftsmodell", "these", "gegenhypothese"))
     out: dict[str, Any] = {
         "geschaeftsmodell": {
             "was": txt(gm.get("was"), 900),
@@ -208,7 +210,7 @@ def validate(obj: Any, sources: list[dict[str, Any]]) -> dict[str, Any] | None:
     if len(out["these"]["text"]) < 80 or len(out["gegenhypothese"]["text"]) < 80 or \
             len(out["geschaeftsmodell"]["was"]) < 30:
         return None
-    crit = obj.get("kriterien") if isinstance(obj.get("kriterien"), dict) else {}
+    crit = _obj(obj.get("kriterien"))
     for key in AI_KEYS:
         c = crit.get(key)
         if not isinstance(c, dict):
