@@ -249,7 +249,8 @@ class ReportService:
             prog.phase("rep_ai", text=f"{len(entries)} Meldungen an {self.ai.provider_name().capitalize()} gesendet – "
                                       "die Antwort dauert meist 20–90 Sekunden")
         try:
-            out = self.ai.generate(SYSTEM, self.payload(entries), None, 6000, json_mode=True)
+            out = self.ai.generate(SYSTEM, self.payload(entries), None, 6000, json_mode=True, task="report",
+                                   priority="manual" if manual else None)
             if prog:
                 prog.phase("rep_save", text="Antwort prüfen, Quellen zuordnen, speichern")
             data = validate(parse_json(out.text), entries, asset_names)

@@ -469,10 +469,29 @@ def settings_page(request: Request, saved: str = "", err: str = "") -> HTMLRespo
     next_runs = ctx.scheduler.next_runs() if ctx.scheduler else {}
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,
                   detected_cash=(led.cash_tracked if led else {}), secrets=ctx.config.secrets.status(),
-                  gemini_models=_gemini_models(ctx),
+                  gemini_models=_gemini_models(ctx), ai_cfg=_ai_cfg(ctx),
                   config=ctx.config, saved=saved, err=err[:400], backups=backups, exports=exports, archive=archive,
                   export_job=job, ds_summary=ds_summary, pp=price_plan, next_runs=next_runs,
                   restore=restore_status(ctx))
+
+
+def _ai_cfg(ctx: Any) -> dict[str, Any]:
+    """Modellzuordnung je Aufgabe (0.111): Profile, eigene Zuordnung, Grenzen je Modell (außer dem Grundmodell, dessen
+    Grenzen die bisherigen Felder sind), Rücklage für manuelle Starts."""
+    from app.news.ai import MANUAL_RESERVE_PCT, PROFILES, TASKS, AiGateway
+
+    gw = AiGateway(ctx)
+    base = gw.base_model()
+    own = ctx.settings.get("llm.task_models") or {}
+    models: list[str] = []
+    for m in [*PROFILES["free_tier"]["models"].values(), *own.values(), *gw.models_in_use()]:
+        if m and m != base and m not in models:
+            models.append(m)
+    return {"profiles": {k: v["label"] for k, v in PROFILES.items()}, "profile": gw.profile(), "tasks": TASKS,
+            "free_tier": PROFILES["free_tier"]["models"], "own": own, "effective": gw.task_models(), "base": base,
+            "limit_models": [{"model": m, **gw.limits(m), "own": m in (ctx.settings.get("llm.model_limits") or {})}
+                             for m in models],
+            "reserve_pct": int(ctx.settings.get("llm.manual_reserve_pct", MANUAL_RESERVE_PCT) or 0)}
 
 
 def _gemini_models(ctx: Any) -> list[str]:

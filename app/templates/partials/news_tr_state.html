@@ -1,6 +1,6 @@
 {# Kernaussagen auf Wunsch: Stand je Video mit Live-Aktualisierung (solange etwas läuft). Erwartet: iid, tr
-   (module.transcript_states). Zustände: none | off | queued | paused | analyzing | done | ai_off | no_captions | failed
-   | analysis_failed. #}
+   (module.transcript_states). Zustände: none | off | queued | paused | analyzing | ai_waiting | done | ai_off
+   | no_captions | failed | analysis_failed. #}
 {% set paste = '/news/' ~ iid ~ '/transkript' %}
 <div id="trs-{{ iid }}" class="tr-state"{% if tr.poll %} hx-get="/news/{{ iid }}/transcript/state" hx-trigger="every {{ tr.poll }}" hx-swap="outerHTML"{% endif %}>
   {% if tr.state == 'none' %}
@@ -15,12 +15,15 @@
     <a class="small" href="{{ paste }}">Transkript selbst einfügen</a>
   {% elif tr.state == 'analyzing' %}
     <span class="badge info" role="status"><span class="spinner" aria-hidden="true"></span> KI erstellt Kernaussagen …</span>
+  {% elif tr.state == 'ai_waiting' %}
+    <span class="badge warn" role="status" title="{{ tr.ai_reason }}">Transkript da – Kernaussagen warten bis {{ tr.ai_until|datetime_de }}</span> <span class="hint">({{ tr.ai_reason }}; Nachrichten laufen auf ihrem Modell weiter)</span>
   {% elif tr.state == 'done' %}
     <a class="btn sm" href="/news/{{ iid }}">Kernaussagen lesen →</a>
   {% elif tr.state == 'ai_off' %}
     <a class="small" href="/news/{{ iid }}">Transkript lesen →</a> <span class="hint">(KI ist aus – keine Kernaussagen)</span>
   {% elif tr.state == 'no_captions' %}
-    <span class="hint">Keine Untertitel verfügbar –</span> <a class="small" href="{{ paste }}">Transkript selbst einfügen</a>
+    <span class="badge warn" role="status" title="YouTube liefert für dieses Video keine Untertitel">Transkript fehlt</span>
+    <span class="hint">wartet auf deine Eingabe –</span> <a class="btn sm" href="{{ paste }}">Transkript einfügen</a> <span class="hint">(aus „Transkript anzeigen“ oder einer Browser-Erweiterung; Zeitmarken bleiben erhalten)</span>
   {% elif tr.state == 'analysis_failed' %}
     <span class="badge warn">KI-Auswertung fehlgeschlagen</span>
     <button class="btn sm ghost" hx-post="/news/{{ iid }}/transcript/request" hx-target="#trs-{{ iid }}" hx-swap="outerHTML">Erneut versuchen</button>

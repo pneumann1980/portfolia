@@ -17,17 +17,27 @@
 <section class="card" style="margin-top:16px">
   <div class="card-head"><h2>KI-Anbieter</h2><span class="hint">{{ 'aktiv' if ai_s.enabled else 'inaktiv' }}</span></div>
   <dl class="kv">
-    <dt>Anbieter / Modell</dt><dd>{{ ai_s.provider|capitalize }} · <span class="mono">{{ ai_s.model }}</span></dd>
+    <dt>Anbieter / Modell</dt><dd>{{ ai_s.provider|capitalize }} · <span class="mono">{{ ai_s.model }}</span>{% if ai_s.provider == 'gemini' %} (Nachrichten) · Profil: {{ ai_s.profile_label }}{% endif %}</dd>
     <dt>Schlüssel</dt><dd>{{ 'gesetzt' if ai_s.key else 'nicht gesetzt' }}</dd>
     <dt>Heute ({{ ai_s.day }}{{ ' Pacific' if ai_s.provider == 'gemini' }})</dt><dd>{{ ai_s.usage.requests }} Anfragen · {{ ai_s.usage.input_tokens|num(0) }} Tokens ein · {{ ai_s.usage.output_tokens|num(0) }} aus · {{ ai_s.usage.errors }} Fehler · {{ ai_s.usage.quota_hits }} Kontingenttreffer</dd>
     {% if ai_s.provider == 'gemini' %}
-    <dt>Lokale Grenzen</dt><dd>{{ ai_s.limits.rpm }}/min · {{ ai_s.limits.tpm|num(0) }} Tokens/min · {{ ai_s.limits.rpd }} Anfragen/Tag · {% if ai_s.limits.tpd %}{{ ai_s.limits.tpd|num(0) }} Tokens/Tag{% else %}Tokens/Tag unbegrenzt{% endif %}</dd>
+    <dt>Grenzen (Nachrichtenmodell)</dt><dd>{{ ai_s.limits.rpm }}/min · {{ ai_s.limits.tpm|num(0) }} Tokens/min · {{ ai_s.limits.rpd }} Anfragen/Tag · {% if ai_s.limits.tpd %}{{ ai_s.limits.tpd|num(0) }} Tokens/Tag{% else %}Tokens/Tag unbegrenzt{% endif %}</dd>
     <dt>Restbudget</dt><dd>{% if ai_s.enabled %}{% if ai_s.requests_left is none %}Anfragen unbegrenzt{% else %}{{ ai_s.requests_left }} Anfragen{% endif %} · {% if ai_s.tokens_left is none %}Tokens unbegrenzt{% else %}{{ ai_s.tokens_left|num(0) }} Tokens{% endif %}{% else %}–{% endif %}</dd>
     {% else %}
     <dt>Restbudget</dt><dd>{% if ai_s.enabled %}{{ ai_s.tokens_left|num(0) }} Tokens{% else %}–{% endif %}</dd>
     {% endif %}
-    {% if ai_s.paused_until %}<dt>Pausiert bis</dt><dd><span class="badge warn">{{ ai_s.paused_until|datetime_de }}</span></dd>{% endif %}
+    {% if ai_s.access_paused and ai_s.access_paused[0] %}<dt>Zugang pausiert</dt><dd><span class="badge crit">bis {{ ai_s.access_paused[0]|datetime_de }}</span> {{ ai_s.access_paused[1] }} – betrifft alle Modelle</dd>
+    {% elif ai_s.paused_until %}<dt>Nachrichten pausiert bis</dt><dd><span class="badge warn">{{ ai_s.paused_until|datetime_de }}</span></dd>{% endif %}
   </dl>
+  {% if ai_s.provider == 'gemini' and ai_s.tasks %}<div class="table-wrap"><table class="compact" id="ki-aufgaben"><thead><tr><th>Aufgabe</th><th>Modell</th><th class="num">Heute (Aufgabe)</th><th class="num">Modell gesamt</th><th class="num">Grenze</th><th class="num">Rest heute</th><th>Wartegrund</th></tr></thead><tbody>
+    {% for t in ai_s.tasks %}<tr><td>{{ t.label }}</td><td class="mono small">{{ t.model }}{% if t.shared %}<div class="hint">teilt Kontingent mit {{ t.shared|join(', ') }}</div>{% endif %}</td>
+      <td class="num">{{ t.usage_task.requests }}<div class="hint">{{ (t.usage_task.input_tokens + t.usage_task.output_tokens)|num(0) }} Tokens</div></td>
+      <td class="num">{{ t.usage_model.requests }}{% if t.usage_model.quota_hits %}<div class="hint">{{ t.usage_model.quota_hits }}× Kontingent</div>{% endif %}</td>
+      <td class="num">{{ t.limits.rpd or '∞' }}/Tag<div class="hint">{{ t.limits.rpm or '∞' }}/min</div></td>
+      <td class="num">{{ t.requests_left if t.requests_left is not none else '∞' }}{% if t.reserve %}<div class="hint">{{ t.reserve }} für manuelle Starts</div>{% endif %}</td>
+      <td class="small">{% if t.wait %}<span class="badge warn">wartet</span> {{ t.wait.reason }} – bis {{ t.wait.until|datetime_de }}{% else %}<span class="hint">–</span>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="hint">Aufgaben mit demselben Modell teilen dessen Kontingent. Ist ein Modell erschöpft, wartet nur seine Aufgabe; Aufgaben auf anderen Modellen laufen weiter. Modell und Grenzen: Einstellungen → KI.</p>{% endif %}
   {% if ai_s.provider == 'gemini' %}<p class="hint">Die lokalen Zähler halten die Last unter Ihren eingestellten Grenzen. Sie garantieren <b>nicht</b>, dass Google die Nutzung als kostenlos wertet: Kontingent und Abrechnung gelten je Google-Projekt; im kostenlosen Kontingent dürfen Eingaben zur Produktverbesserung verwendet werden (daher nur öffentliche Texte).</p>{% endif %}
 </section>
 <section class="card" style="margin-top:16px">

@@ -492,7 +492,7 @@ def test_mispricing_distinguishes_chance_from_value_trap(engine_client, monkeypa
 
 
 def _discovery_ai(seen: list[tuple[str, str]], themes: dict[str, Any]) -> Any:
-    def gen(self, system, user, schema, max_tokens, json_mode=False):
+    def gen(self, system, user, schema, max_tokens, json_mode=False, **kw):
         if system == EN.THEMES_SYSTEM:
             seen.append(("themen", user))
             return AiResult(json.dumps(themes), 900, 700, "gemini", "gemini-test")
@@ -512,7 +512,7 @@ def _discovery_ai(seen: list[tuple[str, str]], themes: dict[str, Any]) -> Any:
                 for u in units]}), 900, 700, "gemini", "gemini-test")
         from tests.test_discovery import fake_parts
 
-        return fake_parts(seen)(self, system, user, schema, max_tokens, json_mode)  # vertiefte Analyse (3 Teile)
+        return fake_parts(seen)(self, system, user, schema, max_tokens, json_mode, **kw)  # vertiefte Analyse (3 Teile)
     return gen
 
 
@@ -584,9 +584,14 @@ def test_ki_discovery_without_ai_or_budget_is_explained(engine_client, monkeypat
     assert jb["status"] == "ki_fehlt" and "ausgeschaltet" in jb["error"]
     _ai_on(ctx, monkeypatch)
     ctx.settings.set("discovery.ai_calls_per_day", 1)
-    jid2, _ = J.create(ctx, "ki_discovery")
+    jid2, _ = J.create(ctx, "ki_discovery")  # manuell: wartet sichtbar bis Mitternacht (0.111)
     J.run(ctx, jid2)
-    assert J.get(ctx.db, jid2)["status"] == "kontingent"
+    jb2 = J.get(ctx.db, jid2)
+    assert jb2["status"] == "wartet" and jb2["wait_until"] and "Tagesgrenze" in jb2["wait_reason"]
+    assert J.cancel(ctx, jid2) and J.get(ctx.db, jid2)["status"] == "abgebrochen"
+    jid3, _ = J.create(ctx, "ki_discovery", trigger="automatisch")  # Zeitplan: kein Warten, nächster Lauf versucht es
+    J.run(ctx, jid3)
+    assert J.get(ctx.db, jid3)["status"] == "kontingent"
 
 
 def test_full_run_continues_after_partial_failures(engine_client, monkeypatch):

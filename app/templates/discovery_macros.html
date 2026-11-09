@@ -35,7 +35,7 @@
 {%- endmacro %}
 
 {% macro jobstate(status, label) -%}
-  <span class="badge {{ {'abgeschlossen': 'good', 'laeuft': 'info', 'geplant': 'info', 'teilweise': 'warn', 'uebersprungen': '', 'fehlgeschlagen': 'crit', 'kontingent': 'warn', 'ki_fehlt': 'warn', 'unterbrochen': 'crit'}.get(status, '') }}">{{ label or status }}</span>
+  <span class="badge {{ {'abgeschlossen': 'good', 'laeuft': 'info', 'geplant': 'info', 'teilweise': 'warn', 'uebersprungen': '', 'fehlgeschlagen': 'crit', 'kontingent': 'warn', 'ki_fehlt': 'warn', 'unterbrochen': 'crit', 'wartet': 'warn', 'abgebrochen': ''}.get(status, '') }}">{{ label or status }}</span>
 {%- endmacro %}
 
 {% macro partstate(status, label) -%}

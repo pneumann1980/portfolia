@@ -139,6 +139,51 @@ ausgegeben (Jinja-Autoescape), nie als HTML.
   `tests/test_news_intel.py::test_ai_payloads_only_contain_public_fields` und `tests/test_privacy.py`). Finanzpfade
   (Ledger, Steuer, Import, Datenquellen …) importieren keinen KI-Client (statische Prüfung in `tests/test_cockpit.py`).
 
+## KI-Modell je Aufgabe (0.111)
+
+Das `AiGateway` ordnet jeder **Aufgabe** ein Gemini-Modell zu; Aufrufer übergeben `task=` (ohne Angabe „news“).
+
+| Aufgabe (`task`) | Aufrufer | Profil „Free Tier“ |
+|---|---|---|
+| `news` – Nachrichtenpakete | `analysis.py` (Batch) | `gemini-3.5-flash-lite` |
+| `events` – Ereignis-Grenzfälle | `events.py` | `gemini-3.5-flash-lite` |
+| `report` – Tagesbericht | `report.py` | `gemini-3.5-flash-lite` |
+| `discovery` – KI-Discovery (Themen, Thesen) | `discovery/engine.py` | `gemini-3.5-flash-lite` |
+| `video` – Video-Kernaussagen | `analysis.py` (Videos) | `gemini-3.6-flash` |
+| `company` – Firmenanalyse (Bericht, Disruption, Portfolia-Score) | `discovery/ai.py` | `gemini-3.8-flash` |
+
+* **Profile** (*Einstellungen → News & KI → „Gemini: Modell je Aufgabe“*, `llm.gemini_profile`):
+  „Ein Modell für alle“ (`einzeln`, **Standard** – bestehende Installationen behalten Modell, Grenzen und den
+  heutigen Tageszähler unverändert), „Free Tier“ (Tabelle oben, empfohlen), „Eigene Zuordnung“ (`llm.task_models`).
+  Nur freigegebene Flash-/Flash-Lite-Modelle; ein unzulässiger Eintrag fällt auf das Grundmodell zurück.
+* **Grenzen je Modell** (`llm.model_limits`: Anfragen/Minute, Tokens/Minute, Anfragen/Tag, Tokens/Tag): für das
+  Grundmodell gelten weiter die bisherigen Felder; für weitere Modelle eine Tabelle mit vorsichtigen Startwerten
+  (Flash-Lite 10/min · 200/Tag, Flash 5/min · 50/Tag – **eigene Annahmen**, bitte durch die Werte aus AI Studio
+  ersetzen). Aufgaben mit **demselben Modell teilen dessen Kontingent**; Verbrauch je Tag, Modell und Aufgabe in
+  `ai_model_usage` (Migration 44).
+* **Pausen nur, wo nötig:** Tages-/Minutenkontingent (429), unbekanntes Modell (404, 6 h) und anhaltende Störungen
+  pausieren **nur das betroffene Modell** (`ai.pause.gemini:<modell>`); Schlüssel-, Berechtigungs-, Abrechnungs- und
+  Netzfehler pausieren den **ganzen Zugang** (`ai.pause.gemini`, 30 min). Kein automatischer Wechsel auf ein anderes
+  Modell oder einen kostenpflichtigen Anbieter. Pausen lassen sich in den Einstellungen ausdrücklich aufheben.
+* **Video wartet allein:** Ist nur das Video-Modell erschöpft, laufen die Nachrichtenpakete weiter; die Videokarte
+  zeigt „Transkript da – Kernaussagen warten bis …“. Teilen Video und Nachrichten ein Modell, endet der Lauf wie bisher.
+* **Vorrang manueller Starts:** Knöpfe (Tagesbericht neu, Kernaussagen anfordern, „Jetzt abarbeiten“,
+  Discovery-Knöpfe) laufen mit `priority="manual"`: Sie überholen Hintergrundaufrufe beim Minutentakt, und eine
+  **Rücklage** (`llm.manual_reserve_pct`, Standard 10 %, abgerundet) des Tageslimits je Modell bleibt ihnen vorbehalten.
+* **Parallel am Limit:** Das Tageslimit wird unter Sperre geprüft, laufende Anfragen zählen mit, und der Verbrauch wird
+  gespeichert, bevor der Platz frei wird – gleichzeitige Aufrufe überschreiten das Limit nicht (Test mit 8 Threads).
+* **Anzeige:** *News → Status → KI-Anbieter* und *Discovery → KI-Researchstatus*: je Aufgabe Modell (mit „teilt
+  Kontingent mit …“), Verbrauch der Aufgabe und des Modells, Grenze, Rest (davon Rücklage) und konkreter Wartegrund
+  mit Zeitpunkt. Discovery zeigt Modellgrenzen getrennt von den Discovery-eigenen Tages-/Monatsgrenzen.
+* **Video-Transkripte:** Fehlen Untertitel, zeigt die Karte „**Transkript fehlt** – wartet auf deine Eingabe“ mit
+  „Transkript einfügen“. Eingefügt werden kann der Text aus „Transkript anzeigen“ (YouTube) oder aus
+  Browser-Erweiterungen: Zeitmarken `1:23`, `[01:02:03]`, `(0:05)`, `00:01:23.456`, `0:00 – Text` sowie SRT/WebVTT
+  (`00:00:01,000 --> …`, Nummern und Formatierung werden entfernt) bleiben als Absatzmarken erhalten. Kernaussagen
+  tragen ab 0.111 je Aussage eine Zeitmarke (Link zur Stelle im Video); ältere Analysen bleiben gültig und werden
+  nicht neu erstellt (Promptversion unverändert, keine Zusatzkosten).
+* **Live-Abnahme:** gegen echte Gemini-Modelle **nicht durchgeführt** (kein Schlüssel in der Testumgebung). Geprüft
+  ist das Verhalten mit nachgebildeten Antworten (`tests/test_ai_models.py`).
+
 ## Einzelanalyse (`news_analysis`)
 
 Pro Artikel (Stapel zu 4): `kategorie` (erweiterbar in `analysis.CATEGORIES`), `geltungsbereich`

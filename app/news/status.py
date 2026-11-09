@@ -100,6 +100,11 @@ def pipeline_status(ctx: AppContext) -> dict[str, Any]:
         bottleneck = f"KI-Analyse: {guard['reason']}"
     elif (analyze_backlog or video_waiting) and ai.get("paused_until"):
         bottleneck = "KI-Kontingent (Anbieter pausiert, Analyse wartet)"
+    elif video_waiting and ai.get("enabled") and gw.blocked("video") is not None:
+        vb = gw.blocked("video") or {}
+        when = vb["until"].astimezone(local_tz()).strftime("%d.%m. %H:%M") if vb.get("until") else "?"
+        bottleneck = (f"Video-Kernaussagen warten bis {when} Uhr (Modell {vb.get('model') or '?'}: "
+                      f"{vb.get('reason') or 'pausiert'}) – Nachrichtenanalyse läuft weiter")
     elif (analyze_backlog or video_waiting) and not ai.get("enabled"):
         bottleneck = "KI ausgeschaltet – Analysen warten"
     elif tr["enabled"] and tr["paused_until"]:

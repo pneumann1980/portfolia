@@ -267,7 +267,11 @@ class TranscriptService:
         return out
 
 
-_TS = re.compile(r"^\[?((?:\d{1,2}:)?\d{1,2}:\d{2})\]?\s*(.*)$")
+# Zeitmarke am Zeilenanfang: „1:23“, „[01:02:03]“, „(0:05)“, „00:01:23.456“, auch mit „-“/„–“/„|“ davor zum Text
+_TS = re.compile(r"^[\[(]?((?:\d{1,2}:)?\d{1,2}:\d{2})(?:[.,]\d{1,3})?[\])]?\s*(?:[-–|:]\s+)?(.*)$")
+# Untertiteldatei (SRT/WebVTT, z. B. aus Browser-Erweiterungen): „00:00:01,000 --> 00:00:04,000“ (Startzeit zählt)
+_CUE = re.compile(r"^((?:\d{1,2}:)?\d{1,2}:\d{2})(?:[.,]\d{1,3})?\s*-->\s*\S+.*$")
+_CUE_SKIP = re.compile(r"^(WEBVTT.*|NOTE\b.*|Kind:.*|Language:.*|\d+)$")
 
 
 def _seconds(ts: str) -> float:
@@ -281,10 +285,21 @@ def pasted_paragraphs(text: str) -> str:
     """Eingefügten Text in Absätze bringen: mit Zeitmarken wie ein geladenes Transkript (Absatz je Minute), ohne
     Zeitmarken Absätze des Originals bzw. etwa 150 Wörter."""
     lines = [ln.strip() for ln in text.replace("\r", "").split("\n")]
+    cues = sum(1 for ln in lines if _CUE.match(ln)) >= 3  # Untertiteldatei: Nummern und Kopfzeilen überspringen
     segs: list[tuple[float, str]] = []
     pending: float | None = None
     stamped = 0
     for ln in lines:
+        if not ln:
+            continue
+        c = _CUE.match(ln) if cues else None
+        if c:
+            stamped += 1
+            pending = _seconds(c.group(1))
+            continue
+        if cues and _CUE_SKIP.match(ln):
+            continue
+        ln = re.sub(r"<[^>]{1,40}>", "", ln).strip() if cues else ln  # WebVTT-Formatierung (<c>, <00:00:01.000>)
         if not ln:
             continue
         m = _TS.match(ln)

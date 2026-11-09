@@ -134,7 +134,10 @@ def job_wave(ctx: AppContext, fetch: bool = True) -> dict[str, Any]:
             return {"skipped": "manueller Lauf läuft bereits"}
         runner = WaveRunner(ctx, (lambda: news_service(ctx).run()) if fetch else None,
                             enrich=enrich_service(ctx), state=wave.reserved(ctx))
-        return runner.run()
+        from app.news.ai import manual_priority
+
+        with manual_priority():  # „Jetzt abarbeiten“: Vorrang vor Hintergrundaufgaben desselben Modells
+            return runner.run()
 
 
 def _report_progress(ctx: AppContext) -> Progress:
@@ -314,18 +317,28 @@ def _decorate(ctx: AppContext, page: list[dict[str, Any]]) -> list[dict[str, Any
 
 # ---- Transkripte auf Wunsch (Knopf „Kernaussagen erstellen“, selbst einfügen) -------------------------------------
 
-TR_POLL = {"queued": "4s", "analyzing": "4s", "paused": "60s"}
+TR_POLL = {"queued": "4s", "analyzing": "4s", "paused": "60s", "ai_waiting": "60s"}
 
 
 def transcript_states(ctx: AppContext, ids: list[int]) -> dict[int, dict[str, Any]]:
-    """Stand der Kernaussagen je Video: none | queued | paused | analyzing | done | ai_off | no_captions | failed |
-    analysis_failed – mit Abfrageintervall für die Live-Anzeige auf der Karte."""
+    """Stand der Kernaussagen je Video: none | queued | paused | analyzing | ai_waiting (Video-Modell erschöpft oder
+    pausiert) | done | ai_off | no_captions (Transkript fehlt – wartet auf Einfügen) | failed | analysis_failed – mit
+    Abfrageintervall für die Live-Anzeige auf der Karte."""
     if not ids:
         return {}
     svc = TranscriptService(ctx)
     on = svc.enabled()
     paused = svc.paused_until()
     ai_on = AnalysisService(ctx).enabled()
+    from app.news.ai import AiGateway
+
+    vwait = AiGateway(ctx).blocked("video") if ai_on else None  # Modell der Video-Kernaussagen pausiert/erschöpft
+    if vwait is None and ai_on:
+        left = AiGateway(ctx).requests_left("video")
+        if left is not None and left <= 0:
+            from app.news.ai import next_pacific_midnight
+
+            vwait = {"until": next_pacific_midnight(), "reason": "Tageslimit des Video-Modells erreicht"}
     ph = ",".join("?" * len(ids))
     out: dict[int, dict[str, Any]] = {}
     for r in ctx.db.q(
@@ -334,7 +347,8 @@ def transcript_states(ctx: AppContext, ids: list[int]) -> dict[int, dict[str, An
                 LEFT JOIN news_analysis a ON a.item_id=n.id WHERE n.id IN ({ph})""", ids):
         reason = str(r["reason"] or "")
         if r["status"] == "success" and reason.startswith("transcript:"):
-            st = ("done" if r["asum"] else "analysis_failed" if r["aid"] else "analyzing" if ai_on else "ai_off")
+            st = ("done" if r["asum"] else "analysis_failed" if r["aid"] else
+                  ("ai_waiting" if vwait else "analyzing") if ai_on else "ai_off")
         elif r["status"] == "failed":
             st = "no_captions" if reason in ("no_transcript", "unavailable") else "failed"
         elif r["tr_requested_at"]:
@@ -342,7 +356,9 @@ def transcript_states(ctx: AppContext, ids: list[int]) -> dict[int, dict[str, An
         else:
             st = "none" if on else "off"
         out[int(r["id"])] = {"state": st, "poll": TR_POLL.get(st), "paused_until": iso(paused) if paused else None,
-                             "pasted": ":eingefuegt:" in reason, "reason": reason}
+                             "pasted": ":eingefuegt:" in reason, "reason": reason,
+                             "ai_until": iso(vwait["until"]) if st == "ai_waiting" and vwait else None,
+                             "ai_reason": str(vwait.get("reason") or "") if st == "ai_waiting" and vwait else ""}
     return out
 
 

@@ -462,7 +462,7 @@ def nash_answer(level: int = 2, quote: str = "Alpha sells robots. Revenue was 74
 def fake_parts(seen: list[tuple[str, str]], *, bericht: Any = None, nash: Any = None) -> Any:
     """KI-Attrappe: antwortet auf den Gesamtaufruf (0.110) bzw. je Teilanalyse (Nachholen), erkannt am Systemtext –
     keine echten Aufrufe. Ein Text statt eines Objekts macht den Teil ungültig."""
-    def gen(self, system, user, schema, max_tokens, json_mode=False):
+    def gen(self, system, user, schema, max_tokens, json_mode=False, **kw):
         part = "analyse" if system == AI.SYSTEM_ANALYSE else "bericht" if system == AI.SYSTEM_BERICHT else \
             "disruption" if system == AI.SYSTEM_DISRUPTION else "nash" if system == AI.SYSTEM_NASH else "andere"
         seen.append((part, user))

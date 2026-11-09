@@ -64,7 +64,7 @@
   <div class="disc-actions">
     {% set busy = active_jobs|length > 0 %}
     {% if stage in ('analysiert', 'veraltet') %}
-    <form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="voll"><button class="btn {{ 'primary' if stage == 'veraltet' }}" type="submit" {{ 'disabled' if busy or not gate.ok }} title="{{ gate.reason if not gate.ok else 'Daten neu laden und 1 KI-Aufruf' }}">KI-Analyse aktualisieren · 1 Aufruf</button></form>
+    <form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="voll"><button class="btn {{ 'primary' if stage == 'veraltet' }}" type="submit" {{ 'disabled' if busy or not gate.ok }} title="{{ gate.reason if gate.reason else 'Daten neu laden und 1 KI-Aufruf (gültige, aktuelle Teile werden wiederverwendet)' }}">KI-Analyse aktualisieren · 1 Aufruf</button></form>
     {% else %}
     <form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="ki"><button class="btn primary" type="submit" {{ 'disabled' if busy or not gate.ok }} title="{{ gate.reason if not gate.ok else 'Steckbrief, These, Gegenhypothese, Disruption und qualitative Score-Kriterien' }}">Mit KI analysieren · 1 Aufruf</button></form>
     {% endif %}
@@ -74,7 +74,7 @@
     <form method="post" action="/discovery/c/{{ co.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="{{ stx }}"><button class="btn ghost" type="submit">{{ label }}</button></form>{% endfor %}
     <form method="post" action="/discovery/c/{{ co.id }}/watchlist"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Zur Watchlist</button></form>
   </div>
-  <p class="hint">{% if gate.ok %}KI heute noch {{ gate.left_day }}, im Monat noch {{ gate.left_month }} Discovery-Aufrufe{% else %}<b>KI gesperrt:</b> {{ gate.reason }}{% endif %} · {{ 'Google Gemini' if st.provider == 'gemini' else 'Claude' }} {{ st.model }}. Daten aktualisieren ist kostenlos (SEC, Kurse). Keine Kaufempfehlung.</p>
+  <p class="hint">{% if not gate.ok %}<b>KI gesperrt:</b> {{ gate.reason }}{% elif not gate.now %}<b>Startet nicht sofort:</b> {{ gate.reason }} – ein Start wartet bis {{ gate.until|datetime_de }} in der Warteschlange und beginnt dann von selbst (abbrechbar){% else %}KI heute noch {{ gate.left_day }}, im Monat noch {{ gate.left_month }} Discovery-Aufrufe{% endif %} · {{ 'Google Gemini' if st.provider == 'gemini' else 'Claude' }} {{ gate.model or st.model }}. Daten aktualisieren ist kostenlos (SEC, Kurse). Keine Kaufempfehlung.</p>
 </section>
 
 {% include "partials/discovery_company_status.html" %}

@@ -260,17 +260,24 @@ def priority(th: dict[str, Any], *, new: bool, inflection: bool, n_evidence: int
     return round(min(100.0, p), 1)
 
 
+def _wait_or_quota(job: J.Job, until: Any, reason: str, scope: str, **result: Any) -> tuple[str, dict[str, Any]]:
+    """Manuell gestartet: sichtbar warten (Warteschlange) und danach selbst starten; Zeitplan: „Kontingent erschöpft“
+    (der nächste geplante Lauf versucht es erneut)."""
+    if job.trigger == "manuell" and until:
+        return J.wait(until, reason, scope, **result)
+    return "kontingent", {**result, "_error": reason, "_error_class": scope or "budget"}
+
+
 def ki_discovery(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
     """Weg A – mehrstufig, genau zwei KI-Aufrufe (Themen, Thesen mit Vorschau inkl. Disruption-Einschätzung).
     Vertiefte KI-Analysen startet der Nutzer je Unternehmen per Knopf."""
     from app.discovery import forward as FW
 
-    state, why = AI.unavailable_reason(ctx)
-    if state:
-        return ("ki_fehlt" if state == "aus" else "kontingent"), {"_error": why, "_error_class": state}
-    ok, why = AI.DiscoveryBudget(ctx).allowed(2)
-    if not ok:
-        return "kontingent", {"_error": why, "_error_class": "budget"}
+    av = AI.availability(ctx, "discovery", n=2)
+    if av["state"] == "aus":
+        return "ki_fehlt", {"_error": av["reason"], "_error_class": "aus"}
+    if av["state"]:
+        return _wait_or_quota(job, av["until"], av["reason"], av["scope"])
     sec = SecClient(ctx)
     res: dict[str, Any] = {"themen": [], "verworfen": [], "kandidaten": [], "neu": 0, "bekannt": 0, "analysiert": []}
     if not ctx.db.q1("SELECT 1 FROM disc_universe WHERE pre_at IS NOT NULL LIMIT 1"):
@@ -289,9 +296,10 @@ def ki_discovery(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
                          ensure_ascii=False)
     data, meta = AI.call(ctx, "themen", THEMES_SYSTEM, payload, max_tokens=5000, prompt_version=THEMES_VERSION,
                          job_id=job.id)
+    if meta["status"] in AI.WAIT_STATES:
+        return _wait_or_quota(job, meta.get("until"), f"Themen: {meta['error']}", meta.get("wait_scope") or "")
     if meta["status"] != "ok":
-        return ("kontingent" if meta["status"] in ("budget", "pausiert") else "fehlgeschlagen"), \
-            {"_error": f"Themen: {meta['error']}", "_error_class": meta["error_class"]}
+        return "fehlgeschlagen", {"_error": f"Themen: {meta['error']}", "_error_class": meta["error_class"]}
     known = {e["id"].upper() for e in ev}
     themes = validate_themes(data, known)
     if not themes:
@@ -389,6 +397,13 @@ def _analyse(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
     mode = str(job.params.get("mode") or "daten")
     if job.params.get("auto"):
         return auto_analyses(ctx, job)
+    if mode in SV.AI_MODES:  # Kontingent vorab prüfen: wartet, ohne vorher Daten neu zu laden
+        n = len(SV.plan_parts(ctx.db, int(job.company_id or 0), mode)) if mode == "ergaenzen" else 1
+        av = AI.availability(ctx, "company", n=max(1, n))
+        if av["state"] == "aus":
+            return "ki_fehlt", {"mode": mode, "_error": av["reason"], "_error_class": "aus"}
+        if av["state"]:
+            return _wait_or_quota(job, av["until"], av["reason"], av["scope"], mode=mode)
     r = SV.analyse_company(ctx, int(job.company_id or 0), trigger=job.trigger, mode=mode, job=job,
                            force=bool(job.params.get("force")))
     if r.get("status") == "error":
@@ -401,7 +416,9 @@ def _analyse(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
     if call == "aus":
         return "ki_fehlt", {**out, "_error": err or "KI nicht konfiguriert", "_error_class": "aus"}
     if call in ("budget", "pausiert"):
-        return "kontingent", {**out, "_error": err, "_error_class": call}
+        w = r.get("ai_wait") or {}
+        return _wait_or_quota(job, w.get("until"), err or str(w.get("reason") or ""), str(w.get("scope") or call),
+                              **out)
     if call in ("teilweise", "ungueltig") and r.get("ai_state") in ("vollstaendig", "veraltet", "teilweise"):
         return "teilweise", {**out, "_error": err}
     return "fehlgeschlagen", {**out, "_error": err or call}
@@ -581,7 +598,9 @@ def ai_status(ctx: Any) -> dict[str, Any]:
     b = AI.DiscoveryBudget(ctx)
     d_used, m_used = b.used()
     d_tok, m_tok = b.tokens()
+    J.wake_waiting(ctx)  # Wartezeit vorbei → sofort weiter (zusätzlich zum minütlichen Lauf)
     state, why = AI.unavailable_reason(ctx)
+    avail = {t: AI.availability(ctx, t, n=2 if t == "discovery" else 1) for t in ("discovery", "company")}
     db = ctx.db
     last_ok = db.q1("SELECT * FROM disc_ai_call WHERE status='ok' ORDER BY id DESC LIMIT 1")
     last_fail = db.q1("SELECT * FROM disc_ai_call WHERE status NOT IN ('ok', 'laeuft') ORDER BY id DESC LIMIT 1")
@@ -596,14 +615,18 @@ def ai_status(ctx: Any) -> dict[str, Any]:
     return {
         "llm_enabled": bool(ctx.settings.get("llm.enabled", False)), "discovery_ai": bool(SV.setting(ctx,
                                                                                                       "discovery.ai")),
-        "themes": bool(SV.setting(ctx, "discovery.themes")), "provider": gst["provider"], "model": gst["model"],
-        "key": gst["key"], "paused_until": gst["paused_until"], "gateway_error": gst["last_error"],
-        "health": gw.health(), "usable": not state, "state": state or "bereit", "reason": why,
+        "themes": bool(SV.setting(ctx, "discovery.themes")), "provider": gst["provider"],
+        "model": gw.model_for("company"),        "model_discovery": gw.model_for("discovery"),
+        "key": gst["key"], "paused_until": gw.paused_until(task="company"), "gateway_error": gst["last_error"],
+        "health": gw.health(task="company"), "usable": not state, "state": state or "bereit", "reason": why,
+        "startable": state != "aus", "avail": avail, "waiting": J.waiting(db),
+        "tasks": [t for t in gst.get("tasks") or [] if t["task"] in ("discovery", "company")],
+        "profile_label": gst.get("profile_label"),
         "day": {"used": d_used, "limit": b.limit("discovery.ai_calls_per_day"),
                 "left": b.limit("discovery.ai_calls_per_day") - d_used, "tokens": d_tok},
         "month": {"used": m_used, "limit": b.limit("discovery.ai_calls_per_month"),
                   "left": b.limit("discovery.ai_calls_per_month") - m_used, "tokens": m_tok},
-        "gateway": {"requests_left": gst["requests_left"], "tokens_left": gst["tokens_left"],
+        "gateway": {"requests_left": gw.requests_left("company"), "tokens_left": gw.tokens_left("company"),
                     "usage": gst["usage"]},
         "cost": cost_note(gst["provider"]),
         "last_ok": dict(last_ok) if last_ok else None, "last_fail": dict(last_fail) if last_fail else None,

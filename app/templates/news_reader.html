@@ -67,7 +67,8 @@
     <div class="card-head"><h2>{{ 'Kernaussagen des Videos' if analysis.video else 'KI-Zusammenfassung' }} <span class="badge info">KI</span></h2>
       <span class="hint">{{ analysis.provider }} · {{ analysis.model }} · {{ analysis.analyzed_at|datetime_de }} · Basis: {{ {'fulltext': 'Volltext', 'excerpt': 'Teiltext', 'teaser': 'nur Anreißer', 'transcript': 'Transkript'}.get(analysis.basis, analysis.basis) }}{% if analysis.gekuerzt %} (über ~60 Min.: verteilte Abschnitte){% endif %}</span></div>
     {% if analysis.video %}
-    <ol class="reader-list">{% for k in analysis.kernaussagen %}<li>{{ k }}</li>{% endfor %}</ol>
+    {% set ks = analysis.kernaussagen_stellen or [] %}
+    <ol class="reader-list">{% for k in analysis.kernaussagen %}{% set st_ = ks[loop.index0] if loop.index0 < ks|length else '' %}<li>{{ k }}{% if st_ and video_at(video_url, st_) %} <a class="hint nowrap" href="{{ video_at(video_url, st_) }}" target="_blank" rel="noopener noreferrer">{{ st_ }} ↗</a>{% endif %}</li>{% endfor %}</ol>
     {% if analysis.empfehlungen %}
     <h3 class="reader-sub">Genannte Werte <span class="badge warn">Aussagen des Videos, keine Empfehlung von Portfolia</span></h3>
     <div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Wert</th><th>Aussage</th><th>Begründung laut Video</th><th>Stelle</th></tr></thead><tbody>

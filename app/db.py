@@ -1330,6 +1330,25 @@ CREATE TABLE IF NOT EXISTS disc_forward (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_disc_forward ON disc_forward(company_id, kind, day);
 """),
+    (44, """
+-- KI je Modell (0.111): Verbrauch je Tag, Modell und Aufgabe (Aufgaben mit demselben Modell teilen dessen
+-- Kontingent); Discovery-Jobs können sichtbar auf ein freies Kontingent warten (Status „wartet“).
+CREATE TABLE IF NOT EXISTS ai_model_usage (
+  day           TEXT NOT NULL,                  -- Pacific-Tag (Gemini) bzw. lokaler Tag
+  model         TEXT NOT NULL,
+  task          TEXT NOT NULL,                  -- news | events | report | discovery | video | company
+  requests      INTEGER NOT NULL DEFAULT 0,
+  input_tokens  INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  errors        INTEGER NOT NULL DEFAULT 0,
+  quota_hits    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, model, task)
+) WITHOUT ROWID;
+ALTER TABLE disc_job ADD COLUMN wait_until TEXT;
+ALTER TABLE disc_job ADD COLUMN wait_reason TEXT;
+DROP INDEX IF EXISTS ux_disc_job_active;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_disc_job_active ON disc_job(slot) WHERE status IN ('geplant', 'laeuft', 'wartet');
+"""),
 ]
 
 

@@ -28,6 +28,14 @@ from tests.helpers import ASSETS, portfolio, tx
 TODAY = today_local()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_today():
+    """Heutiges Datum je Test neu bestimmen: ein Lauf über lokale Mitternacht (Modul vor, Test nach 0 Uhr geladen)
+    rechnete sonst mit dem Datum des Imports, der Code aber mit dem aktuellen – ein Tag Abweichung."""
+    global TODAY
+    TODAY = today_local()
+
+
 def wave(d: date) -> float:
     """Gleichmäßig schwankender „echter“ Kurs von ADA in EUR."""
     return 0.5 + 0.2 * math.sin(d.toordinal() / 30.0)

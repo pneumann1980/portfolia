@@ -151,6 +151,27 @@
       <label class="field">Gemini: Tages-Token-Budget<input type="number" min="1000" name="gemini_budget" value="{{ s['llm.gemini_daily_token_budget'] }}"></label>
       <label class="check" style="align-self:end"><input type="checkbox" name="gemini_unlimited" value="1" {% if s['llm.gemini_tokens_unlimited'] %}checked{% endif %}> Token-Tagesgrenze aufheben (unbegrenzt)</label>
     </div>
+    <h3 class="reader-sub" id="ki-modelle">Gemini: Modell je Aufgabe</h3>
+    <div class="grid-3">
+      <label class="field">Profil
+        <select name="gemini_profile">{% for k, label in ai_cfg.profiles.items() %}<option value="{{ k }}" {% if ai_cfg.profile == k %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="field">Rücklage für manuelle Starts (% des Tageslimits je Modell)<input type="number" min="0" max="50" name="manual_reserve_pct" value="{{ ai_cfg.reserve_pct }}"></label>
+    </div>
+    <div class="table-wrap"><table class="compact"><thead><tr><th>Aufgabe</th><th>Free Tier (empfohlen)</th><th>Eigene Zuordnung</th><th>Jetzt wirksam</th></tr></thead><tbody>
+      {% for t, label in ai_cfg.tasks.items() %}<tr><td>{{ label }}</td><td>{{ ai_cfg.free_tier[t] }}</td>
+        <td><select name="task_model_{{ t }}" aria-label="Eigenes Modell für {{ label }}"><option value="">Grundmodell ({{ ai_cfg.base }})</option>{% for m in gemini_models %}<option value="{{ m }}" {% if ai_cfg.own.get(t) == m %}selected{% endif %}>{{ m }}</option>{% endfor %}</select></td>
+        <td><b>{{ ai_cfg.effective[t] }}</b></td></tr>{% endfor %}
+    </tbody></table></div>
+    <p class="hint">„Ein Modell für alle“ nutzt das Gemini-Modell oben für jede Aufgabe (bisheriges Verhalten). Die eigene Zuordnung gilt nur im Profil „Eigene Zuordnung“. Aufgaben mit demselben Modell teilen dessen Kontingent. Manuelle Starts (Knopf) haben Vorrang; die Rücklage hält einen Teil des Tageslimits für sie frei. Ist ein Modell erschöpft, wartet nur dessen Aufgabe – es wird nie automatisch auf ein anderes Modell oder einen kostenpflichtigen Anbieter gewechselt.</p>
+    {% if ai_cfg.limit_models %}<div class="table-wrap"><table class="compact"><thead><tr><th>Grenzen weiterer Modelle</th><th>Anfragen/Minute</th><th>Tokens/Minute</th><th>Anfragen/Tag</th><th>Tokens/Tag (0 = ohne)</th></tr></thead><tbody>
+      {% for r in ai_cfg.limit_models %}{% set i = loop.index0 %}<tr><td>{{ r.model }}<input type="hidden" name="lim_model_{{ i }}" value="{{ r.model }}">{% if not r.own %}<div class="hint">Startwert (Annahme)</div>{% endif %}</td>
+        <td><input type="number" min="0" name="lim_rpm_{{ i }}" value="{{ r.rpm }}" aria-label="{{ r.model }} Anfragen/Minute"></td>
+        <td><input type="number" min="0" name="lim_tpm_{{ i }}" value="{{ r.tpm }}" aria-label="{{ r.model }} Tokens/Minute"></td>
+        <td><input type="number" min="0" name="lim_rpd_{{ i }}" value="{{ r.rpd }}" aria-label="{{ r.model }} Anfragen/Tag"></td>
+        <td><input type="number" min="0" name="lim_tpd_{{ i }}" value="{{ r.tpd }}" aria-label="{{ r.model }} Tokens/Tag"></td></tr>{% endfor %}
+    </tbody></table></div>
+    <p class="hint">Für das Grundmodell ({{ ai_cfg.base }}) gelten die Felder oben. Die Startwerte sind eigene, vorsichtige Annahmen – bitte die Werte deines Projekts aus Google AI Studio übernehmen (0 = keine lokale Grenze).</p>{% endif %}
+    <label class="check"><input type="checkbox" name="clear_pauses" value="1"> Pausen aller Modelle jetzt aufheben (z. B. nach Anpassen der Grenzen; der nächste Aufruf prüft beim Anbieter erneut)</label>
     <p class="hint">Gemini: Es stehen nur Flash-/Flash-Lite-Modelle mit kostenlosem Kontingent zur Wahl. Die Grenzen oben sind <b>eigene, vorsichtige Annahmen</b> – Google veröffentlicht die genauen Free-Tier-Werte nur in AI Studio und kann sie ändern; bitte dort prüfen und anpassen. Die lokalen Zähler begrenzen die Last, garantieren aber nicht, dass Google die Nutzung als kostenlos wertet (Kontingent gilt je Google-Projekt; ein Schlüssel eines Projekts mit Abrechnung wird abgerechnet). Meldet Google ein erschöpftes Kontingent, pausiert Portfolia den Anbieter – ohne Wechsel auf ein anderes Modell oder einen anderen Anbieter. Im kostenlosen Kontingent dürfen Eingaben zur Produktverbesserung genutzt werden.</p>
     <div class="grid-3">
       <label class="check"><input type="checkbox" name="news_analysis" value="1" {% if s['news.analysis'] %}checked{% endif %}> Einzelanalyse je Artikel</label>

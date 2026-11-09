@@ -619,9 +619,15 @@ def analyse_company(ctx: Any, cid: int, *, trigger: str = "manuell", force: bool
     fps = {p: AI.part_fingerprint(p, co, sources) for p in AI.PARTS}
     ai_errors: list[str] = []
     call_status = ""  # Ergebnis der KI-Aufrufe dieses Laufs (leer = keine KI angefordert)
+    ai_wait: dict[str, Any] = {}  # Grenze/Pause eines KI-Aufrufs (für die Warteschlange des Jobs)
     if as_of is None and mode in ("ki", "voll"):
-        step("KI-Analyse (1 Aufruf: Steckbrief, These, Disruption, Score-Kriterien)", ai_part="analyse")
-        got = AI.run_analysis(ctx, co, sources, job_id=getattr(job, "id", None))
+        pre = parts_state(db, cid, max([x for x in ((latest or {}).get("filed"), universe_filed(db, co)) if x],
+                                       default=None))
+        # gültige, aktuelle Teile wiederverwenden; sind alle aktuell, ist der Knopf ein bewusster Neuaufbau (alle Teile)
+        need = [p for p, st in pre.items() if st["status"] != "ok"] or list(AI.PARTS)
+        step(("KI-Analyse (1 Aufruf, ungültige Teile einzeln nachgeholt, höchstens 3): "
+              + ", ".join(AI.PARTS[p] for p in need)), ai_part="analyse")
+        got = AI.run_analysis(ctx, co, sources, job_id=getattr(job, "id", None), need=need)
         call_err = ""
         for part, (res_p, meta) in got.items():
             _store_part(db, cid, part, res_p, meta, getattr(job, "id", None))
@@ -632,6 +638,9 @@ def analyse_company(ctx: Any, cid: int, *, trigger: str = "manuell", force: bool
                 else:
                     call_err = str(meta.get("error") or meta.get("status"))
                     call_status = str(meta.get("status"))
+                    if meta.get("until") and not ai_wait:
+                        ai_wait = {"until": meta["until"], "scope": meta.get("wait_scope") or "",
+                                   "reason": call_err}
         call_status = call_status or "ok"
         if call_err:
             ai_errors.insert(0, f"KI-Analyse: {call_err}")
@@ -646,6 +655,9 @@ def analyse_company(ctx: Any, cid: int, *, trigger: str = "manuell", force: bool
                 call_status = str(meta.get("status")) if meta.get("status") != "ungueltig" or not call_status \
                     else call_status
                 if meta.get("status") in ("aus", "budget", "pausiert"):  # weitere Teile wären ebenso chancenlos
+                    if meta.get("until"):
+                        ai_wait = {"until": meta["until"], "scope": meta.get("wait_scope") or "",
+                                   "reason": str(meta.get("error") or "")}
                     for rest in todo[i:]:
                         _store_part(db, cid, rest, None, {"status": meta["status"], "error": meta.get("error"),
                                                           "input_fp": fps[rest]}, getattr(job, "id", None))
@@ -668,7 +680,7 @@ def analyse_company(ctx: Any, cid: int, *, trigger: str = "manuell", force: bool
     prev = db.q1("SELECT id, input_hash FROM disc_analysis WHERE company_id=? ORDER BY id DESC LIMIT 1", (cid,))
     if prev is not None and prev["input_hash"] == ihash and not force:
         return {"status": "unchanged", "id": int(prev["id"]), "ai_error": "; ".join(ai_errors), "ai_state": ai_state,
-                "ai_call": call_status}
+                "ai_call": call_status, "ai_wait": ai_wait}
     rep = used.get("bericht") or {}
     crit = (used.get("disruption") or {}).get("kriterien")
     ncrit = (used.get("nash") or {}).get("kriterien")
@@ -747,7 +759,7 @@ def analyse_company(ctx: Any, cid: int, *, trigger: str = "manuell", force: bool
         except Exception as e:  # Vorwärtstest ist Zusatz – die Analyse ist gespeichert
             log.info("Discovery: Vorwärtstest-Eintrag %s nicht gespeichert: %s", cid, e)
     return {"status": "ok", "id": aid, "ai_error": "; ".join(ai_errors), "ai_state": ai_state,
-            "ai_call": call_status}
+            "ai_call": call_status, "ai_wait": ai_wait}
 
 
 def universe_filed(db: Any, co: dict[str, Any]) -> str | None:
@@ -1079,10 +1091,12 @@ def detail_context(ctx: Any, cid: int, aid: int | None = None, amount: float = F
     filed = current_filed(db, co, res)
     parts = parts_state(db, cid, filed)
     pv = preview_of(db, cid)
-    state, why = AI.unavailable_reason(ctx)
+    av = AI.availability(ctx, "company")
     left_d, left_m = AI.DiscoveryBudget(ctx).left()
     n_missing = sum(1 for p in parts.values() if not p["ok_id"])
-    gate = {"ok": not state, "reason": why, "left_day": max(0, left_d), "left_month": max(0, left_m),
+    # ok = Knopf aktiv (nur „KI aus“ sperrt); now = startet sofort, sonst wartet der Job sichtbar bis ``until``
+    gate = {"ok": av["state"] != "aus", "now": not av["state"], "reason": av["reason"], "until": av["until"],
+            "scope": av["scope"], "model": av["model"], "left_day": max(0, left_d), "left_month": max(0, left_m),
             "missing": n_missing, "any_ok": n_missing < len(parts)}
     return {"co": co, "an": an, "res": res, "versions": analyses(db, cid), "fit": fitd, "milestones": ms,
             "stage": _stage(res or {}, pv is not None, filed), "stages": STAGES, "preview": pv, "gate": gate,

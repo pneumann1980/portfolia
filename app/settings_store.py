@@ -83,6 +83,11 @@ DEFAULTS: dict[str, Any] = {
     "llm.gemini_rpd": 100,
     "llm.gemini_daily_token_budget": 200000,
     "llm.gemini_tokens_unlimited": False,  # Token-Tagesgrenze ausdrücklich aufheben (Anfragen-Limits bleiben)
+    # Modell je Aufgabe (0.111): einzeln (bisheriges Modell für alles – Übernahme) | free_tier | eigen
+    "llm.gemini_profile": "einzeln",
+    "llm.task_models": {},  # nur Profil „eigen“: {aufgabe: modell}
+    "llm.model_limits": {},  # eigene Grenzen je Modell {modell: {rpm, tpm, rpd, tpd}} (aus AI Studio)
+    "llm.manual_reserve_pct": 10,  # Anteil des Tageslimits je Modell, der manuellen Starts vorbehalten ist
     # News-Intelligence: Artikelinhalt, Analyse, Ereignisse, Tagesbericht
     "news.enrich": True,  # Volltext nachladen (Hintergrundjob, getrennt vom Feed-Import)
     "news.enrich_per_run": 40,
