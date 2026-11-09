@@ -37,7 +37,7 @@ from app.util.timeutil import iso
 log = logging.getLogger(__name__)
 
 THEMES_VERSION = 2
-THESES_VERSION = 1
+THESES_VERSION = 2  # 0.110: Vorschau mit Disruption-Einschätzung und Kurzbeschreibung
 ROLES = ("direkt", "zulieferer", "infrastruktur", "software", "schluesseltechnologie", "nutzniesser")
 
 THEMES_SYSTEM = (
@@ -71,11 +71,19 @@ THESES_SYSTEM = (
     "3. Bewerte nüchtern mit Stufen 0–2: chance (Größe der Geschäftschance), besonderheit (was das Unternehmen "
     "unterscheidet), nachfrage (wie gut die Nachfrage belegt ist). Ohne Beleg höchstens 1.\n"
     "4. 'widerlegung' nennt konkret, was die These widerlegen würde. Keine Anlageempfehlung.\n"
-    "5. Antworte ausschließlich mit einem gültigen JSON-Objekt, auf Deutsch, ohne Zeilenumbrüche in Zeichenketten.\n"
-    "SCHEMA:\n{\"unternehmen\": [{\"key\": \"U1\", \"besonderheit\": \"...\", \"geld\": \"wie das Unternehmen Geld "
+    "5. 'disruption' ist eine kurze Vorschau (je Feld höchstens 20 Wörter): was verdrängt wird (bestehender Markt "
+    "oder bestehende Lösung), womit (Technologie oder Geschäftsmodell), Reifegrad und eine nüchterne Einschätzung "
+    "gering|mittel|hoch. 'hoch' nur mit wörtlicher Belegstelle; ist das Unternehmen kein Verdränger, sondern "
+    "Zulieferer oder Nutznießer, sage das in 'verdraengt'.\n"
+    "6. Halte alle Texte kurz (höchstens 2 Sätze je Feld).\n"
+    "7. Antworte ausschließlich mit einem gültigen JSON-Objekt, auf Deutsch, ohne Zeilenumbrüche in Zeichenketten.\n"
+    "SCHEMA:\n{\"unternehmen\": [{\"key\": \"U1\", \"was\": \"was das Unternehmen macht (1 Satz)\", "
+    "\"besonderheit\": \"...\", \"geld\": \"wie das Unternehmen Geld "
     "verdient\", \"nachfrage\": \"welche Nachfrageentwicklung belegt ist\", \"langfristig\": \"warum es langfristig "
     "profitieren könnte\", \"vorteile\": \"Wettbewerbsvorteile\", \"widerlegung\": \"...\", \"stufen\": {\"chance\": "
-    "0, \"besonderheit\": 0, \"nachfrage\": 0}, \"belege\": [{\"id\": \"U1-S\", \"zitat\": \"...\"}], "
+    "0, \"besonderheit\": 0, \"nachfrage\": 0}, \"disruption\": {\"verdraengt\": \"...\", \"womit\": \"...\", "
+    "\"reifegrad\": \"labor|pilot|erste_kunden|skaliert\", \"einschaetzung\": \"gering|mittel|hoch\", "
+    "\"beleg\": {\"id\": \"U1-S\", \"zitat\": \"...\"}}, \"belege\": [{\"id\": \"U1-S\", \"zitat\": \"...\"}], "
     "\"konfidenz\": 0.5}]}"
 )
 PRIORITY_RULE = ("Discovery-Priorität (0–100, nur zur Auswahl für vertiefte Analysen): KI-Stufen Chance, "
@@ -201,11 +209,44 @@ def validate_theses(obj: Any, keyed: dict[str, list[dict[str, Any]]]) -> dict[st
             if not any(b["geprueft"] for b in belege):
                 lv = min(lv, 1)  # ohne gefundene Belegstelle höchstens Stufe 1
             levels[k] = lv
-        out[key] = {k: _text(u.get(k), 500) for k in ("besonderheit", "geld", "nachfrage", "langfristig", "vorteile",
-                                                     "widerlegung")}
+        out[key] = {k: _text(u.get(k), 500) for k in ("was", "besonderheit", "geld", "nachfrage", "langfristig",
+                                                     "vorteile", "widerlegung")}
         out[key].update(stufen=levels, belege=belege, konfidenz=round(float(u.get("konfidenz") or 0.3), 2)
                         if isinstance(u.get("konfidenz"), int | float) else 0.3)
+        dis = validate_disruption_preview(u.get("disruption"), texts)
+        if dis:
+            out[key]["disruption"] = dis
     return out
+
+
+RIPENESS = {"labor": "Labor / Forschung", "pilot": "Pilotphase", "erste_kunden": "erste zahlende Kunden",
+            "skaliert": "skaliert (breiter Einsatz)"}
+DISRUPTION_LEVELS = ("gering", "mittel", "hoch")
+
+
+def validate_disruption_preview(raw: Any, texts: dict[str, str]) -> dict[str, Any] | None:
+    """Disruption-Vorschau aus der KI-Discovery prüfen: kurze Felder, bekannte Stufen, „hoch“ nur mit wörtlich
+    gefundener Belegstelle (sonst „mittel“, Grund vermerkt). Keine Punktzahl – die volle Bewertung entsteht erst mit
+    der KI-Analyse per Knopf."""
+    if not isinstance(raw, dict):
+        return None
+    verdraengt, womit = _text(raw.get("verdraengt"), 220), _text(raw.get("womit"), 220)
+    if not verdraengt and not womit:
+        return None
+    level = str(raw.get("einschaetzung") or "").strip().lower()
+    level = level if level in DISRUPTION_LEVELS else "gering"
+    ripe = str(raw.get("reifegrad") or "").strip().lower().replace(" ", "_")
+    braw = raw.get("beleg")
+    b: dict[str, Any] = braw if isinstance(braw, dict) else {}
+    bid = str(b.get("id") or "").strip().upper()
+    quote = _text(b.get("zitat"), 260)
+    found = bool(quote) and bid in texts and AI.quote_found(quote, texts[bid])
+    note = ""
+    if level == "hoch" and not found:
+        level, note = "mittel", "„hoch“ ohne wörtlich gefundene Belegstelle – auf „mittel“ begrenzt"
+    return {"verdraengt": verdraengt, "womit": womit, "reifegrad": ripe if ripe in RIPENESS else "",
+            "einschaetzung": level, "beleg": {"id": bid, "zitat": quote, "geprueft": found} if bid else None,
+            "hinweis": note}
 
 
 def priority(th: dict[str, Any], *, new: bool, inflection: bool, n_evidence: int, has_revenue: bool) -> float:
@@ -220,7 +261,10 @@ def priority(th: dict[str, Any], *, new: bool, inflection: bool, n_evidence: int
 
 
 def ki_discovery(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
-    """Weg A – mehrstufig. Zwei KI-Aufrufe (Themen, Thesen) + vertiefte Analysen im Rahmen des Budgets."""
+    """Weg A – mehrstufig, genau zwei KI-Aufrufe (Themen, Thesen mit Vorschau inkl. Disruption-Einschätzung).
+    Vertiefte KI-Analysen startet der Nutzer je Unternehmen per Knopf."""
+    from app.discovery import forward as FW
+
     state, why = AI.unavailable_reason(ctx)
     if state:
         return ("ki_fehlt" if state == "aus" else "kontingent"), {"_error": why, "_error_class": state}
@@ -325,17 +369,11 @@ def ki_discovery(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
         res["neu" if known_row is None else "bekannt"] += 1
         res["kandidaten"].append({"id": cid, "name": iss.name, "ticker": iss.ticker, "prioritaet": prio,
                                   "neu": known_row is None, "thema": t["thema"]})
-        job.step(f"Fundamentale Validierung: {iss.name}")
-        SV.analyse_company(ctx, cid, trigger="automatisch", mode="daten")
+        job.step(f"Fundamentale Validierung: {iss.name} (ohne KI)")
+        r_an = SV.analyse_company(ctx, cid, trigger="automatisch", mode="daten")
         picked.append((prio or 0, cid))
-    n_deep = int(SV.setting(ctx, "discovery.auto_analyse_per_run") or 0)
-    for _p, cid in sorted(picked, reverse=True)[:n_deep]:
-        if not AI.DiscoveryBudget(ctx).allowed(len(AI.PARTS))[0]:
-            res["analysiert"].append({"id": cid, "status": "kontingent"})
-            break
-        job.step(f"Schritt 7: vertiefte KI-Analyse (Unternehmen {cid})")
-        r = SV.analyse_company(ctx, cid, trigger="automatisch", mode="ergaenzen", job=job)
-        res["analysiert"].append({"id": cid, "status": r.get("status"), "ki": r.get("ai_state")})
+        if th:
+            FW.record_preview(ctx, cid, job.id, th, r_an.get("id"))
     status = "abgeschlossen" if meta2["status"] == "ok" and theses else "teilweise"
     if status == "teilweise":
         res["_error"] = f"Thesen: {meta2.get('error') or 'keine gültige These'}"
@@ -348,24 +386,25 @@ def ki_discovery(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
 
 @J.handler("analyse")
 def _analyse(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
-    mode = str(job.params.get("mode") or "ergaenzen")
+    mode = str(job.params.get("mode") or "daten")
+    if job.params.get("auto"):
+        return auto_analyses(ctx, job)
     r = SV.analyse_company(ctx, int(job.company_id or 0), trigger=job.trigger, mode=mode, job=job,
                            force=bool(job.params.get("force")))
     if r.get("status") == "error":
         return "fehlgeschlagen", {**r, "_error": r.get("error", "")}
-    st = r.get("ai_state")
     out = {**r, "mode": mode}
-    if mode == "daten":
+    call = str(r.get("ai_call") or "")
+    if mode not in SV.AI_MODES or call in ("ok", "nichts"):
         return "abgeschlossen", out
-    if st in ("vollstaendig",):
-        return "abgeschlossen", out
-    if st in ("aus",):
-        return "ki_fehlt", {**out, "_error": r.get("ai_error") or "KI nicht konfiguriert", "_error_class": "aus"}
-    if st in ("budget", "pausiert"):
-        return "kontingent", {**out, "_error": r.get("ai_error"), "_error_class": st}
-    if st in ("teilweise", "veraltet"):
-        return "teilweise", {**out, "_error": r.get("ai_error") or ""}
-    return "fehlgeschlagen" if r.get("ai_error") else "abgeschlossen", {**out, "_error": r.get("ai_error") or ""}
+    err = r.get("ai_error") or ""
+    if call == "aus":
+        return "ki_fehlt", {**out, "_error": err or "KI nicht konfiguriert", "_error_class": "aus"}
+    if call in ("budget", "pausiert"):
+        return "kontingent", {**out, "_error": err, "_error_class": call}
+    if call in ("teilweise", "ungueltig") and r.get("ai_state") in ("vollstaendig", "veraltet", "teilweise"):
+        return "teilweise", {**out, "_error": err}
+    return "fehlgeschlagen", {**out, "_error": err or call}
 
 
 @J.handler("screening")
@@ -417,33 +456,40 @@ def _voll(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
 
 @J.handler("beobachtet")
 def _watched(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
-    """Beobachtete Unternehmen: Daten neu laden; KI nur für fehlende/veraltete Teile im Rahmen des Budgets."""
+    """Beobachtete Unternehmen: SEC- und Marktdaten neu laden (keine KI – ein neuer SEC-Bericht markiert einen
+    vorhandenen KI-Bericht als „veraltet“; aktualisiert wird er nur per Knopf). Danach Vorwärtstest-Kurse."""
     rows = ctx.db.q("SELECT id, name FROM disc_company WHERE status='beobachten' ORDER BY updated_at LIMIT 10")
     done = []
     for i, r in enumerate(rows, 1):
-        mode = "voll" if AI.DiscoveryBudget(ctx).allowed(len(AI.PARTS))[0] and AI.enabled(ctx) else "daten"
-        job.step(f"{i}/{len(rows)}: {r['name']} ({'mit KI' if mode == 'voll' else 'nur Daten'})")
-        res = SV.analyse_company(ctx, int(r["id"]), trigger="automatisch", mode=mode, job=job)
+        job.step(f"{i}/{len(rows)}: {r['name']} (SEC- und Marktdaten, keine KI)")
+        res = SV.analyse_company(ctx, int(r["id"]), trigger="automatisch", mode="daten", job=job)
         done.append({"id": r["id"], "status": res.get("status"), "ki": res.get("ai_state")})
-    return "abgeschlossen", {"aktualisiert": done}
+    from app.discovery import forward as FW
+
+    job.step("Vorwärtstest: Kurse aktualisieren")
+    fw = FW.refresh(ctx)
+    return "abgeschlossen", {"aktualisiert": done, "vorwaertstest": fw}
 
 
 def auto_analyses(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
-    """Automatische Vertiefung: Kandidaten mit fehlender Analyse oder fehlenden KI-Teilen (nach Priorität)."""
+    """Automatische Datenanalysen (ohne KI): Kandidaten ohne Analyse oder mit Analyse älter als 7 Tage, nach
+    Priorität. KI-Analysen startet nur der Nutzer per Knopf."""
     n = int(SV.setting(ctx, "discovery.auto_analyse_per_run") or 0)
-    rows = ctx.db.q("SELECT c.id, c.name, MAX(COALESCE(k.priority, 0)) AS p, MAX(s.strength) AS st FROM disc_company c "
-                    "LEFT JOIN disc_candidate k ON k.company_id = c.id LEFT JOIN disc_signal s ON s.company_id = c.id "
-                    "WHERE c.status IN ('neu', 'beobachten') GROUP BY c.id ORDER BY p DESC, st DESC LIMIT 30")
+    week = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+    rows = ctx.db.q("SELECT c.id, c.name, MAX(COALESCE(k.priority, 0)) AS p, MAX(s.strength) AS st, "
+                    "(SELECT MAX(created_at) FROM disc_analysis a WHERE a.company_id = c.id) AS last_an "
+                    "FROM disc_company c LEFT JOIN disc_candidate k ON k.company_id = c.id "
+                    "LEFT JOIN disc_signal s ON s.company_id = c.id WHERE c.status IN ('neu', 'beobachten') "
+                    "GROUP BY c.id ORDER BY (last_an IS NOT NULL), p DESC, st DESC LIMIT 60")
     done: list[dict[str, Any]] = []
     for r in rows:
         if len(done) >= n:
             break
-        a = ctx.db.q1("SELECT ai_state FROM disc_analysis WHERE company_id=? ORDER BY id DESC LIMIT 1", (r["id"],))
-        if a is not None and a["ai_state"] in ("vollstaendig", "veraltet"):
+        if r["last_an"] and r["last_an"] >= week:
             continue
-        job.step(f"Analyse: {r['name']}")
+        job.step(f"Datenanalyse: {r['name']} (ohne KI)")
         res = SV.analyse_company(ctx, int(r["id"]), trigger="automatisch", mode="auto", job=job)
-        done.append({"id": r["id"], "status": res.get("status"), "ki": res.get("ai_state")})
+        done.append({"id": r["id"], "status": res.get("status")})
     return "abgeschlossen", {"analysiert": done}
 
 
@@ -456,7 +502,7 @@ SCHEDULE: dict[str, tuple[str, dict[str, Any]]] = {
     "beobachtet": ("beobachtet", {"day_of_week": "sun", "hour": 5, "minute": 37}),
 }
 SCHEDULE_LABELS = {"news": "Nachrichten-Discovery", "screening": "Fundamentaldaten-Screening",
-                   "ki": "KI-Themen-Discovery", "analysen": "Vertiefte Unternehmensanalysen",
+                   "ki": "KI-Discovery (Vorschläge mit Vorschau)", "analysen": "Datenanalysen neuer Kandidaten",
                    "beobachtet": "Aktualisierung beobachteter Unternehmen"}
 
 
@@ -484,18 +530,6 @@ def run_scheduled(ctx: Any, step: str) -> dict[str, Any]:
     return J.start(ctx, kind, trigger="automatisch", inline=True)
 
 
-_ORIG_ANALYSE = J.HANDLERS["analyse"]
-
-
-def _analyse_dispatch(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
-    if job.params.get("auto"):
-        return auto_analyses(ctx, job)
-    return _ORIG_ANALYSE(ctx, job)
-
-
-J.HANDLERS["analyse"] = _analyse_dispatch
-
-
 # ------------------------------------------------------------------------------------------------------------
 # KI-Researchstatus (Phase B)
 # ------------------------------------------------------------------------------------------------------------
@@ -519,7 +553,7 @@ def ai_status(ctx: Any) -> dict[str, Any]:
     for step in SCHEDULE:
         hours = int(SV.setting(ctx, f"discovery.auto.{step}") or 0)
         plan.append({"step": step, "label": SCHEDULE_LABELS[step], "hours": hours,
-                     "next": nxt.get(f"disc_auto_{step}"), "uses_ai": step in ("ki", "analysen", "beobachtet")})
+                     "next": nxt.get(f"disc_auto_{step}"), "uses_ai": step == "ki"})
     J.expire_stale(ctx)
     return {
         "llm_enabled": bool(ctx.settings.get("llm.enabled", False)), "discovery_ai": bool(SV.setting(ctx,
@@ -536,9 +570,7 @@ def ai_status(ctx: Any) -> dict[str, Any]:
         "cost": cost_note(gst["provider"]),
         "last_ok": dict(last_ok) if last_ok else None, "last_fail": dict(last_fail) if last_fail else None,
         "plan": plan, "running": J.active(db), "last_jobs": J.last_by_kind(db),
-        "estimates": {"ki_discovery": 2 + len(AI.PARTS) * int(SV.setting(ctx, "discovery.auto_analyse_per_run") or 0),
-                      "analyse": len(AI.PARTS), "screening": 0, "voll": 2 + len(AI.PARTS) * int(
-                          SV.setting(ctx, "discovery.auto_analyse_per_run") or 0)},
+        "estimates": {"ki_discovery": 2, "analyse": 1, "screening": 0, "voll": 2},
     }
 
 

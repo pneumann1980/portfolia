@@ -1,7 +1,7 @@
 """KI-Teil von Discovery & Intelligence – ausschließlich über das vorhandene :class:`app.news.ai.AiGateway`.
 
-Aufbau (seit 0.109): Die Unternehmensanalyse besteht aus drei **Teilanalysen**, die einzeln erstellt, geprüft,
-gespeichert und nachgeholt werden können:
+Aufbau (seit 0.110): Eine KI-Analyse ist **ein** Aufruf (nur per Knopf), dessen Antwort in drei **Teilanalysen**
+zerlegt, einzeln geprüft und gespeichert wird; ein ungültiger Teil lässt sich gezielt nachholen (je Teil ein Aufruf):
 
 * ``bericht`` – Geschäftsmodell, Investment-These, Gegenhypothese, Kernrisiko, Unsicherheiten, Meilensteine;
 * ``disruption`` – qualitative Kriterien für Disruption/Quality/GARP und „Portfolia Fundamental v1“ (Stufen 0–4);
@@ -41,10 +41,10 @@ from app.util.timeutil import iso, today_local
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = 2  # Teilanalysen (0.109); Version 1 = ein Gesamtaufruf (0.108)
-PART_VERSIONS = {"bericht": 2, "disruption": 2, "nash": 2}  # nash 2: Culture und Talent getrennt
-PARTS = {"bericht": "Geschäftsmodell, These und Gegenhypothese", "disruption": "Qualitative Disruption-Kriterien",
-         "nash": "Qualitative Tom-Nash-Kriterien"}
+PROMPT_VERSION = 3  # 0.110: ein kompakter Aufruf (3 Teile); 2 = drei Aufrufe (0.109); 1 = Gesamtaufruf (0.108)
+PART_VERSIONS = {"bericht": 3, "disruption": 3, "nash": 3}  # 3: kurze Texte (Steckbrief), gemeinsamer Aufruf
+PARTS = {"bericht": "Steckbrief, These und Gegenhypothese", "disruption": "Disruption (qualitative Kriterien)",
+         "nash": "Portfolia-Score (qualitative Kriterien)"}
 THEME_PROMPT_VERSION = 2
 MAX_SOURCE_CHARS = 9000
 METRICS = ("revenue_growth", "gross_margin", "op_margin", "fcf_margin", "revenue", "net_income", "fcf")
@@ -67,20 +67,20 @@ _RULES = (
 )
 
 BERICHT_SCHEMA = """{
- "geschaeftsmodell": {"was": "2–4 Sätze, verständlich ohne Vorwissen", "produkte": ["..."],
-   "kunden": "wer bezahlt", "erloesmodell": "wie das Unternehmen Geld verdient",
-   "besonderheit": "was das Unternehmen besonders macht", "langfristig": "warum es außergewöhnlich erfolgreich werden
-   könnte – als Möglichkeit formuliert", "wettbewerber": [{"name": "...", "vergleich": "..."}], "belege": ["IDs"]},
- "these": {"text": "5–8 Sätze: welches Produkt, welche zahlenden Kunden, welche belegte Nachfrage, wie daraus Umsatz/
-   Cashflow entsteht, welche Vorteile", "treiber": [{"treiber": "...", "evidenz": "...", "belege": ["IDs"]}]},
- "gegenhypothese": {"text": "ebenso ausführlich: warum die These scheitern könnte (Technologie, Wettbewerb,
-   Wachstum, Investitionen, Finanzierung, Margen, Bewertung)", "punkte": [{"risiko": "...", "begruendung": "...",
-   "belege": ["IDs"]}]},
- "kernrisiko": "das eine Risiko, das die These am ehesten zerstören würde (1–2 Sätze)",
+ "geschaeftsmodell": {"was": "1–2 Sätze, verständlich ohne Vorwissen", "produkte": ["höchstens 4"],
+   "kunden": "wer bezahlt (1 Satz)", "erloesmodell": "wie das Unternehmen Geld verdient (1 Satz)",
+   "besonderheit": "was das Unternehmen besonders macht (1 Satz)", "langfristig": "warum es außergewöhnlich
+   erfolgreich werden könnte – als Möglichkeit, 1 Satz", "wettbewerber": [{"name": "...", "vergleich": "1 Satz"}],
+   "belege": ["IDs"]},
+ "these": {"text": "höchstens 3 Sätze: Produkt, zahlende Kunden, belegte Nachfrage, wie daraus Umsatz/Cashflow
+   entsteht", "treiber": [{"treiber": "höchstens 15 Wörter, mit Zahl falls belegt", "belege": ["IDs"]}]},
+ "gegenhypothese": {"text": "höchstens 3 Sätze, ebenso ernsthaft: warum die These scheitern könnte",
+   "punkte": [{"risiko": "höchstens 15 Wörter", "belege": ["IDs"]}]},
+ "kernrisiko": "das eine Risiko, das die These am ehesten zerstören würde (1 Satz)",
  "meilensteine": [{"text": "beobachtbare Entwicklung", "art": "bestaetigt|widerlegt",
    "kennzahl": "@METRICS@ oder leer", "operator": ">=|<=", "schwelle": Zahl als Anteil (0.25 = 25 %) oder null,
    "bis": "JJJJ-MM"}],
- "unsicherheiten": ["..."]
+ "unsicherheiten": ["höchstens 3"]
 }"""
 SYSTEM_BERICHT = (
     "Du bist ein nüchterner Aktienanalyst und schreibst den Textteil eines Research-Berichts über ein "
@@ -97,7 +97,7 @@ SYSTEM_DISRUPTION = (
     "Formulierung allein rechtfertigt keine hohe Stufe; nenne immer Gegenargumente. Bei 'risiken' bedeutet eine hohe "
     "Stufe GERINGE Risiken.\n"
     "KRITERIEN:\n" + "\n".join(f"- {k}: {v}" for k, v in AI_KEYS.items()) + "\n"
-    "SCHEMA:\n{\"kriterien\": {\"" + "|".join(AI_KEYS) + "\": {\"stufe\": 0-4, \"begruendung\": \"2–4 Sätze mit "
+    "SCHEMA:\n{\"kriterien\": {\"" + "|".join(AI_KEYS) + "\": {\"stufe\": 0-4, \"begruendung\": \"1–2 Sätze mit "
     "konkreten Fakten\", \"belege\": [\"IDs\"], \"gegenargumente\": [\"...\"], \"fehlend\": [\"welche Information "
     "fehlt\"], \"konfidenz\": 0..1}}}"
 )
@@ -111,11 +111,35 @@ SYSTEM_NASH = (
     "8. Nenne zu jedem Kriterium Gegenargumente und Widersprüche in den Quellen.\n"
     "KRITERIEN:\n" + "\n".join(f"- {k}: {v[0]} – {v[2]}" for k, v in NASH.AI_CRITERIA.items()) + "\n"
     "SCHEMA:\n{\"kriterien\": {\"" + "|".join(NASH.AI_CRITERIA) + "\": {\"stufe\": 0|1|2, \"begruendung\": "
-    "\"2–4 Sätze\", \"belege\": [{\"id\": \"S1\", \"zitat\": \"...\"}], \"gegenargumente\": [\"...\"], "
+    "\"1–2 Sätze\", \"belege\": [{\"id\": \"S1\", \"zitat\": \"...\"}], \"gegenargumente\": [\"...\"], "
     "\"fehlend\": [\"...\"], \"datenqualitaet\": \"gut|mittel|schwach\", \"konfidenz\": 0..1}}}"
 )
 SYSTEM = SYSTEM_BERICHT  # Abwärtskompatibel (frühere Gesamtanalyse)
 SYSTEMS = {"bericht": SYSTEM_BERICHT, "disruption": SYSTEM_DISRUPTION, "nash": SYSTEM_NASH}
+
+# Ein Aufruf für alle drei Teile (0.110): kurze Texte, Kriterien mit knapper Begründung
+SYSTEM_ANALYSE = (
+    "Du bist ein nüchterner Aktienanalyst. Du erstellst für einen privaten Anleger einen KURZEN Steckbrief eines "
+    "börsennotierten Unternehmens und bewertest qualitative Kriterien – nur auf Grundlage der gelieferten Quellen.\n"
+    + _RULES +
+    "6. Kürze: Halte die angegebenen Längen ein (Sätze, Wörter, Anzahl Einträge). Keine Wiederholungen zwischen den "
+    "Abschnitten.\n"
+    "7. Die Gegenhypothese ist ebenso ernsthaft wie die These, kein formaler Risikohinweis.\n"
+    "8. Teil \"disruption\": Stufen 0–4 je Kriterium (0 = nicht erkennbar, 1 = schwach/unbelegt, 2 = vorhanden, "
+    "3 = stark, 4 = herausragend und gut belegt). Ohne Beleg höchstens Stufe 1. Bei 'risiken' bedeutet eine hohe "
+    "Stufe GERINGE Risiken. Kriterien: " + "; ".join(f"{k} = {v}" for k, v in AI_KEYS.items()) + ".\n"
+    "9. Teil \"nash\": Stufen 0 (schwach), 1 (teilweise), 2 (klar erfüllt). Jede Bewertung braucht Belege als "
+    "Objekte {\"id\": Quellen-ID, \"zitat\": wörtlich kopierte Stelle, 20–200 Zeichen} – das Zitat wird maschinell "
+    "geprüft; ohne passende Stelle \"belege\": []. Kriterien: "
+    + "; ".join(f"{k} = {v[0]} ({v[2]})" for k, v in NASH.AI_CRITERIA.items()) + ".\n"
+    "SCHEMA:\n{\"bericht\": " + BERICHT_SCHEMA.replace("@METRICS@", "|".join(METRICS)) + ",\n"
+    " \"disruption\": {\"kriterien\": {\"" + "|".join(AI_KEYS) + "\": {\"stufe\": 0-4, \"begruendung\": "
+    "\"1–2 Sätze\", \"belege\": [\"IDs\"], \"gegenargumente\": [\"höchstens 2\"], \"fehlend\": [\"...\"], "
+    "\"konfidenz\": 0..1}}},\n"
+    " \"nash\": {\"kriterien\": {\"" + "|".join(NASH.AI_CRITERIA) + "\": {\"stufe\": 0|1|2, \"begruendung\": "
+    "\"1–2 Sätze\", \"belege\": [{\"id\": \"S1\", \"zitat\": \"...\"}], \"gegenargumente\": [\"höchstens 2\"], "
+    "\"fehlend\": [\"...\"], \"datenqualitaet\": \"gut|mittel|schwach\", \"konfidenz\": 0..1}}}}"
+)
 
 
 # ------------------------------------------------------------------------------------------------------------
@@ -238,6 +262,9 @@ def call(ctx: Any, step: str, system: str, payload: str, *, max_tokens: int, pro
             DiscoveryBudget(ctx).record(0, 0)  # die Anfrage hat den Anbieter erreicht (zählt zum Kontingent)
             meta.update(status="pausiert" if isinstance(e, QuotaExceeded) else "fehler", error=e.text,
                         error_class=e.code)
+        except Exception as e:  # unerwarteter Fehler: Aufruf nie als „läuft“ stehen lassen, Grund sichtbar
+            log.exception("Discovery-KI-Aufruf %s fehlgeschlagen", step)
+            meta.update(status="fehler", error=f"{type(e).__name__}: {str(e)[:200]}", error_class=type(e).__name__)
         else:
             DiscoveryBudget(ctx).record(res.input_tokens, res.output_tokens)
             meta.update(provider=res.provider, model=res.model, input_tokens=res.input_tokens,
@@ -508,6 +535,40 @@ def run_part(ctx: Any, part: str, company: dict[str, Any], sources: list[dict[st
         mark_call(ctx.db, meta.get("call_id"), "ungueltig", meta["error"])
     meta["input_fp"] = part_fingerprint(part, company, sources)
     return out, meta
+
+
+def run_analysis(ctx: Any, company: dict[str, Any], sources: list[dict[str, Any]], *,
+                 job_id: int | None = None) -> dict[str, tuple[dict[str, Any] | None, dict[str, Any]]]:
+    """Ein KI-Aufruf für alle drei Teile; Ergebnis je Teil: (geprüftes Ergebnis oder ``None``, Metadaten).
+
+    Jeder Teil wird einzeln geprüft – ist ein Teil ungültig, bleiben die anderen gültig (gezielt nachholbar)."""
+    fps = {p: part_fingerprint(p, company, sources) for p in PARTS}
+    if not any(s.get("text") for s in sources):
+        meta = {"status": "keine_quellen", "error": "keine Quelltexte (Geschäftsbericht, Profil, Meldungen)",
+                "step": "analyse"}
+        return {p: (None, {**meta, "input_fp": fps[p]}) for p in PARTS}
+    max_out = int(ctx.settings.get("discovery.ai_max_output_tokens", DEFAULTS["discovery.ai_max_output_tokens"]))
+    data, meta = call(ctx, "analyse", SYSTEM_ANALYSE, build_payload(company, sources), max_tokens=max_out,
+                      prompt_version=PROMPT_VERSION, job_id=job_id, company_id=company.get("id"))
+    out: dict[str, tuple[dict[str, Any] | None, dict[str, Any]]] = {}
+    invalid = []
+    for part in PARTS:
+        m = {**meta, "input_fp": fps[part]}
+        if meta["status"] != "ok":
+            out[part] = (None, m)
+            continue
+        sub = data.get(part) if isinstance(data, dict) else None
+        res = VALIDATORS[part](sub, sources)
+        if res is None:
+            invalid.append(PARTS[part])
+            m.update(status="ungueltig", error_class="schema",
+                     error=f"Teil „{PARTS[part]}“ fehlt oder ist unvollständig")
+        out[part] = (res, m)
+    if meta["status"] == "ok" and invalid:
+        mark_call(ctx.db, int(meta.get("call_id") or 0) or None,
+                  "teilweise" if len(invalid) < len(PARTS) else "ungueltig",
+                  "ungültig: " + ", ".join(invalid))
+    return out
 
 
 # ------------------------------------------------------------------------------------------------------------

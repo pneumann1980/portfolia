@@ -88,3 +88,34 @@
   {% for c in s.criteria %}{{ criterion(c, ccy) }}{% endfor %}
 </details>
 {% endmacro %}
+
+{% macro bar(label, s) -%}
+<div class="disc-bar" title="{{ label }}: {{ s.total|num(0) if s and s.total is not none else '–' }} von {{ s.max|num(0) if s else 100 }}{{ ' – unvollständig' if s and not s.complete }}">
+  <span class="label">{{ label }}</span>
+  {%- if s and s.total is not none %}
+  <span class="meter {{ 'warn' if not s.complete }}"><div style="width:{{ ((s.total or 0) / (s.max or 100) * 100)|round(0) }}%"></div></span>
+  <span class="disc-bar-val">{{ pts(s.total) }}{% if not s.complete %} <span class="badge warn" title="weniger als 70 % der Kriterien bewertbar">unvollst.</span>{% endif %}</span>
+  {%- else %}<span class="hint">–</span>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro alertbox(a) -%}
+<div class="alert {{ {'crit': 'crit', 'warn': 'warn'}.get(a.level, '') }} disc-alert"><span class="icon">{{ '!' if a.level in ('crit', 'warn') else 'i' }}</span><div><b>{{ a.title }}:</b> {{ a.text }}{% if a.source and a.source.startswith('http') %} <a href="{{ a.source }}" rel="noopener noreferrer" target="_blank">Meldung</a>{% elif a.source %} {{ src(a.source) }}{% endif %}</div></div>
+{%- endmacro %}
+
+{% macro numline(nums) -%}
+{%- for n in nums -%}<span class="disc-num"><span class="hint">{{ n.label }}</span> <b>{% if n.fmt == 'pct_sign' %}{{ n.value|pct(0) }}{% elif n.fmt == 'pct' %}{{ n.value|pct(0, false) }}{% else %}{{ money(n.value, n.ccy) }}{% endif %}</b></span>{{ ' · ' if not loop.last }}{%- endfor -%}
+{%- endmacro %}
+
+{% macro preview_block(pv) -%}
+<div class="disc-preview">
+  {% set d = pv.disruption %}
+  {% if d %}<p><b>Disruption (Vorschau):</b> <span class="badge {{ {'hoch': 'good', 'mittel': 'info', 'gering': ''}.get(d.einschaetzung, '') }}">{{ d.einschaetzung }}</span>
+    {% if d.verdraengt %} – verdrängt: {{ d.verdraengt }}{% endif %}{% if d.womit %}; womit: {{ d.womit }}{% endif %}{% if d.reifegrad %}; Reifegrad: {{ ripeness.get(d.reifegrad, d.reifegrad) }}{% endif %}
+    {% if d.beleg and d.beleg.geprueft %}<span class="badge good" title="{{ d.beleg.zitat }}">Beleg geprüft</span>{% elif d.beleg %}<span class="badge warn" title="Belegstelle nicht wörtlich gefunden">Beleg ungeprüft</span>{% endif %}
+    {% if d.hinweis %}<span class="hint">({{ d.hinweis }})</span>{% endif %}</p>{% endif %}
+  {% set st = pv.stufen or {} %}
+  <p class="hint">KI-Vorschau{% if pv.theme %} zum Thema „{{ pv.theme }}“{% endif %}: Chance {{ ['gering', 'mittel', 'hoch'][st.chance or 0] }} · Besonderheit {{ ['gering', 'mittel', 'hoch'][st.besonderheit or 0] }} · Nachfrage {{ ['unbelegt', 'teils belegt', 'belegt'][st.nachfrage or 0] }}. Kurzeinschätzung aus einem Sammelaufruf – die volle Bewertung entsteht mit „Mit KI analysieren“.</p>
+  {% if pv.widerlegung %}<p class="hint"><b>Was die These widerlegen würde:</b> {{ pv.widerlegung }}</p>{% endif %}
+</div>
+{%- endmacro %}

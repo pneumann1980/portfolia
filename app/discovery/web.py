@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from app.discovery import ai as AI
 from app.discovery import engine as EN
 from app.discovery import fit as FIT
+from app.discovery import forward as FW
 from app.discovery import fundamentals as F
 from app.discovery import jobs as J
 from app.discovery import nash as NASH
@@ -91,10 +92,11 @@ def make_router() -> APIRouter:
     router = APIRouter()
 
     @router.get(BASE, response_class=HTMLResponse)
-    def radar(request: Request, cat: str = "", sort: str = "disruption", q: str = "", alle: int = 0,
+    def radar(request: Request, cat: str = "", sort: str = SV.DEFAULT_SORT, q: str = "", alle: int = 0,
               msg: str = "", err: str = "", job: int = 0) -> HTMLResponse:
         ctx = get_ctx(request)
         _recover_once(ctx)
+        sort = sort if sort in SV.SORTS else SV.DEFAULT_SORT
         data = SV.radar(ctx, cat=cat if cat in SV.CATEGORIES else "", sort=sort, q=q[:60], show_all=bool(alle))
         every = SV.radar(ctx, show_all=True)["cards"]
         return render(request, "discovery.html", active="discovery", cards=data["cards"], cat=cat, sort=sort, q=q,
@@ -102,7 +104,8 @@ def make_router() -> APIRouter:
                       last_run=data["last_run"], msg=msg, err=err, st=EN.ai_status(ctx),
                       prog=EN.screening_progress(ctx), jobs=J.recent(ctx.db, 8), focus_job=job,
                       n_total=len(every), statuses=SV.STATUSES, cfg=_cfg(ctx), start_kinds=START_KINDS,
-                      sched_labels=EN.SCHEDULE_LABELS, sizes=U.SIZE_LABELS, prio_rule=EN.PRIORITY_RULE)
+                      sched_labels=EN.SCHEDULE_LABELS, sizes=U.SIZE_LABELS, prio_rule=EN.PRIORITY_RULE,
+                      stages=SV.STAGES, paths=SV.PATHS, ripeness=EN.RIPENESS, fw=FW.evaluate(ctx))
 
     @router.get(BASE + "/status", response_class=HTMLResponse)
     def status_partial(request: Request) -> HTMLResponse:
@@ -149,8 +152,8 @@ def make_router() -> APIRouter:
         form = await request.form()
         res = await run_in_threadpool(SV.add_manual, ctx, str(form.get("q", "")))
         if res.get("id"):
-            return _back(f"{BASE}/c/{res['id']}", msg="Unternehmen aufgenommen – „Fundamentaldaten aktualisieren“ oder "
-                                                      "„KI-Analyse starten“ erstellt die Bewertung.")
+            return _back(f"{BASE}/c/{res['id']}", msg="Unternehmen aufgenommen – „Daten aktualisieren“ berechnet die "
+                                                      "Bewertung ohne KI; „Mit KI analysieren“ ergänzt den Steckbrief.")
         if res.get("choices"):
             names = "; ".join(f"{c['ticker']} ({c['name']})" for c in res["choices"][:8])
             return _back(BASE, err=f"{res['error']}. Bitte Ticker eingeben: {names}")
@@ -217,6 +220,7 @@ def make_router() -> APIRouter:
             raise HTTPException(404)
         return render(request, "discovery_company.html", active="discovery", msg=msg, err=err, focus_job=job,
                       statuses=SV.STATUSES, st=EN.ai_status(ctx), labels=F.LABELS, pct_keys=F.PCT, bars=bars,
+                      ripeness=EN.RIPENESS, open_fit=bool(betrag),
                       nash_prov=NASH.PROVENANCE, nash_method=NASH.METHOD, nash_src=(NASH.SOURCE_VIDEO,
                                                                                    NASH.SOURCE_SUMMARY), **d)
 
@@ -234,11 +238,15 @@ def make_router() -> APIRouter:
         if SV.company(ctx.db, cid) is None:
             raise HTTPException(404)
         form = await request.form()
-        mode = str(form.get("mode") or "ergaenzen")
-        if form.get("force") == "1":  # früherer Knopf „Trotzdem neu erstellen“
-            mode = "voll"
+        mode = str(form.get("mode") or "daten")
+        if form.get("force") == "1":  # früherer Knopf „Trotzdem neu erstellen“: neue Version aus Daten, ohne KI
+            mode = "daten"
         if mode not in SV.MODES or mode == "auto":
             raise HTTPException(400)
+        if mode in SV.AI_MODES:  # Knopf ohne Kontingent bzw. ohne KI: kein Job, Grund sofort sichtbar
+            state, why = AI.unavailable_reason(ctx)
+            if state:
+                return _back(f"{BASE}/c/{cid}", err=f"KI-Analyse nicht gestartet: {why}.")
         r = await run_in_threadpool(J.start, ctx, "analyse", trigger="manuell", company_id=cid,
                                     params={"mode": mode, "force": form.get("force") == "1"})
         jb = J.get(ctx.db, r["id"]) or {}

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "discovery_macros.html" import scorechip, pts with context %}
+{% from "discovery_macros.html" import scorechip, pts, numline, preview_block, alertbox, money with context %}
 {% block title %}Discovery{% endblock %}
 {% block heading %}Discovery & Intelligence{% endblock %}
 {% block content %}
@@ -13,7 +13,7 @@
   <div class="disc-start">
     <form method="post" action="/discovery/start/ki_discovery" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="btn primary" type="submit" {{ 'disabled' if not st.usable }}>KI-Discovery starten</button>
-      <p class="hint">Weg A: Die KI erkennt aus belegten SEC-Wendepunkten{{ ' und Meldungen' if st.themes }} Themen und Wertschöpfungsketten, schlägt Unternehmen vor; Portfolia prüft jede Identität bei der SEC, lässt Discovery-Thesen mit geprüften Belegstellen erstellen und vertieft die besten. Bedarf: ca. {{ st.estimates.ki_discovery }} KI-Aufrufe (heute frei: {{ [st.day.left, 0]|max }}).{% if not st.usable %} <b>Gesperrt: {{ st.reason }}.</b>{% endif %}</p></form>
+      <p class="hint">Die KI erkennt aus belegten SEC-Wendepunkten{{ ' und Meldungen' if st.themes }} Themen und Wertschöpfungsketten und schlägt Unternehmen vor – jedes mit Vorschau (Kurzbeschreibung, Disruption-Einschätzung, Chance/Nachfrage). Portfolia prüft jede Identität bei der SEC und lädt die Zahlen ohne KI. <b>Genau 2 KI-Aufrufe</b> (heute frei: {{ [st.day.left, 0]|max }}); welche Firma vertieft wird, entscheidest du je Karte.{% if not st.usable %} <b>Gesperrt: {{ st.reason }}.</b>{% endif %}</p></form>
     <form method="post" action="/discovery/start/screening" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="btn" type="submit">Fundamentalscreening starten</button>
       <p class="hint">Wege B und C ohne KI: ganzes Universum über SEC-Frames vorauswählen, je Lauf {{ cfg.screen_batch }} Emittenten mit vollständigen SEC-Daten bestätigen (fundamentale Wendepunkte), danach Kurs gegen S&P 500 prüfen (mögliche Fehlbewertung vs. Value Trap). Setzt nach Abbruch fort.</p></form>
@@ -47,8 +47,9 @@
     <li><b>Disruptive Geschäftsmodelle</b>: Disruption-Score vollständig bewertet und ≥ 55.</li>
     <li><b>Fundamentale Wendepunkte</b>: Signal aus dem Screening bzw. der Analyse (Wachstumsbeschleunigung, Margen-, Profitabilitäts- oder FCF-Wende) in den letzten 180 Tagen.</li>
     <li><b>Mögliche Marktfehlbewertungen</b>: Wendepunkt bestätigt, Kurs ≥ 15 Pp. hinter dem S&P 500 (12 Monate) und keine Value-Trap-Merkmale.</li>
-    <li><b>Nash 100+</b>: Tom Nash 125 gesichert ≥ 100 Punkte (fehlende Kriterien könnten nur Punkte hinzufügen).</li>
-    <li><b>Quality / Growth</b>: vollständig bewertet und ≥ 70 bzw. ≥ 65. Unvollständige Scores werden in jeder Sortierung nach den vollständigen eingereiht.</li>
+    <li><b>KI-Vorschau / Mit KI analysiert / KI-Bericht veraltet</b>: Bearbeitungsstand. Vorschau = Vorschlag der KI-Discovery mit Kurzeinschätzung; analysiert = KI-Analyse per Knopf; veraltet = seitdem neuer Quartals-/Jahresbericht bei der SEC.</li>
+    <li><b>Portfolia-Score 100+</b>: gesichert ≥ 100 von 125 Punkten (offene Kriterien könnten nur Punkte hinzufügen).</li>
+    <li><b>Disruptiv</b>: Disruption-Score aus der KI-Analyse vollständig bewertet und ≥ 55. Unvollständige Scores werden in jeder Sortierung nach den vollständigen eingereiht.</li>
     <li>Discovery-Priorität: {{ prio_rule }}</li></ul></details>
 </section>
 
@@ -58,34 +59,49 @@
   <article class="card disc-card">
     <div class="disc-card-head">
       <div><a href="/discovery/c/{{ c.id }}"><b>{{ c.name }}</b></a> <span class="badge">{{ c.ticker }}</span>
-        <div class="hint">{{ c.sector or 'Branche unbekannt' }} · Herkunft: {{ {'news': 'Nachricht', 'ki': 'KI-Discovery', 'screening': 'Fundamentalscreening', 'manuell': 'manuell', 'sec': 'SEC'}.get(c.origin, c.origin) }}{% if c.held %} · <span class="badge good">im Portfolio</span>{% endif %}{% if c.status != 'neu' %} · <span class="badge info">{{ statuses[c.status] }}</span>{% endif %}</div></div>
-      <div class="hint nowrap">{% if c.analysed_at %}Analyse {{ c.analysed_at|datetime_de }}{% else %}<span class="badge warn">noch nicht analysiert</span>{% endif %}</div>
+        <div class="hint">{{ c.sector or 'Branche unbekannt' }}{% if c.held %} · <span class="badge good">im Portfolio</span>{% endif %}{% if c.status != 'neu' %} · <span class="badge info">{{ statuses[c.status] }}</span>{% endif %}</div></div>
+      <span class="badge {{ {'analysiert': 'good', 'veraltet': 'warn', 'vorschau': 'info'}.get(c.stage, '') }}">{{ stages[c.stage] }}</span>
     </div>
     {% if c.business %}<p class="disc-card-biz">{{ c.business }}</p>{% endif %}
-    <div class="disc-card-scores">
-      {% for k, label in [('disruption', 'Disruption'), ('nash125', 'Tom Nash 125'), ('quality', 'Quality'), ('garp', 'Growth'), ('valuation', 'Valuation')] %}
-      <div><span class="label">{{ label }}</span>{{ scorechip(c.scores.get(k), label) }}</div>{% endfor %}
-      {% if c.fit is not none %}<div><span class="label">Portfolio-Fit (1.000 €)</span><b>{{ c.fit|num(0) }}</b><span class="hint">/100</span></div>{% endif %}
-      {% if c.priority is not none %}<div><span class="label">Discovery-Priorität</span><b>{{ pts(c.priority) }}</b><span class="hint">/100</span></div>{% endif %}
+    {% if c.preview and c.stage == 'vorschau' %}{{ preview_block(c.preview) }}{% endif %}
+    <p class="disc-card-line"><b>Warum:</b> {{ c.why.label }}{% if c.why.text %} – {{ c.why.text|truncate(160, false, ' …', 0) }}{% endif %}</p>
+    {% if c.numbers %}<p class="disc-card-line">{{ numline(c.numbers) }}</p>{% endif %}
+    <div class="disc-card-score">
+      {% if c.nash %}<span><span class="label">Portfolia-Score</span> {% if c.nash.quali_open %}<b>{{ pts(c.nash.data.pts) }}</b><span class="hint">/65 Daten · qualitativ offen</span>{% else %}<b>{{ pts(c.nash.total) }}</b><span class="hint">/125{% if c.nash.quali.n_open %} · {{ c.nash.quali.n_open }} offen{% endif %}</span>{% endif %}</span>{% else %}<span class="hint">noch keine Zahlen – „Öffnen“ und „Daten aktualisieren“</span>{% endif %}
+      {% if c.stage in ('analysiert', 'veraltet') and c.scores.disruption %}<span><span class="label">Disruption</span> <b>{{ pts(c.scores.disruption.total) }}</b><span class="hint">/100</span></span>{% endif %}
     </div>
-    {% if c.cats or c.ai_state %}<div class="disc-tags">{% for k in c.cats %}<span class="badge info">{{ cats[k] }}</span>{% endfor %}{% if c.analysed_at %}<span class="badge {{ 'good' if c.ai_state == 'vollstaendig' else 'warn' }}">KI: {{ {'vollstaendig': 'vollständig', 'teilweise': 'teilweise', 'veraltet': 'veraltet', 'fehlt': 'fehlt', 'aus': 'aus', 'budget': 'Budget', 'ungueltig': 'ungültig', 'fehler': 'Fehler', 'keine_quellen': 'keine Quellen', 'pausiert': 'pausiert'}.get(c.ai_state, c.ai_state) }}</span>{% endif %}</div>{% endif %}
-    <dl class="kv disc-card-kv">
-      <dt>Wichtigstes Signal</dt><dd>{% if c.signal %}{{ c.signal.title }} <span class="hint">({{ c.signal.kind }})</span>{% else %}–{% endif %}</dd>
-      <dt>Wichtigstes Gegenargument</dt><dd>{{ c.counter or '–' }}</dd>
-      <dt>Datenqualität</dt><dd>{% if c.coverage is not none %}{{ c.coverage|pct(0, false) }} der Kernkennzahlen vorhanden{% else %}–{% endif %}</dd>
-    </dl>
+    {% for a in c.alerts %}<p class="disc-card-alert"><span class="badge {{ 'crit' if a.level == 'crit' else 'warn' }}">!</span> {{ a.title }}</p>{% endfor %}
+    {% if c.core_risk %}<p class="disc-card-line hint"><b>Größtes Risiko:</b> {{ c.core_risk|truncate(160, false, ' …', 0) }}</p>{% endif %}
     <div class="disc-actions">
-      <a class="btn sm primary" href="/discovery/c/{{ c.id }}">Analyse öffnen</a>
-      <form method="post" action="/discovery/c/{{ c.id }}/watchlist"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Zur Watchlist</button></form>
+      {% if c.stage not in ('analysiert', 'veraltet') %}
+      <form method="post" action="/discovery/c/{{ c.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="ki"><button class="btn sm primary" type="submit" {{ 'disabled' if not st.usable }} title="{{ st.reason if not st.usable else '1 KI-Aufruf: Steckbrief, These, Gegenhypothese, Disruption, qualitative Score-Kriterien' }}">Mit KI analysieren · 1 Aufruf</button></form>
+      {% endif %}
+      <a class="btn sm {{ 'primary' if c.stage in ('analysiert', 'veraltet') }}" href="/discovery/c/{{ c.id }}">Öffnen</a>
       {% if c.status != 'beobachten' %}<form method="post" action="/discovery/c/{{ c.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="beobachten"><input type="hidden" name="back" value="/discovery"><button class="btn sm ghost" type="submit">Beobachten</button></form>{% endif %}
-      {% if c.status != 'zurueckgestellt' %}<form method="post" action="/discovery/c/{{ c.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="zurueckgestellt"><input type="hidden" name="back" value="/discovery"><button class="btn sm ghost" type="submit">Zurückstellen</button></form>{% endif %}
+      {% if c.status != 'verworfen' %}<form method="post" action="/discovery/c/{{ c.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="verworfen"><input type="hidden" name="back" value="/discovery"><button class="btn sm ghost" type="submit">Verwerfen</button></form>{% endif %}
     </div>
   </article>
 {% endfor %}
 </div>
 {% else %}
-<section class="card"><p class="hint">{% if n_total %}Keine Unternehmen in dieser Auswahl.{% else %}Noch keine Kandidaten. „Fundamentalscreening starten“ durchsucht das SEC-Universum ohne KI; „KI-Discovery starten“ sucht entlang von Wertschöpfungsketten; einzelne Unternehmen lassen sich direkt aufnehmen.{% endif %}</p></section>
+<section class="card"><p class="hint">{% if n_total %}Keine Unternehmen in dieser Auswahl.{% else %}Noch keine Kandidaten. „KI-Discovery starten“ schlägt Unternehmen mit Vorschau vor (2 KI-Aufrufe); „Fundamentalscreening starten“ durchsucht das SEC-Universum ohne KI; einzelne Unternehmen lassen sich direkt aufnehmen.{% endif %}</p></section>
 {% endif %}
+
+<details class="card disc-sec" id="vorwaertstest">
+  <summary class="card-head"><h2>Vorwärtstest</h2><span class="hint">{% if fw.n %}{{ fw.n }} Einträge seit {{ fw.first }} · erste Auswertung ab {{ fw.first_eval }}{% else %}noch keine Einträge{% endif %}</span></summary>
+  <p class="hint">Ob die KI-Discovery gute Vorschläge macht, lässt sich nur vorwärts prüfen: Jede KI-Vorschau und jede KI-Analyse wird mit Datum, Kurs und Score gespeichert und nach 12 bzw. 24 Monaten mit dem S&P 500 (SPY) verglichen. Rückwirkende Tests mit KI wären geschönt (das Modell kennt die Kursverläufe). Kursrendite ohne Dividenden; nicht mehr notierte Aktien werden als „ohne Kurs“ gezählt.</p>
+  {% if fw.n %}
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Art</th><th class="num">Einträge</th><th>Zwischenstand (alle)</th>{% for h in [12, 24] %}<th>nach {{ h }} Monaten</th>{% endfor %}</tr></thead><tbody>
+    {% for g in fw.groups %}<tr><td>{{ g.label }}</td><td class="num">{{ g.n }}</td>
+      <td>{% if g.interim.n %}Median {{ g.interim.median_excess|pct(1) }} ggü. S&P 500 · {{ g.interim.beat|pct(0, false) }} besser <span class="hint">({{ g.interim.n }} mit Kurs; noch nicht aussagekräftig)</span>{% else %}–{% endif %}</td>
+      {% for h in g.horizons %}<td>{% if h.n_eval %}Median {{ h.median_excess|pct(1) }} · {{ h.beat|pct(0, false) }} besser <span class="hint">(n={{ h.n_eval }}{% if h.missing %}, {{ h.missing }} ohne Kurs{% endif %})</span>{% else %}<span class="hint">noch keine{% if h.n %} ({{ h.n }} ohne Kurs){% endif %}</span>{% endif %}</td>{% endfor %}</tr>{% endfor %}
+  </tbody></table></div>
+  {% for g in fw.groups if g.by_rating is defined %}<p class="hint">Vorschau nach Disruption-Einschätzung (ab 12 Monaten): {% for r in g.by_rating %}{{ r.rating }} {% if r.n %}{{ r.median_excess|pct(1) }} (n={{ r.n }}){% else %}–{% endif %}{{ ' · ' if not loop.last }}{% endfor %}</p>{% endfor %}
+  <details class="box"><summary>Einträge ({{ fw.rows|length }} jüngste)</summary><div class="table-wrap"><table class="compact"><thead><tr><th>Datum</th><th>Unternehmen</th><th>Art</th><th class="num">Kurs damals</th><th class="num">Rendite</th><th class="num">S&P 500</th><th class="num">Differenz</th></tr></thead><tbody>
+    {% for r in fw.rows %}<tr><td class="nowrap">{{ r.day }}</td><td><a href="/discovery/c/{{ r.company_id }}">{{ r.name }}</a> <span class="hint">{{ r.ticker }}</span></td><td>{{ 'Vorschau' if r.kind == 'vorschau' else 'Analyse' }}{% if r.rating %} <span class="hint">({{ r.rating }})</span>{% endif %}</td><td class="num">{{ r.price|num(2) if r.price else '–' }} {{ r.ccy or '' }}</td><td class="num">{{ r.ret|pct(1) if r.ret is not none else '–' }}</td><td class="num">{{ r.bench_ret|pct(1) if r.bench_ret is not none else '–' }}</td><td class="num">{{ r.excess|pct(1) if r.excess is not none else '–' }}</td></tr>{% endfor %}
+  </tbody></table></div></details>
+  {% endif %}
+</details>
 
 <section class="card">
   <details><summary><b>Einstellungen, Zeitplan, Grenzen und Export</b></summary>
@@ -96,7 +112,7 @@
       {% for step, label in sched_labels.items() %}<label class="field">{{ label }}<select name="auto_{{ step }}">{% for v, t in [(0, 'aus'), (24, 'täglich'), (168, 'wöchentlich')] %}<option value="{{ v }}" {{ 'selected' if cfg['auto.' ~ step] == v }}>{{ t }}</option>{% endfor %}</select></label>{% endfor %}
       <label class="field">Discovery-KI-Aufrufe je Tag<input name="ai_calls_per_day" inputmode="numeric" value="{{ cfg.ai_calls_per_day }}"></label>
       <label class="field">Discovery-KI-Aufrufe je Monat<input name="ai_calls_per_month" inputmode="numeric" value="{{ cfg.ai_calls_per_month }}"></label>
-      <label class="field">Vertiefte KI-Analysen je Lauf<input name="auto_analyse_per_run" inputmode="numeric" value="{{ cfg.auto_analyse_per_run }}"></label>
+      <label class="field">Automatische Datenanalysen je Lauf (ohne KI)<input name="auto_analyse_per_run" inputmode="numeric" value="{{ cfg.auto_analyse_per_run }}"></label>
       <label class="field">Unternehmen je KI-Discovery<input name="ki_companies" inputmode="numeric" value="{{ cfg.ki_companies }}"></label>
       <label class="field">Bestätigungen je Screening-Lauf<input name="screen_batch" inputmode="numeric" value="{{ cfg.screen_batch }}"></label>
       <label class="field">Mindestumsatz im Screening (Mio. USD)<input name="min_revenue_musd" inputmode="numeric" value="{{ cfg.min_revenue_musd }}"></label>
@@ -105,7 +121,7 @@
       <label class="field">SEC-Kontakt (User-Agent, z. B. „Name name@example.org“)<input name="sec_user_agent" maxlength="200" value="{{ cfg.sec_user_agent or '' }}"></label>
       <div class="row"><button class="btn" type="submit">Speichern</button></div>
     </form>
-    <p class="hint">Die SEC verlangt einen aussagekräftigen User-Agent mit Kontakt (Fair-Access-Regeln); Portfolia sendet höchstens 2 Anfragen je Sekunde und speichert Antworten zwischen. Manuelle Starts haben Vorrang, umgehen aber nie die KI-Grenzen. <a href="/discovery/export.json">Discovery-Daten ansehen (JSON)</a> – Wiederherstellung über den Gesamtexport.</p>
+    <p class="hint">KI-Aufrufe entstehen nur durch die KI-Discovery (2 je Lauf) und durch Knöpfe je Unternehmen; alle anderen Abläufe laden kostenlos SEC- und Marktdaten. Die SEC verlangt einen aussagekräftigen User-Agent mit Kontakt (Fair-Access-Regeln); Portfolia sendet höchstens 2 Anfragen je Sekunde und speichert Antworten zwischen. Knöpfe umgehen nie die KI-Grenzen. <a href="/discovery/export.json">Discovery-Daten ansehen (JSON)</a> – Wiederherstellung über den Gesamtexport.</p>
   </details>
 </section>
 </div>

@@ -57,6 +57,7 @@ RULES = {
 }
 WEIGHTS = {"beschleunigung": 3, "marge": 2, "profitabel": 3, "fcf_wende": 2, "hebel": 2, "fcf_marge": 1,
            "umsatzrueckgang": -3, "margenverfall": -2, "verwaesserung": -2}
+SCORE_MAX = 14.0  # 13 Punkte aus den Merkmalen + 1 für Wachstum ≥ 30 % bei Beschleunigung
 CANDIDATE_MIN = 4  # Vorauswahl ab 4 Punkten (z. B. Beschleunigung + Hebel oder Profitabilitätswende + Marge)
 SIZES = (("gross", 10e9), ("mittel", 1e9), ("klein", 100e6), ("mikro", 0.0))
 SIZE_LABELS = {"gross": "groß (Umsatz ≥ 10 Mrd. USD)", "mittel": "mittel (1–10 Mrd.)", "klein": "klein (0,1–1 Mrd.)",
@@ -195,6 +196,11 @@ def evaluate(rev: list[float | None], oi: list[float | None], ocf: list[float | 
             "flags": flags, "score": float(score)}
 
 
+def screen_priority(score: float) -> float:
+    """Wendepunkt-Punkte (höchstens ``SCORE_MAX``) auf die gemeinsame Prioritätsskala 0–100."""
+    return round(max(0.0, min(SCORE_MAX, float(score))) / SCORE_MAX * 100, 1)
+
+
 def describe(ev: dict[str, Any]) -> str:
     from app.discovery.text import P
 
@@ -302,9 +308,10 @@ def _fy_eval(fu: F.Fundamentals) -> dict[str, Any] | None:
     ys = fu.years[-3:]
     if len(ys) < 3:
         return None
-    def s(key: str) -> list[float | None]:
-        return [fu.get(key, y).v for y in ys]
-    ev = evaluate(s("revenue"), s("operating_income"), s("ocf"), s("capex"), s("shares_diluted"))
+    def s(key: str) -> list[float | None]:  # Werte derselben Einreichung (umgestellte Vorjahre vergleichbar)
+        return fu.comparable(key, ys)
+    ev = evaluate(s("revenue"), s("operating_income"), s("ocf"), s("capex"),
+                  [fu.get("shares_diluted", y).v for y in ys])
     ev["years"] = ys
     return ev
 
@@ -344,7 +351,7 @@ def verify(ctx: Any, sec: SecClient, row: dict[str, Any], job_id: int | None) ->
                   key=f"wendepunkt:{ev['years'][-1]}", detail=detail, ref=f"CIK{cik:010d}", direction="positiv",
                   strength_=min(1.0, ev["score"] / 10), published_at=ev["years"][-1])
     SV.record_candidate(db, job_id, "wendepunkt", name=row["name"], ticker=row["ticker"], cik=cik, company_id=cid,
-                        status="bekannt" if known else "neu", reason=detail, priority=ev["score"] * 10,
+                        status="bekannt" if known else "neu", reason=detail, priority=screen_priority(ev["score"]),
                         evidence=[{"art": "SEC companyfacts", "jahre": ev["years"], "merkmale": ev["flags"]}])
     db.x("UPDATE disc_universe SET state='bestaetigt', reason=?, verified_at=?, company_id=?, updated_at=?, "
          "pre_json=? WHERE cik=?", (detail[:500], now, cid, now, json.dumps(ev), cik))

@@ -1,15 +1,122 @@
-# Discovery & Intelligence (0.109.0 – „Discovery & Intelligence 2.0“)
+# Discovery & Intelligence (0.110.0 – „Steckbrief, KI per Knopf, Vorwärtstest“)
 
-**Neu in 0.109:** eigenständige Scorecard **Tom Nash 125 – Public Reconstruction v1** (die bisherige 125-Punkte-Systematik
-heißt jetzt **Portfolia Fundamental v1**), vollständig sichtbarer **KI-Researchstatus**, persistente **Research-Jobs**
-mit Knöpfen und Fortschritt, gezieltes **Nachholen fehlender KI-Teile**, eine **Discovery Engine** mit drei
-Suchwegen unabhängig von der News-Pipeline (KI-gestützte Themen/Wertschöpfungsketten, fundamentale Wendepunkte im
-SEC-Universum, mögliche Marktfehlbewertungen), klassisches PEG, Bewertungsprofile, Gesamtrendite gegenüber dem
-S&P 500, Export/Wiederherstellung der Discovery-Daten im Gesamtexport.
+**Neu in 0.110** (Abschnitt [0](#0-neu-in-0110-und-begründung)): KI-Analysen **nur per Knopf** und mit **einem**
+Aufruf statt drei; die KI-Discovery schlägt Unternehmen mit **Vorschau** (Kurzbeschreibung, Disruption-Einschätzung,
+Chance/Nachfrage) vor und vertieft nichts automatisch; der **Portfolia-Score** (die bisherige „Tom Nash 125 – Public
+Reconstruction v1“, gleiche Berechnung) zeigt Datenteil (65 Punkte, ohne KI) und qualitativen Teil (60 Punkte, nur
+mit KI) getrennt; „Portfolia Fundamental v1“ wird nicht mehr angezeigt; die Unternehmensseite ist ein **Steckbrief**
+auf einem Bildschirm mit eingeklappten Details; Hinweise zu **Übernahmen** (SEC-Formulare), **Sondereffekten**
+(bereinigtes KGV) und Datenlücken stehen oben; Wachstum aus **vergleichbaren Werten derselben SEC-Einreichung**
+(umgestellte Vorjahre); gemeinsame Prioritätsskala 0–100; **Vorwärtstest** der Vorschläge.
+
+**Neu in 0.109:** eigenständige Scorecard nach der 125-Punkte-Methode (seit 0.110 „Portfolia-Score“), vollständig
+sichtbarer **KI-Researchstatus**, persistente **Research-Jobs** mit Knöpfen und Fortschritt, gezieltes **Nachholen
+fehlender KI-Teile**, eine **Discovery Engine** mit drei Suchwegen unabhängig von der News-Pipeline, klassisches PEG,
+Bewertungsprofile, Gesamtrendite gegenüber dem S&P 500, Export/Wiederherstellung der Discovery-Daten.
 
 Research-Modul: Es entdeckt börsennotierte Unternehmen, bewertet sie in getrennten, vollständig aufschlüsselbaren
 Scorecards und prüft den Fit zum eigenen Portfolio lokal. Es ist **kein** Kaufsignal-Generator. Es erzeugt keine
 Buchung und keine Order und verändert weder Ledger noch Steuer- oder Buchungsprüfungsdaten.
+
+## 0. Neu in 0.110 und Begründung
+
+### 0.1 Historische Auswertung: Was freie Kennzahlen leisten (und was nicht)
+
+Vor der Umsetzung wurde geprüft, ob sich spätere Vervielfacher allein aus kostenlosen SEC-Kennzahlen früh erkennen
+lassen. Aufbau: alle heute gelisteten US-Aktien (Nasdaq/NYSE/CBOE) mit ≥ 20 Mio. USD Umsatz und ≥ 50 Mio. USD
+Börsenwert, ca. 16.000 Firma-Jahre; SEC-Frames 2015–2024 (Geschäftsjahre bis Februar des Folgejahres abgeschlossen),
+Bildung jeweils Ende Mai 2018–2025 nur mit damals veröffentlichten Daten, Monatskurse (bereinigt) und Vergleich mit
+SPY nach 12/24/36 Monaten.
+
+| Rangliste (24 Monate) | n | Verdoppler | Halbiert | Faktor ggü. allen |
+|---|---|---|---|---|
+| Alle (Basis) | 13.878 | 11,6 % | 13,5 % | 1,00 |
+| Screening wie in der App (≥ 4 Punkte) | 2.451 | 11,8 % | 19,1 % | 1,01 |
+| Höchstes Umsatzwachstum (obere 10 %) | 1.390 | 12,7 % | 27,9 % | 1,09 |
+| Rule of 40 (obere 10 %) | 1.040 | 9,7 % | 19,9 % | 0,83 |
+| Kombination Fundamentaldaten (obere 10 %) | 1.390 | 9,9 % | 20,6 % | 0,85 |
+| Kursmomentum 12-1 (obere 10 %) | 1.355 | 14,5 % | 17,3 % | 1,24 |
+| Frühphase + Momentum (Top 25 je Jahr) | 175 | 18,3 % | 24,0 % | 1,57 |
+
+Von 694 späteren Verdreifachern (36 Monate) war das Screening bei 18,2 % beteiligt – bei 17,9 % Anteil am Universum
+(kein Vorsprung). Momentum: 11,5 % bei 9,8 % Anteil, aber diese Aktien waren im Vorjahr im Median bereits um 84 %
+gestiegen. Fallbeispiele: Palantir (Mai 2022, Screening 5 Punkte) und Upstart (Mai 2022, 7 Punkte) sahen in den Zahlen
+gleich aus (+1.748 % bzw. −57 % seither); Vertiv, Lumentum und Nvidia 2023 zeigten **vor** der KI-Welle kein Signal.
+
+**Folgerungen für die Produktgestaltung:** (1) Jahreskennzahlen bestätigen eine Wende, sie sagen sie nicht voraus;
+eine Rangliste aus freien Kennzahlen täuscht Qualität vor, die sie nicht hat. (2) Wachstumsfilter erhöhen vor allem
+das Risiko (mehr Halbierungen). (3) Der Weg „vor der Welle“ führt über Themen und Wertschöpfungsketten – das ist die
+Aufgabe der KI-Discovery; die SEC-Daten prüfen und warnen. (4) Ob die KI-Discovery besser als der Zufall ist, lässt
+sich **nur vorwärts** messen (ein Sprachmodell kennt vergangene Kursverläufe) – daher der Vorwärtstest (0.5).
+
+Grenzen der Auswertung: nur heute gelistete Unternehmen (Pleiten fehlen; die Ergebnisse der wachstumsstarken Gruppen
+sind dadurch eher zu gut), nur Jahreszahlen, ein Marktabschnitt (2018–2025) mit stark schwankenden Jahrgängen,
+Geschäftsjahre mit Ende nach Februar teils ausgelassen (kein Vorgriff), ohne Kosten und Steuern. Skripte liegen nicht
+im Repository (einmalige Analyse); die Methodik ist hier vollständig beschrieben.
+
+### 0.2 KI nur per Knopf, ein Aufruf
+
+* **Automatisch** (Zeitplan, Datenanalysen neuer Kandidaten, beobachtete Unternehmen): nur SEC- und Marktdaten,
+  **nie KI**. Einzige automatische KI: die KI-Discovery (wöchentlich, genau **2 Aufrufe**: Themen, Thesen mit
+  Vorschau); sie vertieft nichts automatisch.
+* **Knöpfe je Unternehmen:** „Mit KI analysieren · 1 Aufruf“ (Steckbrief, These, Gegenhypothese, Disruption-Kriterien,
+  qualitative Score-Kriterien in einer Antwort; jeder Teil wird einzeln geprüft und gespeichert), „KI-Analyse
+  aktualisieren · 1 Aufruf“ (Daten neu laden + 1 Aufruf), „Fehlende KI-Teile ergänzen · n Aufrufe“ (nur sichtbar, wenn
+  ein Teil ungültig ist), „Daten aktualisieren“ (kostenlos). Ohne KI bzw. ohne Kontingent ist der Knopf gesperrt und
+  nennt den Grund; es entsteht kein Job.
+* **Veraltet** ist ein KI-Bericht nur, wenn seit seiner Erstellung ein neuer Quartals- oder Jahresbericht bei der SEC
+  eingegangen ist (Einreichungsliste bzw. EDGAR-Tagesindex) – nicht bei neuen Meldungen oder Kursen. Er wird dann
+  markiert, aber nicht automatisch neu erstellt.
+* Textlängen im Prompt begrenzt (Geschäftsmodell 1–2 Sätze, These/Gegenhypothese höchstens 3 Sätze, Pro/Contra
+  höchstens 15 Wörter, Kriterien 1–2 Sätze). Prompt-Version 3; Teilversionen 3. Ältere Berichte bleiben gültig.
+
+### 0.3 Portfolia-Score
+
+Gleiche Berechnung wie „Tom Nash 125 – Public Reconstruction v1“ (Abschnitt 9), neuer Name; die Herkunft der Methode
+steht in den Details. Anzeige getrennt: **Datenteil** (7 Kennzahl-Kriterien, 65 Punkte, immer ohne KI berechnet) und
+**qualitativer Teil** (6 Kriterien, 60 Punkte, nur nach KI-Analyse). Ohne KI-Analyse steht der qualitative Teil auf
+„offen“ (nicht 0); fehlende Datenkriterien werden gezählt und markiert. „Portfolia Fundamental v1“ wird nicht mehr
+angezeigt (Werte bleiben in älteren Versionen gespeichert, nichts wird umgerechnet). Quality, Growth/GARP und
+Valuation erscheinen im Steckbrief als Balken; Disruption ist Teil der KI-Analyse (vorher: Vorschau-Einschätzung).
+
+### 0.4 Steckbrief und Vorschau-Karten
+
+* **Unternehmensseite:** oben ein Steckbrief (Name, Stand, Hinweise, Kurzbeschreibung, warum vorgeschlagen, ggf.
+  KI-Vorschau, Portfolia-Score, Balken, drei Kennzahlen, je höchstens drei Punkte dafür/dagegen, Bewertung in einem
+  Satz, größtes Risiko, Knöpfe mit Kosten). Alles Weitere eingeklappt: KI-Status, These/Gegenhypothese, 13 Kriterien,
+  weitere Bewertungen, Fundamentaldaten, Bewertung/Szenarien, Portfolio-Fit, Signale/Herkunft/Meilensteine, Quellen,
+  Historie. Ohne KI stammen Pro/Contra aus Regeln (Signale, Szenarien, Sondereffekte, Verwässerung).
+* **Hinweise oben (ohne KI):** Übernahme/Fusion laut SEC-Formular (SC 14D9, SC TO-T, PREM14A, DEFM14A, 425 in den
+  letzten 180 Tagen – belegt) bzw. laut Meldung (Begriffe, 90 Tage – „ungeprüft“, Rolle nicht bestimmt);
+  wesentliche **Sondereffekte** des letzten Geschäftsjahres (Schuldentilgung, Wertminderungen, Restrukturierung,
+  Veräußerungsergebnisse, aufgegebene Bereiche; wesentlich ab 5 % des Umsatzes oder 25 % des Nettoergebnisses) mit
+  bereinigtem Nettoergebnis (vor Steuereffekt) und **bereinigtem KGV**; Datenlücken (< 70 % Kernkennzahlen, letzter
+  Abschluss älter als 16 Monate, kein Kurs, mehrere Währungen).
+* **Discovery-Liste:** Karten mit Stand (KI-Vorschau, mit KI analysiert, veraltet, nur Daten), Kurzbeschreibung,
+  **Disruption (Vorschau)** – was verdrängt wird, womit, Reifegrad, Einschätzung gering/mittel/hoch (hoch nur mit
+  wörtlich gefundener Belegstelle, sonst mittel) –, „Warum“, drei Kennzahlen, Portfolia-Score (Daten/qualitativ),
+  wichtigste Hinweise, Knöpfe „Mit KI analysieren · 1 Aufruf“, „Öffnen“, „Beobachten“, „Verwerfen“. Kategorien nach
+  Stand und Inhalt; Standard-Sortierung „Neueste Signale“.
+* **Priorität:** gemeinsame Skala 0–100 (Screening: Punkte ÷ 14 × 100; Migration 43 rechnet gespeicherte Werte um).
+  Nur zur Reihenfolge, kein Qualitätsurteil.
+
+### 0.5 Vorwärtstest
+
+Jede KI-Vorschau und jede KI-Analyse wird mit Stichtag, Kurs, SPY-Stand, Portfolia-Score und (Vorschau) Disruption-
+Einschätzung gespeichert (`disc_forward`, je Unternehmen/Art/Tag einmal; im Gesamtexport enthalten). Die
+Discovery-Seite zeigt je Art den Zwischenstand und – sobald erreicht – Median der Mehrrendite gegenüber dem S&P 500 und
+Anteil besser nach 12 und 24 Monaten, bei Vorschauen zusätzlich nach Einschätzung. Kurse werden wöchentlich (Job
+„beobachtet“, ohne KI) aktualisiert. Grenzen: Kursrendite ohne Dividenden, nicht mehr notierte Aktien werden als
+„ohne Kurs“ gezählt, vor 12 Monaten nur Zwischenstand.
+
+### 0.6 Datenkorrekturen
+
+* **Umgestellte Vorjahre:** Wachstum wird aus Werten **derselben Einreichung** berechnet (jüngste, die beide Jahre
+  enthält); die Tabelle zeigt „umgest.“. Beispiel AppLovin: Der 10-K 2026 weist 2023/2024 ohne den verkauften
+  App-Bereich aus – der frühere Vergleich „neuer Wert ÷ alter Vorjahreswert“ ergab einen Schein-Rückgang (−35 %). Das
+  Screening nutzt dieselben vergleichbaren Werte.
+* **Neuer SEC-Bericht erzeugt eine neue Analyseversion** (auch ohne geänderte Kennzahlen), damit „veraltet“ sichtbar
+  wird.
 
 ## 1. Produktvision und Funktionsumfang
 
@@ -150,8 +257,10 @@ Drei eigenständige Suchwege plus Nachrichten. Jeder Weg ist ein Job mit eigenem
    (geprüfte Belegstelle 10, SEC-Umsatz 5) + Neuheit 15 + unabhängige Evidenz (Wendepunkt im Screening 15, mehrere
    Ausgangsbelege 10) = höchstens 100. Kein Ersatz für die Scores.
 6. *Fundamentale Validierung*: Analyse im Modus „daten“ (alle Regelkriterien, keine KI).
-7. *Vertiefte KI-Analyse* der `discovery.auto_analyse_per_run` besten Kandidaten (3 Aufrufe je Unternehmen), nur wenn
-   das Budget reicht.
+7. *Vorschau statt Vertiefung* (seit 0.110): Die Thesen enthalten je Unternehmen eine Kurzbeschreibung und eine
+   Disruption-Vorschau (verdrängt, womit, Reifegrad, gering/mittel/hoch); jede Vorschau geht in den Vorwärtstest. Eine
+   vertiefte KI-Analyse startet nur der Nutzer per Knopf (1 Aufruf). Bis 0.109: automatische Vertiefung der besten
+   Kandidaten mit 3 Aufrufen je Unternehmen.
 8. *Speicherung*: Signal „KI-Discovery: Thema“, Kandidaten (neu / bereits bekannt / verworfen mit Grund), Themen samt
    Fakten, Hypothese und Gegenargument im Job-Ergebnis.
 
@@ -285,7 +394,7 @@ ausstehende KI-Analysen, Fehler – nur gezählte Werte.
 Junge Unternehmen werden nicht ausgeschlossen. Fehlender Gewinn, negativer FCF, kurze Historie, Cash Burn
 (Reichweite), Verwässerung und Bruttomarge sind einzelne, sichtbare Kriterien.
 
-## 9. Tom Nash 125 – Public Reconstruction v1 und Portfolia Fundamental v1
+## 9. Portfolia-Score (bis 0.109 „Tom Nash 125 – Public Reconstruction v1“) und Portfolia Fundamental v1
 
 ### 9.1 Quellenlage
 
@@ -470,7 +579,8 @@ Weitere Regeln:
 Es gibt keine zweite Infrastruktur: Aufrufe laufen über `AiGateway.generate` (Claude oder Gemini laut
 `llm.provider`, Modell laut `llm.model` bzw. `llm.gemini_model`), JSON-Modus, Budgets und Pausen des Gateways.
 
-**Teilanalysen** (je Unternehmen, einzeln gespeichert in `disc_ai_part`, einzeln nachholbar):
+**Teilanalysen** (je Unternehmen, einzeln gespeichert in `disc_ai_part`, einzeln nachholbar; seit 0.110 entstehen
+alle drei aus **einem** Aufruf `analyse`, Nachholen eines ungültigen Teils kostet je Teil einen Aufruf):
 
 | Teil | Inhalt | Prüfung |
 |---|---|---|
@@ -663,6 +773,20 @@ Ergebnis:
 - Diese lassen sich **nicht seriös rückwirkend testen**, weil heutige KI-Modelle die spätere Entwicklung kennen
   (Zukunftsinformation). Deshalb wird kein rückwirkend optimierter Score präsentiert. Ein systematischer Backtest
   bräuchte damalige Dokumente und ein Modell ohne Wissen über die Zukunft.
+
+### Abnahme 0.110 (09.11.2026)
+
+* **Tests:** `tests/test_discovery.py` (29), `tests/test_discovery2.py` (38), neu `tests/test_discovery3.py` (10):
+  ein Aufruf für drei Teile, keine KI in Automatik/Datenaktualisierung, Sperre ohne Kontingent ohne Job, „veraltet“
+  nur nach neuem SEC-Bericht, umgestellte Vorjahre, Sondereffekte und bereinigtes KGV, Übernahme-Hinweise (SEC und
+  Meldung), Prioritätsskala und Migration 43, Steckbrief ohne KI, Vorwärtstest und Sicherung, Disruption-Vorschau.
+* **Echte Daten (SEC, Kurse), KI als gekennzeichneter Mock** (Modellname „MOCK-kontrolliert (kein Live-Modell)“):
+  Lumentum (LITE) – Hinweis „Übernahme/Fusion laut SEC-Einreichung“ (15 Mitteilungen nach Form 425 seit 02.11.2026),
+  Sondereffekt „Ergebnis aus Schuldentilgung −7,76 Mrd. USD“, bereinigtes Nettoergebnis ≈ 0,82 Mrd. USD, KGV bereinigt
+  ≈ 66 (unbereinigt nicht berechenbar). KI-Discovery: genau 2 Aufrufe, 3 Vorschläge mit Vorschau (LITE, CRDO, COHR),
+  3 Vorwärtstest-Einträge; KI-Analyse CRDO per Knopf: 1 Aufruf, alle drei Teile gültig, Portfolia-Score 82,5/125
+  (Daten 55/65). Mobil (390 px) ohne horizontales Scrollen.
+* **Live-KI-Abnahme steht weiterhin aus** (kein Schlüssel in der Entwicklungsumgebung).
 
 ## 19. Bekannte Grenzen
 

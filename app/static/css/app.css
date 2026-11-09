@@ -1252,3 +1252,38 @@ span.disc-o-reported, span.disc-o-derived, span.disc-o-estimated, span.disc-o-mi
   .disc-actions form { flex: 1 1 calc(50% - 8px); }
   .disc-actions form .btn { width: 100%; }
 }
+
+/* Discovery 0.110: Steckbrief, Vorschau-Karten, eingeklappte Abschnitte */
+.disc-brief { display: flex; flex-direction: column; gap: 10px; }
+.disc-brief > p, .disc-brief .disc-preview p { margin: 0; overflow-wrap: anywhere; }
+.disc-brief-what { font-size: 1rem; }
+.disc-brief-line { font-size: 0.92rem; }
+.disc-brief-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 720px) { .disc-brief-grid { grid-template-columns: minmax(200px, 1fr) 2fr; } }
+.disc-brief-score { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm); }
+.disc-brief-score .label, .disc-bar .label, .disc-card-score .label { font-size: 0.75rem; color: var(--ink-2); }
+.disc-big { font-size: 1.8rem; font-weight: 700; line-height: 1.1; }
+.disc-brief-bars { display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+.disc-bar { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.disc-bar .meter { min-width: 0; }
+.disc-bar-val { white-space: nowrap; font-weight: 600; }
+.disc-procon { display: grid; grid-template-columns: 1fr; gap: 8px 16px; }
+@media (min-width: 720px) { .disc-procon { grid-template-columns: 1fr 1fr; } }
+.disc-procon h3 { margin: 0 0 4px; font-size: 0.9rem; }
+.disc-procon ul { margin: 0; }
+.disc-procon li { overflow-wrap: anywhere; }
+.disc-preview { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: var(--radius-sm); }
+.disc-preview p { margin: 0; font-size: 0.88rem; overflow-wrap: anywhere; }
+.disc-alert { margin: 0; }
+.disc-num { white-space: nowrap; }
+.disc-sec > summary { cursor: pointer; list-style: none; flex-wrap: wrap; }
+.disc-sec > summary::-webkit-details-marker { display: none; }
+.disc-sec > summary h2::before { content: "▸ "; color: var(--ink-2); }
+.disc-sec[open] > summary h2::before { content: "▾ "; }
+.disc-sec:not([open]) > summary { margin-bottom: 0; }
+.disc-sec[open] > summary + * { margin-top: 4px; }
+.disc-sec .disc-score { margin: 10px 0 0; box-shadow: none; border: 1px solid var(--border); }
+.disc-card-line { margin: 0; font-size: 0.86rem; overflow-wrap: anywhere; }
+.disc-card-score { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; }
+.disc-card-score b { font-size: 1.15rem; }
+.disc-card-alert { margin: 0; font-size: 0.84rem; }

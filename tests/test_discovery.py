@@ -360,15 +360,18 @@ def test_manual_add_analyse_detail_page_and_versions(app_client, monkeypatch):
     r = c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token, "mode": "daten"}, follow_redirects=False)
     assert "abgeschlossen" in r.headers["location"] and "job=" in r.headers["location"]
     page = c.get(f"/discovery/c/{cid}").text
-    for needle in ("Investment-Überblick", "KI-Researchstatus dieser Firma", "Geschäftsmodell", "Investment-These",
-                   "Gegenhypothese", "Tom Nash 125", "Disruption:", "Quality:", "Growth / GARP:",
-                   "Portfolia Fundamental v1:", "Valuation:", "Portfolio-Fit", "Quellenverzeichnis", 'id="src-S1"',
+    for needle in ("Portfolia-Score", "/ 65 Datenteil", "qualitativer Teil (60 Punkte): <b>offen</b>",
+                   "Warum vorgeschlagen", "Wachstum", "Qualität", "Bewertung", "Dafür", "Dagegen",
+                   "KI-Status dieser Firma", "These und Gegenhypothese", "alle 13 Kriterien", "Weitere Bewertungen",
+                   "Fundamentaldaten", "Bewertung und Szenarien", "Portfolio-Fit", "Quellen", 'id="src-S1"',
                    "1. Definition", "11. Fehlende Informationen", "Eingepreistes Startwachstum",
-                   "Alpha Robotics builds industrial robots.", "Fehlende KI-Teile ergänzen",
-                   "Vollanalyse aktualisieren", "Fundamentaldaten aktualisieren", "KI-Analyse starten",
-                   "Analysehistorie anzeigen"):
+                   "Alpha Robotics builds industrial robots.", "Mit KI analysieren · 1 Aufruf",
+                   "Daten aktualisieren", "Analysehistorie", "Nur Daten (ohne KI)"):
         assert needle in page, needle
-    assert "Fundamental (Tom-Nash-inspiriert):" not in page  # alte Bezeichnung nur noch als Erklärung
+    for gone in ("Fundamental (Tom-Nash-inspiriert):", "Portfolia Fundamental v1", "Tom Nash 125",
+                 "Vollanalyse aktualisieren", "Investment-Überblick"):
+        assert gone not in page, gone  # alte Methode und Bezeichnungen nicht mehr angezeigt
+    assert page.count("<details") >= 8 and "Fehlende KI-Teile ergänzen ·" not in page  # Details eingeklappt
     assert c.get("/discovery/t/ALPH", follow_redirects=False).headers["location"] == f"/discovery/c/{cid}"
     assert "noch nicht im Discovery-Radar" in c.get("/discovery/t/ZZZZ").text
     again = c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token, "mode": "daten"},
@@ -392,7 +395,7 @@ def test_actions_status_watchlist_and_radar_filters(app_client):
     cid = int(_add(c, "ALPH").headers["location"].split("/c/")[1].split("?")[0])
     c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token, "mode": "daten"})
     radar = c.get("/discovery").text
-    assert "Alpha Robotics" in radar and "Analyse öffnen" in radar
+    assert "Alpha Robotics" in radar and "Öffnen" in radar and "Mit KI analysieren · 1 Aufruf" in radar
     c.post(f"/discovery/c/{cid}/status", data={"csrf_token": c.token, "status": "zurueckgestellt"})
     assert "Alpha Robotics" not in c.get("/discovery").text and "Alpha Robotics" in c.get("/discovery?alle=1").text
     c.post(f"/discovery/c/{cid}/status", data={"csrf_token": c.token, "status": "beobachten"})
@@ -457,12 +460,20 @@ def nash_answer(level: int = 2, quote: str = "Alpha sells robots. Revenue was 74
 
 
 def fake_parts(seen: list[tuple[str, str]], *, bericht: Any = None, nash: Any = None) -> Any:
-    """KI-Attrappe: antwortet je Teilanalyse (erkannt am Systemtext) – keine echten Aufrufe."""
+    """KI-Attrappe: antwortet auf den Gesamtaufruf (0.110) bzw. je Teilanalyse (Nachholen), erkannt am Systemtext –
+    keine echten Aufrufe. Ein Text statt eines Objekts macht den Teil ungültig."""
     def gen(self, system, user, schema, max_tokens, json_mode=False):
-        part = "bericht" if system == AI.SYSTEM_BERICHT else "disruption" if system == AI.SYSTEM_DISRUPTION else \
-            "nash" if system == AI.SYSTEM_NASH else "andere"
+        part = "analyse" if system == AI.SYSTEM_ANALYSE else "bericht" if system == AI.SYSTEM_BERICHT else \
+            "disruption" if system == AI.SYSTEM_DISRUPTION else "nash" if system == AI.SYSTEM_NASH else "andere"
         seen.append((part, user))
-        if part == "bericht":
+        if part == "analyse":
+            b = bericht if bericht is not None else ai_answer()
+            n = nash if nash is not None else nash_answer()
+            if isinstance(b, str):
+                return AiResult(b, 1000, 800, "gemini", "gemini-test")  # ganze Antwort unbrauchbar
+            data = {"bericht": b, "disruption": {"kriterien": ai_answer()["kriterien"]},
+                    "nash": "ungültig" if isinstance(n, str) else n}
+        elif part == "bericht":
             data = bericht if bericht is not None else ai_answer()
         elif part == "disruption":
             data = {"kriterien": ai_answer()["kriterien"]}
@@ -483,14 +494,15 @@ def test_ai_analysis_privacy_budget_and_failure(app_client, monkeypatch):
     cid = int(_add(c, "ALPH").headers["location"].split("/c/")[1].split("?")[0])
     res = SV.analyse_company(ctx, cid, mode="ki")
     assert res["status"] == "ok" and not res["ai_error"] and res["ai_state"] == "vollstaendig"
-    assert sorted(p for p, _ in seen) == ["bericht", "disruption", "nash"]  # drei getrennte Teilanalysen
+    assert [p for p, _ in seen] == ["analyse"]  # ein Aufruf für alle drei Teile (0.110)
     an = SV.analysis(ctx.db, cid)
     assert an["provider"] == "gemini" and an["result"]["thesis"]["text"]
     assert an["result"]["scores"]["disruption"]["coverage"] == 1.0
     nash = an["result"]["scores"]["nash125"]
     assert all(c_["points"] is not None for c_ in nash["criteria"] if c_["kind"] == "ai")
     assert ctx.db.scalar("SELECT COUNT(*) FROM disc_milestone WHERE company_id=?", (cid,)) == 2
-    assert ctx.db.scalar("SELECT COUNT(*) FROM disc_ai_call WHERE company_id=? AND status='ok'", (cid,)) == 3
+    assert ctx.db.scalar("SELECT COUNT(*) FROM disc_ai_call WHERE company_id=? AND status='ok'", (cid,)) == 1
+    assert ctx.db.scalar("SELECT COUNT(*) FROM disc_ai_part WHERE company_id=? AND status='ok'", (cid,)) == 3
     for _p, user in seen:
         payload = json.loads(user)
         assert set(payload) == {"unternehmen", "quellen"}
@@ -498,9 +510,9 @@ def test_ai_analysis_privacy_budget_and_failure(app_client, monkeypatch):
         for forbidden in ("Depot", "Wallet", "qty", "Gewicht", "Konto"):
             assert forbidden not in user
     # Budget: Tagesgrenze erreicht → kein weiterer Aufruf, Zustand „budget“, Analyse ohne neue KI-Teile
-    ctx.settings.set("discovery.ai_calls_per_day", 3)
+    ctx.settings.set("discovery.ai_calls_per_day", 1)
     r2 = SV.analyse_company(ctx, cid, mode="ki", force=True)
-    assert "Tagesgrenze" in r2["ai_error"] and len(seen) == 3
+    assert "Tagesgrenze" in r2["ai_error"] and len(seen) == 1 and r2["ai_call"] == "budget"
     ctx.settings.set("discovery.ai_calls_per_day", 20)
 
     def boom(self, *a, **k):

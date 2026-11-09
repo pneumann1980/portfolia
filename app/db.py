@@ -1307,6 +1307,29 @@ CREATE TABLE IF NOT EXISTS disc_candidate (
 CREATE INDEX IF NOT EXISTS ix_disc_candidate_job ON disc_candidate(job_id);
 CREATE INDEX IF NOT EXISTS ix_disc_candidate_company ON disc_candidate(company_id);
 """),
+    (43, """
+-- Discovery 0.110: gemeinsame Prioritätsskala 0–100 (Screening speicherte bisher Punkte × 10, höchstens 14 Punkte)
+-- und Vorwärtstest (Vorschauen und Analysen mit Datum, Kurs und Score – Auswertung nach 12 und 24 Monaten).
+UPDATE disc_candidate SET priority = ROUND(MIN(140.0, priority) * 100.0 / 140.0, 1)
+ WHERE path = 'wendepunkt' AND priority IS NOT NULL;
+CREATE TABLE IF NOT EXISTS disc_forward (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id   INTEGER NOT NULL REFERENCES disc_company(id) ON DELETE CASCADE,
+  kind         TEXT NOT NULL,                   -- vorschau (KI-Discovery) | analyse (KI-Analyse per Knopf)
+  ref          TEXT,                            -- Job- bzw. Analyse-ID
+  day          TEXT NOT NULL,                   -- Stichtag (JJJJ-MM-TT)
+  series       TEXT,                            -- Kursreihe (yahoo:<Symbol>)
+  price        REAL,                            -- Kurs am Stichtag (Handelswährung)
+  ccy          TEXT,
+  bench_price  REAL,                            -- S&P 500 (SPY) am Stichtag
+  score        REAL,                            -- Portfolia-Score (Punkte) am Stichtag, falls berechnet
+  score_open   INTEGER,                         -- 1 = qualitative Kriterien noch offen
+  rating       TEXT,                            -- Vorschau: Disruption-Einschätzung (gering | mittel | hoch)
+  detail_json  TEXT,
+  created_at   TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_disc_forward ON disc_forward(company_id, kind, day);
+"""),
 ]
 
 
