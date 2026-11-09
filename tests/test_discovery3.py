@@ -247,3 +247,39 @@ def test_preview_disruption_validation():
     assert capped["einschaetzung"] == "mittel" and capped["reifegrad"] == "" and capped["hinweis"]
     assert EN.validate_disruption_preview({"einschaetzung": "hoch"}, texts) is None  # ohne Inhalt keine Vorschau
     assert EN.validate_disruption_preview("Unsinn", texts) is None
+
+
+def test_automatic_refresh_new_filing_first_then_missing_then_old(app_client, monkeypatch):
+    c = app_client
+    ctx = c.app.state.ctx
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr("app.news.ai.AiGateway.generate", fake_parts(seen))
+    a, b = _cid(_add(c, "ALPH")), _cid(_add(c, "BETA"))
+    SV.analyse_company(ctx, a, mode="daten")
+    SV.analyse_company(ctx, b, mode="daten")
+    g = _cid(_add(c, "GOOGL"))  # noch ohne Analyse
+    co_a = SV.company(ctx.db, a)
+    today = today_local().isoformat()
+    ctx.db.x("INSERT INTO disc_universe(cik, ticker, name, filed_seen, added_at, updated_at) VALUES (?,?,?,?,?,?)",
+             (co_a["cik"], "ALPH", "Alpha", (today_local() + timedelta(days=1)).isoformat(), today, today))
+    ctx.db.x("UPDATE disc_analysis SET created_at='2020-01-01T00:00:00+00:00' WHERE company_id=?", (b,))
+    ctx.settings.set("discovery.refresh_days", 30)
+    plan = EN.refresh_plan(ctx)
+    assert [x["id"] for x in plan["bericht"]] == [a] and [x["id"] for x in plan["neu"]] == [g]
+    assert [x["id"] for x in plan["alt"]] == [b]
+    ctx.settings.set("discovery.auto_analyse_per_run", 2)
+    jid, _ = J_create_auto(ctx)
+    EN.J.run(ctx, jid)
+    jb = EN.J.get(ctx.db, jid)
+    res = jb["result"]
+    assert jb["status"] == "teilweise", jb  # GOOGL hat in der Testumgebung keine SEC-Daten – Lauf geht weiter
+    assert [x["grund"] for x in res["analysiert"]] == ["bericht", "neu"] and res["offen"] == 1
+    assert res["analysiert"][0]["status"] in ("ok", "unchanged") and res["analysiert"][1]["status"] == "fehler"
+    assert res["neuer_bericht"] == 1 and seen == []  # nie KI
+    assert len(SV.analyses(ctx.db, a)) >= 2  # neuer SEC-Bericht → neue Version
+    page = c.get("/discovery").text
+    assert "Alle Kandidaten automatisch aktualisieren" in page and 'value="30" selected' in page
+    form = {"csrf_token": c.token, "refresh_days": "7", "auto_analyse_per_run": "25"}
+    r = c.post("/discovery/einstellungen", data=form, follow_redirects=False)
+    assert r.status_code == 303 and ctx.settings.get("discovery.refresh_days") == 7
+    assert ctx.settings.get("discovery.auto_analyse_per_run") == 25

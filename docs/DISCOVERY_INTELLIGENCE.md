@@ -70,6 +70,18 @@ im Repository (einmalige Analyse); die Methodik ist hier vollständig beschriebe
 * Textlängen im Prompt begrenzt (Geschäftsmodell 1–2 Sätze, These/Gegenhypothese höchstens 3 Sätze, Pro/Contra
   höchstens 15 Wörter, Kriterien 1–2 Sätze). Prompt-Version 3; Teilversionen 3. Ältere Berichte bleiben gültig.
 
+### 0.2a Automatische Datenaktualisierung (SEC, Kurse – ohne KI)
+
+Der Zeitplan-Schritt „Datenaktualisierung“ (Standard täglich) frischt Kandidaten mit Status „neu“ oder
+„beobachten“ in fester Reihenfolge auf: (1) **neuer Quartals- oder Jahresbericht** bei der SEC seit der letzten
+Analyse (erkannt über den EDGAR-Tagesindex des Screenings bzw. die Einreichungsliste) – noch am selben Tag;
+(2) Kandidaten **ohne Analyse**; (3) alle übrigen, deren Analyse älter ist als der gewählte Abstand
+(**wöchentlich** oder **monatlich**, Einstellung `discovery.refresh_days` = 7 bzw. 30). Höchstens
+`discovery.auto_analyse_per_run` Firmen je Lauf (Standard 25, einstellbar bis 100); der Rest folgt im nächsten
+Lauf (Anzahl im Job-Ergebnis). Je Firma 2–3 SEC-Abrufe (zwischengespeichert, höchstens 2 Anfragen/s), keine Kosten.
+Ein Fehler bei einer Firma bricht den Lauf nicht ab (Job „teilweise“, Grund je Firma). Ein vorhandener KI-Bericht
+wird bei neuem SEC-Bericht als „veraltet“ markiert, nie automatisch neu erstellt.
+
 ### 0.3 Portfolia-Score
 
 Gleiche Berechnung wie „Tom Nash 125 – Public Reconstruction v1“ (Abschnitt 9), neuer Name; die Herkunft der Methode
@@ -776,10 +788,12 @@ Ergebnis:
 
 ### Abnahme 0.110 (09.11.2026)
 
-* **Tests:** `tests/test_discovery.py` (29), `tests/test_discovery2.py` (38), neu `tests/test_discovery3.py` (10):
+* **Tests:** `tests/test_discovery.py` (29), `tests/test_discovery2.py` (38), neu `tests/test_discovery3.py` (11):
   ein Aufruf für drei Teile, keine KI in Automatik/Datenaktualisierung, Sperre ohne Kontingent ohne Job, „veraltet“
   nur nach neuem SEC-Bericht, umgestellte Vorjahre, Sondereffekte und bereinigtes KGV, Übernahme-Hinweise (SEC und
-  Meldung), Prioritätsskala und Migration 43, Steckbrief ohne KI, Vorwärtstest und Sicherung, Disruption-Vorschau.
+  Meldung), Prioritätsskala und Migration 43, Steckbrief ohne KI, Vorwärtstest und Sicherung, Disruption-Vorschau,
+  automatische Datenaktualisierung (Reihenfolge neuer Bericht → ohne Analyse → fällig, Grenze, Einstellung,
+  Fehler einer Firma bricht den Lauf nicht ab).
 * **Echte Daten (SEC, Kurse), KI als gekennzeichneter Mock** (Modellname „MOCK-kontrolliert (kein Live-Modell)“):
   Lumentum (LITE) – Hinweis „Übernahme/Fusion laut SEC-Einreichung“ (15 Mitteilungen nach Form 425 seit 02.11.2026),
   Sondereffekt „Ergebnis aus Schuldentilgung −7,76 Mrd. USD“, bereinigtes Nettoergebnis ≈ 0,82 Mrd. USD, KGV bereinigt

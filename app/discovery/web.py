@@ -168,7 +168,7 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         form = await request.form()
         for key, lo, hi in (("discovery.ai_calls_per_day", 0, 100), ("discovery.ai_calls_per_month", 0, 3000),
-                            ("discovery.max_new_per_run", 0, 50), ("discovery.auto_analyse_per_run", 0, 10),
+                            ("discovery.max_new_per_run", 0, 50), ("discovery.auto_analyse_per_run", 0, 100),
                             ("discovery.news_days", 1, 90), ("discovery.screen_batch", 0, 200),
                             ("discovery.min_revenue_musd", 0, 100000), ("discovery.ki_companies", 1, 12)):
             raw = form.get(key.split(".", 1)[1])
@@ -182,6 +182,9 @@ def make_router() -> APIRouter:
             raw = form.get(f"auto_{step}")
             if raw is not None and str(raw) in ("0", "24", "168"):
                 ctx.settings.set(f"discovery.auto.{step}", int(str(raw)))
+        raw_days = str(form.get("refresh_days") or "")
+        if raw_days in ("7", "30"):
+            ctx.settings.set("discovery.refresh_days", int(raw_days))
         for key in ("discovery.enabled", "discovery.ai", "discovery.themes"):
             ctx.settings.set(key, form.get(key.split(".", 1)[1]) == "1")
         ua = " ".join(str(form.get("sec_user_agent", "")).split())[:200]

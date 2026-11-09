@@ -471,26 +471,63 @@ def _watched(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
     return "abgeschlossen", {"aktualisiert": done, "vorwaertstest": fw}
 
 
-def auto_analyses(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
-    """Automatische Datenanalysen (ohne KI): Kandidaten ohne Analyse oder mit Analyse älter als 7 Tage, nach
-    Priorität. KI-Analysen startet nur der Nutzer per Knopf."""
-    n = int(SV.setting(ctx, "discovery.auto_analyse_per_run") or 0)
-    week = (datetime.now(UTC) - timedelta(days=7)).isoformat()
-    rows = ctx.db.q("SELECT c.id, c.name, MAX(COALESCE(k.priority, 0)) AS p, MAX(s.strength) AS st, "
-                    "(SELECT MAX(created_at) FROM disc_analysis a WHERE a.company_id = c.id) AS last_an "
-                    "FROM disc_company c LEFT JOIN disc_candidate k ON k.company_id = c.id "
-                    "LEFT JOIN disc_signal s ON s.company_id = c.id WHERE c.status IN ('neu', 'beobachten') "
-                    "GROUP BY c.id ORDER BY (last_an IS NOT NULL), p DESC, st DESC LIMIT 60")
-    done: list[dict[str, Any]] = []
+def refresh_plan(ctx: Any) -> dict[str, list[dict[str, Any]]]:
+    """Welche Kandidaten (Status „neu“ oder „beobachten“) die automatische Datenaktualisierung braucht:
+
+    * ``bericht`` – seit der letzten Analyse ist ein neuer Quartals- oder Jahresbericht bei der SEC eingegangen
+      (EDGAR-Tagesindex aus dem Screening bzw. Einreichungsliste der letzten Analyse) – Vorrang;
+    * ``neu`` – noch keine Analyse;
+    * ``alt`` – letzte Analyse älter als ``discovery.refresh_days`` (7 = wöchentlich, 30 = monatlich)."""
+    db = ctx.db
+    days = int(SV.setting(ctx, "discovery.refresh_days") or 7)
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    rows = db.q("SELECT c.id, c.name, c.cik, a.created_at AS last_an, a.result_json, u.filed_seen, "
+                "(SELECT MAX(COALESCE(priority, 0)) FROM disc_candidate k WHERE k.company_id = c.id) AS p "
+                "FROM disc_company c LEFT JOIN disc_analysis a ON a.id = (SELECT MAX(id) FROM disc_analysis "
+                "WHERE company_id = c.id) LEFT JOIN disc_universe u ON u.cik = c.cik "
+                "WHERE c.status IN ('neu', 'beobachten')")
+    out: dict[str, list[dict[str, Any]]] = {"bericht": [], "neu": [], "alt": []}
     for r in rows:
-        if len(done) >= n:
-            break
-        if r["last_an"] and r["last_an"] >= week:
+        item = {"id": int(r["id"]), "name": r["name"], "p": r["p"] or 0, "last": r["last_an"] or "",
+                "filed": str(r["filed_seen"] or "")[:10]}
+        if not r["last_an"]:
+            out["neu"].append(item)
             continue
-        job.step(f"Datenanalyse: {r['name']} (ohne KI)")
-        res = SV.analyse_company(ctx, int(r["id"]), trigger="automatisch", mode="auto", job=job)
-        done.append({"id": r["id"], "status": res.get("status")})
-    return "abgeschlossen", {"analysiert": done}
+        known = ((json.loads(r["result_json"] or "{}").get("latest_filing") or {}).get("filed") or
+                 str(r["last_an"])[:10])
+        if item["filed"] and item["filed"] > str(known)[:10]:
+            out["bericht"].append(item)
+        elif r["last_an"] < cutoff:
+            out["alt"].append(item)
+    out["bericht"].sort(key=lambda x: x["filed"], reverse=True)
+    out["neu"].sort(key=lambda x: x["p"], reverse=True)
+    out["alt"].sort(key=lambda x: x["last"])
+    return out
+
+
+def auto_analyses(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
+    """Automatische Datenaktualisierung (ohne KI): zuerst Kandidaten mit neuem SEC-Bericht, dann ohne Analyse,
+    dann die ältesten Analysen (wöchentlich bzw. monatlich) – höchstens ``discovery.auto_analyse_per_run`` je Lauf.
+    Ein vorhandener KI-Bericht wird dabei nur als „veraltet“ markiert, nie neu erstellt."""
+    n = int(SV.setting(ctx, "discovery.auto_analyse_per_run") or 0)
+    plan = refresh_plan(ctx)
+    todo = [("bericht", x) for x in plan["bericht"]] + [("neu", x) for x in plan["neu"]] + \
+        [("alt", x) for x in plan["alt"]]
+    done: list[dict[str, Any]] = []
+    labels = {"bericht": "neuer SEC-Bericht", "neu": "erste Datenanalyse", "alt": "regelmäßige Aktualisierung"}
+    for i, (why, r) in enumerate(todo[:n], 1):
+        job.step(f"{i}/{min(n, len(todo))}: {r['name']} ({labels[why]}, ohne KI)")
+        try:
+            res = SV.analyse_company(ctx, r["id"], trigger="automatisch", mode="daten", job=job)
+        except Exception as e:  # eine Firma darf den Lauf nicht abbrechen – Grund im Ergebnis
+            log.exception("Discovery: Datenaktualisierung %s fehlgeschlagen", r["name"])
+            done.append({"id": r["id"], "grund": why, "status": "fehler", "fehler": f"{type(e).__name__}: {e}"[:200]})
+            continue
+        done.append({"id": r["id"], "grund": why, "status": res.get("status"), "ki": res.get("ai_state")})
+    status = "teilweise" if any(d["status"] == "fehler" for d in done) else "abgeschlossen"
+    return status, {"analysiert": done, "neuer_bericht": len(plan["bericht"]),
+                    "ohne_analyse": len(plan["neu"]), "faellig": len(plan["alt"]),
+                    "offen": max(0, len(todo) - n)}
 
 
 # Zeitplan: getrennte Arbeitsschritte (Einstellung discovery.auto.<schritt> = 0 aus, 24 täglich, 168 wöchentlich)
@@ -502,7 +539,8 @@ SCHEDULE: dict[str, tuple[str, dict[str, Any]]] = {
     "beobachtet": ("beobachtet", {"day_of_week": "sun", "hour": 5, "minute": 37}),
 }
 SCHEDULE_LABELS = {"news": "Nachrichten-Discovery", "screening": "Fundamentaldaten-Screening",
-                   "ki": "KI-Discovery (Vorschläge mit Vorschau)", "analysen": "Datenanalysen neuer Kandidaten",
+                   "ki": "KI-Discovery (Vorschläge mit Vorschau)",
+                   "analysen": "Datenaktualisierung (SEC, Kurse – ohne KI)",
                    "beobachtet": "Aktualisierung beobachteter Unternehmen"}
 
 
