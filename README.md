@@ -248,16 +248,16 @@ Ausprobieren ohne Internet: `DEMO_MODE=true` (deutlich gekennzeichnete synthetis
   Reihenfolge, Detailansicht mit Kursverlauf und „Position erstellen“ (öffnet die normale Kauferfassung, legt nichts
   ohne Speichern an). Datenmodell für mehrere Listen vorbereitet. Indizes (`^GSPC` = S&P 500, `^GDAXI`) und
   Devisen/Futures (`EURUSD=X`, `GC=F`) über Yahoo; Indizes zeigen den Stand in Punkten und sind nicht kaufbar.
-* **Discovery & Intelligence (ab 0.108.0, *Discovery*; 2.0 ab 0.109.0):** findet börsennotierte Unternehmen
-  außerhalb des Portfolios auf drei eigenständigen Wegen – KI-gestützt entlang von Wertschöpfungsketten, über ein
-  deterministisches Fundamentalscreening des SEC-Universums (Wendepunkte, mögliche Fehlbewertungen vs. Value Traps)
-  und aus der News-Analyse –, prüft jede Identität gegen das SEC-Verzeichnis und erstellt je Unternehmen einen
-  Research-Bericht: Investment-Überblick, Geschäftsmodell, These und Gegenhypothese (KI, nur mit belegten Quellen),
-  getrennte Scores (Tom Nash 125 – Public Reconstruction v1, Disruption, Quality, Growth/GARP, Portfolia Fundamental
-  v1, Valuation) mit aufklappbaren Kriterien, Fundamentaldaten aus SEC EDGAR mit Herkunft je Wert, drei
-  Bewertungsszenarien nach Profil, lokal berechneter Portfolio-Fit mit Kauf-Simulation (keine Buchung), Versionen und
-  Vergleich. Der KI-Researchstatus zeigt Anbieter, Modell, Kontingent, Jobs und Fehler; Research-Jobs starten per
-  Knopf im Hintergrund, fehlende KI-Teile lassen sich gezielt nachholen. Keine Kaufempfehlung. Einzelheiten: [`docs/DISCOVERY_INTELLIGENCE.md`](docs/DISCOVERY_INTELLIGENCE.md).
+* **Discovery & Intelligence (ab 0.108.0, *Discovery*; 2.0 ab 0.109.0; Steckbrief ab 0.110.0):** findet
+  börsennotierte Unternehmen außerhalb des Portfolios – KI-gestützt entlang von Wertschöpfungsketten (Vorschläge mit
+  Vorschau inkl. Disruption-Einschätzung, 2 KI-Aufrufe je Lauf), über ein deterministisches Fundamentalscreening des
+  SEC-Universums und aus der News-Analyse – und prüft jede Identität gegen das SEC-Verzeichnis. Je Unternehmen ein
+  **Steckbrief** auf einem Bildschirm (Hinweise zu Übernahmen, Sondereffekten und Datenlücken, Portfolia-Score mit
+  Daten- und qualitativem Teil, Balken für Wachstum/Qualität/Bewertung/Disruption, Pro/Contra, Bewertung in einem
+  Satz); Details eingeklappt (These/Gegenhypothese, 13 Kriterien, Fundamentaldaten aus SEC EDGAR mit Herkunft je Wert,
+  Szenarien, lokaler Portfolio-Fit ohne Buchung, Quellen, Historie). **KI nur per Knopf** („Mit KI analysieren · 1
+  Aufruf“); Automatik lädt nur SEC- und Marktdaten. Ein Vorwärtstest misst, wie gut die Vorschläge nach 12/24 Monaten
+  waren. Keine Kaufempfehlung. Einzelheiten: [`docs/DISCOVERY_INTELLIGENCE.md`](docs/DISCOVERY_INTELLIGENCE.md).
 
 ---
 

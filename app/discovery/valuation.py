@@ -93,6 +93,15 @@ def market_metrics(fu: Fundamentals, quote: dict[str, Any]) -> dict[str, Any]:
     eg, eg_period = eps_cagr(fu)
     m["eps_growth"], m["eps_growth_period"] = eg, eg_period
     m["peg"] = (m["pe"] / (eg * 100)) if m.get("pe") and eg and eg > 0 else None  # klassisch: Gewinnwachstum je Aktie
+    # Sondereffekte (0.110): bereinigtes KGV, wenn wesentliche Einmalposten das Nettoergebnis verzerren
+    from app.discovery.fundamentals import adjusted_net_income, special_items
+
+    items = special_items(fu)
+    m["special_items"] = items
+    adj = adjusted_net_income(fu)
+    m["ni_adj"] = adj.v
+    m["ni_adj_formula"] = adj.formula
+    m["pe_adj"] = _safe_div(mcap, conv(adj.v)) if adj.v is not None and adj.v > 0 and mcap else None
     m["notes"] = notes
     return m
 

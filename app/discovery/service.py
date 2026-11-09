@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.discovery import ai as AI
+from app.discovery import alerts as AL
 from app.discovery import fit as FIT
 from app.discovery import fundamentals as F
 from app.discovery import nash as NASH
@@ -31,19 +32,29 @@ log = logging.getLogger(__name__)
 
 STATUSES = {"neu": "Neu", "beobachten": "Beobachten", "zurueckgestellt": "Zurückgestellt", "verworfen": "Verworfen"}
 SETTINGS = {"discovery.enabled": True, "discovery.news_days": 14, "discovery.max_new_per_run": 10,
-            "discovery.auto_analyse_per_run": 1, "discovery.themes": True, "discovery.ai": True,
+            "discovery.auto_analyse_per_run": 25, "discovery.refresh_days": 7, "discovery.themes": True,
+            "discovery.ai": True,
             "discovery.sec_user_agent": "", "discovery.screen_batch": 20, "discovery.min_revenue_musd": 20,
             "discovery.ki_companies": 6,
             "discovery.auto.news": 24, "discovery.auto.screening": 24, "discovery.auto.ki": 168,
             "discovery.auto.analysen": 24, "discovery.auto.beobachtet": 168}
-SORTS = {"disruption": "Disruption", "nash125": "Tom Nash 125", "quality": "Quality", "garp": "Growth/GARP",
-         "fundamental_v1": "Portfolia Fundamental v1", "valuation": "Bewertungsattraktivität", "fit": "Portfolio-Fit",
-         "signal": "Aktualität der Signale", "prioritaet": "Discovery-Priorität"}
+SORTS = {"signal": "Neueste Signale", "prioritaet": "Discovery-Priorität", "nash_daten": "Portfolia-Score (Datenteil)",
+         "nash125": "Portfolia-Score (gesamt)", "disruption": "Disruption", "garp": "Wachstum", "quality": "Qualität",
+         "valuation": "Bewertung", "fit": "Portfolio-Fit"}
+DEFAULT_SORT = "signal"
 CATEGORIES = {
-    "neu": "Neue Entdeckungen", "disruptiv": "Disruptive Geschäftsmodelle", "wendepunkt": "Fundamentale Wendepunkte",
-    "fehlbewertung": "Mögliche Marktfehlbewertungen", "quality": "Quality", "garp": "Growth/GARP",
-    "nash100": "Nash 100+", "beobachten": "Zu beobachten", "portfolio": "Bereits im Portfolio",
+    "vorschau": "KI-Vorschau", "analysiert": "Mit KI analysiert", "veraltet": "KI-Bericht veraltet",
+    "neu": "Neu (14 Tage)", "disruptiv": "Disruptiv", "wendepunkt": "Wendepunkte",
+    "fehlbewertung": "Mögliche Fehlbewertungen", "nash100": "Portfolia-Score 100+", "beobachten": "Beobachten",
+    "portfolio": "Im Portfolio",
 }
+STAGES = {"vorschau": "KI-Vorschau", "analysiert": "Mit KI analysiert", "veraltet": "KI-Bericht veraltet",
+          "daten": "Nur Daten (ohne KI)", "offen": "Noch nicht analysiert"}
+SIGNAL_KINDS = {"nachricht": "Meldung", "fundamental": "Kennzahl (SEC)", "wendepunkt": "Fundamentalscreening",
+                "fehlbewertung": "Kurs vs. Fundament", "ki_discovery": "KI-Discovery", "thema": "KI-Thema",
+                "manuell": "manuell"}
+PATHS = {"ki": "KI-Discovery", "wendepunkt": "Fundamentalscreening (Wendepunkt)",
+         "fehlbewertung": "Kurs vs. Fundament", "news": "Nachrichten-Discovery"}
 HIDDEN_MAX_CAP_USD = 10e9
 _RUN_LOCK = threading.Lock()
 
@@ -408,13 +419,15 @@ def _hash(*parts: Any) -> str:
 
 
 MODES = {
-    "auto": "Automatisch (Daten aus dem Zwischenspeicher, fehlende KI-Teile im Rahmen des Budgets)",
-    "daten": "Fundamentaldaten aktualisieren (SEC und Kurse neu laden, keine KI)",
-    "ergaenzen": "Fehlende KI-Teile ergänzen (nur Teile ohne gültiges Ergebnis)",
-    "ki": "KI-Analyse starten (alle drei Teile neu erstellen)",
-    "voll": "Vollanalyse aktualisieren (Daten neu laden, veraltete und fehlende KI-Teile neu)",
+    "auto": "Automatisch (nur SEC- und Marktdaten, keine KI)",
+    "daten": "Daten aktualisieren (SEC und Kurse neu laden, keine KI)",
+    "ki": "Mit KI analysieren (1 Aufruf: Steckbrief, These, Gegenhypothese, Disruption, qualitative Score-Kriterien)",
+    "voll": "KI-Analyse aktualisieren (Daten neu laden und 1 KI-Aufruf)",
+    "ergaenzen": "Fehlende KI-Teile ergänzen (je fehlendem Teil 1 Aufruf)",
 }
-PART_STATES = {"ok": "vollständig", "veraltet": "veraltet (neue Daten seit Erstellung)", "fehlt": "noch nicht erstellt",
+AI_MODES = ("ki", "voll", "ergaenzen")  # nur diese Modi rufen die KI auf – ausschließlich per Knopf
+PART_STATES = {"ok": "vollständig", "veraltet": "veraltet (neuer SEC-Bericht seit Erstellung)",
+               "fehlt": "noch nicht erstellt",
                "ungueltig": "KI-Antwort ungültig", "fehler": "Anbieterfehler", "budget": "Kontingent erschöpft",
                "pausiert": "Anbieter pausiert", "aus": "KI nicht konfiguriert", "keine_quellen": "keine Quellen",
                "uebersprungen": "nicht versucht (letzter Fehlversuch < 24 h)"}
@@ -423,7 +436,7 @@ AI_STATES = {"vollstaendig": "KI-Analyse vollständig", "veraltet": "KI-Teile vo
              "ungueltig": "KI-Antwort ungültig", "budget": "KI wegen Budget nicht ausgeführt",
              "keine_quellen": "KI mangels Quellen nicht sinnvoll ausführbar", "aus": "KI nicht konfiguriert",
              "fehler": "KI-Anbieter fehlerhaft", "pausiert": "KI-Anbieter pausiert", "historisch": "historische Sicht"}
-RETRY_AFTER_H = 24  # automatische Läufe wiederholen fehlgeschlagene Teile frühestens nach 24 h
+RETRY_AFTER_H = 24  # (bis 0.109) automatische Wiederholung fehlgeschlagener Teile – seit 0.110 keine KI automatisch
 
 
 def ai_parts(db: Any, cid: int) -> dict[str, dict[str, Any]]:
@@ -453,32 +466,25 @@ def _recent_fail(row: dict[str, Any] | None) -> bool:
     return row["created_at"] >= iso(datetime.now(UTC) - timedelta(hours=RETRY_AFTER_H))  # type: ignore[operator]
 
 
-def plan_parts(db: Any, cid: int, mode: str, fps: dict[str, str]) -> list[str]:
-    """Welche KI-Teile im Modus neu erstellt werden (gültige Ergebnisse werden nicht unnötig wiederholt)."""
-    if mode == "daten":
+def plan_parts(db: Any, cid: int, mode: str, fps: dict[str, str] | None = None) -> list[str]:
+    """Welche KI-Teile der Modus neu erstellt: „ki“/„voll“ alle (ein gemeinsamer Aufruf), „ergaenzen“ nur Teile ohne
+    gültiges Ergebnis (je Teil ein Aufruf), „auto“/„daten“ keine – KI nur per Knopf."""
+    if mode in ("ki", "voll"):
+        return list(AI.PARTS)
+    if mode != "ergaenzen":
         return []
     st = ai_parts(db, cid)
-    out = []
-    for part in AI.PARTS:
-        ok, last = st[part]["ok"], st[part]["last"]
-        if mode == "ki":
-            out.append(part)
-        elif mode == "voll":
-            if ok is None or ok["input_fp"] != fps.get(part) or ok["prompt_version"] != AI.PART_VERSIONS[part]:
-                out.append(part)
-        elif ok is None and not (mode == "auto" and _recent_fail(last)):
-            out.append(part)
-    return out
+    return [p for p in AI.PARTS if st[p]["ok"] is None]
 
 
-def parts_state(db: Any, cid: int, fps: dict[str, str] | None = None) -> dict[str, dict[str, Any]]:
-    """Zustand je KI-Teil (für Anzeige und Gesamtzustand); ``fps`` = aktuelle Eingabe-Fingerabdrücke."""
+def parts_state(db: Any, cid: int, latest_filed: str | None = None) -> dict[str, dict[str, Any]]:
+    """Zustand je KI-Teil. Veraltet = seit der Erstellung ist ein neuer Quartals- oder Jahresbericht bei der SEC
+    eingegangen (``latest_filed``, JJJJ-MM-TT) – neue Meldungen oder Kurse machen einen KI-Bericht nicht veraltet."""
     out = {}
     for part, st in ai_parts(db, cid).items():
         ok, last = st["ok"], st["last"]
         if ok is not None:
-            stale = bool(fps) and (ok["input_fp"] != (fps or {}).get(part) or
-                                   ok["prompt_version"] != AI.PART_VERSIONS[part])
+            stale = bool(latest_filed) and str(latest_filed) > str(ok["created_at"])[:10]
             status = "veraltet" if stale else "ok"
         else:
             status = last["status"] if last else "fehlt"
@@ -601,35 +607,68 @@ def analyse_company(ctx: Any, cid: int, *, trigger: str = "manuell", force: bool
              "country=COALESCE(?, country), updated_at=? WHERE id=?",
              (info.get("sector"), info.get("industry"), info.get("country"), now_iso(), cid))
         co = company(db, cid) or co
+    sub = None
+    if co.get("cik") and as_of is None:
+        try:
+            sub = sec(ctx).submissions(int(co["cik"]), fresh=fresh)
+        except SecError as e:
+            log.info("Discovery: SEC-Einreichungsliste %s nicht abrufbar: %s", co["ticker"], e)
+    latest = AL.latest_periodic(sub)
     step("Quellen zusammenstellen")
     sources = build_sources(ctx, co, fu, quote) if as_of is None else []
     fps = {p: AI.part_fingerprint(p, co, sources) for p in AI.PARTS}
     ai_errors: list[str] = []
-    if as_of is None:
-        todo = plan_parts(db, cid, mode, fps)
+    call_status = ""  # Ergebnis der KI-Aufrufe dieses Laufs (leer = keine KI angefordert)
+    if as_of is None and mode in ("ki", "voll"):
+        step("KI-Analyse (1 Aufruf: Steckbrief, These, Disruption, Score-Kriterien)", ai_part="analyse")
+        got = AI.run_analysis(ctx, co, sources, job_id=getattr(job, "id", None))
+        call_err = ""
+        for part, (res_p, meta) in got.items():
+            _store_part(db, cid, part, res_p, meta, getattr(job, "id", None))
+            if meta.get("status") != "ok":
+                if meta.get("error_class") == "schema":
+                    ai_errors.append(f"{AI.PARTS[part]}: {meta.get('error')}")
+                    call_status = call_status or "teilweise"
+                else:
+                    call_err = str(meta.get("error") or meta.get("status"))
+                    call_status = str(meta.get("status"))
+        call_status = call_status or "ok"
+        if call_err:
+            ai_errors.insert(0, f"KI-Analyse: {call_err}")
+    elif as_of is None and mode == "ergaenzen":
+        todo = plan_parts(db, cid, mode)
         for i, part in enumerate(todo, 1):
             step(f"KI-Teil {i}/{len(todo)}: {AI.PARTS[part]}", ai_part=part)
             res, meta = AI.run_part(ctx, part, co, sources, job_id=getattr(job, "id", None))
             _store_part(db, cid, part, res, meta, getattr(job, "id", None))
             if meta.get("status") != "ok":
                 ai_errors.append(f"{AI.PARTS[part]}: {meta.get('error') or meta.get('status')}")
+                call_status = str(meta.get("status")) if meta.get("status") != "ungueltig" or not call_status \
+                    else call_status
                 if meta.get("status") in ("aus", "budget", "pausiert"):  # weitere Teile wären ebenso chancenlos
                     for rest in todo[i:]:
                         _store_part(db, cid, rest, None, {"status": meta["status"], "error": meta.get("error"),
                                                           "input_fp": fps[rest]}, getattr(job, "id", None))
                     break
+            elif not call_status:
+                call_status = "ok"
+        if not todo:
+            call_status = "nichts"
     step("Scores berechnen")
-    pst = parts_state(db, cid, fps) if as_of is None else {}
+    latest_filed = max([x for x in ((latest or {}).get("filed"), universe_filed(db, co)) if x], default=None)
+    pst = parts_state(db, cid, latest_filed) if as_of is None else {}
     used = {p: json.loads(r["ok"]["result_json"]) for p, r in ai_parts(db, cid).items()
             if as_of is None and r["ok"] is not None}
     ai_state = overall_ai_state(pst) if as_of is None else "historisch"
     ihash = _hash(S.CALC_VERSION, NASH.METHOD_VERSION, fu.to_dict(), str(quote.get("at") or "")[:10],
                   [(s["id"], s.get("published"), hashlib.sha256(str(s.get("text", "")).encode()).hexdigest()[:16])
                    for s in sources], as_of, sorted((p, st.get("ok_id")) for p, st in pst.items()),
-                  {k: quote.get(k) for k in ("tr_5y", "spx_tr_5y", "inst_pct", "short_pct")})
+                  {k: quote.get(k) for k in ("tr_5y", "spx_tr_5y", "inst_pct", "short_pct")},
+                  (latest or {}).get("filed"), latest_filed)  # neuer SEC-Bericht → neue Version („veraltet“ sichtbar)
     prev = db.q1("SELECT id, input_hash FROM disc_analysis WHERE company_id=? ORDER BY id DESC LIMIT 1", (cid,))
     if prev is not None and prev["input_hash"] == ihash and not force:
-        return {"status": "unchanged", "id": int(prev["id"]), "ai_error": "; ".join(ai_errors), "ai_state": ai_state}
+        return {"status": "unchanged", "id": int(prev["id"]), "ai_error": "; ".join(ai_errors), "ai_state": ai_state,
+                "ai_call": call_status}
     rep = used.get("bericht") or {}
     crit = (used.get("disruption") or {}).get("kriterien")
     ncrit = (used.get("nash") or {}).get("kriterien")
@@ -652,6 +691,9 @@ def analyse_company(ctx: Any, cid: int, *, trigger: str = "manuell", force: bool
         business = {"was": _sentences(str(info["longBusinessSummary"]), 1200), "belege": ["Y"], "origin": "reported",
                     "hinweis": "Unternehmensbeschreibung des Datenanbieters (keine KI-Analyse verfügbar)"}
     sc_dicts = {k: v.to_dict() for k, v in scores.items()}
+    sig_list = [dict(r) for r in sig_rows]
+    alerts = AL.build(fundamentals=fu.to_dict(), market=market, signals=sig_list, data_coverage=data_cov, sub=sub) \
+        if as_of is None else []
     last_meta = next((st for st in pst.values() if st.get("ok_id")), {})
     ai_meta = {"prompt_version": AI.PROMPT_VERSION, "provider": last_meta.get("provider"),
                "model": last_meta.get("model"), "error": "; ".join(ai_errors), "state": ai_state}
@@ -668,7 +710,7 @@ def analyse_company(ctx: Any, cid: int, *, trigger: str = "manuell", force: bool
         "uncertainties": rep.get("unsicherheiten") or [], "ai_check": {p: (u or {}).get("pruefung")
                                                                        for p, u in used.items()},
         "milestones": rep.get("meilensteine") or [],
-        "signals": [dict(r) for r in sig_rows],
+        "signals": sig_list, "alerts": alerts, "latest_filing": latest,
         "sources": [{k: v for k, v in s.items() if k != "text"} | {"excerpt": str(s.get("text", ""))[:400]}
                     for s in sources],
         "data_coverage": data_cov,
@@ -697,7 +739,23 @@ def analyse_company(ctx: Any, cid: int, *, trigger: str = "manuell", force: bool
                       "VALUES (?,?,?,?,?,?,?,?)", (cid, aid, m["text"], m["art"], m["kennzahl"] or None,
                                                    m["operator"] or None, m["schwelle"], m["bis"] or None))
     check_milestones(db, cid, fu)
-    return {"status": "ok", "id": aid, "ai_error": "; ".join(ai_errors), "ai_state": ai_state}
+    if call_status in ("ok", "teilweise") and mode in ("ki", "voll", "ergaenzen"):
+        from app.discovery import forward as FW
+
+        try:
+            FW.record_analysis(ctx, cid, aid)
+        except Exception as e:  # Vorwärtstest ist Zusatz – die Analyse ist gespeichert
+            log.info("Discovery: Vorwärtstest-Eintrag %s nicht gespeichert: %s", cid, e)
+    return {"status": "ok", "id": aid, "ai_error": "; ".join(ai_errors), "ai_state": ai_state,
+            "ai_call": call_status}
+
+
+def universe_filed(db: Any, co: dict[str, Any]) -> str | None:
+    """Jüngste Quartals-/Jahresbericht-Einreichung laut EDGAR-Tagesindex (Screening), falls bekannt."""
+    if not co.get("cik"):
+        return None
+    v = db.scalar("SELECT filed_seen FROM disc_universe WHERE cik=?", (int(co["cik"]),))
+    return str(v)[:10] if v else None
 
 
 def _sentences(text: str, limit: int) -> str:
@@ -714,6 +772,8 @@ def normalize(res: dict[str, Any]) -> dict[str, Any]:
     """Ältere Berichte (bis 0.108) lesbar machen – ohne Neuberechnung: Die bisherige 125-Punkte-Methode heißt jetzt
     „Portfolia Fundamental v1“; ein KI-Gesamtteil wird als Teilzustand ausgewiesen."""
     sc = res.get("scores") or {}
+    if (sc.get("nash125") or {}).get("label") == NASH.LEGACY_LABEL:  # Umbenennung 0.110, Werte unverändert
+        sc["nash125"]["label"] = NASH.LABEL
     if "nash" in sc and "fundamental_v1" not in sc:
         old = sc.pop("nash")
         sc["fundamental_v1"] = {**old, "key": "fundamental_v1", "label": S.FUNDAMENTAL_V1_LABEL,
@@ -835,12 +895,72 @@ def _latest(fd: dict[str, Any], key: str) -> float | None:
 # Radar
 # ------------------------------------------------------------------------------------------------------------
 
-def _cats(db: Any, r: Any, res: dict[str, Any], held: bool, since_new: str) -> set[str]:
+def _stage(res: dict[str, Any], has_preview: bool, latest_filed: str | None) -> str:
+    """Bearbeitungsstand eines Kandidaten für Liste und Filter."""
+    parts = res.get("ai_parts") or {}
+    oks = [p.get("at") for p in parts.values() if p.get("ok_id")]
+    if oks:
+        newest = max(str(a) for a in oks if a)
+        return "veraltet" if latest_filed and latest_filed > newest[:10] else "analysiert"
+    if res.get("thesis") and not parts:  # Analysen bis 0.108 (ein Gesamtaufruf)
+        return "analysiert"
+    if has_preview:
+        return "vorschau"
+    return "daten" if res else "offen"
+
+
+def preview_of(db: Any, cid: int) -> dict[str, Any] | None:
+    """Jüngste KI-Vorschau (KI-Discovery) eines Unternehmens: These-Kurzfassung inkl. Disruption-Einschätzung."""
+    r = db.q1("SELECT theme, evidence_json, created_at, priority FROM disc_candidate WHERE company_id=? AND path='ki' "
+              "AND status != 'verworfen' ORDER BY id DESC LIMIT 1", (cid,))
+    if r is None:
+        return None
+    ev = json.loads(r["evidence_json"] or "[]")
+    th = next((e for e in ev if isinstance(e, dict) and e.get("art") == "These"), None)
+    if not th:
+        return None
+    return {"theme": r["theme"], "at": r["created_at"], "priority": r["priority"], "was": th.get("was") or "",
+            "besonderheit": th.get("besonderheit") or "", "nachfrage": th.get("nachfrage") or "",
+            "widerlegung": th.get("widerlegung") or "", "stufen": th.get("stufen") or {},
+            "disruption": th.get("disruption"), "belege": th.get("belege") or []}
+
+
+def why_found(db: Any, cid: int, origin: str) -> dict[str, Any]:
+    """Warum vorgeschlagen – jüngster Suchweg mit Kurzbegründung."""
+    r = db.q1("SELECT path, theme, reason, created_at FROM disc_candidate WHERE company_id=? AND status != "
+              "'verworfen' ORDER BY id DESC LIMIT 1", (cid,))
+    if r is None:
+        return {"path": "manuell" if origin == "manuell" else origin, "label": "manuell aufgenommen"
+                if origin == "manuell" else origin, "text": ""}
+    text = str(r["reason"] or "")
+    if r["path"] == "wendepunkt":
+        text = text.split(". Kennzahlen:")[0]
+    elif r["path"] == "ki":
+        text = f"Thema „{r['theme']}“" if r["theme"] else ""
+    return {"path": r["path"], "label": PATHS.get(r["path"], r["path"]), "text": _sentences(text, 240),
+            "at": r["created_at"]}
+
+
+def key_numbers(res: dict[str, Any]) -> list[dict[str, Any]]:
+    """Drei kostenlose Kennzahlen aus den SEC-Daten für Karte und Steckbrief."""
+    fu = res.get("fundamentals") or {}
+    out = []
+    for key, label, fmt in (("revenue_growth", "Umsatz", "pct_sign"), ("op_margin", "op. Marge", "pct"),
+                            ("net_cash", "Netto-Cash", "money")):
+        v = _latest(fu, key)
+        if v is not None:
+            out.append({"key": key, "label": label, "value": v, "fmt": fmt, "ccy": fu.get("currency") or ""})
+    return out
+
+
+def _cats(db: Any, r: Any, res: dict[str, Any], held: bool, since_new: str, stage: str) -> set[str]:
     sc = res.get("scores") or {}
     cats = set()
+    if stage in ("vorschau", "analysiert", "veraltet"):
+        cats.add(stage)
     if r["created_at"] >= since_new and r["status"] == "neu" and r["origin"] != "manuell":
         cats.add("neu")
-    dis, qual, garp = sc.get("disruption") or {}, sc.get("quality") or {}, sc.get("garp") or {}
+    dis = sc.get("disruption") or {}
     if dis.get("complete") and (dis.get("total") or 0) >= 55:
         cats.add("disruptiv")
     half_year = (datetime.now(UTC) - timedelta(days=180)).isoformat()
@@ -850,13 +970,9 @@ def _cats(db: Any, r: Any, res: dict[str, Any], held: bool, since_new: str) -> s
         cats.add("wendepunkt")
     if "fehlbewertung" in kinds:
         cats.add("fehlbewertung")
-    if qual.get("complete") and (qual.get("total") or 0) >= 70:
-        cats.add("quality")
-    if garp.get("complete") and (garp.get("total") or 0) >= 65:
-        cats.add("garp")
     band = res.get("nash_band") or {}
     if band.get("key") == "exceptional" and band.get("sure"):
-        cats.add("nash100")  # nur gesichert ≥ 100 Punkte (fehlende Kriterien können nur Punkte hinzufügen)
+        cats.add("nash100")  # nur gesichert ≥ 100 Punkte (offene Kriterien können nur Punkte hinzufügen)
     if r["status"] == "beobachten":
         cats.add("beobachten")
     if held:
@@ -864,7 +980,7 @@ def _cats(db: Any, r: Any, res: dict[str, Any], held: bool, since_new: str) -> s
     return cats
 
 
-def radar(ctx: Any, *, cat: str = "", sort: str = "disruption", q: str = "", show_all: bool = False
+def radar(ctx: Any, *, cat: str = "", sort: str = DEFAULT_SORT, q: str = "", show_all: bool = False
           ) -> dict[str, Any]:
     db = ctx.db
     hs = FIT.holdings(ctx)
@@ -877,29 +993,28 @@ def radar(ctx: Any, *, cat: str = "", sort: str = "disruption", q: str = "", sho
         res = normalize(json.loads(r["result_json"])) if r["result_json"] else {}
         co = company(db, int(r["id"])) or dict(r)
         held = bool(FIT.held_match(co, hs))
-        sig = db.q("SELECT title, kind, strength, observed_at, n_sources FROM disc_signal WHERE company_id=? "
-                   "ORDER BY strength DESC, observed_at DESC LIMIT 1", (r["id"],))
         last_sig = db.scalar("SELECT MAX(COALESCE(published_at, observed_at)) FROM disc_signal WHERE company_id=?",
                              (r["id"],))
         prio = db.scalar("SELECT MAX(priority) FROM disc_candidate WHERE company_id=?", (r["id"],))
+        pv = preview_of(db, int(r["id"]))
+        stage = _stage(res, pv is not None, current_filed(db, co, res))
         sc = res.get("scores") or {}
         ccy = (res.get("market") or {}).get("ccy")
-        counter = res.get("core_risk") or (((res.get("counter") or {}).get("punkte") or [{}])[0].get("risiko")
-                                           if res.get("counter") else None)
-        if not counter:
-            counter = next((c["counter"][0] for s in sc.values() for c in s.get("criteria", []) if c.get("counter")),
-                           None)
-        biz = (res.get("business") or {}).get("was") or ""
+        biz = (pv or {}).get("was") or (res.get("business") or {}).get("was") or ""
         cards.append({
             "id": r["id"], "ticker": r["ticker"], "name": r["name"], "sector": r["sector"] or r["industry"],
-            "status": r["status"], "origin": r["origin"], "held": held,
-            "cats": sorted(_cats(db, r, res, held, since_new)), "analysed_at": r["analysed_at"],
-            "business": _sentences(biz, 220) if biz else "",
+            "status": r["status"], "origin": r["origin"], "held": held, "stage": stage,
+            "cats": sorted(_cats(db, r, res, held, since_new, stage)), "analysed_at": r["analysed_at"],
+            "business": _sentences(biz, 200) if biz else "", "preview": pv, "why": why_found(db, int(r["id"]),
+                                                                                          r["origin"]),
+            "numbers": key_numbers(res) if res else [],
+            "alerts": [a for a in (res.get("alerts") or []) if a.get("level") in ("crit", "warn")][:2],
             "scores": {k: {"total": v.get("total"), "max": v.get("max"), "complete": v.get("complete")}
                        for k, v in sc.items()},
-            "nash_band": res.get("nash_band"), "ai_state": r["ai_state"] or res.get("ai_state"),
-            "signal": dict(sig[0]) if sig else None, "last_signal": last_sig, "counter": counter,
-            "coverage": r["coverage"], "fit": None, "created_at": r["created_at"], "ccy": ccy, "priority": prio,
+            "nash": NASH.split(sc.get("nash125")), "nash_band": res.get("nash_band"),
+            "ai_state": r["ai_state"] or res.get("ai_state"),
+            "last_signal": last_sig, "coverage": r["coverage"], "fit": None, "created_at": r["created_at"],
+            "ccy": ccy, "priority": prio, "core_risk": res.get("core_risk") or "",
         })
     if cat:
         cards = [c for c in cards if cat in c["cats"]]
@@ -915,12 +1030,14 @@ def radar(ctx: Any, *, cat: str = "", sort: str = "disruption", q: str = "", sho
                 fco["ccy"] = c["ccy"]
                 sim = FIT.simulate(ctx, fco)
                 c["fit"] = FIT.score(ctx, fco, sim, (None, 0)).total
-    key = {"signal": lambda c: c["last_signal"] or "", "fit": lambda c: c["fit"] if c["fit"] is not None else -1,
-           "prioritaet": lambda c: c["priority"] if c["priority"] is not None else -1}
+    key = {"signal": lambda c: c["last_signal"] or c["created_at"] or "",
+           "fit": lambda c: c["fit"] if c["fit"] is not None else -1,
+           "prioritaet": lambda c: c["priority"] if c["priority"] is not None else -1,
+           "nash_daten": lambda c: (c["nash"] or {}).get("data", {}).get("pts", -1) if c["nash"] else -1}
     if sort in key:
         cards.sort(key=key[sort], reverse=True)
     else:
-        s = sort if sort in SORTS else "disruption"
+        s = sort if sort in SORTS else DEFAULT_SORT
         # vollständige Bewertungen vor unvollständigen (ein Teil-Score ist kein vergleichbarer Rang)
         cards.sort(key=lambda c: ((c["scores"].get(s) or {}).get("total") is not None,
                                   bool((c["scores"].get(s) or {}).get("complete")),
@@ -959,13 +1076,77 @@ def detail_context(ctx: Any, cid: int, aid: int | None = None, amount: float = F
     cands = [dict(r) for r in db.q("SELECT * FROM disc_candidate WHERE company_id=? ORDER BY id DESC LIMIT 10",
                                    (cid,))]
     JOBS.expire_stale(ctx)
+    filed = current_filed(db, co, res)
+    parts = parts_state(db, cid, filed)
+    pv = preview_of(db, cid)
+    state, why = AI.unavailable_reason(ctx)
+    left_d, left_m = AI.DiscoveryBudget(ctx).left()
+    n_missing = sum(1 for p in parts.values() if not p["ok_id"])
+    gate = {"ok": not state, "reason": why, "left_day": max(0, left_d), "left_month": max(0, left_m),
+            "missing": n_missing, "any_ok": n_missing < len(parts)}
     return {"co": co, "an": an, "res": res, "versions": analyses(db, cid), "fit": fitd, "milestones": ms,
+            "stage": _stage(res or {}, pv is not None, filed), "stages": STAGES, "preview": pv, "gate": gate,
+            "why": why_found(db, cid, co.get("origin") or ""), "numbers": key_numbers(res) if res else [],
+            "nash": NASH.split(((res or {}).get("scores") or {}).get("nash125")), "summary": summary(res),
+            "signal_kinds": SIGNAL_KINDS, "paths": PATHS, "latest_filed": filed,
             "signals": signals, "amount": amount, "today": today_local().isoformat(), "candidates": cands,
-            "parts": parts_state(db, cid, _current_fps(res) if res else None),
+            "parts": parts,
             "jobs": JOBS.recent(db, 6, company_id=cid), "active_jobs": JOBS.active(db, cid),
             "calls": JOBS.calls(db, company_id=cid, limit=12), "modes": MODES, "ai_states": AI_STATES}
 
 
-def _current_fps(res: dict[str, Any]) -> dict[str, str] | None:
-    """Eingabe-Fingerabdrücke der angezeigten Version (erkennt KI-Teile, die zu älteren Daten gehören)."""
-    return res.get("ai_fps") or None
+def current_filed(db: Any, co: dict[str, Any], res: dict[str, Any] | None) -> str | None:
+    """Jüngster bekannter Quartals-/Jahresbericht (aus der letzten Analyse oder dem EDGAR-Tagesindex)."""
+    cands = [((res or {}).get("latest_filing") or {}).get("filed"), universe_filed(db, co)]
+    return max([c for c in cands if c], default=None)
+
+
+def summary(res: dict[str, Any] | None) -> dict[str, Any]:
+    """Steckbrief: Pro/Contra (höchstens je 3, kurz) und Bewertung in einem Satz – mit KI aus dem Bericht, ohne KI
+    aus Regeln (Signale, Szenarien, Sondereffekte, Verwässerung)."""
+    if not res:
+        return {"pro": [], "contra": [], "valuation": "", "pro_src": "", "contra_src": ""}
+    pro: list[str] = []
+    contra: list[str] = []
+    th, ct = res.get("thesis") or {}, res.get("counter") or {}
+    pro_src = contra_src = "regel"
+    for t in (th.get("treiber") or [])[:3]:
+        pro.append(_sentences(str(t.get("treiber") or ""), 140))
+    if pro:
+        pro_src = "ki"
+    for p in (ct.get("punkte") or [])[:3]:
+        contra.append(_sentences(str(p.get("risiko") or ""), 140))
+    if contra:
+        contra_src = "ki"
+    fu = res.get("fundamentals") or {}
+    if not pro:
+        for sg in res.get("signals") or []:
+            if sg.get("kind") in ("fundamental", "wendepunkt") and sg.get("direction") != "negativ" and \
+                    sg.get("title") not in pro:
+                pro.append(_sentences(str(sg.get("title")), 140))
+            if len(pro) >= 3:
+                break
+    m = res.get("market") or {}
+    sc = res.get("scenarios") or {}
+    val = ""
+    if sc.get("available"):
+        ig = sc.get("implied_growth")
+        base = ((sc.get("cases") or {}).get("basis") or {}).get("rendite_pa")
+        from app.discovery.text import P
+
+        val = (f"Der Kurs setzt {P(ig, 0)} Startwachstum p. a. voraus" if ig is not None else
+               "Der Kurs ist mit dem Basismodell nicht erklärbar") + \
+            (f"; im Basisszenario {P(base, 1)} Rendite pro Jahr." if base is not None else "; Basisszenario ≤ 0.")
+        if not contra and ig is not None and base is not None and base < 0:
+            contra.append(f"Hohe Erwartungen im Kurs: eingepreist {P(ig, 0)} Wachstum p. a.")
+    if len(contra) < 3:
+        for it in m.get("special_items") or []:
+            contra.append(f"Sondereffekt: {it['label'].split(' (')[0]}")
+            if len(contra) >= 3:
+                break
+    dil = _latest(fu, "dilution")
+    if len(contra) < 3 and dil is not None and dil >= 0.05:
+        from app.discovery.text import P
+
+        contra.append(f"Verwässerung: Aktienanzahl {P(dil, 1)} höher als im Vorjahr")
+    return {"pro": pro[:3], "contra": contra[:3], "valuation": val, "pro_src": pro_src, "contra_src": contra_src}

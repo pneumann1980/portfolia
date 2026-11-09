@@ -65,7 +65,28 @@ CONCEPTS: dict[str, tuple[bool, tuple[str, ...]]] = {
                        "ifrs-full:Equity")),
     "assets_current": (False, ("us-gaap:AssetsCurrent", "ifrs-full:CurrentAssets")),
     "liabilities_current": (False, ("us-gaap:LiabilitiesCurrent", "ifrs-full:CurrentLiabilities")),
+    # Sondereffekte (0.110): einmalige Posten, die Nettoergebnis bzw. KGV verzerren (Erkennung siehe special_items)
+    "debt_extinguishment": (True, ("us-gaap:GainsLossesOnExtinguishmentOfDebt",)),
+    "impairment": (True, ("us-gaap:GoodwillImpairmentLoss", "us-gaap:GoodwillAndIntangibleAssetImpairment",
+                          "us-gaap:AssetImpairmentCharges",
+                          "us-gaap:ImpairmentOfIntangibleAssetsExcludingGoodwill")),
+    "restructuring": (True, ("us-gaap:RestructuringCharges",)),
+    "sale_gain": (True, ("us-gaap:GainLossOnSaleOfBusiness", "us-gaap:DisposalGroupNotDiscontinuedOperationGainLossOn"
+                         "Disposal", "us-gaap:GainLossOnDispositionOfAssets1")),
+    "discontinued": (True, ("us-gaap:IncomeLossFromDiscontinuedOperationsNetOfTax",
+                            "us-gaap:IncomeLossFromDiscontinuedOperationsNetOfTaxAttributableToReportingEntity")),
 }
+# Sondereffekt → (Bezeichnung, Vorzeichen der Wirkung auf das Nettoergebnis, im operativen Ergebnis enthalten?)
+# Vorzeichen: +1 = berichteter Wert wirkt wie angegeben (Gewinn positiv), −1 = Aufwand wird positiv berichtet.
+SPECIAL_ITEMS: dict[str, tuple[str, int, bool]] = {
+    "debt_extinguishment": ("Ergebnis aus Schuldentilgung (z. B. Rückkauf/Umwandlung von Wandelanleihen)", 1, False),
+    "impairment": ("Wertminderungen (Goodwill, immaterielle oder sonstige Vermögenswerte)", -1, True),
+    "restructuring": ("Restrukturierungsaufwand", -1, True),
+    "sale_gain": ("Ergebnis aus dem Verkauf von Geschäftsbereichen oder Vermögenswerten", 1, False),
+    "discontinued": ("Ergebnis aufgegebener Geschäftsbereiche (nach Steuern)", 1, False),
+}
+SPECIAL_MIN_REV = 0.05   # wesentlich ab 5 % des Umsatzes …
+SPECIAL_MIN_NI = 0.25    # … oder 25 % des Nettoergebnisses (Betrag)
 LABELS = {
     "revenue": "Umsatz", "revenue_growth": "Umsatzwachstum", "gross_profit": "Bruttogewinn",
     "gross_margin": "Bruttomarge", "operating_income": "Operatives Ergebnis", "op_margin": "Operative Marge",
@@ -81,6 +102,9 @@ LABELS = {
     "assets_current": "Umlaufvermögen", "liabilities_current": "Kurzfristige Verbindlichkeiten",
     "opex_reported": "Operative Aufwendungen (berichtet)", "opex": "Operative Aufwendungen",
     "opex_growth": "Wachstum der operativen Aufwendungen", "eps": "Ergebnis je Aktie (verwässert)",
+    "debt_extinguishment": "Ergebnis aus Schuldentilgung", "impairment": "Wertminderungen",
+    "restructuring": "Restrukturierungsaufwand", "sale_gain": "Ergebnis aus Veräußerungen",
+    "discontinued": "Ergebnis aufgegebener Bereiche", "net_income_adj": "Nettoergebnis bereinigt (vor Steuereffekt)",
 }
 PCT = {"revenue_growth", "gross_margin", "op_margin", "net_margin", "fcf_margin", "dilution", "roic", "rnd_ratio",
        "opex_growth"}
@@ -118,6 +142,23 @@ class Fundamentals:
     shares_outstanding: Value = field(default_factory=lambda: MISSING)
     as_of: str | None = None
     notes: list[str] = field(default_factory=list)
+    # Kennzahl → Periodenende → [(eingereicht, Accession, Wert)] desselben Elements (alle Einreichungen dieser Periode)
+    history: dict[str, dict[str, list[tuple[str, str, float]]]] = field(default_factory=dict)
+
+    def comparable(self, key: str, years: list[str]) -> list[float | None]:
+        """Werte mehrerer Jahre **aus derselben Einreichung** (jüngste, die alle Jahre enthält) – vergleichbar, auch
+        wenn spätere Berichte frühere Jahre umgestellt haben (z. B. aufgegebene Geschäftsbereiche). Ohne gemeinsame
+        Einreichung: die jüngsten Werte je Jahr (wie ``get``)."""
+        hist = self.history.get(key) or {}
+        common: set[str] | None = None
+        for y in years:
+            accns = {a for _f, a, _v in hist.get(y, [])}
+            common = accns if common is None else common & accns
+        if common:
+            filed = {a: f for y in years for f, a, _v in hist.get(y, [])}
+            best = max(common, key=lambda a: (filed.get(a, ""), a))
+            return [next(v for _f, a, v in hist[y] if a == best) for y in years]
+        return [self.get(key, y).v for y in years]
 
     def get(self, key: str, year: str) -> Value:
         return self.rows.get(key, {}).get(year, MISSING)
@@ -238,6 +279,8 @@ def parse(facts: dict[str, Any], as_of: str | None = None) -> Fundamentals:
                                            "first_filed": first.get("filed"), "last": float(last["val"]),
                                            "last_filed": last.get("filed"), "tag": tag})
                 row[y] = val
+                fu.history.setdefault(key, {})[y] = [(str(e.get("filed", "")), str(e.get("accn", "")),
+                                                      float(e["val"])) for e in cands]
                 fu.filings[val.accn] = {"form": val.form, "filed": val.filed}
                 if unit != "shares":
                     ccys.add(unit)
@@ -397,7 +440,7 @@ def _derive(fu: Fundamentals) -> None:
                                  else "operatives Ergebnis fehlt"))
         if i > 0:
             prev = fu.years[i - 1]
-            put("revenue_growth", y, _growth(g("revenue", prev), rev, "Umsatz / Umsatz Vorjahr − 1"))
+            put("revenue_growth", y, _comparable_growth(fu, "revenue", prev, y, "Umsatz / Umsatz Vorjahr − 1"))
             put("dilution", y, _growth(g("shares_diluted", prev), g("shares_diluted", y),
                                        "Aktien (verwässert) / Vorjahr − 1"))
             put("opex_growth", y, _growth(g("opex", prev), g("opex", y), "Operative Aufwendungen / Vorjahr − 1"))
@@ -405,6 +448,57 @@ def _derive(fu: Fundamentals) -> None:
             put("opex_growth", y, Value(None, "missing", note="kein Vorjahr im Betrachtungszeitraum"))
             put("revenue_growth", y, Value(None, "missing", note="kein Vorjahr im Betrachtungszeitraum"))
             put("dilution", y, Value(None, "missing", note="kein Vorjahr im Betrachtungszeitraum"))
+
+
+def _comparable_growth(fu: Fundamentals, key: str, prev: str, y: str, formula: str) -> Value:
+    """Wachstum aus Werten derselben Einreichung. Stellt ein späterer Bericht das Vorjahr um (z. B. ohne einen
+    verkauften Geschäftsbereich), wäre „neuer Wert ÷ alter Wert“ ein Scheinwachstum oder -rückgang."""
+    naive = _growth(fu.get(key, prev), fu.get(key, y), formula)
+    a, b = fu.comparable(key, [prev, y])
+    if a is None or b is None or a <= 0:
+        return naive
+    v = Value(b / a - 1, "derived", "ratio", y, formula=formula + " (beide Werte aus derselben Einreichung)")
+    if naive.v is not None and abs(naive.v - v.v) > 0.02:  # type: ignore[operator]
+        v.note = (f"Vorjahr in späterem Bericht umgestellt: vergleichbar {v.v:.1%} statt {naive.v:.1%} "
+                  "(jüngster Wert ÷ ursprünglicher Vorjahreswert)")
+    return v
+
+
+def special_items(fu: Fundamentals, year: str | None = None) -> list[dict[str, Any]]:
+    """Wesentliche Sondereffekte eines Geschäftsjahres (Standard: letztes) aus berichteten XBRL-Elementen.
+
+    Wesentlich = Betrag ≥ ``SPECIAL_MIN_REV`` des Umsatzes oder ≥ ``SPECIAL_MIN_NI`` des Nettoergebnisses. Wirkung
+    auf das Nettoergebnis vor Steuereffekt (Steuern auf Sondereffekte sind nicht einzeln berichtet)."""
+    y = year or (fu.years[-1] if fu.years else None)
+    if y is None:
+        return []
+    rev, ni = fu.get("revenue", y).v, fu.get("net_income", y).v
+    out = []
+    for key, (label, sign, in_op) in SPECIAL_ITEMS.items():
+        v = fu.get(key, y)
+        if v.v is None or v.v == 0:
+            continue
+        effect = sign * v.v
+        material = (rev is not None and rev > 0 and abs(effect) >= SPECIAL_MIN_REV * rev) or \
+            (ni is not None and ni != 0 and abs(effect) >= SPECIAL_MIN_NI * abs(ni))
+        if material:
+            out.append({"key": key, "label": label, "value": v.v, "effect": effect, "in_operating": in_op,
+                        "period": y, "tag": v.tag, "form": v.form, "filed": v.filed, "accn": v.accn})
+    return out
+
+
+def adjusted_net_income(fu: Fundamentals, year: str | None = None) -> Value:
+    """Nettoergebnis ohne wesentliche Sondereffekte (vor deren Steuereffekt) – Näherung, Herkunft ``derived``."""
+    y = year or (fu.years[-1] if fu.years else None)
+    ni = fu.get("net_income", y) if y else MISSING
+    items = special_items(fu, y)
+    if ni.v is None or not items:
+        return Value(None, "missing", note="keine wesentlichen Sondereffekte" if ni.v is not None else
+                     "Nettoergebnis fehlt")
+    adj = ni.v - sum(i["effect"] for i in items)
+    return Value(adj, "derived", fu.currency or "", y or "",
+                 formula="Nettoergebnis − Sondereffekte (" + ", ".join(i["label"].split(" (")[0] for i in items) + ")",
+                 note="Steuereffekt der Sondereffekte nicht berücksichtigt (nicht einzeln berichtet)")
 
 
 def _growth(a: Value, b: Value, formula: str) -> Value:

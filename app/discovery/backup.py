@@ -1,8 +1,9 @@
 """Discovery-Nutzerdaten im Gesamtexport (``state.json`` → ``discovery``) und ihre Wiederherstellung.
 
 Enthalten: Unternehmen (Status, Notiz, Herkunft, Aliasse), Signale, alle Analyseversionen (vollständiger Bericht),
-Meilensteine, KI-Teilanalysen, Kandidaten (auch verworfene), Job-Historie, KI-Aufrufprotokoll und Discovery-
-Verbrauch je Tag. Nicht enthalten: das Research-Universum und der SEC-Zwischenspeicher – beides wird aus öffentlichen
+Meilensteine, KI-Teilanalysen, Kandidaten (auch verworfene), Job-Historie, KI-Aufrufprotokoll, Discovery-
+Verbrauch je Tag und der Vorwärtstest (0.110: Vorschauen und Analysen mit Stichtag, Kurs und Score). Nicht
+enthalten: das Research-Universum und der SEC-Zwischenspeicher – beides wird aus öffentlichen
 SEC-Daten neu aufgebaut (Fortschritt des Screenings beginnt nach einer Wiederherstellung von vorn).
 
 Wiederherstellung (eine Transaktion, wiederholbar ohne Dubletten): Unternehmen über CIK bzw. Ticker zuordnen, IDs neu
@@ -35,6 +36,7 @@ def collect(db: Any, full: bool = False) -> dict[str, Any]:
         "jobs": _rows(db, "SELECT * FROM disc_job ORDER BY id"),
         "ai_calls": _rows(db, "SELECT * FROM disc_ai_call ORDER BY id"),
         "ai_usage": _rows(db, "SELECT * FROM disc_ai_usage ORDER BY day"),
+        "forward": _rows(db, "SELECT * FROM disc_forward ORDER BY id"),
     }
     if full:  # Ansicht im Browser: Berichte entpackt
         for a in out["analyses"]:
@@ -60,7 +62,7 @@ def restore(c: Any, data: Any) -> int:
     n = 0
     cmap: dict[int, int] = {}
     cols = {t: _cols(c, t) for t in ("disc_company", "disc_signal", "disc_analysis", "disc_milestone", "disc_ai_part",
-                                     "disc_candidate", "disc_job", "disc_ai_call")}
+                                     "disc_candidate", "disc_job", "disc_ai_call", "disc_forward")}
     for co in data.get("companies") or []:
         if not isinstance(co, dict) or not co.get("ticker"):
             continue
@@ -153,4 +155,13 @@ def restore(c: Any, data: Any) -> int:
             n += c.execute("INSERT OR IGNORE INTO disc_ai_usage(day, calls, input_tokens, output_tokens) VALUES "
                            "(?,?,?,?)", (u["day"], int(u.get("calls") or 0), int(u.get("input_tokens") or 0),
                                          int(u.get("output_tokens") or 0))).rowcount or 0
+    for f in data.get("forward") or []:  # je Unternehmen, Art und Tag eindeutig (Index) – wiederholbar
+        old = int(f.get("company_id") or 0) if isinstance(f, dict) else 0
+        if old not in cmap or not f.get("kind") or not f.get("day"):
+            continue
+        if c.execute("SELECT 1 FROM disc_forward WHERE company_id=? AND kind=? AND day=?",
+                     (cmap[old], f["kind"], f["day"])).fetchone():
+            continue
+        _ins(c, "disc_forward", {**f, "company_id": cmap[old]}, cols["disc_forward"])
+        n += 1
     return n

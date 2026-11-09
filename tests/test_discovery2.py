@@ -150,7 +150,11 @@ def test_legacy_method_kept_and_not_recalculated():
     v1 = res["scores"]["fundamental_v1"]
     assert v1["total"] == 77.0 and v1["label"] == "Portfolia Fundamental v1" and "nash" not in res["scores"]
     assert v1["legacy_label"] == "Fundamental (Tom-Nash-inspiriert)" and res["ai_state"] == "fehlt"
-    assert NASH.METHOD == "Tom Nash 125 – Public Reconstruction v1" and "Original" not in NASH.METHOD
+    assert NASH.METHOD.startswith("Portfolia-Score") and "Original" not in NASH.METHOD
+    assert NASH.LABEL == "Portfolia-Score"
+    old = SV.normalize({"scores": {"nash125": {"key": "nash125", "label": "Tom Nash 125", "total": 90.0, "max": 125,
+                                                "criteria": []}}, "ai_state": "vollstaendig"})
+    assert old["scores"]["nash125"]["label"] == "Portfolia-Score" and old["scores"]["nash125"]["total"] == 90.0
 
 
 def test_migration_copies_legacy_score_column(db):
@@ -207,8 +211,9 @@ def test_ai_status_reports_provider_model_budget_without_key(app_client, monkeyp
     assert {p["step"] for p in st["plan"]} == set(EN.SCHEDULE)
     page = app_client.get("/discovery").text
     for needle in ("KI-Researchstatus", "gemini-2.5-flash-lite", "KI-Discovery starten", "Fundamentalscreening starten",
-                   "Vollständigen Discovery-Lauf starten", "Suchfortschritt", "Research-Jobs", "Nash 100+",
-                   "Fundamentale Wendepunkte", "Mögliche Marktfehlbewertungen", "Disruptive Geschäftsmodelle"):
+                   "Vollständigen Discovery-Lauf starten", "Suchfortschritt", "Research-Jobs",
+                   "Portfolia-Score 100+", "Wendepunkte", "Mögliche Fehlbewertungen", "Disruptiv", "KI-Vorschau",
+                   "Mit KI analysiert", "KI-Bericht veraltet", "Vorwärtstest", "Genau 2 KI-Aufrufe"):
         assert needle in page, needle
     assert "Schlüssel" in page and "sk-" not in page
 
@@ -246,11 +251,17 @@ def test_partial_ai_failure_reruns_only_the_failed_part(app_client, monkeypatch)
     seen: list[tuple[str, str]] = []
     monkeypatch.setattr("app.news.ai.AiGateway.generate", fake_parts(seen, nash="{kaputt"))
     r = SV.analyse_company(ctx, cid, mode="ki")
-    assert r["ai_state"] == "teilweise" and "kein gültiges JSON" in r["ai_error"]
+    assert r["ai_state"] == "teilweise" and "unvollständig" in r["ai_error"] and r["ai_call"] == "teilweise"
     st = SV.parts_state(ctx.db, cid)
     assert st["nash"]["status"] == "ungueltig" and st["bericht"]["status"] == "ok"
-    call = ctx.db.q1("SELECT * FROM disc_ai_call WHERE step='nash' ORDER BY id DESC LIMIT 1")
-    assert call["status"] == "ungueltig" and call["error_class"] == "json" and call["output_tokens"] == 800
+    call = ctx.db.q1("SELECT * FROM disc_ai_call WHERE step='analyse' ORDER BY id DESC LIMIT 1")
+    assert call["status"] == "teilweise" and "Portfolia-Score" in call["error"] and call["output_tokens"] == 800
+    # ganze Antwort kein JSON: alle Teile ungültig, Grund sichtbar
+    seen.clear()
+    cid2 = _cid(_add(c, "BETA"))
+    monkeypatch.setattr("app.news.ai.AiGateway.generate", fake_parts(seen, bericht="{kaputt"))
+    r0 = SV.analyse_company(ctx, cid2, mode="ki")
+    assert r0["ai_call"] == "ungueltig" and "kein gültiges JSON" in r0["ai_error"] and r0["ai_state"] == "ungueltig"
     seen.clear()
     monkeypatch.setattr("app.news.ai.AiGateway.generate", fake_parts(seen))
     r2 = SV.analyse_company(ctx, cid, mode="ergaenzen")
@@ -268,11 +279,17 @@ def test_ai_parts_reuse_and_stale_detection(app_client, monkeypatch):
     seen: list[tuple[str, str]] = []
     monkeypatch.setattr("app.news.ai.AiGateway.generate", fake_parts(seen))
     SV.analyse_company(ctx, cid, mode="ki")
-    fps = {p: AI.part_fingerprint(p, SV.company(ctx.db, cid), [{"id": "S9", "text": "neu"}]) for p in AI.PARTS}
-    assert SV.plan_parts(ctx.db, cid, "ergaenzen", fps) == []  # alles gültig
-    assert SV.plan_parts(ctx.db, cid, "voll", fps) == list(AI.PARTS)  # neue Daten → veraltet → neu
-    assert SV.plan_parts(ctx.db, cid, "daten", fps) == []
-    assert SV.overall_ai_state(SV.parts_state(ctx.db, cid, fps)) == "veraltet"
+    assert SV.plan_parts(ctx.db, cid, "ergaenzen") == []  # alles gültig
+    assert SV.plan_parts(ctx.db, cid, "voll") == list(AI.PARTS)  # Knopf „aktualisieren“: ein Aufruf für alle Teile
+    assert SV.plan_parts(ctx.db, cid, "daten") == [] and SV.plan_parts(ctx.db, cid, "auto") == []  # nie KI
+    assert SV.overall_ai_state(SV.parts_state(ctx.db, cid)) == "vollstaendig"
+    # veraltet nur durch einen neuen SEC-Bericht – nicht durch neue Meldungen oder Kurse
+    assert SV.overall_ai_state(SV.parts_state(ctx.db, cid, "2999-01-01")) == "veraltet"
+    assert SV.overall_ai_state(SV.parts_state(ctx.db, cid, "2000-01-01")) == "vollstaendig"
+    n = len(seen)
+    SV.analyse_company(ctx, cid, mode="auto")
+    SV.analyse_company(ctx, cid, mode="daten")
+    assert len(seen) == n  # Automatik und Datenaktualisierung rufen die KI nie auf
 
 
 # ------------------------------------------------------------------------------------------------ Jobs
@@ -347,12 +364,13 @@ def test_company_buttons_start_jobs_and_partial(app_client, monkeypatch):
     ctx = c.app.state.ctx
     cid = _cid(_add(c, "ALPH"))
     r = c.post(f"{CID}{cid}/analyse", data={"csrf_token": c.token, "mode": "ki"}, follow_redirects=False)
-    assert "job=" in r.headers["location"] and "err=" in r.headers["location"]  # KI aus: Grund sichtbar
-    jb = J.recent(ctx.db, 1)[0]
-    assert jb["kind"] == "analyse" and jb["status"] == "ki_fehlt" and "ausgeschaltet" in jb["error"]
+    assert "err=" in r.headers["location"] and "nicht+gestartet" in r.headers["location"]  # KI aus: Grund sofort
+    assert not [j for j in J.recent(ctx.db, 5) if j["kind"] == "analyse"]  # kein Job, kein Aufruf
+    page = c.get(f"{CID}{cid}").text
+    assert "KI gesperrt:" in page and "disabled" in page  # Knopf gesperrt, Grund sichtbar
     assert c.post(f"{CID}{cid}/analyse", data={"csrf_token": c.token, "mode": "auto"}).status_code == 400
     part = c.get(f"{CID}{cid}/status").text
-    assert "KI-Researchstatus dieser Firma" in part and "KI nicht konfiguriert" in part
+    assert "KI-Status dieser Firma" in part and "nur auf Knopfdruck" in part
     run, _ = J.create(ctx, "analyse", company_id=cid)
     ctx.db.x("UPDATE disc_job SET status='laeuft', step='KI-Teil 1/3' WHERE id=?", (run,))
     busy = c.post(f"{CID}{cid}/analyse", data={"csrf_token": c.token, "mode": "daten"}, follow_redirects=False)
@@ -487,7 +505,11 @@ def _discovery_ai(seen: list[tuple[str, str]], themes: dict[str, Any]) -> Any:
                 "widerlegung": "Preisdruck durch Wettbewerber", "stufen": {"chance": 2, "besonderheit": 2,
                                                                           "nachfrage": 1},
                 "belege": [{"id": f"{u['key']}-S", "zitat": "Alpha sells robots. Revenue was 742 million dollars"}],
-                "konfidenz": 0.7} for u in units]}), 900, 700, "gemini", "gemini-test")
+                "konfidenz": 0.7, "was": "Alpha baut Industrieroboter.",
+                "disruption": {"verdraengt": "manuelle Montage", "womit": "Roboter mit eigener Software",
+                               "reifegrad": "skaliert", "einschaetzung": "hoch",
+                               "beleg": {"id": f"{u['key']}-S", "zitat": "nicht in der Quelle enthalten"}}}
+                for u in units]}), 900, 700, "gemini", "gemini-test")
         from tests.test_discovery import fake_parts
 
         return fake_parts(seen)(self, system, user, schema, max_tokens, json_mode)  # vertiefte Analyse (3 Teile)
@@ -532,13 +554,17 @@ def test_ki_discovery_finds_companies_outside_news_and_verifies_identity(engine_
     assert cand["status"] == "neu" and cand["priority"] > 50 and cand["theme"] == "Fabrikautomatisierung"
     sig = ctx.db.q1("SELECT * FROM disc_signal WHERE company_id=? AND kind='ki_discovery'", (alpha["id"],))
     assert "Preisdruck" in sig["detail"]  # Widerlegung gehört zur Discovery-These
-    assert [s for s, _ in seen] == ["themen", "thesen", "bericht", "disruption", "nash"]  # + 1 vertiefte Analyse
-    assert res["analysiert"][0]["ki"] == "vollstaendig"
+    assert [s for s, _ in seen] == ["themen", "thesen"]  # genau 2 Aufrufe – keine automatische Vertiefung
+    pv = SV.preview_of(ctx.db, alpha["id"])
+    assert pv["was"] == "Alpha baut Industrieroboter." and pv["disruption"]["einschaetzung"] == "mittel"  # „hoch“
+    assert "Belegstelle" in pv["disruption"]["hinweis"]  # ohne gefundene Belegstelle auf „mittel“ begrenzt
+    fw = ctx.db.q1("SELECT * FROM disc_forward WHERE company_id=? AND kind='vorschau'", (alpha["id"],))
+    assert fw is not None and fw["rating"] == "mittel"  # Vorwärtstest: Vorschau mit Stichtag gespeichert
     payload = json.loads(seen[0][1])
     assert set(payload) == {"ausgangsbelege"} and all(e["id"].startswith(("B", "E")) for e in
                                                        payload["ausgangsbelege"])
     calls = ctx.db.q("SELECT step, status, job_id FROM disc_ai_call WHERE job_id=?", (jid,))
-    assert {r_["step"] for r_ in calls} == {"themen", "thesen", "bericht", "disruption", "nash"}
+    assert {r_["step"] for r_ in calls} == {"themen", "thesen"}
     assert all(r_["status"] == "ok" for r_ in calls)  # jeder Aufruf dem Job zugeordnet
     # erneuter Lauf: keine künstlichen Neuentdeckungen
     r2 = c.post("/discovery/start/ki_discovery", data={"csrf_token": c.token}, follow_redirects=False)
@@ -546,6 +572,8 @@ def test_ki_discovery_finds_companies_outside_news_and_verifies_identity(engine_
     assert res2["neu"] == 0 and res2["bekannt"] == 1
     radar = c.get("/discovery?cat=neu").text
     assert "Alpha Robotics" in radar and "KI-Discovery" in radar
+    pv_page = c.get("/discovery?cat=vorschau").text
+    assert "Disruption (Vorschau):" in pv_page and "manuelle Montage" in pv_page and "Mit KI analysieren" in pv_page
 
 
 def test_ki_discovery_without_ai_or_budget_is_explained(engine_client, monkeypatch):

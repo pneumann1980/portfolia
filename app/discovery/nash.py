@@ -1,4 +1,4 @@
-"""Tom Nash 125 – Public Reconstruction v1.
+"""Portfolia-Score (0.110; bis 0.109 „Tom Nash 125 – Public Reconstruction v1“) – gleiche Methode, neuer Name.
 
 Eigenständige Scorecard nach der öffentlich erläuterten 125-Punkte-Methode von Tom Nash (13 Kriterien, 0/5/10 Punkte,
 „Recession Resistance“ höchstens 5). Getrennt von „Portfolia Fundamental v1“ (``scoring.fundamental_v1``).
@@ -28,9 +28,14 @@ from app.discovery.fundamentals import Fundamentals
 from app.discovery.scoring import Criterion, Fact, Score, _fact
 from app.discovery.text import G, N, P
 
-METHOD = "Tom Nash 125 – Public Reconstruction v1"
-METHOD_VERSION = 1
-LABEL = "Tom Nash 125"
+METHOD = "Portfolia-Score v1 – nach der öffentlich erläuterten 125-Punkte-Methode von Tom Nash (Rekonstruktion)"
+METHOD_VERSION = 1  # Berechnung unverändert seit 0.109 (nur umbenannt)
+LABEL = "Portfolia-Score"
+LEGACY_LABEL = "Tom Nash 125"
+DATA_KEYS = ("nash_cash", "nash_umsatz", "nash_marge", "nash_short", "nash_institutionell", "nash_skalierung",
+             "nash_rendite")
+DATA_MAX = 65.0   # 7 Kennzahl-Kriterien – ohne KI berechenbar
+QUALI_MAX = 60.0  # 6 qualitative Kriterien – nur mit KI-Analyse (per Knopf)
 SOURCE_VIDEO = "https://www.youtube.com/watch?v=6pm5KqQw6RI"
 SOURCE_SUMMARY = "https://youtubesummary.com/summary/6pm5KqQw6RI"
 PROVENANCE = {
@@ -302,3 +307,24 @@ def band(score: dict[str, Any]) -> dict[str, Any]:
                     "note": "" if not n_open else f"steht trotz {n_open} fehlender Kriterien fest"}
     return {"key": "offen", "label": "Nicht bestimmbar", "sure": False, "lo": lo, "hi": hi, "open": n_open,
             "note": f"{n_open} Kriterien fehlen – möglich sind {G(lo)} bis {G(hi)} Punkte"}
+
+
+def split(score: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Datenteil (7 Kennzahlen, 65 Punkte, ohne KI) und qualitativer Teil (6 Kriterien, 60 Punkte, nur mit KI) –
+    für Anzeige und Sortierung. Offene Kriterien zählen nicht als 0, sondern werden als offen ausgewiesen."""
+    if not score or not score.get("criteria"):
+        return None
+    crit = score["criteria"]
+    data = [c for c in crit if c.get("key") in DATA_KEYS]
+    quali = [c for c in crit if c.get("key") not in DATA_KEYS]
+
+    def part(cs: list[dict[str, Any]], mx: float) -> dict[str, Any]:
+        done = [c for c in cs if c.get("points") is not None]
+        return {"pts": round(sum(float(c["points"]) for c in done), 1), "max": mx, "n": len(cs),
+                "n_done": len(done), "n_open": len(cs) - len(done),
+                "open_max": round(sum(float(c.get("max") or 0) for c in cs if c.get("points") is None), 1)}
+
+    d, q = part(data, DATA_MAX), part(quali, QUALI_MAX)
+    return {"data": d, "quali": q, "total": round(d["pts"] + q["pts"], 1), "max": DATA_MAX + QUALI_MAX,
+            "quali_open": q["n_done"] == 0, "complete": d["n_open"] == 0 and q["n_open"] == 0,
+            "data_pct": round(d["pts"] / DATA_MAX * 100) if d["n_done"] else None}
