@@ -15,6 +15,7 @@ from app.discovery import backup as BK
 from app.discovery import engine as EN
 from app.discovery import forward as FW
 from app.discovery import fundamentals as F
+from app.discovery import jobs as J
 from app.discovery import nash as NASH
 from app.discovery import service as SV
 from app.discovery import universe as U
@@ -113,7 +114,7 @@ def test_screening_priority_scale_and_migration(db):
     db.x("INSERT INTO disc_candidate(path, name, status, priority, created_at) VALUES ('wendepunkt', 'X', 'neu', 140, "
          "'2026-01-01')")
     db.x("PRAGMA user_version=42")
-    db.migrate()
+    db.migrate(target=43)  # nur Migration 43 erneut (spätere Migrationen sind bereits angewendet)
     assert db.scalar("SELECT priority FROM disc_candidate WHERE name='X'") == 100  # nie mehr „140 / 100“
 
 
@@ -174,7 +175,8 @@ def test_stale_ai_report_after_new_sec_filing(app_client, monkeypatch):
     assert "Alpha Robotics" in radar
 
 
-def test_button_blocked_without_budget_shows_reason(app_client, monkeypatch):
+def test_button_without_budget_queues_visible_waiting_job(app_client, monkeypatch):
+    """0.111: Kontingent erschöpft → der Knopf bleibt aktiv, der Job wartet sichtbar (Grund, Zeitpunkt, abbrechbar)."""
     c = app_client
     ctx = c.app.state.ctx
     _ai_on(ctx, monkeypatch)
@@ -183,13 +185,25 @@ def test_button_blocked_without_budget_shows_reason(app_client, monkeypatch):
     monkeypatch.setattr("app.news.ai.AiGateway.generate", fake_parts(seen))
     cid = _cid(_add(c, "ALPH"))
     c.post(f"{CID}{cid}/analyse", data={"csrf_token": c.token, "mode": "daten"})
-    r = c.post(f"{CID}{cid}/analyse", data={"csrf_token": c.token, "mode": "ki"}, follow_redirects=False)
-    assert "Tagesgrenze" in r.headers["location"] or "Tagesgrenze" in json.dumps(r.headers["location"])
-    assert seen == []
     page = c.get(f"{CID}{cid}").text
-    assert "KI gesperrt:" in page and "Tagesgrenze" in page
+    assert "Startet nicht sofort:" in page and "Tagesgrenze" in page
+    r = c.post(f"{CID}{cid}/analyse", data={"csrf_token": c.token, "mode": "ki"}, follow_redirects=False)
+    assert "wartet" in r.headers["location"]
+    assert seen == []
+    jb = J.active(ctx.db, cid)[0]
+    assert jb["status"] == "wartet" and "Tagesgrenze" in jb["wait_reason"]
+    page = c.get(f"{CID}{cid}").text
+    assert f"Job #{jb['id']} wartet bis" in page and "abbrechen" in page
     radar = c.get("/discovery").text
-    assert "disabled" in radar.split("Mit KI analysieren · 1 Aufruf")[0][-400:]  # Knopf auf der Karte gesperrt
+    assert "Warteschlange (1)" in radar
+    assert "disabled" not in radar.split("Mit KI analysieren · 1 Aufruf")[0][-400:]  # Knopf bleibt aktiv
+    r = c.post(f"/discovery/jobs/{jb['id']}/abbrechen", data={"csrf_token": c.token, "back": f"{CID}{cid}"},
+               follow_redirects=False)
+    assert "abgebrochen" in r.headers["location"] and J.get(ctx.db, jb["id"])["status"] == "abgebrochen"
+    ctx.settings.set("llm.enabled", False)  # „KI aus“ sperrt weiterhin sofort (Warten hilft nicht)
+    r = c.post(f"{CID}{cid}/analyse", data={"csrf_token": c.token, "mode": "ki"}, follow_redirects=False)
+    assert "nicht+gestartet" in r.headers["location"] or "nicht%20gestartet" in r.headers["location"]
+    assert "KI gesperrt:" in c.get(f"{CID}{cid}").text
 
 
 # ------------------------------------------------------------------------------------- Steckbrief und Karten

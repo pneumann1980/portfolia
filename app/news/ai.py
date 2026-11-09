@@ -12,17 +12,25 @@ Grundsätze
   ``429``/``RESOURCE_EXHAUSTED``, pausiert Portfolia den Anbieter kontrolliert (Minutenlimit: kurz, Tageslimit: bis
   Mitternacht Pacific Time) und wechselt **nie** selbst auf ein anderes Modell oder einen anderen Anbieter.
 * **Antworten sind Daten:** JSON wird angefordert und vom Aufrufer gegen ein Schema geprüft.
+* **Modell je Aufgabe (0.111):** Jede Aufgabe (Nachrichtenpakete, Tagesbericht, Ereignis-Grenzfälle, KI-Discovery,
+  Video-Kernaussagen, Firmenanalyse) nutzt ein Modell laut Profil (``llm.gemini_profile``: ein Modell für alle =
+  bisheriges Verhalten, Free Tier nach Aufgabe, eigene Zuordnung). Anfragen, Tokens, lokale Grenzen und Pausen gelten
+  **je Modell**; Aufgaben mit demselben Modell teilen sich dessen Kontingent. Ein Minuten-/Tageslimit pausiert nur das
+  betroffene Modell; Fehler, die den ganzen Zugang betreffen (Schlüssel ungültig, Berechtigung, Netz), pausieren alle.
+  Manuelle Starts haben Vorrang (Rücklage vom Tageskontingent, Vortritt beim Minutentakt).
 """
 
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import json
 import logging
 import re
 import threading
 import time
 from collections import deque
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
@@ -46,6 +54,42 @@ _MODEL_RE = re.compile(r"^gemini-[a-z0-9][a-z0-9.\-]{2,40}$")
 _PAID_HINTS = ("pro", "image", "tts", "live", "audio", "embedding", "robotics", "omni", "argon", "nano", "lyria",
                "transcribe", "translate")
 
+# Aufgaben (Schlüssel → Bezeichnung). Aufrufer übergeben ``task``; ohne Angabe gilt „news“ (bisheriges Verhalten).
+TASKS: dict[str, str] = {
+    "news": "Nachrichtenpakete",
+    "events": "Ereignis-Grenzfälle",
+    "report": "Tagesbericht",
+    "discovery": "KI-Discovery: Themen und erste Thesen",
+    "video": "Video-Kernaussagen",
+    "company": "Firmenanalyse: Bericht, Disruption, Portfolia-Score",
+}
+# Profile: „einzeln“ = ein Modell für alle (Übernahme bestehender Installationen), „free_tier“ = Empfehlung für einen
+# Gemini-Schlüssel im Free Tier (je Aufgabe ein eigenes Modellkontingent), „eigen“ = Zuordnung in ``llm.task_models``.
+PROFILES: dict[str, dict[str, Any]] = {
+    "einzeln": {"label": "Ein Modell für alle Aufgaben (bisherige Einstellung)"},
+    "free_tier": {"label": "Free Tier – Modell nach Aufgabe (empfohlen)", "models": {
+        "news": "gemini-3.5-flash-lite", "events": "gemini-3.5-flash-lite", "report": "gemini-3.5-flash-lite",
+        "discovery": "gemini-3.5-flash-lite", "video": "gemini-3.6-flash", "company": "gemini-3.8-flash"}},
+    "eigen": {"label": "Eigene Zuordnung je Aufgabe"},
+}
+# Vorsichtige lokale Startwerte je Modell (eigene Annahmen – die gültigen Free-Tier-Werte zeigt Google AI Studio je
+# Projekt; bitte dort ablesen und in den Einstellungen eintragen). tpd 0 = ohne lokale Token-Tagesgrenze.
+LIMIT_DEFAULTS = {"lite": {"rpm": 10, "tpm": 250_000, "rpd": 200, "tpd": 0},
+                  "flash": {"rpm": 5, "tpm": 250_000, "rpd": 50, "tpd": 0}}
+MANUAL_RESERVE_PCT = 10  # Anteil des Tageskontingents je Modell, den Hintergrundaufgaben nicht verbrauchen
+
+AI_PRIORITY: contextvars.ContextVar[str] = contextvars.ContextVar("ai_priority", default="background")
+
+
+@contextlib.contextmanager
+def manual_priority() -> Iterator[None]:
+    """Aufrufe in diesem Block gelten als manuell gestartet (Vorrang vor Hintergrundaufgaben)."""
+    tok = AI_PRIORITY.set("manual")
+    try:
+        yield
+    finally:
+        AI_PRIORITY.reset(tok)
+
 
 class AiError(Exception):
     """Basisklasse; ``code`` = stabiler Kurzcode, ``text`` = bereinigte Meldung für Protokoll und Oberfläche."""
@@ -60,14 +104,19 @@ class AiError(Exception):
 class QuotaExceeded(AiError):
     code = "quota"
 
-    def __init__(self, text: str, retry_after: float | None = None, scope: str = "unknown") -> None:
+    def __init__(self, text: str, retry_after: float | None = None, scope: str = "unknown", model: str = "") -> None:
         super().__init__(text)
         self.retry_after = retry_after
         self.scope = scope  # minute | day | unknown
+        self.model = model
 
 
 class AiUnavailable(AiError):
     code = "unavailable"
+
+    def __init__(self, text: str = "", scope: str = "access") -> None:
+        super().__init__(text)
+        self.scope = scope  # access (Netz) | model (HTTP 5xx bzw. Zeitüberschreitung des Modells)
 
 
 class AiRejected(AiError):
@@ -75,17 +124,29 @@ class AiRejected(AiError):
 
     code = "rejected"
 
+    def __init__(self, text: str = "", scope: str = "request") -> None:
+        super().__init__(text)
+        self.scope = scope  # request (Inhalt) | model (Modell unbekannt) | access (Schlüssel, Berechtigung)
+
 
 class BudgetExceeded(AiError):
     code = "budget"
+
+    def __init__(self, text: str = "", until: datetime | None = None, model: str = "", scope: str = "local") -> None:
+        super().__init__(text)
+        self.until = until
+        self.model = model
+        self.scope = scope  # local (lokale Tagesgrenze) | reserve (Rücklage für manuelle Starts)
 
 
 class Paused(AiError):
     code = "paused"
 
-    def __init__(self, text: str, until: datetime | None = None) -> None:
+    def __init__(self, text: str, until: datetime | None = None, model: str = "", scope: str = "") -> None:
         super().__init__(text)
         self.until = until
+        self.model = model
+        self.scope = scope  # minute | day | model | access | local
 
 
 @dataclass
@@ -143,9 +204,9 @@ class GeminiProvider:
             r = self.client.post(GEMINI_URL.format(model=self.model), json=body, timeout=self.timeout,
                                  headers={"x-goog-api-key": self.key, "Content-Type": "application/json"})
         except httpx.TimeoutException as e:
-            raise AiUnavailable("Gemini: Zeitüberschreitung") from e
+            raise AiUnavailable(f"Gemini ({self.model}): Zeitüberschreitung", scope="model") from e
         except httpx.HTTPError as e:
-            raise AiUnavailable(f"Gemini: nicht erreichbar ({type(e).__name__})") from e
+            raise AiUnavailable(f"Gemini: nicht erreichbar ({type(e).__name__})", scope="access") from e
         return self._parse(r)
 
     def _parse(self, r: httpx.Response) -> AiResult:
@@ -196,12 +257,20 @@ class GeminiProvider:
                         scope = "minute"
             if scope == "unknown" and re.search(r"(?i)per day|daily|requests per day", msg):
                 scope = "day"
-            raise QuotaExceeded(f"Gemini: Kontingent erschöpft ({scope})", retry, scope)
+            label = {"day": "Tageslimit", "minute": "Minutenlimit"}.get(scope, "Limit")
+            raise QuotaExceeded(f"Gemini: Kontingent erschöpft – {label} von {self.model} ({scope})", retry, scope,
+                                self.model)
         if status in (500, 502, 503, 504) or gstatus in ("UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED"):
-            raise AiUnavailable(f"Gemini: vorübergehend nicht verfügbar (HTTP {status})")
-        if status in (400, 401, 403, 404):
+            raise AiUnavailable(f"Gemini: {self.model} vorübergehend nicht verfügbar (HTTP {status})", scope="model")
+        if status == 404 or gstatus == "NOT_FOUND":
+            raise AiRejected(f"Gemini: Modell {self.model} nicht verfügbar (HTTP {status} {gstatus}) {msg}".strip(),
+                             scope="model")
+        if status in (401, 403) or gstatus in ("UNAUTHENTICATED", "PERMISSION_DENIED") or \
+                re.search(r"(?i)api key|api_key|billing|location is not supported", msg):
+            raise AiRejected(f"Gemini: Zugang abgelehnt (HTTP {status} {gstatus}) {msg}".strip(), scope="access")
+        if status == 400:
             raise AiRejected(f"Gemini: Anfrage abgelehnt (HTTP {status} {gstatus}) {msg}".strip())
-        raise AiUnavailable(f"Gemini: HTTP {status}")
+        raise AiUnavailable(f"Gemini: HTTP {status}", scope="model")
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -210,8 +279,10 @@ class GeminiProvider:
 
 class AiGateway:
     _lock = threading.Lock()
-    # Anbieter → [Zeitpunkt, Tokens] je Anfrage der letzten 60 s (prozessweit, von allen Gateways geteilt)
+    # Modell (bzw. Anbieter) → [Zeitpunkt, Tokens] je Anfrage der letzten 60 s (prozessweit, von allen Gateways geteilt)
     _recent: ClassVar[dict[str, deque[list[float]]]] = {}
+    _inflight: ClassVar[dict[str, int]] = {}       # laufende Anfragen je Modell (Tageslimit bei parallelen Aufrufen)
+    _manual_waiting: ClassVar[dict[str, int]] = {}  # wartende manuelle Anfragen je Modell (Vortritt beim Takt)
 
     def __init__(self, ctx: AppContext) -> None:
         self.ctx = ctx
@@ -229,17 +300,55 @@ class AiGateway:
     def enabled(self) -> bool:
         return bool(self.s.get("llm.enabled", False)) and self.key_present()
 
-    def model(self) -> str:
-        if self.provider_name() == "gemini":
-            m = str(self.s.get("llm.gemini_model") or GEMINI_DEFAULT)
-            return m if model_allowed(m) else GEMINI_DEFAULT
-        return str(self.s.get("llm.model") or "claude-opus-5")
+    def base_model(self) -> str:
+        """Bisheriges (einziges) Gemini-Modell aus ``llm.gemini_model``."""
+        m = str(self.s.get("llm.gemini_model") or GEMINI_DEFAULT)
+        return m if model_allowed(m) else GEMINI_DEFAULT
 
-    def limits(self) -> dict[str, int]:
+    def profile(self) -> str:
+        p = str(self.s.get("llm.gemini_profile") or "einzeln")
+        return p if p in PROFILES else "einzeln"
+
+    def model_for(self, task: str = "news") -> str:
+        """Modell einer Aufgabe laut Profil (Gemini); bei Claude das konfigurierte Claude-Modell."""
+        if self.provider_name() != "gemini":
+            return str(self.s.get("llm.model") or "claude-opus-5")
+        prof = self.profile()
+        if prof == "free_tier":
+            m = str(PROFILES["free_tier"]["models"].get(task) or "")
+        elif prof == "eigen":
+            m = str((self.s.get("llm.task_models") or {}).get(task) or "")
+        else:
+            m = ""
+        return m if m and model_allowed(m) else self.base_model()
+
+    def model(self, task: str = "news") -> str:
+        return self.model_for(task)
+
+    def task_models(self) -> dict[str, str]:
+        return {t: self.model_for(t) for t in TASKS}
+
+    def models_in_use(self) -> list[str]:
+        out: list[str] = []
+        for m in self.task_models().values():
+            if m not in out:
+                out.append(m)
+        return out
+
+    def limits(self, model: str | None = None) -> dict[str, int]:
+        """Lokale Grenzen eines Modells: eigene Werte (``llm.model_limits``), für das bisherige Modell die bisherigen
+        Einstellungen (Übernahme), sonst vorsichtige Startwerte (Annahmen, in AI Studio prüfen)."""
+        m = model or self.model_for("news")
         g = lambda k, d: max(0, int(self.s.get(k, d) or 0))  # noqa: E731
-        unlimited = bool(self.s.get("llm.gemini_tokens_unlimited", False))  # 0 = ohne Token-Tagesgrenze
-        return {"rpm": g("llm.gemini_rpm", 5), "tpm": g("llm.gemini_tpm", 100_000), "rpd": g("llm.gemini_rpd", 100),
-                "tpd": 0 if unlimited else g("llm.gemini_daily_token_budget", 200_000)}
+        own = (self.s.get("llm.model_limits") or {}).get(m)
+        if isinstance(own, dict):
+            return {k: max(0, int(own.get(k) or 0)) for k in ("rpm", "tpm", "rpd", "tpd")}
+        if m == self.base_model():
+            unlimited = bool(self.s.get("llm.gemini_tokens_unlimited", False))  # 0 = ohne Token-Tagesgrenze
+            return {"rpm": g("llm.gemini_rpm", 5), "tpm": g("llm.gemini_tpm", 100_000),
+                    "rpd": g("llm.gemini_rpd", 100), "tpd": 0 if unlimited else g("llm.gemini_daily_token_budget",
+                                                                                  200_000)}
+        return dict(LIMIT_DEFAULTS["lite" if "lite" in m else "flash"])
 
     # -- Nutzung ---------------------------------------------------------------------------------------
     def day_key(self, provider: str | None = None) -> str:
@@ -250,42 +359,111 @@ class AiGateway:
         r = self.db.q1("SELECT * FROM ai_usage WHERE day=? AND provider=?", (day or self.day_key(p), p))
         return {k: int(r[k]) if r else 0 for k in ("requests", "input_tokens", "output_tokens", "errors", "quota_hits")}
 
-    def tokens_left(self) -> int | None:
-        """Restliche Tokens heute; ``None`` = unbegrenzt (nur Gemini, ausdrücklich gewählt)."""
+    def usage_model(self, model: str, day: str | None = None) -> dict[str, int]:
+        """Verbrauch eines Modells heute (Pacific-Tag) – Summe über alle Aufgaben, die es nutzen. Im Profil „ein
+        Modell für alle“ zählt der bisherige Anbieterzähler (lückenlose Übernahme am Tag der Umstellung)."""
+        if self.profile() == "einzeln" and model == self.base_model():
+            return self.usage("gemini", day)
+        r = self.db.q1("SELECT COALESCE(SUM(requests),0) AS requests, COALESCE(SUM(input_tokens),0) AS input_tokens, "
+                       "COALESCE(SUM(output_tokens),0) AS output_tokens, COALESCE(SUM(errors),0) AS errors, "
+                       "COALESCE(SUM(quota_hits),0) AS quota_hits FROM ai_model_usage WHERE day=? AND model=?",
+                       (day or self.day_key("gemini"), model))
+        return {k: int(r[k]) if r else 0 for k in ("requests", "input_tokens", "output_tokens", "errors", "quota_hits")}
+
+    def usage_task(self, task: str, day: str | None = None) -> dict[str, int]:
+        r = self.db.q1("SELECT COALESCE(SUM(requests),0) AS requests, COALESCE(SUM(input_tokens),0) AS input_tokens, "
+                       "COALESCE(SUM(output_tokens),0) AS output_tokens, COALESCE(SUM(errors),0) AS errors, "
+                       "COALESCE(SUM(quota_hits),0) AS quota_hits FROM ai_model_usage WHERE day=? AND task=?",
+                       (day or self.day_key("gemini"), task))
+        return {k: int(r[k]) if r else 0 for k in ("requests", "input_tokens", "output_tokens", "errors", "quota_hits")}
+
+    def tokens_left(self, task: str = "news") -> int | None:
+        """Restliche Tokens heute für das Modell der Aufgabe; ``None`` = ohne lokale Token-Tagesgrenze."""
         p = self.provider_name()
         if p == "claude":
             from app.news.llm import LlmService
 
             return LlmService(self.ctx).budget_left()
-        tpd = self.limits()["tpd"]
+        m = self.model_for(task)
+        tpd = self.limits(m)["tpd"]
         if not tpd:
             return None
-        u = self.usage(p)
+        u = self.usage_model(m)
         return tpd - u["input_tokens"] - u["output_tokens"]
 
-    def requests_left(self) -> int | None:
-        """Restliche Anfragen heute; ``None`` = ohne Tageslimit (Claude oder ``llm.gemini_rpd`` = 0)."""
+    def requests_left(self, task: str = "news") -> int | None:
+        """Restliche Anfragen heute für das Modell der Aufgabe; ``None`` = ohne Tageslimit (Claude bzw. rpd 0)."""
         if self.provider_name() != "gemini":
             return None
-        rpd = self.limits()["rpd"]
-        return rpd - self.usage("gemini")["requests"] if rpd else None
+        m = self.model_for(task)
+        rpd = self.limits(m)["rpd"]
+        return rpd - self.usage_model(m)["requests"] if rpd else None
 
-    def _record(self, provider: str, inp: int = 0, out: int = 0, *, ok: bool = True, quota: bool = False) -> None:
+    def _record(self, provider: str, inp: int = 0, out: int = 0, *, ok: bool = True, quota: bool = False,
+                model: str = "", task: str = "") -> None:
         self.db.x(
             """INSERT INTO ai_usage(day, provider, requests, input_tokens, output_tokens, errors, quota_hits)
                VALUES (?,?,?,?,?,?,?) ON CONFLICT(day, provider) DO UPDATE SET requests=requests+excluded.requests,
                    input_tokens=input_tokens+excluded.input_tokens, output_tokens=output_tokens+excluded.output_tokens,
                    errors=errors+excluded.errors, quota_hits=quota_hits+excluded.quota_hits""",
             (self.day_key(provider), provider, 1, inp, out, 0 if ok else 1, 1 if quota else 0))
+        if model:
+            self.db.x(
+                """INSERT INTO ai_model_usage(day, model, task, requests, input_tokens, output_tokens, errors,
+                       quota_hits) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(day, model, task) DO UPDATE SET
+                       requests=requests+excluded.requests, input_tokens=input_tokens+excluded.input_tokens,
+                       output_tokens=output_tokens+excluded.output_tokens, errors=errors+excluded.errors,
+                       quota_hits=quota_hits+excluded.quota_hits""",
+                (self.day_key(provider), model, task or "news", 1, inp, out, 0 if ok else 1, 1 if quota else 0))
 
     # -- Pause -------------------------------------------------------------------------------------------
-    def paused_until(self, provider: str | None = None) -> datetime | None:
-        st = self.db.get_state(f"ai.pause.{provider or self.provider_name()}")
+    def _pause_state(self, key: str) -> tuple[datetime | None, str]:
+        st = self.db.get_state(key)
         until = parse_iso(st.get("until")) if isinstance(st, dict) else None
-        return until if until and until > datetime.now(UTC) else None
+        if until and until > datetime.now(UTC):
+            return until, str(st.get("reason") or "")  # type: ignore[union-attr]
+        return None, ""
 
-    def _pause(self, provider: str, until: datetime, reason: str) -> None:
-        self.db.set_state(f"ai.pause.{provider}", {"until": iso(until), "reason": reason})
+    def access_paused(self, provider: str | None = None) -> tuple[datetime | None, str]:
+        """Pause des ganzen Zugangs (Schlüssel, Berechtigung, Netz) – betrifft alle Modelle."""
+        return self._pause_state(f"ai.pause.{provider or self.provider_name()}")
+
+    def model_paused(self, model: str) -> tuple[datetime | None, str]:
+        return self._pause_state(f"ai.pause.gemini:{model}")
+
+    def blocked(self, task: str = "news") -> dict[str, Any] | None:
+        """Wartegrund einer Aufgabe (Zugang oder Modell pausiert): ``{until, reason, scope, model}`` oder ``None``."""
+        p = self.provider_name()
+        until, why = self.access_paused(p)
+        if until:
+            return {"until": until, "reason": why or "Zugang pausiert", "scope": "access", "model": ""}
+        if p != "gemini":
+            return None
+        m = self.model_for(task)
+        until, why = self.model_paused(m)
+        if until:
+            st = self.db.get_state(f"ai.pause.gemini:{m}")
+            return {"until": until, "reason": why, "scope": str((st or {}).get("scope") or "model"), "model": m}
+        return None
+
+    def paused_until(self, provider: str | None = None, task: str = "news") -> datetime | None:
+        """Wartezeit der Aufgabe (Standard: Nachrichtenpakete) – Zugang oder ihr Modell pausiert."""
+        b = self.blocked(task) if (provider or self.provider_name()) == self.provider_name() else None
+        if b is None and provider and provider != self.provider_name():
+            return self.access_paused(provider)[0]
+        return b["until"] if b else None
+
+    def _pause(self, provider: str, until: datetime, reason: str, model: str = "", scope: str = "") -> None:
+        key = f"ai.pause.{provider}:{model}" if model else f"ai.pause.{provider}"
+        self.db.set_state(key, {"until": iso(until), "reason": reason, "scope": scope or ("model" if model else
+                                                                                           "access")})
+
+    def clear_pauses(self) -> None:
+        """Pausen aufheben (z. B. nach Änderung von Schlüssel, Profil oder Grenzen in den Einstellungen)."""
+        for p in ("gemini", "claude"):
+            self.db.set_state(f"ai.pause.{p}", None)
+        for m in set(GEMINI_MODELS) | set(self.models_in_use()):
+            self.db.set_state(f"ai.pause.gemini:{m}", None)
 
     def last_error(self) -> str:
         st = self.db.get_state("ai.last_error")
@@ -297,14 +475,16 @@ class AiGateway:
     def _ok(self) -> None:
         self.db.set_state("ai.last_ok", iso(datetime.now(UTC)))
 
-    def health(self, window_min: int = 30) -> tuple[bool, str]:
-        """(erreichbar, Grund). „Nicht erreichbar“ heißt: aus/ohne Schlüssel, pausiert oder der jüngste Aufruf der
-        letzten ``window_min`` Minuten ist fehlgeschlagen und danach gab es keinen Erfolg."""
+    def health(self, window_min: int = 30, task: str = "news") -> tuple[bool, str]:
+        """(erreichbar, Grund). „Nicht erreichbar“ heißt: aus/ohne Schlüssel, Zugang oder Modell der Aufgabe pausiert
+        oder der jüngste Aufruf der letzten ``window_min`` Minuten ist fehlgeschlagen und danach gab es keinen
+        Erfolg."""
         if not self.enabled():
             return False, "Die KI ist ausgeschaltet oder nicht konfiguriert."
-        until = self.paused_until()
-        if until is not None:
-            return False, f"Der KI-Anbieter pausiert bis {until.astimezone(local_tz()):%H:%M} Uhr."
+        b = self.blocked(task)
+        if b is not None:
+            who = f"Das Modell {b['model']}" if b["model"] else "Der KI-Anbieter"
+            return False, f"{who} pausiert bis {b['until'].astimezone(local_tz()):%H:%M} Uhr."
         err = self.db.get_state("ai.last_error")
         at = parse_iso(err.get("at")) if isinstance(err, dict) else None
         if at is not None and datetime.now(UTC) - at < timedelta(minutes=window_min):
@@ -315,17 +495,20 @@ class AiGateway:
 
     # -- Aufruf --------------------------------------------------------------------------------------------
     def generate(self, system: str, user: str, schema: dict[str, Any] | None, max_tokens: int,
-                 json_mode: bool = False) -> AiResult:
+                 json_mode: bool = False, *, task: str = "news", priority: str | None = None) -> AiResult:
         """Ein Aufruf mit allen Kontrollen. ``schema`` (nur Claude: erzwungenes JSON-Schema) oder ``json_mode``
-        (Gemini: JSON-MIME-Typ; die Prüfung gegen das Schema macht der Aufrufer)."""
+        (Gemini: JSON-MIME-Typ; die Prüfung gegen das Schema macht der Aufrufer). ``task`` wählt das Modell (Profil),
+        ``priority`` „manual“ hat Vorrang (Standard: aus :data:`AI_PRIORITY`)."""
         if not self.enabled():
-            raise AiRejected("KI ist nicht aktiviert oder der Schlüssel fehlt")
+            raise AiRejected("KI ist nicht aktiviert oder der Schlüssel fehlt", scope="access")
         provider = self.provider_name()
-        until = self.paused_until(provider)
-        if until:
-            raise Paused("Anbieter pausiert", until)
+        b = self.blocked(task)
+        if b is not None:
+            who = f"Modell {b['model']}" if b["model"] else "Anbieter"
+            raise Paused(f"{who} pausiert: {b['reason']}".strip(": "), b["until"], b["model"], b["scope"])
         if provider == "gemini":
-            return self._gemini(system, user, json_mode or schema is not None, max_tokens)
+            return self._gemini(system, user, json_mode or schema is not None, max_tokens, task,
+                                priority or AI_PRIORITY.get())
         return self._claude(system, user, schema, max_tokens)
 
     def _claude(self, system: str, user: str, schema: dict[str, Any] | None, max_tokens: int) -> AiResult:
@@ -342,81 +525,151 @@ class AiGateway:
             self._error("Claude: keine verwertbare Antwort (Fehler, Rate-Limit oder Ablehnung)")
             raise AiUnavailable("Claude: keine Antwort")
         self._ok()
-        return AiResult(text, after[0] - before[0], after[1] - before[1], "claude", self.model())
+        return AiResult(text, after[0] - before[0], after[1] - before[1], "claude", self.model_for("news"))
 
-    def _gemini(self, system: str, user: str, json_mode: bool, max_tokens: int) -> AiResult:
-        lim = self.limits()
-        u = self.usage("gemini")
-        if lim["rpd"] and u["requests"] >= lim["rpd"]:
-            raise BudgetExceeded("Gemini: Tageslimit für Anfragen erreicht")
+    def reserve(self, model: str) -> int:
+        """Rücklage für manuelle Starts: Anfragen, die Hintergrundaufgaben vom Tageslimit des Modells nicht nutzen."""
+        rpd = self.limits(model)["rpd"]
+        pct = max(0, min(50, int(self.s.get("llm.manual_reserve_pct", MANUAL_RESERVE_PCT) or 0)))
+        return rpd * pct // 100 if rpd and pct else 0  # abgerundet: kleine Grenzen bleiben voll nutzbar
+
+    def _admit(self, model: str, lim: dict[str, int], est_in: int, max_tokens: int, priority: str) -> None:
+        """Tageslimits prüfen und einen Platz belegen – unter Sperre, damit parallele Aufrufe am Limit es nicht
+        überschreiten (laufende Anfragen zählen mit)."""
+        with self._lock:
+            u = self.usage_model(model)
+            used = u["requests"] + self._inflight.get(model, 0)
+            if lim["rpd"] and used >= lim["rpd"]:
+                raise BudgetExceeded(f"Lokales Tageslimit von {model} erreicht ({lim['rpd']} Anfragen)",
+                                     next_pacific_midnight(), model, "local")
+            if priority != "manual" and lim["rpd"] and used >= lim["rpd"] - self.reserve(model):
+                raise BudgetExceeded(f"Rest des Tageskontingents von {model} ist für manuelle Starts reserviert",
+                                     next_pacific_midnight(), model, "reserve")
+            if lim["tpd"] and u["input_tokens"] + u["output_tokens"] + est_in + max_tokens > lim["tpd"]:
+                raise BudgetExceeded(f"Lokales Token-Tagesbudget von {model} reicht nicht", next_pacific_midnight(),
+                                     model, "local")
+            self._inflight[model] = self._inflight.get(model, 0) + 1
+
+    def _gemini(self, system: str, user: str, json_mode: bool, max_tokens: int, task: str = "news",
+                priority: str = "background") -> AiResult:
+        model = self.model_for(task)
+        lim = self.limits(model)
         est_in = (len(system) + len(user)) // 3
-        if lim["tpd"] and u["input_tokens"] + u["output_tokens"] + est_in + max_tokens > lim["tpd"]:
-            raise BudgetExceeded("Gemini: Token-Tagesbudget reicht nicht")
-        slot = self._throttle("gemini", lim, est_in + max_tokens)
-        prov = GeminiProvider(self.ctx.http, self.ctx.config.secrets.gemini_api_key or "", self.model())
+        self._admit(model, lim, est_in, max_tokens, priority)
         try:
-            res = prov.generate(system, user, json_mode, max_tokens)
-        except QuotaExceeded as e:
-            slot[1] = 0
-            self._record("gemini", ok=False, quota=True)
-            if e.scope == "day":
-                until = next_pacific_midnight()
-            else:
-                until = datetime.now(UTC) + timedelta(seconds=min(900.0, max(30.0, (e.retry_after or 60.0) + 2)))
-            self._pause("gemini", until, e.text)
-            self._error(e.text)
-            raise
-        except AiError as e:
-            slot[1] = 0
-            self._record("gemini", ok=False)
-            self._error(e.text)
-            if isinstance(e, AiUnavailable):  # anhaltende Störung: Abstand verdoppeln statt jeden Lauf neu anzufragen
-                self._backoff("gemini", e.text)
-            raise
+            slot = self._throttle(model, lim, est_in + max_tokens, priority)
+            prov = GeminiProvider(self.ctx.http, self.ctx.config.secrets.gemini_api_key or "", model)
+            try:
+                res = prov.generate(system, user, json_mode, max_tokens)
+            except QuotaExceeded as e:
+                slot[1] = 0
+                self._record("gemini", ok=False, quota=True, model=model, task=task)
+                if e.scope == "day":
+                    until = next_pacific_midnight()
+                else:
+                    until = datetime.now(UTC) + timedelta(seconds=min(900.0, max(30.0, (e.retry_after or 60.0) + 2)))
+                self._pause("gemini", until, e.text, model=model, scope="day" if e.scope == "day" else "minute")
+                self._error(e.text)
+                raise
+            except AiError as e:
+                slot[1] = 0
+                self._record("gemini", ok=False, model=model, task=task)
+                self._error(e.text)
+                if isinstance(e, AiRejected) and e.scope == "access":
+                    self._pause("gemini", datetime.now(UTC) + timedelta(minutes=30), e.text, scope="access")
+                elif isinstance(e, AiRejected) and e.scope == "model":
+                    self._pause("gemini", datetime.now(UTC) + timedelta(hours=6), e.text, model=model, scope="model")
+                elif isinstance(e, AiUnavailable):  # anhaltende Störung: Abstand verdoppeln statt jedes Mal anfragen
+                    self._backoff("gemini", e.text, model if e.scope == "model" else "")
+                raise
+            slot[1] = res.input_tokens + res.output_tokens
+            # Verbrauch speichern, BEVOR der Platz frei wird – sonst zählt ein paralleler Aufruf ihn nicht mit
+            self._record("gemini", res.input_tokens, res.output_tokens, model=model, task=task)
+        finally:
+            with self._lock:
+                self._inflight[model] = max(0, self._inflight.get(model, 0) - 1)
+        self.db.set_state(f"ai.fail.gemini:{model}", 0)
         self.db.set_state("ai.fail.gemini", 0)
         self._ok()
-        slot[1] = res.input_tokens + res.output_tokens
-        self._record("gemini", res.input_tokens, res.output_tokens)
         return res
 
-    def _backoff(self, provider: str, reason: str) -> None:
-        n = int(self.db.get_state(f"ai.fail.{provider}", 0) or 0) + 1
-        self.db.set_state(f"ai.fail.{provider}", n)
+    def _backoff(self, provider: str, reason: str, model: str = "") -> None:
+        key = f"ai.fail.{provider}:{model}" if model else f"ai.fail.{provider}"
+        n = int(self.db.get_state(key, 0) or 0) + 1
+        self.db.set_state(key, n)
         if n >= 2:  # einzelne Aussetzer bleiben folgenlos; ab dem zweiten Fehler in Folge 5, 10, 20 … max. 120 min
-            self._pause(provider, datetime.now(UTC) + timedelta(minutes=min(120, 5 * 2 ** (n - 2))), reason)
+            self._pause(provider, datetime.now(UTC) + timedelta(minutes=min(120, 5 * 2 ** (n - 2))), reason,
+                        model=model, scope="model" if model else "access")
 
-    def _throttle(self, provider: str, lim: dict[str, int], est: int) -> list[float]:
-        """Takt je Minute (Anfragen und Tokens) einhalten – kurz warten, bei längerer Wartezeit abbrechen.
+    def _throttle(self, model: str, lim: dict[str, int], est: int, priority: str = "background") -> list[float]:
+        """Takt je Minute und Modell (Anfragen und Tokens) einhalten – kurz warten, bei längerer Wartezeit abbrechen.
+        Manuelle Anfragen haben Vortritt: Hintergrundanfragen warten, solange eine manuelle auf einen Platz wartet.
         Gibt den reservierten Eintrag zurück (``[Zeit, Tokens]``); die Tokens werden nach der Antwort ergänzt."""
         waited = 0.0
-        while True:
+        manual = priority == "manual"
+        if manual:
             with self._lock:
-                dq = self._recent.setdefault(provider, deque())
-                now = time.monotonic()
-                while dq and now - dq[0][0] > 60:
-                    dq.popleft()
-                n, toks = len(dq), int(sum(e[1] for e in dq))
-                over_r = lim["rpm"] and n >= lim["rpm"]
-                over_t = lim["tpm"] and n and toks + est > lim["tpm"]
-                if not (over_r or over_t):
-                    slot = [now, float(est)]
-                    dq.append(slot)
-                    return slot
-                wait = max(0.5, 60 - (now - dq[0][0]) + 0.2)
-            if waited + wait > 75:
-                raise Paused("Minutenlimit lokal erreicht", datetime.now(UTC) + timedelta(seconds=wait))
-            time.sleep(min(wait, 30))
-            waited += min(wait, 30)
+                self._manual_waiting[model] = self._manual_waiting.get(model, 0) + 1
+        try:
+            while True:
+                with self._lock:
+                    dq = self._recent.setdefault(model, deque())
+                    now = time.monotonic()
+                    while dq and now - dq[0][0] > 60:
+                        dq.popleft()
+                    n, toks = len(dq), int(sum(e[1] for e in dq))
+                    over_r = lim["rpm"] and n >= lim["rpm"]
+                    over_t = lim["tpm"] and n and toks + est > lim["tpm"]
+                    yield_to_manual = not manual and self._manual_waiting.get(model, 0) > 0
+                    if not (over_r or over_t or yield_to_manual):
+                        slot = [now, float(est)]
+                        dq.append(slot)
+                        return slot
+                    wait = 0.5 if yield_to_manual and not (over_r or over_t) else \
+                        max(0.5, 60 - (now - dq[0][0]) + 0.2)
+                if waited + wait > 75:
+                    raise Paused(f"Minutenlimit von {model} lokal erreicht", datetime.now(UTC) +
+                                 timedelta(seconds=wait), model, "minute")
+                time.sleep(min(wait, 30))
+                waited += min(wait, 30)
+        finally:
+            if manual:
+                with self._lock:
+                    self._manual_waiting[model] = max(0, self._manual_waiting.get(model, 0) - 1)
 
     # -- Anzeige -------------------------------------------------------------------------------------------------
+    def task_status(self) -> list[dict[str, Any]]:
+        """Je Aufgabe: Modell, Verbrauch (Aufgabe und Modell), Grenzen, Rest, Rücklage und konkreter Wartegrund."""
+        out = []
+        gem = self.provider_name() == "gemini"
+        for task, label in TASKS.items():
+            m = self.model_for(task)
+            row: dict[str, Any] = {"task": task, "label": label, "model": m}
+            if gem:
+                lim, um = self.limits(m), self.usage_model(m)
+                row.update(limits=lim, usage_model=um, usage_task=self.usage_task(task),
+                           shared=[TASKS[t] for t, mm in self.task_models().items() if mm == m and t != task],
+                           requests_left=(lim["rpd"] - um["requests"]) if lim["rpd"] else None,
+                           tokens_left=(lim["tpd"] - um["input_tokens"] - um["output_tokens"]) if lim["tpd"] else None,
+                           reserve=self.reserve(m))
+            b = self.blocked(task) if self.enabled() else None
+            if b is None and gem and row.get("requests_left") is not None and row["requests_left"] <= 0:
+                b = {"until": next_pacific_midnight(), "reason": f"Lokales Tageslimit von {m} erreicht",
+                     "scope": "local", "model": m}
+            row["wait"] = b
+            out.append(row)
+        return out
+
     def status(self) -> dict[str, Any]:
         p = self.provider_name()
         u = self.usage(p)
         lim = self.limits()
-        return {"provider": p, "model": self.model(), "enabled": self.enabled(), "key": self.key_present(),
+        return {"provider": p, "model": self.model_for("news"), "enabled": self.enabled(), "key": self.key_present(),
                 "usage": u, "limits": lim, "tokens_left": self.tokens_left() if self.enabled() else None,
                 "requests_left": self.requests_left(), "paused_until": self.paused_until(p),
-                "last_error": self.last_error(), "day": self.day_key(p)}
+                "last_error": self.last_error(), "day": self.day_key(p), "profile": self.profile(),
+                "profile_label": PROFILES[self.profile()]["label"], "tasks": self.task_status(),
+                "access_paused": self.access_paused(p)}
 
 
 def parse_json(text: str) -> Any:
@@ -433,8 +686,11 @@ def parse_json(text: str) -> Any:
 
 
 __all__ = [
+    "AI_PRIORITY",
     "GEMINI_DEFAULT",
     "GEMINI_MODELS",
+    "PROFILES",
+    "TASKS",
     "AiError",
     "AiGateway",
     "AiRejected",
@@ -444,6 +700,7 @@ __all__ = [
     "GeminiProvider",
     "Paused",
     "QuotaExceeded",
+    "manual_priority",
     "model_allowed",
     "pacific_day",
     "parse_json",

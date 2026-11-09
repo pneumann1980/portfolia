@@ -85,7 +85,7 @@ def test_states_paused_no_captions_failed_and_retry(client, monkeypatch):
     monkeypatch.setattr(T.ytlib, "fetch", lambda *a: (_ for _ in ()).throw(ytlib.TranscriptError("none")))
     T.TranscriptService(ctx, gap_s=0).run()
     t = client.get(f"/news/{a}/transcript/state").text
-    assert "Keine Untertitel" in t and "selbst einfügen" in t
+    assert "Transkript fehlt" in t and "wartet auf deine Eingabe" in t and "Transkript einfügen" in t  # 0.111
     b = add_video(ctx, "S2", requested=True)
     T.TranscriptService(ctx)._upsert(b, "failed", "broken", url="u", attempts=3)
     assert transcript_states(ctx, [b])[b]["state"] == "failed"

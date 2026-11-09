@@ -248,7 +248,7 @@ class EventService:
                             "b": {"titel": b["title"], "zeit": b["published_at"], "text": (b["summary"] or "")[:240]}})
         try:
             out = self.ai.generate(system, json.dumps({"paare": payload}, ensure_ascii=False), None,
-                                   600 + 40 * len(pairs), json_mode=True)
+                                   600 + 40 * len(pairs), json_mode=True, task="events")
             data = parse_json(out.text)
             rows = data.get("paare") if isinstance(data, dict) else None
             if not isinstance(rows, list):

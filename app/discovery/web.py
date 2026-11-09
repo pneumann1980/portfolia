@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
@@ -25,6 +26,7 @@ from app.discovery import universe as U
 from app.discovery.charts import bars
 from app.discovery.identity import norm_ticker
 from app.jobs.scheduler import Scheduler, extra_jobs
+from app.util.timeutil import local_tz, parse_iso
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -61,8 +63,16 @@ def _jobs(s: Scheduler) -> None:
     s.register("discovery_task", lambda ctx, job_id=0: J.run(ctx, int(job_id)), None, executor="discovery")
     s.register("discovery_task_interactive", lambda ctx, job_id=0: J.run(ctx, int(job_id)), None,
                executor="interactive")
+    # Warteschlange: wartende KI-Jobs nach Ablauf der Wartezeit erneut starten (manuelle zuerst)
+    s.register("discovery_wake", lambda ctx: {"geweckt": J.wake_waiting(ctx)}, IntervalTrigger(minutes=1))
     _recover_once(s.ctx)
     schedule(s)
+
+
+def _until(v: Any) -> str:
+    """Wartezeitpunkt lokal und lesbar (TT.MM. HH:MM)."""
+    dt = parse_iso(str(v or ""))
+    return dt.astimezone(local_tz()).strftime("%d.%m. %H:%M") if dt else "–"
 
 
 def _back(target: str, **q: Any) -> RedirectResponse:
@@ -124,8 +134,20 @@ def make_router() -> APIRouter:
         if not r["new"]:
             return _back(BASE, err=f"{START_KINDS[kind]} läuft bereits (Job #{r['id']}) – kein zweiter Start.",
                          job=r["id"])
-        note = "gestartet" if jb.get("active") else f"beendet: {jb.get('status_label')}"
+        note = f"wartet bis {_until(jb.get('wait_until'))} ({jb.get('wait_reason') or 'KI-Kontingent'}) und startet " \
+            "dann von selbst – abbrechbar" if jb.get("waiting") else \
+            "gestartet" if jb.get("active") else f"beendet: {jb.get('status_label')}"
         return _back(BASE, msg=f"{START_KINDS[kind]} {note} (Job #{r['id']}).", job=r["id"])
+
+    @router.post(BASE + "/jobs/{job_id}/abbrechen")
+    async def cancel_job(request: Request, job_id: int) -> Response:
+        ctx = get_ctx(request)
+        form = await request.form()
+        back = str(form.get("back") or BASE)
+        back = back if back.startswith(BASE) else BASE
+        if J.cancel(ctx, job_id):
+            return _back(back, msg=f"Job #{job_id} abgebrochen.")
+        return _back(back, err=f"Job #{job_id} wartet nicht (mehr) – ein laufender Job läuft zu Ende.")
 
     @router.get(BASE + "/jobs/{job_id}", response_class=HTMLResponse)
     def job_partial(request: Request, job_id: int) -> HTMLResponse:
@@ -246,15 +268,19 @@ def make_router() -> APIRouter:
             mode = "daten"
         if mode not in SV.MODES or mode == "auto":
             raise HTTPException(400)
-        if mode in SV.AI_MODES:  # Knopf ohne Kontingent bzw. ohne KI: kein Job, Grund sofort sichtbar
-            state, why = AI.unavailable_reason(ctx)
-            if state:
-                return _back(f"{BASE}/c/{cid}", err=f"KI-Analyse nicht gestartet: {why}.")
+        if mode in SV.AI_MODES:  # ohne KI-Konfiguration kein Job; bei Grenzen wartet der Job sichtbar
+            av = AI.availability(ctx, "company")
+            if av["state"] == "aus":
+                return _back(f"{BASE}/c/{cid}", err=f"KI-Analyse nicht gestartet: {av['reason']}.")
         r = await run_in_threadpool(J.start, ctx, "analyse", trigger="manuell", company_id=cid,
                                     params={"mode": mode, "force": form.get("force") == "1"})
         jb = J.get(ctx.db, r["id"]) or {}
         if not r["new"]:
             return _back(f"{BASE}/c/{cid}", err=f"Für dieses Unternehmen läuft bereits eine Analyse (Job #{r['id']}).",
+                         job=r["id"])
+        if jb.get("waiting"):
+            return _back(f"{BASE}/c/{cid}", msg=f"Job #{r['id']} wartet bis {_until(jb.get('wait_until'))} "
+                         f"({jb.get('wait_reason') or 'KI-Kontingent'}) und startet dann von selbst – abbrechbar.",
                          job=r["id"])
         if jb.get("active"):
             return _back(f"{BASE}/c/{cid}", msg=f"Job #{r['id']} gestartet: {SV.MODES[mode]}.", job=r["id"])

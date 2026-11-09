@@ -1995,7 +1995,9 @@ Speichern aus der Oberfläche erhalten).
 * **Optional KI** (Anthropic Claude **oder** Google Gemini, standardmäßig **aus**): strukturierte Einzelanalyse
   (Fakten ≠ zitierte Einschätzungen ≠ KI-Einordnung ≠ Unsicheres), Grenzfälle der Gruppierung, Tagesbericht – mit
   Tages-Token-Budget; bei Gemini zusätzlich lokale Minuten-/Tagesgrenzen und kontrollierte Pause bei erschöpftem
-  Kontingent. Gesendet werden ausschließlich öffentliche Artikeltexte, Titel, Quellen und Asset-Namen – nie
+  Kontingent. Ab 0.111 wahlweise ein **Modell je Aufgabe** (Profil „Free Tier“: Flash-Lite für Nachrichten, Bericht,
+  Ereignisse und KI-Discovery, Flash für Video-Kernaussagen und Firmenanalysen) mit Grenzen und Pausen je Modell –
+  ein erschöpftes Modell hält nur seine Aufgaben an. Gesendet werden ausschließlich öffentliche Artikeltexte, Titel, Quellen und Asset-Namen – nie
   Stückzahlen, Werte, Gewichte, Konten oder Adressen. Details, Grenzen und Datenschutz:
   [docs/NEWS_INTELLIGENCE.md](docs/NEWS_INTELLIGENCE.md).
 

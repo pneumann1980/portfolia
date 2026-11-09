@@ -94,6 +94,39 @@ def _int(v: Any, default: int, lo: int, hi: int) -> int:
     return int(_float(v, default, lo, hi))
 
 
+def _save_ai_models(ctx: Any, f: Any) -> None:
+    """Modellzuordnung je Aufgabe, Grenzen weiterer Modelle und Rücklage speichern (0.111). Unbekannte oder nicht
+    freigegebene Modelle werden verworfen; Pausen bleiben bestehen, außer sie werden ausdrücklich aufgehoben."""
+    from app.news.ai import MANUAL_RESERVE_PCT, PROFILES, TASKS, AiGateway, model_allowed
+
+    s = ctx.settings
+    prof = str(f.get("gemini_profile") or s.get("llm.gemini_profile") or "einzeln")
+    s.set("llm.gemini_profile", prof if prof in PROFILES else "einzeln")
+    if any(f"task_model_{t}" in f for t in TASKS):  # nur wenn das Formular die Zuordnung enthält
+        own = {}
+        for t in TASKS:
+            m = str(f.get(f"task_model_{t}") or "").strip().lower()
+            if m and model_allowed(m):
+                own[t] = m
+        s.set("llm.task_models", own)
+    if "manual_reserve_pct" in f:
+        s.set("llm.manual_reserve_pct", _int(f.get("manual_reserve_pct"), MANUAL_RESERVE_PCT, 0, 50))
+    limits = dict(s.get("llm.model_limits") or {})
+    for i in range(20):
+        m = str(f.get(f"lim_model_{i}") or "").strip().lower()
+        if not m:
+            break
+        if not model_allowed(m):
+            continue
+        limits[m] = {"rpm": _int(f.get(f"lim_rpm_{i}"), 0, 0, 100_000),
+                     "tpm": _int(f.get(f"lim_tpm_{i}"), 0, 0, 100_000_000),
+                     "rpd": _int(f.get(f"lim_rpd_{i}"), 0, 0, 1_000_000),
+                     "tpd": _int(f.get(f"lim_tpd_{i}"), 0, 0, 1_000_000_000)}
+    s.set("llm.model_limits", limits)
+    if f.get("clear_pauses") == "1":
+        AiGateway(ctx).clear_pauses()
+
+
 @router.post("/settings/save")
 async def save_settings(request: Request) -> Response:
     ctx = get_ctx(request)
@@ -177,6 +210,7 @@ async def save_settings(request: Request) -> Response:
             s.set("llm.gemini_rpd", _int(f.get("gemini_rpd"), 100, 1, 100000))
             s.set("llm.gemini_daily_token_budget", _int(f.get("gemini_budget"), 200000, 1000, 50_000_000))
             s.set("llm.gemini_tokens_unlimited", f.get("gemini_unlimited") == "1")
+            _save_ai_models(ctx, f)
             s.set("news.enrich", f.get("news_enrich") == "1")
             s.set("news.content_mode", "excerpt" if f.get("content_mode") == "excerpt" else "full")
             s.set("news.analysis", f.get("news_analysis") == "1")

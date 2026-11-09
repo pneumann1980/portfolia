@@ -123,7 +123,7 @@ class FakeGateway:
     def paused_until(self):
         return None
 
-    def generate(self, system, user, schema, max_tokens, json_mode=False):
+    def generate(self, system, user, schema, max_tokens, json_mode=False, **kw):
         self.calls.append({"system": system, "user": user, "max_tokens": max_tokens})
         if callable(self.answers):
             ans = self.answers(user)
@@ -1374,7 +1374,8 @@ def test_status_tab_reports_counts_budget_errors(client):
     ctx.db.set_state("ai.last_error", {"text": "Gemini: Kontingent erschöpft (day)", "at": iso(NOW)})
     t = client.get("/news?tab=status").text
     assert "Jetzt abarbeiten" in t and "Importiert (Artikel)" in t and "gemini-3.5-flash-lite" in t
-    assert "7 Anfragen" in t and "Restbudget" in t and "Pausiert bis" in t and "Kontingent erschöpft" in t
+    assert "7 Anfragen" in t and "Restbudget" in t and "Kontingent erschöpft" in t
+    assert "Zugang pausiert" in t and "betrifft alle Modelle" in t  # 0.111: Zugangspause ≠ Modellpause
     assert "garantieren <b>nicht</b>" in t and "test-gemini-key" not in t
     from app.news.status import pipeline_status
 

@@ -1,4 +1,8 @@
-# Discovery & Intelligence (0.110.0 – „Steckbrief, KI per Knopf, Vorwärtstest“)
+# Discovery & Intelligence (0.111.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe)
+
+**Neu in 0.111** (Abschnitt [0.7](#07-neu-in-0111-modell-je-aufgabe-und-warteschlange)): eigenes Gemini-Modell für
+KI-Discovery und Firmenanalyse, sichtbare **Warteschlange** bei erschöpftem Kontingent (abbrechbar, startet von
+selbst), Wiederverwendung gültiger KI-Teile, höchstens 3 Aufrufe je Firmenanalyse.
 
 **Neu in 0.110** (Abschnitt [0](#0-neu-in-0110-und-begründung)): KI-Analysen **nur per Knopf** und mit **einem**
 Aufruf statt drei; die KI-Discovery schlägt Unternehmen mit **Vorschau** (Kurzbeschreibung, Disruption-Einschätzung,
@@ -129,6 +133,24 @@ Anteil besser nach 12 und 24 Monaten, bei Vorschauen zusätzlich nach Einschätz
   Screening nutzt dieselben vergleichbaren Werte.
 * **Neuer SEC-Bericht erzeugt eine neue Analyseversion** (auch ohne geänderte Kennzahlen), damit „veraltet“ sichtbar
   wird.
+
+### 0.7 Neu in 0.111: Modell je Aufgabe und Warteschlange
+
+* **Modelle:** KI-Discovery (Themen, Thesen) nutzt die Gateway-Aufgabe `discovery`, Firmenanalysen (gemeinsamer Aufruf
+  und Nachholen je Teil) die Aufgabe `company` – im Profil „Free Tier“ Flash-Lite bzw. `gemini-3.8-flash`
+  (Einzelheiten: [News-Intelligence → KI-Modell je Aufgabe](NEWS_INTELLIGENCE.md#ki-modell-je-aufgabe-0111)).
+* **Bis zu 3 Aufrufe je Firmenanalyse:** gültige, aktuelle KI-Teile (kein neuer SEC-Bericht seit Erstellung) werden
+  wiederverwendet; ab zwei fehlenden Teilen ein gemeinsamer Aufruf, ein ungültiger Teil wird danach einzeln
+  nachgeholt (höchstens 3 Aufrufe). Sind alle Teile aktuell, baut der Knopf bewusst alle neu auf (1 Aufruf).
+* **Warteschlange statt Sperre:** Reicht das Kontingent nicht (Minuten-/Tageslimit oder Pause des Modells, Rücklage,
+  Discovery-Tages-/Monatsgrenze), legt ein Knopf den Job trotzdem an: Zustand **„wartet“** mit Grund und Zeitpunkt
+  (`disc_job.wait_until`, `wait_reason`), sichtbar im KI-Researchstatus (Warteschlange) und auf der
+  Unternehmensseite, jederzeit **abbrechbar**. Minutenlimit → Start nach rund einer Minute; Tageslimit → nach dem
+  Zurücksetzen (Google: Mitternacht Pazifikzeit, Discovery: Mitternacht lokal, Monatsgrenze: Monatsanfang). Ein
+  minütlicher Lauf (`discovery_wake`) und jeder Seitenaufruf starten fällige Jobs – manuelle zuerst. Wartende Jobs
+  überstehen einen Neustart und belegen ihren Slot (kein Doppelstart). Nur „KI aus/kein Schlüssel“ sperrt den Knopf
+  sofort. Zeitgesteuerte Läufe warten nicht (Zustand „Kontingent erschöpft“, nächster Lauf versucht es erneut).
+* **Vorrang:** manuell gestartete Jobs rufen die KI mit Vorrang auf (Rücklage, Minutentakt).
 
 ## 1. Produktvision und Funktionsumfang
 
@@ -633,7 +655,7 @@ Kein Knopf blockiert: Der Job wird angelegt und an den Scheduler übergeben (Poo
 Fehlergrund und fragt per HTMX alle 2–4 s nach, solange der Job läuft. Ohne Scheduler (Tests,
 `scheduler_enabled = false`) läuft der Job im Anfrage-Thread.
 
-**Kein Doppelstart:** eindeutiger Teilindex `disc_job(slot) WHERE status IN ('geplant','laeuft')` – gilt für
+**Kein Doppelstart:** eindeutiger Teilindex `disc_job(slot) WHERE status IN ('geplant','laeuft','wartet')` – gilt für
 gleichzeitige Klicks, Scheduler und Knopf. **Neustart:** Jobs anderer Prozesse werden beim Start als „unterbrochen“
 markiert (Grund sichtbar); laufende Jobs ohne Lebenszeichen seit 45 Minuten ebenfalls. Screening setzt am
 gespeicherten Fortschritt fort.

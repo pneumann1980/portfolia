@@ -30,14 +30,23 @@ import hashlib
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from app.discovery import nash as NASH
 from app.discovery.scoring import AI_KEYS
-from app.news.ai import AiError, AiGateway, BudgetExceeded, Paused, QuotaExceeded, parse_json
+from app.news.ai import (
+    AI_PRIORITY,
+    AiError,
+    AiGateway,
+    BudgetExceeded,
+    Paused,
+    QuotaExceeded,
+    next_pacific_midnight,
+    parse_json,
+)
 from app.news.analysis import _digits, _num, _text, fact_supported
-from app.util.timeutil import iso, today_local
+from app.util.timeutil import iso, local_tz, today_local
 
 log = logging.getLogger(__name__)
 
@@ -193,22 +202,80 @@ def enabled(ctx: Any) -> bool:
     return bool(ctx.settings.get("discovery.ai", True)) and AiGateway(ctx).enabled()
 
 
-def unavailable_reason(ctx: Any) -> tuple[str, str]:
-    """(Zustand, Grund), warum gerade kein KI-Aufruf möglich ist – ``("", "")`` wenn möglich."""
+STEP_TASKS = {"themen": "discovery", "thesen": "discovery"}  # alle übrigen Schritte: Unternehmensanalyse
+
+
+def task_of(step: str) -> str:
+    """Gateway-Aufgabe eines Discovery-Schritts (bestimmt das Modell laut Profil)."""
+    return STEP_TASKS.get(step, "company")
+
+
+def _local_midnight(days: int = 1) -> datetime:
+    d = today_local() + timedelta(days=days)
+    return datetime.combine(d, datetime.min.time(), tzinfo=local_tz()).astimezone(UTC)
+
+
+def _next_month() -> datetime:
+    t = today_local()
+    first = date(t.year + (t.month == 12), t.month % 12 + 1, 1)
+    return datetime.combine(first, datetime.min.time(), tzinfo=local_tz()).astimezone(UTC)
+
+
+SCOPES = {"access": "Zugang", "model": "Modell", "minute": "Minutenlimit des Modells",
+          "day": "Tageskontingent des Modells (Google)", "local": "lokales Tageslimit des Modells",
+          "reserve": "Rücklage für manuelle Starts", "discovery_day": "Discovery-Tagesgrenze",
+          "discovery_month": "Discovery-Monatsgrenze"}
+
+
+def availability(ctx: Any, task: str = "company", n: int = 1, priority: str | None = None) -> dict[str, Any]:
+    """Kann die Aufgabe jetzt ``n`` KI-Aufrufe starten? ``state``: ``""`` (ja) | ``"aus"`` (nicht konfiguriert –
+    Warten hilft nicht) | ``"wartet"`` (Grenze/Pause bis ``until``). ``scope`` trennt Modellgrenzen (``minute``,
+    ``day``, ``local``, ``reserve``, ``model``), den Zugang (``access``) und die Discovery-eigenen Grenzen
+    (``discovery_day``/``discovery_month``)."""
     gw = AiGateway(ctx)
+    out: dict[str, Any] = {"state": "", "reason": "", "until": None, "scope": "", "model": gw.model_for(task),
+                           "task": task}
     if not ctx.settings.get("llm.enabled", False):
-        return "aus", "KI ist in den Einstellungen ausgeschaltet (llm.enabled)"
+        return out | {"state": "aus", "reason": "KI ist in den Einstellungen ausgeschaltet (llm.enabled)"}
     if not gw.key_present():
-        return "aus", f"Kein API-Schlüssel für {gw.provider_name()} hinterlegt"
+        return out | {"state": "aus", "reason": f"Kein API-Schlüssel für {gw.provider_name()} hinterlegt"}
     if not ctx.settings.get("discovery.ai", True):
-        return "aus", "KI für Discovery ist ausgeschaltet (discovery.ai)"
-    until = gw.paused_until()
-    if until is not None:
-        return "pausiert", f"Anbieter pausiert bis {iso(until)}"
-    ok, why = DiscoveryBudget(ctx).allowed()
+        return out | {"state": "aus", "reason": "KI für Discovery ist ausgeschaltet (discovery.ai)"}
+    b = gw.blocked(task)
+    if b is not None:
+        who = "Zugang" if b["scope"] == "access" else f"Modell {b['model']}"
+        return out | {"state": "wartet", "reason": f"{who} pausiert bis {iso(b['until'])}: {b['reason']}".rstrip(": "),
+                      "until": b["until"], "scope": b["scope"] if b["scope"] in SCOPES else "model"}
+    if gw.provider_name() == "gemini":
+        m = out["model"]
+        lim = gw.limits(m)
+        if lim["rpd"]:
+            left = lim["rpd"] - gw.usage_model(m)["requests"]
+            if (priority or AI_PRIORITY.get()) != "manual":
+                left -= gw.reserve(m)
+            if left < n:
+                scope = "local" if lim["rpd"] - gw.usage_model(m)["requests"] < n else "reserve"
+                return out | {"state": "wartet", "until": next_pacific_midnight(), "scope": scope,
+                              "reason": f"Tageslimit von {m} erreicht ({lim['rpd']} Anfragen, gemeinsam mit "
+                                        "anderen Aufgaben dieses Modells)" if scope == "local" else
+                              f"Rest des Tageskontingents von {m} ist für manuelle Starts reserviert"}
+    ok, why = DiscoveryBudget(ctx).allowed(n)
     if not ok:
-        return "kontingent", why
-    return "", ""
+        month = "Monatsgrenze" in why
+        return out | {"state": "wartet", "reason": why, "until": _next_month() if month else _local_midnight(),
+                      "scope": "discovery_month" if month else "discovery_day"}
+    return out
+
+
+def unavailable_reason(ctx: Any, task: str = "company", n: int = 1) -> tuple[str, str]:
+    """(Zustand, Grund), warum gerade kein KI-Aufruf möglich ist – ``("", "")`` wenn möglich. Zustände: ``aus``,
+    ``pausiert`` (Zugang/Modell pausiert, Minutenlimit), ``kontingent`` (Tages-/Monatsgrenze von Modell/Discovery)."""
+    a = availability(ctx, task, n)
+    if not a["state"]:
+        return "", ""
+    if a["state"] == "aus":
+        return "aus", a["reason"]
+    return ("pausiert" if a["scope"] in ("access", "model", "minute") else "kontingent"), a["reason"]
 
 
 def fingerprint(*parts: Any) -> str:
@@ -239,29 +306,38 @@ def call(ctx: Any, step: str, system: str, payload: str, *, max_tokens: int, pro
     """Ein protokollierter KI-Aufruf. Ergebnis: (geparstes JSON oder ``None``, Metadaten mit status/error/…)."""
     db = ctx.db
     gw = AiGateway(ctx)
-    meta: dict[str, Any] = {"step": step, "provider": gw.provider_name(), "model": gw.model(),
+    task = task_of(step)
+    meta: dict[str, Any] = {"step": step, "provider": gw.provider_name(), "model": gw.model_for(task), "task": task,
                             "prompt_version": prompt_version, "input_fp": fingerprint(step, prompt_version, system,
                                                                                       payload),
-                            "status": "", "error": "", "error_class": "", "input_tokens": 0, "output_tokens": 0}
-    state, why = unavailable_reason(ctx)
+                            "status": "", "error": "", "error_class": "", "input_tokens": 0, "output_tokens": 0,
+                            "until": None, "wait_scope": ""}
+    av = availability(ctx, task)
+    state, why = av["state"], av["reason"]
     cid = int(db.x("INSERT INTO disc_ai_call(job_id, company_id, step, provider, model, prompt_version, input_fp, "
                    "status, started_at) VALUES (?,?,?,?,?,?,?,?,?)",
                    (job_id, company_id, step, meta["provider"], meta["model"], prompt_version, meta["input_fp"],
                     "laeuft", _now())).lastrowid or 0)
     meta["call_id"] = cid
     data: Any = None
-    if state:
-        meta.update(status={"kontingent": "budget"}.get(state, state), error=why, error_class=state)
+    if state == "aus":
+        meta.update(status="aus", error=why, error_class="aus")
+    elif state:
+        meta.update(status="pausiert" if av["scope"] in ("access", "model", "minute") else "budget", error=why,
+                    error_class=av["scope"], until=iso(av["until"]), wait_scope=av["scope"])
     else:
         try:
-            res = gw.generate(system, payload, None, max_tokens, json_mode=True)
+            res = gw.generate(system, payload, None, max_tokens, json_mode=True, task=task)
         except (BudgetExceeded, Paused) as e:
             meta.update(status="budget" if isinstance(e, BudgetExceeded) else "pausiert", error=e.text,
-                        error_class=e.code)
+                        error_class=e.code, until=iso(e.until), wait_scope=e.scope or "model")
         except AiError as e:
             DiscoveryBudget(ctx).record(0, 0)  # die Anfrage hat den Anbieter erreicht (zählt zum Kontingent)
             meta.update(status="pausiert" if isinstance(e, QuotaExceeded) else "fehler", error=e.text,
                         error_class=e.code)
+            b = gw.blocked(task)  # Kontingent beim Anbieter erschöpft bzw. Zugang/Modell gestört: Pause wurde gesetzt
+            if b is not None:
+                meta.update(until=iso(b["until"]), wait_scope=b["scope"])
         except Exception as e:  # unerwarteter Fehler: Aufruf nie als „läuft“ stehen lassen, Grund sichtbar
             log.exception("Discovery-KI-Aufruf %s fehlgeschlagen", step)
             meta.update(status="fehler", error=f"{type(e).__name__}: {str(e)[:200]}", error_class=type(e).__name__)
@@ -537,22 +613,37 @@ def run_part(ctx: Any, part: str, company: dict[str, Any], sources: list[dict[st
     return out, meta
 
 
-def run_analysis(ctx: Any, company: dict[str, Any], sources: list[dict[str, Any]], *,
-                 job_id: int | None = None) -> dict[str, tuple[dict[str, Any] | None, dict[str, Any]]]:
-    """Ein KI-Aufruf für alle drei Teile; Ergebnis je Teil: (geprüftes Ergebnis oder ``None``, Metadaten).
+MAX_ANALYSIS_CALLS = 3
+WAIT_STATES = ("budget", "pausiert")  # Aufruf nicht möglich, aber später (Grenze/Pause bis ``until``)
 
-    Jeder Teil wird einzeln geprüft – ist ein Teil ungültig, bleiben die anderen gültig (gezielt nachholbar)."""
+
+def run_analysis(ctx: Any, company: dict[str, Any], sources: list[dict[str, Any]], *,
+                 job_id: int | None = None, need: list[str] | None = None,
+                 max_calls: int = MAX_ANALYSIS_CALLS) -> dict[str, tuple[dict[str, Any] | None, dict[str, Any]]]:
+    """KI-Teile ``need`` (Standard: alle) erstellen; Ergebnis je Teil: (geprüftes Ergebnis oder ``None``, Metadaten).
+
+    Ab zwei benötigten Teilen **ein** gemeinsamer Aufruf; jeder Teil wird einzeln geprüft – ungültige Teile werden
+    danach gezielt einzeln nachgeholt (Reparatur), insgesamt höchstens ``max_calls`` Aufrufe. Gültige, nicht
+    angeforderte Teile bleiben unangetastet (Wiederverwendung)."""
+    need = [p for p in (need if need is not None else list(PARTS)) if p in PARTS]
     fps = {p: part_fingerprint(p, company, sources) for p in PARTS}
+    out: dict[str, tuple[dict[str, Any] | None, dict[str, Any]]] = {}
+    if not need:
+        return out
     if not any(s.get("text") for s in sources):
         meta = {"status": "keine_quellen", "error": "keine Quelltexte (Geschäftsbericht, Profil, Meldungen)",
                 "step": "analyse"}
-        return {p: (None, {**meta, "input_fp": fps[p]}) for p in PARTS}
+        return {p: (None, {**meta, "input_fp": fps[p]}) for p in need}
+    calls = 0
+    if len(need) == 1:
+        res1, meta1 = run_part(ctx, need[0], company, sources, job_id=job_id)
+        return {need[0]: (res1, meta1)}
     max_out = int(ctx.settings.get("discovery.ai_max_output_tokens", DEFAULTS["discovery.ai_max_output_tokens"]))
     data, meta = call(ctx, "analyse", SYSTEM_ANALYSE, build_payload(company, sources), max_tokens=max_out,
                       prompt_version=PROMPT_VERSION, job_id=job_id, company_id=company.get("id"))
-    out: dict[str, tuple[dict[str, Any] | None, dict[str, Any]]] = {}
+    calls += 1
     invalid = []
-    for part in PARTS:
+    for part in need:
         m = {**meta, "input_fp": fps[part]}
         if meta["status"] != "ok":
             out[part] = (None, m)
@@ -560,14 +651,24 @@ def run_analysis(ctx: Any, company: dict[str, Any], sources: list[dict[str, Any]
         sub = data.get(part) if isinstance(data, dict) else None
         res = VALIDATORS[part](sub, sources)
         if res is None:
-            invalid.append(PARTS[part])
+            invalid.append(part)
             m.update(status="ungueltig", error_class="schema",
                      error=f"Teil „{PARTS[part]}“ fehlt oder ist unvollständig")
         out[part] = (res, m)
     if meta["status"] == "ok" and invalid:
         mark_call(ctx.db, int(meta.get("call_id") or 0) or None,
-                  "teilweise" if len(invalid) < len(PARTS) else "ungueltig",
-                  "ungültig: " + ", ".join(invalid))
+                  "teilweise" if len(invalid) < len(need) else "ungueltig",
+                  "ungültig: " + ", ".join(PARTS[p] for p in invalid))
+        for part in invalid:  # Reparatur: je ungültigem Teil ein eigener Aufruf, solange das Höchstmaß reicht
+            if calls >= max_calls:
+                break
+            res2, meta2 = run_part(ctx, part, company, sources, job_id=job_id)
+            calls += 1
+            if res2 is not None:
+                out[part] = (res2, {**meta2, "repariert": True})
+            elif meta2.get("status") in WAIT_STATES:  # Grenze erreicht – weitere Reparaturen wären chancenlos
+                out[part] = (None, meta2)
+                break
     return out
 
 
