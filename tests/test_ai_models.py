@@ -179,6 +179,45 @@ def test_parallel_calls_at_the_daily_limit_never_exceed_it(ctx):
     assert gw.usage_model(FLASH_CO)["requests"] == 3
 
 
+def test_finished_call_is_never_counted_twice_while_releasing_its_slot(ctx, monkeypatch):
+    """Regression (CI 0.112): Zwischen „Verbrauch gespeichert“ und „Platz freigegeben“ zählte ein paralleler Aufruf
+    denselben Aufruf doppelt (gespeichert + laufend) und wurde zu früh abgewiesen. Das Fenster wird hier künstlich
+    geöffnet: Aufruf A ist gespeichert, hält seinen Platz noch – B (Limit 2) muss trotzdem zugelassen werden."""
+    gw = gemini_ctx(ctx, lambda r: gem_ok(), **{"llm.gemini_profile": "free_tier", "llm.manual_reserve_pct": 0,
+                                                "llm.model_limits": {FLASH_CO: {"rpm": 0, "tpm": 0, "rpd": 2,
+                                                                                "tpd": 0}}})
+    recorded, go_on = threading.Event(), threading.Event()
+    orig = A.AiGateway._record
+
+    def record_then_hold(self, *a, **k):
+        orig(self, *a, **k)
+        if k.get("model") and not recorded.is_set():
+            recorded.set()
+            go_on.wait(5)  # Aufruf A: Verbrauch gespeichert, Platz (noch) nicht freigegeben
+
+    monkeypatch.setattr(A.AiGateway, "_record", record_then_hold)
+    errs: list[str] = []
+
+    def call_a():
+        try:
+            A.AiGateway(ctx).generate("s", "u", None, 100, task="company")
+        except Exception as e:  # pragma: no cover – im Fehlerfall sichtbar
+            errs.append(repr(e))
+
+    t = threading.Thread(target=call_a)
+    t.start()
+    assert recorded.wait(5)
+    threading.Timer(0.3, go_on.set).start()  # A gibt den Platz nach 0,3 s frei
+    try:
+        res = gw.generate("s", "u", None, 100, task="company")  # B: 1 von 2 verbraucht – muss durchgehen
+    finally:
+        go_on.set()
+        t.join()
+    assert res.model == FLASH_CO and errs == [] and gw.usage_model(FLASH_CO)["requests"] == 2
+    with pytest.raises(A.BudgetExceeded):
+        gw.generate("s", "u", None, 100, task="company")  # jetzt wirklich voll
+
+
 def test_manual_starts_keep_a_reserve_and_have_priority(ctx):
     gw = gemini_ctx(ctx, lambda r: gem_ok(), **{"llm.gemini_profile": "free_tier", "llm.manual_reserve_pct": 20,
                                                 "llm.model_limits": {FLASH_CO: {"rpm": 0, "tpm": 0, "rpd": 10,

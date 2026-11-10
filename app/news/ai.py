@@ -654,6 +654,12 @@ class AiGateway:
         lim = self.limits(model)
         est_in = (len(system) + len(user)) // 3
         self._admit(model, lim, est_in, max_tokens, priority)
+        held = [True]  # Platz belegt, bis der Verbrauch gespeichert ist (siehe _settle)
+
+        def settle(inp: int = 0, out: int = 0, **kw: Any) -> None:
+            self._settle(model, task, inp, out, **kw)
+            held[0] = False
+
         try:
             slot = self._throttle(model, lim, est_in + max_tokens, priority)
             prov = GeminiProvider(self.ctx.http, self.ctx.config.secrets.gemini_api_key or "", model)
@@ -661,7 +667,7 @@ class AiGateway:
                 res = prov.generate(system, user, json_mode, max_tokens)
             except QuotaExceeded as e:
                 slot[1] = 0
-                self._record("gemini", ok=False, quota=True, model=model, task=task)
+                settle(ok=False, quota=True)
                 self._learn(model, e.limits)
                 if e.scope == "day":
                     until = next_pacific_midnight()
@@ -672,7 +678,7 @@ class AiGateway:
                 raise
             except AiError as e:
                 slot[1] = 0
-                self._record("gemini", ok=False, model=model, task=task)
+                settle(ok=False)
                 self._error(e.text)
                 if isinstance(e, AiRejected) and e.scope == "access":
                     self._pause("gemini", datetime.now(UTC) + timedelta(minutes=30), e.text, scope="access")
@@ -682,15 +688,27 @@ class AiGateway:
                     self._backoff("gemini", e.text, model if e.scope == "model" else "")
                 raise
             slot[1] = res.input_tokens + res.output_tokens
-            # Verbrauch speichern, BEVOR der Platz frei wird – sonst zählt ein paralleler Aufruf ihn nicht mit
-            self._record("gemini", res.input_tokens, res.output_tokens, model=model, task=task)
+            settle(res.input_tokens, res.output_tokens)
         finally:
-            with self._lock:
-                self._inflight[model] = max(0, self._inflight.get(model, 0) - 1)
+            if held[0]:  # z. B. Abbruch im Takt (Paused) oder unerwarteter Fehler: Platz ohne Verbrauch freigeben
+                with self._lock:
+                    self._inflight[model] = max(0, self._inflight.get(model, 0) - 1)
         self.db.set_state(f"ai.fail.gemini:{model}", 0)
         self.db.set_state("ai.fail.gemini", 0)
         self._ok()
         return res
+
+    def _settle(self, model: str, task: str, inp: int = 0, out: int = 0, *, ok: bool = True,
+                quota: bool = False) -> None:
+        """Verbrauch speichern und den belegten Platz freigeben – in **einem** Schritt unter der Sperre, unter der
+        :meth:`_admit` zählt. Getrennt gäbe es ein Fenster, in dem ein paralleler Aufruf denselben Aufruf entweder
+        gar nicht (Platz frei, Verbrauch fehlt → Limit überschritten) oder doppelt (gespeichert und noch belegt →
+        zu früh abgewiesen) zählt."""
+        with self._lock:
+            try:
+                self._record("gemini", inp, out, ok=ok, quota=quota, model=model, task=task)
+            finally:
+                self._inflight[model] = max(0, self._inflight.get(model, 0) - 1)
 
     def _backoff(self, provider: str, reason: str, model: str = "") -> None:
         key = f"ai.fail.{provider}:{model}" if model else f"ai.fail.{provider}"
