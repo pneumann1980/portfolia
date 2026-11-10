@@ -286,19 +286,71 @@ def _now() -> str:
     return iso(datetime.now(UTC)) or ""
 
 
+def repair_brackets(text: str) -> str:
+    """Klammerstruktur einer JSON-Antwort reparieren, ohne Inhalte zu ändern (0.112): falsch geschlossene Ebenen
+    (``}`` wo ``]`` fehlt), überzählige Schließklammern und fehlende Schließklammern am Ende. Zeichenketten bleiben
+    unangetastet; eine offene Zeichenkette am Ende wird geschlossen. Was danach unvollständig ist, verwerfen die
+    Prüfungen der Aufrufer (Pflichtfelder) – reparierte Struktur macht keine Aussage gültig."""
+    out: list[str] = []
+    stack: list[str] = []
+    pair = {"{": "}", "[": "]"}
+    in_str = esc = False
+    for ch in text:
+        if in_str:
+            out.append(ch)
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in pair:
+            stack.append(pair[ch])
+        elif ch in "}]":
+            if ch not in stack:  # überzählige Schließklammer: weglassen
+                continue
+            while stack and stack[-1] != ch:  # fehlende innere Schließklammern ergänzen
+                out.append(stack.pop())
+            stack.pop()
+        out.append(ch)
+    if in_str:
+        out.append('"')
+    t = "".join(out).rstrip()
+    t = re.sub(r",\s*$", "", t)
+    if t.endswith(":"):
+        t += " null"
+    return t + "".join(reversed(stack))
+
+
 def parse_lenient(text: str) -> Any:
-    """JSON aus einer Modellantwort – tolerant gegenüber Zeilenumbrüchen in Zeichenketten, Code-Zäunen und
-    überzähligen Kommas (häufige Ursache von „kein gültiges JSON“ bei kleinen Modellen). Inhalte werden nie geändert."""
+    """JSON aus einer Modellantwort – tolerant gegenüber Zeilenumbrüchen in Zeichenketten, Code-Zäunen,
+    überzähligen Kommas und (seit 0.112) falsch gesetzten oder fehlenden Klammern (häufige Ursachen von „kein
+    gültiges JSON“ bei kleinen Modellen). Inhalte werden nie geändert."""
     try:
         return parse_json(text)
     except ValueError:
         pass
     t = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
-    a, b = t.find("{"), t.rfind("}")
-    if a >= 0 and b > a:
-        t = t[a:b + 1]
-    t = re.sub(r",\s*([}\]])", r"\1", t)
-    return json.loads(t, strict=False)
+    a = t.find("{")
+    if a >= 0:
+        t = t[a:]
+    b = t.rfind("}")
+    head = t[:b + 1] if b > 0 else t
+    try:
+        return json.loads(re.sub(r",\s*([}\]])", r"\1", head), strict=False)
+    except ValueError as first:
+        try:  # Struktur reparieren (ganzer Text: auch eine fehlende letzte Schließklammer)
+            return json.loads(re.sub(r",\s*([}\]])", r"\1", repair_brackets(t)), strict=False)
+        except ValueError:
+            raise first from None
+
+
+def _tail(text: str, n: int = 70) -> str:
+    """Ende der Modellantwort für die Fehlermeldung (öffentliche Inhalte, ohne Zeilenumbrüche)."""
+    return " ".join(text[-n:].split())
 
 
 def call(ctx: Any, step: str, system: str, payload: str, *, max_tokens: int, prompt_version: int,
@@ -352,7 +404,8 @@ def call(ctx: Any, step: str, system: str, payload: str, *, max_tokens: int, pro
                 pos = getattr(e, "pos", None)
                 meta.update(status="ungueltig", error_class="json",
                             error=f"KI-Antwort ist kein gültiges JSON ({type(e).__name__}"
-                                  + (f" an Zeichen {pos} von {len(res.text)}" if pos is not None else "") + ")")
+                                  + (f" an Zeichen {pos} von {len(res.text)}" if pos is not None else "")
+                                  + f"; Ende der Antwort: „…{_tail(res.text)}“)")
     db.x("UPDATE disc_ai_call SET status=?, provider=?, model=?, input_tokens=?, output_tokens=?, error_class=?, "
          "error=?, finished_at=? WHERE id=?",
          (meta["status"], meta["provider"], meta["model"], meta["input_tokens"], meta["output_tokens"],

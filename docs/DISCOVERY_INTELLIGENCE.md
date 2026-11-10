@@ -1,4 +1,4 @@
-# Discovery & Intelligence (0.111.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe)
+# Discovery & Intelligence (0.112.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe)
 
 **Neu in 0.111** (Abschnitt [0.7](#07-neu-in-0111-modell-je-aufgabe-und-warteschlange)): eigenes Gemini-Modell für
 KI-Discovery und Firmenanalyse, sichtbare **Warteschlange** bei erschöpftem Kontingent (abbrechbar, startet von
@@ -151,6 +151,20 @@ Anteil besser nach 12 und 24 Monaten, bei Vorschauen zusätzlich nach Einschätz
   überstehen einen Neustart und belegen ihren Slot (kein Doppelstart). Nur „KI aus/kein Schlüssel“ sperrt den Knopf
   sofort. Zeitgesteuerte Läufe warten nicht (Zustand „Kontingent erschöpft“, nächster Lauf versucht es erneut).
 * **Vorrang:** manuell gestartete Jobs rufen die KI mit Vorrang auf (Rücklage, Minutentakt).
+
+### 0.8 Neu in 0.112
+
+* **Ungültiges JSON der KI-Discovery:** Kleine Modelle schließen verschachtelte Listen gelegentlich falsch (`}` statt
+  `]}`) oder vergessen die letzte Klammer – Fehler wie „kein gültiges JSON (an Zeichen 1356 von 1360)“. Die Auswertung
+  repariert jetzt die Klammerstruktur (falsch geschlossen, überzählig, fehlend), ohne Inhalte zu ändern; Texte in
+  Anführungszeichen bleiben unberührt. Was danach unvollständig ist, verwerfen die üblichen Prüfungen. Bleibt die
+  Antwort unlesbar, nennt die Fehlermeldung zusätzlich das Ende der Antwort (öffentlicher Modelltext), damit die Ursache
+  sichtbar wird. Kein zusätzlicher KI-Aufruf.
+* **Position halten:** Knöpfe auf der Discovery-Liste und der Unternehmensseite laden die Seite nicht mehr „nach oben“:
+  Die Ansicht bleibt an der Karte bzw. am Knopf, geöffnete Klappbereiche bleiben offen, Meldungen erscheinen unten als
+  Hinweis. Später gezeichnete Teile (Diagramme, nachgeladene Abschnitte) werden bis zu 6 s ausgeglichen, solange man
+  nicht selbst scrollt. Knöpfe, die bewusst auf eine andere Seite führen (z. B. „Mit KI analysieren“ → Unternehmensseite),
+  beginnen dort oben.
 
 ## 1. Produktvision und Funktionsumfang
 

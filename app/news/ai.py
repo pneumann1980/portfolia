@@ -45,6 +45,8 @@ log = logging.getLogger(__name__)
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+LEARNED_DAYS = 30  # von Google gemeldete Grenzen gelten so lange (danach wieder Einstellung/Startwert)
 # Kostenlos nutzbare Flash-/Flash-Lite-Modelle laut https://ai.google.dev/gemini-api/docs/pricing (Stand der Prüfung:
 # 2026-10). Standard ist ein Flash-Lite-Modell – günstigstes Free-Tier-Modell mit ausreichender Qualität für Einordnung.
 GEMINI_MODELS = ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-3.8-flash",
@@ -76,6 +78,7 @@ PROFILES: dict[str, dict[str, Any]] = {
 # Projekt; bitte dort ablesen und in den Einstellungen eintragen). tpd 0 = ohne lokale Token-Tagesgrenze.
 LIMIT_DEFAULTS = {"lite": {"rpm": 10, "tpm": 250_000, "rpd": 200, "tpd": 0},
                   "flash": {"rpm": 5, "tpm": 250_000, "rpd": 50, "tpd": 0}}
+LIMIT_LABELS = {"rpm": "Anfragen/Minute", "tpm": "Tokens/Minute", "rpd": "Anfragen/Tag", "tpd": "Tokens/Tag"}
 MANUAL_RESERVE_PCT = 10  # Anteil des Tageskontingents je Modell, den Hintergrundaufgaben nicht verbrauchen
 
 AI_PRIORITY: contextvars.ContextVar[str] = contextvars.ContextVar("ai_priority", default="background")
@@ -104,11 +107,13 @@ class AiError(Exception):
 class QuotaExceeded(AiError):
     code = "quota"
 
-    def __init__(self, text: str, retry_after: float | None = None, scope: str = "unknown", model: str = "") -> None:
+    def __init__(self, text: str, retry_after: float | None = None, scope: str = "unknown", model: str = "",
+                 limits: dict[str, int] | None = None) -> None:
         super().__init__(text)
         self.retry_after = retry_after
         self.scope = scope  # minute | day | unknown
         self.model = model
+        self.limits = limits or {}  # von Google gemeldete Grenzen (``quotaValue``), z. B. {"rpd": 20}
 
 
 class AiUnavailable(AiError):
@@ -158,6 +163,14 @@ class AiResult:
     model: str
 
 
+def _quota_key(quota_id: str) -> str:
+    """Google-``quotaId`` → lokale Grenze: Anfragen/Tokens je Minute/Tag (``rpm``, ``rpd``, ``tpm``, ``tpd``)."""
+    q = quota_id.lower()
+    unit = "t" if "token" in q else "r"
+    per = "d" if "perday" in q else "m" if "perminute" in q else ""
+    return f"{unit}p{per}" if per else ""
+
+
 def model_allowed(model: str) -> bool:
     """Gemini-Modell: nur Flash/Flash-Lite ohne Spezialvarianten (Bild, Audio, Pro …)."""
     m = model.strip().lower()
@@ -189,6 +202,31 @@ class GeminiProvider:
         self.key = api_key
         self.model = model
         self.timeout = timeout
+
+    def list_models(self) -> list[dict[str, Any]]:
+        """Für diesen Schlüssel verfügbare Modelle mit ``generateContent`` (``models.list``, ohne Kontingente)."""
+        out: list[dict[str, Any]] = []
+        token = ""
+        for _ in range(10):
+            try:
+                params: dict[str, Any] = {"pageSize": 1000, **({"pageToken": token} if token else {})}
+                r = self.client.get(GEMINI_MODELS_URL, params=params, timeout=30.0,
+                                    headers={"x-goog-api-key": self.key})
+            except httpx.HTTPError as e:
+                raise AiUnavailable(f"Gemini: Modellliste nicht erreichbar ({type(e).__name__})", scope="access") from e
+            if r.status_code != 200:
+                self._raise(r)
+            data = r.json() or {}
+            for m in data.get("models") or []:
+                if "generateContent" not in (m.get("supportedGenerationMethods") or []):
+                    continue
+                out.append({"id": str(m.get("name") or "").removeprefix("models/"),
+                            "label": str(m.get("displayName") or ""), "input": int(m.get("inputTokenLimit") or 0),
+                            "output": int(m.get("outputTokenLimit") or 0), "thinking": bool(m.get("thinking"))})
+            token = str(data.get("nextPageToken") or "")
+            if not token:
+                break
+        return out
 
     def generate(self, system: str, user: str, json_mode: bool, max_tokens: int) -> AiResult:
         body: dict[str, Any] = {
@@ -242,6 +280,7 @@ class GeminiProvider:
         gstatus = str(err.get("status") or "")
         if status == 429 or gstatus == "RESOURCE_EXHAUSTED":
             retry, scope = None, "unknown"
+            limits: dict[str, int] = {}
             for d in err.get("details") or []:
                 if not isinstance(d, dict):
                     continue
@@ -255,11 +294,20 @@ class GeminiProvider:
                         scope = "day"
                     elif "PerMinute" in qid and scope != "day":
                         scope = "minute"
+                    key, val = _quota_key(qid), str((v or {}).get("quotaValue", "")).strip()
+                    if key and val.isdigit():  # nicht offiziell dokumentiert – nur übernehmen, wenn vorhanden
+                        limits[key] = int(val)
             if scope == "unknown" and re.search(r"(?i)per day|daily|requests per day", msg):
                 scope = "day"
+            if limits and all(v == 0 for v in limits.values()):
+                # Kontingent 0: Modell ist für dieses Projekt im Free Tier nicht freigegeben – Warten hilft nicht
+                raise AiRejected(f"Gemini: Google meldet Kontingent 0 für {self.model} – für dieses Projekt im "
+                                 "kostenlosen Kontingent nicht verfügbar", scope="model")
             label = {"day": "Tageslimit", "minute": "Minutenlimit"}.get(scope, "Limit")
-            raise QuotaExceeded(f"Gemini: Kontingent erschöpft – {label} von {self.model} ({scope})", retry, scope,
-                                self.model)
+            told = ", ".join(f"{LIMIT_LABELS.get(k, k)} {v}" for k, v in sorted(limits.items()) if v)
+            raise QuotaExceeded(f"Gemini: Kontingent erschöpft – {label} von {self.model} ({scope})"
+                                + (f"; Google meldet {told}" if told else ""), retry, scope, self.model,
+                                {k: v for k, v in limits.items() if v > 0})
         if status in (500, 502, 503, 504) or gstatus in ("UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED"):
             raise AiUnavailable(f"Gemini: {self.model} vorübergehend nicht verfügbar (HTTP {status})", scope="model")
         if status == 404 or gstatus == "NOT_FOUND":
@@ -335,20 +383,70 @@ class AiGateway:
                 out.append(m)
         return out
 
-    def limits(self, model: str | None = None) -> dict[str, int]:
+    def limits(self, model: str | None = None, *, learned: bool = True) -> dict[str, int]:
         """Lokale Grenzen eines Modells: eigene Werte (``llm.model_limits``), für das bisherige Modell die bisherigen
         Einstellungen (Übernahme), sonst vorsichtige Startwerte (Annahmen, in AI Studio prüfen)."""
         m = model or self.model_for("news")
         g = lambda k, d: max(0, int(self.s.get(k, d) or 0))  # noqa: E731
         own = (self.s.get("llm.model_limits") or {}).get(m)
         if isinstance(own, dict):
-            return {k: max(0, int(own.get(k) or 0)) for k in ("rpm", "tpm", "rpd", "tpd")}
-        if m == self.base_model():
+            lim = {k: max(0, int(own.get(k) or 0)) for k in ("rpm", "tpm", "rpd", "tpd")}
+        elif m == self.base_model():
             unlimited = bool(self.s.get("llm.gemini_tokens_unlimited", False))  # 0 = ohne Token-Tagesgrenze
-            return {"rpm": g("llm.gemini_rpm", 5), "tpm": g("llm.gemini_tpm", 100_000),
-                    "rpd": g("llm.gemini_rpd", 100), "tpd": 0 if unlimited else g("llm.gemini_daily_token_budget",
-                                                                                  200_000)}
-        return dict(LIMIT_DEFAULTS["lite" if "lite" in m else "flash"])
+            lim = {"rpm": g("llm.gemini_rpm", 5), "tpm": g("llm.gemini_tpm", 100_000),
+                   "rpd": g("llm.gemini_rpd", 100), "tpd": 0 if unlimited else g("llm.gemini_daily_token_budget",
+                                                                                 200_000)}
+        else:
+            lim = dict(LIMIT_DEFAULTS["lite" if "lite" in m else "flash"])
+        for k, v in (self.learned(m) if learned else {}).items():  # von Google gemeldet: nie darüber hinaus
+            if k in lim and v > 0:
+                lim[k] = min(lim[k], v) if lim[k] else v
+        return lim
+
+    def learned(self, model: str) -> dict[str, int]:
+        """Von Google gemeldete Grenzen eines Modells (aus der letzten Kontingent-Meldung, höchstens
+        :data:`LEARNED_DAYS` alt) – ``{}``, wenn keine bekannt."""
+        st = (self.db.get_state("ai.learned_limits") or {}).get(model)
+        if not isinstance(st, dict):
+            return {}
+        at = parse_iso(str(st.get("at") or ""))
+        if at is None or datetime.now(UTC) - at > timedelta(days=LEARNED_DAYS):
+            return {}
+        return {k: int(v) for k, v in st.items() if k in LIMIT_LABELS and str(v).isdigit()}
+
+    def learned_all(self) -> dict[str, dict[str, Any]]:
+        out = {}
+        for m, st in (self.db.get_state("ai.learned_limits") or {}).items():
+            if self.learned(m):
+                out[m] = {**self.learned(m), "at": st.get("at")}
+        return out
+
+    def _learn(self, model: str, limits: dict[str, int]) -> None:
+        if not model or not limits:
+            return
+        with self._lock:
+            allst = dict(self.db.get_state("ai.learned_limits") or {})
+            cur = dict(allst.get(model) or {}) if self.learned(model) else {}
+            cur.update({k: int(v) for k, v in limits.items() if k in LIMIT_LABELS and v > 0})
+            cur["at"] = iso(datetime.now(UTC))
+            allst[model] = cur
+            self.db.set_state("ai.learned_limits", allst)
+
+    def forget_learned(self) -> None:
+        self.db.set_state("ai.learned_limits", None)
+
+    def refresh_models(self) -> dict[str, Any]:
+        """Modellliste bei Google abrufen und speichern (Einstellungen → KI). Kein Kontingent, kein Prompt."""
+        if self.provider_name() != "gemini" or not self.key_present():
+            raise AiRejected("Gemini ist nicht gewählt oder der Schlüssel fehlt", scope="access")
+        models = GeminiProvider(self.ctx.http, self.ctx.config.secrets.gemini_api_key or "", "").list_models()
+        st = {"at": iso(datetime.now(UTC)), "models": models}
+        self.db.set_state("ai.models_available", st)
+        return st
+
+    def models_available(self) -> dict[str, Any] | None:
+        st = self.db.get_state("ai.models_available")
+        return st if isinstance(st, dict) and st.get("models") is not None else None
 
     # -- Nutzung ---------------------------------------------------------------------------------------
     def day_key(self, provider: str | None = None) -> str:
@@ -564,6 +662,7 @@ class AiGateway:
             except QuotaExceeded as e:
                 slot[1] = 0
                 self._record("gemini", ok=False, quota=True, model=model, task=task)
+                self._learn(model, e.limits)
                 if e.scope == "day":
                     until = next_pacific_midnight()
                 else:
@@ -650,6 +749,7 @@ class AiGateway:
                 row.update(limits=lim, usage_model=um, usage_task=self.usage_task(task),
                            shared=[TASKS[t] for t, mm in self.task_models().items() if mm == m and t != task],
                            requests_left=(lim["rpd"] - um["requests"]) if lim["rpd"] else None,
+                           learned=self.learned(m),
                            tokens_left=(lim["tpd"] - um["input_tokens"] - um["output_tokens"]) if lim["tpd"] else None,
                            reserve=self.reserve(m))
             b = self.blocked(task) if self.enabled() else None
