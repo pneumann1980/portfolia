@@ -33,7 +33,7 @@
     {% for t in ai_s.tasks %}<tr><td>{{ t.label }}</td><td class="mono small">{{ t.model }}{% if t.shared %}<div class="hint">teilt Kontingent mit {{ t.shared|join(', ') }}</div>{% endif %}</td>
       <td class="num">{{ t.usage_task.requests }}<div class="hint">{{ (t.usage_task.input_tokens + t.usage_task.output_tokens)|num(0) }} Tokens</div></td>
       <td class="num">{{ t.usage_model.requests }}{% if t.usage_model.quota_hits %}<div class="hint">{{ t.usage_model.quota_hits }}× Kontingent</div>{% endif %}</td>
-      <td class="num">{{ t.limits.rpd or '∞' }}/Tag<div class="hint">{{ t.limits.rpm or '∞' }}/min</div></td>
+      <td class="num">{{ t.limits.rpd or '∞' }}/Tag<div class="hint">{{ t.limits.rpm or '∞' }}/min{% if t.learned %} · von Google gemeldet{% endif %}</div></td>
       <td class="num">{{ t.requests_left if t.requests_left is not none else '∞' }}{% if t.reserve %}<div class="hint">{{ t.reserve }} für manuelle Starts</div>{% endif %}</td>
       <td class="small">{% if t.wait %}<span class="badge warn">wartet</span> {{ t.wait.reason }} – bis {{ t.wait.until|datetime_de }}{% else %}<span class="hint">–</span>{% endif %}</td></tr>{% endfor %}
   </tbody></table></div>

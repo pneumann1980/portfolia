@@ -181,6 +181,17 @@ Das `AiGateway` ordnet jeder **Aufgabe** ein Gemini-Modell zu; Aufrufer übergeb
   (`00:00:01,000 --> …`, Nummern und Formatierung werden entfernt) bleiben als Absatzmarken erhalten. Kernaussagen
   tragen ab 0.111 je Aussage eine Zeitmarke (Link zur Stelle im Video); ältere Analysen bleiben gültig und werden
   nicht neu erstellt (Promptversion unverändert, keine Zusatzkosten).
+* **Grenzen von Google (0.112):** Die Gemini-Schnittstelle liefert **keine** Kontingente – `models.list` nennt nur
+  Modelle, Kontextlänge und Fähigkeiten; die Free-Tier-Werte zeigt Google ausschließlich in AI Studio. Portfolia nutzt
+  deshalb zwei Quellen: (1) *Einstellungen → „Verfügbare Modelle abrufen“* ruft `models.list` ab (Schlüssel im Header,
+  kein Kontingentverbrauch, kein Prompt) – neu gemeldete Flash-/Flash-Lite-Modelle werden wählbar, nicht gemeldete
+  markiert; Pro- und Spezialmodelle bleiben ausgeschlossen. (2) Meldet Google ein erschöpftes Kontingent (429), enthält
+  die Antwort je Verstoß meist `quotaId` und `quotaValue` (nicht offiziell dokumentiert; nur genutzt, wenn vorhanden).
+  Dieser Wert wird für das Modell übernommen und gilt 30 Tage als **Obergrenze** (eigene niedrigere Werte bleiben;
+  „Google meldet …“ in Einstellungen und Status; verwerfbar). Meldet Google **0**, ist das Modell für das Projekt nicht im
+  kostenlosen Kontingent: Portfolia pausiert nur dieses Modell mit dieser Begründung (6 h) statt zu warten.
+  Grenze der Aussage: gelernt wird erst beim ersten Erreichen eines Limits; höhere tatsächliche Kontingente werden
+  nicht automatisch erkannt.
 * **Live-Abnahme:** gegen echte Gemini-Modelle **nicht durchgeführt** (kein Schlüssel in der Testumgebung). Geprüft
   ist das Verhalten mit nachgebildeten Antworten (`tests/test_ai_models.py`).
 

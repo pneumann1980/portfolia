@@ -433,7 +433,8 @@ def _age_label(v: Any) -> str:
 # -- Einstellungen ---------------------------------------------------------------------------------------
 
 @router.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request, saved: str = "", err: str = "") -> HTMLResponse:
+def settings_page(request: Request, saved: str = "", err: str = "", models: str = "",
+                  models_err: str = "") -> HTMLResponse:
     ctx = get_ctx(request)
     pf = ctx.portfolio()
     led = ctx.ledger()
@@ -470,7 +471,8 @@ def settings_page(request: Request, saved: str = "", err: str = "") -> HTMLRespo
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,
                   detected_cash=(led.cash_tracked if led else {}), secrets=ctx.config.secrets.status(),
                   gemini_models=_gemini_models(ctx), ai_cfg=_ai_cfg(ctx),
-                  config=ctx.config, saved=saved, err=err[:400], backups=backups, exports=exports, archive=archive,
+                  config=ctx.config, saved=saved, err=err[:400],
+                  models_msg=models[:6], models_err=models_err[:240], backups=backups, exports=exports, archive=archive,
                   export_job=job, ds_summary=ds_summary, pp=price_plan, next_runs=next_runs,
                   restore=restore_status(ctx))
 
@@ -487,15 +489,27 @@ def _ai_cfg(ctx: Any) -> dict[str, Any]:
     for m in [*PROFILES["free_tier"]["models"].values(), *own.values(), *gw.models_in_use()]:
         if m and m != base and m not in models:
             models.append(m)
+    av = gw.models_available()
+    learned = gw.learned_all()
     return {"profiles": {k: v["label"] for k, v in PROFILES.items()}, "profile": gw.profile(), "tasks": TASKS,
             "free_tier": PROFILES["free_tier"]["models"], "own": own, "effective": gw.task_models(), "base": base,
-            "limit_models": [{"model": m, **gw.limits(m), "own": m in (ctx.settings.get("llm.model_limits") or {})}
+            "limit_models": [{"model": m, **gw.limits(m, learned=False),
+                              "own": m in (ctx.settings.get("llm.model_limits") or {}), "learned": learned.get(m)}
                              for m in models],
+            "base_learned": learned.get(base), "learned": learned,
+            "available": {x["id"]: x for x in (av or {}).get("models") or []}, "available_at": (av or {}).get("at"),
             "reserve_pct": int(ctx.settings.get("llm.manual_reserve_pct", MANUAL_RESERVE_PCT) or 0)}
 
 
 def _gemini_models(ctx: Any) -> list[str]:
-    from app.news.ai import GEMINI_MODELS
+    """Wählbare Modelle: feste Liste, ergänzt um die von Google für diesen Schlüssel gemeldeten Flash-/Flash-Lite-
+    Modelle (Einstellungen → „Modelle bei Google abrufen“); nur freigegebene Modellnamen."""
+    from app.news.ai import GEMINI_MODELS, AiGateway, model_allowed
 
+    out = list(GEMINI_MODELS)
+    for m in (AiGateway(ctx).models_available() or {}).get("models") or []:
+        mid = str(m.get("id") or "")
+        if model_allowed(mid) and mid not in out:
+            out.append(mid)
     cur = str(ctx.settings.get("llm.gemini_model") or "")
-    return list(GEMINI_MODELS) if cur in GEMINI_MODELS or not cur else [cur, *GEMINI_MODELS]
+    return out if cur in out or not cur else [cur, *out]

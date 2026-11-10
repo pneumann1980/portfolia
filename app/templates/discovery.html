@@ -3,9 +3,9 @@
 {% block title %}Discovery{% endblock %}
 {% block heading %}Discovery & Intelligence{% endblock %}
 {% block content %}
-<div class="stack disc-page">
-{% if msg %}<div class="alert good"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
-{% if err %}<div class="alert crit"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+<div class="stack disc-page" data-keep-scroll>
+{% if msg %}<div class="alert good" data-flash><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+{% if err %}<div class="alert crit" data-flash><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
 {% if focus_job %}<div hx-get="/discovery/jobs/{{ focus_job }}" hx-trigger="load" hx-swap="outerHTML"></div>{% endif %}
 
 <section class="card" id="aktionen">
@@ -56,7 +56,7 @@
 {% if cards %}
 <div class="disc-cards">
 {% for c in cards %}
-  <article class="card disc-card">
+  <article class="card disc-card" id="karte-{{ c.id }}">
     <div class="disc-card-head">
       <div><a href="/discovery/c/{{ c.id }}"><b>{{ c.name }}</b></a> <span class="badge">{{ c.ticker }}</span>
         <div class="hint">{{ c.sector or 'Branche unbekannt' }}{% if c.held %} · <span class="badge good">im Portfolio</span>{% endif %}{% if c.status != 'neu' %} · <span class="badge info">{{ statuses[c.status] }}</span>{% endif %}</div></div>

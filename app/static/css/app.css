@@ -1287,3 +1287,8 @@ span.disc-o-reported, span.disc-o-derived, span.disc-o-estimated, span.disc-o-mi
 .disc-card-score { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; }
 .disc-card-score b { font-size: 1.15rem; }
 .disc-card-alert { margin: 0; font-size: 0.84rem; }
+
+/* 0.112: Meldung nach Formular-Knopf, wenn die Seite die Position hält (siehe app.js „Position halten“) */
+.flash-toast { position: fixed; left: 16px; right: 16px; bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  z-index: 60; max-width: 640px; margin: 0 auto; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); cursor: pointer; }
+@media (min-width: 900px) { .flash-toast { bottom: 24px; } }

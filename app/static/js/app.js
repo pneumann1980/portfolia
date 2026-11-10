@@ -570,3 +570,65 @@
     mark();
   });
 })();
+
+/* Position halten (0.112): Seiten mit ``data-keep-scroll`` laden nach einem Formular-Knopf (POST → Weiterleitung
+   auf dieselbe Seite) nicht mehr ganz oben. Gemerkt werden das nächstgelegene Element mit ID samt Abstand zum
+   Fensterrand (robuster als die reine Scrollhöhe, falls oben Inhalt hinzukommt) und die geöffneten Klappbereiche.
+   Die Erfolgs-/Fehlermeldung (``data-flash``) erscheint zusätzlich unten als Hinweis, damit sie sichtbar bleibt. */
+(function () {
+  var KEY = "pf-keep-scroll";
+  function active() { return !!document.querySelector("[data-keep-scroll]"); }
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (!active() || !(f instanceof HTMLFormElement) || f.hasAttribute("hx-post") || f.hasAttribute("hx-get")) return;
+    if ((f.getAttribute("method") || "get").toLowerCase() !== "post" || f.closest("[data-keep-scroll='0']")) return;
+    var anchor = f.closest("[id]");
+    var open = [];
+    document.querySelectorAll("details[open][id]").forEach(function (d) { open.push(d.id); });
+    try {
+      sessionStorage.setItem(KEY, JSON.stringify({
+        p: location.pathname, y: window.scrollY, t: Date.now(), open: open,
+        a: anchor ? anchor.id : "", off: anchor ? anchor.getBoundingClientRect().top : 0}));
+    } catch (_) { /* privater Modus: ohne Merken weiter */ }
+  }, true);
+
+  var s = null;
+  try { s = JSON.parse(sessionStorage.getItem(KEY) || "null"); sessionStorage.removeItem(KEY); } catch (_) { s = null; }
+  if (!s || s.p !== location.pathname || Date.now() - s.t > 60000 || location.hash) return;
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+  function restore() {
+    (s.open || []).forEach(function (id) { var d = document.getElementById(id); if (d && d.tagName === "DETAILS") d.open = true; });
+    var el = s.a ? document.getElementById(s.a) : null;
+    if (el) window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - s.off);
+    else window.scrollTo(0, s.y);
+  }
+  function toast() {
+    var src = document.querySelector("[data-flash]");
+    if (!src || src.getBoundingClientRect().bottom > 0) return;  // Meldung ohnehin sichtbar
+    var t = src.cloneNode(true);
+    t.removeAttribute("data-flash");
+    t.classList.add("flash-toast");
+    t.setAttribute("role", "status");
+    t.addEventListener("click", function () { t.remove(); });
+    document.body.appendChild(t);
+    setTimeout(function () { t.remove(); }, 7000);
+  }
+  // Später gezeichnete Teile (Diagramme, HTMX) verschieben den Inhalt: nachführen, solange sich die Höhe ändert –
+  // höchstens 6 s und nur, bis der Nutzer selbst scrollt oder tippt.
+  var until = Date.now() + 6000, moved = false;
+  ["wheel", "touchstart", "keydown", "mousedown"].forEach(function (ev) {
+    window.addEventListener(ev, function () { moved = true; }, { passive: true, once: true });
+  });
+  function follow() { if (!moved && Date.now() < until) restore(); }
+  document.addEventListener("DOMContentLoaded", function () {
+    restore();
+    toast();
+    if ("ResizeObserver" in window) {
+      var ro = new ResizeObserver(follow);
+      ro.observe(document.body);
+      setTimeout(function () { ro.disconnect(); }, 6100);
+    }
+  });
+  window.addEventListener("load", follow);
+  document.addEventListener("htmx:afterSettle", follow);
+})();

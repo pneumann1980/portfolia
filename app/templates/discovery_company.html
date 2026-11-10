@@ -5,9 +5,9 @@
 {% set m = res.market if res else {} %}
 {% set ccy = (res.fundamentals.currency if res else '') or '' %}
 {% block content %}
-<div class="stack disc-page">
-{% if msg %}<div class="alert good"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
-{% if err %}<div class="alert crit"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
+<div class="stack disc-page" data-keep-scroll>
+{% if msg %}<div class="alert good" data-flash><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
+{% if err %}<div class="alert crit" data-flash><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
 {% if focus_job %}<div hx-get="/discovery/jobs/{{ focus_job }}" hx-trigger="load" hx-swap="outerHTML"></div>{% endif %}
 
 {# ---------------- Steckbrief (ein Bildschirm) ---------------- #}

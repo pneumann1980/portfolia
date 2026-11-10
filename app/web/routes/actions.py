@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
@@ -125,6 +126,26 @@ def _save_ai_models(ctx: Any, f: Any) -> None:
     s.set("llm.model_limits", limits)
     if f.get("clear_pauses") == "1":
         AiGateway(ctx).clear_pauses()
+    if f.get("forget_learned") == "1":
+        AiGateway(ctx).forget_learned()
+
+
+@router.post("/settings/ai-models")
+async def refresh_ai_models(request: Request) -> Response:
+    """Verfügbare Gemini-Modelle bei Google abrufen (``models.list``: kein Kontingentverbrauch, kein Prompt)."""
+    from app.news.ai import AiError, AiGateway
+
+    ctx = get_ctx(request)
+
+    def work() -> Response:
+        try:
+            st = AiGateway(ctx).refresh_models()
+            q = f"models={len(st['models'])}"
+        except AiError as e:
+            q = "models_err=" + quote(e.text[:200])
+        return Response(status_code=303, headers={"Location": f"/settings?{q}#ki-modellliste"})
+
+    return await run_in_threadpool(work)
 
 
 @router.post("/settings/save")
