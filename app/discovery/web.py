@@ -21,6 +21,7 @@ from app.discovery import forward as FW
 from app.discovery import fundamentals as F
 from app.discovery import jobs as J
 from app.discovery import nash as NASH
+from app.discovery import presets as PR
 from app.discovery import service as SV
 from app.discovery import universe as U
 from app.discovery.charts import bars
@@ -95,7 +96,7 @@ def _amount(v: Any) -> float:
 
 def _cfg(ctx: Any) -> dict[str, Any]:
     return {k.split(".", 1)[1]: SV.setting(ctx, k) for k in SV.SETTINGS} | \
-        {k.split(".", 1)[1]: ctx.settings.get(k, v) for k, v in AI.DEFAULTS.items()}
+        {k.split(".", 1)[1]: ctx.settings.get(k, v) for k, v in AI.DEFAULTS.items()} | {"presets": PR.view(ctx)}
 
 
 def make_router() -> APIRouter:
@@ -187,30 +188,54 @@ def make_router() -> APIRouter:
 
     @router.post(BASE + "/einstellungen")
     async def save_settings(request: Request) -> Response:
+        """Discovery-Einstellungen (0.113): drei Entscheidungen (automatische Suche, Rechercheumfang, KI) plus
+        „Erweitert“. Gespeichert wird nur, was das Formular enthält; ein geänderter erweiterter Wert hat Vorrang vor
+        einem Profil (das Profil wird dann als „Benutzerdefiniert“ angezeigt, die Anpassung bleibt erhalten)."""
         ctx = get_ctx(request)
         form = await request.form()
+        nums: dict[str, int] = {}
         for key, lo, hi in (("discovery.ai_calls_per_day", 0, 100), ("discovery.ai_calls_per_month", 0, 3000),
                             ("discovery.max_new_per_run", 0, 50), ("discovery.auto_analyse_per_run", 0, 100),
                             ("discovery.news_days", 1, 90), ("discovery.screen_batch", 0, 200),
                             ("discovery.min_revenue_musd", 0, 100000), ("discovery.ki_companies", 1, 12)):
             raw = form.get(key.split(".", 1)[1])
-            if raw is None:
+            if raw is None or str(raw).strip() == "":
                 continue
             try:
-                ctx.settings.set(key, max(lo, min(hi, int(str(raw).strip()))))
-            except ValueError:
+                nums[key] = max(lo, min(hi, int(str(raw).strip())))
+            except ValueError:  # erst prüfen, dann speichern: ein ungültiger Wert ändert nichts
                 return _back(BASE, err=f"Ungültiger Wert für {key.split('.', 1)[1]}.")
-        for step in EN.SCHEDULE:
-            raw = form.get(f"auto_{step}")
-            if raw is not None and str(raw) in ("0", "24", "168"):
-                ctx.settings.set(f"discovery.auto.{step}", int(str(raw)))
+        hours = {step: int(str(form.get(f"auto_{step}"))) for step in EN.SCHEDULE
+                 if str(form.get(f"auto_{step}")) in ("0", "24", "168")}
+        cur_scope, cur_sched = PR.current_scope(ctx), PR.current_schedule(ctx)
+        # Rechercheumfang: geänderter erweiterter Wert > Profilwechsel > unverändert
+        scope_changed = any(int(SV.setting(ctx, k) if k in SV.SETTINGS else ctx.settings.get(k, AI.DEFAULTS.get(k))
+                                or 0) != v for k, v in nums.items() if k.split(".", 1)[1] in PR.SCOPE_KEYS)
+        sp = str(form.get("scope_preset") or "")
+        for key, val in nums.items():
+            ctx.settings.set(key, val)
+        if sp in PR.SCOPE_PRESETS and sp != cur_scope and not scope_changed:
+            PR.apply_scope(ctx, sp)
+        # Automatische Suche: geänderte Einzelzeitpläne > Profilwechsel; „Aus“ behält die Zeitpläne
+        sched_changed = any(int(SV.setting(ctx, f"discovery.auto.{st}") or 0) != h for st, h in hours.items())
+        for step, h in hours.items():
+            ctx.settings.set(f"discovery.auto.{step}", h)
+        pr = str(form.get("schedule_preset") or "")
+        if pr == "aus":
+            PR.apply_schedule(ctx, "aus")
+        elif pr in PR.SCHEDULE_PRESETS and pr != cur_sched and not sched_changed:
+            PR.apply_schedule(ctx, pr)
+        elif pr in ("custom", *PR.SCHEDULE_PRESETS):
+            ctx.settings.set("discovery.enabled", True)
         raw_days = str(form.get("refresh_days") or "")
         if raw_days in ("7", "30"):
             ctx.settings.set("discovery.refresh_days", int(raw_days))
         for key in ("discovery.enabled", "discovery.ai", "discovery.themes"):
-            ctx.settings.set(key, form.get(key.split(".", 1)[1]) == "1")
-        ua = " ".join(str(form.get("sec_user_agent", "")).split())[:200]
-        ctx.settings.set("discovery.sec_user_agent", ua)
+            name = key.split(".", 1)[1]
+            if f"has_{name}" in form:  # Schalter nur ändern, wenn er im Formular stand (sonst bleibt er)
+                ctx.settings.set(key, form.get(name) == "1")
+        if "sec_user_agent" in form:
+            ctx.settings.set("discovery.sec_user_agent", " ".join(str(form.get("sec_user_agent", "")).split())[:200])
         sched = getattr(ctx, "scheduler", None)
         if sched is not None:
             schedule(sched)

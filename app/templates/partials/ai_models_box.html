@@ -1,0 +1,8 @@
+{# Modelle bei Google (0.113): eigener Kasten, per HTMX aktualisiert – sendet keine Formularfelder (hx-params="none"),
+   ungespeicherte Eingaben im umgebenden Formular bleiben unverändert. Erwartet: ai_cfg, gemini_models, secrets,
+   models_msg, models_err. #}
+<div class="box" id="ki-modellliste">{% if models_err %}<div class="alert crit"><span class="icon">!</span><div>Modellliste nicht abrufbar: {{ models_err }}</div></div>{% elif models_msg %}<div class="alert good"><span class="icon">✓</span><div>Modellliste abgerufen ({{ models_msg }} Modelle). Neu gemeldete Flash-Modelle sind nach dem Neuladen der Seite wählbar.</div></div>{% endif %}
+  <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><b>Modellverfügbarkeit bei Google</b>
+  <button class="btn sm" type="button" hx-post="/settings/ai-models" hx-target="#ki-modellliste" hx-swap="outerHTML" hx-params="none" {{ 'disabled' if not secrets['GEMINI_API_KEY'] }}>Verfügbare Modelle abrufen</button></div>
+  {% if ai_cfg.available_at %}<p class="hint">Stand {{ ai_cfg.available_at|datetime_de }}: {{ ai_cfg.available|length }} Modelle mit Textausgabe für deinen Schlüssel{% set fl = gemini_models|select('in', ai_cfg.available)|list %}, davon wählbar (Flash/Flash-Lite): {{ fl|join(', ') if fl else 'keins' }}.</p>{% endif %}
+  <p class="hint">Google liefert per Schnittstelle die <b>verfügbaren Modelle</b>, aber <b>keine Kontingente</b> – die gibt es nur in AI Studio. Portfolia übernimmt zusätzlich die Grenze, die Google bei einem erschöpften Kontingent mitteilt („Google meldet“); meldet Google 0, gilt das Modell für dein Projekt als nicht im kostenlosen Kontingent. Der Abruf verbraucht kein Kontingent und ändert keine Einstellungen.</p></div>

@@ -183,7 +183,7 @@ Das `AiGateway` ordnet jeder **Aufgabe** ein Gemini-Modell zu; Aufrufer übergeb
   nicht neu erstellt (Promptversion unverändert, keine Zusatzkosten).
 * **Grenzen von Google (0.112):** Die Gemini-Schnittstelle liefert **keine** Kontingente – `models.list` nennt nur
   Modelle, Kontextlänge und Fähigkeiten; die Free-Tier-Werte zeigt Google ausschließlich in AI Studio. Portfolia nutzt
-  deshalb zwei Quellen: (1) *Einstellungen → „Verfügbare Modelle abrufen“* ruft `models.list` ab (Schlüssel im Header,
+  deshalb zwei Quellen: (1) *Einstellungen → KI & Modelle → Erweitert → „Verfügbare Modelle abrufen“* ruft `models.list` ab (Schlüssel im Header,
   kein Kontingentverbrauch, kein Prompt) – neu gemeldete Flash-/Flash-Lite-Modelle werden wählbar, nicht gemeldete
   markiert; Pro- und Spezialmodelle bleiben ausgeschlossen. (2) Meldet Google ein erschöpftes Kontingent (429), enthält
   die Antwort je Verstoß meist `quotaId` und `quotaValue` (nicht offiziell dokumentiert; nur genutzt, wenn vorhanden).
@@ -194,6 +194,32 @@ Das `AiGateway` ordnet jeder **Aufgabe** ein Gemini-Modell zu; Aufrufer übergeb
   nicht automatisch erkannt.
 * **Live-Abnahme:** gegen echte Gemini-Modelle **nicht durchgeführt** (kein Schlüssel in der Testumgebung). Geprüft
   ist das Verhalten mit nachgebildeten Antworten (`tests/test_ai_models.py`).
+
+## Einstellungen „KI & Modelle“ (0.113)
+
+Alle KI-Einstellungen stehen auf einer eigenen Seite *Einstellungen → KI & Modelle* (`/settings/ki`, Formular
+`section=ai`). Die Karte *News & Artikeltexte* enthält nur noch Artikelabruf/-speicherung, Nachrichtenanalyse an/aus,
+Ereignisgruppierung, KI für Grenzfälle, Tagesbericht und dessen Zeitplan – mit Verweis auf „KI & Modelle“.
+
+* **Normalansicht:** KI an/aus (`llm.enabled`), Anbieter (`llm.provider`), Zugangsstatus, **Modellstrategie**
+  (`llm.gemini_profile`), tatsächlich zugeordnete Modelle je Aufgabe und Kontingent heute je Modell.
+* **Strategien:** *Kostenbewusst optimiert* (`free_tier`, empfohlen), *Ein Modell für alles* (`einzeln`, Grundmodell
+  `llm.gemini_model` für alle Aufgaben), *Individuell* (`eigen`, Modell je Aufgabe in `llm.task_models`; die sechs
+  Auswahlfelder erscheinen nur hier). Bestehende Installationen behalten ihre Strategie (ohne Eintrag: „Ein Modell für
+  alles“) – nichts wird automatisch auf andere oder kostenpflichtige Modelle umgestellt.
+* **Nichts geht verloren:** Felder des anderen Anbieters bzw. einer anderen Strategie werden ausgeblendet **und
+  deaktiviert**, also nicht gesendet; der Server ändert nur Felder, die im Formular stehen (Schalter über
+  `has_<name>`). Anbieter- oder Strategiewechsel löscht daher keine gespeicherten Werte; die individuelle Zuordnung gilt
+  wieder, sobald „Individuell“ gewählt wird. Wechselt man im Formular den Anbieter, blendet die Übersicht (gespeicherter
+  Stand) sich bis zum Speichern aus.
+* **Erweitert** (eingeklappt): Grenzen des Grundmodells (RPM/TPM/RPD, Tages-Tokenbudget, unbegrenzt), Rücklage für
+  manuelle Starts, Grenzen weiterer Modelle (inkl. TPD), von Google gemeldete Grenzen, Modellverfügbarkeit, Pausen
+  aufheben, gemeldete Grenzen verwerfen, Diagnose-Verweise; bei Claude das Tages-Tokenbudget.
+* **Modellliste abrufen** ersetzt per HTMX nur den eigenen Kasten (`hx-params="none"`): keine Formularfelder werden
+  gesendet, ungespeicherte Eingaben bleiben stehen, gespeicherte Einstellungen bleiben unverändert.
+* **Getrennte Bereiche:** Speichern von *KI & Modelle* ändert nur `llm.*`, *News & Artikeltexte* nur `news.*`,
+  Discovery nur `discovery.*`. Schlüsselnamen unverändert, keine Migration; API-Schlüssel werden weiterhin nur aus der
+  Umgebung gelesen.
 
 ## Einzelanalyse (`news_analysis`)
 

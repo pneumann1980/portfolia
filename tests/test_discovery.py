@@ -610,7 +610,9 @@ def test_settings_export_and_entry_links(app_client):
     assert r.status_code == 303 and "gespeichert" in r.headers["location"]
     s = ctx.settings
     assert s.get("discovery.ai_calls_per_day") == 3 and s.get("discovery.ai_calls_per_month") == 3000
-    assert s.get("discovery.enabled") is False and s.get("discovery.ai") is True
+    # 0.113: Felder, die nicht im Formular stehen, bleiben unverändert (früher setzte ein Teilformular sie auf „aus“)
+    assert SV.setting(ctx, "discovery.enabled") is True and s.get("discovery.enabled") is None
+    assert s.get("discovery.ai") in (None, True)
     assert s.get("discovery.sec_user_agent") == "Test test@example.org"
     bad = c.post("/discovery/einstellungen", data={"csrf_token": c.token, "ai_calls_per_day": "x"},
                  follow_redirects=False)

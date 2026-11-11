@@ -632,3 +632,66 @@
   window.addEventListener("load", follow);
   document.addEventListener("htmx:afterSettle", follow);
 })();
+
+/* Discovery-Einstellungen (0.113): Ändert man unter „Erweitert“ einen Wert, wird das zugehörige Profil sofort als
+   „Benutzerdefiniert“ markiert – der Server übernimmt dann genau diese Werte (nichts wird überschrieben). */
+(function () {
+  document.querySelectorAll("form[data-disc-settings]").forEach(function (form) {
+    form.addEventListener("change", function (e) {
+      var grp = e.target && e.target.getAttribute && e.target.getAttribute("data-group");
+      if (!grp) return;
+      var lab = form.querySelector('[data-choice="' + grp + '-custom"]');
+      if (!lab) return;
+      lab.hidden = false;
+      var r = lab.querySelector("input[type=radio]");
+      if (r) r.checked = true;
+    });
+  });
+})();
+
+/* KI & Modelle (0.113): Felder nur für den gewählten Anbieter bzw. die gewählte Modellstrategie anzeigen. Verborgene
+   Felder werden deaktiviert und damit nicht gesendet – ihre gespeicherten Werte bleiben unverändert (Anbieter- oder
+   Strategiewechsel löscht nichts). */
+(function () {
+  document.querySelectorAll("form[data-ai-form]").forEach(function (form) {
+    var prov = form.querySelector("[data-ai-provider]");
+    function strategy() {
+      var r = form.querySelector("input[data-ai-strategy]:checked");
+      return r ? r.value : "";
+    }
+    function show(el, on) {
+      el.hidden = !on;
+      el.querySelectorAll("input, select, textarea, button").forEach(function (x) {
+        if (x.dataset.aiKeep === undefined) x.dataset.aiKeep = x.disabled ? "1" : "0";
+        x.disabled = !on || x.dataset.aiKeep === "1";
+      });
+    }
+    function update() {
+      var p = prov ? prov.value : "";
+      var st = strategy();
+      form.querySelectorAll("[data-only-provider]").forEach(function (el) {
+        show(el, el.getAttribute("data-only-provider") === p);
+      });
+      // Strategie-Blöcke nur innerhalb des sichtbaren Gemini-Teils freigeben
+      form.querySelectorAll("[data-only-strategy]").forEach(function (el) {
+        var inProv = !el.closest("[data-only-provider]") || !el.closest("[data-only-provider]").hidden;
+        show(el, inProv && (" " + el.getAttribute("data-only-strategy") + " ").indexOf(" " + st + " ") >= 0);
+      });
+      // Übersicht zeigt den gespeicherten Stand: bei geändertem Anbieter ausblenden und darauf hinweisen
+      var changed = false, stChanged = false;
+      form.querySelectorAll("[data-saved-provider]").forEach(function (el) {
+        var same = el.getAttribute("data-saved-provider") === p;
+        changed = changed || !same;
+        el.hidden = !same;
+        var ss = el.getAttribute("data-saved-strategy");
+        if (ss && same && p === "gemini" && st && ss !== st) stChanged = true;
+      });
+      form.querySelectorAll("[data-unsaved-provider]").forEach(function (el) { el.hidden = !changed; });
+      form.querySelectorAll("[data-unsaved-strategy]").forEach(function (el) { el.hidden = !stChanged; });
+    }
+    form.addEventListener("change", function (e) {
+      if (e.target === prov || (e.target && e.target.hasAttribute && e.target.hasAttribute("data-ai-strategy"))) update();
+    });
+    update();
+  });
+})();

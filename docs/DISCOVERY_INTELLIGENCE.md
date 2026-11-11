@@ -1,4 +1,8 @@
-# Discovery & Intelligence (0.112.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe)
+# Discovery & Intelligence (0.113.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe; einfache Einstellungen)
+
+**Neu in 0.113** (Abschnitt [0.9](#09-neu-in-0113-einfache-discovery-einstellungen-und-kompakter-ki-status)):
+Discovery-Einstellungen auf drei Entscheidungen reduziert (automatische Suche, Rechercheumfang, KI ja/nein), alles
+Weitere unter „Erweitert“; kompakter KI-Status („KI bereit“ ≠ „KI arbeitet gerade“), Details eingeklappt.
 
 **Neu in 0.111** (Abschnitt [0.7](#07-neu-in-0111-modell-je-aufgabe-und-warteschlange)): eigenes Gemini-Modell für
 KI-Discovery und Firmenanalyse, sichtbare **Warteschlange** bei erschöpftem Kontingent (abbrechbar, startet von
@@ -165,6 +169,53 @@ Anteil besser nach 12 und 24 Monaten, bei Vorschauen zusätzlich nach Einschätz
   Hinweis. Später gezeichnete Teile (Diagramme, nachgeladene Abschnitte) werden bis zu 6 s ausgeglichen, solange man
   nicht selbst scrollt. Knöpfe, die bewusst auf eine andere Seite führen (z. B. „Mit KI analysieren“ → Unternehmensseite),
   beginnen dort oben.
+
+### 0.9 Neu in 0.113: einfache Discovery-Einstellungen und kompakter KI-Status
+
+**Drei Entscheidungen** (Karte „Discovery-Einstellungen“, Code `app/discovery/presets.py`). Sie setzen ausschließlich
+die bestehenden Schlüssel `discovery.*` – keine neuen Algorithmen, keine Migration.
+
+*Automatische Suche* → Hauptschalter `discovery.enabled` und Zeitpläne `discovery.auto.<schritt>` (Stunden):
+
+| Profil | enabled | news | screening | analysen | beobachtet | ki |
+|---|---|---|---|---|---|---|
+| Aus | false | *bleiben gespeichert* | | | | |
+| Täglich (= bisherige Standardwerte) | true | 24 | 24 | 24 | 168 | 168 |
+| Wöchentlich | true | 168 | 168 | 168 | 168 | 168 |
+
+„Aus“ schaltet nur den Hauptschalter ab; die einzelnen Zeitpläne bleiben erhalten und gelten nach „Täglich/Wöchentlich“
+bzw. beim Wiedereinschalten. KI-Vorschläge laufen auch bei „Täglich“ nur wöchentlich (2 KI-Aufrufe je Lauf).
+
+*Rechercheumfang* → vorhandene Grenzen:
+
+| Profil | screen_batch | ki_companies | max_new_per_run | auto_analyse_per_run | ai_calls_per_day | ai_calls_per_month |
+|---|---|---|---|---|---|---|
+| Sparsam | 10 | 3 | 5 | 10 | 6 | 60 |
+| Ausgewogen (= bisherige Standardwerte) | 20 | 6 | 10 | 25 | 12 | 150 |
+| Intensiv | 50 | 10 | 20 | 50 | 24 | 300 |
+
+Die KI-Grenzen eines Profils überschreiten nie die globalen Modellgrenzen: Bei Gemini wird `ai_calls_per_day` auf das
+kleinste Tageslimit (`rpd`) der Modelle für KI-Discovery und Unternehmensanalyse gekappt, `ai_calls_per_month` auf das
+31-Fache davon. Zusätzlich gelten unverändert die Kontingente des `AiGateway` (gemeinsam mit News, Bericht, Video).
+
+*KI für Discovery* → `discovery.ai` (bestehender Schalter; ohne KI laufen Screening, News-Discovery und
+Datenaktualisierung weiter). Modell und globale Kontingente stehen unter *Einstellungen → KI & Modelle*.
+
+**Benutzerdefiniert:** Entsprechen die gespeicherten Werte keinem Profil, zeigt die Karte „Benutzerdefiniert“. Ändert man
+unter „Erweiterte Discovery-Einstellungen“ einen Wert, markiert die Oberfläche sofort „Benutzerdefiniert“; beim Speichern
+gilt die Regel *geänderter Einzelwert schlägt Profil* – ein gleichzeitig gewähltes Profil überschreibt die Anpassung nicht.
+Ein Profil wird nur angewendet, wenn es gewechselt wurde und kein Einzelwert geändert ist.
+
+**Speichern ohne Nebenwirkungen:** Alle Zahlen werden zuerst geprüft; ein ungültiger Wert ändert nichts. Schalter
+(`enabled`, `ai`, `themes`) werden nur geändert, wenn sie im Formular stehen (`has_<name>`). Behobener Altfehler: Ein
+Teilformular setzte früher fehlende Schalter auf „aus“.
+
+**Kompakter KI-Status** (Kopf der Discovery-Seite): Zustand *KI deaktiviert* / *KI bereit* / *KI arbeitet gerade*
+(laufender Job `ki_discovery`, `voll` oder KI-Analyse) / *KI pausiert*; darunter Discovery-Modell, verbleibendes
+Kontingent (Discovery-Aufrufe heute, Modellanfragen, Monat), laufende Research-Aufgabe, letzter erfolgreicher KI-Lauf,
+nächster automatischer Lauf. Verbrauch, Aufgabenmodelle, Grenzen, Fehler, Warteschlange, Zeitplan und Research-Jobs
+sind eingeklappt. Die Knöpfe „KI-Discovery starten“, „Fundamentalscreening starten“ und „Mit KI analysieren“ sind
+unverändert.
 
 ## 1. Produktvision und Funktionsumfang
 

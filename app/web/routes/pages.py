@@ -432,9 +432,18 @@ def _age_label(v: Any) -> str:
 
 # -- Einstellungen ---------------------------------------------------------------------------------------
 
+@router.get("/settings/ki", response_class=HTMLResponse)
+def settings_ai_page(request: Request, saved: str = "", models: str = "", models_err: str = "") -> HTMLResponse:
+    """Einstellungen → KI & Modelle (0.113): Anbieter, Modellstrategie, wirksame Modelle, Kontingent; Technik unter
+    „Erweitert“."""
+    ctx = get_ctx(request)
+    return render(request, "settings_ai.html", active="settings", s=ctx.settings.all(),
+                  secrets=ctx.config.secrets.status(), gemini_models=_gemini_models(ctx), ai_cfg=_ai_cfg(ctx),
+                  saved=saved, models_msg=models[:6], models_err=models_err[:240])
+
+
 @router.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request, saved: str = "", err: str = "", models: str = "",
-                  models_err: str = "") -> HTMLResponse:
+def settings_page(request: Request, saved: str = "", err: str = "") -> HTMLResponse:
     ctx = get_ctx(request)
     pf = ctx.portfolio()
     led = ctx.ledger()
@@ -470,11 +479,45 @@ def settings_page(request: Request, saved: str = "", err: str = "", models: str 
     next_runs = ctx.scheduler.next_runs() if ctx.scheduler else {}
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,
                   detected_cash=(led.cash_tracked if led else {}), secrets=ctx.config.secrets.status(),
-                  gemini_models=_gemini_models(ctx), ai_cfg=_ai_cfg(ctx),
-                  config=ctx.config, saved=saved, err=err[:400],
-                  models_msg=models[:6], models_err=models_err[:240], backups=backups, exports=exports, archive=archive,
+                  config=ctx.config, saved=saved, err=err[:400], backups=backups, exports=exports, archive=archive,
                   export_job=job, ds_summary=ds_summary, pp=price_plan, next_runs=next_runs,
                   restore=restore_status(ctx))
+
+
+# Aufgaben in der Reihenfolge und mit den Namen der Einstellungsseite (interne Schlüssel unverändert)
+TASK_UI = {"news": "Nachrichtenanalyse", "events": "Ereignisgruppierung", "report": "Tagesbericht",
+           "discovery": "KI-Discovery", "company": "Unternehmensanalyse", "video": "Video-Kernaussagen"}
+STRATEGIES = {"free_tier": ("Kostenbewusst optimiert", "passende Modelle für jede Aufgabe (empfohlen)"),
+              "einzeln": ("Ein Modell für alles", "einfachste Konfiguration"),
+              "eigen": ("Individuell", "Modell je Aufgabe festlegen")}
+
+
+def _model_kind(model: str) -> str:
+    m = model.lower()
+    return "Flash-Lite" if "flash-lite" in m else "Flash" if "flash" in m else model
+
+
+def _ai_status(ctx: Any) -> dict[str, Any]:
+    """Zugang auf einen Blick: (Bezeichnung, Ton, Erklärung) – ohne Schlüssel oder Inhalte."""
+    from app.news.ai import AiGateway
+
+    gw = AiGateway(ctx)
+    p = gw.provider_name()
+    name = "Google Gemini" if p == "gemini" else "Anthropic Claude"
+    if not gw.key_present():
+        return {"label": "Schlüssel fehlt", "tone": "warn",
+                "text": f"Für {name} ist kein API-Schlüssel hinterlegt (Umgebungsvariable des Containers)."}
+    if not ctx.settings.get("llm.enabled", False):
+        return {"label": "Aus", "tone": "",
+                "text": f"Schlüssel für {name} vorhanden – KI-Funktionen sind ausgeschaltet."}
+    until, why = gw.access_paused(p)
+    if until:
+        return {"label": "Zugang pausiert", "tone": "crit", "text": f"Bis {until:%d.%m. %H:%M} UTC: {why}"}
+    blocked = [t for t in TASK_UI if gw.blocked(t)]
+    if blocked:
+        return {"label": "Teilweise pausiert", "tone": "warn",
+                "text": "Wartet: " + ", ".join(TASK_UI[t] for t in blocked) + " – andere Aufgaben laufen weiter."}
+    return {"label": "Bereit", "tone": "good", "text": f"Schlüssel für {name} vorhanden, keine Pause."}
 
 
 def _ai_cfg(ctx: Any) -> dict[str, Any]:
@@ -498,7 +541,31 @@ def _ai_cfg(ctx: Any) -> dict[str, Any]:
                              for m in models],
             "base_learned": learned.get(base), "learned": learned,
             "available": {x["id"]: x for x in (av or {}).get("models") or []}, "available_at": (av or {}).get("at"),
-            "reserve_pct": int(ctx.settings.get("llm.manual_reserve_pct", MANUAL_RESERVE_PCT) or 0)}
+            "reserve_pct": int(ctx.settings.get("llm.manual_reserve_pct", MANUAL_RESERVE_PCT) or 0),
+            **_ai_overview(ctx, gw)}
+
+
+def _ai_overview(ctx: Any, gw: Any) -> dict[str, Any]:
+    """Wirksame Modelle je Aufgabe (Reihenfolge der Einstellungsseite) und vereinfachtes Tageskontingent je Modell."""
+    eff = gw.task_models()
+    rows = [{"task": t, "label": lbl, "model": eff[t], "kind": _model_kind(eff[t])} for t, lbl in TASK_UI.items()]
+    quota: list[dict[str, Any]] = []
+    if gw.provider_name() == "gemini":
+        seen: dict[str, dict[str, Any]] = {}
+        for r in gw.task_status():
+            q = seen.get(r["model"])
+            if q is None:
+                q = seen[r["model"]] = {"model": r["model"], "kind": _model_kind(r["model"]), "tasks": [],
+                                        "rpd": r["limits"]["rpd"], "used": r["usage_model"]["requests"],
+                                        "left": r["requests_left"], "wait": r["wait"]}
+                quota.append(q)
+            q["tasks"].append(TASK_UI.get(r["task"], r["label"]))
+    else:
+        left = gw.tokens_left()
+        quota.append({"model": eff["news"], "kind": eff["news"], "tasks": list(TASK_UI.values()), "rpd": 0,
+                      "used": 0, "left": None, "tokens_left": left, "wait": None})
+    return {"rows": rows, "quota": quota, "strategies": STRATEGIES, "task_ui": TASK_UI, "status": _ai_status(ctx),
+            "provider": gw.provider_name()}
 
 
 def _gemini_models(ctx: Any) -> list[str]:

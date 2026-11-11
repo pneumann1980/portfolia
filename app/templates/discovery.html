@@ -103,27 +103,41 @@
   {% endif %}
 </details>
 
-<section class="card">
-  <details><summary><b>Einstellungen, Zeitplan, Grenzen und Export</b></summary>
-    <form method="post" action="/discovery/einstellungen" class="form-grid disc-settings"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label class="check"><input type="checkbox" name="enabled" value="1" {{ 'checked' if cfg.enabled }}> Automatische Discovery-Schritte (Zeitplan unten)</label>
-      <label class="check"><input type="checkbox" name="ai" value="1" {{ 'checked' if cfg.ai }}> KI für Discovery verwenden (Anbieter und Modell wie unter Einstellungen → KI)</label>
-      <label class="check"><input type="checkbox" name="themes" value="1" {{ 'checked' if cfg.themes }}> Meldungen als zusätzliche Ausgangsbelege der KI-Themen verwenden</label>
-      {% for step, label in sched_labels.items() %}<label class="field">{{ label }}<select name="auto_{{ step }}">{% for v, t in [(0, 'aus'), (24, 'täglich'), (168, 'wöchentlich')] %}<option value="{{ v }}" {{ 'selected' if cfg['auto.' ~ step] == v }}>{{ t }}</option>{% endfor %}</select></label>{% endfor %}
-      <label class="field">Discovery-KI-Aufrufe je Tag<input name="ai_calls_per_day" inputmode="numeric" value="{{ cfg.ai_calls_per_day }}"></label>
-      <label class="field">Discovery-KI-Aufrufe je Monat<input name="ai_calls_per_month" inputmode="numeric" value="{{ cfg.ai_calls_per_month }}"></label>
+{% set pv = cfg.presets %}
+<section class="card" id="disc-einstellungen">
+  <div class="card-head"><h2>Discovery-Einstellungen</h2>{% if pv.schedule == 'custom' or pv.scope == 'custom' %}<span class="badge info">Benutzerdefiniert</span>{% endif %}</div>
+  <form method="post" action="/discovery/einstellungen" class="disc-settings-simple" data-disc-settings><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <fieldset class="choice-group"><legend>Automatische Suche</legend>
+      {% for k in ['aus', 'taeglich', 'woechentlich', 'custom'] %}<label class="choice"{% if k == 'custom' and pv.schedule != 'custom' %} hidden{% endif %} data-choice="schedule-{{ k }}"><input type="radio" name="schedule_preset" value="{{ k }}" {{ 'checked' if pv.schedule == k }}{% if k == 'custom' %} data-custom{% endif %}> <span>{% set lbl = pv.schedule_labels[k].split(' – ', 1) %}<b>{{ lbl[0] }}</b>{% if lbl|length > 1 %} – {{ lbl[1] }}{% endif %}</span></label>{% endfor %}
+    </fieldset>
+    <fieldset class="choice-group"><legend>Umfang der Recherche</legend>
+      {% for k in ['sparsam', 'ausgewogen', 'intensiv', 'custom'] %}<label class="choice"{% if k == 'custom' and pv.scope != 'custom' %} hidden{% endif %} data-choice="scope-{{ k }}"><input type="radio" name="scope_preset" value="{{ k }}" {{ 'checked' if pv.scope == k }}{% if k == 'custom' %} data-custom{% endif %}> <span>{% set lbl = pv.scope_labels[k].split(' – ', 1) %}<b>{{ lbl[0] }}</b>{% if lbl|length > 1 %} – {{ lbl[1] }}{% endif %}</span></label>{% endfor %}
+      {% if pv.cap is not none %}<p class="hint">KI-Grenzen der Profile werden auf das Tageslimit der Modelle gekappt (höchstens {{ pv.cap }} Aufrufe je Tag).</p>{% endif %}
+    </fieldset>
+    <input type="hidden" name="has_ai" value="1"><label class="check"><input type="checkbox" name="ai" value="1" {{ 'checked' if cfg.ai }}> <span><b>KI für Discovery-Recherche nutzen</b></span></label>
+    <p class="hint">Ohne KI laufen Fundamentalscreening, Nachrichten-Discovery und Datenaktualisierung weiter. Modell und globale Kontingente kommen aus <a href="/settings/ki">Einstellungen → KI &amp; Modelle</a>.</p>
+    <details class="box" id="disc-erweitert"><summary><b>Erweiterte Discovery-Einstellungen</b> <span class="hint">Zeitpläne je Schritt, Grenzen, SEC-Kontakt</span></summary>
+      <div class="form-grid disc-settings">
+      <input type="hidden" name="has_themes" value="1"><label class="check"><input type="checkbox" name="themes" value="1" {{ 'checked' if cfg.themes }}> Meldungen als zusätzliche Ausgangsbelege der KI-Themen verwenden</label>
+      {% for step, label in sched_labels.items() %}<label class="field">{{ label }}<select name="auto_{{ step }}" data-group="schedule">{% for v, t in [(0, 'aus'), (24, 'täglich'), (168, 'wöchentlich')] %}<option value="{{ v }}" {{ 'selected' if cfg['auto.' ~ step] == v }}>{{ t }}</option>{% endfor %}</select></label>{% endfor %}
+      <label class="field">Discovery-KI-Aufrufe je Tag<input name="ai_calls_per_day" inputmode="numeric" value="{{ cfg.ai_calls_per_day }}" data-group="scope"></label>
+      <label class="field">Discovery-KI-Aufrufe je Monat<input name="ai_calls_per_month" inputmode="numeric" value="{{ cfg.ai_calls_per_month }}" data-group="scope"></label>
       <label class="field">Alle Kandidaten automatisch aktualisieren (SEC, Kurse, ohne KI)<select name="refresh_days">{% for v, t in [(7, 'wöchentlich'), (30, 'monatlich')] %}<option value="{{ v }}" {{ 'selected' if cfg.refresh_days == v }}>{{ t }}</option>{% endfor %}</select></label>
-      <label class="field">Datenaktualisierungen je Lauf (höchstens)<input name="auto_analyse_per_run" inputmode="numeric" value="{{ cfg.auto_analyse_per_run }}"></label>
-      <label class="field">Unternehmen je KI-Discovery<input name="ki_companies" inputmode="numeric" value="{{ cfg.ki_companies }}"></label>
-      <label class="field">Bestätigungen je Screening-Lauf<input name="screen_batch" inputmode="numeric" value="{{ cfg.screen_batch }}"></label>
+      <label class="field">Datenaktualisierungen je Lauf (höchstens)<input name="auto_analyse_per_run" inputmode="numeric" value="{{ cfg.auto_analyse_per_run }}" data-group="scope"></label>
+      <label class="field">Unternehmen je KI-Discovery<input name="ki_companies" inputmode="numeric" value="{{ cfg.ki_companies }}" data-group="scope"></label>
+      <label class="field">Bestätigungen je Screening-Lauf<input name="screen_batch" inputmode="numeric" value="{{ cfg.screen_batch }}" data-group="scope"></label>
       <label class="field">Mindestumsatz im Screening (Mio. USD)<input name="min_revenue_musd" inputmode="numeric" value="{{ cfg.min_revenue_musd }}"></label>
-      <label class="field">Neue Unternehmen je Nachrichtenlauf<input name="max_new_per_run" inputmode="numeric" value="{{ cfg.max_new_per_run }}"></label>
+      <label class="field">Neue Unternehmen je Nachrichtenlauf<input name="max_new_per_run" inputmode="numeric" value="{{ cfg.max_new_per_run }}" data-group="scope"></label>
       <label class="field">Meldungen der letzten … Tage<input name="news_days" inputmode="numeric" value="{{ cfg.news_days }}"></label>
       <label class="field">SEC-Kontakt (User-Agent, z. B. „Name name@example.org“)<input name="sec_user_agent" maxlength="200" value="{{ cfg.sec_user_agent or '' }}"></label>
-      <div class="row"><button class="btn" type="submit">Speichern</button></div>
-    </form>
-    <p class="hint">Die Datenaktualisierung (Zeitplan oben) frischt zuerst Kandidaten mit neuem Quartals- oder Jahresbericht bei der SEC auf (erkannt über den EDGAR-Tagesindex des Screenings), dann Kandidaten ohne Analyse, dann alle übrigen im gewählten Abstand – kostenlos, ohne KI; ein vorhandener KI-Bericht wird bei neuem SEC-Bericht als „veraltet“ markiert, nicht neu erstellt. KI-Aufrufe entstehen nur durch die KI-Discovery (2 je Lauf) und durch Knöpfe je Unternehmen; alle anderen Abläufe laden kostenlos SEC- und Marktdaten. Die SEC verlangt einen aussagekräftigen User-Agent mit Kontakt (Fair-Access-Regeln); Portfolia sendet höchstens 2 Anfragen je Sekunde und speichert Antworten zwischen. Knöpfe umgehen nie die KI-Grenzen. <a href="/discovery/export.json">Discovery-Daten ansehen (JSON)</a> – Wiederherstellung über den Gesamtexport.</p>
-  </details>
+      </div>
+      <div class="table-wrap"><table class="compact"><thead><tr><th>Profil</th>{% for k in ['screen_batch', 'ki_companies', 'max_new_per_run', 'auto_analyse_per_run', 'ai_calls_per_day', 'ai_calls_per_month'] %}<th class="num">{{ {'screen_batch': 'Screening', 'ki_companies': 'Firmen je KI-Lauf', 'max_new_per_run': 'Neu je Nachrichtenlauf', 'auto_analyse_per_run': 'Daten je Lauf', 'ai_calls_per_day': 'KI/Tag', 'ai_calls_per_month': 'KI/Monat'}[k] }}</th>{% endfor %}</tr></thead><tbody>
+        {% for name, vals in pv.scope_presets.items() %}<tr><td>{{ pv.scope_labels[name].split(' – ')[0] }}</td>{% for k in ['screen_batch', 'ki_companies', 'max_new_per_run', 'auto_analyse_per_run', 'ai_calls_per_day', 'ai_calls_per_month'] %}<td class="num">{{ vals[k] }}</td>{% endfor %}</tr>{% endfor %}
+      </tbody></table></div>
+      <p class="hint">Ändert man hier einen Wert, gilt der Rechercheumfang bzw. die automatische Suche als „Benutzerdefiniert“ – die Anpassung bleibt erhalten. „Aus“ hält die einzelnen Zeitpläne gespeichert. Die Datenaktualisierung frischt zuerst Kandidaten mit neuem SEC-Bericht auf, dann solche ohne Analyse, dann alle übrigen im gewählten Abstand – kostenlos, ohne KI. KI-Aufrufe entstehen nur durch die KI-Discovery (2 je Lauf) und durch Knöpfe je Unternehmen. Die SEC verlangt einen aussagekräftigen User-Agent mit Kontakt; Portfolia sendet höchstens 2 Anfragen je Sekunde. <a href="/discovery/export.json">Discovery-Daten ansehen (JSON)</a> – Wiederherstellung über den Gesamtexport.</p>
+    </details>
+    <div class="row"><button class="btn primary" type="submit">Speichern</button></div>
+  </form>
 </section>
 </div>
 {% endblock %}

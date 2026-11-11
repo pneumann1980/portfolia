@@ -87,9 +87,9 @@ def test_free_tier_and_own_profile_mapping(ctx):
 def test_settings_page_saves_profile_task_models_and_limits(config, monkeypatch):
     for c in make_client(config, monkeypatch):
         ctx = c.app.state.ctx
-        page = c.get("/settings").text
-        assert "Gemini: Modell je Aufgabe" in page and 'name="gemini_profile"' in page
-        form = {"csrf_token": c.token, "section": "news", "gemini_model": LITE, "gemini_rpm": "5",
+        page = c.get("/settings/ki").text  # 0.113: eigene Seite „KI & Modelle“
+        assert "Modellstrategie" in page and 'name="gemini_profile"' in page
+        form = {"csrf_token": c.token, "section": "ai", "gemini_model": LITE, "gemini_rpm": "5",
                 "gemini_tpm": "100000", "gemini_rpd": "100", "gemini_budget": "200000", "llm_provider": "gemini",
                 "gemini_profile": "free_tier", "manual_reserve_pct": "20", "task_model_video": "gemini-2.5-flash",
                 "lim_model_0": FLASH_CO, "lim_rpm_0": "4", "lim_tpm_0": "250000", "lim_rpd_0": "25", "lim_tpd_0": "0",
