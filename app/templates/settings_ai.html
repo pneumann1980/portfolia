@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}KI & Modelle{% endblock %}
+{% block heading %}Einstellungen{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Einstellungen"><a href="/settings">Einstellungen</a><a class="active" href="/settings/ki">KI &amp; Modelle</a><a href="/settings/zugaenge">Zugänge</a></nav>
+{% set prov = s['llm.provider'] if s['llm.provider'] == 'gemini' else 'claude' %}
+{% set strat = ai_cfg.profile %}
+{% set lim_lbl = [('rpm', '/min'), ('rpd', '/Tag'), ('tpm', ' Tokens/min'), ('tpd', ' Tokens/Tag')] %}
+<div class="stack">
+<section class="card ai-settings" id="ki">
+  <div class="card-head"><div><h2>KI &amp; Modelle</h2><span class="hint">Anbieter, Modellstrategie und Kontingent für alle KI-Funktionen</span></div>
+    <span class="badge {{ ai_cfg.status.tone }}" title="{{ ai_cfg.status.text }}">{{ ai_cfg.status.label }}</span></div>
+  <form method="post" action="/settings/save" id="ai-form" data-ai-form>
+    <input type="hidden" name="section" value="ai"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="has_llm_enabled" value="1">
+    <label class="check ai-row"><input type="checkbox" name="llm_enabled" value="1" {% if s['llm.enabled'] %}checked{% endif %} {% if not (secrets['ANTHROPIC_API_KEY'] or secrets['GEMINI_API_KEY']) %}disabled{% endif %}>
+      <span><b>KI-Funktionen verwenden</b> <span class="hint">Nachrichtenanalyse, Ereignis-Grenzfälle, Tagesbericht, Video-Kernaussagen, Discovery</span>{% if not (secrets['ANTHROPIC_API_KEY'] or secrets['GEMINI_API_KEY']) %} <span class="badge">weder ANTHROPIC_API_KEY noch GEMINI_API_KEY gesetzt</span>{% endif %}</span></label>
+
+    <label class="field ai-provider">KI-Anbieter
+      <select name="llm_provider" data-ai-provider>
+        <option value="gemini" {% if prov == 'gemini' %}selected{% endif %}>Google Gemini{% if not secrets['GEMINI_API_KEY'] %} (Schlüssel fehlt){% endif %}</option>
+        <option value="claude" {% if prov == 'claude' %}selected{% endif %}>Anthropic Claude{% if not secrets['ANTHROPIC_API_KEY'] %} (Schlüssel fehlt){% endif %}</option></select></label>
+    <p class="hint ai-access" data-saved-provider="{{ prov }}"><b>Zugang:</b> {{ ai_cfg.status.text }}</p>
+
+    <div data-only-provider="gemini" {% if prov != 'gemini' %}hidden{% endif %}>
+      <fieldset class="choice-group" id="ki-strategie"><legend>Modellstrategie</legend>
+        {% for k, (title, desc) in ai_cfg.strategies.items() %}<label class="choice"><input type="radio" name="gemini_profile" value="{{ k }}" data-ai-strategy {{ 'checked' if strat == k }}> <span><b>{{ title }}</b> – {{ desc }}</span></label>{% endfor %}
+      </fieldset>
+      <div class="grid-2" data-only-strategy="einzeln eigen" {% if strat == 'free_tier' %}hidden{% endif %}>
+        <label class="field">Grundmodell{% if strat == 'eigen' %} (für Aufgaben ohne eigene Wahl){% endif %}
+          <select name="gemini_model">{% for m in gemini_models %}<option value="{{ m }}" {% if s['llm.gemini_model'] == m %}selected{% endif %}>{{ m }}{% if ai_cfg.available_at and m not in ai_cfg.available %} – von Google nicht gemeldet{% endif %}</option>{% endfor %}</select></label>
+      </div>
+      <div class="grid-2 ai-task-models" data-only-strategy="eigen" {% if strat != 'eigen' %}hidden{% endif %}>
+        {% for t, label in ai_cfg.task_ui.items() %}<label class="field">{{ label }}
+          <select name="task_model_{{ t }}" aria-label="Modell für {{ label }}"><option value="">Grundmodell ({{ ai_cfg.base }})</option>{% for m in gemini_models %}<option value="{{ m }}" {% if ai_cfg.own.get(t) == m %}selected{% endif %}>{{ m }}{% if ai_cfg.available_at and m not in ai_cfg.available %} – von Google nicht gemeldet{% endif %}</option>{% endfor %}</select></label>{% endfor %}
+      </div>
+    </div>
+    <div data-only-provider="claude" {% if prov != 'claude' %}hidden{% endif %}>
+      <label class="field">Claude-Modell<input type="text" name="llm_model" value="{{ s['llm.model'] }}"></label>
+      <p class="hint">Bei Claude gilt ein Modell für alle Aufgaben. Die Modellstrategie betrifft nur Gemini – deine Gemini-Einstellungen bleiben gespeichert.</p>
+    </div>
+
+    <p class="alert" data-unsaved-provider hidden><span class="icon">i</span><span>Anbieter geändert – Zugang, zugeordnete Modelle und Kontingent werden nach dem Speichern für den neuen Anbieter angezeigt. Die Einstellungen des bisherigen Anbieters bleiben gespeichert.</span></p>
+    <div class="ai-overview" data-saved-provider="{{ prov }}" data-saved-strategy="{{ strat }}">
+      <div class="ai-overview-head"><b>Aktuell zugeordnete Modelle</b><span class="hint">gespeicherter Stand</span></div>
+      <p class="hint" data-unsaved-strategy hidden>Geänderte Modellstrategie – die Zuordnung unten gilt bis zum Speichern.</p>
+      <ul class="ai-model-list" id="ki-wirksam">{% for r in ai_cfg.rows %}<li><span>{{ r.label }}</span><span class="hint mono" title="{{ r.model }}">{{ r.kind if ai_cfg.provider == 'gemini' else r.model }}</span></li>{% endfor %}</ul>
+      <div class="ai-overview-head"><b>Kontingent heute</b><span class="hint">{{ 'Tag nach Pazifikzeit' if ai_cfg.provider == 'gemini' else 'Tages-Tokenbudget' }}</span></div>
+      <ul class="ai-model-list" id="ki-kontingent">{% for q in ai_cfg.quota %}<li><span><span class="mono">{{ q.model }}</span><span class="hint"> · {{ q.tasks|join(', ') }}</span>{% if q.wait %}<span class="badge warn">wartet bis {{ q.wait.until|datetime_de }}</span>{% endif %}</span>
+        <span class="nowrap">{% if ai_cfg.provider == 'gemini' %}{% if q.rpd %}noch <b>{{ [q.left, 0]|max }}</b> von {{ q.rpd }}{% else %}ohne Tagesgrenze{% endif %}{% else %}{% if q.tokens_left is not none %}noch <b>{{ q.tokens_left|num(0) }}</b> Tokens{% else %}–{% endif %}{% endif %}</span></li>{% endfor %}</ul>
+    </div>
+
+    <details class="box ai-advanced" id="ki-erweitert"><summary><b>Erweiterte KI-Einstellungen</b> <span class="hint">Rate Limits, Tokenbudgets, manuelle Reserven und Kontingentdiagnose</span></summary>
+      <div data-only-provider="gemini" {% if prov != 'gemini' %}hidden{% endif %}>
+        <h3 class="reader-sub">Grenzen des Grundmodells ({{ ai_cfg.base }})</h3>
+        <div class="grid-3">
+          <label class="field">Anfragen/Minute<input type="number" min="1" name="gemini_rpm" value="{{ s['llm.gemini_rpm'] }}"></label>
+          <label class="field">Tokens/Minute<input type="number" min="1000" name="gemini_tpm" value="{{ s['llm.gemini_tpm'] }}"></label>
+          <label class="field">Anfragen/Tag<input type="number" min="1" name="gemini_rpd" value="{{ s['llm.gemini_rpd'] }}"></label>
+          <label class="field">Tages-Tokenbudget<input type="number" min="1000" name="gemini_budget" value="{{ s['llm.gemini_daily_token_budget'] }}"></label>
+          <input type="hidden" name="has_gemini_unlimited" value="1"><label class="check" style="align-self:end"><input type="checkbox" name="gemini_unlimited" value="1" {% if s['llm.gemini_tokens_unlimited'] %}checked{% endif %}> Token-Tagesgrenze aufheben (unbegrenzt)</label>
+          <label class="field">Rücklage für manuelle Starts (% des Tageslimits je Modell)<input type="number" min="0" max="50" name="manual_reserve_pct" value="{{ ai_cfg.reserve_pct }}"></label>
+        </div>
+        {% if ai_cfg.base_learned %}<p class="hint"><span class="badge info">Google meldet</span> für {{ ai_cfg.base }}: {% for k, lbl in lim_lbl if ai_cfg.base_learned[k] %}{{ ai_cfg.base_learned[k]|num(0) }}{{ lbl }}{{ ' · ' if not loop.last }}{% endfor %} – gilt als Obergrenze.</p>{% endif %}
+        {% if ai_cfg.limit_models %}<h3 class="reader-sub">Grenzen weiterer Modelle</h3>
+        <div class="table-wrap"><table class="compact"><thead><tr><th>Modell</th><th>Anfragen/Minute</th><th>Tokens/Minute</th><th>Anfragen/Tag</th><th>Tokens/Tag (0 = ohne)</th></tr></thead><tbody>
+          {% for r in ai_cfg.limit_models %}{% set i = loop.index0 %}<tr><td>{{ r.model }}<input type="hidden" name="lim_model_{{ i }}" value="{{ r.model }}">{% if not r.own %}<div class="hint">Startwert (Annahme)</div>{% endif %}{% if r.learned %}<div class="hint"><span class="badge info">Google meldet</span> {% for k, lbl in lim_lbl if r.learned[k] %}{{ r.learned[k]|num(0) }}{{ lbl }}{{ ' · ' if not loop.last }}{% endfor %} – gilt als Obergrenze</div>{% endif %}{% if ai_cfg.available_at and r.model not in ai_cfg.available %}<div class="hint"><span class="badge warn">von Google nicht gemeldet</span></div>{% endif %}</td>
+            <td><input type="number" min="0" name="lim_rpm_{{ i }}" value="{{ r.rpm }}" aria-label="{{ r.model }} Anfragen/Minute"></td>
+            <td><input type="number" min="0" name="lim_tpm_{{ i }}" value="{{ r.tpm }}" aria-label="{{ r.model }} Tokens/Minute"></td>
+            <td><input type="number" min="0" name="lim_rpd_{{ i }}" value="{{ r.rpd }}" aria-label="{{ r.model }} Anfragen/Tag"></td>
+            <td><input type="number" min="0" name="lim_tpd_{{ i }}" value="{{ r.tpd }}" aria-label="{{ r.model }} Tokens/Tag"></td></tr>{% endfor %}
+        </tbody></table></div>{% endif %}
+        <p class="hint">Die Grenzen sind <b>eigene, vorsichtige Annahmen</b> – Google veröffentlicht die Free-Tier-Werte nur in AI Studio; bitte dort ablesen (0 = keine lokale Grenze). Aufgaben mit demselben Modell teilen dessen Kontingent; manuelle Starts haben Vorrang und nutzen die Rücklage. Ist ein Modell erschöpft, wartet nur seine Aufgabe – es gibt keinen automatischen Wechsel auf ein anderes Modell oder einen kostenpflichtigen Anbieter. Im kostenlosen Kontingent darf Google Eingaben zur Produktverbesserung nutzen; Portfolia sendet nur öffentliche Texte.</p>
+        {% include "partials/ai_models_box.html" %}
+        <h3 class="reader-sub">Pausen und gemeldete Grenzen</h3>
+        <label class="check"><input type="checkbox" name="clear_pauses" value="1"> Pausen aller Modelle jetzt aufheben (der nächste Aufruf prüft beim Anbieter erneut)</label>
+        <label class="check"><input type="checkbox" name="forget_learned" value="1"> Von Google gemeldete Grenzen verwerfen (z. B. nach Wechsel des Schlüssels oder Projekts)</label>
+      </div>
+      <div data-only-provider="claude" {% if prov != 'claude' %}hidden{% endif %}>
+        <label class="field">Claude: Tages-Tokenbudget<input type="number" min="0" name="llm_budget" value="{{ s['llm.daily_token_budget'] }}"></label>
+      </div>
+      <p class="hint">Diagnose: Verbrauch, Wartegründe und Engpass je Aufgabe unter <a href="/news?tab=status">News → Status</a>; KI-Aufrufe von Discovery im <a href="/discovery/protokoll">Ausführungsprotokoll</a>.</p>
+    </details>
+    <div class="row" style="margin-top:12px"><button class="btn primary" type="submit">Speichern</button>{% if saved == 'ai' %}<span class="badge good">✓ gespeichert</span>{% endif %}</div>
+  </form>
+  <p class="hint">Ausgeblendete Felder (anderer Anbieter, andere Strategie) werden nicht verändert – deine Einstellungen bleiben beim Wechsel erhalten. Welche Funktionen KI nutzen, stellst du unter <a href="/settings#news">News &amp; Artikeltexte</a> und auf der <a href="/discovery#disc-einstellungen">Discovery-Seite</a> ein.</p>
+</section>
+</div>
+{% endblock %}

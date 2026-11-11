@@ -1412,21 +1412,27 @@ def test_status_explains_bottleneck_and_paused_hosts(client):
 
 
 def test_settings_save_and_render_new_options(client):
-    page = client.get("/settings").text
+    page = client.get("/settings/ki").text  # 0.113: Anbieter und Modelle auf eigener Seite
     assert "Anthropic Claude" in page and "Google Gemini" in page and "gemini-3.5-flash-lite" in page
-    assert "eigene, vorsichtige Annahmen" in page and "Täglicher Finanzmarktbericht" in page
-    data = {"section": "news", "min_relevance": "0.3", "dashboard_count": "6", "llm_enabled": "1",
-            "llm_provider": "gemini", "gemini_model": "gemini-3.1-pro-preview", "gemini_rpm": "4",
-            "gemini_tpm": "50000", "gemini_rpd": "60", "gemini_budget": "90000", "news_enrich": "1",
+    assert "eigene, vorsichtige Annahmen" in page
+    assert "Täglicher Finanzmarktbericht" in client.get("/settings").text
+    ai = {"section": "ai", "has_llm_enabled": "1", "llm_enabled": "1",
+          "llm_provider": "gemini", "gemini_model": "gemini-3.1-pro-preview", "gemini_rpm": "4",
+          "gemini_tpm": "50000", "gemini_rpd": "60", "gemini_budget": "90000", "llm_budget": "1000",
+          "llm_model": "claude-opus-5"}
+    r = client.post("/settings/save", data=ai, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/settings/ki")
+    news = {"section": "news", "min_relevance": "0.3", "dashboard_count": "6", "news_enrich": "1",
             "content_mode": "excerpt", "news_analysis": "1", "news_group": "1", "news_report": "1",
-            "report_hour": "6", "report_minute": "45", "llm_budget": "1000", "llm_model": "claude-opus-5"}
-    r = client.post("/settings/save", data=data, follow_redirects=False)
+            "report_hour": "6", "report_minute": "45"}
+    r = client.post("/settings/save", data=news, follow_redirects=False)
     assert r.status_code == 303
     s = wctx(client).settings
+    assert s.get("llm.enabled") is True  # News-Speichern setzt KI-Einstellungen nicht zurück
     assert s.get("llm.provider") == "gemini" and s.get("llm.gemini_model") == A.GEMINI_DEFAULT  # Pro-Modell abgelehnt
     assert (s.get("llm.gemini_rpm"), s.get("llm.gemini_rpd"), s.get("llm.gemini_daily_token_budget")) == (4, 60, 90000)
     assert s.get("news.content_mode") == "excerpt" and s.get("news.report_hour") == 6 and not s.get("news.group_llm")
-    assert 'value="gemini"' in client.get("/settings").text
+    assert 'value="gemini"' in client.get("/settings/ki").text
 
 
 def test_jobs_registered_and_run_without_ai_or_network(config):
@@ -1545,15 +1551,15 @@ def test_gemini_token_budget_can_be_lifted_explicitly(ctx):
 
 def test_settings_unlimited_checkbox_and_status_text(client):
     ctx = wctx(client)
-    base = {"section": "news", "min_relevance": "0.2", "dashboard_count": "5", "llm_provider": "gemini",
+    base = {"section": "ai", "llm_provider": "gemini", "has_gemini_unlimited": "1",
             "gemini_model": A.GEMINI_DEFAULT, "gemini_rpm": "10", "gemini_tpm": "100000", "gemini_rpd": "100",
-            "gemini_budget": "5", "report_hour": "7", "report_minute": "30"}
+            "gemini_budget": "5"}
     client.post("/settings/save", data=base, follow_redirects=False)
     assert not ctx.settings.get("llm.gemini_tokens_unlimited")
     assert ctx.settings.get("llm.gemini_daily_token_budget") == 1000
     client.post("/settings/save", data={**base, "gemini_unlimited": "1"}, follow_redirects=False)
     assert ctx.settings.get("llm.gemini_tokens_unlimited") is True
-    page = client.get("/settings").text
+    page = client.get("/settings/ki").text
     assert "Token-Tagesgrenze aufheben" in page and "gemini_unlimited" in page
     from dataclasses import replace
 

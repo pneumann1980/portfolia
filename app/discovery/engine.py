@@ -612,7 +612,17 @@ def ai_status(ctx: Any) -> dict[str, Any]:
         plan.append({"step": step, "label": SCHEDULE_LABELS[step], "hours": hours,
                      "next": nxt.get(f"disc_auto_{step}"), "uses_ai": step == "ki"})
     J.expire_stale(ctx)
+    running = J.active(db)
+    ai_kinds = ("ki_discovery", "voll")
+    busy = [j for j in running if j["status"] == "laeuft" and (
+        j["kind"] in ai_kinds or (j["kind"] == "analyse" and str(j["params"].get("mode") or "") in SV.AI_MODES))]
+    enabled = bool(SV.setting(ctx, "discovery.enabled"))
+    nexts = sorted((p["next"], p["label"]) for p in plan if p["hours"] and p["next"]) if enabled else []
+    lefts = [t["requests_left"] for t in (gst.get("tasks") or []) if t["task"] in ("discovery", "company")
+             and t.get("requests_left") is not None]
     return {
+        "ai_busy": busy[0] if busy else None, "next_run": nexts[0] if nexts else None, "auto_enabled": enabled,
+        "model_left": min(lefts) if lefts else None,
         "llm_enabled": bool(ctx.settings.get("llm.enabled", False)), "discovery_ai": bool(SV.setting(ctx,
                                                                                                       "discovery.ai")),
         "themes": bool(SV.setting(ctx, "discovery.themes")), "provider": gst["provider"],
@@ -630,7 +640,7 @@ def ai_status(ctx: Any) -> dict[str, Any]:
                     "usage": gst["usage"]},
         "cost": cost_note(gst["provider"]),
         "last_ok": dict(last_ok) if last_ok else None, "last_fail": dict(last_fail) if last_fail else None,
-        "plan": plan, "running": J.active(db), "last_jobs": J.last_by_kind(db),
+        "plan": plan, "running": running, "last_jobs": J.last_by_kind(db),
         "estimates": {"ki_discovery": 2, "analyse": 1, "screening": 0, "voll": 2},
     }
 

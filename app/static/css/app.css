@@ -1292,3 +1292,33 @@ span.disc-o-reported, span.disc-o-derived, span.disc-o-estimated, span.disc-o-mi
 .flash-toast { position: fixed; left: 16px; right: 16px; bottom: calc(76px + env(safe-area-inset-bottom, 0px));
   z-index: 60; max-width: 640px; margin: 0 auto; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); cursor: pointer; }
 @media (min-width: 900px) { .flash-toast { bottom: 24px; } }
+
+/* 0.113: KI & Modelle / Discovery-Einstellungen – Auswahlgruppen und kompakte Übersichten */
+.choice-group { border: 0; padding: 0; margin: 14px 0 8px; display: grid; gap: 2px; min-width: 0; }
+.choice-group legend { font-size: 0.85rem; color: var(--ink-2); padding: 0; margin-bottom: 6px; }
+.choice { display: flex; align-items: flex-start; gap: 10px; padding: 7px 0; font-size: 0.95rem; cursor: pointer;
+  overflow-wrap: anywhere; }
+.choice > input[type=radio] { flex: 0 0 auto; margin-top: 3px; width: 18px; height: 18px; }
+.choice[hidden] { display: none; }
+.ai-settings .ai-row { padding: 6px 0 10px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+.ai-settings .ai-provider { max-width: 420px; }
+.ai-settings .ai-access { margin: 6px 0 4px; }
+.ai-task-models { margin-top: 8px; }
+.ai-overview { margin: 14px 0 4px; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm);
+  display: grid; gap: 6px; }
+.ai-overview-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.ai-model-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.ai-model-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 0.92rem;
+  min-width: 0; }
+.ai-model-list li > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.ai-advanced { margin-top: 14px; }
+.ai-advanced > summary .hint, .disc-settings-simple details > summary .hint { display: block; font-weight: 400; }
+.disc-settings-simple .choice-group { margin-top: 4px; }
+.disc-status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.disc-status-grid > div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; background: var(--surface-2);
+  border-radius: var(--radius-sm); min-width: 0; overflow-wrap: anywhere; }
+.disc-status-grid .label { font-size: 0.75rem; color: var(--ink-2); }
+@media (min-width: 720px) { .ai-settings .grid-2 { grid-template-columns: 1fr 1fr; } }
+/* 0.113: Grenzen-Tabelle in „Erweiterte KI-Einstellungen“ ohne waagerechtes Scrollen auf dem Desktop */
+.ai-advanced table input[type="number"] { width: 100%; min-width: 4.5em; max-width: 10em; }
+.ai-advanced table td:first-child { min-width: 9em; }

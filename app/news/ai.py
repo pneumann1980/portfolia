@@ -68,11 +68,11 @@ TASKS: dict[str, str] = {
 # Profile: „einzeln“ = ein Modell für alle (Übernahme bestehender Installationen), „free_tier“ = Empfehlung für einen
 # Gemini-Schlüssel im Free Tier (je Aufgabe ein eigenes Modellkontingent), „eigen“ = Zuordnung in ``llm.task_models``.
 PROFILES: dict[str, dict[str, Any]] = {
-    "einzeln": {"label": "Ein Modell für alle Aufgaben (bisherige Einstellung)"},
-    "free_tier": {"label": "Free Tier – Modell nach Aufgabe (empfohlen)", "models": {
+    "einzeln": {"label": "Ein Modell für alles"},
+    "free_tier": {"label": "Kostenbewusst optimiert", "models": {
         "news": "gemini-3.5-flash-lite", "events": "gemini-3.5-flash-lite", "report": "gemini-3.5-flash-lite",
         "discovery": "gemini-3.5-flash-lite", "video": "gemini-3.6-flash", "company": "gemini-3.8-flash"}},
-    "eigen": {"label": "Eigene Zuordnung je Aufgabe"},
+    "eigen": {"label": "Individuell"},
 }
 # Vorsichtige lokale Startwerte je Modell (eigene Annahmen – die gültigen Free-Tier-Werte zeigt Google AI Studio je
 # Projekt; bitte dort ablesen und in den Einstellungen eintragen). tpd 0 = ohne lokale Token-Tagesgrenze.

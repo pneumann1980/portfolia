@@ -820,7 +820,8 @@ def make_router() -> APIRouter:
     def report_regenerate(request: Request) -> HTMLResponse:
         ctx = get_ctx(request)
         if not AiGateway(ctx).enabled():
-            return HTMLResponse('<span class="badge warn">KI ist nicht aktiviert (Einstellungen → News)</span>')
+            return HTMLResponse('<span class="badge warn">KI ist nicht aktiviert '
+                                '(Einstellungen → KI &amp; Modelle)</span>')
         ctx.db.set_state("news.report.manual", {"requested_at": iso(datetime.now(UTC))})
         if ctx.scheduler is not None:
             ctx.scheduler.trigger("news_report", 0.3, manual=True)

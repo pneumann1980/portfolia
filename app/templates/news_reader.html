@@ -60,7 +60,7 @@
   {% if tr and tr.state in ('analyzing', 'analysis_failed') %}
   <section class="card">{% set iid = n.id %}{% include "partials/news_tr_state.html" %}</section>
   {% elif tr and tr.state == 'ai_off' %}
-  <section class="card"><p class="hint">Die KI ist ausgeschaltet – Kernaussagen entstehen, sobald sie aktiviert ist (Einstellungen → News &amp; KI). Das Transkript steht unten.</p></section>
+  <section class="card"><p class="hint">Die KI ist ausgeschaltet – Kernaussagen entstehen, sobald sie aktiviert ist (<a href="/settings/ki">Einstellungen → KI &amp; Modelle</a>). Das Transkript steht unten.</p></section>
   {% endif %}
   {% if analysis %}
   <section class="card ai-box" aria-label="KI-Analyse">

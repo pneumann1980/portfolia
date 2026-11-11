@@ -4,28 +4,36 @@
 <section class="card" id="ki-status">
   <div class="card-head">
     <h2>KI-Researchstatus</h2>
-    {% if st.usable %}<span class="badge good">KI arbeitet: bereit</span>
-    {% elif st.state == 'aus' %}<span class="badge warn">KI nicht verfügbar</span>
-    {% else %}<span class="badge warn">{{ {'pausiert': 'Modell pausiert', 'kontingent': 'Kontingent erschöpft'}.get(st.state, st.state) }} – Starts warten</span>{% endif %}
+    {% if st.state == 'aus' %}<span class="badge warn">KI deaktiviert</span>
+    {% elif st.ai_busy %}<span class="badge info"><span class="spinner" aria-hidden="true"></span> KI arbeitet gerade</span>
+    {% elif st.usable %}<span class="badge good">KI bereit</span>
+    {% else %}<span class="badge warn">{{ {'pausiert': 'KI pausiert', 'kontingent': 'Kontingent erschöpft'}.get(st.state, st.state) }} – Starts warten</span>{% endif %}
   </div>
-  {% if st.state == 'aus' %}<div class="alert warn"><span class="icon">i</span><div>{{ st.reason }}. Ohne KI laufen Fundamentalscreening und Nachrichten-Discovery weiter; qualitative Kriterien, These und Gegenhypothese bleiben offen.</div></div>
+  {% if st.state == 'aus' %}<div class="alert warn"><span class="icon">i</span><div>{{ st.reason }}. Ohne KI laufen Fundamentalscreening und Nachrichten-Discovery weiter; qualitative Kriterien, These und Gegenhypothese bleiben offen. <a href="/settings/ki">KI &amp; Modelle</a></div></div>
   {% elif not st.usable %}<div class="alert warn"><span class="icon">i</span><div>{{ st.reason }}. Ein manueller Start wartet sichtbar in der Warteschlange und beginnt danach von selbst (abbrechbar).</div></div>{% endif %}
-  {% if st.waiting %}<div class="box" id="warteschlange"><b>Warteschlange ({{ st.waiting|length }})</b>
+  <div class="disc-status-grid" id="ki-kurzstatus">
+    <div><span class="label">Discovery-Modell</span><b class="mono">{{ st.model_discovery }}</b><span class="hint">{% if st.model != st.model_discovery %}Unternehmensanalyse: {{ st.model }}{% else %}auch für Unternehmensanalysen{% endif %}</span></div>
+    <div><span class="label">Verbleibendes Kontingent</span><b>{{ [st.day.left, 0]|max }} Discovery-Aufrufe heute</b><span class="hint">{% if st.model_left is not none %}Modell: noch {{ [st.model_left, 0]|max }} Anfragen · {% endif %}Monat: noch {{ [st.month.left, 0]|max }}</span></div>
+    <div><span class="label">Laufende Research-Aufgabe</span>{% set act = st.running|rejectattr('waiting')|list %}{% if act %}<b>{{ act[0].kind_label }}</b><span class="hint">{{ act[0].step or 'gestartet' }}{% if act|length > 1 %} · +{{ act|length - 1 }} weitere{% endif %}</span>{% else %}<b>keine</b><span class="hint">{% if st.waiting %}{{ st.waiting|length }} wartet auf KI-Kontingent{% else %}–{% endif %}</span>{% endif %}</div>
+    <div><span class="label">Letzter erfolgreicher KI-Lauf</span><b>{{ st.last_ok.started_at|datetime_de if st.last_ok else '–' }}</b><span class="hint">{% if st.last_ok %}{{ st.last_ok.step }}{% endif %}</span></div>
+    <div><span class="label">Nächster automatischer Lauf</span><b>{% if not st.auto_enabled %}aus{% elif st.next_run %}{{ st.next_run[0]|datetime_de }}{% else %}–{% endif %}</b><span class="hint">{% if st.next_run and st.auto_enabled %}{{ st.next_run[1] }}{% elif not st.auto_enabled %}nur manuelle Starts{% else %}kein Termin geplant (Zeitplaner nicht aktiv oder alle Schritte aus){% endif %}</span></div>
+  </div>
+  {% if st.waiting %}<details class="box" id="warteschlange"><summary><b>Warteschlange ({{ st.waiting|length }})</b> <span class="hint">startet von selbst, abbrechbar</span></summary>
     <div class="table-wrap"><table class="compact"><thead><tr><th>Job</th><th>Art</th><th>wartet bis</th><th>Grund</th><th></th></tr></thead><tbody>
     {% for j in st.waiting %}<tr><td class="nowrap">#{{ j.id }}</td><td>{{ j.kind_label }}{% if j.company_id %} <a class="hint" href="/discovery/c/{{ j.company_id }}">Unternehmen</a>{% endif %}<div class="hint">{{ j.trigger }}</div></td>
       <td class="nowrap">{{ j.wait_until|datetime_de }}</td><td class="hint">{{ j.wait_reason or '–' }}</td>
       <td><form method="post" action="/discovery/jobs/{{ j.id }}/abbrechen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Abbrechen</button></form></td></tr>{% endfor %}
     </tbody></table></div>
-    <p class="hint">Minutenlimit: Start nach rund einer Minute. Tageslimit: Start nach dem Zurücksetzen (Google: Mitternacht Pazifikzeit; Discovery-Grenze: Mitternacht lokal). Manuelle Starts haben Vorrang vor Hintergrundaufgaben.</p></div>{% endif %}
+    <p class="hint">Minutenlimit: Start nach rund einer Minute. Tageslimit: Start nach dem Zurücksetzen (Google: Mitternacht Pazifikzeit; Discovery-Grenze: Mitternacht lokal). Manuelle Starts haben Vorrang vor Hintergrundaufgaben.</p></details>{% endif %}
+  <details class="box" id="ki-details"><summary><b>Details</b> <span class="hint">Verbrauch, Aufgabenmodelle, technische Grenzen, Fehler</span></summary>
   <div class="disc-statgrid">
     <div><span class="label">KI (global)</span><b>{{ 'aktiviert' if st.llm_enabled else 'deaktiviert' }}</b><span class="hint">llm.enabled</span></div>
     <div><span class="label">KI für Discovery</span><b>{{ 'an' if st.discovery_ai else 'aus' }}</b><span class="hint">Themen-Discovery {{ 'an' if st.themes else 'aus' }}</span></div>
-    <div><span class="label">Anbieter / Modell</span><b>{{ 'Google Gemini' if st.provider == 'gemini' else 'Anthropic Claude' }}</b><span class="hint">Analyse: {{ st.model }}{% if st.model_discovery != st.model %} · Discovery: {{ st.model_discovery }}{% endif %}{% if st.profile_label %} · Profil {{ st.profile_label }}{% endif %}</span></div>
+    <div><span class="label">Anbieter / Modell</span><b>{{ 'Google Gemini' if st.provider == 'gemini' else 'Anthropic Claude' }}</b><span class="hint">Analyse: {{ st.model }}{% if st.model_discovery != st.model %} · Discovery: {{ st.model_discovery }}{% endif %}{% if st.profile_label %} · {{ st.profile_label }}{% endif %}</span></div>
     <div><span class="label">API-Schlüssel</span><b>{{ 'vorhanden' if st.key else 'fehlt' }}</b><span class="hint">Inhalt wird nie angezeigt</span></div>
     <div><span class="label">Anbieterzustand</span><b>{% if not st.llm_enabled or not st.key %}nicht aktiv{% elif st.paused_until %}pausiert{% elif st.health[0] %}verfügbar{% else %}gestört{% endif %}</b><span class="hint">{% if not st.llm_enabled or not st.key %}KI aus oder kein Schlüssel{% elif st.paused_until %}bis {{ st.paused_until|datetime_de }}{% elif not st.health[0] %}{{ st.health[1] }}{% else %}–{% endif %}</span></div>
     <div><span class="label">Heute (Discovery-Grenze)</span><b>{{ st.day.used }} / {{ st.day.limit }} Aufrufe</b><span class="hint">noch {{ [st.day.left, 0]|max }} · {{ st.day.tokens|num(0) }} Tokens</span></div>
     <div><span class="label">Dieser Monat</span><b>{{ st.month.used }} / {{ st.month.limit }} Aufrufe</b><span class="hint">noch {{ [st.month.left, 0]|max }} · {{ st.month.tokens|num(0) }} Tokens</span></div>
-    <div><span class="label">Letzter erfolgreicher Aufruf</span><b>{{ st.last_ok.started_at|datetime_de if st.last_ok else '–' }}</b><span class="hint">{% if st.last_ok %}{{ st.last_ok.step }} · {{ st.last_ok.model }}{% endif %}</span></div>
     <div><span class="label">Letzter Fehlschlag</span><b>{{ st.last_fail.started_at|datetime_de if st.last_fail else '–' }}</b><span class="hint">{% if st.last_fail %}{{ st.last_fail.step }}: {{ st.last_fail.error or st.last_fail.status }}{% endif %}</span></div>
   </div>
   {% if st.tasks and st.provider == 'gemini' %}<div class="table-wrap"><table class="compact" id="ki-modelle"><thead><tr><th>Aufgabe</th><th>Modell</th><th class="num">Heute (Aufgabe)</th><th class="num">Modell gesamt</th><th class="num">Modellgrenze/Tag</th><th class="num">Rest</th><th>Wartegrund</th></tr></thead><tbody>
@@ -35,17 +43,18 @@
       <td class="num">{{ t.requests_left if t.requests_left is not none else '∞' }}{% if t.reserve %}<div class="hint">davon {{ t.reserve }} für manuelle Starts</div>{% endif %}</td>
       <td class="hint">{% if t.wait %}{{ t.wait.reason }} – bis {{ t.wait.until|datetime_de }}{% else %}–{% endif %}</td></tr>{% endfor %}
   </tbody></table></div>
-  <p class="hint">Modellgrenzen (Google, in Einstellungen → KI an die Werte aus AI Studio anpassbar) gelten für alle Aufgaben desselben Modells gemeinsam; die Discovery-Grenzen oben gelten zusätzlich nur für Discovery.</p>{% endif %}
+  <p class="hint">Modellgrenzen (in <a href="/settings/ki">KI &amp; Modelle</a> an die Werte aus AI Studio anpassbar) gelten für alle Aufgaben desselben Modells gemeinsam; die Discovery-Grenzen gelten zusätzlich nur für Discovery.</p>{% endif %}
   <p class="hint">{{ st.cost }}{% if st.gateway.requests_left is not none %} Tageskontingent des Analysemodells (gemeinsam mit allen Aufgaben dieses Modells): noch {{ st.gateway.requests_left }} Anfragen{% if st.gateway.tokens_left is not none %}, {{ st.gateway.tokens_left|num(0) }} Tokens{% endif %}.{% endif %}
-    Anbieter und Modelle kommen aus Einstellungen → KI; Discovery wechselt nie selbst auf ein anderes Modell oder einen kostenpflichtigen Anbieter. <a href="/discovery/protokoll">Ausführungsprotokoll</a></p>
+    Anbieter und Modelle kommen aus <a href="/settings/ki">KI &amp; Modelle</a>; Discovery wechselt nie selbst auf ein anderes Modell oder einen kostenpflichtigen Anbieter. <a href="/discovery/protokoll">Ausführungsprotokoll</a></p>
+  </details>
   <details class="box"><summary>Zeitplan der automatischen Schritte</summary>
     <table class="compact"><thead><tr><th>Schritt</th><th>Takt</th><th>Nächster Lauf</th><th>KI</th></tr></thead><tbody>
-    {% for p in st.plan %}<tr><td>{{ p.label }}</td><td>{{ {0: 'aus', 24: 'täglich', 168: 'wöchentlich'}.get(p.hours, p.hours ~ ' h') }}</td><td>{{ p.next|datetime_de if p.next else ('–' if p.hours else 'aus') }}</td><td>{{ 'ja (im Budget)' if p.uses_ai else 'nein' }}</td></tr>{% endfor %}
-    </tbody></table></details>
+    {% for p in st.plan %}<tr><td>{{ p.label }}</td><td>{{ {0: 'aus', 24: 'täglich', 168: 'wöchentlich'}.get(p.hours, p.hours ~ ' h') }}</td><td>{{ p.next|datetime_de if p.next and st.auto_enabled else ('–' if p.hours and st.auto_enabled else 'aus') }}</td><td>{{ 'ja (im Budget)' if p.uses_ai else 'nein' }}</td></tr>{% endfor %}
+    </tbody></table>{% if not st.auto_enabled %}<p class="hint">Automatische Suche ist aus – die Zeitpläne bleiben gespeichert (<a href="#disc-einstellungen">Discovery-Einstellungen</a>).</p>{% endif %}</details>
 </section>
 
-<section class="card" id="jobs">
-  <div class="card-head"><h2>Research-Jobs</h2>{% if st.running %}<span class="badge info">{{ st.running|length }} aktiv</span>{% endif %}</div>
+<details class="card disc-sec" id="jobs"{% if st.running %} open{% endif %}>
+  <summary class="card-head"><h2>Research-Jobs</h2>{% if st.running %}<span class="badge info">{{ st.running|length }} aktiv</span>{% else %}<span class="hint">letzte Ausführungen</span>{% endif %}</summary>
   {% if jobs %}<div class="table-wrap"><table class="compact disc-jobs"><thead><tr><th>Job</th><th>Art</th><th>Status</th><th>Schritt / Ergebnis</th><th>Zeit</th></tr></thead><tbody>
     {% for j in jobs %}<tr><td class="nowrap"><a href="/discovery/protokoll?job={{ j.id }}">#{{ j.id }}</a></td><td>{{ j.kind_label }}{% if j.company_id %} <a class="hint" href="/discovery/c/{{ j.company_id }}">Unternehmen</a>{% endif %}<div class="hint">{{ j.trigger }}</div></td>
       <td>{{ jobstate(j.status, j.status_label) }}</td>
@@ -53,7 +62,8 @@
         {% if j.error %}<div class="hint disc-err">{{ j.error }}</div>{% endif %}</td>
       <td class="nowrap hint">{{ (j.started_at or j.created_at)|datetime_de }}</td></tr>{% endfor %}
   </tbody></table></div>{% else %}<p class="hint">Noch keine Jobs.</p>{% endif %}
-</section>
+  <p class="hint">Alle Ausführungen mit KI-Aufrufen: <a href="/discovery/protokoll">Ausführungsprotokoll</a>.</p>
+</details>
 
 <section class="card" id="fortschritt">
   <div class="card-head"><h2>Suchfortschritt (Research-Universum)</h2><span class="hint">nur gezählte Ergebnisse – keine Schätzungen</span></div>

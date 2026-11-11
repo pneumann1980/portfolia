@@ -215,9 +215,9 @@ def test_settings_show_learned_limit_and_forget(config, monkeypatch):
         ctx.settings.set("llm.provider", "gemini")
         ctx.settings.set("llm.gemini_profile", "free_tier")
         A.AiGateway(ctx)._learn(FLASH, {"rpd": 20})
-        page = c.get("/settings").text
+        page = c.get("/settings/ki").text
         assert "Google meldet" in page and "20/Tag" in page
-        form = {"csrf_token": c.token, "section": "news", "gemini_model": LITE, "gemini_rpm": "5",
+        form = {"csrf_token": c.token, "section": "ai", "gemini_model": LITE, "gemini_rpm": "5",
                 "gemini_tpm": "100000", "gemini_rpd": "100", "gemini_budget": "200000", "llm_provider": "gemini",
                 "gemini_profile": "free_tier", "forget_learned": "1"}
         c.post("/settings/save", data=form, follow_redirects=False)

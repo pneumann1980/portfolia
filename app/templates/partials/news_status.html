@@ -37,7 +37,7 @@
       <td class="num">{{ t.requests_left if t.requests_left is not none else '∞' }}{% if t.reserve %}<div class="hint">{{ t.reserve }} für manuelle Starts</div>{% endif %}</td>
       <td class="small">{% if t.wait %}<span class="badge warn">wartet</span> {{ t.wait.reason }} – bis {{ t.wait.until|datetime_de }}{% else %}<span class="hint">–</span>{% endif %}</td></tr>{% endfor %}
   </tbody></table></div>
-  <p class="hint">Aufgaben mit demselben Modell teilen dessen Kontingent. Ist ein Modell erschöpft, wartet nur seine Aufgabe; Aufgaben auf anderen Modellen laufen weiter. Modell und Grenzen: Einstellungen → KI.</p>{% endif %}
+  <p class="hint">Aufgaben mit demselben Modell teilen dessen Kontingent. Ist ein Modell erschöpft, wartet nur seine Aufgabe; Aufgaben auf anderen Modellen laufen weiter. Modell und Grenzen: <a href="/settings/ki">Einstellungen → KI &amp; Modelle</a>.</p>{% endif %}
   {% if ai_s.provider == 'gemini' %}<p class="hint">Die lokalen Zähler halten die Last unter Ihren eingestellten Grenzen. Sie garantieren <b>nicht</b>, dass Google die Nutzung als kostenlos wertet: Kontingent und Abrechnung gelten je Google-Projekt; im kostenlosen Kontingent dürfen Eingaben zur Produktverbesserung verwendet werden (daher nur öffentliche Texte).</p>{% endif %}
 </section>
 <section class="card" style="margin-top:16px">

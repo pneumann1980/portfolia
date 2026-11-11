@@ -1997,7 +1997,10 @@ Speichern aus der Oberfläche erhalten).
   Tages-Token-Budget; bei Gemini zusätzlich lokale Minuten-/Tagesgrenzen und kontrollierte Pause bei erschöpftem
   Kontingent. Ab 0.111 wahlweise ein **Modell je Aufgabe** (Profil „Free Tier“: Flash-Lite für Nachrichten, Bericht,
   Ereignisse und KI-Discovery, Flash für Video-Kernaussagen und Firmenanalysen) mit Grenzen und Pausen je Modell –
-  ein erschöpftes Modell hält nur seine Aufgaben an. Gesendet werden ausschließlich öffentliche Artikeltexte, Titel, Quellen und Asset-Namen – nie
+  ein erschöpftes Modell hält nur seine Aufgaben an. Ab 0.113 liegen alle KI-Einstellungen gebündelt unter
+  *Einstellungen → KI & Modelle* (Anbieter, Modellstrategie „Kostenbewusst optimiert“ / „Ein Modell für alles“ /
+  „Individuell“, Kontingent; Grenzen unter „Erweitert“); Discovery hat drei Grundeinstellungen (automatische Suche,
+  Rechercheumfang, KI ja/nein). Gesendet werden ausschließlich öffentliche Artikeltexte, Titel, Quellen und Asset-Namen – nie
   Stückzahlen, Werte, Gewichte, Konten oder Adressen. Details, Grenzen und Datenschutz:
   [docs/NEWS_INTELLIGENCE.md](docs/NEWS_INTELLIGENCE.md).
 
