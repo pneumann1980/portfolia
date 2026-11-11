@@ -114,7 +114,7 @@
       {% for k in ['sparsam', 'ausgewogen', 'intensiv', 'custom'] %}<label class="choice"{% if k == 'custom' and pv.scope != 'custom' %} hidden{% endif %} data-choice="scope-{{ k }}"><input type="radio" name="scope_preset" value="{{ k }}" {{ 'checked' if pv.scope == k }}{% if k == 'custom' %} data-custom{% endif %}> <span>{% set lbl = pv.scope_labels[k].split(' – ', 1) %}<b>{{ lbl[0] }}</b>{% if lbl|length > 1 %} – {{ lbl[1] }}{% endif %}</span></label>{% endfor %}
       {% if pv.cap is not none %}<p class="hint">KI-Grenzen der Profile werden auf das Tageslimit der Modelle gekappt (höchstens {{ pv.cap }} Aufrufe je Tag).</p>{% endif %}
     </fieldset>
-    <input type="hidden" name="has_ai" value="1"><label class="check"><input type="checkbox" name="ai" value="1" {{ 'checked' if cfg.ai }}> <b>KI für Discovery-Recherche nutzen</b></label>
+    <input type="hidden" name="has_ai" value="1"><label class="check"><input type="checkbox" name="ai" value="1" {{ 'checked' if cfg.ai }}> <span><b>KI für Discovery-Recherche nutzen</b></span></label>
     <p class="hint">Ohne KI laufen Fundamentalscreening, Nachrichten-Discovery und Datenaktualisierung weiter. Modell und globale Kontingente kommen aus <a href="/settings/ki">Einstellungen → KI &amp; Modelle</a>.</p>
     <details class="box" id="disc-erweitert"><summary><b>Erweiterte Discovery-Einstellungen</b> <span class="hint">Zeitpläne je Schritt, Grenzen, SEC-Kontakt</span></summary>
       <div class="form-grid disc-settings">
