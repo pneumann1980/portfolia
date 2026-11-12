@@ -488,8 +488,9 @@ def _watched(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
     return "abgeschlossen", {"aktualisiert": done, "vorwaertstest": fw}
 
 
-def refresh_plan(ctx: Any) -> dict[str, list[dict[str, Any]]]:
-    """Welche Kandidaten (Status „neu“ oder „beobachten“) die automatische Datenaktualisierung braucht:
+def refresh_plan(ctx: Any, ids: set[int] | None = None) -> dict[str, list[dict[str, Any]]]:
+    """Welche Kandidaten (Status „neu“ oder „beobachten“) die automatische Datenaktualisierung braucht – bzw. mit
+    ``ids`` genau diese Unternehmen unabhängig vom Status (0.114: Aktien im Bestand):
 
     * ``bericht`` – seit der letzten Analyse ist ein neuer Quartals- oder Jahresbericht bei der SEC eingegangen
       (EDGAR-Tagesindex aus dem Screening bzw. Einreichungsliste der letzten Analyse) – Vorrang;
@@ -502,9 +503,11 @@ def refresh_plan(ctx: Any) -> dict[str, list[dict[str, Any]]]:
                 "(SELECT MAX(COALESCE(priority, 0)) FROM disc_candidate k WHERE k.company_id = c.id) AS p "
                 "FROM disc_company c LEFT JOIN disc_analysis a ON a.id = (SELECT MAX(id) FROM disc_analysis "
                 "WHERE company_id = c.id) LEFT JOIN disc_universe u ON u.cik = c.cik "
-                "WHERE c.status IN ('neu', 'beobachten')")
+                + ("WHERE c.status IN ('neu', 'beobachten')" if ids is None else ""))
     out: dict[str, list[dict[str, Any]]] = {"bericht": [], "neu": [], "alt": []}
     for r in rows:
+        if ids is not None and int(r["id"]) not in ids:
+            continue
         item = {"id": int(r["id"]), "name": r["name"], "p": r["p"] or 0, "last": r["last_an"] or "",
                 "filed": str(r["filed_seen"] or "")[:10]}
         if not r["last_an"]:
@@ -522,12 +525,19 @@ def refresh_plan(ctx: Any) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
-def auto_analyses(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
+@J.handler("bestand")
+def _holdings(ctx: Any, job: J.Job) -> tuple[str, dict[str, Any]]:
+    from app.discovery import holdings as H
+
+    return H.run(ctx, job)
+
+
+def auto_analyses(ctx: Any, job: J.Job, ids: set[int] | None = None) -> tuple[str, dict[str, Any]]:
     """Automatische Datenaktualisierung (ohne KI): zuerst Kandidaten mit neuem SEC-Bericht, dann ohne Analyse,
     dann die ältesten Analysen (wöchentlich bzw. monatlich) – höchstens ``discovery.auto_analyse_per_run`` je Lauf.
     Ein vorhandener KI-Bericht wird dabei nur als „veraltet“ markiert, nie neu erstellt."""
     n = int(SV.setting(ctx, "discovery.auto_analyse_per_run") or 0)
-    plan = refresh_plan(ctx)
+    plan = refresh_plan(ctx, ids)
     todo = [("bericht", x) for x in plan["bericht"]] + [("neu", x) for x in plan["neu"]] + \
         [("alt", x) for x in plan["alt"]]
     done: list[dict[str, Any]] = []

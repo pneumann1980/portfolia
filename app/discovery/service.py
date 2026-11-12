@@ -925,6 +925,10 @@ def preview_of(db: Any, cid: int) -> dict[str, Any] | None:
     """Jüngste KI-Vorschau (KI-Discovery) eines Unternehmens: These-Kurzfassung inkl. Disruption-Einschätzung."""
     r = db.q1("SELECT theme, evidence_json, created_at, priority FROM disc_candidate WHERE company_id=? AND path='ki' "
               "AND status != 'verworfen' ORDER BY id DESC LIMIT 1", (cid,))
+    return _preview_from(r)
+
+
+def _preview_from(r: Any) -> dict[str, Any] | None:
     if r is None:
         return None
     ev = json.loads(r["evidence_json"] or "[]")
@@ -941,9 +945,13 @@ def why_found(db: Any, cid: int, origin: str) -> dict[str, Any]:
     """Warum vorgeschlagen – jüngster Suchweg mit Kurzbegründung."""
     r = db.q1("SELECT path, theme, reason, created_at FROM disc_candidate WHERE company_id=? AND status != "
               "'verworfen' ORDER BY id DESC LIMIT 1", (cid,))
+    return _why_from(r, origin)
+
+
+def _why_from(r: Any, origin: str) -> dict[str, Any]:
     if r is None:
-        return {"path": "manuell" if origin == "manuell" else origin, "label": "manuell aufgenommen"
-                if origin == "manuell" else origin, "text": ""}
+        label = {"manuell": "manuell aufgenommen", "portfolio": "Aktie im Bestand (SEC-Kennzahlen)"}.get(origin, origin)
+        return {"path": origin, "label": label, "text": ""}
     text = str(r["reason"] or "")
     if r["path"] == "wendepunkt":
         text = text.split(". Kennzahlen:")[0]
@@ -965,19 +973,21 @@ def key_numbers(res: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _cats(db: Any, r: Any, res: dict[str, Any], held: bool, since_new: str, stage: str) -> set[str]:
+def _cats(db: Any, r: Any, res: dict[str, Any], held: bool, since_new: str, stage: str,
+          watched: bool = False, kinds: set[str] | None = None) -> set[str]:
     sc = res.get("scores") or {}
     cats = set()
     if stage in ("vorschau", "analysiert", "veraltet"):
         cats.add(stage)
-    if r["created_at"] >= since_new and r["status"] == "neu" and r["origin"] != "manuell":
+    if r["created_at"] >= since_new and r["status"] == "neu" and r["origin"] not in ("manuell", "portfolio"):
         cats.add("neu")
     dis = sc.get("disruption") or {}
     if dis.get("complete") and (dis.get("total") or 0) >= 55:
         cats.add("disruptiv")
-    half_year = (datetime.now(UTC) - timedelta(days=180)).isoformat()
-    kinds = {x["kind"] for x in db.q("SELECT DISTINCT kind FROM disc_signal WHERE company_id=? AND observed_at>=? "
-                                     "AND COALESCE(direction, '') != 'negativ'", (r["id"], half_year))}
+    if kinds is None:
+        half_year = (datetime.now(UTC) - timedelta(days=180)).isoformat()
+        kinds = {x["kind"] for x in db.q("SELECT DISTINCT kind FROM disc_signal WHERE company_id=? AND observed_at>=? "
+                                         "AND COALESCE(direction, '') != 'negativ'", (r["id"], half_year))}
     if kinds & {"wendepunkt", "fundamental"}:
         cats.add("wendepunkt")
     if "fehlbewertung" in kinds:
@@ -985,40 +995,77 @@ def _cats(db: Any, r: Any, res: dict[str, Any], held: bool, since_new: str, stag
     band = res.get("nash_band") or {}
     if band.get("key") == "exceptional" and band.get("sure"):
         cats.add("nash100")  # nur gesichert ≥ 100 Punkte (offene Kriterien können nur Punkte hinzufügen)
-    if r["status"] == "beobachten":
+    if watched or r["status"] == "beobachten":  # 0.114: Status oder Mitgliedschaft in einer Watchlist
         cats.add("beobachten")
     if held:
         cats.add("portfolio")
     return cats
 
 
-def radar(ctx: Any, *, cat: str = "", sort: str = DEFAULT_SORT, q: str = "", show_all: bool = False
-          ) -> dict[str, Any]:
+def all_cards(ctx: Any) -> list[dict[str, Any]]:
+    """Karten aller Unternehmen (ungefiltert, unsortiert) – Grundlage für Liste, Zähler und Filter (0.114: einmal je
+    Seitenaufruf statt zweimal)."""
+    from app.discovery import watch as W
+
     db = ctx.db
     hs = FIT.holdings(ctx)
+    lists_of = W.watched_index(db)
+    # 0.114: Sammelabfragen statt Einzelabfragen je Unternehmen (Aliasse, Signale, Kandidaten, EDGAR-Stand)
+    tickers: dict[int, list[str]] = {}
+    for x in db.q("SELECT company_id, value FROM disc_alias WHERE kind='ticker' ORDER BY value"):
+        tickers.setdefault(int(x["company_id"]), []).append(x["value"])
+    last_sigs = {int(x["company_id"]): x["m"] for x in db.q(
+        "SELECT company_id, MAX(COALESCE(published_at, observed_at)) AS m FROM disc_signal GROUP BY company_id")}
+    half_year = (datetime.now(UTC) - timedelta(days=180)).isoformat()
+    sig_kinds: dict[int, set[str]] = {}
+    for x in db.q("SELECT DISTINCT company_id, kind FROM disc_signal WHERE observed_at>=? "
+                  "AND COALESCE(direction, '') != 'negativ'", (half_year,)):
+        sig_kinds.setdefault(int(x["company_id"]), set()).add(x["kind"])
+    prios: dict[int, Any] = {}
+    latest_cand: dict[int, Any] = {}  # jüngster nicht verworfener Kandidat je Unternehmen (Suchweg)
+    latest_ki: dict[int, Any] = {}    # jüngste nicht verworfene KI-Vorschau je Unternehmen
+    for x in db.q("SELECT company_id, path, theme, reason, evidence_json, created_at, priority, status "
+                  "FROM disc_candidate WHERE company_id IS NOT NULL ORDER BY id"):
+        k = int(x["company_id"])
+        if x["priority"] is not None and (prios.get(k) is None or x["priority"] > prios[k]):
+            prios[k] = x["priority"]
+        if x["status"] != "verworfen":
+            latest_cand[k] = x
+            if x["path"] == "ki":
+                latest_ki[k] = x
+    filed_seen = {int(x["cik"]): str(x["filed_seen"])[:10] for x in db.q(
+        "SELECT u.cik, u.filed_seen FROM disc_universe u JOIN disc_company c ON c.cik = u.cik "
+        "WHERE u.filed_seen IS NOT NULL AND u.filed_seen != ''")}
     rows = db.q("SELECT c.*, a.id AS aid, a.created_at AS analysed_at, a.coverage, a.confidence, a.ai_state, "
                 "a.result_json FROM disc_company c LEFT JOIN disc_analysis a "
                 "ON a.id = (SELECT MAX(id) FROM disc_analysis WHERE company_id = c.id)")
     cards = []
     since_new = (datetime.now(UTC) - timedelta(days=14)).isoformat()
     for r in rows:
+        cid = int(r["id"])
         res = normalize(json.loads(r["result_json"])) if r["result_json"] else {}
-        co = company(db, int(r["id"])) or dict(r)
+        co = {k: r[k] for k in ("id", "cik", "ticker", "exchange", "yahoo_symbol", "name", "sector", "industry",
+                                "country", "status", "origin")}
+        co["tickers"] = tickers.get(cid) or [r["ticker"]]
         held = bool(FIT.held_match(co, hs))
-        last_sig = db.scalar("SELECT MAX(COALESCE(published_at, observed_at)) FROM disc_signal WHERE company_id=?",
-                             (r["id"],))
-        prio = db.scalar("SELECT MAX(priority) FROM disc_candidate WHERE company_id=?", (r["id"],))
-        pv = preview_of(db, int(r["id"]))
-        stage = _stage(res, pv is not None, current_filed(db, co, res))
+        last_sig = last_sigs.get(cid)
+        prio = prios.get(cid)
+        pv = _preview_from(latest_ki.get(cid))
+        filed = max([f for f in (((res or {}).get("latest_filing") or {}).get("filed"),
+                                 filed_seen.get(int(r["cik"])) if r["cik"] else None) if f], default=None)
+        stage = _stage(res, pv is not None, filed)
         sc = res.get("scores") or {}
         ccy = (res.get("market") or {}).get("ccy")
         biz = (pv or {}).get("was") or (res.get("business") or {}).get("was") or ""
         cards.append({
             "id": r["id"], "ticker": r["ticker"], "name": r["name"], "sector": r["sector"] or r["industry"],
             "status": r["status"], "origin": r["origin"], "held": held, "stage": stage,
-            "cats": sorted(_cats(db, r, res, held, since_new, stage)), "analysed_at": r["analysed_at"],
-            "business": _sentences(biz, 200) if biz else "", "preview": pv, "why": why_found(db, int(r["id"]),
-                                                                                          r["origin"]),
+            "watched": r["status"] == "beobachten" or int(r["id"]) in lists_of,
+            "lists": lists_of.get(int(r["id"]), []),
+            "cats": sorted(_cats(db, r, res, held, since_new, stage, cid in lists_of, sig_kinds.get(cid, set()))),
+            "analysed_at": r["analysed_at"],
+            "business": _sentences(biz, 200) if biz else "", "preview": pv,
+            "why": _why_from(latest_cand.get(cid), r["origin"]),
             "numbers": key_numbers(res) if res else [],
             "alerts": [a for a in (res.get("alerts") or []) if a.get("level") in ("crit", "warn")][:2],
             "scores": {k: {"total": v.get("total"), "max": v.get("max"), "complete": v.get("complete")}
@@ -1028,6 +1075,14 @@ def radar(ctx: Any, *, cat: str = "", sort: str = DEFAULT_SORT, q: str = "", sho
             "last_signal": last_sig, "coverage": r["coverage"], "fit": None, "created_at": r["created_at"],
             "ccy": ccy, "priority": prio, "core_risk": res.get("core_risk") or "",
         })
+    return cards
+
+
+def radar(ctx: Any, *, cat: str = "", sort: str = DEFAULT_SORT, q: str = "", show_all: bool = False,
+          base: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Gefilterte, sortierte Karten. ``base``: bereits gebaute Karten (:func:`all_cards`) wiederverwenden."""
+    db = ctx.db
+    cards = list(base) if base is not None else all_cards(ctx)
     if cat:
         cards = [c for c in cards if cat in c["cats"]]
     elif not show_all:
@@ -1056,6 +1111,22 @@ def radar(ctx: Any, *, cat: str = "", sort: str = DEFAULT_SORT, q: str = "", sho
                                   (c["scores"].get(s) or {}).get("total") or 0, c["name"]), reverse=True)
     last_run = db.q1("SELECT * FROM disc_run ORDER BY id DESC LIMIT 1")
     return {"cards": cards, "last_run": dict(last_run) if last_run else None}
+
+
+def briefs(db: Any, cids: list[int]) -> dict[int, dict[str, Any]]:
+    """Analysestand je Unternehmen für die Ansicht „Beobachtet“ – nur gespeicherte Daten (kein Abruf, keine KI)."""
+    out: dict[int, dict[str, Any]] = {}
+    for cid in cids:
+        co = company(db, cid)
+        if co is None:
+            continue
+        an = analysis(db, cid)
+        res = an["result"] if an else {}
+        out[cid] = {"id": cid, "ticker": co["ticker"], "name": co["name"], "status": co["status"],
+                    "stage": _stage(res, preview_of(db, cid) is not None, current_filed(db, co, res)),
+                    "analysed_at": an["created_at"] if an else None,
+                    "nash": NASH.split((res.get("scores") or {}).get("nash125"))}
+    return out
 
 
 def category_counts(cards: list[dict[str, Any]]) -> dict[str, int]:

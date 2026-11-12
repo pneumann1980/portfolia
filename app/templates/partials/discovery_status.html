@@ -9,6 +9,12 @@
     {% elif st.usable %}<span class="badge good">KI bereit</span>
     {% else %}<span class="badge warn">{{ {'pausiert': 'KI pausiert', 'kontingent': 'Kontingent erschöpft'}.get(st.state, st.state) }} – Starts warten</span>{% endif %}
   </div>
+  {% set w = st.waiting[0] if st.waiting else none %}
+  {% set failed_last = st.last_fail and (not st.last_ok or st.last_fail.started_at > st.last_ok.started_at) %}
+  {% if w or failed_last %}<p class="hint" id="ki-hinweis">
+    {% if w %}<span class="badge warn">wartet</span> {{ w.kind_label }} wartet bis {{ w.wait_until|datetime_de }}{% if w.wait_reason %} – {{ w.wait_reason }}{% endif %}{% if st.waiting|length > 1 %} · +{{ st.waiting|length - 1 }} weitere{% endif %}. {% endif %}
+    {% if failed_last %}<span class="badge crit">Fehler</span> Letzter KI-Aufruf am {{ st.last_fail.started_at|datetime_de }} fehlgeschlagen: {{ st.last_fail.step }} – {{ st.last_fail.error or st.last_fail.status }}. {% endif %}
+    <a href="/discovery/protokoll">Protokoll</a></p>{% endif %}
   {% if st.state == 'aus' %}<div class="alert warn"><span class="icon">i</span><div>{{ st.reason }}. Ohne KI laufen Fundamentalscreening und Nachrichten-Discovery weiter; qualitative Kriterien, These und Gegenhypothese bleiben offen. <a href="/settings/ki">KI &amp; Modelle</a></div></div>
   {% elif not st.usable %}<div class="alert warn"><span class="icon">i</span><div>{{ st.reason }}. Ein manueller Start wartet sichtbar in der Warteschlange und beginnt danach von selbst (abbrechbar).</div></div>{% endif %}
   <div class="disc-status-grid" id="ki-kurzstatus">

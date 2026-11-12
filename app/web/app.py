@@ -28,8 +28,7 @@ STATIC_DIR = BASE / "static"
 NAV = [
     ("dashboard", "/", "Übersicht", "home"),
     ("positions", "/positions", "Positionen", "list"),
-    ("watchlist", "/watchlist", "Watchlist", "eye"),
-    ("discovery", "/discovery", "Discovery", "radar"),
+    ("watchlist", "/watchlist", "Entdecken & Beobachten", "eye"),  # 0.114: Watchlist + Discovery, zwei Ansichten
     ("journal", "/journal", "Buchungen", "book"),
     ("accounts", "/accounts", "Konten", "list"),
     ("plans", "/plans", "Sparpläne", "repeat"),
@@ -39,6 +38,8 @@ NAV = [
     ("quality", "/quality", "Datenqualität", "check"),
     ("settings", "/settings", "Einstellungen", "gear"),
 ]
+# Seiten ohne eigenen Menüpunkt → Menüpunkt, der als aktiv markiert wird („Entdecken“ gehört zu „Beobachtet“)
+NAV_ALIASES = {"discovery": "watchlist"}
 
 
 def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
@@ -48,7 +49,7 @@ def create_app(ctx: AppContext, lifespan: Any = None) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     fmt.register(templates.env)
     templates.env.globals.update(app_name=APP_NAME, version=__version__, revision=REVISION, nav=NAV,
-                                 demo_mode=ctx.config.demo_mode, flow_kid=flow_kid)
+                                 nav_aliases=NAV_ALIASES, demo_mode=ctx.config.demo_mode, flow_kid=flow_kid)
     app.state.templates = templates
 
     app.add_middleware(FlowMiddleware)  # innerste Schicht: schreibt nur Weiterleitungen um

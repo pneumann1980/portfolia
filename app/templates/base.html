@@ -46,8 +46,9 @@
 <div class="app">
   <nav class="sidebar" aria-label="Hauptnavigation">
     <a class="brand" href="/"><img src="/static/img/icon.svg" alt="">{{ app_name }}</a>
+    {% set nav_active = nav_aliases.get(active, active) %}
     {% for key, href, label, icon in nav %}
-      <a class="nav-link {% if active == key %}active{% endif %}" href="{{ href }}" {% if active == key %}aria-current="page"{% endif %}>
+      <a class="nav-link {% if nav_active == key %}active{% endif %}" href="{{ href }}" {% if nav_active == key %}aria-current="page"{% endif %}>
         <svg><use href="#i-{{ icon }}"/></svg>{{ label }}</a>
     {% endfor %}
     <div class="spacer"></div>
@@ -82,17 +83,13 @@
   <a href="/positions" class="{% if active == 'positions' %}active{% endif %}"><svg><use href="#i-list"/></svg>Positionen</a>
   <a href="/performance" class="{% if active == 'performance' %}active{% endif %}"><svg><use href="#i-chart"/></svg>Performance</a>
   <a href="/news" class="{% if active == 'news' %}active{% endif %}"><svg><use href="#i-news"/></svg>News</a>
-  <button type="button" data-more-toggle class="{% if active in ('journal','plans','tax','quality','settings','watchlist','accounts','discovery') %}active{% endif %}" aria-expanded="false"><svg><use href="#i-more"/></svg>Mehr</button>
+  {% set bottom_keys = ['dashboard', 'positions', 'performance', 'news'] %}
+  <button type="button" data-more-toggle class="{% if nav_aliases.get(active, active) not in bottom_keys and active %}active{% endif %}" aria-expanded="false"><svg><use href="#i-more"/></svg>Mehr</button>
 </nav>
+{# 0.114: Mehr-Menü aus der Menüliste (alles, was nicht in der unteren Leiste steht) – eine Stelle für Menüänderungen #}
 <div class="more-menu" id="more-menu">
-  <a href="/watchlist"><svg><use href="#i-eye"/></svg>Watchlist</a>
-  <a href="/discovery"><svg><use href="#i-radar"/></svg>Discovery</a>
-  <a href="/journal"><svg><use href="#i-book"/></svg>Buchungen</a>
-  <a href="/plans"><svg><use href="#i-repeat"/></svg>Sparpläne</a>
-  <a href="/tax"><svg><use href="#i-tax"/></svg>Steuern &amp; Haltefristen</a>
-  <a href="/quality"><svg><use href="#i-check"/></svg>Datenqualität</a>
-  <a href="/accounts"><svg><use href="#i-list"/></svg>Konten</a>
-  <a href="/settings"><svg><use href="#i-gear"/></svg>Einstellungen</a>
+  {% for key, href, label, icon in nav if key not in ['dashboard', 'positions', 'performance', 'news'] %}<a href="{{ href }}"><svg><use href="#i-{{ icon }}"/></svg>{{ label }}</a>
+  {% endfor %}
 </div>
 <div class="panel-backdrop" data-panel-close></div>
 <aside class="panel" id="panel" aria-hidden="true" aria-label="Detailansicht">

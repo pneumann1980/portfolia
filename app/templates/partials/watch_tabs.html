@@ -1,0 +1,5 @@
+{# Reiter „Entdecken & Beobachten“ (0.114). Erwartet: watch_tab ('beobachtet' | 'entdecken'), watch_count. #}
+<nav class="tabs" aria-label="Entdecken &amp; Beobachten">
+  <a class="{{ 'active' if watch_tab == 'beobachtet' }}" href="/watchlist"{% if watch_tab == 'beobachtet' %} aria-current="page"{% endif %}>Beobachtet{% if watch_count %} <span class="badge">{{ watch_count }}</span>{% endif %}</a>
+  <a class="{{ 'active' if watch_tab == 'entdecken' }}" href="/discovery"{% if watch_tab == 'entdecken' %} aria-current="page"{% endif %}>Entdecken</a>
+</nav>

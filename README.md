@@ -2000,7 +2000,9 @@ Speichern aus der Oberfläche erhalten).
   ein erschöpftes Modell hält nur seine Aufgaben an. Ab 0.113 liegen alle KI-Einstellungen gebündelt unter
   *Einstellungen → KI & Modelle* (Anbieter, Modellstrategie „Kostenbewusst optimiert“ / „Ein Modell für alles“ /
   „Individuell“, Kontingent; Grenzen unter „Erweitert“); Discovery hat drei Grundeinstellungen (automatische Suche,
-  Rechercheumfang, KI ja/nein). Gesendet werden ausschließlich öffentliche Artikeltexte, Titel, Quellen und Asset-Namen – nie
+  Rechercheumfang, KI ja/nein). Ab 0.114 sind Discovery und Watchlist ein Bereich „Entdecken & Beobachten“ (ein
+  „Beobachten“, Listenverwaltung), und für US-Aktien im Bestand lädt Portfolia täglich SEC-Kennzahlen, die im
+  Einzeltitel samt Portfolia-Score erscheinen. Gesendet werden ausschließlich öffentliche Artikeltexte, Titel, Quellen und Asset-Namen – nie
   Stückzahlen, Werte, Gewichte, Konten oder Adressen. Details, Grenzen und Datenschutz:
   [docs/NEWS_INTELLIGENCE.md](docs/NEWS_INTELLIGENCE.md).
 

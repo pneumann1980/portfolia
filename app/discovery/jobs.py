@@ -29,7 +29,8 @@ log = logging.getLogger(__name__)
 
 KINDS = {"ki_discovery": "KI-Discovery", "screening": "Fundamentalscreening", "voll": "Vollständiger Discovery-Lauf",
          "news": "Nachrichten-Discovery", "analyse": "Unternehmensanalyse",
-         "beobachtet": "Aktualisierung beobachteter Unternehmen"}
+         "beobachtet": "Aktualisierung beobachteter Unternehmen",
+         "bestand": "SEC-Kennzahlen der Aktien im Bestand"}
 STATUS = {"geplant": "geplant", "laeuft": "läuft", "abgeschlossen": "abgeschlossen",
           "teilweise": "teilweise abgeschlossen", "uebersprungen": "übersprungen", "fehlgeschlagen": "fehlgeschlagen",
           "kontingent": "Kontingent erschöpft", "ki_fehlt": "KI nicht konfiguriert", "unterbrochen": "unterbrochen",
