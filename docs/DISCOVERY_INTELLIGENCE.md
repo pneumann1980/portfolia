@@ -1,4 +1,8 @@
-# Discovery & Intelligence (0.113.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe; einfache Einstellungen)
+# Discovery & Intelligence (0.114.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe; einfache Einstellungen)
+
+**Neu in 0.114** (Abschnitt [0.10](#010-neu-in-0114-entdecken--beobachten-und-sec-kennzahlen-im-bestand)):
+ein Menüpunkt „Entdecken & Beobachten“ mit zwei Ansichten, ein „Beobachten“ für Discovery und Watchlist,
+Listenverwaltung, SEC-Kennzahlen für US-Aktien im Bestand im Einzeltitel.
 
 **Neu in 0.113** (Abschnitt [0.9](#09-neu-in-0113-einfache-discovery-einstellungen-und-kompakter-ki-status)):
 Discovery-Einstellungen auf drei Entscheidungen reduziert (automatische Suche, Rechercheumfang, KI ja/nein), alles
@@ -216,6 +220,45 @@ Kontingent (Discovery-Aufrufe heute, Modellanfragen, Monat), laufende Research-A
 nächster automatischer Lauf. Verbrauch, Aufgabenmodelle, Grenzen, Fehler, Warteschlange, Zeitplan und Research-Jobs
 sind eingeklappt. Die Knöpfe „KI-Discovery starten“, „Fundamentalscreening starten“ und „Mit KI analysieren“ sind
 unverändert.
+
+### 0.10 Neu in 0.114: Entdecken & Beobachten und SEC-Kennzahlen im Bestand
+
+**Ein Bereich, zwei Ansichten.** Der Menüpunkt „Entdecken & Beobachten“ führt zu **Beobachtet** (`/watchlist`,
+Standardeinstieg: Listen, Kurse, Analysestand) und **Entdecken** (`/discovery`: offene Kandidaten, ein primärer
+Suchstart, übrige unter „Weitere Suchläufe“, darunter neu die Nachrichten-Discovery per Knopf). Alle bisherigen
+Adressen und Filterparameter gelten weiter.
+
+**Verknüpfung ohne eigene Tabelle** (`app/discovery/watch.py`): Ein Watchlist-Eintrag mit Yahoo-Kursquelle gehört zu
+genau dem Unternehmen, dessen Yahoo-Symbol exakt gleich ist. `SAP.DE` ist nie das US-Listing `SAP`; CoinGecko-Einträge
+sind nie verknüpft; tragen mehrere Unternehmen dasselbe Symbol, wird nicht verknüpft („Zuordnung mehrdeutig“). Export
+und Wiederherstellung sind unverändert. Ein Unternehmen gilt als beobachtet, wenn der Status `beobachten` gesetzt ist
+(steuert die Jobs) oder es in mindestens einer Liste steht.
+
+| Aktion | Wirkung |
+|---|---|
+| „Beobachten“ (Karte, Steckbrief, alte Adressen `…/watchlist`, `…/status` mit `beobachten`) | Status `beobachten` und Eintrag in der gewählten Liste (sonst Standardliste); Wiederholung erzeugt keinen zweiten Eintrag |
+| Aus einer Liste entfernen | nur dieser Eintrag; war es die letzte Liste und der Status `beobachten`, wird der Status `zurueckgestellt` |
+| Liste löschen | wie Entfernen aller Einträge; die Standardliste lässt sich nicht löschen |
+| „Vorschlag verwerfen“ | nur Status `verworfen`; Listen bleiben unverändert |
+| Titel manuell hinzufügen | ändert keinen Discovery-Status; bei exakt gleichem Symbol automatisch verknüpft |
+
+Unternehmen mit Status `beobachten` ohne Liste (Altbestand, kein eindeutiges Symbol) stehen unter „Beobachtet“ im
+Abschnitt „Ohne Liste“. Öffnen, Beobachten und Entfernen lösen weder KI- noch Netzaufrufe aus.
+
+**Listenverwaltung:** Listen umbenennen, löschen, als Standard setzen (`/watchlist/lists/{id}/rename|default|delete`).
+
+**SEC-Kennzahlen für Aktien im Bestand** (`app/discovery/holdings.py`): Für gehaltene Wertpapiere mit Yahoo-Symbol
+ohne Börsenkürzel (US-Listing), die im SEC-Verzeichnis eindeutig einem Emittenten gehören, legt ein täglicher
+Hintergrundlauf (Job `bestand`, 06:17 Uhr, **unabhängig** von „Automatische Suche“) das Unternehmen an (Herkunft
+`portfolio`) und aktualisiert SEC- und Marktdaten nach den Regeln der Datenaktualisierung (neuer SEC-Bericht sofort,
+sonst wöchentlich/monatlich, Grenze `discovery.auto_analyse_per_run`). Keine KI. Der Einzeltitel zeigt Umsatz,
+Wachstum, Margen, Free Cashflow, Nettofinanzposition, Verbindlichkeiten, ROIC, den Portfolia-Score (Datenteil /65; mit
+vorhandener KI-Analyse /125) sowie die Balken Wachstum, Qualität, Bewertung und verweist auf den Steckbrief. Nach
+vollständigem Verkauf wird ein nur bestandsbedingt angelegtes Unternehmen (Status `neu`) zurückgestellt; Daten bleiben.
+Grenzen: Titel anderer Börsenplätze (`SAP.DE`), ETFs und Unternehmen ohne SEC-Registrierung erhalten keine SEC-Daten.
+
+**Leistung:** Die Liste baut ihre Karten einmal je Aufruf und mit Sammelabfragen (24 Unternehmen: 15 statt 202
+Abfragen für die Karten).
 
 ## 1. Produktvision und Funktionsumfang
 

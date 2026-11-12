@@ -100,10 +100,23 @@ def dashboard(request: Request) -> HTMLResponse:
         top = None
     from app.fullexport import status as restore_status
 
+    watch = None
+    try:  # 0.114: Kachel „Beobachtet“ – darf die Startseite nie stören
+        from app.discovery import watch as W
+        from app.watchlist.service import watchlist_service
+
+        mv = watchlist_service(ctx).movers(3)
+        if mv["n"]:
+            unique, _amb = W.symbol_index(ctx.db)
+            watch = {"up": mv["up"], "down": mv["down"], "count": len(mv["n"]),
+                     "link": {i.id: unique.get(i.quote_id.upper()) for i in mv["up"] + mv["down"]
+                              if i.quote_source == "yahoo"}}
+    except Exception as e:  # pragma: no cover
+        log.debug("Beobachtet-Kachel nicht verfügbar: %s", e)
     ignored = set(ctx.settings.get("prices.stale_ignored") or [])
     stale = [p for p in val.stale if p.asset_id not in ignored]  # ausgeblendete Hinweise (Datenqualität) nicht melden
     return render(request, "dashboard.html", active="dashboard", val=val, kpi=_kpis(ctx, val, hist), gainers=gainers,
-                  stale=stale,
+                  stale=stale, watch=watch,
                   losers=losers, gainers_eur=gainers_eur, losers_eur=losers_eur, news=news, top=top, **sess,
                   threshold=ctx.settings.get("allocation.other_threshold_pct", 1.0),
                   default_range=ctx.settings.get("ui.default_range", "1J"), restore=restore_status(ctx))
@@ -223,7 +236,19 @@ def asset_context(ctx: Any, asset_id: str) -> dict[str, Any]:
         "info": info or {}, "info_at": info_at, "series": series, "meta": meta, "perf": perf, "news": news,
         "colors": asset_colors(asset_id, a.segment), "account_scope": ctx.settings.get("ledger.scope", "global"),
         "tax_pack": pack_name, "quality": hist.quality.get(asset_id) if hist is not None else None,
+        "sec": _sec_brief(ctx, a),
     }
+
+
+def _sec_brief(ctx: Any, asset: Any) -> dict[str, Any] | None:
+    """SEC-Kennzahlen für den Einzeltitel (0.114) – nur gespeicherte Daten; ein Fehler dort stört die Seite nie."""
+    try:
+        from app.discovery import holdings as H
+
+        return H.brief_for_asset(ctx, asset)
+    except Exception as e:  # pragma: no cover
+        log.debug("SEC-Kennzahlen für %s nicht verfügbar: %s", getattr(asset, "asset_id", "?"), e)
+        return None
 
 
 @router.get("/progress/active", response_class=HTMLResponse)

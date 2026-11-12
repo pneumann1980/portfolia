@@ -1,8 +1,11 @@
 # Plan 0.114 – Projektreview und „Entdecken & Beobachten“
 
 Stand der Analyse: Branch `claude/portfolia-dashboard-s9p6zr`, Commit `39479ea` (0.113.0), 12.11.2026.
-Dieses Dokument ist die Arbeitsanweisung für die Umsetzung. **Noch nichts davon ist umgesetzt** – im Repository
-liegen nur dieser Plan und ein geprüfter Backend-Patch (`docs/plan_0114/backend.patch`).
+**Status: umgesetzt in 0.114.0.** Abweichungen vom Plan nach Rückfrage: Entfernen aus der letzten Liste setzt den
+Status `zurueckgestellt` (statt `neu`); zusätzlich umgesetzt wurden Listenverwaltung (B9), Sammelabfragen (B10),
+Mobilmenü aus der Menüliste (B5), die Kachel „Beobachtet“ auf der Übersicht und SEC-Kennzahlen für US-Aktien im
+Bestand. Maßgeblich ist `docs/DISCOVERY_INTELLIGENCE.md`, Abschnitt 0.10; der Backend-Patch ist eingearbeitet und
+entfernt.
 
 Lesereihenfolge für die Umsetzung: Abschnitt 4 (Entscheidungen) → Abschnitt 5 (Arbeitspakete, strikt der Reihe nach)
 → Abschnitt 6 (Abnahme). Abschnitt 2 und 3 sind Begründung und Zielbild.

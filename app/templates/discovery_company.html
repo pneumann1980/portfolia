@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "discovery_macros.html" import origin, money, val, src, scorechip, scorecard, criterion, pts, prov, bar, alertbox, numline, preview_block with context %}
 {% block title %}{{ co.name }} – Discovery{% endblock %}
-{% block heading %}<a href="/discovery" class="hint">Discovery</a> › {{ co.ticker }}{% endblock %}
+{% block heading %}<a href="/discovery" class="hint">Entdecken</a> › {{ co.ticker }}{% endblock %}
 {% set m = res.market if res else {} %}
 {% set ccy = (res.fundamentals.currency if res else '') or '' %}
 {% block content %}
@@ -70,10 +70,26 @@
     {% endif %}
     {% if gate.any_ok and gate.missing %}<form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="ergaenzen"><button class="btn" type="submit" {{ 'disabled' if busy or not gate.ok }}>Fehlende KI-Teile ergänzen · {{ gate.missing }} {{ 'Aufruf' if gate.missing == 1 else 'Aufrufe' }}</button></form>{% endif %}
     <form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="daten"><button class="btn" type="submit" {{ 'disabled' if busy }} title="SEC- und Marktdaten neu laden – kostenlos, keine KI">Daten aktualisieren</button></form>
-    {% for stx, label in [('beobachten', 'Beobachten'), ('verworfen', 'Verwerfen'), ('neu', 'Status zurücksetzen')] if stx != co.status %}
+    {% if not watched %}
+    <form method="post" action="/discovery/c/{{ co.id }}/beobachten" class="row" style="gap:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% if watch_lists|length > 1 %}<label class="sr-only" for="beob-liste">Liste</label><select id="beob-liste" name="list">{% for l in watch_lists %}<option value="{{ l.id }}" {{ 'selected' if l.is_default }}>{{ l.name }}</option>{% endfor %}</select>{% endif %}
+      <button class="btn" type="submit">Beobachten</button></form>
+    {% endif %}
+    {% for stx, label in [('verworfen', 'Vorschlag verwerfen'), ('neu', 'Status zurücksetzen')] if stx != co.status and not (stx == 'neu' and co.status == 'beobachten') %}
     <form method="post" action="/discovery/c/{{ co.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="{{ stx }}"><button class="btn ghost" type="submit">{{ label }}</button></form>{% endfor %}
-    <form method="post" action="/discovery/c/{{ co.id }}/watchlist"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Zur Watchlist</button></form>
   </div>
+  {% if watched %}
+  <div class="disc-watch" id="beobachtung">
+    {% if watch_members %}<span><b>Beobachtet in:</b></span>
+      {% for m in watch_members %}<form method="post" action="/watchlist/item/{{ m.item_id }}/remove" class="inline" data-confirm="{{ co.ticker }} aus der Liste „{{ m.list_name }}“ entfernen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/discovery/c/{{ co.id }}"><a href="/watchlist?list={{ m.list_id }}">{{ m.list_name }}</a> <button class="icon-btn" type="submit" aria-label="aus „{{ m.list_name }}“ entfernen" title="aus dieser Liste entfernen">×</button></form>{% endfor %}
+    {% else %}<span><b>Beobachtet (ohne Liste)</b></span>
+      <form method="post" action="/discovery/c/{{ co.id }}/status" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="zurueckgestellt"><button class="btn sm ghost" type="submit">Nicht mehr beobachten</button></form>{% endif %}
+    {% set member_ids = watch_members|map(attribute='list_id')|list %}{% set rest = watch_lists|rejectattr('id', 'in', member_ids)|list %}
+    {% if rest %}<form method="post" action="/discovery/c/{{ co.id }}/beobachten" class="inline row" style="gap:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% if rest|length > 1 %}<label class="sr-only" for="beob-weitere">Weitere Liste</label><select id="beob-weitere" name="list">{% for l in rest %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}</select>{% else %}<input type="hidden" name="list" value="{{ rest[0].id }}">{% endif %}
+      <button class="btn sm ghost" type="submit">{% if rest|length > 1 %}Auch in diese Liste{% else %}Auch in „{{ rest[0].name }}“{% endif %}</button></form>{% endif %}
+  </div>
+  {% endif %}
   <p class="hint">{% if not gate.ok %}<b>KI gesperrt:</b> {{ gate.reason }}{% elif not gate.now %}<b>Startet nicht sofort:</b> {{ gate.reason }} – ein Start wartet bis {{ gate.until|datetime_de }} in der Warteschlange und beginnt dann von selbst (abbrechbar){% else %}KI heute noch {{ gate.left_day }}, im Monat noch {{ gate.left_month }} Discovery-Aufrufe{% endif %} · {{ 'Google Gemini' if st.provider == 'gemini' else 'Claude' }} {{ gate.model or st.model }}. Daten aktualisieren ist kostenlos (SEC, Kurse). Keine Kaufempfehlung.</p>
 </section>
 

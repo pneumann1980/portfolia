@@ -73,7 +73,7 @@ def _bg_refresh(ctx: Any, series: list[str]) -> bool:
 
 def _page(request: Request, list_id: int | None = None, sort: str = "manual", errors: list[str] | None = None,
           choices: list[dict[str, Any]] | None = None, form: dict[str, str] | None = None,
-          status_code: int = 200) -> HTMLResponse:
+          status_code: int = 200, msg: str = "", err: str = "") -> HTMLResponse:
     ctx = get_ctx(request)
     svc = watchlist_service(ctx)
     lists = svc.lists()
@@ -84,8 +84,22 @@ def _page(request: Request, list_id: int | None = None, sort: str = "manual", er
     pf = ctx.portfolio()
     assets = sorted((a for a in (pf.assets.values() if pf else []) if not a.is_fiat and a.quote_id
                      and a.quote_source in ("coingecko", "yahoo")), key=lambda a: a.name.lower())
+    from app.discovery import service as SV
+    from app.discovery import watch as W
+
+    # 0.114: Verknüpfung zu Discovery (exaktes Yahoo-Symbol) und Analysestand – nur gespeicherte Daten
+    unique, ambiguous = W.symbol_index(ctx.db)
+    link = {i.id: unique.get(i.quote_id.upper()) for i in items if i.quote_source == "yahoo"}
+    unlisted = W.unlisted(ctx.db)
+    briefs = SV.briefs(ctx.db, sorted({c for c in link.values() if c} | {int(u["id"]) for u in unlisted}))
     return render(request, "watchlist.html", status_code=status_code, active="watchlist", items=items, lists=lists,
-                  list_id=lid, sort=sort, sorts=SORTS, kinds=KINDS, errors=errors or [], choices=choices or [],
+                  link=link, briefs=briefs, unlisted=unlisted, stages=SV.STAGES,
+                  ambiguous={i.id for i in items if i.quote_source == "yahoo" and i.quote_id.upper() in ambiguous},
+                  watch_count=W.count_watched(ctx.db), msg=msg,
+                  list_counts={int(r["list_id"]): int(r["n"]) for r in ctx.db.q(
+                      "SELECT list_id, COUNT(*) AS n FROM watchlist_item GROUP BY list_id")},
+                  list_id=lid, sort=sort, sorts=SORTS, kinds=KINDS, choices=choices or [],
+                  errors=(errors or []) + ([err] if err else []),
                   form=form or {}, loading=loading, sparkline=sparkline, assets=assets)
 
 
@@ -93,8 +107,8 @@ def make_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/watchlist", response_class=HTMLResponse)
-    def page(request: Request, list: int = 0, sort: str = "manual") -> HTMLResponse:
-        return _page(request, list or None, sort)
+    def page(request: Request, list: int = 0, sort: str = "manual", msg: str = "", err: str = "") -> HTMLResponse:
+        return _page(request, list or None, sort, msg=msg[:300], err=err[:300])
 
     @router.post("/watchlist/add")
     async def add(request: Request) -> Response:
@@ -123,14 +137,45 @@ def make_router() -> APIRouter:
             return _page(request, errors=errors, status_code=400)
         return _back(request, f"/watchlist?list={lid}")
 
+    @router.post("/watchlist/lists/{list_id}/{action}")
+    async def manage_list(request: Request, list_id: int, action: str) -> Response:
+        """Listenverwaltung (0.114): umbenennen, als Standard setzen, löschen."""
+        ctx = get_ctx(request)
+        svc = watchlist_service(ctx)
+        f = await request.form()
+        target = list_id
+        if action == "rename":
+            errors, done = svc.rename_list(list_id, str(f.get("name") or "")), "Liste umbenannt."
+        elif action == "default":
+            errors, done = svc.set_default(list_id), "Standardliste geändert."
+        elif action == "delete":
+            gone, errors = svc.delete_list(list_id)
+            if not errors:
+                from app.discovery import watch as W
+
+                for source, qid in gone:  # letzte Liste eines Unternehmens → alter Status „beobachten“ endet
+                    W.after_item_removed(ctx, source, qid)
+                target = svc.default_id()
+            done = f"Liste gelöscht ({len(gone)} Einträge entfernt)." if not errors else ""
+        else:
+            raise HTTPException(404)
+        q = {"list": target, "err": "; ".join(errors)} if errors else {"list": target, "msg": done}
+        return _back(request, f"/watchlist?{urlencode(q)}#listen")
+
     @router.post("/watchlist/item/{item_id}/remove")
     async def remove(request: Request, item_id: int) -> Response:
-        svc = watchlist_service(get_ctx(request))
+        ctx = get_ctx(request)
+        svc = watchlist_service(ctx)
         it = svc.get(item_id)
         if it is None:
             raise HTTPException(404)
         svc.remove(item_id)
-        return _back(request, f"/watchlist?list={it.list_id}")
+        from app.discovery import watch as W
+
+        W.after_item_removed(ctx, it.quote_source, it.quote_id)  # letzte Liste → alter Status „beobachten“ endet
+        back = str((await request.form()).get("back") or "")
+        ok = (back.startswith("/watchlist") or back.startswith("/discovery")) and "//" not in back and "\\" not in back
+        return _back(request, back if ok else f"/watchlist?list={it.list_id}")
 
     @router.post("/watchlist/item/{item_id}/move")
     async def move(request: Request, item_id: int) -> Response:
@@ -152,8 +197,10 @@ def make_router() -> APIRouter:
         if it.asset_id and ctx.portfolio() is not None and it.asset_id in ctx.portfolio().assets:
             return Response(status_code=303, headers={"Location": f"/asset/{it.asset_id}"})
         loading = _ensure_history(ctx, it.series)
+        from app.discovery import watch as W
+
         return render(request, "watchlist_item.html", active="watchlist", it=it, loading=loading,
-                      sparkline=sparkline)
+                      sparkline=sparkline, company_id=W.company_for(ctx.db, it.quote_source, it.quote_id)[0])
 
     @router.get("/api/watchlist/{item_id}/chart")
     def chart(request: Request, item_id: int, range: str = "1J") -> JSONResponse:

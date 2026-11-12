@@ -624,7 +624,8 @@ def test_settings_export_and_entry_links(app_client):
     assert exp.headers["content-disposition"].startswith("attachment") and data["companies"][0]["ticker"] == "ALPH"
     assert data["analyses"][0]["result"]["scores"]["quality"]["max"] == 100
     assert data["analyses"][0]["result"]["scores"]["nash125"]["max"] == 125
-    assert "/discovery" in c.get("/").text  # Navigation
+    # 0.114: ein Menüpunkt „Entdecken & Beobachten“ (führt zu „Beobachtet“); „Entdecken“ ist die zweite Ansicht
+    assert "Entdecken &amp; Beobachten" in c.get("/").text and 'href="/watchlist"' in c.get("/").text
 
 
 @pytest.mark.parametrize(("raw", "eur"), [("1.000", 1000.0), ("1.000,50", 1000.5), ("2500", 2500.0), ("99.5", 99.5),

@@ -212,3 +212,29 @@ def test_web_app_manifest_for_home_screen(client):
     for i in m["icons"]:
         assert client.get(i["src"]).status_code == 200
     assert client.get("/static/img/apple-touch-icon.png").status_code == 200
+
+
+def test_asset_detail_links_analysis_only_for_exact_us_symbols(client):
+    assert "/discovery/t/" not in client.get("/asset/WKN:716460").text  # SAP.DE: anderer Börsenplatz
+    assert 'href="/discovery/t/AAPL"' in client.get("/asset/WKN:865985").text
+
+
+def test_dashboard_tile_shows_watched_movers(client):
+    assert 'id="beobachtet-kachel"' not in client.get("/").text  # ohne beobachtete Titel keine Kachel
+    post(client, "/watchlist/add", {"kind": "crypto", "value": "dogecoin"})
+    post(client, "/watchlist/add", {"kind": "security", "value": "sap.de"})
+    second = post(client, "/watchlist/lists", {"name": "Zwei"}).headers["location"].split("list=")[1]
+    post(client, "/watchlist/add", {"kind": "crypto", "value": "dogecoin", "list": second})  # zählt nur einmal
+    tile = client.get("/").text.split('id="beobachtet-kachel"')[1].split("</section>")[0]
+    assert 'Beobachtet <span class="badge">2</span>' in tile and 'href="/watchlist"' in tile
+    assert tile.count('class="list-item"') <= 2 and "/watchlist/item/" in tile
+    mv = ctx(client).db.scalar("SELECT COUNT(*) FROM watchlist_item")
+    assert mv == 3
+
+
+def test_single_title_shows_sec_block_only_for_us_symbols(client):
+    us = client.get("/asset/WKN:865985").text  # AAPL: US-Symbol, noch nicht abgeglichen
+    assert 'id="sec-kennzahlen"' in us and "noch keine SEC-Daten" in us
+    assert 'id="sec-kennzahlen"' not in client.get("/asset/WKN:716460").text   # SAP.DE
+    assert 'id="sec-kennzahlen"' not in client.get("/asset/WKN:A0RPWH").text   # EUNL.DE (ETF)
+    assert 'id="sec-kennzahlen"' in client.get("/panel/asset/WKN:865985").text  # auch in der Seitenleiste

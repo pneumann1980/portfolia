@@ -1,29 +1,50 @@
 {% extends "base.html" %}
 {% from "discovery_macros.html" import scorechip, pts, numline, preview_block, alertbox, money with context %}
-{% block title %}Discovery{% endblock %}
-{% block heading %}Discovery & Intelligence{% endblock %}
+{% block title %}Entdecken{% endblock %}
+{% block heading %}Entdecken &amp; Beobachten{% endblock %}
 {% block content %}
 <div class="stack disc-page" data-keep-scroll>
+{% with watch_tab = 'entdecken' %}{% include "partials/watch_tabs.html" %}{% endwith %}
+{% set bq = [] %}{% if cat %}{% set _ = bq.append('cat=' ~ cat|urlencode) %}{% endif %}{% if sort %}{% set _ = bq.append('sort=' ~ sort|urlencode) %}{% endif %}{% if q %}{% set _ = bq.append('q=' ~ q|urlencode) %}{% endif %}{% if alle %}{% set _ = bq.append('alle=1') %}{% endif %}
+{% set back_url = '/discovery' ~ ('?' ~ bq|join('&') if bq else '') %}
 {% if msg %}<div class="alert good" data-flash><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
 {% if err %}<div class="alert crit" data-flash><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
 {% if focus_job %}<div hx-get="/discovery/jobs/{{ focus_job }}" hx-trigger="load" hx-swap="outerHTML"></div>{% endif %}
 
 <section class="card" id="aktionen">
-  <div class="card-head"><h2>Research starten</h2><span class="hint">läuft im Hintergrund – die Seite muss nicht offen bleiben</span></div>
+  <div class="card-head"><h2>Kandidaten suchen</h2><span class="hint">läuft im Hintergrund – die Seite muss nicht offen bleiben</span></div>
   <div class="disc-start">
-    <form method="post" action="/discovery/start/ki_discovery" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if st.startable %}
+    <form method="post" action="/discovery/start/ki_discovery" class="disc-start-item" data-primary-start="ki_discovery"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="btn primary" type="submit" {{ 'disabled' if not st.startable }}>KI-Discovery starten</button>
       <p class="hint">Die KI erkennt aus belegten SEC-Wendepunkten{{ ' und Meldungen' if st.themes }} Themen und Wertschöpfungsketten und schlägt Unternehmen vor – jedes mit Vorschau (Kurzbeschreibung, Disruption-Einschätzung, Chance/Nachfrage). Portfolia prüft jede Identität bei der SEC und lädt die Zahlen ohne KI. <b>Genau 2 KI-Aufrufe</b> (heute frei: {{ [st.day.left, 0]|max }}); welche Firma vertieft wird, entscheidest du je Karte.{% if st.state == 'aus' %} <b>Gesperrt: {{ st.reason }}.</b>{% elif st.avail.discovery.state %} <b>Startet nicht sofort:</b> {{ st.avail.discovery.reason }} – der Job wartet bis {{ st.avail.discovery.until|datetime_de }} und beginnt dann von selbst.{% endif %}</p></form>
-    <form method="post" action="/discovery/start/screening" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button class="btn" type="submit">Fundamentalscreening starten</button>
+    {% else %}
+    <form method="post" action="/discovery/start/screening" class="disc-start-item" data-primary-start="screening"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn primary" type="submit">Fundamentalscreening starten</button>
       <p class="hint">Wege B und C ohne KI: ganzes Universum über SEC-Frames vorauswählen, je Lauf {{ cfg.screen_batch }} Emittenten mit vollständigen SEC-Daten bestätigen (fundamentale Wendepunkte), danach Kurs gegen S&P 500 prüfen (mögliche Fehlbewertung vs. Value Trap). Setzt nach Abbruch fort.</p></form>
-    <form method="post" action="/discovery/start/voll" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button class="btn" type="submit">Vollständigen Discovery-Lauf starten</button>
-      <p class="hint">Nacheinander: Nachrichten-Discovery, Fundamentalscreening, KI-Discovery (soweit KI verfügbar) – jeder Teil mit eigenen Grenzen; ein Fehler bricht die anderen nicht ab.</p></form>
+    {% endif %}
   </div>
   <form method="post" action="/discovery/add" class="row disc-add"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label class="sr-only" for="disc-q">Ticker oder Firmenname</label><input id="disc-q" name="q" placeholder="Unternehmen direkt aufnehmen: Ticker oder Firmenname" maxlength="120" required>
     <button class="btn" type="submit">Aufnehmen</button></form>
+  <details class="box" id="weitere-suchlaeufe"><summary>Weitere Suchläufe</summary>
+  <div class="disc-start">
+    {% if st.startable %}
+    <form method="post" action="/discovery/start/screening" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn" type="submit">Fundamentalscreening starten</button>
+      <p class="hint">Wege B und C ohne KI: ganzes Universum über SEC-Frames vorauswählen, je Lauf {{ cfg.screen_batch }} Emittenten mit vollständigen SEC-Daten bestätigen (fundamentale Wendepunkte), danach Kurs gegen S&P 500 prüfen (mögliche Fehlbewertung vs. Value Trap). Setzt nach Abbruch fort.</p></form>
+    {% else %}
+    <form method="post" action="/discovery/start/ki_discovery" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn" type="submit" {{ 'disabled' if not st.startable }}>KI-Discovery starten</button>
+      <p class="hint">Die KI erkennt aus belegten SEC-Wendepunkten{{ ' und Meldungen' if st.themes }} Themen und Wertschöpfungsketten und schlägt Unternehmen vor – jedes mit Vorschau (Kurzbeschreibung, Disruption-Einschätzung, Chance/Nachfrage). Portfolia prüft jede Identität bei der SEC und lädt die Zahlen ohne KI. <b>Genau 2 KI-Aufrufe</b> (heute frei: {{ [st.day.left, 0]|max }}); welche Firma vertieft wird, entscheidest du je Karte.{% if st.state == 'aus' %} <b>Gesperrt: {{ st.reason }}.</b>{% elif st.avail.discovery.state %} <b>Startet nicht sofort:</b> {{ st.avail.discovery.reason }} – der Job wartet bis {{ st.avail.discovery.until|datetime_de }} und beginnt dann von selbst.{% endif %}</p></form>
+    {% endif %}
+    <form method="post" action="/discovery/start/voll" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn" type="submit">Vollständigen Discovery-Lauf starten</button>
+      <p class="hint">Nacheinander: Nachrichten-Discovery, Fundamentalscreening, KI-Discovery (soweit KI verfügbar) – jeder Teil mit eigenen Grenzen; ein Fehler bricht die anderen nicht ab.</p></form>
+    <form method="post" action="/discovery/start/news" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn" type="submit">Nachrichten-Discovery starten</button>
+      <p class="hint">Sucht in den bereits analysierten Meldungen der letzten {{ cfg.news_days }} Tage nach börsennotierten Unternehmen – ohne KI-Aufruf.</p></form>
+  </div></details>
 </section>
 
 {% include "partials/discovery_status.html" %}
@@ -56,10 +77,10 @@
 {% if cards %}
 <div class="disc-cards">
 {% for c in cards %}
-  <article class="card disc-card" id="karte-{{ c.id }}">
+  <article class="card disc-card" id="karte-{{ c.id }}"{% if c.watched %} data-watched="1"{% endif %}>
     <div class="disc-card-head">
       <div><a href="/discovery/c/{{ c.id }}"><b>{{ c.name }}</b></a> <span class="badge">{{ c.ticker }}</span>
-        <div class="hint">{{ c.sector or 'Branche unbekannt' }}{% if c.held %} · <span class="badge good">im Portfolio</span>{% endif %}{% if c.status != 'neu' %} · <span class="badge info">{{ statuses[c.status] }}</span>{% endif %}</div></div>
+        <div class="hint">{{ c.sector or 'Branche unbekannt' }}{% if c.held %} · <span class="badge good">im Portfolio</span>{% endif %}{% if c.watched %} · <span class="badge good">beobachtet</span>{% if c.lists %} <span class="hint">({{ c.lists|join(', ') }})</span>{% endif %}{% endif %}{% if c.status not in ('neu', 'beobachten') %} · <span class="badge info">{{ statuses[c.status] }}</span>{% endif %}</div></div>
       <span class="badge {{ {'analysiert': 'good', 'veraltet': 'warn', 'vorschau': 'info'}.get(c.stage, '') }}">{{ stages[c.stage] }}</span>
     </div>
     {% if c.business %}<p class="disc-card-biz">{{ c.business }}</p>{% endif %}
@@ -77,8 +98,9 @@
       <form method="post" action="/discovery/c/{{ c.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="ki"><button class="btn sm primary" type="submit" {{ 'disabled' if not st.startable }} title="{{ st.reason if st.reason else '1 KI-Aufruf: Steckbrief, These, Gegenhypothese, Disruption, qualitative Score-Kriterien' }}{{ ' – Job wartet und startet dann selbst' if st.startable and not st.usable }}">Mit KI analysieren · 1 Aufruf</button></form>
       {% endif %}
       <a class="btn sm {{ 'primary' if c.stage in ('analysiert', 'veraltet') }}" href="/discovery/c/{{ c.id }}">Öffnen</a>
-      {% if c.status != 'beobachten' %}<form method="post" action="/discovery/c/{{ c.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="beobachten"><input type="hidden" name="back" value="/discovery"><button class="btn sm ghost" type="submit">Beobachten</button></form>{% endif %}
-      {% if c.status != 'verworfen' %}<form method="post" action="/discovery/c/{{ c.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="verworfen"><input type="hidden" name="back" value="/discovery"><button class="btn sm ghost" type="submit">Verwerfen</button></form>{% endif %}
+      {% if c.watched %}<a class="btn sm ghost" href="/watchlist">Beobachtet ✓</a>
+      {% else %}<form method="post" action="/discovery/c/{{ c.id }}/beobachten"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="{{ back_url }}"><button class="btn sm ghost" type="submit">Beobachten</button></form>{% endif %}
+      {% if c.status != 'verworfen' %}<form method="post" action="/discovery/c/{{ c.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="verworfen"><input type="hidden" name="back" value="{{ back_url }}"><button class="btn sm ghost" type="submit" title="Nur der Vorschlag wird verworfen – Listen unter „Beobachtet“ bleiben unverändert">Vorschlag verwerfen</button></form>{% endif %}
     </div>
   </article>
 {% endfor %}

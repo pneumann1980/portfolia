@@ -20,6 +20,7 @@ from app.util.timeutil import iso
 
 # Yahoo-Symbole: Aktien/ETFs (SAP.DE), Indizes mit führendem „^“ (^GSPC, ^GDAXI), Devisen/Futures (EURUSD=X, GC=F)
 _YAHOO = re.compile(r"^\^?[A-Z0-9][A-Z0-9.\-=]{0,24}$")
+YAHOO_SYMBOL = _YAHOO  # öffentlich: gültiges Yahoo-Symbol (auch für app.discovery.watch)
 MAX_ITEMS = 200
 SORTS = {"manual": "eigene Reihenfolge", "name": "Name", "change_24h": "24h", "change_7d": "7 Tage",
          "market_cap": "Marktkapitalisierung"}
@@ -79,6 +80,38 @@ class WatchlistService:
         cur = self.db.x("INSERT INTO watchlist(name, position, is_default, created_at) VALUES (?, "
                         "(SELECT COALESCE(MAX(position), 0) + 1 FROM watchlist), 0, ?)", (name, iso(datetime.now(UTC))))
         return int(cur.lastrowid), []  # type: ignore[arg-type]
+
+    def rename_list(self, list_id: int, name: str) -> list[str]:
+        name = re.sub(r"\s+", " ", name or "").strip()[:40]
+        if not name:
+            return ["Name der Liste fehlt."]
+        if not self.db.x("UPDATE watchlist SET name=? WHERE id=?", (name, list_id)).rowcount:
+            return ["Liste nicht gefunden."]
+        return []
+
+    def set_default(self, list_id: int) -> list[str]:
+        """Standardliste wechseln (genau eine Standardliste; sie nimmt „Beobachten“ ohne Listenwahl auf)."""
+        if self.db.q1("SELECT 1 FROM watchlist WHERE id=?", (list_id,)) is None:
+            return ["Liste nicht gefunden."]
+        with self.db.transaction() as c:
+            c.execute("UPDATE watchlist SET is_default=0 WHERE is_default=1")
+            c.execute("UPDATE watchlist SET is_default=1 WHERE id=?", (list_id,))
+        return []
+
+    def delete_list(self, list_id: int) -> tuple[list[tuple[str, str]], list[str]]:
+        """Liste samt Einträgen löschen. Die Standardliste bleibt – erst eine andere Liste zum Standard machen.
+        Rückgabe: (entfernte Einträge als (quote_source, quote_id), Fehler)."""
+        row = self.db.q1("SELECT is_default FROM watchlist WHERE id=?", (list_id,))
+        if row is None:
+            return [], ["Liste nicht gefunden."]
+        if row["is_default"]:
+            return [], ["Die Standardliste lässt sich nicht löschen – zuerst eine andere Liste als Standard wählen."]
+        gone = [(r["quote_source"], r["quote_id"]) for r in self.db.q(
+            "SELECT quote_source, quote_id FROM watchlist_item WHERE list_id=?", (list_id,))]
+        with self.db.transaction() as c:
+            c.execute("DELETE FROM watchlist_item WHERE list_id=?", (list_id,))
+            c.execute("DELETE FROM watchlist WHERE id=?", (list_id,))
+        return gone, []
 
     # -- Einträge -------------------------------------------------------------------------------------------
     def items(self, list_id: int, sort: str = "manual", with_market: bool = True) -> list[Item]:
@@ -204,6 +237,27 @@ class WatchlistService:
             ids[i], ids[j] = ids[j], ids[i]
         with self.db.transaction() as c:
             c.executemany("UPDATE watchlist_item SET position=? WHERE id=?", [(n, x) for n, x in enumerate(ids, 1)])
+
+    def movers(self, limit: int = 3) -> dict[str, list[Item]]:
+        """Größte 24h-Bewegungen der beobachteten Titel über alle Listen (für die Übersicht) – nur gespeicherte
+        Marktdaten, kein Abruf. Jede Kennung zählt einmal, auch wenn sie in mehreren Listen steht."""
+        seen: dict[tuple[str, str], Item] = {}
+        for r in self.db.q("SELECT * FROM watchlist_item ORDER BY list_id, position, id"):
+            key = (r["quote_source"], r["quote_id"])
+            if key in seen:
+                continue
+            it = Item(int(r["id"]), int(r["list_id"]), r["quote_source"], r["quote_id"], r["asset_class"],
+                      r["asset_id"], r["symbol"], r["name"], int(r["position"]))
+            it.series = self.series(it)
+            seen[key] = it
+        items = list(seen.values())
+        snaps = market_data(self.ctx).snapshots([i.series for i in items if i.series])
+        for it in items:
+            it.snap = snaps.get(it.series or "")
+        moved = [i for i in items if i.snap is not None and i.snap.change_24h is not None]
+        up = sorted([i for i in moved if i.snap.change_24h > 0], key=lambda i: -i.snap.change_24h)[:limit]  # type: ignore[union-attr,operator]
+        down = sorted([i for i in moved if i.snap.change_24h < 0], key=lambda i: i.snap.change_24h)[:limit]  # type: ignore[union-attr,operator,arg-type,return-value]
+        return {"up": up, "down": down, "n": items}  # type: ignore[dict-item]
 
     def all_series(self) -> list[str]:
         out = []

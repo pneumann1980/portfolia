@@ -24,6 +24,7 @@ from app.discovery import nash as NASH
 from app.discovery import presets as PR
 from app.discovery import service as SV
 from app.discovery import universe as U
+from app.discovery import watch as W
 from app.discovery.charts import bars
 from app.discovery.identity import norm_ticker
 from app.jobs.scheduler import Scheduler, extra_jobs
@@ -65,6 +66,11 @@ def _jobs(s: Scheduler) -> None:
     s.register("discovery_task_interactive", lambda ctx, job_id=0: J.run(ctx, int(job_id)), None,
                executor="interactive")
     # Warteschlange: wartende KI-Jobs nach Ablauf der Wartezeit erneut starten (manuelle zuerst)
+    # 0.114: SEC-Kennzahlen der Aktien im Bestand – täglich, unabhängig vom Schalter „Automatische Suche“
+    from app.discovery import holdings as H
+
+    s.register("discovery_holdings", lambda ctx: H.run_scheduled(ctx), CronTrigger(hour=6, minute=17),
+               executor="discovery")
     s.register("discovery_wake", lambda ctx: {"geweckt": J.wake_waiting(ctx)}, IntervalTrigger(minutes=1))
     _recover_once(s.ctx)
     schedule(s)
@@ -79,6 +85,32 @@ def _until(v: Any) -> str:
 def _back(target: str, **q: Any) -> RedirectResponse:
     qs = urlencode({k: v for k, v in q.items() if v not in (None, "")})
     return RedirectResponse(target + (("?" + qs) if qs else ""), status_code=303)
+
+
+def _safe_back(back: Any, default: str) -> str:
+    """Rücksprungziel aus dem Formular: nur innerhalb von Discovery bzw. Watchlist (nie auf fremde Adressen)."""
+    b = str(back or "")
+    ok = (b.startswith(BASE) or b.startswith("/watchlist")) and "//" not in b and "\\" not in b
+    return b if ok else default
+
+
+def _with_msg(target: str, **q: Any) -> RedirectResponse:
+    """Weiterleitung mit Meldung – hängt an vorhandene Abfrageparameter an (Filter bleiben erhalten)."""
+    qs = urlencode({k: v for k, v in q.items() if v not in (None, "")})
+    path, _, frag = target.partition("#")
+    url = path + ((("&" if "?" in path else "?") + qs) if qs else "") + (("#" + frag) if frag else "")
+    return RedirectResponse(url, status_code=303)
+
+
+def _observe_msg(name: str, r: dict[str, Any]) -> dict[str, str]:
+    """Meldung nach „Beobachten“ (Schlüssel ``msg`` oder ``err``)."""
+    if not r.get("ok"):
+        return {"err": f"„{name}“ nicht aufgenommen: {r.get('error') or 'unbekannter Fehler'}"}
+    if not r.get("listed"):
+        return {"msg": f"„{name}“ wird beobachtet – {r.get('note')}."}
+    if r.get("already"):
+        return {"msg": f"„{name}“ steht bereits in der Liste „{r['list']}“ – kein zweiter Eintrag."}
+    return {"msg": f"„{name}“ wird beobachtet (Liste „{r['list']}“)."}
 
 
 def _amount(v: Any) -> float:
@@ -108,9 +140,11 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         _recover_once(ctx)
         sort = sort if sort in SV.SORTS else SV.DEFAULT_SORT
-        data = SV.radar(ctx, cat=cat if cat in SV.CATEGORIES else "", sort=sort, q=q[:60], show_all=bool(alle))
-        every = SV.radar(ctx, show_all=True)["cards"]
+        every = SV.all_cards(ctx)  # 0.114: Karten einmal bauen – Liste, Zähler und Gesamtzahl daraus
+        data = SV.radar(ctx, cat=cat if cat in SV.CATEGORIES else "", sort=sort, q=q[:60], show_all=bool(alle),
+                        base=every)
         return render(request, "discovery.html", active="discovery", cards=data["cards"], cat=cat, sort=sort, q=q,
+                      watch_count=W.count_watched(ctx.db),
                       alle=alle, cats=SV.CATEGORIES, counts=SV.category_counts(every), sorts=SV.SORTS,
                       last_run=data["last_run"], msg=msg, err=err, st=EN.ai_status(ctx),
                       prog=EN.screening_progress(ctx), jobs=J.recent(ctx.db, 8), focus_job=job,
@@ -268,7 +302,12 @@ def make_router() -> APIRouter:
         d = SV.detail_context(ctx, cid, a, _amount(betrag) if betrag else FIT.DEFAULT_AMOUNT)
         if d is None:
             raise HTTPException(404)
+        from app.watchlist.service import watchlist_service
+
+        members = W.memberships(ctx.db, d["co"])
         return render(request, "discovery_company.html", active="discovery", msg=msg, err=err, focus_job=job,
+                      watch_members=members, watch_lists=[dict(r) for r in watchlist_service(ctx).lists()],
+                      watched=bool(members) or d["co"]["status"] == "beobachten",
                       statuses=SV.STATUSES, st=EN.ai_status(ctx), labels=F.LABELS, pct_keys=F.PCT, bars=bars,
                       ripeness=EN.RIPENESS, open_fit=bool(betrag),
                       nash_prov=NASH.PROVENANCE, nash_method=NASH.METHOD, nash_src=(NASH.SOURCE_VIDEO,
@@ -322,29 +361,33 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         form = await request.form()
         st = str(form.get("status", ""))
-        if not SV.set_status(ctx.db, cid, st):
+        if st not in SV.STATUSES:
             raise HTTPException(400)
-        back = str(form.get("back", ""))
-        target = back if back.startswith(BASE) and "//" not in back else f"{BASE}/c/{cid}"
+        co = SV.company(ctx.db, cid)
+        if co is None:
+            raise HTTPException(404)
+        target = _safe_back(form.get("back"), f"{BASE}/c/{cid}")
+        if st == "beobachten":  # 0.114: wie der Knopf „Beobachten“ – Status und Standardliste, nie doppelt
+            return _with_msg(target, **_observe_msg(co["name"], W.observe(ctx, cid)))
+        SV.set_status(ctx.db, cid, st)  # verwerfen/zurückstellen/zurücksetzen ändert keine Listenmitgliedschaft
         return RedirectResponse(target, status_code=303)
 
-    @router.post(BASE + "/c/{cid}/watchlist")
-    async def to_watchlist(request: Request, cid: int) -> Response:
+    @router.post(BASE + "/c/{cid}/beobachten")
+    async def observe(request: Request, cid: int) -> Response:
+        """„Beobachten“ (0.114): Status setzen und in die gewählte Liste aufnehmen – kein KI- oder Netzaufruf."""
         ctx = get_ctx(request)
         co = SV.company(ctx.db, cid)
         if co is None:
             raise HTTPException(404)
-        from app.watchlist.service import watchlist_service
+        form = await request.form()
+        raw = str(form.get("list") or "")
+        res = W.observe(ctx, cid, int(raw) if raw.isdigit() else None)
+        return _with_msg(_safe_back(form.get("back"), f"{BASE}/c/{cid}"), **_observe_msg(co["name"], res))
 
-        ws = watchlist_service(ctx)
-        entry, errs, _ = ws.resolve("security", co.get("yahoo_symbol") or co["ticker"])
-        if entry is None:
-            return _back(f"{BASE}/c/{cid}", err="; ".join(errs))
-        entry["name"] = co["name"]
-        _id, errs = ws.add(ws.default_id(), entry)
-        if errs:
-            return _back(f"{BASE}/c/{cid}", err="; ".join(errs))
-        return _back(f"{BASE}/c/{cid}", msg="Zur Watchlist hinzugefügt.")
+    @router.post(BASE + "/c/{cid}/watchlist")
+    async def to_watchlist(request: Request, cid: int) -> Response:
+        """Früherer Knopf „Zur Watchlist“ (bis 0.113) – bleibt als Adresse erhalten und entspricht „Beobachten“."""
+        return await observe(request, cid)
 
     @router.get(BASE + "/c/{cid}/vergleich", response_class=HTMLResponse)
     def compare(request: Request, cid: int, a: int = 0, b: int = 0) -> HTMLResponse:

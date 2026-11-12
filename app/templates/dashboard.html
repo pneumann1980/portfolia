@@ -152,4 +152,22 @@
     {% endif %}
   </section>
 </div>
+{% if watch %}
+<section class="card" id="beobachtet-kachel" aria-labelledby="watch-h" style="margin-top:16px">
+  {% macro wmover(it, up) -%}
+    {% set wc = watch.link.get(it.id) %}
+    <a class="list-item" href="{{ ('/discovery/c/' ~ wc) if wc else ('/watchlist/item/' ~ it.id) }}">
+      <span class="grow"><span class="title">{{ it.label }}</span><span class="meta">{{ it.sym }}{% if it.snap.price_eur %} · {{ it.snap.price_eur|price }}{% endif %}</span></span>
+      <span class="delta {{ 'up' if up else 'down' }}">{{ '▲' if up else '▼' }} {{ it.snap.change_24h|pct }}</span>
+    </a>
+  {%- endmacro %}
+  <div class="card-head"><h2 id="watch-h">Beobachtet <span class="badge">{{ watch.count }}</span></h2><a class="btn sm ghost" href="/watchlist">Alle</a></div>
+  {% if watch.up or watch.down %}
+  <div class="movers">
+    <div><h3 class="muted" style="margin-bottom:4px">Gewinner (24h)</h3><div class="list">{% for it in watch.up %}{{ wmover(it, True) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
+    <div><h3 class="muted" style="margin-bottom:4px">Verlierer (24h)</h3><div class="list">{% for it in watch.down %}{{ wmover(it, False) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
+  </div>
+  {% else %}<p class="hint">Noch keine Kursbewegungen für die beobachteten Titel – die Marktdaten werden beim Öffnen von „Beobachtet“ aktualisiert.</p>{% endif %}
+</section>
+{% endif %}
 {% endblock %}
