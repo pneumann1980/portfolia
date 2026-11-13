@@ -373,7 +373,7 @@ def test_manual_add_analyse_detail_page_and_versions(app_client, monkeypatch):
         assert gone not in page, gone  # alte Methode und Bezeichnungen nicht mehr angezeigt
     assert page.count("<details") >= 8 and "Fehlende KI-Teile ergänzen ·" not in page  # Details eingeklappt
     assert c.get("/discovery/t/ALPH", follow_redirects=False).headers["location"] == f"/discovery/c/{cid}"
-    assert "noch nicht im Discovery-Radar" in c.get("/discovery/t/ZZZZ").text
+    assert "noch nicht unter den Vorschlägen" in c.get("/discovery/t/ZZZZ").text
     again = c.post(f"/discovery/c/{cid}/analyse", data={"csrf_token": c.token, "mode": "daten"},
                    follow_redirects=False)
     assert "unver%C3%A4ndert" in again.headers["location"]
