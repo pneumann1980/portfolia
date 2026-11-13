@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "discovery_macros.html" import jobstate, partstate with context %}
 {% block title %}Discovery-Protokoll{% endblock %}
-{% block heading %}<a href="/discovery" class="hint">Discovery</a> › Ausführungsprotokoll{% endblock %}
+{% block heading %}<a href="/watchlist" class="hint">Watchlist</a> › Ausführungsprotokoll{% endblock %}
 {% block content %}
 <div class="stack disc-page">
 {% if jb %}
@@ -18,7 +18,7 @@
   {% if r.themen %}<h3>Themen (KI)</h3>{% for t in r.themen %}<details class="box"><summary><b>{{ t.thema }}</b> · Ausgangsbelege {{ t.belege|join(', ') }}</summary>
     <p><b>Fakten:</b></p><ul class="plain-list">{% for f in t.fakten %}<li>{{ f.text }} <span class="hint">({{ f.belege|join(', ') }})</span></li>{% endfor %}</ul>
     <p><b>Hypothese</b> <span class="badge warn">Einschätzung</span>: {{ t.hypothese }}</p><p><b>Gegenargument:</b> {{ t.gegenargument }}</p></details>{% endfor %}{% endif %}
-  {% if cands %}<h3>Kandidaten dieses Laufs</h3><div class="table-wrap"><table class="compact"><thead><tr><th>Unternehmen</th><th>Suchweg</th><th>Thema</th><th>Ergebnis</th><th class="num">Priorität</th><th>Begründung</th></tr></thead><tbody>
+  {% if cands %}<h3>Vorschläge dieses Laufs</h3><div class="table-wrap"><table class="compact"><thead><tr><th>Unternehmen</th><th>Suchweg</th><th>Thema</th><th>Ergebnis</th><th class="num">Priorität</th><th>Begründung</th></tr></thead><tbody>
     {% for k in cands %}<tr><td>{% if k.company_id %}<a href="/discovery/c/{{ k.company_id }}">{{ k.name }}</a>{% else %}{{ k.name }}{% endif %} <span class="hint">{{ k.ticker or '' }}</span></td><td>{{ k.path }}</td><td>{{ k.theme or '–' }}</td><td>{{ {'neu': 'neu entdeckt', 'bekannt': 'bereits bekannt', 'verworfen': 'verworfen'}.get(k.status, k.status) }}</td><td class="num">{{ k.priority|num(1) if k.priority is not none else '–' }}</td><td class="hint">{{ k.reason }}</td></tr>{% endfor %}
   </tbody></table></div>{% endif %}
   <details class="box"><summary>Ergebnis (Rohdaten)</summary><pre class="disc-pre">{{ r|tojson(indent=1) }}</pre></details>

@@ -54,9 +54,9 @@
     Anbieter und Modelle kommen aus <a href="/settings/ki">KI &amp; Modelle</a>; Discovery wechselt nie selbst auf ein anderes Modell oder einen kostenpflichtigen Anbieter. <a href="/discovery/protokoll">Ausführungsprotokoll</a></p>
   </details>
   <details class="box"><summary>Zeitplan der automatischen Schritte</summary>
-    <table class="compact"><thead><tr><th>Schritt</th><th>Takt</th><th>Nächster Lauf</th><th>KI</th></tr></thead><tbody>
+    <div class="table-wrap"><table class="compact"><thead><tr><th>Schritt</th><th>Takt</th><th>Nächster Lauf</th><th>KI</th></tr></thead><tbody>
     {% for p in st.plan %}<tr><td>{{ p.label }}</td><td>{{ {0: 'aus', 24: 'täglich', 168: 'wöchentlich'}.get(p.hours, p.hours ~ ' h') }}</td><td>{{ p.next|datetime_de if p.next and st.auto_enabled else ('–' if p.hours and st.auto_enabled else 'aus') }}</td><td>{{ 'ja (im Budget)' if p.uses_ai else 'nein' }}</td></tr>{% endfor %}
-    </tbody></table>{% if not st.auto_enabled %}<p class="hint">Automatische Suche ist aus – die Zeitpläne bleiben gespeichert (<a href="#disc-einstellungen">Discovery-Einstellungen</a>).</p>{% endif %}</details>
+    </tbody></table></div>{% if not st.auto_enabled %}<p class="hint">Automatische Suche ist aus – die Zeitpläne bleiben gespeichert (<a href="#disc-einstellungen">Discovery-Einstellungen</a>).</p>{% endif %}</details>
 </section>
 
 <details class="card disc-sec" id="jobs"{% if st.running %} open{% endif %}>
@@ -64,7 +64,7 @@
   {% if jobs %}<div class="table-wrap"><table class="compact disc-jobs"><thead><tr><th>Job</th><th>Art</th><th>Status</th><th>Schritt / Ergebnis</th><th>Zeit</th></tr></thead><tbody>
     {% for j in jobs %}<tr><td class="nowrap"><a href="/discovery/protokoll?job={{ j.id }}">#{{ j.id }}</a></td><td>{{ j.kind_label }}{% if j.company_id %} <a class="hint" href="/discovery/c/{{ j.company_id }}">Unternehmen</a>{% endif %}<div class="hint">{{ j.trigger }}</div></td>
       <td>{{ jobstate(j.status, j.status_label) }}</td>
-      <td>{% if j.waiting %}wartet bis {{ j.wait_until|datetime_de }}{% if j.wait_reason %}<div class="hint">{{ j.wait_reason }}</div>{% endif %}<form method="post" action="/discovery/jobs/{{ j.id }}/abbrechen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Abbrechen</button></form>{% elif j.active %}{{ j.step or 'wartet auf freien Platz' }}{% else %}{% set r = j.result %}{% if j.kind in ('screening', 'voll') and r.bestaetigung %}{{ r.bestaetigung.geprueft }} geprüft, {{ r.bestaetigung.bestaetigt }} bestätigt ({{ r.bestaetigung.neu }} neu){% elif j.kind == 'ki_discovery' and r.kandidaten is defined %}{{ r.themen|length }} Themen, {{ r.neu }} neue / {{ r.bekannt }} bekannte Kandidaten, {{ r.verworfen|length }} verworfen{% elif j.kind == 'news' and r.mentions is defined %}{{ r.mentions }} Nennungen, {{ r.new_companies }} neue Unternehmen{% elif j.kind == 'analyse' and r.ai_state %}KI: {{ r.ai_state }}{% endif %}{% endif %}
+      <td>{% if j.waiting %}wartet bis {{ j.wait_until|datetime_de }}{% if j.wait_reason %}<div class="hint">{{ j.wait_reason }}</div>{% endif %}<form method="post" action="/discovery/jobs/{{ j.id }}/abbrechen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Abbrechen</button></form>{% elif j.active %}{{ j.step or 'wartet auf freien Platz' }}{% else %}{% set r = j.result %}{% if j.kind in ('screening', 'voll') and r.bestaetigung %}{{ r.bestaetigung.geprueft }} geprüft, {{ r.bestaetigung.bestaetigt }} bestätigt ({{ r.bestaetigung.neu }} neu){% elif j.kind == 'ki_discovery' and r.kandidaten is defined %}{{ r.themen|length }} Themen, {{ r.neu }} neue / {{ r.bekannt }} bekannte Vorschläge, {{ r.verworfen|length }} verworfen{% elif j.kind == 'news' and r.mentions is defined %}{{ r.mentions }} Nennungen, {{ r.new_companies }} neue Unternehmen{% elif j.kind == 'analyse' and r.ai_state %}KI: {{ r.ai_state }}{% endif %}{% endif %}
         {% if j.error %}<div class="hint disc-err">{{ j.error }}</div>{% endif %}</td>
       <td class="nowrap hint">{{ (j.started_at or j.created_at)|datetime_de }}</td></tr>{% endfor %}
   </tbody></table></div>{% else %}<p class="hint">Noch keine Jobs.</p>{% endif %}
@@ -79,7 +79,7 @@
     <div><span class="label">Vorauswahl berechnet</span><b>{{ (prog.prescreen.bewertet or 0)|num(0) }}</b><span class="hint">{{ prog.prescreen.jahre or '' }}{% if prog.prescreen.at %} · {{ prog.prescreen.at|datetime_de }}{% endif %}</span></div>
     <div><span class="label">Bestätigung ausstehend</span><b>{{ prog.pending|num(0) }}</b><span class="hint">vorausgewählt, noch nicht geprüft</span></div>
     <div><span class="label">Mit SEC-Daten geprüft</span><b>{{ prog.checked|num(0) }}</b><span class="hint">{{ prog.states.get('bestaetigt', 0) }} bestätigt · {{ prog.states.get('verworfen', 0) }} verworfen</span></div>
-    <div><span class="label">Kandidaten (30 Tage)</span><b>{{ prog.candidates_30d.get('neu', 0) }} neu</b><span class="hint">{{ prog.candidates_30d.get('bekannt', 0) }} bekannt · {{ prog.candidates_30d.get('verworfen', 0) }} verworfen</span></div>
+    <div><span class="label">Vorschläge (30 Tage)</span><b>{{ prog.candidates_30d.get('neu', 0) }} neu</b><span class="hint">{{ prog.candidates_30d.get('bekannt', 0) }} bekannt · {{ prog.candidates_30d.get('verworfen', 0) }} verworfen</span></div>
     <div><span class="label">Analysiert / KI ausstehend</span><b>{{ prog.analysed }} / {{ prog.pending_ai }}</b><span class="hint">Unternehmen mit Analyse / ohne vollständigen KI-Teil</span></div>
     <div><span class="label">Fehler / ohne Daten</span><b>{{ prog.errors }} / {{ prog.states.get('keine_daten', 0) }}</b><span class="hint">Abruf fehlgeschlagen / keine Umsatzangaben</span></div>
   </div>

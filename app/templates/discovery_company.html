@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "discovery_macros.html" import origin, money, val, src, scorechip, scorecard, criterion, pts, prov, bar, alertbox, numline, preview_block with context %}
-{% block title %}{{ co.name }} – Discovery{% endblock %}
+{% block title %}{{ co.name }} – Watchlist{% endblock %}
 {% block heading %}<a href="/watchlist" class="hint">Watchlist</a> › {{ co.ticker }}{% endblock %}
 {% set m = res.market if res else {} %}
 {% set ccy = (res.fundamentals.currency if res else '') or '' %}
@@ -229,7 +229,7 @@
   {% if signals %}<h3>Signale</h3><div class="table-wrap"><table class="compact"><thead><tr><th>Datum</th><th>Art</th><th>Signal</th><th class="num">Quellen</th></tr></thead><tbody>
     {% for s in signals %}<tr><td class="nowrap">{{ (s.published_at or s.observed_at)[:10] }}</td><td>{{ signal_kinds.get(s.kind, s.kind) }}</td><td>{% if s.url %}<a href="{{ s.url }}" rel="noopener noreferrer" target="_blank">{{ s.title }}</a>{% else %}{{ s.title }}{% endif %}{% if s.detail %}<div class="hint">{{ s.detail|truncate(240, false, ' …', 0) }}</div>{% endif %}</td><td class="num">{{ s.n_sources }}</td></tr>{% endfor %}
   </tbody></table></div>{% endif %}
-  {% if candidates %}<h3>Herkunft als Kandidat</h3><div class="table-wrap"><table class="compact"><thead><tr><th>Datum</th><th>Suchweg</th><th>Status</th><th class="num">Priorität</th><th>Begründung</th></tr></thead><tbody>
+  {% if candidates %}<h3>Herkunft als Vorschlag</h3><div class="table-wrap"><table class="compact"><thead><tr><th>Datum</th><th>Suchweg</th><th>Status</th><th class="num">Priorität</th><th>Begründung</th></tr></thead><tbody>
     {% for k in candidates %}<tr><td class="nowrap">{{ k.created_at|datetime_de }}</td><td>{{ paths.get(k.path, k.path) }}{% if k.theme %}<div class="hint">{{ k.theme }}</div>{% endif %}</td><td>{{ {'neu': 'neu entdeckt', 'bekannt': 'bereits bekannt', 'verworfen': 'verworfen'}.get(k.status, k.status) }}</td><td class="num">{{ pts([k.priority, 100]|min) if k.priority is not none else '–' }}</td><td class="hint">{{ k.reason|truncate(260, false, ' …', 0) }}</td></tr>{% endfor %}
   </tbody></table></div><p class="hint">Priorität 0–100: nur zur Reihenfolge, kein Qualitätsurteil.</p>{% endif %}
 </details>

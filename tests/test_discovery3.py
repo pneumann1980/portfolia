@@ -292,7 +292,7 @@ def test_automatic_refresh_new_filing_first_then_missing_then_old(app_client, mo
     assert res["neuer_bericht"] == 1 and seen == []  # nie KI
     assert len(SV.analyses(ctx.db, a)) >= 2  # neuer SEC-Bericht → neue Version
     page = c.get("/discovery").text
-    assert "Alle Kandidaten automatisch aktualisieren" in page and 'value="30" selected' in page
+    assert "Alle Vorschläge automatisch aktualisieren" in page and 'value="30" selected' in page
     form = {"csrf_token": c.token, "refresh_days": "7", "auto_analyse_per_run": "25"}
     r = c.post("/discovery/einstellungen", data=form, follow_redirects=False)
     assert r.status_code == 303 and ctx.settings.get("discovery.refresh_days") == 7

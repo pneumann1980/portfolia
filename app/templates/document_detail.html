@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Beleg prüfen{% endblock %}
-{% block heading %}PDF &amp; Screenshot · Beleg{% endblock %}
+{% block heading %}<a href="/journal/documents" class="hint">PDF &amp; Screenshot</a> › Beleg{% endblock %}
 {% macro boxq(x) %}{{ '%.4f,%.4f,%.4f,%.4f'|format(x[0], x[1], x[2], x[3]) }}{% endmacro %}
 {% block content %}
 {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}

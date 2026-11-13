@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Integritätsprüfung{% endblock %}
-{% block heading %}Datenqualität · Integritätsprüfung{% endblock %}
+{% block heading %}<a href="/quality" class="hint">Datenqualität</a> › Integritätsprüfung{% endblock %}
 {% from "partials/progress.html" import bar %}
 {% macro iurl(category=None, severity=None) -%}
 /quality/integrity?{% if category %}category={{ category }}{% elif f.category %}category={{ f.category }}{% endif %}&amp;{% if severity %}severity={{ severity }}{% elif f.severity %}severity={{ f.severity }}{% endif %}

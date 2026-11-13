@@ -38,7 +38,7 @@ NAV = [
     ("quality", "/quality", "Datenqualität", "check"),
     ("settings", "/settings", "Einstellungen", "gear"),
 ]
-# Seiten ohne eigenen Menüpunkt → Menüpunkt, der als aktiv markiert wird („Entdecken“ gehört zu „Beobachtet“)
+# Seiten ohne eigenen Menüpunkt → Menüpunkt, der als aktiv markiert wird (Vorschläge gehören zur Watchlist)
 NAV_ALIASES = {"discovery": "watchlist"}
 
 

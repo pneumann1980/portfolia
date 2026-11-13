@@ -59,6 +59,8 @@ def eur_compact(v: Any, sign: bool = False) -> str:
         return "–"
     f = float(v)
     a = abs(f)
+    if a >= 1e9:
+        return f"{num(f / 1e9, 2, sign)}{NBSP}Mrd.{NBSP}€"
     if a >= 1e6:
         return f"{num(f / 1e6, 2, sign)}{NBSP}Mio.{NBSP}€"
     if a >= 1e4:

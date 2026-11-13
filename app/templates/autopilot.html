@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Autopilot{% endblock %}
-{% block heading %}Datenqualität · Autopilot und Importbericht{% endblock %}
+{% block heading %}<a href="/quality" class="hint">Datenqualität</a> › Autopilot und Importbericht{% endblock %}
 {% macro report(run) %}{% set s = run.s %}
   <p><b>{{ s.tasks }} offene Aufgaben</b> · {{ s.hints }} Hinweise{% if not s.first %} · <b>{{ s.n_new }} neu</b>, {{ s.n_gone }} erledigt/verschwunden seit dem vorigen Durchgang{% endif %}</p>
   {% if s.by_kind %}<p class="hint">{% for k, n in s.by_kind.items() %}{{ kinds.get(k, k) }}: {{ n }}{{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}

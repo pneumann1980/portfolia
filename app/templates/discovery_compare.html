@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "discovery_macros.html" import money with context %}
 {% block title %}Vergleich {{ co.ticker }}{% endblock %}
-{% block heading %}<a href="/discovery" class="hint">Discovery</a> › <a href="/discovery/c/{{ co.id }}" class="hint">{{ co.ticker }}</a> › Vergleich{% endblock %}
+{% block heading %}<a href="/watchlist" class="hint">Watchlist</a> › <a href="/discovery/c/{{ co.id }}" class="hint">{{ co.ticker }}</a> › Vergleich{% endblock %}
 {% block content %}
 <section class="card">
   <div class="card-head"><h2>Analyseversionen vergleichen</h2></div>
