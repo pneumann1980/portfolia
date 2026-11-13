@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "partials/account_tools.html" import account_tools with context %}
 {% block title %}Konto {{ a.name }}{% endblock %}
-{% block heading %}Konto: {{ a.name }}{% endblock %}
+{% block heading %}<a href="/accounts" class="hint">Konten</a> › {{ a.name }}{% endblock %}
 {% block content %}
 <div class="stack">
   <p class="hint"><a href="/accounts">← Konten</a></p>

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Abweichungsentwicklung{% endblock %}
-{% block heading %}Datenqualität · Abweichungsentwicklung{% endblock %}
+{% block heading %}<a href="/quality" class="hint">Datenqualität</a> › Abweichungsentwicklung{% endblock %}
 {% import "partials/diag_macros.html" as dm with context %}
 {% block content %}
 {% set dq_tab = 'belege' %}{% include "partials/dq_nav.html" %}

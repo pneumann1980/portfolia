@@ -65,7 +65,8 @@
     </header>
     <main class="content" id="content">
       <div id="progress-active" hx-get="/progress/active" hx-trigger="load" hx-swap="outerHTML"></div>
-      {% for al in alerts %}
+      {% set _ap = request.url.path %}
+      {% for al in alerts if al.level == 'crit' or _ap == '/' or (al.href and _ap.startswith(al.href.split('#')[0].split('?')[0])) %}
         <div class="alert {{ al.level }}" role="status">
           <span class="icon">{% if al.level == 'crit' %}!{% elif al.level == 'warn' %}!{% else %}i{% endif %}</span>
           <div style="flex:1">{{ al.text }} {% if al.href %}<a href="{{ al.href }}">Details</a>{% endif %}

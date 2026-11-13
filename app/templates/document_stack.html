@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Belegstapel{% endblock %}
-{% block heading %}PDF &amp; Screenshot · Stapel{% endblock %}
+{% block heading %}<a href="/journal/documents" class="hint">PDF &amp; Screenshot</a> › Stapel{% endblock %}
 {% block content %}
 {% for e in errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ e }}</div></div>{% endfor %}
 {% if msg %}<div class="alert" role="status"><span class="icon">i</span><div>{{ msg }}</div></div>{% endif %}

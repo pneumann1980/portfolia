@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/diag_macros.html" as dm with context %}
 {% block title %}Vorgang prüfen{% endblock %}
-{% block heading %}Datenqualität · Vorgang prüfen{% endblock %}
+{% block heading %}<a href="/quality" class="hint">Datenqualität</a> › Vorgang prüfen{% endblock %}
 {% set level = {'belegt': ('Nachgewiesen', 'Die Identität des Vorgangs ist durch Kennung bzw. Hash bzw. Kennzeichen in den Daten belegt.'),
                 'wahrscheinlich': ('Wahrscheinlich – nicht bewiesen', 'Mehrere unabhängige Übereinstimmungen; ein Identitätsbeleg (gemeinsame Kennung) fehlt.'),
                 'verdacht': ('Ungeklärt – Verdacht', 'Das Muster passt, ein entscheidender Beleg fehlt oder eine legitime Erklärung ist möglich.'),

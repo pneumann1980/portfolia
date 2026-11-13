@@ -180,6 +180,8 @@
       var col = (n.colors || {})[m] || t.muted;
       var o = { name: n.name, value: n.value, _id: n.id, _share: n.share, _other: !!n.other, _members: n.members || [],
         itemStyle: { color: col }, label: { color: onFill(col) } };
+      // große Segmente im Außenring: Beschriftung entlang des Bogens (dort ist Platz), kleine radial
+      if (depth === 3 && n.share >= 10) { o._wide = true; o.label.rotate = "tangential"; }
       if (n.children) o.children = n.children.map(function (c) { return conv(c, depth + 1); });
       return o;
     }
@@ -229,7 +231,15 @@
             { r0: narrow ? "42%" : "39%", r: narrow ? "64%" : "61%", label: { rotate: "tangential", fontSize: 10, minAngle: 16,
               formatter: function (p) { return p.name.length > 18 ? p.name.slice(0, 17) + "…" : p.name; } } },
             { r0: narrow ? "64%" : "61%", r: narrow ? "96%" : "94%", label: { rotate: "radial", fontSize: 10, minAngle: 7,
-              formatter: function (p) { var n = p.name.length > 14 ? p.name.slice(0, 13) + "…" : p.name; return n + " " + share(p.data._share); } } },
+              formatter: function (p) {
+                // Beschriftung muss in die Ringbreite passen (sonst ragt sie über den Diagrammrand)
+                var sh = share(p.data._share);
+                var rad = Math.min(el.clientWidth, el.clientHeight) / 2;
+                var room = p.data._wide ? 2 * Math.PI * rad * 0.78 * p.data._share / 100 : rad * (narrow ? 0.32 : 0.33);
+                var max = Math.max(3, Math.floor((room - 10) / 5.6) - sh.length - 1);
+                var n = p.name.length > max ? p.name.slice(0, max - 1) + "…" : p.name;
+                return n + " " + sh;
+              } } },
           ],
         }],
         graphic: [{ type: "text", left: "center", top: "middle", style: { text: "Gesamt\n" + eurCompact(total), fill: t.ink, fontSize: narrow ? 10 : 12, fontWeight: 650, align: "center", lineHeight: 15 } }],

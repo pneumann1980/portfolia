@@ -173,7 +173,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 .topbar {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; gap: 12px;
-  padding: 10px 16px;
+  padding: 10px 16px; min-height: 52px;  /* gleiche Höhe mit und ohne Aktionsknöpfe */
   background: color-mix(in srgb, var(--page) 88%, transparent);
   backdrop-filter: saturate(1.4) blur(8px);
   border-bottom: 1px solid var(--border);
@@ -1340,3 +1340,18 @@ span.disc-o-reported, span.disc-o-derived, span.disc-o-estimated, span.disc-o-mi
 .suggest-list .suggest-empty { cursor: default; }
 details.disc-sec > section.card, details.disc-sec .disc-status > section.card { border: 0; padding: 0; margin: 0; box-shadow: none; background: none; }
 details.disc-sec > section.card > .card-head h2, details.disc-sec .disc-status > section.card > .card-head h2 { font-size: 1rem; }
+
+/* 0.116 Review-Korrekturen */
+@media (min-width: 900px) { table.journal td.actions { white-space: nowrap; } }
+/* Schmale Bildschirme: nur die wichtigsten Spalten, der Rest steht im Detailfenster (kein seitliches Scrollen) */
+@media (max-width: 699px) {
+  .pos-table th:nth-child(n+2), .pos-table td:nth-child(n+2) { display: none; }
+  .pos-table th:nth-child(4), .pos-table td:nth-child(4), .pos-table th:nth-child(5), .pos-table td:nth-child(5) { display: table-cell; }
+  .watch-table th:nth-child(n+4), .watch-table td:nth-child(n+4) { display: none; }
+  .pos-table td .name, .watch-table td .name { min-width: 0; }
+  .pos-table td .name { max-width: 42vw; }
+  .watch-table td .name { max-width: 46vw; }
+  .pos-table td .name .t b, .watch-table td .name .t b { max-width: 100%; }
+  .pos-table td .name .t small, .watch-table td .name .t small { white-space: normal; }
+  .pos-table th, .pos-table td, .watch-table th, .watch-table td { padding-left: 4px; padding-right: 4px; }
+}

@@ -503,6 +503,7 @@ def settings_page(request: Request, saved: str = "", err: str = "") -> HTMLRespo
                            ctx.config.coingecko_plan, bool(ctx.config.secrets.coingecko_api_key))
     next_runs = ctx.scheduler.next_runs() if ctx.scheduler else {}
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,
+                  has_tx=ctx.recorded_portfolio() is not None,
                   detected_cash=(led.cash_tracked if led else {}), secrets=ctx.config.secrets.status(),
                   config=ctx.config, saved=saved, err=err[:400], backups=backups, exports=exports, archive=archive,
                   export_job=job, ds_summary=ds_summary, pp=price_plan, next_runs=next_runs,

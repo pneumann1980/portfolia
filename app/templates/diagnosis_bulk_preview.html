@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/diag_macros.html" as dm with context %}
 {% block title %}Sammelvorschau{% endblock %}
-{% block heading %}Datenqualität · Sammelvorschau{% endblock %}
+{% block heading %}<a href="/quality" class="hint">Datenqualität</a> › Sammelvorschau{% endblock %}
 {% block content %}
 {% set dq_tab = 'faelle' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">

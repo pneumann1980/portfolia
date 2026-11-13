@@ -16,7 +16,7 @@
 {% include "partials/discovery_status.html" %}
 
 <section class="card disc-filters" id="radar">
-  <div class="card-head"><h2>Discovery-Radar <span class="badge">{{ n_total }}</span></h2></div>
+  <div class="card-head"><h2>Vorschläge <span class="badge">{{ n_total }}</span></h2></div>
   <div class="seg" role="group" aria-label="Kategorie">
     <a class="{{ 'active' if not cat }}" href="/discovery?sort={{ sort }}#radar">Alle offenen</a>
     {% for k, label in cats.items() %}<a class="{{ 'active' if cat == k }}" href="/discovery?cat={{ k }}&sort={{ sort }}#radar" title="{{ label }}">{{ label }} <span class="badge">{{ counts[k] }}</span></a>{% endfor %}
@@ -72,7 +72,7 @@
 {% endfor %}
 </div>
 {% else %}
-<section class="card"><p class="hint">{% if n_total %}Keine Unternehmen in dieser Auswahl.{% else %}Noch keine Kandidaten. „KI-Discovery starten“ schlägt Unternehmen mit Vorschau vor (2 KI-Aufrufe); „Fundamentalscreening starten“ durchsucht das SEC-Universum ohne KI; einzelne Unternehmen lassen sich direkt aufnehmen.{% endif %}</p></section>
+<section class="card"><p class="hint">{% if n_total %}Keine Unternehmen in dieser Auswahl.{% else %}Noch keine Vorschläge. „KI-Discovery starten“ schlägt Unternehmen mit Vorschau vor (2 KI-Aufrufe); „Fundamentalscreening starten“ durchsucht das SEC-Universum ohne KI; einzelne Unternehmen lassen sich direkt aufnehmen.{% endif %}</p></section>
 {% endif %}
 
 {% include "partials/discovery_forward.html" %}

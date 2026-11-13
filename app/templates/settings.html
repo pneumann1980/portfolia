@@ -166,7 +166,7 @@
 
 <section class="card" id="export">
   <div class="card-head"><h2>ZIP-Sicherungen (Import-Format)</h2>
-    <div class="row"><a class="btn sm" href="/journal/export.zip" download>Gesamtexport herunterladen</a>
+    <div class="row">{% if has_tx %}<a class="btn sm" href="/journal/export.zip" download>Gesamtexport herunterladen</a>{% else %}<span class="hint">Gesamtexport: erst mit Buchungen verfügbar</span>{% endif %}
       <button class="btn sm" hx-post="/actions/export" hx-target="#export-msg" hx-indicator="#ex-spin">Jetzt sichern</button>
       <span id="ex-spin" class="htmx-indicator spinner"></span><span id="export-msg"></span></div></div>
   {% if saved == 'restore_apply' %}<div class="alert good"><span class="icon">✓</span><div>Zusatzdaten aus dem Export übernommen{% if restore and restore.counts %}: {{ restore.counts.settings }} Einstellungen, {{ restore.counts.asset_sources }} Kursquellen, {{ restore.counts.prices|num(0) }} Tageskurse, {{ restore.counts.datasources }} Datenquellen{% endif %}. API-Keys unter Datenquellen neu eingeben.</div></div>{% endif %}

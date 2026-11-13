@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/diag_macros.html" as dm with context %}
 {% block title %}Vorschau Korrektur{% endblock %}
-{% block heading %}Datenqualität · Vorschau{% endblock %}
+{% block heading %}<a href="/quality" class="hint">Datenqualität</a> › Vorschau{% endblock %}
 {% macro arrow(a, b) %}{% if a == b %}<span class="muted">unverändert</span>{% else %}{{ a }} → <strong>{{ b }}</strong>{% endif %}{% endmacro %}
 {% block content %}
 {% set dq_tab = 'faelle' %}{% include "partials/dq_nav.html" %}

@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}{{ ticker }} – Discovery{% endblock %}
-{% block heading %}<a href="/discovery" class="hint">Discovery</a> › {{ ticker }}{% endblock %}
+{% block title %}{{ ticker }} – Watchlist{% endblock %}
+{% block heading %}<a href="/watchlist" class="hint">Watchlist</a> › {{ ticker }}{% endblock %}
 {% block content %}
 <section class="card">
-  <div class="card-head"><h2>{{ ticker }} ist noch nicht im Discovery-Radar</h2></div>
+  <div class="card-head"><h2>{{ ticker }} ist noch nicht unter den Vorschlägen</h2></div>
   <p class="hint">Aufnehmen prüft den Ticker gegen das SEC-Verzeichnis (nur börsennotierte, bei der SEC registrierte Emittenten) und legt das Unternehmen an. Danach lässt sich die Analyse erstellen.</p>
   <form method="post" action="/discovery/add" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="q" value="{{ ticker }}"><button class="btn primary" type="submit">{{ ticker }} aufnehmen</button></form>
   <a class="btn ghost" href="/discovery">Zum Radar</a>

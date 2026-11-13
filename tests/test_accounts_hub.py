@@ -56,7 +56,7 @@ def test_wallet_card_has_account_tools_and_detail_page(client):
     page = client.get("/accounts").text
     assert f'id="ds-{sid}"' in page and "Konto verwalten" in page and "Wallet SOL" in page
     d = client.get("/accounts/detail?account=Wallet%20SOL")
-    assert d.status_code == 200 and "Konto: Wallet SOL" in d.text and "Ledger SOL" in d.text
+    assert d.status_code == 200 and "Konten</a> › Wallet SOL" in d.text and "Ledger SOL" in d.text
     assert f"/settings/datasources/{sid}" in d.text and "/belege?konto=Wallet%20SOL" in d.text
     r = client.get("/accounts/detail?account=Gibtsnicht", follow_redirects=False)
     assert r.status_code == 303 and "err=" in r.headers["location"]

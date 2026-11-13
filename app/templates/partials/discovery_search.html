@@ -1,6 +1,6 @@
 {# Suchläufe starten und Unternehmen direkt aufnehmen (0.115: auch unter der Watchlist). Erwartet: st, cfg; optional disc_back. #}
 <section class="card" id="aktionen">
-  <div class="card-head"><h2>Kandidaten suchen</h2><span class="hint">läuft im Hintergrund – die Seite muss nicht offen bleiben</span></div>
+  <div class="card-head"><h2>Vorschläge suchen</h2><span class="hint">läuft im Hintergrund – die Seite muss nicht offen bleiben</span></div>
   <div class="disc-start">
     {% if st.startable %}
     <form method="post" action="/discovery/start/ki_discovery" class="disc-start-item" data-primary-start="ki_discovery"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if disc_back %}<input type="hidden" name="back" value="{{ disc_back }}">{% endif %}

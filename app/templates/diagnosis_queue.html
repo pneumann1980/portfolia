@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "partials/diag_macros.html" as dm with context %}
 {% block title %}Entscheidungsliste{% endblock %}
-{% block heading %}Datenqualität · Entscheidungsliste{% endblock %}
+{% block heading %}<a href="/quality" class="hint">Datenqualität</a> › Entscheidungsliste{% endblock %}
 {% block content %}
 {% set dq_tab = 'faelle' %}{% include "partials/dq_nav.html" %}
 <div class="stack diag">

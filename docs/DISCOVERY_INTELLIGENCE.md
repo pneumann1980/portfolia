@@ -1,4 +1,10 @@
-# Discovery & Intelligence (0.115.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe; einfache Einstellungen)
+# Discovery & Intelligence (0.116.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe; einfache Einstellungen)
+
+**Neu in 0.116** (Review-Korrekturen): Begriffe vereinheitlicht – „Watchlist“ ist der Bereich, „Vorschlag“ das
+Ergebnis, „Discovery“ nur noch der Name der Suchfunktion; Brotkrumen überall „Bereich › Seite“; Marktkapitalisierung
+ab 1 Mrd. € in Mrd.; auf schmalen Bildschirmen zeigen Positions- und Watchlist-Tabelle nur die Kernspalten (Rest im
+Detailfenster); Warn- und Infobanner erscheinen nur noch auf der Übersicht und auf ihrer Zielseite (Kritisches
+überall).
 
 **Neu in 0.115** (Abschnitt [0.11](#011-neu-in-0115-eine-watchlist-tabelle-detailfenster-titelsuche)):
 der Bereich heißt „Watchlist“ und ist **eine Tabelle** (Listentitel, beobachtete Unternehmen ohne Liste, offene

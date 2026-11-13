@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Diagnose{% endblock %}
-{% block heading %}Datenqualität · Diagnose{% endblock %}
+{% block heading %}<a href="/quality" class="hint">Datenqualität</a> › Diagnose{% endblock %}
 {% macro qurl(k=None, s=None) -%}
 /quality/diagnose?{% if k %}kind={{ k }}{% endif %}{% if k and s %}&amp;{% endif %}{% if s %}status={{ s }}{% endif %}
 {%- endmacro %}
