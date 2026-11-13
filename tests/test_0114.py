@@ -181,7 +181,7 @@ def test_old_links_and_single_navigation_entry(c):
     for url in ("/watchlist", "/discovery", f"/discovery/c/{alph}"):
         page = c.get(url).text
         assert re.search(nav, page), url  # ein Menüpunkt für beide Ansichten
-        assert "Entdecken &amp; Beobachten" in page and 'class="nav-link" href="/discovery"' not in page
+        assert 'class="nav-link" href="/discovery"' not in page and "Entdecken &amp; Beobachten" not in page
 
 
 def test_brief_uses_stored_data_only(c):
@@ -204,49 +204,175 @@ def card_of(page: str, cid: int) -> str:
     return page.split(f'id="karte-{cid}"')[1].split("</article>")[0]
 
 
-def test_tabs_on_both_views(c):
-    cid_of(c, "ALPH")
-    for url, active in (("/watchlist", "/watchlist"), ("/discovery", "/discovery")):
-        page = c.get(url).text
-        assert '<nav class="tabs" aria-label="Entdecken &amp; Beobachten">' in page, url
-        tabs = page.split('aria-label="Entdecken &amp; Beobachten">')[1].split("</nav>")[0]
-        assert 'href="/watchlist"' in tabs and 'href="/discovery"' in tabs
-        assert re.search(rf'class="active" href="{active}" aria-current="page"', tabs), url
+def row_c(page: str, cid: int) -> str:
+    return page.split(f'id="wc-{cid}"')[1].split("</tr>")[0]
 
 
-def test_watched_view_shows_lists_links_and_analysis_state(c):
+def test_one_watchlist_table_with_marked_suggestions(c):
+    """0.115: eine Tabelle – Listentitel, beobachtete Unternehmen ohne Liste und offene Vorschläge (markiert)."""
     ctx = c.app.state.ctx
     ws = watchlist_service(ctx)
-    alph, beta = cid_of(c, "ALPH"), cid_of(c, "BETA")
+    alph, beta, mtp = cid_of(c, "ALPH"), cid_of(c, "BETA"), cid_of(c, "MTP")
     post(c, f"/discovery/c/{alph}/analyse", mode="daten")
     post(c, f"/discovery/c/{alph}/beobachten")
     SV.set_status(ctx.db, beta, "beobachten")  # Altbestand ohne Liste
-    for sym in ("ALPH.DE", "ZZZZ"):  # anderer Börsenplatz / US-Symbol ohne Discovery-Eintrag
+    for sym in ("ALPH.DE", "ZZZZ"):
         entry, _e, _c = ws.resolve("security", sym)
         ws.add(ws.default_id(), entry)
     ids = {r["quote_id"]: int(r["id"]) for r in ctx.db.q("SELECT id, quote_id FROM watchlist_item")}
     page = c.get("/watchlist").text
-    assert 'href="#add">Titel hinzufügen</a>' in page
+    assert "<title>Watchlist" in page and 'aria-label="Entdecken &amp; Beobachten"' not in page  # keine Reiter mehr
+    assert page.count('<table class="watch-table">') == 1 and 'href="#add">Titel hinzufügen</a>' in page
     linked = row_of(page, ids["ALPH"])
-    assert f'href="/discovery/c/{alph}"' in linked and "Details öffnen" in linked and "Kursverlauf" in linked
-    assert SV.STAGES["daten"] in linked and "Portfolia-Score" in linked and "/65 Daten" in linked
+    assert f'data-panel="/panel/watchlist/item/{ids["ALPH"]}"' in page and 'data-marker="liste"' in page
+    assert SV.STAGES["daten"] in linked and "/65" in linked
     other = row_of(page, ids["ALPH.DE"])
-    assert "/discovery/" not in other and f'href="/watchlist/item/{ids["ALPH.DE"]}"' in other  # kein US-Steckbrief
-    plain = row_of(page, ids["ZZZZ"])
-    assert 'href="/discovery/t/ZZZZ"' in plain and "Analyse suchen" in plain
-    section = page.split('id="ohne-liste"')[1].split("</section>")[0]
-    assert "Beta Photonics" in section and f'action="/discovery/c/{beta}/beobachten"' in section
-    assert 'name="status" value="zurueckgestellt"' in section and "Nicht mehr beobachten" in section
-    r = post(c, f"/discovery/c/{beta}/status", status="zurueckgestellt", back="/watchlist?list=1")
-    assert r.headers["location"] == "/watchlist?list=1" and 'id="ohne-liste"' not in c.get("/watchlist").text
+    assert SV.STAGES["daten"] not in other and "/65" not in other  # anderer Börsenplatz: kein US-Unternehmen
+    sug = row_c(page, mtp)
+    assert f'id="wc-{mtp}" data-marker="vorschlag"' in page and ">Vorschlag</span>" in sug
+    assert f'action="/discovery/c/{mtp}/beobachten"' in sug and 'name="status" value="verworfen"' in sug
+    old = row_c(page, beta)
+    assert f'id="wc-{beta}" data-marker="ohne_liste"' in page and "ohne Liste" in old
+    assert 'name="status" value="zurueckgestellt"' in old and ">In Liste</button>" in old
+    assert f'id="wc-{alph}"' not in page  # beobachtetes Unternehmen steht genau einmal (als Listentitel)
+    # Ansichten: nur Vorschläge, nur eine Liste (eigene Reihenfolge mit Pfeilen)
+    only = c.get("/watchlist?nur=vorschlaege").text
+    assert f'id="wc-{mtp}"' in only and f'id="wc-{beta}"' not in only and 'data-marker="liste"' not in only
+    one = c.get(f"/watchlist?list={ws.default_id()}").text
+    assert 'id="wc-' not in one and "↑" in one and "↑" not in c.get(f"/watchlist?list={ws.default_id()}&sort=name").text
+    assert c.get("/watchlist?sort=score").status_code == 200 and c.get("/watchlist?sort=manual").status_code == 200
+    # Aktionen aus der Tabelle: beobachten, verwerfen, nicht mehr beobachten – zurück zur Watchlist
+    r = post(c, f"/discovery/c/{mtp}/beobachten", back="/watchlist")
+    assert r.headers["location"].startswith("/watchlist?msg=")
+    page = c.get("/watchlist").text
+    assert f'id="wc-{mtp}"' not in page and "Meta Platforms" in page
+    post(c, f"/discovery/c/{beta}/status", status="zurueckgestellt", back="/watchlist")
+    assert f'id="wc-{beta}"' not in c.get("/watchlist").text
     ctx.db.x("UPDATE disc_company SET yahoo_symbol='ALPH' WHERE id=?", (beta,))  # zwei Unternehmen, ein Symbol
     assert "Zuordnung mehrdeutig" in row_of(c.get("/watchlist").text, ids["ALPH"])
 
 
-def test_empty_watched_view_points_to_discover(c):
+def test_detail_window_like_positions_extended_for_discovery(c, monkeypatch):
+    from app.news import ai as NAI
+
+    ctx = c.app.state.ctx
+    ws = watchlist_service(ctx)
+    calls: list[int] = []
+    monkeypatch.setattr(NAI.AiGateway, "generate", lambda *a, **k: calls.append(1))
+    alph, mtp = cid_of(c, "ALPH"), cid_of(c, "MTP")
+    post(c, f"/discovery/c/{alph}/analyse", mode="daten")
+    post(c, f"/discovery/c/{alph}/beobachten")
+    entry, _e, _c = ws.resolve("security", "ZZZZ")
+    plain, _ = ws.add(ws.default_id(), entry)
+    item = W.memberships(ctx.db, SV.company(ctx.db, alph))[0]["item_id"]
+    jobs = ctx.db.scalar("SELECT COUNT(*) FROM disc_job")
+    pan = c.get(f"/panel/watchlist/item/{item}")
+    assert pan.status_code == 200 and "<html" not in pan.text.lower()
+    needles = ("Kursverlauf", f'data-src="/api/watchlist/{item}/chart"', "Position erstellen",
+               'id="watch-unternehmen"', 'id="sec-kennzahlen"', "Portfolia-Score", f'href="/discovery/c/{alph}"',
+               "Aus der Liste entfernen")
+    for needle in needles:
+        assert needle in pan.text, needle
+    simple = c.get(f"/panel/watchlist/item/{plain}").text  # Titel ohne Discovery: gleiches Fenster, ohne Erweiterung
+    assert "Kursverlauf" in simple and 'id="watch-unternehmen"' not in simple and 'id="sec-kennzahlen"' not in simple
+    sug = c.get(f"/panel/watchlist/c/{mtp}").text  # Vorschlag ohne Listeneintrag
+    assert ">Vorschlag</span>" in sug and f'action="/discovery/c/{mtp}/beobachten"' in sug
+    assert "Vorschlag verwerfen" in sug and 'id="watch-unternehmen"' in sug and "Position erstellen" not in sug
+    assert c.get(f"/api/watchlist/c/{mtp}/chart").status_code == 200
+    assert c.get(f"/watchlist/item/{item}").status_code == 200 and c.get("/panel/watchlist/c/9999").status_code == 404
+    assert c.get("/panel/watchlist/item/9999").status_code == 404
+    assert not calls and ctx.db.scalar("SELECT COUNT(*) FROM disc_job") == jobs  # Öffnen startet nichts
+
+
+def test_discovery_sections_are_collapsed_under_the_table(c):
+    cid_of(c, "ALPH")
     page = c.get("/watchlist").text
-    assert "Noch keine Einträge" in page
-    assert 'href="/discovery">Entdecken</a>' in page.split("Noch keine Einträge")[1][:200]  # Hinweis im Leertext
+    for sec in ('id="kandidaten"', 'id="ki-bereich"', 'id="vorwaertstest"', 'id="disc-einstellungen-bereich"',
+                'id="listen"'):
+        assert f"<details class=\"card disc-sec\" {sec}" in page, sec
+    assert 'data-primary-start="screening"' in page and 'action="/discovery/einstellungen"' in page
+    assert page.count('name="back" value="/watchlist"') >= 6  # Suchläufe, Aufnahme und Einstellungen kehren zurück
+    r = post(c, "/discovery/start/news", back="/watchlist")
+    assert r.headers["location"].startswith("/watchlist?msg=") and "job=" in r.headers["location"]
+    assert c.get(r.headers["location"]).status_code == 200
+    r = post(c, "/discovery/einstellungen", scope_preset="sparsam", back="/watchlist")
+    assert r.headers["location"].startswith("/watchlist?msg=")
+    assert post(c, "/discovery/add", q="Gamma Acquisition", back="/watchlist").headers["location"].startswith(
+        "/watchlist?err=")
+    assert post(c, "/discovery/add", q="BETA", back="/watchlist").headers["location"].startswith("/discovery/c/")
+    disc = c.get("/discovery").text  # Kartenansicht bleibt erreichbar und führt zurück
+    assert 'href="/watchlist">← Watchlist</a>' in disc and 'href="/discovery">Vorschläge als Karten</a>' in page
+
+
+def test_empty_watchlist(c):
+    page = c.get("/watchlist").text
+    assert "Noch keine Einträge" in page and "0 Titel" in page
+
+
+def test_suggestions_by_name_or_symbol(c, monkeypatch):
+    from app.watchlist import suggest as SG
+
+    ctx = c.app.state.ctx
+    assert c.get("/api/watchlist/suggest?q=a").json() == {"items": [], "note": ""}  # erst ab 2 Zeichen
+    seen: list[str] = []
+
+    def fake_yahoo(ctx, q):
+        seen.append(q)
+        return [{"kind": "security", "value": "SIE.DE", "label": "Siemens AG", "symbol": "SIE.DE",
+                 "sub": "Aktie · XETRA"}], ""
+
+    monkeypatch.setattr(SG, "_yahoo", fake_yahoo)
+    data = c.get("/api/watchlist/suggest?q=Siemens").json()
+    assert seen == ["siemens"] and data["items"][0]["value"] == "SIE.DE" and data["items"][0]["kind"] == "security"
+    monkeypatch.setattr(SG, "_yahoo", lambda ctx, q: ([], "Yahoo-Suche derzeit nicht erreichbar – Symbol bitte von "
+                                                      "Hand eingeben."))
+    assert "nicht erreichbar" in c.get("/api/watchlist/suggest?q=Siemens").json()["note"]
+    # Auswahl eines Vorschlags = Art und Kennung, wie sie das Formular sendet
+    r = post(c, "/watchlist/add", kind="security", value="SIE.DE", label="Siemens  AG")
+    assert r.status_code == 303
+    assert ctx.db.q1("SELECT name FROM watchlist_item WHERE quote_id='SIE.DE'")["name"] == "Siemens AG"
+    # ohne Auswahl (Art „auto“): eindeutiges Yahoo-Symbol bzw. Symbol von Hand
+    assert post(c, "/watchlist/add", kind="auto", value="^GSPC").status_code == 303
+    assert post(c, "/watchlist/add", kind="auto", value="sap.de").status_code == 303
+    assert ctx.db.scalar("SELECT COUNT(*) FROM watchlist_item WHERE quote_source='yahoo'") == 3
+    assert post(c, "/watchlist/add", kind="auto", value="nicht da!").status_code == 400
+    # „msft“ kann Coin oder Börsensymbol sein: nichts raten, sondern wählen lassen
+    r = post(c, "/watchlist/add", kind="auto", value="msft")
+    assert r.status_code == 200 and "Coin oder ein Börsensymbol" in r.text
+    assert 'name="kind" value="security"><input type="hidden" name="value" value="MSFT"' in r.text
+    assert 'name="kind" value="crypto"><input type="hidden" name="value" value="msft"' in r.text
+    assert ctx.db.scalar("SELECT COUNT(*) FROM watchlist_item") == 3
+    page = c.get("/watchlist").text
+    assert 'data-suggest-src="/api/watchlist/suggest"' in page and 'name="kind" value="auto"' in page
+
+
+def test_yahoo_search_is_parsed_and_failures_are_soft(c, monkeypatch):
+    import httpx
+
+    from app.watchlist import suggest as SG
+
+    ctx = c.app.state.ctx
+    assert SG._yahoo(ctx, "siemens") == ([], "")  # Demo-Modus: kein Abruf
+    from dataclasses import replace
+
+    ctx.config = replace(ctx.config, demo_mode=False)
+    asked: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        asked.append(str(req.url))
+        return httpx.Response(200, json={"quotes": [
+            {"symbol": "SIE.DE", "longname": "Siemens  Aktiengesellschaft", "quoteType": "EQUITY", "exchDisp": "XETRA"},
+            {"symbol": "BTC-EUR", "shortname": "Bitcoin EUR", "quoteType": "CRYPTOCURRENCY"},
+            {"symbol": "EUNL.DE", "shortname": "iShares Core MSCI World", "quoteType": "ETF", "exchDisp": "XETRA"}]})
+
+    ctx.http = httpx.Client(transport=httpx.MockTransport(handler))
+    items, note = SG._yahoo(ctx, "siemens")
+    assert [i["value"] for i in items] == ["SIE.DE", "EUNL.DE"] and note == ""
+    assert items[0]["label"] == "Siemens Aktiengesellschaft" and items[0]["sub"] == "Aktie · XETRA"
+    assert "q=siemens" in asked[0] and "finance.yahoo.com" in asked[0]
+    ctx.http = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(503)))
+    items, note = SG._yahoo(ctx, "siemens")
+    assert items == [] and "nicht erreichbar" in note
 
 
 def test_discover_view_primary_start_and_cards(c, monkeypatch):
@@ -355,7 +481,7 @@ def test_lists_can_be_renamed_made_default_and_deleted(c):
 def test_mobile_more_menu_is_generated_from_navigation(c):
     page = c.get("/watchlist").text
     more = page.split('id="more-menu"')[1].split("</div>")[0]
-    assert more.count("<a href=") == 7 and 'href="/watchlist"' in more and "Entdecken &amp; Beobachten" in more
+    assert more.count("<a href=") == 7 and 'href="/watchlist"' in more and ">Watchlist</a>" in more
     for href in ("/journal", "/accounts", "/plans", "/tax", "/quality", "/settings"):
         assert f'href="{href}"' in more, href
     for href in ('href="/"', 'href="/positions"', 'href="/performance"', 'href="/news"', 'href="/discovery"'):

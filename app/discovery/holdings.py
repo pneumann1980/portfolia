@@ -123,22 +123,30 @@ def brief_for_asset(ctx: Any, asset: Any) -> dict[str, Any] | None:
     """SEC-Block für den Einzeltitel. ``None``: kein US-Symbol (kein Block). Sonst ``state``:
     ``geladen`` (mit Kennzahlen), ``ausstehend`` (Unternehmen bekannt, noch keine Daten) oder ``unbekannt``
     (noch nicht abgeglichen bzw. kein SEC-Emittent)."""
-    from app.discovery import nash as NASH
-    from app.discovery import service as SV
-
     if not getattr(asset, "is_security", False):
         return None
     sym = us_symbol(asset.quote_source, asset.quote_id)
     if sym is None:
         return None
-    db = ctx.db
-    cid = company_id_for(db, "yahoo", sym)
+    cid = company_id_for(ctx.db, "yahoo", sym)
     if cid is None:
         return {"state": "unbekannt", "symbol": sym}
+    return brief_for_company(ctx, cid, sym)
+
+
+def brief_for_company(ctx: Any, cid: int, sym: str = "") -> dict[str, Any] | None:
+    """SEC-Block für ein Discovery-Unternehmen (auch für die Watchlist, 0.115) – nur gespeicherte Daten."""
+    from app.discovery import nash as NASH
+    from app.discovery import service as SV
+
+    db = ctx.db
     co = SV.company(db, cid)
+    if co is None:
+        return None
+    sym = sym or co["ticker"]
     an = SV.analysis(db, cid)
-    if co is None or an is None:
-        return {"state": "ausstehend", "symbol": sym, "company_id": cid, "name": co["name"] if co else sym}
+    if an is None:
+        return {"state": "ausstehend", "symbol": sym, "company_id": cid, "name": co["name"]}
     res = an["result"]
     fu = res.get("fundamentals") or {}
     numbers = []

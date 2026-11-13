@@ -1,108 +1,122 @@
 {% extends "base.html" %}
 {% from "discovery_macros.html" import pts with context %}
-{% block title %}Beobachtet{% endblock %}
-{% block heading %}Entdecken &amp; Beobachten{% endblock %}
-{% macro spark(it) -%}
-  {%- set pts = sparkline(it.snap.sparkline if it.snap else []) -%}
-  {%- if pts %}<svg class="spark {{ (it.snap.sparkline[-1] - it.snap.sparkline[0])|tone }}" viewBox="0 0 96 28" width="96" height="28" role="img" aria-label="Kursverlauf {{ 7 if it.quote_source == 'coingecko' else 30 }} Tage"><polyline points="{{ pts }}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>{% else %}<span class="muted">–</span>{% endif -%}
+{% block title %}Watchlist{% endblock %}
+{% block heading %}Watchlist{% endblock %}
+{% macro spark(snap, src) -%}
+  {%- set pts_ = sparkline(snap.sparkline if snap else []) -%}
+  {%- if pts_ %}<svg class="spark {{ (snap.sparkline[-1] - snap.sparkline[0])|tone }}" viewBox="0 0 96 28" width="96" height="28" role="img" aria-label="Kursverlauf {{ 7 if src == 'coingecko' else 30 }} Tage"><polyline points="{{ pts_ }}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>{% else %}<span class="muted">–</span>{% endif -%}
 {%- endmacro %}
+{% macro view_url(l=none, nur='', s=sort) -%}/watchlist{% set q = [] %}{% if l %}{% set _ = q.append('list=' ~ l) %}{% endif %}{% if nur %}{% set _ = q.append('nur=' ~ nur) %}{% endif %}{% if s and s != 'standard' %}{% set _ = q.append('sort=' ~ s) %}{% endif %}{% if q %}?{{ q|join('&') }}{% endif %}{%- endmacro %}
 {% block content %}
-{% with watch_tab = 'beobachtet' %}{% include "partials/watch_tabs.html" %}{% endwith %}
+<div class="stack" data-keep-scroll>
 {% if msg %}<div class="alert good" data-flash><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
 {% if errors %}<div class="alert crit"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
+{% if focus_job %}<div hx-get="/discovery/jobs/{{ focus_job }}" hx-trigger="load" hx-swap="outerHTML"></div>{% endif %}
 
-<section class="card">
+<section class="card flush" id="watch-tabelle">
   <div class="card-head">
-    <h2>{% for l in lists if l.id == list_id %}{{ l.name }}{% endfor %} <span class="badge">{{ items|length }}</span></h2>
+    <h2>{{ rows|length }} Titel{% for l in lists if l.id == list_id %} · {{ l.name }}{% endfor %}{% if only %} · Vorschläge{% endif %}</h2>
     <div class="row" style="gap:8px;flex-wrap:wrap">
       <a class="btn sm primary" href="#add">Titel hinzufügen</a>
-      {% if lists|length > 1 %}<div class="seg" role="group" aria-label="Liste">{% for l in lists %}<a class="{{ 'active' if l.id == list_id }}" href="/watchlist?list={{ l.id }}" aria-pressed="{{ 'true' if l.id == list_id else 'false' }}">{{ l.name }}</a>{% endfor %}</div>{% endif %}
-      <form method="get" action="/watchlist" class="row" style="gap:6px"><input type="hidden" name="list" value="{{ list_id }}">
+      <div class="seg" role="group" aria-label="Ansicht">
+        <a class="{{ 'active' if not list_id and not only }}" href="{{ view_url() }}">Alle <span class="badge">{{ counts.alle }}</span></a>
+        {% if lists|length > 1 %}{% for l in lists %}<a class="{{ 'active' if l.id == list_id }}" href="{{ view_url(l.id) }}">{{ l.name }}</a>{% endfor %}{% endif %}
+        {% if counts.vorschlaege %}<a class="{{ 'active' if only }}" href="{{ view_url(none, 'vorschlaege') }}">Vorschläge <span class="badge">{{ counts.vorschlaege }}</span></a>{% endif %}
+      </div>
+      <form method="get" action="/watchlist" class="row" style="gap:6px">{% if list_id %}<input type="hidden" name="list" value="{{ list_id }}">{% endif %}{% if only %}<input type="hidden" name="nur" value="{{ only }}">{% endif %}
         <label class="sr-only" for="wl-sort">Sortierung</label>
-        <select id="wl-sort" name="sort" data-autosubmit>{% for k, v in sorts.items() %}<option value="{{ k }}" {{ 'selected' if k == sort }}>{{ v }}</option>{% endfor %}</select>
+        <select id="wl-sort" name="sort" data-autosubmit>{% for k, v in sorts.items() %}<option value="{{ k }}" {{ 'selected' if k == sort }}>{{ v if k != 'standard' else ('eigene Reihenfolge' if list_id else 'Standard') }}</option>{% endfor %}</select>
         <noscript><button class="btn sm" type="submit">Sortieren</button></noscript></form>
     </div>
   </div>
-  {% if loading %}<p class="hint">Marktdaten werden aktualisiert – Seite in Kürze neu laden.</p>{% endif %}
-  {% if items %}
-  <div class="table-wrap cards-wrap"><table class="compact cards watchlist">
-    <thead><tr><th>Wert</th><th class="num">Kurs</th><th class="num">24h</th><th class="num">7 Tage</th><th class="num">Marktkap.</th><th>Verlauf</th><th></th></tr></thead>
+  {% if loading %}<p class="hint" style="padding:0 16px">Marktdaten werden aktualisiert – Seite in Kürze neu laden.</p>{% endif %}
+  {% if rows %}
+  <div class="table-wrap" style="margin:0;padding:0 8px 8px">
+  <table class="watch-table">
+    <thead><tr><th>Titel</th><th class="num">Kurs</th><th class="num">24h</th><th class="num">7 Tage</th><th class="num">Marktkap.</th><th class="num">Score</th><th>Verlauf</th><th class="sr-only">Aktionen</th></tr></thead>
     <tbody>
-    {% for it in items %}
-      {% set cid = link.get(it.id) %}{% set b = briefs.get(cid) if cid else none %}
-      {% set detail_url = ('/discovery/c/' ~ cid) if cid else ('/watchlist/item/' ~ it.id) %}
-      <tr id="wl-{{ it.id }}">
-        <td data-label="Wert"><a href="{{ detail_url }}"><b>{{ it.sym }}</b></a> <span class="hint">{{ it.label }}</span>
-          <div class="hint">{{ it.snap.provider_label if it.snap else it.quote_source }}{% if it.held %} · <span class="badge good">im Portfolio</span>{% endif %}{% if it.snap and it.snap.stale %} · <span class="badge warn">veraltet</span>{% endif %}{% if it.id in ambiguous %} · <span class="badge warn" title="Mehrere Discovery-Unternehmen tragen dieses Symbol – keine automatische Zuordnung">Zuordnung mehrdeutig</span>{% endif %}</div>
-          {% if b %}<div class="hint wl-brief"><span class="badge {{ {'analysiert': 'good', 'veraltet': 'warn', 'vorschau': 'info'}.get(b.stage, '') }}">{{ stages[b.stage] }}</span>{% if b.nash %} · Portfolia-Score {% if b.nash.quali_open %}<b>{{ pts(b.nash.data.pts) }}</b>/65 Daten · qualitativ offen{% else %}<b>{{ pts(b.nash.total) }}</b>/125{% endif %}{% endif %}{% if b.status == 'verworfen' %} · Vorschlag verworfen{% endif %}</div>{% endif %}</td>
-        <td class="num nowrap" data-label="{{ 'Stand' if it.is_index else 'Kurs' }}">{% if it.is_index and it.snap and it.snap.price_native %}{{ it.snap.price_native|num }} Pkt.{% else %}{{ it.snap.price_eur|price if it.snap and it.snap.price_eur else '–' }}{% endif %}</td>
-        <td class="num nowrap" data-label="24h">{% if it.snap and it.snap.change_24h is not none %}<span class="delta {{ it.snap.change_24h|tone }}">{{ it.snap.change_24h|arrow }} {{ it.snap.change_24h|pct }}</span>{% else %}–{% endif %}</td>
-        <td class="num nowrap" data-label="7 Tage">{% if it.snap and it.snap.change_7d is not none %}<span class="delta {{ it.snap.change_7d|tone }}">{{ it.snap.change_7d|arrow }} {{ it.snap.change_7d|pct }}</span>{% else %}–{% endif %}</td>
-        <td class="num nowrap" data-label="Marktkap.">{{ it.snap.market_cap_eur|eur_compact if it.snap and it.snap.market_cap_eur else '–' }}</td>
-        <td data-label="Verlauf">{{ spark(it) }}</td>
-        <td class="nowrap actions">
-          <a class="btn sm ghost" href="{{ detail_url }}">Details öffnen</a>
-          {% if cid %}<a class="btn sm ghost" href="/watchlist/item/{{ it.id }}">Kursverlauf</a>
-          {% elif it.quote_source == 'yahoo' and not it.is_index and '.' not in it.quote_id and '=' not in it.quote_id and it.id not in ambiguous %}<a class="btn sm ghost" href="/discovery/t/{{ it.quote_id|urlencode }}" title="Im SEC-Verzeichnis suchen und als Kandidat aufnehmen">Analyse suchen</a>{% endif %}
-          {% if not it.is_index %}<form method="post" action="/watchlist/item/{{ it.id }}/position" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit" title="Kauf erfassen (normale Buchungserfassung)">Position erstellen</button></form>{% endif %}
-          {% if sort == 'manual' %}
-          <form method="post" action="/watchlist/item/{{ it.id }}/move" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="dir" value="up"><button class="icon-btn" type="submit" aria-label="nach oben" title="nach oben" {{ 'disabled' if loop.first }}>↑</button></form>
-          <form method="post" action="/watchlist/item/{{ it.id }}/move" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="dir" value="down"><button class="icon-btn" type="submit" aria-label="nach unten" title="nach unten" {{ 'disabled' if loop.last }}>↓</button></form>
+    {% for r in rows %}{% set it = r.item %}{% set c = r.card %}
+      <tr class="clickable" id="{{ ('wl-' ~ it.id) if it else ('wc-' ~ r.company_id) }}" data-marker="{{ r.marker }}" data-panel="{{ r.panel }}" data-title="{{ r.name }}" data-href="{{ r.href }}" tabindex="0">
+        <td><div class="name"><span class="t"><b>{{ r.name }}</b><small>{{ r.sym }}{% if r.sub %} · {{ r.sub }}{% endif %}
+          {% if r.marker == 'vorschlag' %} · <span class="badge info" title="Offener Vorschlag aus Discovery – noch nicht beobachtet">Vorschlag</span>{% elif r.marker == 'ohne_liste' %} · <span class="badge warn" title="In Discovery beobachtet, steht in keiner Liste">ohne Liste</span>{% elif lists|length > 1 and not list_id %} · {{ r.lists|join(', ') }}{% endif %}
+          {% if r.held %} · <span class="badge good">im Portfolio</span>{% endif %}
+          {% if c %} · <span class="badge {{ {'analysiert': 'good', 'veraltet': 'warn', 'vorschau': 'info'}.get(c.stage, '') }}" title="Discovery-Analysestand">{{ stages[c.stage] }}</span>{% endif %}
+          {% if c and c.status == 'verworfen' %} · Vorschlag verworfen{% endif %}
+          {% if r.ambiguous %} · <span class="badge warn" title="Mehrere Discovery-Unternehmen tragen dieses Symbol – keine automatische Zuordnung">Zuordnung mehrdeutig</span>{% endif %}
+          {% if r.snap and r.snap.stale %} · <span class="badge warn">veraltet</span>{% endif %}</small></span></div></td>
+        <td class="num nowrap">{% if it and it.is_index and r.snap and r.snap.price_native %}{{ r.snap.price_native|num }} Pkt.{% elif r.snap and r.snap.price_eur %}{{ r.snap.price_eur|price }}{% elif r.native_price %}{{ r.native_price[0]|num(2) }} {{ r.native_price[1] }}{% else %}–{% endif %}</td>
+        <td class="num nowrap">{% if r.snap and r.snap.change_24h is not none %}<span class="delta {{ r.snap.change_24h|tone }}">{{ r.snap.change_24h|pct }}</span>{% else %}–{% endif %}</td>
+        <td class="num nowrap">{% if r.snap and r.snap.change_7d is not none %}<span class="delta {{ r.snap.change_7d|tone }}">{{ r.snap.change_7d|pct }}</span>{% else %}–{% endif %}</td>
+        <td class="num nowrap">{{ r.snap.market_cap_eur|eur_compact if r.snap and r.snap.market_cap_eur else '–' }}</td>
+        <td class="num nowrap">{% if c and c.nash %}{% if c.nash.quali_open %}{{ pts(c.nash.data.pts) }}<small class="muted">/65</small>{% else %}<b>{{ pts(c.nash.total) }}</b><small class="muted">/125</small>{% endif %}{% else %}–{% endif %}</td>
+        <td>{{ spark(r.snap, it.quote_source if it else 'yahoo') }}</td>
+        <td class="nowrap quick-btns">
+          {% if it %}
+            {% if list_id and sort == 'standard' %}
+            <form method="post" action="/watchlist/item/{{ it.id }}/move" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="dir" value="up"><button class="icon-btn" type="submit" aria-label="nach oben" title="nach oben" {{ 'disabled' if loop.first }}>↑</button></form>
+            <form method="post" action="/watchlist/item/{{ it.id }}/move" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="dir" value="down"><button class="icon-btn" type="submit" aria-label="nach unten" title="nach unten" {{ 'disabled' if loop.last }}>↓</button></form>
+            {% endif %}
+            {% if not it.is_index %}<form method="post" action="/watchlist/item/{{ it.id }}/position" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="icon-btn qt-buy" type="submit" aria-label="Position erstellen: {{ r.name }}" title="Position erstellen (Kauf erfassen)">+</button></form>{% endif %}
+            <form method="post" action="/watchlist/item/{{ it.id }}/remove" class="inline" data-confirm="{{ it.sym }} aus der Liste „{{ r.lists[0] }}“ entfernen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="{{ here }}"><button class="icon-btn" type="submit" aria-label="Entfernen: {{ r.name }}" title="aus der Liste entfernen">×</button></form>
+          {% else %}
+            <form method="post" action="/discovery/c/{{ r.company_id }}/beobachten" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="list" value="{{ default_list }}"><input type="hidden" name="back" value="{{ here }}"><button class="btn sm" type="submit" title="In die Standardliste aufnehmen">{{ 'Beobachten' if r.marker == 'vorschlag' else 'In Liste' }}</button></form>
+            <form method="post" action="/discovery/c/{{ r.company_id }}/status" class="inline" data-confirm="{{ r.sym }}: {{ 'Vorschlag verwerfen' if r.marker == 'vorschlag' else 'nicht mehr beobachten' }}? Unternehmen und Analysen bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="{{ 'verworfen' if r.marker == 'vorschlag' else 'zurueckgestellt' }}"><input type="hidden" name="back" value="{{ here }}"><button class="icon-btn" type="submit" aria-label="{{ 'Vorschlag verwerfen' if r.marker == 'vorschlag' else 'Nicht mehr beobachten' }}: {{ r.name }}" title="{{ 'Vorschlag verwerfen' if r.marker == 'vorschlag' else 'Nicht mehr beobachten' }}">×</button></form>
           {% endif %}
-          <form method="post" action="/watchlist/item/{{ it.id }}/remove" class="inline" data-confirm="{{ it.sym }} aus dieser Liste entfernen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="icon-btn" type="submit" aria-label="Entfernen" title="Entfernen">×</button></form>
         </td>
       </tr>
     {% endfor %}
     </tbody></table></div>
-  {% else %}<p class="hint">Noch keine Einträge – unten einen Titel hinzufügen oder unter <a href="/discovery">Entdecken</a> Kandidaten ansehen.</p>{% endif %}
-  <p class="hint">Kurse und 24h laufen mit dem regulären Kursabruf (CoinGecko gebündelt, Yahoo); 7 Tage, Marktkapitalisierung und Verlauf höchstens alle 15 Minuten (ein gebündelter CoinGecko-Aufruf). An die Anbieter gehen nur Kennungen.</p>
+  {% else %}<p class="hint" style="padding:0 16px 12px">Noch keine Einträge – unten einen Titel hinzufügen oder unter „Kandidaten suchen“ Vorschläge erzeugen.</p>{% endif %}
+  <p class="hint" style="padding:0 16px 12px">Ein Klick auf eine Zeile öffnet die Details. <span class="badge info">Vorschlag</span> = offener Discovery-Vorschlag, noch nicht beobachtet. Kurse der Listentitel laufen mit dem regulären Kursabruf; Vorschläge zeigen den Kurs der letzten Datenanalyse.</p>
 </section>
-
-{% if unlisted %}
-<section class="card" id="ohne-liste">
-  <div class="card-head"><h2>Ohne Liste <span class="badge">{{ unlisted|length }}</span></h2><span class="hint">in Discovery beobachtet, noch in keiner Liste</span></div>
-  <div class="table-wrap cards-wrap"><table class="compact cards"><thead><tr><th>Unternehmen</th><th>Analysestand</th><th></th></tr></thead><tbody>
-  {% for u in unlisted %}{% set b = briefs.get(u.id) %}
-    <tr><td data-label="Unternehmen"><a href="/discovery/c/{{ u.id }}"><b>{{ u.ticker }}</b></a> <span class="hint">{{ u.name }}</span></td>
-      <td data-label="Analysestand">{% if b %}{{ stages[b.stage] }}{% if b.nash %} · Portfolia-Score {% if b.nash.quali_open %}{{ pts(b.nash.data.pts) }}/65 Daten{% else %}{{ pts(b.nash.total) }}/125{% endif %}{% endif %}{% else %}–{% endif %}</td>
-      <td class="nowrap actions">
-        <a class="btn sm ghost" href="/discovery/c/{{ u.id }}">Details öffnen</a>
-        <form method="post" action="/discovery/c/{{ u.id }}/beobachten" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="list" value="{{ list_id }}"><input type="hidden" name="back" value="/watchlist?list={{ list_id }}"><button class="btn sm" type="submit">In diese Liste aufnehmen</button></form>
-        <form method="post" action="/discovery/c/{{ u.id }}/status" class="inline" data-confirm="{{ u.ticker }} nicht mehr beobachten? Unternehmen und Analysen bleiben erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="zurueckgestellt"><input type="hidden" name="back" value="/watchlist?list={{ list_id }}"><button class="btn sm ghost" type="submit">Nicht mehr beobachten</button></form>
-      </td></tr>
-  {% endfor %}
-  </tbody></table></div>
-  <p class="hint">Diese Unternehmen wurden vor 0.114 nur in Discovery beobachtet oder haben kein eindeutiges Kurssymbol. Die automatische Datenaktualisierung läuft für sie weiter.</p>
-</section>
-{% endif %}
 
 <section class="card" id="add">
-  <div class="card-head"><h2>Titel hinzufügen</h2></div>
-  <form method="post" action="/watchlist/add" class="form-grid">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="list" value="{{ list_id }}">
-    <label class="field">Art<select name="kind">{% for k, v in kinds.items() %}<option value="{{ k }}" {{ 'selected' if form.kind == k }}>{{ v }}</option>{% endfor %}</select></label>
-    <label class="field">Symbol, CoinGecko-ID/-Link bzw. Yahoo-Symbol<input name="value" value="{{ form.value or '' }}" list="wl-assets" placeholder="z. B. kaspa, BONK, SAP.DE, ^GSPC" autocomplete="off"></label>
-    <datalist id="wl-assets">{% for a in assets %}<option value="{{ a.asset_id }}">{{ a.name }}</option>{% endfor %}</datalist>
+  <div class="card-head"><h2>Titel hinzufügen</h2><span class="hint">Name oder Symbol eingeben und einen Vorschlag wählen</span></div>
+  <form method="post" action="/watchlist/add" class="form-grid" data-suggest-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="kind" value="{{ form.kind or 'auto' }}" data-suggest-kind><input type="hidden" name="label" value="" data-suggest-label>
+    <label class="field suggest-field">Aktie, ETF, Index oder Krypto
+      <input name="value" value="{{ form.value or '' }}" placeholder="z. B. Siemens, Apple, MSCI World, Kaspa, SAP.DE" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="wl-suggest" aria-autocomplete="list" data-suggest-input data-suggest-src="/api/watchlist/suggest">
+      <ul class="suggest-list" id="wl-suggest" role="listbox" hidden></ul></label>
+    <label class="field">Liste<select name="list">{% for l in lists %}<option value="{{ l.id }}" {{ 'selected' if (list_id and l.id == list_id) or (not list_id and l.is_default) }}>{{ l.name }}</option>{% endfor %}</select></label>
     <div class="row"><button class="btn primary" type="submit">Hinzufügen</button></div>
   </form>
+  <p class="hint" data-suggest-note>Vorschläge kommen aus deinem Portfolio, dem CoinGecko-Katalog und der Yahoo-Suche (dabei geht nur der Suchtext an Yahoo). Ohne Auswahl gilt die Eingabe als Symbol bzw. Kennung.</p>
   {% if choices %}
-  <p class="hint" style="margin-top:8px">Mehrere Coins mit diesem Symbol – bitte wählen:</p>
+  <p class="hint" style="margin-top:8px">Bitte wählen:</p>
   <div class="row" style="gap:6px;flex-wrap:wrap">
-    {% for c in choices %}<form method="post" action="/watchlist/add" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="list" value="{{ list_id }}"><input type="hidden" name="kind" value="crypto"><input type="hidden" name="value" value="{{ c.id }}"><button class="btn sm" type="submit">{{ c.symbol }} · {{ c.name }} <span class="hint">({{ c.id }})</span></button></form>{% endfor %}
+    {% for c in choices %}<form method="post" action="/watchlist/add" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="list" value="{{ list_id or default_list }}"><input type="hidden" name="kind" value="{{ c.kind or 'crypto' }}"><input type="hidden" name="value" value="{{ c.id }}"><button class="btn sm" type="submit">{{ c.symbol }} · {{ c.name }}{% if (c.kind or 'crypto') == 'crypto' %} <span class="hint">(Coin: {{ c.id }})</span>{% endif %}</button></form>{% endfor %}
   </div>{% endif %}
-  <details class="box" id="listen" style="margin-top:12px"{% if lists|length > 1 %} open{% endif %}><summary>Listen verwalten</summary>
-    <div class="table-wrap cards-wrap"><table class="compact cards"><thead><tr><th>Liste</th><th class="num">Titel</th><th></th></tr></thead><tbody>
-    {% for l in lists %}
-      <tr><td data-label="Liste"><form method="post" action="/watchlist/lists/{{ l.id }}/rename" class="row" style="gap:6px;flex-wrap:wrap"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label class="sr-only" for="liste-{{ l.id }}">Name</label><input id="liste-{{ l.id }}" name="name" value="{{ l.name }}" maxlength="40" required><button class="btn sm" type="submit">Umbenennen</button></form></td>
-        <td class="num" data-label="Titel">{{ list_counts.get(l.id, 0) }}</td>
-        <td class="nowrap actions">{% if l.is_default %}<span class="badge good">Standardliste</span>{% else %}
-          <form method="post" action="/watchlist/lists/{{ l.id }}/default" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit" title="„Beobachten“ ohne Listenwahl nimmt Titel in diese Liste auf">Als Standard</button></form>
-          <form method="post" action="/watchlist/lists/{{ l.id }}/delete" class="inline" data-confirm="Liste „{{ l.name }}“ mit {{ list_counts.get(l.id, 0) }} Einträgen löschen? Titel in anderen Listen bleiben dort.">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form>{% endif %}</td></tr>
-    {% endfor %}
-    </tbody></table></div>
-    <form method="post" action="/watchlist/lists" class="form-grid" style="margin-top:8px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label class="field">Weitere Liste anlegen<input name="name" maxlength="40" placeholder="Name der neuen Liste"></label><div class="row"><button class="btn" type="submit">Anlegen</button></div></form>
-  </details>
 </section>
+
+<details class="card disc-sec" id="kandidaten"><summary class="card-head"><h2>Kandidaten suchen</h2><span class="hint">Discovery: KI-Vorschläge, Fundamentalscreening, Nachrichten</span></summary>
+  {% include "partials/discovery_search.html" %}
+  <p class="hint"><a href="/discovery">Vorschläge als Karten</a> mit KI-Vorschau, Kategorien und Filtern.</p>
+</details>
+
+<details class="card disc-sec" id="ki-bereich"{% if st.running %} open{% endif %}><summary class="card-head"><h2>KI-Status und Research-Jobs</h2><span class="hint">{% if st.state == 'aus' %}KI deaktiviert{% elif st.ai_busy %}KI arbeitet gerade{% elif st.usable %}KI bereit{% else %}Starts warten{% endif %}{% if st.waiting %} · {{ st.waiting|length }} wartet{% endif %}</span></summary>
+  {% include "partials/discovery_status.html" %}
+</details>
+
+{% include "partials/discovery_forward.html" %}
+
+<details class="card disc-sec" id="disc-einstellungen-bereich"><summary class="card-head"><h2>Discovery-Einstellungen</h2><span class="hint">automatische Suche, Rechercheumfang, KI</span></summary>
+  {% include "partials/discovery_settings.html" %}
+</details>
+
+<details class="card disc-sec" id="listen"{% if lists|length > 1 %} open{% endif %}><summary class="card-head"><h2>Listen verwalten</h2><span class="hint">{{ lists|length }} {{ 'Liste' if lists|length == 1 else 'Listen' }}</span></summary>
+  <div class="table-wrap cards-wrap"><table class="compact cards"><thead><tr><th>Liste</th><th class="num">Titel</th><th></th></tr></thead><tbody>
+  {% for l in lists %}
+    <tr><td data-label="Liste"><form method="post" action="/watchlist/lists/{{ l.id }}/rename" class="row" style="gap:6px;flex-wrap:wrap"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label class="sr-only" for="liste-{{ l.id }}">Name</label><input id="liste-{{ l.id }}" name="name" value="{{ l.name }}" maxlength="40" required><button class="btn sm" type="submit">Umbenennen</button></form></td>
+      <td class="num" data-label="Titel">{{ list_counts.get(l.id, 0) }}</td>
+      <td class="nowrap actions">{% if l.is_default %}<span class="badge good">Standardliste</span>{% else %}
+        <form method="post" action="/watchlist/lists/{{ l.id }}/default" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit" title="„Beobachten“ ohne Listenwahl nimmt Titel in diese Liste auf">Als Standard</button></form>
+        <form method="post" action="/watchlist/lists/{{ l.id }}/delete" class="inline" data-confirm="Liste „{{ l.name }}“ mit {{ list_counts.get(l.id, 0) }} Einträgen löschen? Titel in anderen Listen bleiben dort.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form>{% endif %}</td></tr>
+  {% endfor %}
+  </tbody></table></div>
+  <form method="post" action="/watchlist/lists" class="form-grid" style="margin-top:8px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="field">Weitere Liste anlegen<input name="name" maxlength="40" placeholder="Name der neuen Liste"></label><div class="row"><button class="btn" type="submit">Anlegen</button></div></form>
+</details>
+</div>
 {% endblock %}

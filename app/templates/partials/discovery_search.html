@@ -1,0 +1,36 @@
+{# Suchläufe starten und Unternehmen direkt aufnehmen (0.115: auch unter der Watchlist). Erwartet: st, cfg; optional disc_back. #}
+<section class="card" id="aktionen">
+  <div class="card-head"><h2>Kandidaten suchen</h2><span class="hint">läuft im Hintergrund – die Seite muss nicht offen bleiben</span></div>
+  <div class="disc-start">
+    {% if st.startable %}
+    <form method="post" action="/discovery/start/ki_discovery" class="disc-start-item" data-primary-start="ki_discovery"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if disc_back %}<input type="hidden" name="back" value="{{ disc_back }}">{% endif %}
+      <button class="btn primary" type="submit" {{ 'disabled' if not st.startable }}>KI-Discovery starten</button>
+      <p class="hint">Die KI erkennt aus belegten SEC-Wendepunkten{{ ' und Meldungen' if st.themes }} Themen und Wertschöpfungsketten und schlägt Unternehmen vor – jedes mit Vorschau (Kurzbeschreibung, Disruption-Einschätzung, Chance/Nachfrage). Portfolia prüft jede Identität bei der SEC und lädt die Zahlen ohne KI. <b>Genau 2 KI-Aufrufe</b> (heute frei: {{ [st.day.left, 0]|max }}); welche Firma vertieft wird, entscheidest du je Karte.{% if st.state == 'aus' %} <b>Gesperrt: {{ st.reason }}.</b>{% elif st.avail.discovery.state %} <b>Startet nicht sofort:</b> {{ st.avail.discovery.reason }} – der Job wartet bis {{ st.avail.discovery.until|datetime_de }} und beginnt dann von selbst.{% endif %}</p></form>
+    {% else %}
+    <form method="post" action="/discovery/start/screening" class="disc-start-item" data-primary-start="screening"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if disc_back %}<input type="hidden" name="back" value="{{ disc_back }}">{% endif %}
+      <button class="btn primary" type="submit">Fundamentalscreening starten</button>
+      <p class="hint">Wege B und C ohne KI: ganzes Universum über SEC-Frames vorauswählen, je Lauf {{ cfg.screen_batch }} Emittenten mit vollständigen SEC-Daten bestätigen (fundamentale Wendepunkte), danach Kurs gegen S&P 500 prüfen (mögliche Fehlbewertung vs. Value Trap). Setzt nach Abbruch fort.</p></form>
+    {% endif %}
+  </div>
+  <form method="post" action="/discovery/add" class="row disc-add"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if disc_back %}<input type="hidden" name="back" value="{{ disc_back }}">{% endif %}
+    <label class="sr-only" for="disc-q">Ticker oder Firmenname</label><input id="disc-q" name="q" placeholder="Unternehmen direkt aufnehmen: Ticker oder Firmenname" maxlength="120" required>
+    <button class="btn" type="submit">Aufnehmen</button></form>
+  <details class="box" id="weitere-suchlaeufe"><summary>Weitere Suchläufe</summary>
+  <div class="disc-start">
+    {% if st.startable %}
+    <form method="post" action="/discovery/start/screening" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if disc_back %}<input type="hidden" name="back" value="{{ disc_back }}">{% endif %}
+      <button class="btn" type="submit">Fundamentalscreening starten</button>
+      <p class="hint">Wege B und C ohne KI: ganzes Universum über SEC-Frames vorauswählen, je Lauf {{ cfg.screen_batch }} Emittenten mit vollständigen SEC-Daten bestätigen (fundamentale Wendepunkte), danach Kurs gegen S&P 500 prüfen (mögliche Fehlbewertung vs. Value Trap). Setzt nach Abbruch fort.</p></form>
+    {% else %}
+    <form method="post" action="/discovery/start/ki_discovery" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if disc_back %}<input type="hidden" name="back" value="{{ disc_back }}">{% endif %}
+      <button class="btn" type="submit" {{ 'disabled' if not st.startable }}>KI-Discovery starten</button>
+      <p class="hint">Die KI erkennt aus belegten SEC-Wendepunkten{{ ' und Meldungen' if st.themes }} Themen und Wertschöpfungsketten und schlägt Unternehmen vor – jedes mit Vorschau (Kurzbeschreibung, Disruption-Einschätzung, Chance/Nachfrage). Portfolia prüft jede Identität bei der SEC und lädt die Zahlen ohne KI. <b>Genau 2 KI-Aufrufe</b> (heute frei: {{ [st.day.left, 0]|max }}); welche Firma vertieft wird, entscheidest du je Karte.{% if st.state == 'aus' %} <b>Gesperrt: {{ st.reason }}.</b>{% elif st.avail.discovery.state %} <b>Startet nicht sofort:</b> {{ st.avail.discovery.reason }} – der Job wartet bis {{ st.avail.discovery.until|datetime_de }} und beginnt dann von selbst.{% endif %}</p></form>
+    {% endif %}
+    <form method="post" action="/discovery/start/voll" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if disc_back %}<input type="hidden" name="back" value="{{ disc_back }}">{% endif %}
+      <button class="btn" type="submit">Vollständigen Discovery-Lauf starten</button>
+      <p class="hint">Nacheinander: Nachrichten-Discovery, Fundamentalscreening, KI-Discovery (soweit KI verfügbar) – jeder Teil mit eigenen Grenzen; ein Fehler bricht die anderen nicht ab.</p></form>
+    <form method="post" action="/discovery/start/news" class="disc-start-item"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if disc_back %}<input type="hidden" name="back" value="{{ disc_back }}">{% endif %}
+      <button class="btn" type="submit">Nachrichten-Discovery starten</button>
+      <p class="hint">Sucht in den bereits analysierten Meldungen der letzten {{ cfg.news_days }} Tage nach börsennotierten Unternehmen – ohne KI-Aufruf.</p></form>
+  </div></details>
+</section>

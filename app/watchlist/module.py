@@ -16,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from app.jobs.scheduler import Scheduler, extra_jobs
 from app.prices.market import market_data
 from app.util.timeutil import today_local
-from app.watchlist.service import SORTS, watchlist_service
+from app.watchlist.service import watchlist_service
 from app.web.app import register_router
 from app.web.deps import get_ctx, render
 
@@ -71,44 +71,83 @@ def _bg_refresh(ctx: Any, series: list[str]) -> bool:
     return True
 
 
-def _page(request: Request, list_id: int | None = None, sort: str = "manual", errors: list[str] | None = None,
+def _page(request: Request, list_id: int | None = None, sort: str = "standard", errors: list[str] | None = None,
           choices: list[dict[str, Any]] | None = None, form: dict[str, str] | None = None,
-          status_code: int = 200, msg: str = "", err: str = "") -> HTMLResponse:
+          status_code: int = 200, msg: str = "", err: str = "", only: str = "", job: int = 0) -> HTMLResponse:
+    """Watchlist als eine Tabelle (0.115): Listentitel, beobachtete Unternehmen ohne Liste und offene Vorschläge;
+    darunter eingeklappt Suche, KI-Status, Vorwärtstest, Discovery-Einstellungen und Listenverwaltung."""
+    from app.discovery import engine as EN
+    from app.discovery import forward as FW
+    from app.discovery import jobs as J
+    from app.discovery import service as SV
+    from app.discovery import universe as U
+    from app.discovery import watch as W
+    from app.discovery.web import START_KINDS, _cfg, _recover_once
+    from app.watchlist import view as V
+
     ctx = get_ctx(request)
+    _recover_once(ctx)
     svc = watchlist_service(ctx)
     lists = svc.lists()
-    lid = list_id if list_id and any(int(r["id"]) == list_id for r in lists) else svc.default_id()
-    sort = sort if sort in SORTS else "manual"
-    items = svc.items(lid, sort)
-    loading = _bg_refresh(ctx, [i.series for i in items if i.series])
-    pf = ctx.portfolio()
-    assets = sorted((a for a in (pf.assets.values() if pf else []) if not a.is_fiat and a.quote_id
-                     and a.quote_source in ("coingecko", "yahoo")), key=lambda a: a.name.lower())
-    from app.discovery import service as SV
-    from app.discovery import watch as W
-
-    # 0.114: Verknüpfung zu Discovery (exaktes Yahoo-Symbol) und Analysestand – nur gespeicherte Daten
-    unique, ambiguous = W.symbol_index(ctx.db)
-    link = {i.id: unique.get(i.quote_id.upper()) for i in items if i.quote_source == "yahoo"}
-    unlisted = W.unlisted(ctx.db)
-    briefs = SV.briefs(ctx.db, sorted({c for c in link.values() if c} | {int(u["id"]) for u in unlisted}))
-    return render(request, "watchlist.html", status_code=status_code, active="watchlist", items=items, lists=lists,
-                  link=link, briefs=briefs, unlisted=unlisted, stages=SV.STAGES,
-                  ambiguous={i.id for i in items if i.quote_source == "yahoo" and i.quote_id.upper() in ambiguous},
-                  watch_count=W.count_watched(ctx.db), msg=msg,
+    lid = list_id if list_id and any(int(r["id"]) == list_id for r in lists) else None
+    only = only if only == "vorschlaege" and lid is None else ""
+    sort = "standard" if sort == "manual" else sort  # frühere Adresse ?sort=manual
+    sort = sort if sort in V.SORTS else "standard"
+    rows, counts = V.rows(ctx, svc, lists, lid, only, sort)
+    loading = _bg_refresh(ctx, [r.item.series for r in rows if r.item is not None and r.item.series])
+    q = {k: v for k, v in (("list", lid), ("nur", only), ("sort", sort if sort != "standard" else "")) if v}
+    here = "/watchlist" + (("?" + urlencode(q)) if q else "")
+    return render(request, "watchlist.html", status_code=status_code, active="watchlist", rows=rows, lists=lists,
+                  counts=counts, list_id=lid, only=only, sort=sort, sorts=V.SORTS, markers=V.MARKERS, here=here,
+                  default_list=svc.default_id(), kinds=KINDS, choices=choices or [],
+                  errors=(errors or []) + ([err] if err else []), msg=msg, form=form or {}, loading=loading,
+                  sparkline=sparkline, watch_count=W.count_watched(ctx.db), focus_job=job, stages=SV.STAGES,
                   list_counts={int(r["list_id"]): int(r["n"]) for r in ctx.db.q(
                       "SELECT list_id, COUNT(*) AS n FROM watchlist_item GROUP BY list_id")},
-                  list_id=lid, sort=sort, sorts=SORTS, kinds=KINDS, choices=choices or [],
-                  errors=(errors or []) + ([err] if err else []),
-                  form=form or {}, loading=loading, sparkline=sparkline, assets=assets)
+                  # Discovery-Bereiche unter der Tabelle (gleiche Bausteine wie die Kartenansicht)
+                  st=EN.ai_status(ctx), prog=EN.screening_progress(ctx), jobs=J.recent(ctx.db, 8), cfg=_cfg(ctx),
+                  fw=FW.evaluate(ctx), start_kinds=START_KINDS, sched_labels=EN.SCHEDULE_LABELS,
+                  sizes=U.SIZE_LABELS, disc_back="/watchlist")
+
+
+def _detail(request: Request, template: str, item_id: int = 0, company_id: int = 0, **extra: Any) -> Response:
+    """Detailfenster (Seitenfenster bzw. ganze Seite) für einen Listentitel oder ein Discovery-Unternehmen."""
+    from app.watchlist import view as V
+
+    ctx = get_ctx(request)
+    svc = watchlist_service(ctx)
+    it = svc.get(item_id) if item_id else None
+    if item_id and it is None:
+        raise HTTPException(404)
+    d = V.detail(ctx, svc, it, company_id or None)
+    if d is None:
+        raise HTTPException(404)
+    loading = _ensure_history(ctx, d["series"])
+    return render(request, template, active="watchlist", loading=loading, sparkline=sparkline, **d, **extra)
+
+
+def _chart(ctx: Any, series: str, label: str, range: str, snap: Any) -> JSONResponse:
+    from app.web.routes.api import _range_start
+
+    today = today_local()
+    rng = range.upper()
+    start = today - timedelta(days=7) if rng in ("1T", "7T", "1W") else _range_start(rng, today, today -
+                                                                                     timedelta(days=3650))
+    pts = [[d.isoformat(), round(c, 8), round(n, 8)] for d, c, n, _s, _r in
+           market_data(ctx).eur_series(series, start, today)]
+    if snap and snap.price_eur and (not pts or pts[-1][0] < today.isoformat()):
+        pts.append([today.isoformat(), round(snap.price_eur, 8), None])
+    return JSONResponse({"asset": label, "range": rng, "kind": "line", "intraday": False, "avg_cost": None,
+                         "ccy": "EUR", "points": pts, "candles": [], "markers": [], "source": series})
 
 
 def make_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/watchlist", response_class=HTMLResponse)
-    def page(request: Request, list: int = 0, sort: str = "manual", msg: str = "", err: str = "") -> HTMLResponse:
-        return _page(request, list or None, sort, msg=msg[:300], err=err[:300])
+    def page(request: Request, list: int = 0, sort: str = "standard", nur: str = "", msg: str = "", err: str = "",
+             job: int = 0) -> HTMLResponse:
+        return _page(request, list or None, sort, msg=msg[:300], err=err[:300], only=nur, job=job)
 
     @router.post("/watchlist/add")
     async def add(request: Request) -> Response:
@@ -118,15 +157,25 @@ def make_router() -> APIRouter:
         kind = str(f.get("kind") or "crypto")
         value = str(f.get("value") or "").strip()
         lid = int(str(f.get("list") or 0) or 0) or svc.default_id()
-        entry, errors, choices = svc.resolve(kind if kind in KINDS else "crypto", value)
+        entry, errors, choices = svc.resolve_any(value) if kind not in KINDS else svc.resolve(kind, value)
         if entry is None:
             return _page(request, lid, errors=errors, choices=choices, form={"kind": kind, "value": value},
                          status_code=400 if not choices else 200)
+        label = " ".join(str(f.get("label") or "").split())[:80]
+        if label and not entry.get("name"):  # Name aus dem gewählten Vorschlag (Yahoo liefert sonst nur das Symbol)
+            entry["name"] = label
         item_id, errors = svc.add(lid, entry)
         if errors:
             return _page(request, lid, errors=errors, form={"kind": kind, "value": value}, status_code=400)
         await run_in_threadpool(market_data(ctx).refresh, [svc.series(svc.get(item_id))], True)  # type: ignore[arg-type,list-item]
         return _back(request, f"/watchlist?{urlencode({'list': lid})}")
+
+    @router.get("/api/watchlist/suggest")
+    async def suggest(request: Request, q: str = "") -> JSONResponse:
+        """Vorschläge zu Name oder Symbol (0.115) – der Suchtext geht für Wertpapiere an die Yahoo-Suche."""
+        from app.watchlist.suggest import suggest as find
+
+        return JSONResponse(await run_in_threadpool(find, get_ctx(request), q))
 
     @router.post("/watchlist/lists")
     async def create_list(request: Request) -> Response:
@@ -190,17 +239,22 @@ def make_router() -> APIRouter:
     @router.get("/watchlist/item/{item_id}", response_class=HTMLResponse)
     def detail(request: Request, item_id: int) -> Response:
         ctx = get_ctx(request)
-        svc = watchlist_service(ctx)
-        it = svc.get(item_id)
+        it = watchlist_service(ctx).get(item_id)
         if it is None:
             raise HTTPException(404)
         if it.asset_id and ctx.portfolio() is not None and it.asset_id in ctx.portfolio().assets:
             return Response(status_code=303, headers={"Location": f"/asset/{it.asset_id}"})
-        loading = _ensure_history(ctx, it.series)
-        from app.discovery import watch as W
+        return _detail(request, "watchlist_item.html", item_id=item_id)
 
-        return render(request, "watchlist_item.html", active="watchlist", it=it, loading=loading,
-                      sparkline=sparkline, company_id=W.company_for(ctx.db, it.quote_source, it.quote_id)[0])
+    @router.get("/panel/watchlist/item/{item_id}", response_class=HTMLResponse)
+    def detail_panel(request: Request, item_id: int) -> Response:
+        """Seitenfenster eines Listentitels – gleiche Art von Fenster wie bei den Positionen (0.115)."""
+        return _detail(request, "partials/watch_detail.html", item_id=item_id, in_panel=True, alerts=[])
+
+    @router.get("/panel/watchlist/c/{cid}", response_class=HTMLResponse)
+    def company_panel(request: Request, cid: int) -> Response:
+        """Seitenfenster eines Discovery-Unternehmens ohne Listeneintrag (Vorschlag bzw. „ohne Liste“)."""
+        return _detail(request, "partials/watch_detail.html", company_id=cid, in_panel=True, alerts=[])
 
     @router.get("/api/watchlist/{item_id}/chart")
     def chart(request: Request, item_id: int, range: str = "1J") -> JSONResponse:
@@ -208,19 +262,17 @@ def make_router() -> APIRouter:
         it = watchlist_service(ctx).get(item_id)
         if it is None or not it.series:
             raise HTTPException(404)
-        from app.web.routes.api import _range_start
+        return _chart(ctx, it.series, it.label, range, it.snap)
 
-        today = today_local()
-        rng = range.upper()
-        start = today - timedelta(days=7) if rng in ("1T", "7T", "1W") else _range_start(rng, today, today -
-                                                                                         timedelta(days=3650))
-        pts = [[d.isoformat(), round(c, 8), round(n, 8)] for d, c, n, _s, _r in
-               market_data(ctx).eur_series(it.series, start, today)]
-        snap = it.snap
-        if snap and snap.price_eur and (not pts or pts[-1][0] < today.isoformat()):
-            pts.append([today.isoformat(), round(snap.price_eur, 8), None])
-        return JSONResponse({"asset": it.label, "range": rng, "kind": "line", "intraday": False, "avg_cost": None,
-                             "ccy": "EUR", "points": pts, "candles": [], "markers": [], "source": it.series})
+    @router.get("/api/watchlist/c/{cid}/chart")
+    def company_chart(request: Request, cid: int, range: str = "1J") -> JSONResponse:
+        from app.watchlist import view as V
+
+        ctx = get_ctx(request)
+        d = V.detail(ctx, watchlist_service(ctx), None, cid)
+        if d is None or not d["series"]:
+            raise HTTPException(404)
+        return _chart(ctx, d["series"], d["name"], range, d["snap"])
 
     @router.post("/watchlist/item/{item_id}/position")
     async def create_position(request: Request, item_id: int) -> Response:

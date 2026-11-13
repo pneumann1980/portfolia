@@ -135,6 +135,8 @@
     if (e.target.closest("[data-panel-close]")) { e.preventDefault(); closePanel(false); return; }
     var trg = e.target.closest("[data-panel]");
     if (!trg || e.target.closest("a[href]:not([data-panel])")) return;
+    // 0.115: Knöpfe und Formulare in einer klickbaren Tabellenzeile behalten ihre eigene Wirkung
+    if (trg.tagName === "TR" && e.target.closest("button, input, select, label, form")) return;
     if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) {
       var href = trg.getAttribute("href") || trg.getAttribute("data-href");
       if (href && trg.tagName !== "A") window.open(href, "_blank");
@@ -693,5 +695,78 @@
       if (e.target === prov || (e.target && e.target.hasAttribute && e.target.hasAttribute("data-ai-strategy"))) update();
     });
     update();
+  });
+})();
+
+/* Titel hinzufügen mit Vorschlägen (0.115): Name oder Symbol tippen → Trefferliste (Portfolio, CoinGecko-Katalog,
+   Yahoo-Suche). Auswahl füllt Art und Kennung und sendet das Formular ab. Ohne JavaScript bleibt die Eingabe von Hand. */
+(function () {
+  document.querySelectorAll("form[data-suggest-form]").forEach(function (form) {
+    var input = form.querySelector("[data-suggest-input]");
+    var kind = form.querySelector("[data-suggest-kind]");
+    var list = form.querySelector(".suggest-list");
+    var note = (form.parentNode || document).querySelector("[data-suggest-note]");
+    if (!input || !kind || !list) return;
+    var labelField = form.querySelector("[data-suggest-label]");
+    var timer = null, seq = 0, items = [], active = -1;
+
+    function close() { list.hidden = true; input.setAttribute("aria-expanded", "false"); active = -1; }
+    function mark() {
+      Array.prototype.forEach.call(list.children, function (li, i) { li.setAttribute("aria-selected", i === active ? "true" : "false"); });
+      if (active >= 0 && list.children[active]) list.children[active].scrollIntoView({ block: "nearest" });
+    }
+    function choose(it) {
+      kind.value = it.kind;
+      if (labelField) labelField.value = it.label || "";
+      input.value = it.value;
+      close();
+      if (form.requestSubmit) form.requestSubmit(); else form.submit();
+    }
+    function render(data) {
+      items = data.items || [];
+      list.textContent = "";
+      items.forEach(function (it, i) {
+        var li = document.createElement("li");
+        li.setAttribute("role", "option");
+        li.id = "wl-suggest-" + i;
+        var a = document.createElement("span"); a.className = "suggest-main";
+        var b = document.createElement("b"); b.textContent = it.label;
+        var s = document.createElement("span"); s.className = "badge"; s.textContent = it.symbol;
+        a.appendChild(b); a.appendChild(document.createTextNode(" ")); a.appendChild(s);
+        var sub = document.createElement("small"); sub.className = "hint"; sub.textContent = it.sub || "";
+        li.appendChild(a); li.appendChild(sub);
+        li.addEventListener("mousedown", function (e) { e.preventDefault(); choose(it); });
+        list.appendChild(li);
+      });
+      if (!items.length) {
+        var li = document.createElement("li"); li.className = "hint suggest-empty";
+        li.textContent = "Keine Vorschläge – genaues Symbol eingeben und „Hinzufügen“ wählen.";
+        list.appendChild(li);
+      }
+      if (note && data.note) note.textContent = data.note;
+      list.hidden = false; input.setAttribute("aria-expanded", "true"); active = -1;
+    }
+    input.addEventListener("input", function () {
+      kind.value = "auto";  // von Hand geändert: Art wieder automatisch bestimmen
+      if (labelField) labelField.value = "";
+      var q = input.value.trim();
+      clearTimeout(timer);
+      if (q.length < 2) { close(); return; }
+      timer = setTimeout(function () {
+        var mine = ++seq;
+        fetch(input.getAttribute("data-suggest-src") + "?q=" + encodeURIComponent(q), { headers: { "Accept": "application/json" } })
+          .then(function (r) { return r.ok ? r.json() : { items: [] }; })
+          .then(function (d) { if (mine === seq) render(d); })
+          .catch(function () { if (mine === seq) close(); });
+      }, 250);
+    });
+    input.addEventListener("keydown", function (e) {
+      if (list.hidden) return;
+      if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(items.length - 1, active + 1); mark(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(-1, active - 1); mark(); }
+      else if (e.key === "Enter" && active >= 0) { e.preventDefault(); choose(items[active]); }
+      else if (e.key === "Escape") { close(); }
+    });
+    input.addEventListener("blur", function () { setTimeout(close, 150); });
   });
 })();

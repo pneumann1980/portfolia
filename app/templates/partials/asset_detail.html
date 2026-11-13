@@ -41,35 +41,6 @@
     </div>
   </div>
 
-  {% if sec %}
-  {% from "discovery_macros.html" import pts, bar, money with context %}
-  <section class="card" id="sec-kennzahlen">
-    <div class="card-head"><h2>SEC-Kennzahlen</h2>{% if sec.company_id %}<a class="btn sm ghost" href="/discovery/c/{{ sec.company_id }}">Unternehmenssteckbrief</a>{% endif %}</div>
-    {% if sec.state == 'geladen' %}
-    <div class="disc-brief-grid">
-      <div class="disc-brief-score">
-        <span class="label">Portfolia-Score</span>
-        {% if sec.nash %}
-          {% if sec.nash.quali_open %}<div><b class="disc-big">{{ pts(sec.nash.data.pts) }}</b><span class="hint"> / 65 Datenteil</span></div>
-          <div class="hint">qualitativer Teil (60 Punkte): offen – entsteht nur per Knopf im Unternehmenssteckbrief (KI)</div>
-          {% else %}<div><b class="disc-big">{{ pts(sec.nash.total) }}</b><span class="hint"> / 125</span></div>
-          <div class="hint">Daten {{ pts(sec.nash.data.pts) }}/65 · qualitativ {{ pts(sec.nash.quali.pts) }}/60{% if sec.nash.quali.n_open %} ({{ sec.nash.quali.n_open }} offen){% endif %}</div>{% endif %}
-          {% if sec.nash.data.n_open %}<div class="hint"><span class="badge warn">{{ sec.nash.data.n_open }} {{ 'Datenkriterium' if sec.nash.data.n_open == 1 else 'Datenkriterien' }} ohne Wert</span></div>{% endif %}
-        {% else %}<div class="hint">nicht berechnet</div>{% endif %}
-      </div>
-      <div class="disc-brief-bars">{{ bar('Wachstum', sec.scores.garp) }}{{ bar('Qualität', sec.scores.quality) }}{{ bar('Bewertung', sec.scores.valuation) }}</div>
-    </div>
-    {% if sec.numbers %}
-    <div class="disc-statgrid sec-numbers">{% for n in sec.numbers %}<div><span class="label">{{ n.label }}</span><b>{% if n.fmt == 'pct_sign' %}{{ n.value|pct(0) }}{% elif n.fmt == 'pct' %}{{ n.value|pct(0, false) }}{% else %}{{ money(n.value, n.ccy) }}{% endif %}</b></div>{% endfor %}</div>
-    {% else %}<p class="hint">Die SEC-Daten enthalten für dieses Unternehmen keine auswertbaren Kennzahlen.</p>{% endif %}
-    <p class="hint">Quelle: SEC (EDGAR){% if sec.year %}, letztes Geschäftsjahr {{ sec.year }}{% endif %}{% if sec.filed %} · jüngster Bericht eingereicht am {{ sec.filed|date_de }}{% endif %} · geladen {{ sec.analysed_at|datetime_de }} · ohne KI. Aktualisierung täglich im Hintergrund (neuer SEC-Bericht sofort).</p>
-    {% elif sec.state == 'ausstehend' %}
-    <p class="hint">{{ sec.name }} ist zugeordnet; die SEC-Kennzahlen werden beim nächsten täglichen Hintergrundlauf geladen (ohne KI).</p>
-    {% else %}
-    <p class="hint">Für {{ sec.symbol }} liegen noch keine SEC-Daten vor. Der tägliche Hintergrundlauf gleicht Aktien im Bestand mit dem SEC-Verzeichnis ab; findet er keinen eindeutigen SEC-Emittenten (z. B. bei ETFs), bleibt dieser Bereich leer.</p>
-    {% endif %}
-  </section>
-  {% endif %}
   <section class="card">
     <div class="card-head">
       <h2>Kursverlauf</h2>
@@ -166,6 +137,7 @@
     </div>
   </section>
   {% endif %}
+  {% include "partials/sec_block.html" %}
 
   <section class="card">
     <div class="card-head"><h2>FIFO-Lots</h2><span class="hint">{{ lots|length }} offen · {% if tax_pack %}Zuordnung laut Steuer-Regelwerk{% else %}Reihenfolge {{ 'global je Asset' if account_scope == 'global' else 'je Konto' }}{% endif %}</span></div>

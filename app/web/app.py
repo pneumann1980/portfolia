@@ -28,7 +28,7 @@ STATIC_DIR = BASE / "static"
 NAV = [
     ("dashboard", "/", "Übersicht", "home"),
     ("positions", "/positions", "Positionen", "list"),
-    ("watchlist", "/watchlist", "Entdecken & Beobachten", "eye"),  # 0.114: Watchlist + Discovery, zwei Ansichten
+    ("watchlist", "/watchlist", "Watchlist", "eye"),  # 0.115: eine Tabelle – Listen, Beobachtetes, Vorschläge
     ("journal", "/journal", "Buchungen", "book"),
     ("accounts", "/accounts", "Konten", "list"),
     ("plans", "/plans", "Sparpläne", "repeat"),

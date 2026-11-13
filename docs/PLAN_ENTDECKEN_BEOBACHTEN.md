@@ -5,7 +5,8 @@ Stand der Analyse: Branch `claude/portfolia-dashboard-s9p6zr`, Commit `39479ea` 
 Status `zurueckgestellt` (statt `neu`); zusätzlich umgesetzt wurden Listenverwaltung (B9), Sammelabfragen (B10),
 Mobilmenü aus der Menüliste (B5), die Kachel „Beobachtet“ auf der Übersicht und SEC-Kennzahlen für US-Aktien im
 Bestand. Maßgeblich ist `docs/DISCOVERY_INTELLIGENCE.md`, Abschnitt 0.10; der Backend-Patch ist eingearbeitet und
-entfernt.
+entfernt. **Seit 0.115** ersetzt eine einzige Tabelle „Watchlist“ die beiden Reiter (Abschnitt 0.11 dort);
+`partials/watch_tabs.html` entfällt.
 
 Lesereihenfolge für die Umsetzung: Abschnitt 4 (Entscheidungen) → Abschnitt 5 (Arbeitspakete, strikt der Reihe nach)
 → Abschnitt 6 (Abnahme). Abschnitt 2 und 3 sind Begründung und Zielbild.

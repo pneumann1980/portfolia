@@ -164,25 +164,25 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         if kind not in START_KINDS:
             raise HTTPException(404)
+        home = _safe_back((await request.form()).get("back"), BASE)  # 0.115: Start auch von der Watchlist aus
         r = await run_in_threadpool(J.start, ctx, kind, trigger="manuell")
         jb = J.get(ctx.db, r["id"]) or {}
         if not r["new"]:
-            return _back(BASE, err=f"{START_KINDS[kind]} läuft bereits (Job #{r['id']}) – kein zweiter Start.",
-                         job=r["id"])
+            return _with_msg(home, err=f"{START_KINDS[kind]} läuft bereits (Job #{r['id']}) – kein zweiter Start.",
+                             job=r["id"])
         note = f"wartet bis {_until(jb.get('wait_until'))} ({jb.get('wait_reason') or 'KI-Kontingent'}) und startet " \
             "dann von selbst – abbrechbar" if jb.get("waiting") else \
             "gestartet" if jb.get("active") else f"beendet: {jb.get('status_label')}"
-        return _back(BASE, msg=f"{START_KINDS[kind]} {note} (Job #{r['id']}).", job=r["id"])
+        return _with_msg(home, msg=f"{START_KINDS[kind]} {note} (Job #{r['id']}).", job=r["id"])
 
     @router.post(BASE + "/jobs/{job_id}/abbrechen")
     async def cancel_job(request: Request, job_id: int) -> Response:
         ctx = get_ctx(request)
         form = await request.form()
-        back = str(form.get("back") or BASE)
-        back = back if back.startswith(BASE) else BASE
+        back = _safe_back(form.get("back"), BASE)
         if J.cancel(ctx, job_id):
-            return _back(back, msg=f"Job #{job_id} abgebrochen.")
-        return _back(back, err=f"Job #{job_id} wartet nicht (mehr) – ein laufender Job läuft zu Ende.")
+            return _with_msg(back, msg=f"Job #{job_id} abgebrochen.")
+        return _with_msg(back, err=f"Job #{job_id} wartet nicht (mehr) – ein laufender Job läuft zu Ende.")
 
     @router.get(BASE + "/jobs/{job_id}", response_class=HTMLResponse)
     def job_partial(request: Request, job_id: int) -> HTMLResponse:
@@ -213,8 +213,8 @@ def make_router() -> APIRouter:
                                                       "Bewertung ohne KI; „Mit KI analysieren“ ergänzt den Steckbrief.")
         if res.get("choices"):
             names = "; ".join(f"{c['ticker']} ({c['name']})" for c in res["choices"][:8])
-            return _back(BASE, err=f"{res['error']}. Bitte Ticker eingeben: {names}")
-        return _back(BASE, err=res.get("error", "Nicht gefunden."))
+            return _with_msg(_safe_back(form.get("back"), BASE), err=f"{res['error']}. Bitte Ticker eingeben: {names}")
+        return _with_msg(_safe_back(form.get("back"), BASE), err=res.get("error", "Nicht gefunden."))
 
     @router.post(BASE + "/run")
     async def run_legacy(request: Request) -> Response:
@@ -238,7 +238,8 @@ def make_router() -> APIRouter:
             try:
                 nums[key] = max(lo, min(hi, int(str(raw).strip())))
             except ValueError:  # erst prüfen, dann speichern: ein ungültiger Wert ändert nichts
-                return _back(BASE, err=f"Ungültiger Wert für {key.split('.', 1)[1]}.")
+                return _with_msg(_safe_back(form.get("back"), BASE),
+                                 err=f"Ungültiger Wert für {key.split('.', 1)[1]}.")
         hours = {step: int(str(form.get(f"auto_{step}"))) for step in EN.SCHEDULE
                  if str(form.get(f"auto_{step}")) in ("0", "24", "168")}
         cur_scope, cur_sched = PR.current_scope(ctx), PR.current_schedule(ctx)
@@ -273,7 +274,7 @@ def make_router() -> APIRouter:
         sched = getattr(ctx, "scheduler", None)
         if sched is not None:
             schedule(sched)
-        return _back(BASE, msg="Discovery-Einstellungen gespeichert.")
+        return _with_msg(_safe_back(form.get("back"), BASE), msg="Discovery-Einstellungen gespeichert.")
 
     @router.get(BASE + "/export.json")
     def export(request: Request) -> Response:

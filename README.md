@@ -2002,7 +2002,9 @@ Speichern aus der Oberfläche erhalten).
   „Individuell“, Kontingent; Grenzen unter „Erweitert“); Discovery hat drei Grundeinstellungen (automatische Suche,
   Rechercheumfang, KI ja/nein). Ab 0.114 sind Discovery und Watchlist ein Bereich „Entdecken & Beobachten“ (ein
   „Beobachten“, Listenverwaltung), und für US-Aktien im Bestand lädt Portfolia täglich SEC-Kennzahlen, die im
-  Einzeltitel samt Portfolia-Score erscheinen. Gesendet werden ausschließlich öffentliche Artikeltexte, Titel, Quellen und Asset-Namen – nie
+  Einzeltitel samt Portfolia-Score erscheinen. Ab 0.115 heißt der Bereich „Watchlist“: eine Tabelle mit Listentiteln und
+  markierten Vorschlägen, Detailfenster wie bei den Positionen und Titelsuche nach Name oder Symbol (der Suchtext geht
+  dabei an Yahoo Finance). Gesendet werden ausschließlich öffentliche Artikeltexte, Titel, Quellen und Asset-Namen – nie
   Stückzahlen, Werte, Gewichte, Konten oder Adressen. Details, Grenzen und Datenschutz:
   [docs/NEWS_INTELLIGENCE.md](docs/NEWS_INTELLIGENCE.md).
 
