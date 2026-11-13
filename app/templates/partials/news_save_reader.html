@@ -6,7 +6,7 @@
     <summary>{{ 'Notiz' if n.note else 'Notiz hinzufügen' }} <span class="muted small">(optional, nur für Sie)</span></summary>
     <form class="note-form" hx-post="/news/{{ n.id }}/note" hx-target="#reader-save" hx-swap="outerHTML">
       <textarea name="note" rows="2" maxlength="500" aria-label="Notiz" placeholder="z. B. Warum gemerkt, was beobachten …">{{ n.note or '' }}</textarea>
-      <div class="row" style="gap:8px"><button class="btn sm" type="submit">Notiz speichern</button>{% if note_saved %}<span class="badge good" role="status">gespeichert</span>{% endif %}</div>
+      <div class="row gap-8"><button class="btn sm" type="submit">Notiz speichern</button>{% if note_saved %}<span class="badge good" role="status">gespeichert</span>{% endif %}</div>
     </form>
   </details>
   {% else %}

@@ -38,17 +38,17 @@
     {% endif %}
     <ul class="hint">{% for i in p.info %}<li>{{ i }}</li>{% endfor %}</ul>
 
-    <form method="post" action="/accounts/merge/apply" class="stack" style="gap:8px;margin-top:10px">
+    <form method="post" action="/accounts/merge/apply" class="stack gap-8 mt-10">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="alias" value="{{ p.alias }}"><input type="hidden" name="target" value="{{ p.target }}"><input type="hidden" name="fp" value="{{ p.fp }}">
       <label class="field">Notiz (optional)<input type="text" name="note" maxlength="200" placeholder="z. B. dasselbe Depot bei der DKB"></label>
       <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe die Vorschau geprüft und möchte die Konten zusammenführen.</label>
-      <div class="row" style="gap:8px;flex-wrap:wrap">
+      <div class="row gap-8 fx-wrap">
         <button class="btn primary" type="submit">Zusammenführen</button>
         <a class="btn" href="/accounts/merge">Abbrechen</a>
       </div>
     </form>
-    <form method="post" action="/accounts/merge/preview" class="inline" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="alias" value="{{ p.alias }}"><input type="hidden" name="target" value="{{ p.target }}"><input type="hidden" name="swap" value="1"><button class="btn ghost sm" type="submit">Richtung tauschen ({{ p.target }} → {{ p.alias }})</button></form>
+    <form method="post" action="/accounts/merge/preview" class="inline mt-6"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="alias" value="{{ p.alias }}"><input type="hidden" name="target" value="{{ p.target }}"><input type="hidden" name="swap" value="1"><button class="btn ghost sm" type="submit">Richtung tauschen ({{ p.target }} → {{ p.alias }})</button></form>
     <p class="hint">Rückgängig jederzeit unter <a href="/accounts/merge#durchgefuehrt">Durchgeführt</a>. Es wird keine Buchung erzeugt oder verändert.</p>
     {% endif %}
   </section>

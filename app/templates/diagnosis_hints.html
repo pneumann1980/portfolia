@@ -17,7 +17,7 @@
   <ul class="plain-list">{% for f in plan.items %}<li><span class="badge {{ status_badge[f.status] }}">{{ f.status }}</span> <span class="badge">{{ f.kind_label }}</span> {{ f.title }} <a class="hint" href="/quality/diagnose?status=hinweis&amp;f={{ f.id }}#{{ f.id }}">ansehen</a></li>{% endfor %}</ul>
 </section>
 <section class="card"><h2>Als geprüft markieren</h2>
-  <form method="post" action="/quality/diagnose/hints/apply" class="stack" style="gap:8px">
+  <form method="post" action="/quality/diagnose/hints/apply" class="stack gap-8">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="fp" value="{{ plan.fp }}"><input type="hidden" name="kind" value="{{ kind }}">
     <input type="text" name="note" maxlength="200" placeholder="Notiz (optional), z. B. „Konten sind bewusst stillgelegt“" aria-label="Notiz">
     <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe die Liste gesehen; es ist keine Datenänderung nötig.</label>

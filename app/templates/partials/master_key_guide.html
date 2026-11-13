@@ -3,7 +3,7 @@
   <p class="small" style="margin:8px 0 4px">Portfolia speichert API-Keys nur verschlüsselt. Der Schlüssel dafür liegt bewusst
     <b>nicht</b> in der Datenbank, sondern als Datei außerhalb von appdata – deshalb dieser eine Schritt im Unraid-Terminal
     (<b>&gt;_</b> oben rechts):</p>
-  <pre class="mono small" style="white-space:pre-wrap;overflow-wrap:anywhere;margin:0">mkdir -p /boot/config/portfolia
+  <pre class="mono small m-0" style="white-space:pre-wrap;overflow-wrap:anywhere">mkdir -p /boot/config/portfolia
 openssl rand -base64 32 &gt; /boot/config/portfolia/master.key</pre>
   <ol class="small" style="margin:8px 0 0 18px">
     <li>Im Container-Template muss die Pfad-Zuordnung <b>„Master-Key (Ordner, nur lesen)“</b>

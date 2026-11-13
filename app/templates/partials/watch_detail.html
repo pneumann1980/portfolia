@@ -5,7 +5,7 @@
 {% set back_here = ('/watchlist/item/' ~ it.id) if it and not in_panel else '/watchlist' %}
 <div class="stack" data-watch-detail="{{ ('i' ~ it.id) if it else ('c' ~ co.id) }}">
   <div class="asset-head">
-    <div style="flex:1;min-width:0">
+    <div class="flex-1 min-0">
       <h1 style="font-size:1.2rem">{{ name }}</h1>
       <div class="hint">{{ sym }} · {% if it %}{{ 'Krypto' if it.asset_class == 'crypto' else ('Index' if is_index else 'Wertpapier') }} · Quelle {{ snap.provider_label if snap else it.quote_source }} ({{ it.quote_id }}){% else %}Wertpapier{% if co.exchange %} · {{ co.exchange }}{% endif %}{% endif %}
         {% if disc %} · <span class="badge {{ {'analysiert': 'good', 'veraltet': 'warn', 'vorschau': 'info'}.get(disc.stage, '') }}">{{ stages[disc.stage] }}</span>{% endif %}
@@ -20,10 +20,10 @@
     </div>
   </div>
 
-  <div class="row" style="gap:8px;flex-wrap:wrap" id="watch-aktionen">
+  <div class="row gap-8 fx-wrap" id="watch-aktionen">
     {% if it and not is_index %}<form method="post" action="/watchlist/item/{{ it.id }}/position"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm primary" type="submit">Position erstellen</button></form>{% endif %}
     {% if co and not (disc and disc.watched) %}
-    <form method="post" action="/discovery/c/{{ co.id }}/beobachten" class="row" style="gap:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/watchlist">
+    <form method="post" action="/discovery/c/{{ co.id }}/beobachten" class="row gap-6"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/watchlist">
       {% if watch_lists|length > 1 %}<label class="sr-only" for="wd-liste">Liste</label><select id="wd-liste" name="list">{% for l in watch_lists %}<option value="{{ l.id }}" {{ 'selected' if l.is_default }}>{{ l.name }}</option>{% endfor %}</select>{% endif %}
       <button class="btn sm primary" type="submit">Beobachten</button></form>
     {% endif %}

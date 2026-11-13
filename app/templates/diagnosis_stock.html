@@ -50,7 +50,7 @@
     </tr>
     {% if not view and (r.unexplained or r.decisions) %}<tr class="detail-row"><td colspan="5">
       <details class="box"{% if open_pos == r.key %} open{% endif %}><summary>Mögliche Ursachen, Befunde, Entscheidungen – {{ r.account }} · {{ r.asset }}</summary>
-        <div class="stack" style="gap:6px;margin-top:6px">
+        <div class="stack gap-6 mt-6">
           {% if r.causes %}<div><b>Mögliche Ursachen</b> <span class="hint">(Kategorien, keine Feststellung)</span><ul class="plain-list">{% for c in r.causes %}<li>{{ c }}</li>{% endfor %}</ul></div>{% endif %}
           {% if r.candidates %}<div><b>Kandidaten</b> <span class="hint">(Hypothesen, nichts gebucht)</span><ul class="plain-list">{% for c in r.candidates %}<li>{{ c }}</li>{% endfor %}</ul>{% if r.rest_strong is not none %}<div class="hint">Rest nach belegten/stark gestützten Kandidaten: {{ r.rest_strong|qty_exact }}</div>{% endif %}</div>{% else %}{% if r.unexplained %}<div class="hint">Keine Kandidaten – die Differenz bleibt <b>ungeklärt</b>; es wird nichts angenommen oder gebucht.</div>{% endif %}{% endif %}
           {% if r.findings %}<div><b>Befunde</b><ul class="plain-list">{% for fid, title in r.findings %}<li><a href="/quality/diagnose/case/{{ fid }}">{{ title }}</a></li>{% endfor %}</ul></div>{% endif %}

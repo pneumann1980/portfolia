@@ -2,7 +2,7 @@
 {% block title %}{{ 'Datenquelle bearbeiten' if ds else 'Datenquelle anlegen' }}{% endblock %}
 {% block heading %}Datenquellen{% endblock %}
 {% macro key_guide() %}
-<details class="box" style="margin-top:10px"><summary>So erstellst du den Bitpanda-API-Key</summary>
+<details class="box mt-10"><summary>So erstellst du den Bitpanda-API-Key</summary>
   <ol class="small" style="margin:8px 0 0 18px">
     <li>Bei Bitpanda anmelden → Profil → <b>API-Key</b> (app.bitpanda.com/my-account/apikey), Reiter <b>Bitpanda</b>.</li>
     <li>Namen vergeben (z. B. „Portfolia“) und <b>nur Leserechte</b> wählen:
@@ -20,7 +20,7 @@
     nie an Dritte und nie zurück an den Browser.</p>
 </details>{% endmacro %}
 {% macro binance_guide() %}
-<details class="box" style="margin-top:10px"><summary>So erstellst du den Binance-API-Key (nur lesend)</summary>
+<details class="box mt-10"><summary>So erstellst du den Binance-API-Key (nur lesend)</summary>
   <ol class="small" style="margin:8px 0 0 18px">
     <li>Bei Binance anmelden → Profil → <b>API-Verwaltung</b> → „API erstellen“ → <b>Systemgeneriert</b> (HMAC).</li>
     <li>Namen vergeben (z. B. „Portfolia“), Sicherheitsprüfung abschließen.</li>
@@ -41,7 +41,7 @@
 {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 {% if errors %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{% for e in errors %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>{% endif %}
 {% if errors and not ds and kind == 'exchange' and 'bereits die Datenquelle' in errors|join(' ') %}
-<form method="post" action="/settings/datasources" class="box" autocomplete="off" style="margin-top:8px">
+<form method="post" action="/settings/datasources" class="box mt-8" autocomplete="off">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="kind" value="exchange">
   {% for k in ('provider', 'name', 'account', 'sync_interval_min', 'note', 'key_expires_on', 'credential_ref') %}<input type="hidden" name="{{ k }}" value="{{ data.get(k, '') }}">{% endfor %}
   <input type="hidden" name="allow_duplicate" value="1">
@@ -67,24 +67,24 @@
   </div>
   {% set chk = ds.check %}
   {% if chk %}
-  <div style="margin-top:10px"><div class="hint">Letzte Verbindungsprüfung{% if chk.at %} · {{ chk.at|datetime_de }}{% endif %}</div>
-    <div class="alert {{ 'good' if chk.ok else 'crit' }}" style="margin-top:4px"><span class="icon">{{ '✓' if chk.ok else '!' }}</span><div>{{ chk.message }}
+  <div class="mt-10"><div class="hint">Letzte Verbindungsprüfung{% if chk.at %} · {{ chk.at|datetime_de }}{% endif %}</div>
+    <div class="alert {{ 'good' if chk.ok else 'crit' }} mt-4"><span class="icon">{{ '✓' if chk.ok else '!' }}</span><div>{{ chk.message }}
       {% if chk.details %}<ul class="small" style="margin:6px 0 0 16px">{% for name, d in chk.details.items() %}<li>{{ check_labels.get(name, name) }}: {{ '✓' if d.ok else '✗' }} {{ d.text }}</li>{% endfor %}</ul>{% endif %}</div></div>
   </div>{% endif %}
-  <div class="row" style="margin-top:12px">
+  <div class="row mt-12">
     {% if ds.key_mode %}<form method="post" action="/settings/datasources/{{ ds.id }}/check" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit">Verbindung testen</button></form>{% endif %}
     {% if ds.key_mode == 'app' %}<form method="post" action="/settings/datasources/{{ ds.id }}/key/delete" class="inline" data-confirm="API-Key entfernen? Übernommene Buchungen bleiben; Abrufe sind erst mit einem neuen Schlüssel wieder möglich."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">API-Key entfernen</button></form>{% endif %}
   </div>
   {% if vault.available %}
-  <form method="post" action="/settings/datasources/{{ ds.id }}/key" class="stack" style="gap:10px;margin-top:14px" autocomplete="off">
+  <form method="post" action="/settings/datasources/{{ ds.id }}/key" class="stack gap-10 mt-12" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <h3>{{ 'API-Key ersetzen' if ds.key_mode == 'app' else 'API-Key eingeben' }}</h3>
     <div class="grid-2">
-      <label class="field" style="grid-column:1/-1">API-Key
+      <label class="field span-all">API-Key
         <input type="text" name="api_key" required minlength="16" maxlength="1024" class="mono secret-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="{{ 'neuen Schlüssel einfügen' if ds.key_mode == 'app' else 'Schlüssel einfügen' }}">
         <span class="hint">Wird verschlüsselt gespeichert und danach nie wieder angezeigt (nur die letzten 4 Zeichen).</span></label>
       {% if ds.provider == 'binance' %}
-      <label class="field" style="grid-column:1/-1">Secret Key
+      <label class="field span-all">Secret Key
         <input type="password" name="api_secret" required minlength="16" maxlength="1024" class="mono secret-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="Secret Key einfügen">
         <span class="hint">Nur zum Signieren der Abfragen – wird nie angezeigt und nie übertragen.</span></label>
       {% endif %}
@@ -101,15 +101,15 @@
 <section class="card" id="status">
   <div class="card-head"><h2>Synchronisierung</h2><span class="badge {{ ds.sync_state[1] }}">{{ ds.sync_state[0] }}</span></div>
   {% if ds.is_wallet %}
-  <div class="hint wrap-any" style="margin-bottom:8px">{{ ds.provider_label }}{% if ds.group %} · Gruppe „{{ ds.group }}“{% endif %}{% if ds.endpoint %} · Anbieter: {{ ds.endpoint.label }}{% endif %}</div>
+  <div class="hint wrap-any mb-8">{{ ds.provider_label }}{% if ds.group %} · Gruppe „{{ ds.group }}“{% endif %}{% if ds.endpoint %} · Anbieter: {{ ds.endpoint.label }}{% endif %}</div>
   {% if ds.progress.running %}{% with p=ds.progress, back='detail' %}{% include "partials/ds_progress.html" %}{% endwith %}
-  {% elif ds.progress.finished_at %}<div class="alert {{ 'good' if ds.progress.ok else 'crit' }}" style="margin-bottom:8px"><span class="icon">{{ '✓' if ds.progress.ok else '!' }}</span><div>Letzter Abruf beendet {{ ds.progress.finished_at|datetime_de }}{% if ds.progress.result %}: {{ ds.progress.result }}{% endif %}{% if ds.progress.batch_id %} – <a href="/journal/csv/{{ ds.progress.batch_id }}">Prüf-Stapel öffnen</a>{% endif %}</div></div>{% endif %}
-  {% for g in ds.gaps %}<div class="alert warn" style="margin-bottom:8px"><span class="icon">!</span><div><b>Erkannte Lücke:</b> {{ g }}</div></div>{% endfor %}
-  {% if ds.parts %}<ul class="plain-list ds-parts" style="margin-bottom:8px">{% for pt in ds.parts %}
+  {% elif ds.progress.finished_at %}<div class="alert {{ 'good' if ds.progress.ok else 'crit' }} mb-8"><span class="icon">{{ '✓' if ds.progress.ok else '!' }}</span><div>Letzter Abruf beendet {{ ds.progress.finished_at|datetime_de }}{% if ds.progress.result %}: {{ ds.progress.result }}{% endif %}{% if ds.progress.batch_id %} – <a href="/journal/csv/{{ ds.progress.batch_id }}">Prüf-Stapel öffnen</a>{% endif %}</div></div>{% endif %}
+  {% for g in ds.gaps %}<div class="alert warn mb-8"><span class="icon">!</span><div><b>Erkannte Lücke:</b> {{ g }}</div></div>{% endfor %}
+  {% if ds.parts %}<ul class="plain-list ds-parts mb-8">{% for pt in ds.parts %}
     <li><span class="badge {{ {'complete': 'good', 'progress': 'info', 'blocked': 'warn', 'off': ''}.get(pt.state, '') }}">{{ pt.label }} · {{ {'complete': 'vollständig', 'progress': 'in Bearbeitung', 'blocked': 'blockiert', 'off': 'aus'}.get(pt.state, pt.state) }}</span> <span class="hint">{{ pt.text }}</span></li>{% endfor %}</ul>{% endif %}
-  {% if ds.backfill_pending %}<div class="alert" style="margin-bottom:8px"><span class="icon">i</span><div>Historie noch nicht vollständig{% if ds.coverage.to_block is defined %} (abgerufen bis Block {{ ds.coverage.to_block }}){% endif %}. {% if ds.sched.next_reason %}{{ ds.sched.next_reason|capitalize }}.{% endif %} „Vollständig synchronisiert“ erst danach.{% if ds.sync_interval_min and not ds.catchup %} Mit „Lange Historie automatisch aufholen“ (Einstellungen) geht es in kurzen Abständen weiter; „Jetzt abrufen“ setzt sofort fort.{% endif %}</div></div>{% endif %}
+  {% if ds.backfill_pending %}<div class="alert mb-8"><span class="icon">i</span><div>Historie noch nicht vollständig{% if ds.coverage.to_block is defined %} (abgerufen bis Block {{ ds.coverage.to_block }}){% endif %}. {% if ds.sched.next_reason %}{{ ds.sched.next_reason|capitalize }}.{% endif %} „Vollständig synchronisiert“ erst danach.{% if ds.sync_interval_min and not ds.catchup %} Mit „Lange Historie automatisch aufholen“ (Einstellungen) geht es in kurzen Abständen weiter; „Jetzt abrufen“ setzt sofort fort.{% endif %}</div></div>{% endif %}
   {% endif %}
-  {% if ds.sched.stalled %}<div class="alert warn" style="margin-bottom:8px"><span class="icon">!</span><div><b>Stillstand erkannt:</b> {{ ds.sched.stalled }}. Der Abrufstand bleibt auf vollständig verarbeiteten Daten; nichts wird übersprungen.</div></div>{% endif %}
+  {% if ds.sched.stalled %}<div class="alert warn mb-8"><span class="icon">!</span><div><b>Stillstand erkannt:</b> {{ ds.sched.stalled }}. Der Abrufstand bleibt auf vollständig verarbeiteten Daten; nichts wird übersprungen.</div></div>{% endif %}
   {% if not ds.supported %}<p class="hint"><b>Manuell / noch nicht unterstützt</b> – Buchungen per <a href="/journal/csv">CSV-Import</a>.</p>{% endif %}
   <div class="facts">
     <div class="fact"><div class="k">Letzter Lauf</div><div class="v">{{ ds.last_run_at|datetime_de if ds.last_run_at else '–' }}</div></div>
@@ -118,14 +118,14 @@
     {% if ds.sched.start %}<div class="fact"><div class="k">Letzter Start</div><div class="v">{{ {'schedule': 'regulärer Termin', 'catchup': 'automatische Fortsetzung', 'manual': 'manuell'}.get(ds.sched.start, ds.sched.start) }}</div></div>{% endif %}
     {% if ds.sched.last_progress_at %}<div class="fact"><div class="k">Letzte Fortschrittsänderung</div><div class="v">{{ ds.sched.last_progress_at|datetime_de }}</div></div>{% endif %}
     <div class="fact"><div class="k">Angelegt</div><div class="v">{{ ds.created_at|datetime_de }}</div></div>
-    {% if ds.last_error %}<div class="fact" style="grid-column:1/-1"><div class="k">Letzter Fehler{% if ds.last_error_at %} · {{ ds.last_error_at|datetime_de }}{% endif %}</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
+    {% if ds.last_error %}<div class="fact span-all"><div class="k">Letzter Fehler{% if ds.last_error_at %} · {{ ds.last_error_at|datetime_de }}{% endif %}</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
   </div>
   {% if acct_sug %}{% set sg = acct_sug %}
-  <div class="alert warn" style="margin-top:10px" id="konto"><span class="icon">!</span><div><b>Konto laut Abgleich:</b> Der kuratierte Import führt {{ sg.matches }} von {{ sg.total }} gefundenen Vorgängen dieser Quelle unter <b>„{{ sg.account }}“</b>{% if sg.sides %} (davon {{ sg.sides }} als Seite eines Transfers – gleiche Menge, ohne gemeinsamen Hash, z. B. verzögerte Auszahlung einer Börse){% endif %}; diese Quelle bucht auf „{{ ds.account }}“ – vermutlich dasselbe Wallet unter zwei Namen.
+  <div class="alert warn mt-10" id="konto"><span class="icon">!</span><div><b>Konto laut Abgleich:</b> Der kuratierte Import führt {{ sg.matches }} von {{ sg.total }} gefundenen Vorgängen dieser Quelle unter <b>„{{ sg.account }}“</b>{% if sg.sides %} (davon {{ sg.sides }} als Seite eines Transfers – gleiche Menge, ohne gemeinsamen Hash, z. B. verzögerte Auszahlung einer Börse){% endif %}; diese Quelle bucht auf „{{ ds.account }}“ – vermutlich dasselbe Wallet unter zwei Namen.
     {% if sg.used %}Auf „{{ ds.account }}“ gibt es {{ sg.used }} Buchung{{ 'en' if sg.used != 1 }} – sie bleiben dort (bei Bedarf einzeln anpassen bzw. unter <a href="/journal/abgleich">Abgleich mit dem Import</a> entscheiden); künftige Vorgänge gehen auf das neue Konto.{% endif %}
     <form method="post" action="/settings/datasources/{{ ds.id }}/account-adopt" class="inline" data-confirm="Konto dieser Quelle auf „{{ sg.account }}“ umstellen? Offene Prüf-Stapel folgen, übernommene Buchungen bleiben auf „{{ ds.account }}“ (zurücknehmbar)."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ sg.account }}"><button class="btn sm" type="submit">Konto „{{ sg.account }}“ übernehmen</button></form></div></div>
   {% elif acct_sw and not acct_sw.undone and acct_sw.to == ds.account %}
-  <div class="alert info" style="margin-top:10px" id="konto"><span class="icon">i</span><div>Konto {{ 'automatisch' if acct_sw.auto else '' }} von „{{ acct_sw['from'] }}“ auf „{{ acct_sw.to }}“ umgestellt{% if acct_sw.at %} ({{ acct_sw.at|datetime_de }}){% endif %}.
+  <div class="alert info mt-10" id="konto"><span class="icon">i</span><div>Konto {{ 'automatisch' if acct_sw.auto else '' }} von „{{ acct_sw['from'] }}“ auf „{{ acct_sw.to }}“ umgestellt{% if acct_sw.at %} ({{ acct_sw.at|datetime_de }}){% endif %}.
     <form method="post" action="/settings/datasources/{{ ds.id }}/account-undo" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Rückgängig</button></form></div></div>
   {% endif %}
   {% set cov = ds.coverage %}
@@ -152,7 +152,7 @@
       <li>Grundlage ist immer die Vorgangshistorie; Bestände dienen nur als Plausibilitätsprüfung.</li>
     </ul></details>{% endif %}
   {% if holdings and (ds.is_wallet or holdings['items']) %}{% set obs = 'On-Chain beobachtet' if ds.is_wallet else 'laut ' ~ ds.provider_label %}
-  <h3 style="margin-top:14px">Bestände: {{ obs }} vs. durch Portfolia-Buchungen erklärt</h3>
+  <h3 class="mt-12">Bestände: {{ obs }} vs. durch Portfolia-Buchungen erklärt</h3>
   <p class="hint">Beobachtet = laut Anbieter{% if holdings.observed_at %} ({{ holdings.observed_at|datetime_de }}){% endif %}; erklärt = Bestand des Kontos „{{ ds.account }}“ aus übernommenen Buchungen. Abweichungen sind Hinweise (offene Prüfpunkte, unbestätigte Vorgänge, nicht erfasste Bewegungen) – sie werden nie automatisch ausgeglichen.{% if not ds.is_wallet %} Darunter je Asset der Abgleich des Anbieterbestands mit der Summe seiner Vorgänge.{% endif %}</p>
   {% if holdings['items'] %}
   <div class="table-wrap cards-wrap"><table class="compact cards">
@@ -165,22 +165,22 @@
     </tr>{% endfor %}</tbody></table></div>
   {% else %}<p class="hint">Noch keine Bestände beobachtet – „Verbindung testen“ oder synchronisieren.</p>{% endif %}
   {% endif %}
-  {% if outdated %}<div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div><b>{{ outdated }} {{ 'Vorgang' if outdated == 1 else 'Vorgänge' }} in offenen Prüf-Stapeln mit älterer Auswertung</b> – unbearbeitete ersetzt die nächste Synchronisierung („Vollständig neu abrufen“ sofort), bearbeitete im Prüf-Stapel über „Veraltete Zeilen neu auswerten“.</div></div>{% endif %}
+  {% if outdated %}<div class="alert warn mt-10"><span class="icon">!</span><div><b>{{ outdated }} {{ 'Vorgang' if outdated == 1 else 'Vorgänge' }} in offenen Prüf-Stapeln mit älterer Auswertung</b> – unbearbeitete ersetzt die nächste Synchronisierung („Vollständig neu abrufen“ sofort), bearbeitete im Prüf-Stapel über „Veraltete Zeilen neu auswerten“.</div></div>{% endif %}
   {% if open_counts %}{% set n = open_counts.values()|sum %}
-  <div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div><b>Zur Prüfung offen: {{ n }} {{ 'Vorgang' if n == 1 else 'Vorgänge' }}</b>
+  <div class="alert warn mt-10"><span class="icon">!</span><div><b>Zur Prüfung offen: {{ n }} {{ 'Vorgang' if n == 1 else 'Vorgänge' }}</b>
     ({% for st, k in open_counts.items() %}{{ k }}× {{ st }}{% if not loop.last %} · {% endif %}{% endfor %})
-    <div class="row" style="margin-top:6px"><a class="btn sm primary" href="/journal/pruefung?source={{ ds.id }}">Jetzt prüfen</a>{% for b in pending %}<a class="btn sm ghost" href="/journal/csv/{{ b.id }}">Prüf-Stapel {{ b.created_at|datetime_de }}</a>{% endfor %}</div></div></div>{% endif %}
+    <div class="row mt-6"><a class="btn sm primary" href="/journal/pruefung?source={{ ds.id }}">Jetzt prüfen</a>{% for b in pending %}<a class="btn sm ghost" href="/journal/csv/{{ b.id }}">Prüf-Stapel {{ b.created_at|datetime_de }}</a>{% endfor %}</div></div></div>{% endif %}
   <details class="box" style="margin-top:10px" id="datei" {% if not ds.supported or last_import is none %}open{% endif %}><summary>Datei-Import: Exportdatei dieser Quelle (CSV, XLSX, ZIP)</summary>
     <p class="hint">Für jede Börse und Wallet – auch ohne Schnittstelle. Die Datei wird dieser Datenquelle (Konto <b>{{ ds.account }}</b>) zugeordnet; jede Tabelle wird ein Prüf-Stapel mit Herkunft (Archiv, Eintrag, Blatt, Prüfsumme). Excel-Makros werden nie ausgeführt.
       {% if last_import %}Letzter Datei-Import: {{ last_import.created_at|datetime_de }} · {{ last_import.filename }}.{% endif %}</p>
     {{ import_form('/settings/datasources/' ~ ds.id ~ '/upload', last_booking) }}
   </details>
   {% if ds.is_wallet and ds.check %}{% set chk = ds.check %}
-  <div style="margin-top:10px"><div class="hint">Letzte Verbindungsprüfung{% if chk.at %} · {{ chk.at|datetime_de }}{% endif %}</div>
-    <div class="alert {{ 'good' if chk.ok else 'crit' }}" style="margin-top:4px"><span class="icon">{{ '✓' if chk.ok else '!' }}</span><div class="wrap-any">{{ chk.message }}
+  <div class="mt-10"><div class="hint">Letzte Verbindungsprüfung{% if chk.at %} · {{ chk.at|datetime_de }}{% endif %}</div>
+    <div class="alert {{ 'good' if chk.ok else 'crit' }} mt-4"><span class="icon">{{ '✓' if chk.ok else '!' }}</span><div class="wrap-any">{{ chk.message }}
       {% if chk.details %}<ul class="small" style="margin:6px 0 0 16px">{% for name, d in chk.details.items() %}<li>{{ check_labels.get(name, name) }}: {{ '✓' if d.ok else '✗' }} {{ d.text }}</li>{% endfor %}</ul>{% endif %}</div></div>
   </div>{% endif %}
-  <div class="row" style="margin-top:12px">
+  <div class="row mt-12">
     {% if ds.supported and ds.enabled %}
     <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit" {% if ds.needs_key and not ds.key_mode %}disabled title="Zuerst API-Key eingeben"{% endif %}{% if ds.progress.running %} disabled{% endif %}>{{ 'Jetzt synchronisieren' if ds.last_success_at else ('Erstabruf starten' if ds.is_wallet else 'Historischen Abgleich starten') }}</button></form>
     {% if ds.is_wallet %}<form method="post" action="/settings/datasources/{{ ds.id }}/check" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Verbindung testen</button></form>{% endif %}
@@ -190,7 +190,7 @@
     {% if ds.supported and takeover_supported %}<a class="btn" href="/settings/datasources/{{ ds.id }}/uebernahme" title="Die Quelle für dieses Konto maßgeblich machen, den kuratierten Import dafür zurücknehmen – mit Beweis bzw. Bestätigung, Vorschau und Rückgängig">Quellenübernahme …</a>{% endif %}
     {% if ds.supported and ds.cursor_json %}<form method="post" action="/settings/datasources/{{ ds.id }}/reset" class="inline" data-confirm="Abrufstand zurücksetzen? Der nächste Lauf holt alle Vorgänge erneut; bereits übernommene werden erkannt, Überschneidungen mit CSV-Importen erscheinen erneut zur Prüfung."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Abrufstand zurücksetzen</button></form>{% endif %}
   </div>
-  <p class="hint" style="margin-top:8px">Vor der Übernahme zeigt der Prüf-Stapel neue, bereits bekannte (z. B. per CSV importierte), möglicherweise doppelte und ungeklärte Vorgänge. Nach der Prüfung kannst du unten eine stündliche Synchronisierung einschalten – sie liest nur.</p>
+  <p class="hint mt-8">Vor der Übernahme zeigt der Prüf-Stapel neue, bereits bekannte (z. B. per CSV importierte), möglicherweise doppelte und ungeklärte Vorgänge. Nach der Prüfung kannst du unten eine stündliche Synchronisierung einschalten – sie liest nur.</p>
 </section>
 {% endif %}
 
@@ -200,12 +200,12 @@
     <span class="badge {{ 'crit' if q.proven else 'warn' if q.plausible else 'good' }}">{{ q.proven|length }} nachgewiesen · {{ q.plausible|length }} plausibel</span></div>
   <p class="hint">Nur belegte Aussagen: Pagination, Pflichtfelder, Saldoverlauf (asset_balance_after), Abgleich mit /portfolio und der letzte vollständige Abruf. Eine erfolgreiche API-Antwort allein gilt nicht als Beleg. Nichts wird automatisch korrigiert.{% if q.history %} Letzter vollständiger Abruf: {{ q.history.at|datetime_de }} – {{ q.history.events }} Vorgänge{% if q.history.first %} vom {{ q.history.first|date_de }} bis {{ q.history.last|date_de }}{% endif %}.{% endif %}</p>
   {% for title, items, badge in (('Nachgewiesene Fehler', q.proven, 'crit'), ('Plausible Datenlücken', q.plausible, 'warn'), ('Nicht verifizierbar', q.unverifiable, '')) %}
-  <h3 style="margin-top:12px">{{ title }} <span class="badge {{ badge if items else 'good' }}">{{ items|length }}</span></h3>
+  <h3 class="mt-12">{{ title }} <span class="badge {{ badge if items else 'good' }}">{{ items|length }}</span></h3>
   {% if items %}<ul class="plain quality-list">{% for f in items %}<li><b>{{ f.title }}</b>{% if f.detail %}<div class="hint">{{ f.detail }}</div>{% endif %}{% if f.examples %}<div class="hint mono wrap-any">{% for e in f.examples %}{{ e }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div>{% endif %}</li>{% endfor %}</ul>
   {% else %}<p class="hint">{{ 'Keine – die geprüften Belege sind stimmig.' if badge == 'crit' else 'Keine Hinweise.' if badge == 'warn' else 'Nichts offen.' }}</p>{% endif %}
   {% endfor %}
   {% if q.years %}
-  <details class="box" style="margin-top:10px"><summary>Vorgänge je Monat (letzter vollständiger Abruf)</summary>
+  <details class="box mt-10"><summary>Vorgänge je Monat (letzter vollständiger Abruf)</summary>
     <div class="table-wrap"><table class="compact months"><thead><tr><th>Jahr</th>{% for m in ('Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez') %}<th class="num">{{ m }}</th>{% endfor %}</tr></thead>
       <tbody>{% for y, row in q.years %}<tr><td>{{ y }}</td>{% for n in row %}<td class="num{{ ' zero' if n == 0 }}">{{ '' if n is none else n }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
     <p class="hint">Leere Felder: außerhalb des abgerufenen Zeitraums; hervorgehoben: Monate ohne Vorgänge.</p>
@@ -218,7 +218,7 @@
   <div class="card-head"><h2>{{ 'Einstellungen' if ds else ('Börse anlegen' if kind == 'exchange' else 'Wallet-Konto anlegen') }}</h2>
     <a class="btn ghost" href="/accounts">Zurück</a></div>
   {% if not ds %}
-  <div class="seg" role="group" aria-label="Art" style="margin-bottom:12px">
+  <div class="seg mb-12" role="group" aria-label="Art">
     <a href="/settings/datasources/new?kind=wallet" class="{{ 'active' if kind == 'wallet' }}">Wallet</a>
     <a href="/settings/datasources/new?kind=exchange" class="{{ 'active' if kind == 'exchange' }}">Börse</a>
   </div>{% endif %}
@@ -231,8 +231,8 @@
     <a class="btn chain-btn" href="/settings/datasources/new?kind=wallet&amp;provider={{ p.id }}{% if data.get('wallet_group') %}&amp;group={{ data.get('wallet_group')|urlencode }}{% endif %}"><span class="chain-icon chain-{{ p.id }}" aria-hidden="true">{{ chain_ticker.get(p.id, p.id[:3]|upper) }}</span>{{ p.label }}</a>
     {% endif %}{% endfor %}
   </div>
-  <details class="box" style="margin-top:12px"><summary>Andere Chain (nur CSV-Import)</summary>
-    <div class="row" style="margin-top:8px">{% for p in providers %}{% if p.id not in supported_ids %}<a class="btn sm ghost" href="/settings/datasources/new?kind=wallet&amp;provider={{ p.id }}">{{ p.label }}</a>{% endif %}{% endfor %}</div>
+  <details class="box mt-12"><summary>Andere Chain (nur CSV-Import)</summary>
+    <div class="row mt-8">{% for p in providers %}{% if p.id not in supported_ids %}<a class="btn sm ghost" href="/settings/datasources/new?kind=wallet&amp;provider={{ p.id }}">{{ p.label }}</a>{% endif %}{% endfor %}</div>
   </details>
   {% else %}
   <form method="post" action="{{ '/settings/datasources/' ~ ds.id if ds else '/settings/datasources' }}" class="stack" style="gap:12px" autocomplete="off"{% if not ds and kind == 'exchange' %} enctype="multipart/form-data"{% endif %}>
@@ -255,10 +255,10 @@
         <input type="text" name="name" maxlength="60" required value="{{ data.get('name', '') }}" placeholder="{{ 'z. B. Bitpanda Hauptkonto' if kind == 'exchange' else 'z. B. Ledger ' ~ chain_ticker.get(chain, '') }}" autocomplete="off"></label>
       {% if kind == 'wallet' %}
       {% if chain == 'bitcoin' %}
-      <label class="field" style="grid-column:1/-1">Öffentliche Adressen und/oder Kontoschlüssel
+      <label class="field span-all">Öffentliche Adressen und/oder Kontoschlüssel
         <textarea name="address" rows="4" required class="mono" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="bc1q… (eine Adresse je Zeile) oder zpub…/ypub…/xpub…">{{ data.get('address', '') }}</textarea>
         <span class="hint">Mehrere Adressen derselben Wallet je Zeile – oder der <b>öffentliche Kontoschlüssel</b> (Ledger Live: Konto → ⋯ → „Bearbeiten“ → „Erweitert“ → xpub). Nur dann erkennt Portfolia Wechselgeld vollständig; bei Einzeladressen erscheint Wechselgeld an andere Adressen der Wallet als Abgang.</span></label>
-      <div class="alert warn" style="grid-column:1/-1"><span class="icon">!</span><div><b>Datenschutz:</b> Ein Kontoschlüssel legt <b>alle</b> Adressen des Kontos offen – Portfolia leitet sie ab und fragt sie einzeln beim Anbieter ab, der sie einander zuordnen kann. Ausgeben lässt sich damit nichts. Private Schlüssel (xprv) und Seed-Phrasen werden abgelehnt.</div></div>
+      <div class="alert warn span-all"><span class="icon">!</span><div><b>Datenschutz:</b> Ein Kontoschlüssel legt <b>alle</b> Adressen des Kontos offen – Portfolia leitet sie ab und fragt sie einzeln beim Anbieter ab, der sie einander zuordnen kann. Ausgeben lässt sich damit nichts. Private Schlüssel (xprv) und Seed-Phrasen werden abgelehnt.</div></div>
       <label class="field">Adresstyp des Kontoschlüssels
         <select name="script"><option value="">automatisch nach Präfix (xpub → Legacy, ypub → Nested SegWit, zpub → Native SegWit)</option>
           {% for k, l in script_types.items() %}<option value="{{ k }}" {% if data.get('script') == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
@@ -267,11 +267,11 @@
         <input type="number" name="gap" min="5" max="200" value="{{ data.get('gap') or gap_default }}">
         <span class="hint">So viele ungenutzte Adressen in Folge, bevor die Suche endet (Standard {{ gap_default }}).</span></label>
       {% elif chain == 'cardano' %}
-      <label class="field" style="grid-column:1/-1">Stake-Adresse oder Adresse(n)
+      <label class="field span-all">Stake-Adresse oder Adresse(n)
         <textarea name="address" rows="3" required class="mono" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="stake1… (ganzes Konto) oder addr1… (eine je Zeile)">{{ data.get('address', '') }}</textarea>
         <span class="hint">Empfohlen: die <b>Stake-Adresse</b> (stake1…) oder eine beliebige <b>Empfangsadresse</b> (addr1q…) der Wallet – Portfolia leitet daraus das Konto ab und erfasst alle Adressen mit demselben Stake-Teil inklusive Wechselgeld und Rewards. Adressen ohne Stake-Teil (addr1v…) werden einzeln geführt.</span></label>
       {% else %}
-      <label class="field" style="grid-column:1/-1">Öffentliche Adresse
+      <label class="field span-all">Öffentliche Adresse
         <input type="text" name="address" required value="{{ data.get('address', '') }}" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="text" class="mono" placeholder="{{ {'kaspa': 'kaspa:q…', 'solana': 'Base58, 32–44 Zeichen', 'xrp': 'r… (klassische Adresse)', 'polkadot': '1… (Polkadot-Format)'}.get(chain, '0x…') }}">
         <span class="hint">Nur die öffentliche Adresse. <b>Niemals</b> privaten Schlüssel, Seed-Phrase oder Signatur eingeben – solche Eingaben werden abgelehnt.{% if chain in ('ethereum', 'bsc', 'polygon', 'avalanche') %} Groß-/Kleinschreibung wird als Prüfsumme (EIP-55) geprüft.{% elif chain == 'xrp' %} Destination Tags gehören nicht zur Adresse (sie stehen später in den Vorgängen).{% elif chain == 'polkadot' %} Adressen im generischen Substrate-Format (5…) werden umgerechnet; Kusama-Adressen werden abgelehnt.{% endif %}</span></label>
       {% endif %}
@@ -281,10 +281,10 @@
         <span class="hint">{% for e in ci.endpoints %}<b>{{ e.label }}:</b> {{ e.terms }}{% if e.key_provider %} – Schlüssel: {% set pk = provider_keys.get(e.key_provider) %}{% if pk and pk.mode %}vorhanden{% elif e.key_required %}<a href="/settings/datasources#anbieter">nötig, unter „Anbieter-Schlüssel“ hinterlegen</a>{% else %}optional{% endif %}{% endif %}.{% if not loop.last %}<br>{% endif %}{% endfor %}</span></label>
       {% if chain in ('ethereum', 'bsc', 'polygon', 'avalanche', 'pulsechain', 'robinhood', 'solana', 'kaspa') %}
       <input type="hidden" name="tokens_shown" value="1">
-      <label class="check" style="grid-column:1/-1"><input type="checkbox" name="tokens" value="1" {% if data.get('tokens') in ('1', 'on') %}checked{% endif %}>
+      <label class="check span-all"><input type="checkbox" name="tokens" value="1" {% if data.get('tokens') in ('1', 'on') %}checked{% endif %}>
         Tokens mit abrufen ({{ 'ERC-20/BEP-20' if chain in ('ethereum', 'bsc', 'polygon', 'avalanche') else ('PRC-20' if chain == 'pulsechain' else ('SPL-Tokens' if chain == 'solana' else 'KRC-20 über den Kasplex-Indexer')) }}) – Tokens werden über Contract/Mint identifiziert, nie über das Symbol</label>
       {% endif %}
-      <div class="alert" style="grid-column:1/-1"><span class="icon">i</span><div><b>Abdeckung:</b> {{ ci.limits|join(' · ') }}. Der gewählte Anbieter sieht die abgefragten Adressen.</div></div>
+      <div class="alert span-all"><span class="icon">i</span><div><b>Abdeckung:</b> {{ ci.limits|join(' · ') }}. Der gewählte Anbieter sieht die abgefragten Adressen.</div></div>
       {% endif %}
       {% endif %}
       <label class="field">Konto in Portfolia
@@ -295,38 +295,38 @@
         <span class="hint">Erst nach dem geprüften Erstabruf regelmäßig synchronisieren. Das gewählte Intervall gilt immer: auch ein unvollständiger Abruf wird erst zum nächsten Termin fortgesetzt. Bei „nur manuell“ startet Portfolia nie von selbst – „Jetzt abrufen“ setzt am gespeicherten Fortsetzungspunkt fort.</span></label>
       {% if kind == 'wallet' %}
       <input type="hidden" name="catchup_shown" value="1">
-      <label class="check" style="grid-column:1/-1"><input type="checkbox" name="catchup" value="1" {% if data.get('catchup') in ('1', 'on') %}checked{% endif %}>
+      <label class="check span-all"><input type="checkbox" name="catchup" value="1" {% if data.get('catchup') in ('1', 'on') %}checked{% endif %}>
         Lange Historie automatisch aufholen – bei unvollständigem Abruf in kurzen Abständen (ca. 90 s) fortsetzen, höchstens 12 Mal je Termin und nur, solange der Abruf nachweislich vorankommt. Ohne Häkchen gilt ausschließlich das Intervall oben.</label>
       {% endif %}
       {% if kind == 'exchange' and not ds and vault.available %}
-      <label class="field" style="grid-column:1/-1">API-Key (optional, nur bei automatischer Anbindung)
+      <label class="field span-all">API-Key (optional, nur bei automatischer Anbindung)
         <input type="text" name="api_key" maxlength="1024" class="mono secret-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
         <span class="hint">Wird verschlüsselt gespeichert und nie wieder angezeigt. Kann auch später unter „Zugang“ eingegeben werden.</span></label>
-      <label class="field" style="grid-column:1/-1">Secret Key (nur Binance)
+      <label class="field span-all">Secret Key (nur Binance)
         <input type="password" name="api_secret" maxlength="1024" class="mono secret-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
         <span class="hint">Binance verlangt API-Key und Secret Key (nur „Enable Reading“) – Anleitung nach dem Anlegen unter „Zugang“.</span></label>
       {% elif kind == 'exchange' and not ds %}
-      <div style="grid-column:1/-1"><div class="alert warn"><span class="icon">!</span><div>Ein API-Key kann erst nach Einrichtung des
+      <div class="span-all"><div class="alert warn"><span class="icon">!</span><div>Ein API-Key kann erst nach Einrichtung des
         Master-Keys gespeichert werden – die Datenquelle lässt sich trotzdem schon anlegen.{% if vault.error or vault.note %}<br>{{ vault.error or vault.note }}{% endif %}</div></div>
         {% include "partials/master_key_guide.html" %}</div>
       {% endif %}
       {% if kind == 'exchange' %}
       <label class="field">Ablaufdatum des API-Keys (optional)
         <input type="date" name="key_expires_on" value="{{ data.get('key_expires_on', '') }}"></label>
-      <details class="box" style="grid-column:1/-1"><summary>Fortgeschritten: Schlüssel als Umgebungsvariable statt in der App</summary>
-        <label class="field" style="margin-top:8px">Name der Umgebungsvariable
+      <details class="box span-all"><summary>Fortgeschritten: Schlüssel als Umgebungsvariable statt in der App</summary>
+        <label class="field mt-8">Name der Umgebungsvariable
           <input type="text" name="credential_ref" maxlength="64" value="{{ data.get('credential_ref', '') }}" placeholder="PORTFOLIA_DS_BITPANDA" autocomplete="off" autocapitalize="characters" spellcheck="false" class="mono">
           <span class="hint">Nur der Name (Präfix PORTFOLIA_DS_), den Wert im Container setzen – ein in der App gespeicherter Schlüssel hat Vorrang.</span></label>
       </details>
       {% endif %}
       {% if kind == 'exchange' and not ds %}
-      <div class="box" style="grid-column:1/-1"><b>Exportdatei (optional): CSV, XLSX oder ZIP</b>
+      <div class="box span-all"><b>Exportdatei (optional): CSV, XLSX oder ZIP</b>
         <p class="hint">Für Börsen ohne automatische Anbindung – oder zusätzlich zur Anbindung. Die Vorgänge werden direkt
           dieser Börse (Konto in Portfolia) zugeordnet und zur Prüfung vorgelegt; Format wird erkannt.</p>
         <input type="file" name="file" accept=".csv,.txt,.tsv,.xlsx,.zip,text/csv" aria-label="Exportdatei (optional)">
         {{ mode_fields(None, 'all') }}</div>
       {% endif %}
-      <label class="field" style="grid-column:1/-1">Notiz (optional)
+      <label class="field span-all">Notiz (optional)
         <input type="text" name="note" maxlength="300" value="{{ data.get('note', '') }}"></label>
     </div>
     <label class="check"><input type="checkbox" name="auto_commit" value="1" {% if data.get('auto_commit') in ('1', 'on') %}checked{% endif %}>

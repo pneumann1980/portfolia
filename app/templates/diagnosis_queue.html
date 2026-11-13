@@ -17,15 +17,15 @@
   <section class="card">
     <div class="card-head"><h2>Fall {{ i + 1 }} von {{ items|length }}</h2>
       <div class="row">{% if prev_id %}<a class="btn sm ghost" href="/quality/diagnose/liste?f={{ prev_id }}">← zurück</a>{% endif %}{% if next_id %}<a class="btn sm ghost" href="/quality/diagnose/liste?f={{ next_id }}" title="Ohne Entscheidung weiter">überspringen →</a>{% endif %}</div></div>
-    <progress max="{{ items|length }}" value="{{ i + 1 }}" aria-label="Fortschritt" style="width:100%"></progress>
-    <div class="row" style="margin-top:8px"><span class="badge {{ status_badge[cur.status] }}">{{ cur.status }}</span><span class="badge">{{ cur.kind_label }}</span>{% if cur.priority == 1 %}<span class="badge warn">zuerst ansehen</span>{% endif %}{% if cur.state and cur.state != 'offen' %}<span class="badge {{ case_states[cur.state][1] }}">{{ case_states[cur.state][0] }}</span>{% endif %}</div>
+    <progress max="{{ items|length }}" value="{{ i + 1 }}" aria-label="Fortschritt" class="w-full"></progress>
+    <div class="row mt-8"><span class="badge {{ status_badge[cur.status] }}">{{ cur.status }}</span><span class="badge">{{ cur.kind_label }}</span>{% if cur.priority == 1 %}<span class="badge warn">zuerst ansehen</span>{% endif %}{% if cur.state and cur.state != 'offen' %}<span class="badge {{ case_states[cur.state][1] }}">{{ case_states[cur.state][0] }}</span>{% endif %}</div>
     <div class="f-title" style="margin:6px 0">{{ cur.title }}</div>
     <div class="f-meta">{% if cur.accounts %}{{ cur.accounts[:4]|join(', ') }}{% endif %}{% if cur.assets %}{% if cur.accounts %} · {% endif %}{{ cur.assets[:6]|join(', ') }}{% endif %} · <a href="/quality/diagnose/case/{{ cur.id }}">Vorgang im Detail</a></div>
   </section>
 
   <section class="card"><h2>{{ 'Empfehlung (nach Prüfung)' if rec.conditional else 'Empfehlung' }}</h2>
     <p>{{ rec.text }}</p>
-    {% if rec.checks %}<details class="box"><summary>Vorher prüfen ({{ rec.checks|length }})</summary><ul class="plain-list" style="margin-top:6px">{% for text, links in rec.checks %}<li>{{ text }}{{ dm.ext_links(links) }}</li>{% endfor %}</ul></details>{% endif %}
+    {% if rec.checks %}<details class="box"><summary>Vorher prüfen ({{ rec.checks|length }})</summary><ul class="plain-list mt-6">{% for text, links in rec.checks %}<li>{{ text }}{{ dm.ext_links(links) }}</li>{% endfor %}</ul></details>{% endif %}
     {% if rec.fixes %}<div class="reco-opts">
       {% for o in rec.fixes %}<div class="reco-opt{% if o.recommended %} is-rec{% endif %}">
         <div class="reco-opt-text"><b>{{ o.label }}</b>{% if o.recommended %} <span class="badge good">empfohlen</span>{% else %} <span class="badge">Alternative</span>{% endif %}
@@ -36,7 +36,7 @@
   </section>
 
   <section class="card"><h2>Entscheidung ohne Datenänderung</h2>
-    <form method="post" action="/quality/diagnose/mark" class="stack" style="gap:8px">
+    <form method="post" action="/quality/diagnose/mark" class="stack gap-8">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ cur.id }}"><input type="hidden" name="back" value="liste">
       <input type="text" name="note" maxlength="500" placeholder="Notiz (optional), z. B. „im Explorer geprüft“" aria-label="Notiz zur Entscheidung">
       <div class="row">
@@ -59,7 +59,7 @@
     {% if cur.suspected %}<div><h4>Was Portfolia nur vermutet</h4><ul>{% for x in cur.suspected %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
     {% if cur.evidence %}<div><h4>Belege</h4><ul>{% for x in cur.evidence %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
     {% if cur.uncertainty %}<div><h4>Unsicherheiten</h4><ul>{% for x in cur.uncertainty %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
-    {% if cur.pairs %}<div><h4>Gegenüberstellung</h4><div class="stack" style="gap:10px">{% for a, b, why in cur.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">Begründung: {{ why }}</div></div>{% endfor %}</div></div>
+    {% if cur.pairs %}<div><h4>Gegenüberstellung</h4><div class="stack gap-10">{% for a, b, why in cur.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">Begründung: {{ why }}</div></div>{% endfor %}</div></div>
     {% elif cur.txs %}<div><h4>Betroffene Buchungen ({{ cur.txs|length }})</h4><div class="tx-grid">{% for t in cur.txs %}{{ dm.txref(t) }}{% endfor %}</div></div>{% endif %}
   </section>
   {% endif %}

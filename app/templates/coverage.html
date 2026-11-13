@@ -8,14 +8,14 @@
   <div class="card-head"><h2>Historische Quellenabdeckung</h2>
     <div class="row"><a class="btn sm" href="/quality/diagnose">Diagnose</a><a class="btn sm" href="/quality/diagnose/stock">Bestandsklärung</a><a class="btn sm" href="/journal/pruefung">Prüfung</a></div></div>
   <p class="hint">Je Konto und Quelle: für welche Monate liegen Daten vor? <b>Lücke</b> heißt: im Aktivitätszeitraum weder Buchung noch eingelesene Lieferung noch vollständiger Abruf – dort fehlen am ehesten Vorgänge. „Abgedeckt, ohne Vorgänge“ ist ein belegter ruhiger Monat (vollständige Datei bzw. vollständiger Abruf). Diese Ansicht ist rein berechnet und ändert nichts.</p>
-  <form method="get" action="/quality/abdeckung" class="filters" style="margin-top:8px">
+  <form method="get" action="/quality/abdeckung" class="filters mt-8">
     <label class="field">Konto<select name="account"><option value="">alle</option>{% for a in accounts %}<option {% if account == a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
     <label class="field">Bereich<select name="area"><option value="">alle</option>{% for k, l in mx.areas.items() %}<option value="{{ k }}" {% if mx.area == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
     <label class="field">von (Monat)<input type="month" name="frm" value="{{ mx.frm }}"></label>
     <label class="field">bis (Monat)<input type="month" name="to" value="{{ mx.to }}"></label>
     <div class="filters-go"><button class="btn sm" type="submit">Anzeigen</button></div>
   </form>
-  <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">{% for k, (l, badge) in states.items() %}<span class="badge {{ badge }} cov-{{ k }}">{{ l }}</span>{% endfor %}</div>
+  <div class="row mt-8 fx-wrap gap-6">{% for k, (l, badge) in states.items() %}<span class="badge {{ badge }} cov-{{ k }}">{{ l }}</span>{% endfor %}</div>
 </section>
 
 <section class="card">

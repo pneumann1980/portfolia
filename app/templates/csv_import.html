@@ -12,7 +12,7 @@
     Börsen oder Wallets. Nach dem Einlesen zeigt eine Vorschau jede Buchung im einheitlichen Format; erst mit „Übernehmen“
     werden daraus Buchungen. Bereits importierte Zeilen werden erkannt, Überträge zwischen eigenen Konten abgeglichen,
     und jeder Import lässt sich als Ganzes rückgängig machen.</p>
-  <form method="post" action="/journal/csv" enctype="multipart/form-data" class="stack" style="gap:10px">
+  <form method="post" action="/journal/csv" enctype="multipart/form-data" class="stack gap-10">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="grid-3">
       <label class="field">Exportdatei – CSV, Excel (XLSX) oder ZIP (höchstens {{ max_mb }} MB)<input type="file" name="file" accept=".csv,.txt,.tsv,.xlsx,.zip,text/csv" required></label>
@@ -25,14 +25,14 @@
         <span class="hint">leer: Name des Formats; bei Exporten mit mehreren Konten (Koinly, Blockpit, CoinTracking) Ersatz, falls eine Zeile kein Konto nennt</span></label>
     </div>
     <details class="box"><summary>Weitere Optionen</summary>
-      <div class="grid-3" style="margin-top:8px">
+      <div class="grid-3 mt-8">
         <label class="field">Zeitzone von Zeitangaben ohne Zone<select name="tz">{% for v, l in tz_choices %}<option value="{{ v }}" {% if form.get('tz') == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
         <label class="field">Dezimaltrenner<select name="decimal"><option value="">wie Format</option><option value="." {% if form.get('decimal') == '.' %}selected{% endif %}>Punkt (1234.56)</option><option value="," {% if form.get('decimal') == ',' %}selected{% endif %}>Komma (1234,56)</option></select></label>
         <label class="field">Datumsformat<select name="dayfirst"><option value="">automatisch</option><option value="1" {% if form.get('dayfirst') == '1' %}selected{% endif %}>Tag zuerst (31.01.2024)</option><option value="0" {% if form.get('dayfirst') == '0' %}selected{% endif %}>Monat zuerst (01/31/2024)</option></select></label>
         <label class="field">Währung (Wallet-Exporte ohne Währungsspalte)<input type="text" name="default_asset" value="{{ form.get('default_asset', '') }}" placeholder="z. B. BTC" autocomplete="off"></label>
         <label class="field">Stichtag – nur Buchungen danach<input type="date" name="cutoff" value="{{ form.get('cutoff', cutoff) }}"><input type="hidden" name="cutoff_set" value="1">
           <span class="hint">{% if cutoff %}Standard: Stand des kuratierten Imports ({{ cutoff|date_de }}) – ältere Zeilen stehen dort schon. Leeren, um alle Zeilen vorzuschlagen.{% else %}leer: alle Zeilen{% endif %}</span></label>
-        <label class="check" style="align-self:end"><input type="checkbox" name="accounts_from_file" value="1" {% if form.get('accounts_from_file') %}checked{% endif %}> Ledger Live: je Ledger-Konto ein eigenes Konto</label>
+        <label class="check self-end"><input type="checkbox" name="accounts_from_file" value="1" {% if form.get('accounts_from_file') %}checked{% endif %}> Ledger Live: je Ledger-Konto ein eigenes Konto</label>
       </div>
     </details>
     <div class="row"><button class="btn primary" type="submit">Einlesen und Vorschau zeigen</button></div>
@@ -40,7 +40,7 @@
 </section>
 
 {% if queue %}
-<section class="card" style="margin-top:16px" id="zuerst">
+<section class="card mt-16" id="zuerst">
   <div class="card-head"><h2>Zuerst prüfen</h2><span class="row"><span class="badge warn">{{ queue|length }}</span> <a class="btn sm" href="/journal/pruefung">Alle offenen Vorgänge</a></span></div>
   <p class="hint">Reihenfolge: neue Quellen (noch nichts übernommen) und Vorgänge ohne Gegenstück im Bestand zuerst – dort fehlen am ehesten Buchungen. Dubletten und Ergänzungen lassen sich im Prüf-Stapel gesammelt verknüpfen.</p>
   <ul class="plain queue">{% for q in queue %}{% set b = q.b %}
@@ -49,7 +49,7 @@
   {% endfor %}</ul>
 </section>{% endif %}
 
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>Importe</h2></div>
   {% if batches %}
   <div class="table-wrap cards-wrap"><table class="compact cards">
@@ -66,21 +66,21 @@
   {% else %}<p class="hint">Noch keine CSV-Datei eingelesen.</p>{% endif %}
 </section>
 
-<details class="box" style="margin-top:16px" id="formate"><summary>Unterstützte Formate und Exportanleitung</summary>
-  {% for g, ps in groups %}<h3 style="margin-top:10px">{{ g }}</h3>
+<details class="box mt-16" id="formate"><summary>Unterstützte Formate und Exportanleitung</summary>
+  {% for g, ps in groups %}<h3 class="mt-10">{{ g }}</h3>
     <dl class="kv">{% for p in ps %}<dt>{{ p.label }}</dt><dd>{{ p.hint or 'Eigene Spaltenzuordnung' }}{% if p.mid %}
       <form method="post" action="/journal/csv/mapping/{{ p.mid }}/delete" class="inline" data-confirm="Format „{{ p.label }}“ löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form>{% endif %}</dd>{% endfor %}</dl>
   {% endfor %}
-  <p class="hint" style="margin-top:10px">Andere Börsen und Wallets: den CSV-Export hochladen und „Anderes Format – Spalten selbst zuordnen“ wählen; die Zuordnung wird gespeichert und beim nächsten Mal automatisch erkannt. Viele Börsen bieten außerdem einen Export im Koinly-Format an.</p>
+  <p class="hint mt-10">Andere Börsen und Wallets: den CSV-Export hochladen und „Anderes Format – Spalten selbst zuordnen“ wählen; die Zuordnung wird gespeichert und beim nächsten Mal automatisch erkannt. Viele Börsen bieten außerdem einen Export im Koinly-Format an.</p>
 </details>
 
-<details class="box" style="margin-top:8px" id="zuordnungen"><summary>Gespeicherte Zuordnungen <span class="badge">{{ symbols|length + account_maps|length }}</span></summary>
-  {% if symbols %}<h3 style="margin-top:10px">Symbole → Assets</h3>
+<details class="box mt-8" id="zuordnungen"><summary>Gespeicherte Zuordnungen <span class="badge">{{ symbols|length + account_maps|length }}</span></summary>
+  {% if symbols %}<h3 class="mt-10">Symbole → Assets</h3>
   <div class="table-wrap"><table class="compact"><thead><tr><th>Symbol laut Datei</th><th>Asset</th><th></th></tr></thead><tbody>
     {% for sm in symbols %}<tr><td class="mono">{{ sm.symbol }}</td><td>{{ sm.asset_id or 'ignoriert' }}{% if sm.origin == 'abgleich' %} <span class="badge info" title="Aus gleicher Blockchain-Transaktion im kuratierten Import bzw. in Portfolia abgeleitet">Abgleich</span>{% endif %}</td>
       <td class="actions"><form method="post" action="/journal/csv/symbol/delete" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="symbol" value="{{ sm.symbol }}"><button class="icon-btn" type="submit" title="Zuordnung entfernen" aria-label="Zuordnung {{ sm.symbol }} entfernen">×</button></form></td></tr>{% endfor %}
   </tbody></table></div>{% endif %}
-  {% if account_maps %}<h3 style="margin-top:10px">Konten laut Datei → Konten</h3>
+  {% if account_maps %}<h3 class="mt-10">Konten laut Datei → Konten</h3>
   <div class="table-wrap"><table class="compact"><thead><tr><th>Konto laut Datei</th><th>Konto in Portfolia</th><th></th></tr></thead><tbody>
     {% for am in account_maps %}<tr><td>{{ am.name }}</td><td>{{ am.account }}</td>
       <td class="actions"><form method="post" action="/journal/csv/account/delete" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="name" value="{{ am.name }}"><button class="icon-btn" type="submit" title="Zuordnung entfernen" aria-label="Zuordnung {{ am.name }} entfernen">×</button></form></td></tr>{% endfor %}

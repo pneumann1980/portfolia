@@ -13,7 +13,7 @@
 
 <section class="card">
   <div class="card-head"><h2>Buchungen {% if total %}<span class="badge">{{ total }}</span>{% endif %}</h2>
-    <div class="row" style="gap:8px;flex-wrap:wrap">
+    <div class="row gap-8 fx-wrap">
       <a class="btn sm primary" href="/journal/new">+ Neue Buchung</a>
       <a class="btn sm" href="/journal/csv">CSV importieren</a>
       <a class="btn sm" href="/journal/pruefung" title="Alle offenen Vorgänge aus Datenquellen und Dateien an einer Stelle">Prüfung{% if review_open %} <span class="badge warn">{{ review_open }}</span>{% endif %}</a>
@@ -41,8 +41,8 @@
     <label class="field">Typ<select name="type" data-autosubmit><option value="">alle</option>{% for k, l in tx_types.items() %}<option value="{{ k }}" {% if params.type == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
     <label class="field">Jahr<select name="year" data-autosubmit><option value="">alle</option>{% for y in years %}<option {% if params.year == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></label>
     <label class="field">Suche<input type="search" name="q" value="{{ params.q }}" placeholder="ID oder Notiz"></label>
-    <div class="row" style="gap:6px"><button class="btn sm" type="submit">Filtern</button>{% if has_filter %}<a class="btn sm ghost" href="/journal">Zurücksetzen</a>{% endif %}</div>
-    {% if params.year %}<div class="row" style="gap:6px"><a class="btn sm" href="/journal/documents/export?year={{ params.year }}" title="Alle mit Buchungen verknüpften Belege dieses Jahres als ZIP mit Manifest (z. B. für die Steuererklärung)">Belege {{ params.year }} herunterladen</a><a class="btn sm ghost" href="/belege?jahr={{ params.year }}" title="Alle abgelegten Bankdokumente dieses Jahres ansehen und herunterladen – auch ohne Buchung">Beleg-Archiv</a></div>{% endif %}
+    <div class="row gap-6"><button class="btn sm" type="submit">Filtern</button>{% if has_filter %}<a class="btn sm ghost" href="/journal">Zurücksetzen</a>{% endif %}</div>
+    {% if params.year %}<div class="row gap-6"><a class="btn sm" href="/journal/documents/export?year={{ params.year }}" title="Alle mit Buchungen verknüpften Belege dieses Jahres als ZIP mit Manifest (z. B. für die Steuererklärung)">Belege {{ params.year }} herunterladen</a><a class="btn sm ghost" href="/belege?jahr={{ params.year }}" title="Alle abgelegten Bankdokumente dieses Jahres ansehen und herunterladen – auch ohne Buchung">Beleg-Archiv</a></div>{% endif %}
   </form>
   {% if rows %}
   <div class="table-wrap cards-wrap"><table class="compact cards journal">
@@ -102,7 +102,7 @@
   {% endif %}
 </section>
 
-<section class="card" id="assets" style="margin-top:16px">
+<section class="card mt-16" id="assets">
   <div class="card-head"><h2>In Portfolia angelegte Assets</h2><a class="btn sm" href="/journal/asset">+ Neues Asset</a></div>
   {% if own_assets %}
   <div class="table-wrap cards-wrap"><table class="compact cards">
@@ -120,7 +120,7 @@
 </section>
 
 {% if deleted %}
-<details class="box" style="margin-top:16px"><summary>Gelöschte Buchungen <span class="badge">{{ deleted|length }}</span></summary>
+<details class="box mt-16"><summary>Gelöschte Buchungen <span class="badge">{{ deleted|length }}</span></summary>
   <div class="table-wrap"><table class="compact">
     <thead><tr><th>ID</th><th>Datum</th><th>Vorgang</th><th>Gelöscht</th><th></th></tr></thead>
     <tbody>{% for d in deleted %}

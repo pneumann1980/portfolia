@@ -6,7 +6,7 @@
     <svg width="16" height="16"><use href="#i-refresh"/></svg><span class="hide-sm">Aktualisieren</span></button>
 {% endblock %}
 {% block content %}
-<div id="refresh-msg" class="row" style="margin-bottom:8px"></div>
+<div id="refresh-msg" class="row mb-8"></div>
 {% if restore and restore.state == 'pending' %}{% include "partials/restore_notice.html" %}{% elif restore and restore.state == 'incomplete' %}{% include "partials/restore_incomplete.html" %}{% elif restore and restore.state == 'applied_gaps' %}{% include "partials/restore_gaps.html" %}{% endif %}
 {% set stale_n = stale|length %}{% set unval_n = val.unvalued|length %}
 {% if stale_n %}{% set reasons = stale|map(attribute='price.note')|select|unique|list %}
@@ -56,7 +56,7 @@
   </div>
 </section>
 
-<div class="grid-2" style="margin-top:16px" data-privacy-scope>
+<div class="grid-2 mt-16" data-privacy-scope>
   <section class="card" aria-labelledby="alloc-h">
     <div class="card-head">
       <h2 id="alloc-h">Allokation</h2>
@@ -66,11 +66,11 @@
         <button type="button" data-mode="treemap" aria-pressed="false">Treemap</button>
       </div>
     </div>
-    <div class="seg" role="group" aria-label="Treemap-Farbe" data-tm-color style="display:none;margin-bottom:6px">
+    <div class="seg mb-6" role="group" aria-label="Treemap-Farbe" data-tm-color style="display:none">
       <button type="button" data-color="day" aria-pressed="true">Farbe: 24h</button>
       <button type="button" data-color="total" aria-pressed="false">Farbe: G/V gesamt</button>
     </div>
-    <div class="seg" role="group" aria-label="Donut-Ebene" data-alloc-level style="display:none;margin-bottom:6px">
+    <div class="seg mb-6" role="group" aria-label="Donut-Ebene" data-alloc-level style="display:none">
       <button type="button" data-level="segment" aria-pressed="false">Segment</button>
       <button type="button" data-level="category" aria-pressed="false">Kategorie</button>
       <button type="button" data-level="position" aria-pressed="true">Position</button>
@@ -93,7 +93,7 @@
   </section>
 </div>
 
-<div class="grid-2" style="margin-top:16px">
+<div class="grid-2 mt-16">
   <section class="card" aria-labelledby="movers-h">
     {% macro mover(p, up, sess=False) -%}
       <a class="list-item" href="{{ asset_url(p.asset_id) }}" data-panel="{{ panel_url(p.asset_id) }}" data-title="{{ p.asset.name }}">
@@ -112,19 +112,19 @@
     <div data-movers="{{ unit }}"{% if unit == 'eur' %} hidden{% endif %}>
     <div class="movers">
       <div>
-        <h3 class="muted" style="margin-bottom:4px">Gewinner</h3>
+        <h3 class="muted mb-4">Gewinner</h3>
         <div class="list">{% for p in g %}{{ mover(p, True) }}{% else %}<p class="hint">Keine Gewinner heute.</p>{% endfor %}</div>
       </div>
       <div>
-        <h3 class="muted" style="margin-bottom:4px">Verlierer</h3>
+        <h3 class="muted mb-4">Verlierer</h3>
         <div class="list">{% for p in l %}{{ mover(p, False) }}{% else %}<p class="hint">Keine Verlierer heute.</p>{% endfor %}</div>
       </div>
     </div>
     {% if sg or sl %}
     <h3 style="margin:14px 0 4px">Wertpapiere am letzten Handelstag{% if val.session and val.session.date and val.session.same_date %} ({{ val.session.date|trading_day }}){% endif %}</h3>
     <div class="movers">
-      <div><h3 class="muted" style="margin-bottom:4px">Gewinner</h3><div class="list">{% for p in sg %}{{ mover(p, True, True) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
-      <div><h3 class="muted" style="margin-bottom:4px">Verlierer</h3><div class="list">{% for p in sl %}{{ mover(p, False, True) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
+      <div><h3 class="muted mb-4">Gewinner</h3><div class="list">{% for p in sg %}{{ mover(p, True, True) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
+      <div><h3 class="muted mb-4">Verlierer</h3><div class="list">{% for p in sl %}{{ mover(p, False, True) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
     </div>
     {% endif %}
     </div>
@@ -153,7 +153,7 @@
   </section>
 </div>
 {% if watch %}
-<section class="card" id="beobachtet-kachel" aria-labelledby="watch-h" style="margin-top:16px">
+<section class="card mt-16" id="beobachtet-kachel" aria-labelledby="watch-h">
   {% macro wmover(it, up) -%}
     {% set wc = watch.link.get(it.id) %}
     <a class="list-item" href="{{ ('/discovery/c/' ~ wc) if wc else ('/watchlist/item/' ~ it.id) }}">
@@ -164,8 +164,8 @@
   <div class="card-head"><h2 id="watch-h">Watchlist <span class="badge">{{ watch.count }}</span></h2><a class="btn sm ghost" href="/watchlist">Alle</a></div>
   {% if watch.up or watch.down %}
   <div class="movers">
-    <div><h3 class="muted" style="margin-bottom:4px">Gewinner (24h)</h3><div class="list">{% for it in watch.up %}{{ wmover(it, True) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
-    <div><h3 class="muted" style="margin-bottom:4px">Verlierer (24h)</h3><div class="list">{% for it in watch.down %}{{ wmover(it, False) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
+    <div><h3 class="muted mb-4">Gewinner (24h)</h3><div class="list">{% for it in watch.up %}{{ wmover(it, True) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
+    <div><h3 class="muted mb-4">Verlierer (24h)</h3><div class="list">{% for it in watch.down %}{{ wmover(it, False) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
   </div>
   {% else %}<p class="hint">Noch keine Kursbewegungen für die beobachteten Titel – die Marktdaten werden beim Öffnen der Watchlist aktualisiert.</p>{% endif %}
 </section>

@@ -17,10 +17,10 @@
   <div class="review-stats">
     {% for t, (label, _s) in tabs.items() %}<a href="?{{ qs({'tab': t}) }}" class="{{ 'active' if q.tab == t }}"><b>{{ q.counts[t] }}</b><span>{{ label }}</span></a>{% endfor %}
   </div>
-  {% if q.reasons and q.tab == 'offen' %}<p class="hint" style="margin-top:8px">Prüfgründe: {% for r, n in q.reasons.most_common() %}<a href="?{{ qs({'tab': 'offen', 'reason': r}) }}">{{ n }}× {{ r }}</a>{{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
+  {% if q.reasons and q.tab == 'offen' %}<p class="hint mt-8">Prüfgründe: {% for r, n in q.reasons.most_common() %}<a href="?{{ qs({'tab': 'offen', 'reason': r}) }}">{{ n }}× {{ r }}</a>{{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
   {% if q.history_gaps %}<p class="hint">{{ q.history_gaps }} Vorgänge vor dem Stichtag sind im kuratierten Import nicht zu finden – mögliche Lücken (nur Hinweis, im Reiter <a href="?{{ qs({'tab': 'historie'}) }}">Historie</a>).</p>{% endif %}
   <details class="box" style="margin-top:8px" {% if params %}open{% endif %}><summary>Filter{% if params %} ({{ params|length }} aktiv){% endif %}</summary>
-    <form method="get" action="/journal/pruefung" class="filters" style="margin-top:8px"><input type="hidden" name="tab" value="{{ q.tab }}">
+    <form method="get" action="/journal/pruefung" class="filters mt-8"><input type="hidden" name="tab" value="{{ q.tab }}">
       <label class="field">Quelle<select name="source"><option value="">alle</option>{% for s in q.sources if s.datasource %}<option value="{{ s.key }}" {% if params.get('source') == s.key|string %}selected{% endif %}>{{ s.label }} ({{ s.open }})</option>{% endfor %}</select></label>
       <label class="field">Konto<select name="account"><option value="">alle</option>{% for a in q.accounts %}<option {% if params.get('account') == a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
       <label class="field">Art<select name="kind"><option value="">alle</option>{% for k in q.kinds %}<option value="{{ k }}" {% if params.get('kind') == k %}selected{% endif %}>{{ kind_label.get(k, k) }}</option>{% endfor %}</select></label>
@@ -35,7 +35,7 @@
 </section>
 
 {% if q.sources and not params %}
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>Quellen mit offenen Vorgängen</h2></div>
   <ul class="plain queue">{% for s in q.sources %}
     <li><a href="?{{ (s.param|dictsort|list + [('tab', q.tab)])|urlencode }}"><b>{{ s.label }}</b></a>
@@ -43,7 +43,7 @@
   {% endfor %}</ul>
 </section>{% endif %}
 
-<section class="card" style="margin-top:16px" id="vorgaenge">
+<section class="card mt-16" id="vorgaenge">
   <div class="card-head"><h2>{{ tabs[q.tab][0] }} <span class="badge">{{ q.total }}</span></h2>
     {% if q.tab == 'sicher' and q.total %}<span class="hint">{{ n_selected }} von {{ q.total }} ausgewählt</span>{% endif %}</div>
   {% if q.tab == 'sicher' %}<p class="hint">Vorausgewählt sind nur sichere Verknüpfungen (Dubletten und Ergänzungen) – sie buchen nichts. Sichere <b>neue</b> Buchungen werden nur gewählt, wenn du sie ausdrücklich anhakst. Eine Abwahl bleibt gespeichert.</p>{% endif %}
@@ -60,7 +60,7 @@
         <td data-label="Beträge">{% for l in it.legs %}<div class="nowrap">{{ l }}</div>{% else %}–{% endfor %}</td>
         <td data-label="Quelle">{% if b %}{{ source_label(b.source) if b.kind == 'sync' else b.filename }}<div class="hint">Stapel {{ b.id }} · {{ batch_status.get(b.status, b.status) }}</div>{% endif %}</td>
         <td data-label="Stand"><span class="badge {{ st[1] }}">{{ st[0] }}</span>{% if it.state == 'sicher' %}<div class="hint">{{ 'neu buchen' if it.books else 'verknüpfen (bucht nichts)' }}{% if it.cat %} · {{ cat_label.get(it.cat, it.cat) }}{% endif %}{% if it.conf %} · {{ it.conf }}{% endif %}</div>{% endif %}{% if it.reason %}<div class="hint">{{ it.reason }}</div>{% endif %}</td>
-        <td>{% if q.tab == 'offen' %}<div class="stack" style="gap:4px">{% for v in it.variants() %}
+        <td>{% if q.tab == 'offen' %}<div class="stack gap-4">{% for v in it.variants() %}
             {% if v.op %}<button class="btn sm ghost" type="submit" form="dec-{{ v.op }}-{{ it.batch_id }}-{{ it.idxs[0] }}" title="{{ v.hint }}">{{ v.label }}</button>
             {% else %}<a class="btn sm{{ ' ghost' if not loop.first }}" href="{{ ev_url }}" title="{{ v.hint }}">{{ v.label }}</a>{% endif %}
           {% endfor %}</div>
@@ -68,7 +68,7 @@
         {% else %}<a class="btn sm ghost" href="{{ ev_url }}">{{ 'Ansehen' if it.state not in ('offen', 'zurueckgestellt', 'vorgemerkt', 'sicher') else 'Einzeln prüfen' }}</a>{% endif %}</td></tr>
     {% endfor %}</tbody></table></div>
   {% if q.tab == 'sicher' %}
-    <div class="row review-foot" style="margin-top:8px">
+    <div class="row review-foot mt-8">
       <button class="btn sm ghost" type="submit" name="op" value="save">Auswahl speichern</button>
       <button class="btn sm ghost" type="submit" name="op" value="all" title="alle sicheren Vorschläge der Filter – auch neue Buchungen">Alle auswählen</button>
       <button class="btn sm ghost" type="submit" name="op" value="safe" title="nur sichere Verknüpfungen">Vorauswahl</button>
@@ -77,7 +77,7 @@
     </div>
     <p class="hint">„Gesammelt verarbeiten“ speichert die Auswahl dieser Seite und öffnet die Vorschau aller ausgewählten Vorgänge (auch auf weiteren Seiten) – ausgeführt wird erst nach Bestätigung.</p>
   </form>{% endif %}
-    <div class="row" style="margin-top:8px">{% if q.offset %}<a class="btn sm ghost" href="?{{ qs({'tab': q.tab, 'offset': [q.offset - page, 0]|max}) }}">Zurück</a>{% endif %}
+    <div class="row mt-8">{% if q.offset %}<a class="btn sm ghost" href="?{{ qs({'tab': q.tab, 'offset': [q.offset - page, 0]|max}) }}">Zurück</a>{% endif %}
       <span class="hint">{{ q.offset + 1 }}–{{ q.offset + q.items|length }} von {{ q.total }}</span>
       {% if q.offset + page < q.total %}<a class="btn sm ghost" href="?{{ qs({'tab': q.tab, 'offset': q.offset + page}) }}">Weiter</a>{% endif %}</div>
   {% endif %}

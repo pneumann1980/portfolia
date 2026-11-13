@@ -58,7 +58,7 @@
           <label class="field">Tokens/Minute<input type="number" min="1000" name="gemini_tpm" value="{{ s['llm.gemini_tpm'] }}"></label>
           <label class="field">Anfragen/Tag<input type="number" min="1" name="gemini_rpd" value="{{ s['llm.gemini_rpd'] }}"></label>
           <label class="field">Tages-Tokenbudget<input type="number" min="1000" name="gemini_budget" value="{{ s['llm.gemini_daily_token_budget'] }}"></label>
-          <input type="hidden" name="has_gemini_unlimited" value="1"><label class="check" style="align-self:end"><input type="checkbox" name="gemini_unlimited" value="1" {% if s['llm.gemini_tokens_unlimited'] %}checked{% endif %}> Token-Tagesgrenze aufheben (unbegrenzt)</label>
+          <input type="hidden" name="has_gemini_unlimited" value="1"><label class="check self-end"><input type="checkbox" name="gemini_unlimited" value="1" {% if s['llm.gemini_tokens_unlimited'] %}checked{% endif %}> Token-Tagesgrenze aufheben (unbegrenzt)</label>
           <label class="field">Rücklage für manuelle Starts (% des Tageslimits je Modell)<input type="number" min="0" max="50" name="manual_reserve_pct" value="{{ ai_cfg.reserve_pct }}"></label>
         </div>
         {% if ai_cfg.base_learned %}<p class="hint"><span class="badge info">Google meldet</span> für {{ ai_cfg.base }}: {% for k, lbl in lim_lbl if ai_cfg.base_learned[k] %}{{ ai_cfg.base_learned[k]|num(0) }}{{ lbl }}{{ ' · ' if not loop.last }}{% endfor %} – gilt als Obergrenze.</p>{% endif %}
@@ -81,7 +81,7 @@
       </div>
       <p class="hint">Diagnose: Verbrauch, Wartegründe und Engpass je Aufgabe unter <a href="/news?tab=status">News → Status</a>; KI-Aufrufe von Discovery im <a href="/discovery/protokoll">Ausführungsprotokoll</a>.</p>
     </details>
-    <div class="row" style="margin-top:12px"><button class="btn primary" type="submit">Speichern</button>{% if saved == 'ai' %}<span class="badge good">✓ gespeichert</span>{% endif %}</div>
+    <div class="row mt-12"><button class="btn primary" type="submit">Speichern</button>{% if saved == 'ai' %}<span class="badge good">✓ gespeichert</span>{% endif %}</div>
   </form>
   <p class="hint">Ausgeblendete Felder (anderer Anbieter, andere Strategie) werden nicht verändert – deine Einstellungen bleiben beim Wechsel erhalten. Welche Funktionen KI nutzen, stellst du unter <a href="/settings#news">News &amp; Artikeltexte</a> und auf der <a href="/discovery#disc-einstellungen">Discovery-Seite</a> ein.</p>
 </section>

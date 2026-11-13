@@ -19,7 +19,7 @@
 </section>
 
 {% if mp.impact %}
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>Wirkung auf die Bestände (alle Stapel zusammen)</h2>{% if mp.negative %}<span class="badge crit">negativer Bestand</span>{% endif %}</div>
   <div class="table-wrap cards-wrap"><table class="compact cards">
     <thead><tr><th>Konto</th><th>Asset</th><th class="num">jetzt</th><th class="num">Änderung</th><th class="num">danach</th></tr></thead>
@@ -32,11 +32,11 @@
   {% if mp.fees %}<p class="hint">Gebühren der neuen Buchungen: {% for a, q in mp.fees.items() %}{{ q|qty }} {{ a }}{{ ' · ' if not loop.last }}{% endfor %}.</p>{% endif %}
   <p class="hint"><b>FIFO und Steuer:</b> Neue Buchungen ändern die Anschaffungsreihenfolge ab ihrem Datum – {% for f in mp.fifo %}{{ f.asset }} auf {{ f.account or '–' }} ab {{ f.from|date_de if f.from else 'unbekannt' }}{% if f.retro %} (<b>rückwirkend</b>: Veräußerungen {{ f.retro|join(', ') }} werden neu zugeordnet){% endif %}{{ ', ' if not loop.last }}{% endfor %}. Spätere Veräußerungen dieser Positionen werden neu zugeordnet; die Steueransicht zeigt die Werte nach dem Ausführen. Verknüpfungen ändern weder Bestand noch FIFO.</p>
 </section>{% elif mp.todo %}
-<section class="card" style="margin-top:16px"><div class="card-head"><h2>Wirkung</h2></div>
+<section class="card mt-16"><div class="card-head"><h2>Wirkung</h2></div>
   <p class="hint">Nur Verknüpfungen: kein Bestand, keine Gebühr, keine FIFO- oder Steuerwirkung – die vorhandenen Buchungen bleiben unverändert, die Angaben der Quelle werden mit Herkunft an ihnen festgehalten.</p></section>{% endif %}
 
 {% for part in mp.parts %}{% set p = part.plan %}
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>{{ source_label(part.batch.source) if part.batch.kind == 'sync' else part.batch.filename }} <span class="hint">Stapel {{ part.batch.id }}</span></h2>
     <a class="btn sm ghost" href="/journal/csv/{{ part.batch.id }}#pruefung">Stapel öffnen</a></div>
   <p class="hint">{% for k, n in p.counts().items() %}{{ n }}× {{ effect_label.get(k, k) }}{{ ' · ' if not loop.last }}{% endfor %}{% if p.excluded %} · {{ p.excluded|length }} ausgeschlossen{% endif %}</p>
@@ -49,8 +49,8 @@
 </section>{% endfor %}
 
 {% if mp.todo %}
-<section class="card" style="margin-top:16px">
-  <form method="post" action="/journal/pruefung/ausfuehren" class="stack" style="gap:10px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<section class="card mt-16">
+  <form method="post" action="/journal/pruefung/ausfuehren" class="stack gap-10"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% for k, v in params.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
     {% for part in mp.parts if part.plan.todo %}<input type="hidden" name="part" value="{{ part.batch.id }}"><input type="hidden" name="token_{{ part.batch.id }}" value="{{ part.token }}"><input type="hidden" name="fp_{{ part.batch.id }}" value="{{ part.fingerprint }}"><input type="hidden" name="idx_{{ part.batch.id }}" value="{{ part.idxs|join(',') }}">{% endfor %}
     <label class="check"><input type="checkbox" name="confirm" value="1" required> Ich habe die Vorschau geprüft: {{ counts.get('link', 0) }} Verknüpfungen{% if counts.get('include') %} und {{ counts.include }} neue Buchungen{% endif %} ausführen.</label>

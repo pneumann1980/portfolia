@@ -1,6 +1,6 @@
 {# YouTube-Transkripte: an/aus, Stand der letzten 7 Tage, Sperre/Fehler, Version der Bibliothek mit Update-Knopf.
    Erwartet: tr (module.transcripts_view), tr_result (Ergebnis einer Aktion oder None). #}
-<section class="card" id="yt-transcripts" style="margin-top:16px">
+<section class="card mt-16" id="yt-transcripts">
   <div class="card-head"><h2>YouTube-Transkripte</h2>
     <form hx-post="/news/transcripts/toggle" hx-target="#yt-transcripts" hx-swap="outerHTML" class="inline">
       <input type="hidden" name="on" value="{{ '0' if tr.on else '1' }}">
@@ -10,7 +10,7 @@
   <p class="hint">Kernaussagen gibt es <b>auf Wunsch</b>: Knopf „✨ Kernaussagen erstellen“ auf der Videokarte – Portfolia lädt dann die Untertitel dieses Videos und lässt daraus 5–10 Kernaussagen und die genannten Werte mit Begründung erstellen. Alternativ „Transkript selbst einfügen“. Automatisch nur für <b>Lieblingskanäle</b> (Spalte „Auto-Kernaussagen“ oben), begrenzt pro Tag – YouTube sperrt den inoffiziellen Abruf bei vielen Anfragen (beobachtet: nach etwa 24 am Tag). Übertragen wird nur die Video-Kennung.</p>
   <dl class="kv">
     <dt>Lieblingskanäle</dt><dd>{{ tr.fav|length }} gewählt · heute {{ tr.auto_used }} von {{ tr.auto_per_day }} automatischen Abrufen
-      <form hx-post="/news/transcripts/fav" class="inline row" style="gap:6px;margin-top:4px"><label class="small">Tagesgrenze <input type="number" name="per_day" min="0" max="50" value="{{ tr.auto_per_day }}" style="width:70px"></label><button class="btn sm ghost" type="submit">✓</button></form></dd>
+      <form hx-post="/news/transcripts/fav" class="inline row gap-6 mt-4"><label class="small">Tagesgrenze <input type="number" name="per_day" min="0" max="50" value="{{ tr.auto_per_day }}" style="width:70px"></label><button class="btn sm ghost" type="submit">✓</button></form></dd>
     <dt>Letzte 7 Tage</dt><dd>{{ tr.stats.success }} Transkripte geladen · {{ tr.stats.failed }} ohne Untertitel bzw. nicht verfügbar · {{ tr.stats.pending }} warten auf einen neuen Versuch</dd>
     <dt>Bibliothek</dt><dd>youtube-transcript-api {{ tr.lib.version or '–' }} {% if tr.lib.updated %}<span class="badge info">in der App aktualisiert</span>{% if tr.lib.updated_at %} <span class="hint">{{ tr.lib.updated_at|datetime_de }}</span>{% endif %}{% else %}<span class="badge">mitgeliefert</span>{% endif %}{% if not tr.lib.available %} <span class="badge crit">nicht installiert</span>{% endif %}</dd>
   </dl>
@@ -22,7 +22,7 @@
     {% elif tr_result.ok %}<div class="alert good" role="status"><span class="icon">✓</span><div>Aktualisiert auf {{ tr_result.version }} – geprüft und aktiv.</div></div>
     {% else %}<div class="alert crit" role="alert"><span class="icon">!</span><div>Nicht aktualisiert{% if tr_result.version %} ({{ tr_result.version }}){% endif %}: {{ tr_result.error }} Die bisherige Version bleibt aktiv.</div></div>{% endif %}
   {% endif %}
-  <div class="row" style="gap:8px;flex-wrap:wrap">
+  <div class="row gap-8 fx-wrap">
     <button class="btn sm" hx-post="/news/transcripts/update" hx-target="#yt-transcripts" hx-swap="outerHTML" hx-indicator="#tr-spin" data-once>Bibliothek aktualisieren</button>
     {% if tr.lib.updated %}<button class="btn sm ghost" hx-post="/news/transcripts/reset" hx-target="#yt-transcripts" hx-swap="outerHTML" hx-confirm="Zur mitgelieferten Version {{ tr.lib.bundled }} zurückkehren?">Mitgelieferte Version verwenden</button>{% endif %}
     <span id="tr-spin" class="htmx-indicator spinner"></span>

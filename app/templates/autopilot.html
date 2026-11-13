@@ -29,7 +29,7 @@
 
   <section class="card"><div class="card-head"><h2>Einstellung</h2></div>
     <div class="alert"><span class="icon">i</span><div>Der <b>Bericht</b> entsteht immer und ändert nichts. Der <b>Autopilot</b> ist standardmäßig <b>aus</b>. Eingeschaltet erledigt er nach jedem Import nur, was <em>beweisbar</em> ist – nie anhand von Ähnlichkeitswerten, nie mit neuen Buchungen, nie bei konkurrierenden Kandidaten.</div></div>
-    <form method="post" action="/quality/autopilot/einstellungen" class="stack" style="gap:8px">
+    <form method="post" action="/quality/autopilot/einstellungen" class="stack gap-8">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label class="check"><input type="checkbox" name="enabled" value="1" {% if on %}checked{% endif %}> Autopilot nach Importen einschalten</label>
       <label class="check"><input type="checkbox" name="rules" value="1" {% if use_rules %}checked{% endif %}> <span>Entscheidungsregeln anwenden (<a href="/quality/diagnose/regeln">Regeln verwalten</a>; ohne Datenänderung)</span></label>

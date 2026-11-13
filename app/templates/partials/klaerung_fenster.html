@@ -3,7 +3,7 @@
 <section class="card" id="fenster"><div class="card-head"><h2>Bestandsfenster</h2></div>
   <p class="hint">Referenzbestände (Nachweise) und der Ledger-Bestand zum selben Zeitpunkt – nie über verschiedene Zeitpunkte verglichen. Gezeigt werden nur Fenster, in denen Buchungen dieses Falls liegen (sonst das jüngste auffällige Fenster). Die Seite ruft nichts ab; eine Recherche startet nur durch Ihren Klick und liest ausschließlich.</p>
   {% for wr in win_rows %}{% set row = wr.row %}{% set tr = row.tr %}
-  <div class="stack" style="gap:8px;margin-bottom:14px">
+  <div class="stack gap-8 mb-12">
     <div><b>{{ tr.account }}</b> · {{ tr.asset }}
       {% for t in tr.summary %}<span class="badge info">{{ t }}</span>{% endfor %}
       <a class="hint" href="/quality/diagnose/windows?acc={{ tr.account|urlencode }}&asset={{ tr.asset|urlencode }}&all=1">alle Fenster dieser Position</a></div>

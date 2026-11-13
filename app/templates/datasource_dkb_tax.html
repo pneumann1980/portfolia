@@ -22,7 +22,7 @@
       <span class="hint">liest die abgelegten Originale lokal; höchstens 300 je Klick.</span></div></div>
     {% endif %}
     {% if years %}
-    <form method="get" class="inline-form" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+    <form method="get" class="inline-form gap-8 items-end fx-wrap" style="display:flex">
       <label class="field">Jahr<select name="year">{% for y in years %}<option value="{{ y }}"{% if y == d.year %} selected{% endif %}>{{ y }}</option>{% endfor %}</select></label>
       <label class="field">Hinweis ab (€)<input name="hinweis" inputmode="decimal" value="{{ d.thresholds.info|string|replace('.', ',') }}" size="6"></label>
       <label class="field">Warnung ab (€)<input name="warnung" inputmode="decimal" value="{{ d.thresholds.warn|string|replace('.', ',') }}" size="6"></label>
@@ -65,7 +65,7 @@
     <p>Aus den Topfständen „Vorher“ der ersten Abrechnung des Jahres{% if pr.from_doc %} ({{ pr.from_doc|date_de }}){% endif %}. Nur sinnvoll, wenn das Archiv <b>alle</b> Abrechnungen des Jahres enthält. Es wird nichts ohne Ihre Bestätigung geändert.</p>
     {% if pr.note %}<p class="hint">{{ pr.note }}</p>{% endif %}
     {% if pr['items'] %}
-    <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/steuer/vorbelegen" class="stack" style="gap:8px">
+    <form method="post" action="/settings/datasources/{{ ds.id }}/dkb/steuer/vorbelegen" class="stack gap-8">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ d.year }}">
       <div class="table-wrap cards-wrap"><table class="table cards">
         <thead><tr><th><span class="sr-only">Auswahl</span></th><th>Option</th><th class="num">bisher</th><th class="num">laut DKB</th><th>Gültigkeit</th></tr></thead>

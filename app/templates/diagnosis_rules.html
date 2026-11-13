@@ -13,7 +13,7 @@
   </section>
 
   <section class="card"><div class="card-head"><h2>Neue Regel</h2></div>
-    <form method="post" action="/quality/diagnose/regeln/neu" class="stack" style="gap:8px">
+    <form method="post" action="/quality/diagnose/regeln/neu" class="stack gap-8">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label>Befundart
         <select name="kind" required>{% for k, label in kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}{% if not kinds %}{% for k, label in all_kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}{% endif %}</select></label>
@@ -32,13 +32,13 @@
   <section class="card"><div class="card-head"><h2>Regeln ({{ rows|length }})</h2>
     {% if rows %}<form method="post" action="/quality/diagnose/regeln/anwenden"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Regeln jetzt anwenden</button></form>{% endif %}</div>
     {% if not rows %}<p class="hint">Noch keine Regeln.</p>{% endif %}
-    <div class="stack" style="gap:8px">
+    <div class="stack gap-8">
     {% for row in rows %}{% set r = row.r %}
       <div class="box">
         <div><b>#{{ r.id }}</b> {{ r.scope() }} {% if not r.active %}<span class="badge">aus</span>{% else %}<span class="badge good">aktiv</span>{% endif %}</div>
         {% if r.note %}<div class="hint">„{{ r.note }}“</div>{% endif %}
         <div class="hint">{% if r.active %}trifft jetzt {{ row.n }} offene(n) Befund(e) · {% endif %}bisher angewandt: {{ r.applied_count }}{% if r.last_applied_at %} · zuletzt {{ r.last_applied_at|datetime_de }}{% endif %}</div>
-        <div class="row" style="margin-top:6px">
+        <div class="row mt-6">
           {% if r.active %}
           <form method="post" action="/quality/diagnose/regeln/{{ r.id }}/aus"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Ausschalten</button></form>
           <form method="post" action="/quality/diagnose/regeln/{{ r.id }}/aus"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="revert" value="1"><button class="btn sm ghost" type="submit" title="Regel aus und alle ihre Markierungen zurücknehmen">Ausschalten &amp; Markierungen zurücknehmen</button></form>
@@ -53,7 +53,7 @@
 
   {% if recent %}
   <section class="card"><div class="card-head"><h2>Letzte Anwendungen</h2></div>
-    <div class="stack" style="gap:6px">{% for b in recent %}
+    <div class="stack gap-6">{% for b in recent %}
       <form method="post" action="/quality/diagnose/regeln/zurueck/{{ b.token }}" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><span class="hint">{{ b.at|datetime_de }}: {{ b.active }} Befund(e) markiert</span><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endfor %}</div>
   </section>
   {% endif %}

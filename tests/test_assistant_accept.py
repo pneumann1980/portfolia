@@ -114,7 +114,7 @@ def test_every_card_is_answerable_here_one_click_layout_and_plain_words(client):
 
 def test_mobile_css_keeps_the_question_above_the_fold():
     css = (Path(__file__).resolve().parents[1] / "app/static/css/app.css").read_text("utf-8")
-    block = css[css.index("@media (max-width: 600px) {\n  .guide"):]
+    block = css[css.index("@media (max-width: 699px) {\n  .guide"):]
     block = block[:block.index("\n}\n")]
     assert ".guide-themes { display: none; }" in block and ".guide-q" in block
 

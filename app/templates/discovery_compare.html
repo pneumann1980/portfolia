@@ -5,7 +5,7 @@
 {% block content %}
 <section class="card">
   <div class="card-head"><h2>Analyseversionen vergleichen</h2></div>
-  <form method="get" action="/discovery/c/{{ co.id }}/vergleich" class="row" style="gap:6px;flex-wrap:wrap">
+  <form method="get" action="/discovery/c/{{ co.id }}/vergleich" class="row gap-6 fx-wrap">
     <label class="field">Ältere Version<select name="a">{% for v in versions %}<option value="{{ v.id }}" {{ 'selected' if cmp and v.id == cmp.a.id }}>{{ v.created_at|datetime_de }} ({{ v.trigger }})</option>{% endfor %}</select></label>
     <label class="field">Neuere Version<select name="b">{% for v in versions %}<option value="{{ v.id }}" {{ 'selected' if cmp and v.id == cmp.b.id }}>{{ v.created_at|datetime_de }} ({{ v.trigger }})</option>{% endfor %}</select></label>
     <div class="row"><button class="btn" type="submit">Vergleichen</button></div>

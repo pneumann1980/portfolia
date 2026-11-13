@@ -2,9 +2,9 @@
    aus der Adresse (``kid`` – je Tab eindeutig, auch ohne Cookie) und nur ersatzweise aus dem Cookie ``dq_cur``.
    Zurück/Überspringen/Übersicht ändern keine Buchungen und keine Entscheidungen. #}
 {% set fkid = flow_kid(request) %}
-<div class="alert dq-flowbar" role="navigation" aria-label="Buchungen prüfen" style="align-items:center;flex-wrap:wrap;gap:8px">
+<div class="alert dq-flowbar items-center fx-wrap gap-8" role="navigation" aria-label="Buchungen prüfen">
   <span class="icon">➜</span>
-  <div style="flex:1;min-width:200px"><b>Du bearbeitest eine Aufgabe aus „Buchungen prüfen“.</b> Nach einer abgeschlossenen Entscheidung geht es mit der nächsten Frage weiter; bei Fehlern und Zwischenschritten bleibst du hier.</div>
+  <div class="flex-1" style="min-width:200px"><b>Du bearbeitest eine Aufgabe aus „Buchungen prüfen“.</b> Nach einer abgeschlossenen Entscheidung geht es mit der nächsten Frage weiter; bei Fehlern und Zwischenschritten bleibst du hier.</div>
   <a class="btn sm" href="/quality/assistent">Zurück zu Buchungen prüfen</a>
   {% if fkid %}<a class="btn sm ghost" href="/quality/assistent?skip={{ fkid|urlencode }}" title="Bleibt offen – nur für diesen Durchgang übersprungen">Dieses Problem überspringen</a>{% endif %}
   <a class="btn sm ghost" href="/quality">Datenqualität</a>

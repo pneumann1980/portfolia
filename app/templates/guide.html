@@ -8,13 +8,13 @@
   {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
   {% if undo %}
   <div class="alert good guide-done" role="status"><span class="icon">✓</span>
-    <div style="flex:1">{{ msg or 'Gespeichert.' }}{% if gone %} <b>{{ gone }} weitere Aufgabe{{ 'n' if gone != 1 }} dadurch erledigt.</b>{% endif %}</div>
+    <div class="flex-1">{{ msg or 'Gespeichert.' }}{% if gone %} <b>{{ gone }} weitere Aufgabe{{ 'n' if gone != 1 }} dadurch erledigt.</b>{% endif %}</div>
     <form method="post" action="/quality/assistent/rueckgaengig"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% for k, v in undo.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}<button class="btn sm ghost" type="submit">↶ Rückgängig</button></form>
   </div>
   {% endif %}
   {% if batch %}
   <div class="alert info guide-done" role="note"><span class="icon">≡</span>
-    <div style="flex:1">Es gibt <b>{{ batch.n }} weitere Frage{{ 'n' if batch.n != 1 }} dieser Art</b> (gleiches Muster, gleiche Empfehlung). Alle gleich beantworten{% if batch.st %} mit „{{ batch.st }}“{% endif %}?</div>
+    <div class="flex-1">Es gibt <b>{{ batch.n }} weitere Frage{{ 'n' if batch.n != 1 }} dieser Art</b> (gleiches Muster, gleiche Empfehlung). Alle gleich beantworten{% if batch.st %} mit „{{ batch.st }}“{% endif %}?</div>
     <form method="post" action="/quality/assistent/alle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="sig" value="{{ batch.sig }}"><input type="hidden" name="a" value="{{ batch.sa }}"><button class="btn sm" type="submit" data-once>Alle {{ batch.n }} gleich beantworten</button></form>
   </div>
   {% endif %}
@@ -101,7 +101,7 @@
       <p class="hint">{{ f.title }}</p>
       {% if f.known %}<h4>Was Portfolia aus den Daten weiß</h4><ul>{% for x in f.known %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
       {% if f.suspected %}<h4>Was Portfolia nur vermutet</h4><ul>{% for x in f.suspected %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
-      {% if f.pairs %}<h4>Gegenüberstellung</h4><div class="stack" style="gap:10px">{% for a, b, why in f.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">{{ why }}</div></div>{% endfor %}</div>
+      {% if f.pairs %}<h4>Gegenüberstellung</h4><div class="stack gap-10">{% for a, b, why in f.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">{{ why }}</div></div>{% endfor %}</div>
       {% elif f.txs %}<h4>Betroffene Buchungen ({{ f.txs|length }})</h4><div class="tx-grid">{% for t in f.txs[:12] %}{{ dm.txref(t) }}{% endfor %}</div>{% endif %}
       <p><a href="/quality/diagnose/case/{{ f.id }}">Expertenansicht dieses Falls</a></p>
       {% endif %}

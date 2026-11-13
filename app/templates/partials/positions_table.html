@@ -17,7 +17,7 @@
 <section class="card flush" style="margin-top:{{ '16px' if params.view == 'treemap' else '0' }}">
   <div class="card-head"><h2>{{ rows|length }} Position{{ 'en' if rows|length != 1 }}{% if val.account %} · {{ val.account }}{% endif %}</h2>
     <span class="hint">Summe {{ totals.value|eur }}</span></div>
-  <div class="table-wrap" style="margin:0;padding:0 8px 8px">
+  <div class="table-wrap m-0" style="padding:0 8px 8px">
   <table class="pos-table">
     <thead><tr>
       {{ sort_link('name', 'Position') }}

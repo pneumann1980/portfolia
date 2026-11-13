@@ -5,7 +5,7 @@
 {% set cs = content.status if content else 'none' %}
 {% set origin = (content.final_url if content and content.final_url else n.url) %}
 <article class="stack reader">
-  <p class="row" style="gap:10px;flex-wrap:wrap"><a href="{{ back }}">← Zurück zur Übersicht</a>
+  <p class="row gap-10 fx-wrap"><a href="{{ back }}">← Zurück zur Übersicht</a>
     <span id="rb-{{ n.id }}">{% include "partials/news_read_button.html" %}</span></p>
   {% include "partials/news_save_reader.html" %}
 
@@ -24,7 +24,7 @@
     {% set auto = ':auto:' in (content.reason or '') %}
     <p class="meta meta-row">{% if n.duration_s %}<span class="badge">{{ n.duration_s|duration }}</span>{% endif %}<span class="badge good" title="Untertitel des Videos wurden lokal geladen">Transkript</span>{% if ':eingefuegt:' in (content.reason or '') %}<span class="badge warn" title="Selbst eingefügter Text – Herkunft und Genauigkeit unbekannt">selbst eingefügt</span>{% else %}<span class="badge {{ 'warn' if auto else '' }}" title="{{ 'Automatisch erzeugte Untertitel – Namen, Ticker und Zahlen können falsch erkannt sein' if auto else 'Vom Kanal erstellte Untertitel' }}">{{ 'automatische Untertitel' if auto else 'Untertitel vom Kanal' }}</span>{% endif %}</p>
     {% if n.video_id %}<a href="{{ video_url }}" target="_blank" rel="noopener noreferrer"><img class="reader-img" src="https://i.ytimg.com/vi/{{ n.video_id }}/hqdefault.jpg" alt="Vorschaubild – Video auf YouTube öffnen" loading="lazy"></a>{% endif %}
-    <p class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+    <p class="row gap-8 fx-wrap mt-12">
       <a class="btn" href="{{ video_url }}" target="_blank" rel="noopener noreferrer">Video auf YouTube ansehen ↗</a>
       <a class="btn ghost" href="#transkript">Transkript lesen</a>
       <a class="btn ghost" href="/news/{{ n.id }}/transkript?back={{ urlq(back) }}" title="Transkript durch einen selbst kopierten Text ersetzen">Transkript ersetzen</a>
@@ -49,7 +49,7 @@
       {% elif content and content.excerpt %}<p>{{ content.excerpt }}</p>
       {% elif n.summary %}<p>{{ n.summary }}</p>{% endif %}
     </div>
-    <p class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+    <p class="row gap-8 fx-wrap mt-12">
       <a class="btn" href="{{ origin }}" target="_blank" rel="noopener noreferrer">Originalartikel öffnen ↗</a>
       {% if cs in ('failed', 'blocked', 'partial', 'none') %}<button class="btn ghost" hx-post="/news/{{ n.id }}/refetch" title="Artikeltext erneut laden">Erneut laden</button>{% endif %}
     </p>

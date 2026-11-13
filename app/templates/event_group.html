@@ -14,9 +14,9 @@
     <dt>Gebühr</dt><dd>{% if b.fee_asset %}{{ b.fee_qty }} {{ b.fee_asset }}{% else %}–{% endif %}</dd>
     <dt>EUR-Wert</dt><dd>{{ b.value_eur or '–' }}</dd></dl>
   {% else %}<p class="hint">Die Buchung besteht nicht mehr – Verknüpfungen bleiben zur Nachvollziehbarkeit sichtbar.</p>{% endif %}
-  {% for kind, text in g.conflicts %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div><b>{{ kinds.get(kind, kind) }}:</b> {{ text }}</div></div>{% endfor %}
+  {% for kind, text in g.conflicts %}<div class="alert warn mt-8"><span class="icon">!</span><div><b>{{ kinds.get(kind, kind) }}:</b> {{ text }}</div></div>{% endfor %}
 </section>
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>Quellen dieses Vorgangs <span class="badge">{{ g.members|length }}</span></h2></div>
   {% if not g.members %}<p class="hint">Keine weiteren Quellen verknüpft.</p>{% else %}
   <div class="table-wrap"><table class="compact"><thead><tr><th>Quelle</th><th>Rolle</th><th>Zeitpunkt</th><th>Abgang</th><th>Zugang</th><th>Gebühr</th><th>Gebührenbasis</th><th>EUR-Wert</th><th>Kennung</th></tr></thead><tbody>

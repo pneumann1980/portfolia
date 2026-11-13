@@ -77,7 +77,7 @@
     {% endif %}
     <p>Setzt die <b>ganze Datenbank</b> auf den Stand einer Sicherung zurück – auch Abrufe, Importe und Einstellungen, die danach dazugekommen sind. Portfolia startet dafür neu (etwa eine Minute). Der aktuelle Stand wird vorher selbst als Sicherung abgelegt; die Wiederherstellung ist also ebenfalls umkehrbar.</p>
     {% if backups %}
-    <form method="post" action="/quality/assistent/sicherung" class="stack" style="gap:8px">
+    <form method="post" action="/quality/assistent/sicherung" class="stack gap-8">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="guide-answers" role="radiogroup" aria-label="Sicherung">
       {% for b in backups[:15] %}<label class="guide-a"><input type="radio" name="name" value="{{ b.name }}" required{% if loop.first %} checked{% endif %}><span class="guide-a-body"><b>{{ b.created|datetime_de }}</b><span class="hint">{{ b.label or 'tägliche bzw. manuelle Sicherung' }} · {{ (b.bytes / 1024)|round|int }} KB</span></span></label>{% endfor %}

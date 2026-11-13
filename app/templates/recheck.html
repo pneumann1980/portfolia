@@ -18,7 +18,7 @@
       <td><a href="/journal?q={{ r.tx_id|urlencode }}"><span class="mono">{{ r.tx_id }}</span></a></td>
       <td data-label="Herkunft"><a href="{{ r.url }}">{{ r.text }}</a>{% if r.file %}<div class="hint">{{ r.file }}</div>{% endif %}</td>
       <td class="wide" data-label="Grund">{{ r.reason }}</td>
-      <td><div class="row" style="gap:6px;flex-wrap:wrap">
+      <td><div class="row gap-6 fx-wrap">
         {% if r.can_reopen %}<form method="post" action="/quality/erneut/zurueck"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="tx" value="{{ r.tx_id }}"><button class="btn sm" type="submit">Zurück in den Prüfstapel</button></form>{% endif %}
         <form method="post" action="/quality/erneut/entfernen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="tx" value="{{ r.tx_id }}"><button class="btn sm ghost" type="submit">Markierung entfernen</button></form>
       </div></td></tr>{% endfor %}

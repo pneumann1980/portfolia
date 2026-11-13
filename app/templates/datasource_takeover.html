@@ -7,7 +7,7 @@
 {% set kidq = ('?kid=' ~ kid|urlencode) if kid else '' %}
 {% macro kidf() %}{% if kid %}<input type="hidden" name="kid" value="{{ kid }}">{% endif %}{% endmacro %}
 <div class="stack" id="takeover"{% if t and (t.status in ('fetching', 'running') or t.busy) %} hx-get="/settings/datasources/{{ ds.id }}/uebernahme{{ kidq }}" hx-trigger="every 3s" hx-select="#takeover" hx-swap="outerHTML"{% endif %}>
-  <p class="hint row" style="gap:12px;flex-wrap:wrap"><a href="/settings/datasources/{{ ds.id }}">← {{ ds.name }}</a><a href="/quality/assistent">Buchungen prüfen</a><a href="/quality">Datenqualität</a>{% if ds.provider == 'bitpanda' %}<a href="/settings/datasources/{{ ds.id }}/luecken">Lücken der API prüfen</a>{% endif %}</p>
+  <p class="hint row gap-12 fx-wrap"><a href="/settings/datasources/{{ ds.id }}">← {{ ds.name }}</a><a href="/quality/assistent">Buchungen prüfen</a><a href="/quality">Datenqualität</a>{% if ds.provider == 'bitpanda' %}<a href="/settings/datasources/{{ ds.id }}/luecken">Lücken der API prüfen</a>{% endif %}</p>
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 
@@ -89,7 +89,7 @@
     {% if a and a.counts.api is not none %}{% set ct = a.counts %}
     <p class="hint">Zählung: <b>{{ ct.api }}</b> API-Vorgänge = <b>{{ ct.events }}</b> ausgewertete Vorgänge{% if ct.skipped %} + <b>{{ ct.skipped }}</b> bewusst ohne Buchung ({% for k, n in a.skipped.items() %}{{ n }}× {{ k }}{{ '; ' if not loop.last }}{% endfor %}){% endif %}{% if ct.explained %} <span class="badge good">vollständig erklärt</span>{% else %} <span class="badge warn">{{ ct.gap }} ohne Erklärung</span>{% endif %}. Die {{ ct.events }} Vorgänge ergeben {{ ct.lines }} Buchungszeilen (z. B. Handel mit Gebühr oder mehreren Teilen).</p>{% endif %}
     {% if t.message and result.detail is defined %}<div class="alert warn"><span class="icon">!</span><div><b>Letzter Übernahmeversuch:</b> {{ t.message }}{% if result.detail %}<details><summary>Einzelheiten ({{ result.detail|length }})</summary><ul>{% for d in result.detail[:12] %}<li>{{ d }}</li>{% endfor %}</ul></details>{% endif %}</div></div>{% endif %}
-    <div class="row" style="gap:8px;flex-wrap:wrap">
+    <div class="row gap-8 fx-wrap">
       <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/abruf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<button class="btn" type="submit">Erneut abrufen</button></form>
       <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/verwerfen" data-confirm="Gespeicherten Vollabruf verwerfen? Gebucht ist nichts; gespeicherte Zuordnungen bleiben."><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<button class="btn ghost" type="submit">Gespeicherten Abruf verwerfen</button></form>
     </div>
@@ -116,7 +116,7 @@
     {% set n_inc, n_skip = cnt.inc, cnt.skip %}
     <div class="tk-actions" id="alle-entscheiden">
       <p><b>{{ open_dec|length }} Vorgänge brauchen eine Einzelentscheidung.</b> Du kannst jeden unten einzeln entscheiden oder – wenn du sie geprüft hast – allen dieselbe Antwort geben (nur dieser Lauf; der Probelauf prüft danach neu).</p>
-      <div class="row" style="gap:6px;flex-wrap:wrap">
+      <div class="row gap-6 fx-wrap">
       {% for k, n in (('include', n_inc), ('skip', n_skip)) if n %}
         <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/entscheidung-alle" class="inline" data-confirm="{{ n }} Vorgänge: „{{ choice_labels.get(k, k) }}“?">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="token" value="{{ a.token }}">{% if a.confirm %}<input type="hidden" name="confirm" value="1">{% endif %}{% for x in a.adjust|sort %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}<input type="hidden" name="choice" value="{{ k }}">
@@ -135,20 +135,20 @@
           </tbody></table></div></details>{% endif %}
         {% if p.kind == 'map' %}
           <div class="tk-actions">
-            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnen" class="row" style="gap:6px;flex-wrap:wrap;align-items:flex-end">
+            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnen" class="row gap-6 fx-wrap items-end">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="symbol" value="{{ p.symbol }}"><input type="hidden" name="action" value="map">
               <label class="field grow">Vorhandenem Asset zuordnen<input type="text" name="asset" list="tk-assets" required placeholder="Asset wählen (ID — Name)" autocomplete="off"></label>
               <button class="btn sm" type="submit">Zuordnen</button>
             </form>
             <details><summary>Neues Asset anlegen</summary>
-            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnen" class="row" style="gap:6px;flex-wrap:wrap;align-items:flex-end">
+            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnen" class="row gap-6 fx-wrap items-end">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="symbol" value="{{ p.symbol }}"><input type="hidden" name="action" value="new">
               <label class="field">Kennung<input type="text" name="new_id" value="{{ p.symbol }}" maxlength="40" required></label>
               <label class="field grow">Name<input type="text" name="new_name" maxlength="120" placeholder="z. B. Terra Classic"></label>
               <label class="field">Art<select name="new_class"><option value="crypto">Krypto</option><option value="security">Wertpapier</option><option value="other">Sonstiges</option></select></label>
               <button class="btn sm" type="submit">Anlegen und zuordnen</button>
             </form></details>
-            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnen" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px" data-confirm="„{{ p.symbol }}“ als Spam markieren? Vorgänge und Bestand dieses Tokens zählen dann nicht und werden nicht gebucht (rückgängig über „Zuordnungen für diese Quelle“).">
+            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/zuordnen" class="row gap-6 fx-wrap items-center mt-6" data-confirm="„{{ p.symbol }}“ als Spam markieren? Vorgänge und Bestand dieses Tokens zählen dann nicht und werden nicht gebucht (rückgängig über „Zuordnungen für diese Quelle“).">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="symbol" value="{{ p.symbol }}"><input type="hidden" name="action" value="spam">
               <button class="btn sm" type="submit">Als Spam ignorieren</button>
               <span class="hint">Für ungefragt zugesandte Tokens (Airdrop-Spam, Werbung) – sie erscheinen nicht im Bestand.</span>
@@ -159,7 +159,7 @@
           <div class="tk-actions">
             {% if p.partner %}<p class="hint">Mögliche Gegenbuchung im Zustand nach dem Ausblenden: {{ p.partner.text }}</p>{% endif %}
             {% if p.options %}
-            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/entscheidung" class="stack" style="gap:4px">
+            <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/entscheidung" class="stack gap-4">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="token" value="{{ a.token }}">{% if a.confirm %}<input type="hidden" name="confirm" value="1">{% endif %}{% for x in a.adjust|sort %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}<input type="hidden" name="key" value="{{ p.key }}">
               {% for k in p.options %}<label class="check"><input type="radio" name="choice" value="{{ k }}" required> <span>{% if k == 'pair' %}Transfer mit dieser Gegenbuchung bestätigen{% if p.partner and p.partner.kind == 'imp' %} – die Import-Buchung wird durch die Gegenseite des Transfers ersetzt (Einstand und Haltedauer bleiben){% endif %}{% else %}{{ p.labels[k] }}{% endif %}</span></label>{% endfor %}
               <div><button class="btn sm" type="submit">Entscheidung speichern</button></div>
@@ -174,7 +174,7 @@
             <p><b>Ursachen der Abweichung</b> ({{ c.deviation|qty_exact }} {{ p.symbol }}{% if c.complete %} – vollständig erklärt{% else %} – davon erklärt {{ c.explained|qty_exact }}{% endif %}):</p>
             {% if c.dups %}
             <p class="small">In der App erfasste Buchungen, die <b>auch in der API</b> stehen – sie zählen sonst doppelt:</p>
-            <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme#probleme" class="stack" style="gap:6px">{{ kidf() }}{% if confirmed %}<input type="hidden" name="confirm" value="1">{% endif %}
+            <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme#probleme" class="stack gap-6">{{ kidf() }}{% if confirmed %}<input type="hidden" name="confirm" value="1">{% endif %}
               {% set ids = c.dups|map(attribute='tx')|map(attribute='tx_id')|list %}{% for x in adjust_sel %}{% if not (x.startswith('drop:') and x[5:] in ids) %}<input type="hidden" name="adjust" value="{{ x }}">{% endif %}{% endfor %}
               <ul class="small">{% for d in c.dups %}<li>{{ d.tx.ts|date_de }} · {{ d.tx.type }} · {{ d.qty|qty_exact }} {{ p.symbol }} <span class="mono muted">{{ d.tx.tx_id }}</span>{% if d.lag %} <span class="hint">(API mit Versatz)</span>{% endif %}
                 {% if d.hideable %}<label class="check"><input type="checkbox" name="adjust" value="drop:{{ d.tx.tx_id }}"{% if ('drop:' ~ d.tx.tx_id) in adjust_sel %} checked{% endif %}> <span>bei der Übernahme ausblenden</span></label>
@@ -197,7 +197,7 @@
             {% if adj.dated %}<p><b>Die Quelle belegt die fehlenden Bewegungen selbst</b> (Sprünge im Kontostand je Vorgang): {{ adj['items']|length }} Lücke{{ 'n' if adj['items']|length != 1 }} ergeben zusammen {{ adj.amount|qty_exact }} {{ p.symbol }}{% if adj.rest %} – der Rest von {{ adj.rest|qty_exact }} {{ p.symbol }} ist keine Lücke der API (Ursachen oben) und wird nicht ausgeglichen{% endif %}.</p>
             {% else %}<p><b>Nicht durch den Saldoverlauf belegt</b>{% if adj.gaps_total %} (Lücken laut Saldoverlauf ergeben {{ adj.gaps_total|qty_exact }}, nötig sind {{ adj.need|qty_exact }}){% endif %}. Ein Ausgleich wäre eine einzige Buchung über {{ adj.need|qty_exact }} {{ p.symbol }} zum Abrufzeitpunkt.</p>{% endif %}
             <details{% if adj['items']|length <= 6 %} open{% endif %}><summary>Ausgleichsbuchungen ({{ adj['items']|length }})</summary><ul class="small">{% for x in adj['items'][:40] %}<li>{{ x.amount|qty_exact }} {{ p.symbol }} – {{ x.window }}</li>{% endfor %}</ul></details>
-            <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme#uebernehmen" class="stack" style="gap:6px">{{ kidf() }}{% if confirmed %}<input type="hidden" name="confirm" value="1">{% endif %}
+            <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme#uebernehmen" class="stack gap-6">{{ kidf() }}{% if confirmed %}<input type="hidden" name="confirm" value="1">{% endif %}
               {% for x in adjust_sel if x != p.asset %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}
               <label class="check"><input type="checkbox" name="adjust" value="{{ p.asset }}"> <span>Ich bestätige: Für {{ p.symbol }} gilt der Bestand der Quelle. Die fehlenden Bewegungen werden als gekennzeichnete Ausgleichsbuchungen gebucht ({% if p.asset|upper == 'EUR' %}steuerlich neutral{% else %}Zu- bzw. Abgang ohne Gegenwert – die Wirkung auf die Steuerjahre wird gemessen und angezeigt{% endif %}); rückgängig mit der ganzen Übernahme.</span></label>
               <div><button class="btn sm" type="submit">Mit Ausgleich prüfen</button></div>
@@ -244,7 +244,7 @@
   <section class="card" id="beweis">
     <div class="card-head"><h2>2 · {{ 'Beweis' if a.mode == 'proof' else 'Prüfung und Bestätigung' }}</h2> {% if a.ok %}<span class="badge good">{{ 'erbracht' if a.mode == 'proof' else 'bestätigt' }}</span>{% else %}<span class="badge crit">{{ 'nicht erbracht' if a.mode == 'proof' else 'offen' }}</span>{% endif %}</div>
     {% if a.mode == 'confirm' %}
-    <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme" class="stack" style="gap:6px;margin-bottom:10px">{{ kidf() }}{% for x in adjust_sel %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}
+    <form method="get" action="/settings/datasources/{{ ds.id }}/uebernahme" class="stack gap-6 mb-10">{{ kidf() }}{% for x in adjust_sel %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}
       <label class="check"><input type="checkbox" name="confirm" value="1"{% if confirmed %} checked{% endif %}> <span>Ich bestätige: {{ ds.provider_label }} kennt für das Konto „{{ ds.account }}“ die <b>vollständige Historie</b> (der kuratierte Import darf ab dem ersten Ereignis der Quelle zurücktreten).</span></label>
       <div><button class="btn sm" type="submit">Mit dieser Angabe prüfen</button></div>
     </form>
@@ -301,7 +301,7 @@
   <section class="card" id="uebernehmen">
     <div class="card-head"><h2>5 · Übernehmen</h2></div>
     {% if a.ok %}
-    <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/uebernehmen" class="stack" style="gap:8px">
+    <form method="post" action="/settings/datasources/{{ ds.id }}/uebernahme/uebernehmen" class="stack gap-8">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{{ kidf() }}<input type="hidden" name="token" value="{{ a.token }}">{% for x in a.adjust|sort %}<input type="hidden" name="adjust" value="{{ x }}">{% endfor %}{% if a.confirm %}<input type="hidden" name="confirmed" value="1">{% endif %}
       {% if a.adjustments %}<div class="alert warn"><span class="icon">!</span><div>Mit bestätigtem Ausgleich: {{ a.adjustments|length }} gekennzeichnete Ausgleichsbuchung{{ 'en' if a.adjustments|length != 1 }} ({% for x in a.adjust|sort %}{{ x }}{{ ', ' if not loop.last }}{% endfor %}) werden mitgebucht.</div></div>{% endif %}
       {% if a.fillers %}<p class="hint">{{ a.fillers|length }} Import-Buchung{{ 'en' if a.fillers|length != 1 }} ohne Gegenstück füll{{ 'en' if a.fillers|length != 1 else 't' }} eine Lücke der API und bleib{{ 'en' if a.fillers|length != 1 else 't' }} bestehen (Liste unter „Bleibende Buchungen“).</p>{% endif %}
@@ -318,7 +318,7 @@
       </li>{% endfor %}</ul></div></div>
     <div class="tk-skip">
       <p><b>Übernahme vorerst überspringen?</b> Der gespeicherte Abruf und deine Zuordnungen bleiben erhalten; die Quelle wird nicht abgelehnt.</p>
-      <div class="row" style="gap:8px;flex-wrap:wrap">
+      <div class="row gap-8 fx-wrap">
         {% if kid %}<a class="btn" href="/quality/assistent?skip={{ kid|urlencode }}">Überspringen – weiter mit der nächsten Frage</a>{% endif %}
         {% if pending %}<a class="btn ghost" href="/journal/csv/{{ pending.id }}">Einzelne Buchungen im Prüfstapel prüfen</a>
         {% else %}<form method="post" action="/settings/datasources/{{ ds.id }}/sync"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Einzelne Buchungen prüfen (Abruf in den Prüfstapel)</button></form>{% endif %}

@@ -3,7 +3,7 @@
 {% block heading %}Hat die API Lücken? {{ ds.name }}{% endblock %}
 {% block content %}
 <div class="stack" id="gapcheck">
-  <p class="hint row" style="gap:12px;flex-wrap:wrap"><a href="/settings/datasources/{{ ds.id }}">← {{ ds.name }}</a><a href="/settings/datasources/{{ ds.id }}/uebernahme">Quellenübernahme</a>{% if rep %}<a href="/settings/datasources/{{ ds.id }}/luecken.csv">Bericht als CSV</a>{% endif %}</p>
+  <p class="hint row gap-12 fx-wrap"><a href="/settings/datasources/{{ ds.id }}">← {{ ds.name }}</a><a href="/settings/datasources/{{ ds.id }}/uebernahme">Quellenübernahme</a>{% if rep %}<a href="/settings/datasources/{{ ds.id }}/luecken.csv">Bericht als CSV</a>{% endif %}</p>
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if error %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ error }}</div></div>{% endif %}
 

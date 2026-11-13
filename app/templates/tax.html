@@ -117,7 +117,7 @@
       · <a href="/tax?year={{ year }}&tab=docs#reports">alle {{ reports|length }} Berichte</a></span>
     {% elif reports %}<span class="taxbar-reports">Für {{ year }} gibt es noch keinen Bericht · <a href="/tax?year={{ year }}&tab=docs#reports">alle {{ reports|length }} Berichte</a></span>{% endif %}
     <details class="inline-details"><summary>Anderes Jahr</summary>
-      <form method="get" action="/tax" class="row" style="gap:6px"><input type="hidden" name="tab" value="{{ tab }}">
+      <form method="get" action="/tax" class="row gap-6"><input type="hidden" name="tab" value="{{ tab }}">
         <input type="number" name="year" min="{{ MIN_YEAR }}" max="{{ MAX_YEAR }}" value="{{ year }}" aria-label="Jahr eingeben" style="width:6.5rem"><button class="btn sm" type="submit">Anzeigen</button></form></details>
   </div>
 </section>
@@ -136,7 +136,7 @@
   {% endfor %}
 </section>
 
-<div class="grid-2" style="margin-top:16px">
+<div class="grid-2 mt-16">
   <section class="card">
     <div class="card-head"><h2>Freigaben der nächsten 12 Monate</h2><span class="hint">Wert zu aktuellen Kursen, der steuerfrei wird</span></div>
     <div class="chart" data-chart="releases" data-src="/api/tax/releases" role="img" aria-label="Balkendiagramm: Wert der Kryptowerte, deren Haltefrist je Monat endet"></div>
@@ -157,13 +157,13 @@
   </section>
 </div>
 
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>Haltefristen je Kryptowert und Wallet</h2>{% for n in ov.notes %}<span class="hint">{{ n }}</span>{% endfor %}</div>
   {{ gtable(ov.positions, 200, true) }}
 </section>
 {% endif %}
 
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>Realisiert je Jahr</h2><span class="hint">Krypto bis/über 1 Jahr Haltedauer, Leistungen § 22 Nr. 3, Kapitalerträge</span></div>
   {% if ov and ov.years %}
   <div class="table-wrap"><table class="compact">
@@ -178,7 +178,7 @@
   {% else %}<p class="hint">Keine realisierten Vorgänge.</p>{% endif %}
 </section>
 {% elif tab == 'year' %}
-<section class="card" id="year" style="margin-top:16px">
+<section class="card mt-16" id="year">
   <div class="card-head"><h2>Steuerjahr {{ year }}</h2>{% if year_info %}<span class="hint">{{ year_info }}</span>{% endif %}</div>
   {% if res %}
   {% set rv = res.review() %}
@@ -199,7 +199,7 @@
       <h3>Frei- und Pauschbeträge</h3>
       {{ meters(res.meters) }}
       {% if res.estimate %}
-      <h3 style="margin-top:14px">Schätzung (vereinfacht)</h3>
+      <h3 class="mt-12">Schätzung (vereinfacht)</h3>
       <table class="compact lines"><tbody>{% for l in res.estimate %}
         {% if l.kind == 'text' and l.amount is none %}<tr class="group"><th colspan="2">{{ l.label }}</th></tr>
         {% else %}<tr class="{{ 'strong' if l.strong }}"><td style="padding-left:{{ 8 + l.indent * 14 }}px">{{ l.label }}{% if l.note %}<div class="hint">{{ l.note }}</div>{% endif %}</td><td class="num nowrap">{{ l.amount|tcell('eur') }}</td></tr>{% endif %}
@@ -208,7 +208,7 @@
     </div>
   </div>
 
-  <h3 style="margin-top:16px">Übertragungshilfe</h3>
+  <h3 class="mt-16">Übertragungshilfe</h3>
   {% if res.fields %}
   {% set any_line = res.fields|selectattr('line')|list|length > 0 %}
   <div class="table-wrap"><table class="compact">
@@ -222,21 +222,21 @@
   {% else %}<p class="hint">Für {{ year }} ergeben sich aus den Daten keine Eintragungen.</p>{% endif %}
 
   {% for s in res.sections %}{% for t in s.tables if t.rows %}
-  <details class="box" style="margin-top:8px"><summary>{{ t.title }} <span class="badge">{{ t.rows|length }}</span></summary>
+  <details class="box mt-8"><summary>{{ t.title }} <span class="badge">{{ t.rows|length }}</span></summary>
     {% if t.note %}<p class="hint">{{ t.note }}</p>{% endif %}
     {{ gtable(t, html_rows, true) }}
   </details>
   {% endfor %}{% endfor %}
 
   {% set infos = res.issues|selectattr('severity', 'equalto', 'info')|list %}
-  {% if infos %}<details class="box" style="margin-top:8px"><summary>Hinweise <span class="badge">{{ infos|length }}</span></summary>
+  {% if infos %}<details class="box mt-8"><summary>Hinweise <span class="badge">{{ infos|length }}</span></summary>
     <ul class="list">{% for i in infos %}<li>{{ i.text }}</li>{% endfor %}</ul></details>{% endif %}
-  <details class="box" style="margin-top:8px"><summary>Methodik und Annahmen</summary>
+  <details class="box mt-8"><summary>Methodik und Annahmen</summary>
     <ul class="list">{% for a in res.assumptions %}<li>{{ a }}</li>{% endfor %}</ul></details>
   {% endif %}
 </section>
 {% elif tab == 'docs' %}
-<div class="grid-2" style="margin-top:16px">
+<div class="grid-2 mt-16">
 <section class="card" id="reports-form">
   <div class="card-head"><h2>PDF-Bericht {{ year }}</h2><span class="hint">Aufstellungen als Beleg zur Steuererklärung</span></div>
   <form method="post" action="/tax/report" class="stack" hx-post="/tax/report" hx-target="#report-result" hx-indicator="#rep-spin">
@@ -266,18 +266,18 @@
   {% endif %}
 </section>
 </div>
-<section class="card" id="belege" style="margin-top:16px">
+<section class="card mt-16" id="belege">
   <div class="card-head"><h2>Belege der Bank und externe Daten</h2></div>
   <ul class="plain-list">
     <li><a href="/tax/certs">Steuerbescheinigungen</a> – Jahressteuerbescheinigung und Erträgnisaufstellung der Bank (PDF) hochladen; sie ersetzen den Pauschbetrag-Eintrag und dienen dem Abgleich.</li>
     <li><a href="/tax/data">Steuerdaten je Jahr</a> – externe Steuerberichte (JSON/CSV) je Steuerjahr verwalten und Buchungen zuordnen.</li>
   </ul>
 </section>
-<div style="margin-top:16px">
+<div class="mt-16">
 <section class="card" id="reports">
   {% if reports %}
-  <div class="row" style="margin-top:14px;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><h3 style="margin:0">Erzeugte Berichte <span class="badge">{{ reports|length }}</span></h3>
-    <span class="row" style="gap:6px;flex-wrap:wrap">
+  <div class="row mt-12 justify-between items-center gap-8 fx-wrap"><h3 class="m-0">Erzeugte Berichte <span class="badge">{{ reports|length }}</span></h3>
+    <span class="row gap-6 fx-wrap">
     <form method="post" action="/tax/reports/delete-all" data-confirm="ALLE {{ reports|length }} erzeugten Berichte aller Jahre (inkl. ZIP) löschen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm danger" type="submit">Alle Berichte löschen</button></form></span></div>
   <ul class="list">
     {% for r in reports %}
@@ -298,7 +298,7 @@
 </section>
 </div>
 {% else %}
-<div style="margin-top:16px">
+<div class="mt-16">
 <section class="card" id="options">
   <div class="card-head"><h2>Optionen</h2><span class="hint">Wahlrechte und Angaben; Felder mit „{{ year }}“ gelten nur für dieses Jahr</span></div>
   <form method="post" action="/tax/options" class="stack">
@@ -316,7 +316,7 @@
   </form>
 </section>
 </div>
-<div class="grid-2" style="margin-top:16px">
+<div class="grid-2 mt-16">
 <section class="card" id="mapping">
   <div class="card-head"><h2>Zuordnung Wertpapiere</h2><span class="hint">Steuerabzug je Depot, Fondsart je Wertpapier</span></div>
   {% if sec_accounts or securities %}
@@ -338,21 +338,21 @@
     {% endfor %}</fieldset>{% endif %}
     <div class="row"><button class="btn primary" type="submit">Zuordnung speichern</button></div>
   </form>
-  <form method="post" action="/tax/isin/run" class="row" style="gap:8px;align-items:center;margin-top:8px">
+  <form method="post" action="/tax/isin/run" class="row gap-8 items-center mt-8">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}">
     <button class="btn sm" type="submit">ISIN jetzt abrufen</button>
     <span class="hint">Fehlende ISIN werden automatisch ergänzt (Bankbelege, Onvista – nur die WKN wird übermittelt).{% if isin_last %} Letzter Lauf {{ isin_last.at[:16]|replace('T', ' ') }}: {{ isin_last.found }} gefunden, {{ isin_last.open }} offen.{% endif %}</span>
   </form>
-  <form method="post" action="/tax/isin/settings" class="row" style="gap:8px;align-items:center">
+  <form method="post" action="/tax/isin/settings" class="row gap-8 items-center">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}">
-    <label class="row" style="gap:6px"><input type="checkbox" name="auto" value="1" {% if isin_auto %}checked{% endif %}> täglich automatisch suchen</label>
+    <label class="row gap-6"><input type="checkbox" name="auto" value="1" {% if isin_auto %}checked{% endif %}> täglich automatisch suchen</label>
     <button class="btn sm" type="submit">Speichern</button>
   </form>
   {% else %}<p class="hint">Keine Wertpapiere im Import.</p>{% endif %}
 </section>
 <section class="card" id="profile">
   <div class="card-head"><h2>Regelwerk &amp; Deckblatt</h2></div>
-  <form method="post" action="/tax/pack" class="row" style="gap:8px;flex-wrap:wrap">
+  <form method="post" action="/tax/pack" class="row gap-8 fx-wrap">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label class="field">Regelwerk
       <select name="pack" data-autosubmit>
@@ -361,13 +361,13 @@
       </select></label>
     <noscript><button class="btn" type="submit">Wechseln</button></noscript>
   </form>
-  <dl class="kv" style="margin-top:10px">
+  <dl class="kv mt-10">
     <dt>Version</dt><dd>{{ pack.version }}{% if override_active %} <span class="badge info">lokale Parameter aktiv</span>{% endif %}</dd>
     {% if params_meta.updated %}<dt>Parameter-Stand</dt><dd>{{ params_meta.updated|date_de }}{% if params_meta.reviewed_through %}, geprüft bis {{ params_meta.reviewed_through }}{% endif %}</dd>{% endif %}
     <dt>Lokale Anpassung</dt><dd><code>{{ override_path or '–' }}</code></dd>
   </dl>
   <p class="hint">{{ pack.description }} Neue Freigrenzen, Basiszinsen oder geprüfte Formularzeilen lassen sich ohne Update über die lokale Parameterdatei eintragen (siehe README).</p>
-  <form method="post" action="/tax/profile" class="stack" style="margin-top:12px">
+  <form method="post" action="/tax/profile" class="stack mt-12">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}">
     <label class="field">Name (Deckblatt)<input type="text" name="name" value="{{ profile.name or '' }}" autocomplete="name"></label>
     <label class="field">Steuer-ID<input type="text" name="tax_id" value="{{ profile.tax_id or '' }}" inputmode="numeric"></label>
@@ -377,7 +377,7 @@
   </form>
 </section>
 </div>
-<div style="margin-top:16px">
+<div class="mt-16">
 <section class="card" id="rulesets">
   <div class="card-head"><h2>Regelwerk-Dateien (Parameterstände)</h2><span class="hint">Freigrenzen, Pauschbeträge, Basiszins, Formularzeilen und Schalter je Jahr – als YAML importieren</span></div>
   <p class="hint">Eine Datei ändert nur Werte und Schalter, keine Rechenlogik, und gilt nur in ihren Gültigkeitsjahren; sonst gilt der Standard
@@ -424,18 +424,18 @@
         <td class="num">{{ fmt_val(rg.old) }}</td><td class="num"><b>{{ fmt_val(rg.new) }}</b></td></tr>{% endfor %}{% endfor %}</tbody>
     </table></div>
     {% else %}<p class="hint">Keine Unterschiede zum Standard in den Gültigkeitsjahren.</p>{% endif %}
-    <div class="row" style="gap:8px">
+    <div class="row gap-8">
       {% if preview.slug != ruleset_slug %}<form method="post" action="/tax/ruleset" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}"><input type="hidden" name="tab" value="settings"><input type="hidden" name="ruleset" value="{{ preview.slug }}"><button class="btn primary" type="submit">Aktivieren</button></form>{% endif %}
       <a class="btn" href="/tax?year={{ year }}&tab=settings#rulesets">Schließen</a>
     </div>
   </div>
   {% endif %}
 
-  <h3 style="margin-top:14px">Datei importieren</h3>
-  <form method="post" action="/tax/rules/upload" enctype="multipart/form-data" class="stack" style="gap:10px">
+  <h3 class="mt-12">Datei importieren</h3>
+  <form method="post" action="/tax/rules/upload" enctype="multipart/form-data" class="stack gap-10">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="year" value="{{ year }}">
     <label class="field">YAML-Datei (höchstens 256 KB)<input type="file" name="file" accept=".yaml,.yml,text/yaml,text/plain" required></label>
-    <div class="row" style="gap:8px"><button class="btn primary" type="submit">Prüfen und speichern</button>
+    <div class="row gap-8"><button class="btn primary" type="submit">Prüfen und speichern</button>
       <a class="btn" href="/tax/rules/template.yaml?year={{ year }}" download>Vorlage herunterladen</a></div>
     <p class="hint">Geprüft werden Aufbau, Schlüssel, Typen und Wertebereiche; bei Fehlern wird nichts gespeichert. Die Datei wird erst durch „Aktivieren“ wirksam. Eine Datei mit gleicher Kennung ersetzt die vorhandene.</p>
   </form>

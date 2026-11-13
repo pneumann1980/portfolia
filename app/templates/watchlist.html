@@ -16,14 +16,14 @@
 <section class="card flush" id="watch-tabelle">
   <div class="card-head">
     <h2>{{ rows|length }} Titel{% for l in lists if l.id == list_id %} · {{ l.name }}{% endfor %}{% if only %} · Vorschläge{% endif %}</h2>
-    <div class="row" style="gap:8px;flex-wrap:wrap">
+    <div class="row gap-8 fx-wrap">
       <a class="btn sm primary" href="#add">Titel hinzufügen</a>
       <div class="seg" role="group" aria-label="Ansicht">
         <a class="{{ 'active' if not list_id and not only }}" href="{{ view_url() }}">Alle <span class="badge">{{ counts.alle }}</span></a>
         {% if lists|length > 1 %}{% for l in lists %}<a class="{{ 'active' if l.id == list_id }}" href="{{ view_url(l.id) }}">{{ l.name }}</a>{% endfor %}{% endif %}
         {% if counts.vorschlaege %}<a class="{{ 'active' if only }}" href="{{ view_url(none, 'vorschlaege') }}">Vorschläge <span class="badge">{{ counts.vorschlaege }}</span></a>{% endif %}
       </div>
-      <form method="get" action="/watchlist" class="row" style="gap:6px">{% if list_id %}<input type="hidden" name="list" value="{{ list_id }}">{% endif %}{% if only %}<input type="hidden" name="nur" value="{{ only }}">{% endif %}
+      <form method="get" action="/watchlist" class="row gap-6">{% if list_id %}<input type="hidden" name="list" value="{{ list_id }}">{% endif %}{% if only %}<input type="hidden" name="nur" value="{{ only }}">{% endif %}
         <label class="sr-only" for="wl-sort">Sortierung</label>
         <select id="wl-sort" name="sort" data-autosubmit>{% for k, v in sorts.items() %}<option value="{{ k }}" {{ 'selected' if k == sort }}>{{ v if k != 'standard' else ('eigene Reihenfolge' if list_id else 'Standard') }}</option>{% endfor %}</select>
         <noscript><button class="btn sm" type="submit">Sortieren</button></noscript></form>
@@ -31,7 +31,7 @@
   </div>
   {% if loading %}<p class="hint" style="padding:0 16px">Marktdaten werden aktualisiert – Seite in Kürze neu laden.</p>{% endif %}
   {% if rows %}
-  <div class="table-wrap" style="margin:0;padding:0 8px 8px">
+  <div class="table-wrap m-0" style="padding:0 8px 8px">
   <table class="watch-table">
     <thead><tr><th>Titel</th><th class="num">Kurs</th><th class="num">24h</th><th class="num">7 Tage</th><th class="num">Marktkap.</th><th class="num">Score</th><th>Verlauf</th><th class="sr-only">Aktionen</th></tr></thead>
     <tbody>
@@ -83,8 +83,8 @@
   </form>
   <p class="hint" data-suggest-note>Vorschläge kommen aus deinem Portfolio, dem CoinGecko-Katalog und der Yahoo-Suche (dabei geht nur der Suchtext an Yahoo). Ohne Auswahl gilt die Eingabe als Symbol bzw. Kennung.</p>
   {% if choices %}
-  <p class="hint" style="margin-top:8px">Bitte wählen:</p>
-  <div class="row" style="gap:6px;flex-wrap:wrap">
+  <p class="hint mt-8">Bitte wählen:</p>
+  <div class="row gap-6 fx-wrap">
     {% for c in choices %}<form method="post" action="/watchlist/add" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="list" value="{{ list_id or default_list }}"><input type="hidden" name="kind" value="{{ c.kind or 'crypto' }}"><input type="hidden" name="value" value="{{ c.id }}"><button class="btn sm" type="submit">{{ c.symbol }} · {{ c.name }}{% if (c.kind or 'crypto') == 'crypto' %} <span class="hint">(Coin: {{ c.id }})</span>{% endif %}</button></form>{% endfor %}
   </div>{% endif %}
 </section>
@@ -107,7 +107,7 @@
 <details class="card disc-sec" id="listen"{% if lists|length > 1 %} open{% endif %}><summary class="card-head"><h2>Listen verwalten</h2><span class="hint">{{ lists|length }} {{ 'Liste' if lists|length == 1 else 'Listen' }}</span></summary>
   <div class="table-wrap cards-wrap"><table class="compact cards"><thead><tr><th>Liste</th><th class="num">Titel</th><th></th></tr></thead><tbody>
   {% for l in lists %}
-    <tr><td data-label="Liste"><form method="post" action="/watchlist/lists/{{ l.id }}/rename" class="row" style="gap:6px;flex-wrap:wrap"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label class="sr-only" for="liste-{{ l.id }}">Name</label><input id="liste-{{ l.id }}" name="name" value="{{ l.name }}" maxlength="40" required><button class="btn sm" type="submit">Umbenennen</button></form></td>
+    <tr><td data-label="Liste"><form method="post" action="/watchlist/lists/{{ l.id }}/rename" class="row gap-6 fx-wrap"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label class="sr-only" for="liste-{{ l.id }}">Name</label><input id="liste-{{ l.id }}" name="name" value="{{ l.name }}" maxlength="40" required><button class="btn sm" type="submit">Umbenennen</button></form></td>
       <td class="num" data-label="Titel">{{ list_counts.get(l.id, 0) }}</td>
       <td class="nowrap actions">{% if l.is_default %}<span class="badge good">Standardliste</span>{% else %}
         <form method="post" action="/watchlist/lists/{{ l.id }}/default" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit" title="„Beobachten“ ohne Listenwahl nimmt Titel in diese Liste auf">Als Standard</button></form>
@@ -115,7 +115,7 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form>{% endif %}</td></tr>
   {% endfor %}
   </tbody></table></div>
-  <form method="post" action="/watchlist/lists" class="form-grid" style="margin-top:8px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <form method="post" action="/watchlist/lists" class="form-grid mt-8"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label class="field">Weitere Liste anlegen<input name="name" maxlength="40" placeholder="Name der neuen Liste"></label><div class="row"><button class="btn" type="submit">Anlegen</button></div></form>
 </details>
 </div>

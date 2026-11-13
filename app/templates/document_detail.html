@@ -91,7 +91,7 @@
 
   {% if d.analysis_json %}
   <details class="box" id="korrektur{{ it.n }}" {% if row and row.status in ('invalid', 'unclear') %}open{% endif %}><summary>Angaben korrigieren bzw. ergänzen</summary>
-    <form method="post" action="/journal/documents/{{ d.id }}/correct" class="stack" style="gap:8px;margin-top:8px">
+    <form method="post" action="/journal/documents/{{ d.id }}/correct" class="stack gap-8 mt-8">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="n" value="{{ it.n }}">
       <div class="grid-3">{% for name in edit_order %}{% set fv = t.get('fields', {}).get(name, {}) %}
         {% if name == 'kind' %}

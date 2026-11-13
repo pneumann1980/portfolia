@@ -40,7 +40,7 @@
     {% endfor %}
   {% endif %}
   {% if diff %}
-  <h3 style="margin-top:14px">Änderungen zur Vorversion</h3>
+  <h3 class="mt-12">Änderungen zur Vorversion</h3>
   {% if diff.first_import %}<p class="hint">Erster Import – {{ diff.new }} Transaktionen.</p>{% else %}
   <div class="row" style="margin:6px 0"><span class="badge good">+{{ diff.new }} neu</span><span class="badge warn">{{ diff.changed }} geändert</span><span class="badge crit">−{{ diff.removed }} entfernt</span><span class="badge">{{ diff.holdings|length }} Bestandsänderungen</span></div>
   {% if diff.holdings %}<details class="box" open><summary>Bestandsänderungen je Asset</summary><div class="table-wrap"><table>
@@ -62,14 +62,14 @@
   {% endif %}{% endif %}
   {% else %}<p class="hint">Noch kein Import verarbeitet.</p>{% endif %}
 
-  {% if audit %}<details class="box" style="margin-top:12px"><summary>Prüfunterlagen des Kurators ({{ audit|length }}) <span class="hint">archiviert, nicht ausgewertet</span></summary>
+  {% if audit %}<details class="box mt-12"><summary>Prüfunterlagen des Kurators ({{ audit|length }}) <span class="hint">archiviert, nicht ausgewertet</span></summary>
     <p class="hint">Dateien aus dem Ordner <code>kuration/</code> der Import-ZIP. Portfolia zeigt hier nur die ersten Zeilen; zur Auswertung bitte melden, welche Datei nützlich wäre.</p>
     {% for a in audit %}<details class="box"><summary><code>{{ a.name }}</code> <span class="hint">{{ (a.size / 1024)|round(1) }} KB</span></summary>
       {% if a.binary %}<p class="hint">Binärdatei – keine Vorschau.</p>{% else %}<pre class="mono small" style="white-space:pre-wrap;overflow-x:auto">{% for ln in a.head %}{{ ln }}
 {% endfor %}</pre>{% endif %}</details>{% endfor %}
   </details>{% endif %}
 
-  <details class="box" style="margin-top:12px"><summary>Importhistorie ({{ imports|length }})</summary><div class="table-wrap"><table>
+  <details class="box mt-12"><summary>Importhistorie ({{ imports|length }})</summary><div class="table-wrap"><table>
     <thead><tr><th>#</th><th>Datei</th><th>Verarbeitet</th><th>Status</th><th class="num">Tx</th><th>Daten</th></tr></thead><tbody>
     {% for i in imports %}{% set c = (i.counts_json and i.counts_json|fromjson) or {} %}
       <tr><td><a href="/quality/technik?import_id={{ i.id }}#import">{{ i.id }}</a></td><td class="mono">{{ i.filename }}</td><td>{{ i.processed_at|datetime_de }}</td>
@@ -80,7 +80,7 @@
 </section>
 
 <details class="card dq-tech" id="technik"><summary><b>Technische Einzelheiten</b> <span class="hint">Abgleich, Buchungen, Kurse, Datenquellen, Ledger- und Steuerhinweise, Jobs, Fehlerprotokoll</span></summary>
-<div class="stack" style="margin-top:12px">
+<div class="stack mt-12">
 <section class="card" id="holdings">
   <div class="card-head"><h2>Abgleich mit holdings_check</h2>{% if check %}<span class="hint">{{ check.ok }} von {{ check.checked }} übereinstimmend</span>{% endif %}</div>
   {% if check and check.deviations %}
@@ -123,7 +123,7 @@
 
 <section class="card" id="prices">
   <div class="card-head"><h2>Kurse: unbewertet &amp; veraltet</h2>
-    <span class="row" style="gap:6px;flex-wrap:wrap"><a class="btn sm" href="/changes">Ticker/Umstellungen</a>
+    <span class="row gap-6 fx-wrap"><a class="btn sm" href="/changes">Ticker/Umstellungen</a>
     <a class="btn sm" href="/assets/merge">Assets zusammenführen</a>
     <a class="btn sm" href="/accounts/merge">Konten zusammenführen</a>
     <a class="btn sm" href="/quality/sources">Kursquellen zuordnen{% if src_suggested %} <span class="badge warn">{{ src_suggested }}</span>{% endif %}</a></span></div>
@@ -139,7 +139,7 @@
     </tbody></table></div>
     {% else %}<p><span class="badge good">✓</span> Alle Positionen aktuell bewertet.</p>{% endif %}
   {% endif %}
-  <h3 id="price-quality" style="margin-top:14px">Kursqualität der Historie</h3>
+  <h3 id="price-quality" class="mt-12">Kursqualität der Historie</h3>
   {% set nq = price_quality|rejectattr('state', 'equalto', 'complete')|list %}
   {% if not hist %}<p class="hint">Noch keine Historie berechnet.</p>
   {% elif not price_quality %}<p><span class="badge good">✓</span> Marktdaten vollständig – alle gehaltenen Tage mit Schlusskursen des Kursanbieters bewertet.</p>
@@ -221,7 +221,7 @@
   {% for name, j in jobs.items() %}
     <tr><td class="mono">{{ name }}</td>
       <td>{% if j.running %}<span class="badge info"><span class="spinner"></span> läuft</span>{% elif j.last_ok %}<span class="badge good">ok</span>{% elif j.last_ok is not none %}<span class="badge crit">Fehler</span>{% endif %}
-        {% if j.running and j.progress %}<div class="progress" style="margin-top:4px;min-width:80px"><div style="width:{{ (j.progress.done / j.progress.total * 100) if j.progress.total else 0 }}%"></div></div>{% endif %}</td>
+        {% if j.running and j.progress %}<div class="progress mt-4" style="min-width:80px"><div style="width:{{ (j.progress.done / j.progress.total * 100) if j.progress.total else 0 }}%"></div></div>{% endif %}</td>
       <td>{{ j.last_end|datetime_de }}</td><td>{{ next_runs.get(name)|datetime_de }}</td>
       <td class="small">{{ j.last_error or (j.progress|tojson if j.progress and not j.running else '') }}</td></tr>
   {% else %}<tr><td colspan="5" class="hint">Noch keine Läufe.</td></tr>{% endfor %}
