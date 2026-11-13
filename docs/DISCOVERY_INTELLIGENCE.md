@@ -1,4 +1,9 @@
-# Discovery & Intelligence (0.114.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe; einfache Einstellungen)
+# Discovery & Intelligence (0.115.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe; einfache Einstellungen)
+
+**Neu in 0.115** (Abschnitt [0.11](#011-neu-in-0115-eine-watchlist-tabelle-detailfenster-titelsuche)):
+der Bereich heißt „Watchlist“ und ist **eine Tabelle** (Listentitel, beobachtete Unternehmen ohne Liste, offene
+Vorschläge mit Markierung), Detailfenster wie bei den Positionen, Titelsuche nach Name oder Symbol, kompakter
+SEC-Block unter den Stammdaten, Kauf-/Verkaufsmarker auf der Kurslinie.
 
 **Neu in 0.114** (Abschnitt [0.10](#010-neu-in-0114-entdecken--beobachten-und-sec-kennzahlen-im-bestand)):
 ein Menüpunkt „Entdecken & Beobachten“ mit zwei Ansichten, ein „Beobachten“ für Discovery und Watchlist,
@@ -259,6 +264,44 @@ Grenzen: Titel anderer Börsenplätze (`SAP.DE`), ETFs und Unternehmen ohne SEC-
 
 **Leistung:** Die Liste baut ihre Karten einmal je Aufruf und mit Sammelabfragen (24 Unternehmen: 15 statt 202
 Abfragen für die Karten).
+
+### 0.11 Neu in 0.115: eine Watchlist-Tabelle, Detailfenster, Titelsuche
+
+**Eine Tabelle** (`/watchlist`, Menüpunkt „Watchlist“; `app/watchlist/view.py`). Spalten: Titel, Kurs, 24h, 7 Tage,
+Marktkapitalisierung, Portfolia-Score, Verlauf. Jede Zeile trägt eine Markierung:
+
+| Markierung | Herkunft | Kurs |
+|---|---|---|
+| (keine) / Listenname | Eintrag einer Watchlist | Marktdaten-Ablage (EUR) |
+| „beobachtet · ohne Liste“ | Discovery-Status `beobachten` ohne Listeneintrag | Marktdaten-Ablage, sonst letzte Datenanalyse |
+| „Vorschlag“ | offener Discovery-Kandidat (nicht verworfen, nicht zurückgestellt, nicht im Bestand) | letzte Datenanalyse in Handelswährung – **kein Abruf** |
+
+Ansichten: Alle, je Liste, „Vorschläge“ (`?nur=vorschlaege`); Sortierung nach Name, 24h, 7 Tage,
+Marktkapitalisierung, Score (fehlende Werte zuletzt). Verworfene und zurückgestellte Unternehmen erscheinen nicht.
+Die Tabelle ruft weder KI noch Netz auf.
+
+**Detailfenster.** Ein Klick öffnet dasselbe Seitenfenster wie bei den Positionen
+(`/panel/watchlist/item/{id}`, `/panel/watchlist/c/{id}`; Titel aus dem eigenen Bestand öffnen das Positionsfenster):
+Kursverlauf, Marktdaten, Aktionen (Position erstellen, Beobachten mit Listenwahl, Aus der Liste entfernen, Vorschlag
+verwerfen). Für verknüpfte Discovery-Unternehmen zusätzlich Kurzbeschreibung, „Warum hier“, Chancen/Risiken, Stand
+der Analyse und der kompakte SEC-Block; „Vollständiger Steckbrief“ führt zu `/discovery/c/{id}`.
+
+**Discovery-Funktionen eingeklappt unter der Tabelle:** Kandidaten suchen (Suchläufe, manuell hinzufügen),
+KI-Status, Vorwärtstest, Discovery-Einstellungen, Listen verwalten. Die Formulare kehren zur Watchlist zurück
+(Feld `back`, nur lokale Pfade). Die Kartenansicht `/discovery` bleibt als Link „Vorschläge als Karten“ erhalten.
+
+**Titelsuche** (`app/watchlist/suggest.py`, `GET /api/watchlist/suggest?q=`): Vorschläge ab zwei Zeichen nach
+Firmenname oder Symbol aus (1) eigenem Bestand, (2) lokalem CoinGecko-Katalog, (3) Yahoo-Suche, (4) SEC-Verzeichnis,
+sofern bereits geladen. **Datenschutz:** Der eingegebene Suchtext wird an Yahoo Finance gesendet (sonst nichts; im
+Demo-Modus gar nicht). Fällt Yahoo aus, bleiben die lokalen Treffer und ein Hinweis. Wer ohne Auswahl absendet,
+erhält keine geratene Zuordnung: Passt die Eingabe sowohl auf einen Coin als auch auf ein Börsensymbol, fragt
+Portfolia nach („Coin oder Börsensymbol“). Der Name des gewählten Vorschlags wird als Eintragsname übernommen.
+
+**SEC-Block im Einzeltitel** (`partials/sec_block.html`): kompakt im Raster der Stammdaten, direkt darunter.
+
+**Kursdiagramm:** Kauf- und Verkaufsmarker sitzen auf der Kurslinie (Kurs der Linie zum Ausführungszeitpunkt,
+zwischen zwei Stützpunkten linear interpoliert); der tatsächliche Ausführungskurs steht im Tooltip. Grund für die
+frühere Abweichung: Ausführungskurs (inkl. Spread, Intraday, ggf. andere Währung/Börse) ≠ Tagesschlusskurs der Linie.
 
 ## 1. Produktvision und Funktionsumfang
 

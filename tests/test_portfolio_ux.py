@@ -226,7 +226,7 @@ def test_dashboard_tile_shows_watched_movers(client):
     second = post(client, "/watchlist/lists", {"name": "Zwei"}).headers["location"].split("list=")[1]
     post(client, "/watchlist/add", {"kind": "crypto", "value": "dogecoin", "list": second})  # zählt nur einmal
     tile = client.get("/").text.split('id="beobachtet-kachel"')[1].split("</section>")[0]
-    assert 'Beobachtet <span class="badge">2</span>' in tile and 'href="/watchlist"' in tile
+    assert 'Watchlist <span class="badge">2</span>' in tile and 'href="/watchlist"' in tile
     assert tile.count('class="list-item"') <= 2 and "/watchlist/item/" in tile
     mv = ctx(client).db.scalar("SELECT COUNT(*) FROM watchlist_item")
     assert mv == 3

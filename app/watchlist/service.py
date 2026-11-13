@@ -199,6 +199,47 @@ class WatchlistService:
         return None, [f"„{raw}“ ist nicht eindeutig ({len(cands)} Coins) – bitte auswählen."], [
             {"id": c["id"], "name": c.get("name"), "symbol": str(c.get("symbol") or "").upper()} for c in cands[:20]]
 
+    def resolve_any(self, raw: str) -> tuple[dict[str, Any] | None, list[str], list[dict[str, Any]]]:
+        """Eingabe ohne gewählten Vorschlag (0.115). Es wird nichts geraten:
+
+        * eigenes Asset bzw. eindeutiges Yahoo-Symbol („SAP.DE“, „^GSPC“) → direkt;
+        * genau eine CoinGecko-**ID** oder ein Link → Krypto;
+        * nur ein Coin-**Symbol** passt, oder der Katalog fehlt → Auswahl „Coin oder Wertpapier“;
+        * kein Coin passt → Wertpapier mit genau diesem Symbol."""
+        raw = (raw or "").strip()
+        if not raw:
+            return None, ["Bitte einen Namen oder ein Symbol eingeben."], []
+        pf = self.ctx.portfolio()
+        if pf is not None and raw in pf.assets and not pf.assets[raw].is_fiat:
+            return self.resolve("asset", raw)
+        if _yahoo_like(raw):
+            return self.resolve("security", raw)
+        sym = raw.upper()
+        stock = [{"kind": "security", "id": sym, "symbol": sym, "name": "Wertpapier (Yahoo-Symbol)"}] \
+            if _YAHOO.match(sym) else []
+        cat = cached_catalog(catalog_path(self.ctx))
+        cid = parse_coin_id(raw)
+        if cat is not None and cid and cid in cat.by_id and (not stock or "/" in raw or cid != raw.lower()
+                                                             or not cat.candidates(raw)):
+            return self.resolve("crypto", raw)  # Link oder ID, die kein Symbol eines anderen Coins ist
+        coins = [{"kind": "crypto", "id": c["id"], "name": c.get("name"), "symbol": str(c.get("symbol") or "").upper()}
+                 for c in (cat.candidates(raw)[:12] if cat is not None else [])]
+        if cat is not None and cid and cid in cat.by_id and not any(c["id"] == cid for c in coins):
+            coins.insert(0, {"kind": "crypto", "id": cid, "name": cat.by_id[cid].get("name"),
+                             "symbol": str(cat.by_id[cid].get("symbol") or "").upper()})
+        if cat is None and cid:
+            coins = [{"kind": "crypto", "id": cid, "name": "Krypto (CoinGecko-ID)", "symbol": cid}]
+        if coins and stock:
+            return None, [f"„{raw}“ kann ein Coin oder ein Börsensymbol sein – bitte wählen."], coins + stock
+        if len(coins) == 1:
+            return self.resolve("crypto", coins[0]["id"])
+        if coins:
+            return None, [f"„{raw}“ ist nicht eindeutig ({len(coins)} Coins) – bitte wählen."], coins
+        if stock:
+            return self.resolve("security", raw)
+        return None, [f"„{raw}“ nicht gefunden – bitte einen Vorschlag aus der Liste wählen oder das genaue Symbol "
+                      "eingeben (z. B. SAP.DE, AAPL, kaspa)."], []
+
     def _asset_for(self, source: str, qid: str) -> str | None:
         pf = self.ctx.portfolio()
         if pf is None:

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "discovery_macros.html" import origin, money, val, src, scorechip, scorecard, criterion, pts, prov, bar, alertbox, numline, preview_block with context %}
 {% block title %}{{ co.name }} – Discovery{% endblock %}
-{% block heading %}<a href="/discovery" class="hint">Entdecken</a> › {{ co.ticker }}{% endblock %}
+{% block heading %}<a href="/watchlist" class="hint">Watchlist</a> › {{ co.ticker }}{% endblock %}
 {% set m = res.market if res else {} %}
 {% set ccy = (res.fundamentals.currency if res else '') or '' %}
 {% block content %}

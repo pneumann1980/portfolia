@@ -1074,6 +1074,8 @@ def all_cards(ctx: Any) -> list[dict[str, Any]]:
             "ai_state": r["ai_state"] or res.get("ai_state"),
             "last_signal": last_sig, "coverage": r["coverage"], "fit": None, "created_at": r["created_at"],
             "ccy": ccy, "priority": prio, "core_risk": res.get("core_risk") or "",
+            "yahoo_symbol": (r["yahoo_symbol"] or r["ticker"] or "").upper(),
+            "market": {k: (res.get("market") or {}).get(k) for k in ("price", "ccy", "market_cap")},
         })
     return cards
 

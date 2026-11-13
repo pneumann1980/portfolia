@@ -161,13 +161,13 @@
       <span class="delta {{ 'up' if up else 'down' }}">{{ '▲' if up else '▼' }} {{ it.snap.change_24h|pct }}</span>
     </a>
   {%- endmacro %}
-  <div class="card-head"><h2 id="watch-h">Beobachtet <span class="badge">{{ watch.count }}</span></h2><a class="btn sm ghost" href="/watchlist">Alle</a></div>
+  <div class="card-head"><h2 id="watch-h">Watchlist <span class="badge">{{ watch.count }}</span></h2><a class="btn sm ghost" href="/watchlist">Alle</a></div>
   {% if watch.up or watch.down %}
   <div class="movers">
     <div><h3 class="muted" style="margin-bottom:4px">Gewinner (24h)</h3><div class="list">{% for it in watch.up %}{{ wmover(it, True) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
     <div><h3 class="muted" style="margin-bottom:4px">Verlierer (24h)</h3><div class="list">{% for it in watch.down %}{{ wmover(it, False) }}{% else %}<p class="hint">Keine.</p>{% endfor %}</div></div>
   </div>
-  {% else %}<p class="hint">Noch keine Kursbewegungen für die beobachteten Titel – die Marktdaten werden beim Öffnen von „Beobachtet“ aktualisiert.</p>{% endif %}
+  {% else %}<p class="hint">Noch keine Kursbewegungen für die beobachteten Titel – die Marktdaten werden beim Öffnen der Watchlist aktualisiert.</p>{% endif %}
 </section>
 {% endif %}
 {% endblock %}

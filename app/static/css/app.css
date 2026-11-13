@@ -1328,3 +1328,15 @@ span.disc-o-reported, span.disc-o-derived, span.disc-o-estimated, span.disc-o-mi
 .disc-watch form.inline { display: inline-flex; align-items: center; gap: 4px; }
 .sec-numbers { margin-top: 10px; }
 .disc-start-item[data-primary-start] { grid-column: 1 / -1; }
+/* 0.115 Watchlist als eine Tabelle, Vorschläge beim Hinzufügen */
+.watch-table td .name { min-width: 180px; }
+.watch-table .quick-btns form.inline { display: inline-block; }
+.suggest-field { position: relative; }
+.suggest-list { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin: 4px 0 0; padding: 4px; list-style: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; max-height: 320px; overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); }
+.suggest-list li { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.suggest-list li[aria-selected="true"], .suggest-list li[role="option"]:hover { background: var(--surface-2); }
+.suggest-list .suggest-empty { cursor: default; }
+details.disc-sec > section.card, details.disc-sec .disc-status > section.card { border: 0; padding: 0; margin: 0; box-shadow: none; background: none; }
+details.disc-sec > section.card > .card-head h2, details.disc-sec .disc-status > section.card > .card-head h2 { font-size: 1rem; }

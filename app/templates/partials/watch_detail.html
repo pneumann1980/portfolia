@@ -1,0 +1,74 @@
+{# Detailfenster der Watchlist (0.115) – Aufbau wie das Detailfenster der Positionen; für Discovery-Unternehmen um
+   Steckbrief und SEC-Kennzahlen erweitert. Erwartet: it (Listentitel oder none), co, disc, members, snap, sec, … #}
+{% from "discovery_macros.html" import pts with context %}
+{% set is_index = it.is_index if it else false %}
+{% set back_here = ('/watchlist/item/' ~ it.id) if it and not in_panel else '/watchlist' %}
+<div class="stack" data-watch-detail="{{ ('i' ~ it.id) if it else ('c' ~ co.id) }}">
+  <div class="asset-head">
+    <div style="flex:1;min-width:0">
+      <h1 style="font-size:1.2rem">{{ name }}</h1>
+      <div class="hint">{{ sym }} · {% if it %}{{ 'Krypto' if it.asset_class == 'crypto' else ('Index' if is_index else 'Wertpapier') }} · Quelle {{ snap.provider_label if snap else it.quote_source }} ({{ it.quote_id }}){% else %}Wertpapier{% if co.exchange %} · {{ co.exchange }}{% endif %}{% endif %}
+        {% if disc %} · <span class="badge {{ {'analysiert': 'good', 'veraltet': 'warn', 'vorschau': 'info'}.get(disc.stage, '') }}">{{ stages[disc.stage] }}</span>{% endif %}
+        {% if not it and disc and not disc.watched %} · <span class="badge info">Vorschlag</span>{% endif %}</div>
+      {% if members %}<div class="hint">In {{ 'Liste' if members|length == 1 else 'Listen' }}: {% for m in members %}<a href="/watchlist?list={{ m.list_id }}">{{ m.list_name }}</a>{{ ', ' if not loop.last }}{% endfor %}</div>
+      {% elif disc and disc.watched %}<div class="hint">Beobachtet (ohne Liste)</div>{% endif %}
+    </div>
+    <div style="text-align:right">
+      <div class="price">{% if is_index and snap and snap.price_native %}{{ snap.price_native|num }} Pkt.{% elif snap and snap.price_eur %}{{ snap.price_eur|price }}{% elif disc and disc.res and disc.res.market and disc.res.market.price %}{{ disc.res.market.price|num(2) }} {{ disc.res.market.ccy }}{% else %}–{% endif %}</div>
+      <div class="hint">{% if snap and snap.change_24h is not none %}<span class="delta {{ snap.change_24h|tone }}">24h {{ snap.change_24h|pct }}</span>{% endif %}
+        {% if snap and snap.change_7d is not none %} · <span class="delta {{ snap.change_7d|tone }}">7T {{ snap.change_7d|pct }}</span>{% endif %}</div>
+    </div>
+  </div>
+
+  <div class="row" style="gap:8px;flex-wrap:wrap" id="watch-aktionen">
+    {% if it and not is_index %}<form method="post" action="/watchlist/item/{{ it.id }}/position"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm primary" type="submit">Position erstellen</button></form>{% endif %}
+    {% if co and not (disc and disc.watched) %}
+    <form method="post" action="/discovery/c/{{ co.id }}/beobachten" class="row" style="gap:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/watchlist">
+      {% if watch_lists|length > 1 %}<label class="sr-only" for="wd-liste">Liste</label><select id="wd-liste" name="list">{% for l in watch_lists %}<option value="{{ l.id }}" {{ 'selected' if l.is_default }}>{{ l.name }}</option>{% endfor %}</select>{% endif %}
+      <button class="btn sm primary" type="submit">Beobachten</button></form>
+    {% endif %}
+    {% if it %}<form method="post" action="/watchlist/item/{{ it.id }}/remove" data-confirm="{{ sym }} aus dieser Liste entfernen?"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/watchlist"><button class="btn sm ghost" type="submit">Aus der Liste entfernen</button></form>{% endif %}
+    {% if co and not it and disc.watched and not members %}<form method="post" action="/discovery/c/{{ co.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="zurueckgestellt"><input type="hidden" name="back" value="/watchlist"><button class="btn sm ghost" type="submit">Nicht mehr beobachten</button></form>{% endif %}
+    {% if co and co.status not in ('verworfen', 'beobachten') %}<form method="post" action="/discovery/c/{{ co.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="verworfen"><input type="hidden" name="back" value="/watchlist"><button class="btn sm ghost" type="submit" title="Nur der Vorschlag wird verworfen – Listen bleiben unverändert">Vorschlag verwerfen</button></form>{% endif %}
+    {% if co %}<a class="btn sm ghost" href="/discovery/c/{{ co.id }}">Vollständiger Steckbrief</a>{% endif %}
+  </div>
+
+  {% if chart_src %}
+  <section class="card">
+    <div class="card-head"><h2>Kursverlauf</h2>
+      <div class="seg" role="group" aria-label="Zeitraum" data-range-group="wd-{{ ('i' ~ it.id) if it else ('c' ~ co.id) }}">
+        {% for r in ['1M','3M','6M','1J','MAX'] %}<button type="button" data-range="{{ r }}" aria-pressed="{{ 'true' if r == '1J' else 'false' }}">{{ 'Max' if r == 'MAX' else r }}</button>{% endfor %}
+      </div></div>
+    {% if loading %}<p class="hint">Historie wird geladen (einmalig, bis zu ein Jahr) – in Kürze erneut öffnen.</p>{% endif %}
+    <div id="wd-{{ ('i' ~ it.id) if it else ('c' ~ co.id) }}" class="chart" data-chart="price" data-src="{{ chart_src }}" data-range="1J" data-kind="line" role="img" aria-label="Kursverlauf in EUR"></div>
+  </section>
+  {% endif %}
+
+  {% if snap and (snap.market_cap_eur or snap.change_7d is not none) %}
+  <section class="card">
+    <div class="card-head"><h2>Marktdaten</h2></div>
+    <div class="facts cols-3">
+      {% if snap.market_cap_eur %}<div class="fact"><div class="k">Marktkapitalisierung</div><div class="v">{{ snap.market_cap_eur|eur_compact }}</div></div>{% endif %}
+      {% if snap.change_24h is not none %}<div class="fact"><div class="k">24 Stunden</div><div class="v"><span class="delta {{ snap.change_24h|tone }}">{{ snap.change_24h|pct }}</span></div></div>{% endif %}
+      {% if snap.change_7d is not none %}<div class="fact"><div class="k">7 Tage</div><div class="v"><span class="delta {{ snap.change_7d|tone }}">{{ snap.change_7d|pct }}</span></div></div>{% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if disc %}
+  {% set b = disc.res.business if disc.res else none %}
+  <section class="card" id="watch-unternehmen">
+    <div class="card-head"><h2>Unternehmen</h2><span class="hint">{{ co.sector or co.industry or 'Branche unbekannt' }}</span></div>
+    <p>{% if b and b.was %}{{ b.was|truncate(320, false, ' …', 0) }}{% elif disc.preview and disc.preview.was %}{{ disc.preview.was }} <span class="badge info">KI-Vorschau</span>{% else %}<span class="hint">Noch keine Beschreibung – im Steckbrief lädt „Daten aktualisieren“ das Profil, „Mit KI analysieren“ schreibt die Einschätzung.</span>{% endif %}</p>
+    <p class="hint"><b>Warum hier:</b> {{ disc.why.label }}{% if disc.why.text %} – {{ disc.why.text }}{% endif %}</p>
+    {% if disc.summary and (disc.summary.pro or disc.summary.contra) %}
+    <div class="disc-procon">
+      <div><h3>Dafür</h3>{% if disc.summary.pro %}<ul class="plain-list">{% for x in disc.summary.pro %}<li>+ {{ x }}</li>{% endfor %}</ul>{% else %}<p class="hint">–</p>{% endif %}</div>
+      <div><h3>Dagegen</h3>{% if disc.summary.contra %}<ul class="plain-list">{% for x in disc.summary.contra %}<li>− {{ x }}</li>{% endfor %}</ul>{% else %}<p class="hint">–</p>{% endif %}</div>
+    </div>{% endif %}
+    {% if disc.res and disc.res.core_risk %}<p class="hint"><b>Größtes Risiko:</b> {{ disc.res.core_risk }}</p>{% endif %}
+    <p class="hint">KI-Analyse, Belege, Einzelkriterien und Historie stehen im <a href="/discovery/c/{{ co.id }}">vollständigen Steckbrief</a> – das Öffnen dieses Fensters ruft keine KI auf.</p>
+  </section>
+  {% with sec_no_link = true %}{% include "partials/sec_block.html" %}{% endwith %}
+  {% endif %}
+</div>

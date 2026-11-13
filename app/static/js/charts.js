@@ -316,10 +316,26 @@
     }
     var buys = (d.markers || []).filter(function (m) { return m.side === "buy"; });
     var sells = (d.markers || []).filter(function (m) { return m.side === "sell"; });
+    // 0.115: Marker sitzen auf der Kurslinie (Kurs des Diagramms zum Zeitpunkt des Geschäfts). Der tatsächliche
+    // Ausführungskurs weicht vom Tagesschluss ab und steht weiterhin im Tooltip.
+    var lineT = [], lineV = [];
+    (candle ? d.candles.map(function (c) { return [c[0], c[2]]; }) : pts).forEach(function (p) {
+      if (p[1] !== null && p[1] !== undefined) { lineT.push(new Date(p[0]).getTime()); lineV.push(p[1]); }
+    });
+    function onLine(ts, fallback) {
+      var x = new Date(ts).getTime();
+      if (!lineT.length || isNaN(x)) return fallback;
+      var lo = 0, hi = lineT.length - 1;
+      if (x <= lineT[0]) return lineV[0];
+      if (x >= lineT[hi]) return lineV[hi];
+      while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (lineT[mid] <= x) lo = mid; else hi = mid; }
+      if (lineT[lo] === x || candle) return lineV[lo];
+      return lineV[lo] + (lineV[hi] - lineV[lo]) * (x - lineT[lo]) / (lineT[hi] - lineT[lo]);  // zwischen zwei Punkten
+    }
     function mk(list, name, color, rot) {
       return { name: name, type: "scatter", symbol: "triangle", symbolRotate: rot, symbolSize: 12, z: 5,
         itemStyle: { color: color, borderColor: t.surface, borderWidth: 2 },
-        data: list.map(function (m) { return { value: [m.t, m.price], _m: m }; }) };
+        data: list.map(function (m) { return { value: [m.t, onLine(m.t, m.price)], _m: m }; }) };
     }
     if (buys.length) series.push(mk(buys, "Kauf", t.s2, 0));
     if (sells.length) series.push(mk(sells, "Verkauf", t.s3, 180));
@@ -355,7 +371,7 @@
             } else if (p.data && p.data._m) {
               var m = p.data._m;
               s += '<div style="margin-top:6px"><b>' + (m.side === "buy" ? "Kauf" : "Verkauf") + "</b></div>" +
-                row(null, "Menge", num(m.qty, 6)) + row(null, "Kurs", eur(m.price)) + row(null, "Wert", eur(m.value));
+                row(null, "Menge", num(m.qty, 6)) + row(null, "Ausführungskurs", eur(m.price)) + row(null, "Wert", eur(m.value));
             }
           });
           return s;

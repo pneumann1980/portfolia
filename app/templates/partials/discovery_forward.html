@@ -1,0 +1,16 @@
+{# Vorwärtstest der KI-Vorschläge. Erwartet: fw. #}
+<details class="card disc-sec" id="vorwaertstest">
+  <summary class="card-head"><h2>Vorwärtstest</h2><span class="hint">{% if fw.n %}{{ fw.n }} Einträge seit {{ fw.first }} · erste Auswertung ab {{ fw.first_eval }}{% else %}noch keine Einträge{% endif %}</span></summary>
+  <p class="hint">Ob die KI-Discovery gute Vorschläge macht, lässt sich nur vorwärts prüfen: Jede KI-Vorschau und jede KI-Analyse wird mit Datum, Kurs und Score gespeichert und nach 12 bzw. 24 Monaten mit dem S&P 500 (SPY) verglichen. Rückwirkende Tests mit KI wären geschönt (das Modell kennt die Kursverläufe). Kursrendite ohne Dividenden; nicht mehr notierte Aktien werden als „ohne Kurs“ gezählt.</p>
+  {% if fw.n %}
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Art</th><th class="num">Einträge</th><th>Zwischenstand (alle)</th>{% for h in [12, 24] %}<th>nach {{ h }} Monaten</th>{% endfor %}</tr></thead><tbody>
+    {% for g in fw.groups %}<tr><td>{{ g.label }}</td><td class="num">{{ g.n }}</td>
+      <td>{% if g.interim.n %}Median {{ g.interim.median_excess|pct(1) }} ggü. S&P 500 · {{ g.interim.beat|pct(0, false) }} besser <span class="hint">({{ g.interim.n }} mit Kurs; noch nicht aussagekräftig)</span>{% else %}–{% endif %}</td>
+      {% for h in g.horizons %}<td>{% if h.n_eval %}Median {{ h.median_excess|pct(1) }} · {{ h.beat|pct(0, false) }} besser <span class="hint">(n={{ h.n_eval }}{% if h.missing %}, {{ h.missing }} ohne Kurs{% endif %})</span>{% else %}<span class="hint">noch keine{% if h.n %} ({{ h.n }} ohne Kurs){% endif %}</span>{% endif %}</td>{% endfor %}</tr>{% endfor %}
+  </tbody></table></div>
+  {% for g in fw.groups if g.by_rating is defined %}<p class="hint">Vorschau nach Disruption-Einschätzung (ab 12 Monaten): {% for r in g.by_rating %}{{ r.rating }} {% if r.n %}{{ r.median_excess|pct(1) }} (n={{ r.n }}){% else %}–{% endif %}{{ ' · ' if not loop.last }}{% endfor %}</p>{% endfor %}
+  <details class="box"><summary>Einträge ({{ fw.rows|length }} jüngste)</summary><div class="table-wrap"><table class="compact"><thead><tr><th>Datum</th><th>Unternehmen</th><th>Art</th><th class="num">Kurs damals</th><th class="num">Rendite</th><th class="num">S&P 500</th><th class="num">Differenz</th></tr></thead><tbody>
+    {% for r in fw.rows %}<tr><td class="nowrap">{{ r.day }}</td><td><a href="/discovery/c/{{ r.company_id }}">{{ r.name }}</a> <span class="hint">{{ r.ticker }}</span></td><td>{{ 'Vorschau' if r.kind == 'vorschau' else 'Analyse' }}{% if r.rating %} <span class="hint">({{ r.rating }})</span>{% endif %}</td><td class="num">{{ r.price|num(2) if r.price else '–' }} {{ r.ccy or '' }}</td><td class="num">{{ r.ret|pct(1) if r.ret is not none else '–' }}</td><td class="num">{{ r.bench_ret|pct(1) if r.bench_ret is not none else '–' }}</td><td class="num">{{ r.excess|pct(1) if r.excess is not none else '–' }}</td></tr>{% endfor %}
+  </tbody></table></div></details>
+  {% endif %}
+</details>
