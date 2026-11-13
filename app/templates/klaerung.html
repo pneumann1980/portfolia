@@ -12,7 +12,7 @@
   <section class="card" id="einstellungen"><div class="card-head"><h2>So arbeitet die Klärung</h2>
     <form method="post" action="/quality/pruefen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="back" value="/quality/klaerung"><button class="btn sm" type="submit" title="Diagnose, Integritätsprüfung und Klärung in einem Durchgang – lokal, mit Fortschrittsbalken">Jetzt untersuchen</button></form></div>
     <p class="hint">Zusammengehörige Befunde bilden einen Fall. Portfolia sammelt die vorhandenen Belege, bildet nur Lösungen, die sich aus Belegen ableiten lassen, simuliert sie <b>gemeinsam</b> mit der vorhandenen Engine und übernimmt nur, wenn Beleg, Eindeutigkeit und Simulation es tragen{% if auto %} (Automatik ist <b>an</b>){% else %} (Automatik ist <b>aus</b>: Eindeutige Lösungen warten auf deine Bestätigung){% endif %}. Sonst steht hier genau, welche Information fehlt. Ein Bestandsnachweis bucht nie etwas; er wählt nur zwischen belegten Deutungen.</p>
-    <form method="post" action="/quality/klaerung/einstellungen" class="row" style="gap:12px;flex-wrap:wrap">
+    <form method="post" action="/quality/klaerung/einstellungen" class="row gap-12 fx-wrap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label class="check"><input type="checkbox" name="enabled" value="1" {% if enabled %}checked{% endif %}> Klärung nach Importen und Abrufen</label>
       <label class="check"><input type="checkbox" name="research" value="1" {% if research %}checked{% endif %}> Fehlende Informationen gezielt (lesend) bei der Datenquelle nachladen</label>
@@ -24,7 +24,7 @@
     {% if not open_ %}<p class="hint">Keine offenen Fälle. Nach dem nächsten Import oder über „Jetzt untersuchen“ werden neue Fälle gebildet.</p>{% endif %}
     <ul class="plain-list">
     {% for c in open_ %}
-      <li style="margin-bottom:10px">
+      <li class="mb-10">
         <div class="row"><span class="badge {{ status[c.status][1] }}">{{ status[c.status][0] }}</span>{% if c.kind == 'unsupported' %}<span class="badge warn">nicht unterstützt</span>{% endif %}<a href="/quality/klaerung/{{ c.key }}"><b>{{ c.title }}</b></a></div>
         <div class="hint">{{ dims_text(c.dims) }}</div>
         {% if c.state.decision and c.state.decision.reason %}<div class="hint">{{ c.state.decision.reason }}</div>{% endif %}
@@ -45,7 +45,7 @@
 
   {% if done %}
   <section class="card"><details id="erledigt"><summary><b>Erledigt – geklärt ({{ done|length }})</b> <span class="hint">– aufklappen, um einen Fall anzusehen oder die Übernahme zurückzunehmen</span></summary>
-    <ul class="plain-list" style="margin-top:8px">{% for c in done %}<li><a href="/quality/klaerung/{{ c.key }}">{{ c.title }}</a> · {{ c.resolved_at|datetime_de if c.resolved_at else '' }}<div class="hint">{{ dims_text(c.dims) }}</div></li>{% endfor %}</ul>
+    <ul class="plain-list mt-8">{% for c in done %}<li><a href="/quality/klaerung/{{ c.key }}">{{ c.title }}</a> · {{ c.resolved_at|datetime_de if c.resolved_at else '' }}<div class="hint">{{ dims_text(c.dims) }}</div></li>{% endfor %}</ul>
   </details></section>{% endif %}
 </div>
 {% endblock %}

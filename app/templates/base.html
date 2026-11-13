@@ -52,7 +52,7 @@
         <svg><use href="#i-{{ icon }}"/></svg>{{ label }}</a>
     {% endfor %}
     <div class="spacer"></div>
-    <button class="nav-link" type="button" data-theme-toggle style="border:0;background:none;cursor:pointer;font:inherit;width:100%">
+    <button class="nav-link w-full" type="button" data-theme-toggle style="border:0;background:none;cursor:pointer;font:inherit">
       <svg><use href="#i-moon"/></svg><span>Hell/Dunkel</span></button>
     <div class="hint" style="padding:6px 10px" title="{{ 'Build ' ~ revision if revision else 'ohne Build-Kennung (lokal gebaut)' }}">v{{ version }}{% if revision %} · {{ revision[:7] }}{% endif %}</div>
   </nav>
@@ -69,8 +69,8 @@
       {% for al in alerts if al.level == 'crit' or _ap == '/' or (al.href and _ap.startswith(al.href.split('#')[0].split('?')[0])) %}
         <div class="alert {{ al.level }}" role="status">
           <span class="icon">{% if al.level == 'crit' %}!{% elif al.level == 'warn' %}!{% else %}i{% endif %}</span>
-          <div style="flex:1">{{ al.text }} {% if al.href %}<a href="{{ al.href }}">Details</a>{% endif %}
-            {% if al.progress %}<div class="progress" style="margin-top:6px"><div style="width:{{ al.progress }}%"></div></div>{% endif %}
+          <div class="flex-1">{{ al.text }} {% if al.href %}<a href="{{ al.href }}">Details</a>{% endif %}
+            {% if al.progress %}<div class="progress mt-6"><div style="width:{{ al.progress }}%"></div></div>{% endif %}
           </div>
         </div>
       {% endfor %}

@@ -71,7 +71,7 @@
     {% if gate.any_ok and gate.missing %}<form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="ergaenzen"><button class="btn" type="submit" {{ 'disabled' if busy or not gate.ok }}>Fehlende KI-Teile ergänzen · {{ gate.missing }} {{ 'Aufruf' if gate.missing == 1 else 'Aufrufe' }}</button></form>{% endif %}
     <form method="post" action="/discovery/c/{{ co.id }}/analyse"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="mode" value="daten"><button class="btn" type="submit" {{ 'disabled' if busy }} title="SEC- und Marktdaten neu laden – kostenlos, keine KI">Daten aktualisieren</button></form>
     {% if not watched %}
-    <form method="post" action="/discovery/c/{{ co.id }}/beobachten" class="row" style="gap:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <form method="post" action="/discovery/c/{{ co.id }}/beobachten" class="row gap-6"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {% if watch_lists|length > 1 %}<label class="sr-only" for="beob-liste">Liste</label><select id="beob-liste" name="list">{% for l in watch_lists %}<option value="{{ l.id }}" {{ 'selected' if l.is_default }}>{{ l.name }}</option>{% endfor %}</select>{% endif %}
       <button class="btn" type="submit">Beobachten</button></form>
     {% endif %}
@@ -85,7 +85,7 @@
     {% else %}<span><b>Beobachtet (ohne Liste)</b></span>
       <form method="post" action="/discovery/c/{{ co.id }}/status" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="zurueckgestellt"><button class="btn sm ghost" type="submit">Nicht mehr beobachten</button></form>{% endif %}
     {% set member_ids = watch_members|map(attribute='list_id')|list %}{% set rest = watch_lists|rejectattr('id', 'in', member_ids)|list %}
-    {% if rest %}<form method="post" action="/discovery/c/{{ co.id }}/beobachten" class="inline row" style="gap:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if rest %}<form method="post" action="/discovery/c/{{ co.id }}/beobachten" class="inline row gap-6"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {% if rest|length > 1 %}<label class="sr-only" for="beob-weitere">Weitere Liste</label><select id="beob-weitere" name="list">{% for l in rest %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}</select>{% else %}<input type="hidden" name="list" value="{{ rest[0].id }}">{% endif %}
       <button class="btn sm ghost" type="submit">{% if rest|length > 1 %}Auch in diese Liste{% else %}Auch in „{{ rest[0].name }}“{% endif %}</button></form>{% endif %}
   </div>
@@ -197,7 +197,7 @@
 <details class="card disc-sec" id="fit" {{ 'open' if open_fit }}>
   {% set s = fit.sim %}
   <summary class="card-head"><h2>Portfolio-Fit (lokal)</h2><span class="hint">{{ fit.score.total|num(0) }}/100 · Gewicht {{ s.new_weight|pct(1, false) }} bei {{ s.amount|eur }}</span></summary>
-  <form method="get" action="/discovery/c/{{ co.id }}#fit" class="row" style="gap:6px"><label class="sr-only" for="betrag">Betrag</label>
+  <form method="get" action="/discovery/c/{{ co.id }}#fit" class="row gap-6"><label class="sr-only" for="betrag">Betrag</label>
     {% for bb in [500, 1000, 2500] %}<a class="btn sm {{ 'primary' if amount == bb }}" href="/discovery/c/{{ co.id }}?betrag={{ bb }}{{ '&a=' ~ an.id if an.id != versions[0].id }}#fit">{{ bb }} €</a>{% endfor %}
     <input id="betrag" name="betrag" inputmode="decimal" value="{{ amount|num(0) }}" style="width:7em">{% if an.id != versions[0].id %}<input type="hidden" name="a" value="{{ an.id }}">{% endif %}<button class="btn sm" type="submit">Simulieren</button></form>
   <p class="hint">Hypothetischer Kauf über {{ s.amount|eur }} – <b>keine Buchung, keine Order</b>. Portfolio-Daten verlassen das Gerät nicht.</p>

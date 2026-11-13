@@ -15,6 +15,6 @@
           {% else %}<span class="badge good">{{ 'bereits ausgeführt' if r.get('repeat') else 'ausgeführt' }}</span>{% if (r.get('counts') or {}).get('link') %} <span class="hint">{{ r.counts.link }} verknüpft</span>{% endif %}{% if r.get('created') %} <span class="hint">{{ r.created }} gebucht</span>{% endif %}{% endif %}</td>
         <td><a class="btn sm ghost" href="/journal/csv/{{ r.batch_id }}#verlauf">{{ 'Verlauf / Rückgängig' if not r.errors else 'Stapel öffnen' }}</a></td></tr>
     {% endfor %}</tbody></table></div>
-  <div class="row" style="margin-top:10px"><a class="btn primary" href="/journal/pruefung?{{ params|urlencode }}">Zur Prüfwarteschlange</a></div>
+  <div class="row mt-10"><a class="btn primary" href="/journal/pruefung?{{ params|urlencode }}">Zur Prüfwarteschlange</a></div>
 </section>
 {% endblock %}

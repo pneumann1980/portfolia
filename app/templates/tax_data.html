@@ -33,7 +33,7 @@
 
   <section class="card">
     <div class="card-head"><h2>Steuerjahre</h2>
-      <form method="post" action="/tax/data/scan" style="margin:0"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <form method="post" action="/tax/data/scan" class="m-0"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="btn sm" type="submit">Steuerdateien prüfen</button></form></div>
     {% set rows = years | selectattr('active') | list %}
     {% if rows %}
@@ -55,21 +55,21 @@
 
   <section class="card" id="upload">
     <div class="card-head"><h2>Steuerdatei hinzufügen</h2><span class="hint">Vorschau vor der Übernahme</span></div>
-    <form method="post" action="/tax/data/upload" enctype="multipart/form-data" class="stack" style="gap:10px">
+    <form method="post" action="/tax/data/upload" enctype="multipart/form-data" class="stack gap-10">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label class="field">JSON- oder CSV-Datei (höchstens {{ max_mb }} MB)<input type="file" name="file" accept=".json,.csv,.txt,application/json,text/csv" required></label>
       <div><button class="btn primary" type="submit">Hochladen und prüfen</button></div>
     </form>
-    <details class="box" style="margin-top:10px"><summary>Ordner und Format</summary>
+    <details class="box mt-10"><summary>Ordner und Format</summary>
       <p class="hint">Dateien im Ordner <code>{{ folder }}</code> werden beim Start{% if auto_scan %}, alle 15 Minuten{% endif %} und mit „Steuerdateien prüfen“ erkannt
         (Dateiname, Prüfsumme, Größe, Steuerjahr). Ein neues Steuerjahr wird direkt übernommen; gibt es für das Jahr schon eine aktive Datei,
         wartet die neue Fassung auf Bestätigung. Gleicher Inhalt wird nie doppelt übernommen.</p>
       <p class="hint">Felder: <code>taxYear, transactionId, externalId, asset, quantity, acquisitionDate, disposalDate, acquisitionCost,
         disposalValue, holdingPeriod, taxable, gainLoss, taxCategory, source, comment</code> – JSON als Liste oder
         <code>{"taxYear": 2025, "records": [...]}</code>; CSV mit Kopfzeile (auch deutsche Bezeichnungen, Dezimalkomma).</p>
-      <form method="post" action="/tax/data/settings" class="row" style="gap:8px;align-items:center">
+      <form method="post" action="/tax/data/settings" class="row gap-8 items-center">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <label class="row" style="gap:6px"><input type="checkbox" name="auto_scan" value="1" {% if auto_scan %}checked{% endif %}> Ordner alle 15 Minuten prüfen</label>
+        <label class="row gap-6"><input type="checkbox" name="auto_scan" value="1" {% if auto_scan %}checked{% endif %}> Ordner alle 15 Minuten prüfen</label>
         <button class="btn sm" type="submit">Speichern</button>
       </form>
     </details>

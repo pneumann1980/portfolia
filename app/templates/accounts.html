@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Konten{% endblock %}
 {% block heading %}Konten{% endblock %}
-{% macro open_line(oc, pb, sid) %}{% if oc %}{% set n = oc.values()|sum %}<div class="alert warn" style="margin-top:10px"><span class="icon">!</span><div>Zur Prüfung offen: <b>{{ n }} {{ 'Vorgang' if n == 1 else 'Vorgänge' }}</b>
+{% macro open_line(oc, pb, sid) %}{% if oc %}{% set n = oc.values()|sum %}<div class="alert warn mt-10"><span class="icon">!</span><div>Zur Prüfung offen: <b>{{ n }} {{ 'Vorgang' if n == 1 else 'Vorgänge' }}</b>
     ({% for st, k in oc.items() %}{{ k }}× {{ st }}{% if not loop.last %} · {% endif %}{% endfor %})
     – <a href="/journal/pruefung?source={{ sid }}">jetzt prüfen</a>{% if pb|length > 1 %} <span class="hint">({{ pb|length }} Prüf-Stapel)</span>{% endif %}</div></div>{% endif %}{% endmacro %}
 {% macro holdings_table(h, limit=6) %}
   {% if h and h['items'] %}
-  <div class="table-wrap cards-wrap" style="margin-top:8px"><table class="compact cards">
+  <div class="table-wrap cards-wrap mt-8"><table class="compact cards">
     <thead><tr><th>Asset</th><th class="num">On-Chain beobachtet</th><th class="num">durch Portfolia-Buchungen erklärt</th><th class="num">Differenz</th></tr></thead>
     <tbody>{% for i in h['items'][:limit] %}<tr>
       <td data-label="Asset" class="wrap-any"><span class="mono">{{ i.key|asset_label }}</span>{% if i.asset_id and i.asset_id != i.key %} <span class="hint">→ {{ i.asset_id }}</span>{% endif %}</td>
@@ -30,7 +30,7 @@
   <p class="hint">Zwei Quellen für dasselbe Konto verdoppeln Prüfströme und Karten (doppelt gebucht wird nichts – die Kennung
     der Vorgänge fängt das ab). Zusammenführen ordnet Prüf-Stapel, Läufe und Zuordnungen einer Quelle zu; Buchungen bleiben unverändert.</p>
   <ul class="plain">{% for d in dups %}
-    <li class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
+    <li class="row gap-8 fx-wrap items-center mt-6">
       <span><b>{{ d.a.name }}</b> + <b>{{ d.b.name }}</b> <span class="hint">· {{ d.why }}</span></span>
       <a class="btn sm primary" href="/settings/datasources/merge?keep={{ d.a.id }}&amp;drop={{ d.b.id }}">Zusammenführen …</a></li>
   {% endfor %}</ul>
@@ -45,9 +45,9 @@
       <a class="btn ghost" href="/settings/zugaenge">Zugänge &amp; Schlüssel</a>
     </div></div>
   <p class="hint">Ein <b>Konto</b> ist die Einheit, auf die Portfolia bucht. Seine <b>Anbindung</b> (Wallet-Adresse, Börsen-API, Datei- oder ZIP-Import) steht auf der Karte des Kontos; Stammdaten, Umbenennen, Zusammenführen und Entfernen unter „Konto verwalten“. Portfolia liest nur – <b>nie</b> Seed-Phrase, privaten Schlüssel oder Signatur. Vorgänge durchlaufen die Prüfung wie ein CSV-Import. Automatische Anbindung: <b>Bitpanda</b>, Binance und Wallets (<b>Bitcoin, Ethereum, BNB Chain, Polygon, Avalanche C-Chain, Solana, XRP Ledger, Cardano, Polkadot, Kaspa</b>); DKB: <b>ZIP-Import</b> der Wertpapierdokumente. Gruppen (z. B. „Ledger“) sind die Depotgruppe des Kontos und bestimmen auch die Gruppierung bei Positionen und Performance.</p>
-  <details class="box" id="neu" style="margin-top:8px"><summary>Konto ohne Anbindung anlegen</summary>
+  <details class="box mt-8" id="neu"><summary>Konto ohne Anbindung anlegen</summary>
     <p class="hint">Ein Konto entsteht sonst erst mit der ersten Buchung oder Anbindung. Vorab angelegt steht es im Buchungsformular und beim Zusammenführen zur Auswahl.</p>
-    <form method="post" action="/accounts/new" class="stack" style="gap:8px">
+    <form method="post" action="/accounts/new" class="stack gap-8">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="grid-2">
         <label class="field">Name<input name="name" required maxlength="80" placeholder="z. B. Scalable Capital" autocomplete="off"></label>
@@ -59,7 +59,7 @@
     </form>
   </details>
   <datalist id="acc-brokers">{% for b in brokers %}<option value="{{ b }}">{% endfor %}</datalist>
-  <details class="box" style="margin-top:8px"><summary>Status</summary>
+  <details class="box mt-8"><summary>Status</summary>
     <ul class="small">
       <li><b>angelegt</b> – gespeichert, noch nicht verbunden (ohne automatische Anbindung: Buchungen per CSV-Import)</li>
       <li><b>verbunden</b> – Verbindungsprüfung erfolgreich, noch nicht synchronisiert</li>
@@ -106,14 +106,14 @@
 
 {% for group, accounts in groups.items() %}{% set gs = sums.get(group) %}
 <section class="card" id="gruppe-{{ loop.index }}">
-  <div class="card-head"><div style="min-width:0"><h2 class="wrap-any">{{ group or 'Ohne Gruppe' }}</h2>
+  <div class="card-head"><div class="min-0"><h2 class="wrap-any">{{ group or 'Ohne Gruppe' }}</h2>
       <div class="hint">{{ gs.count }} Konto{{ '' if gs.count == 1 else 'n' }}{% if gs.value is not none %} · {% if gs.state != 'ok' %}mind. {% endif %}<b>{{ gs.value|eur }}</b>{% else %} · Wert unbekannt{% endif %}{% if gs.unknown %} · {{ gs.unknown }} ohne Wert{% endif %}{% if gs.skipped %} · {{ gs.skipped }} Überschneidung nicht doppelt gezählt{% endif %}{% if q %} · Treffer: {{ accounts|length }}{% endif %}</div></div>
     <div class="row">
       <form method="post" action="/settings/datasources/sync-many" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="scope" value="group"><input type="hidden" name="group" value="{{ group }}"><button class="btn sm" type="submit" {% if batch.running %}disabled{% endif %}>↻ Gruppe aktualisieren</button></form>
       <a class="btn sm" href="/settings/datasources/new?kind=wallet&amp;group={{ group|urlencode }}">+ Konto{% if group %} in „{{ group }}“{% endif %}</a></div></div>
   {% if group %}<details class="ds-rename"><summary class="hint">Gruppe umbenennen</summary>
-    <form method="post" action="/settings/datasources/groups/rename" class="row" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="old" value="{{ group }}">
-      <input type="text" name="new" maxlength="40" value="{{ group }}" list="dl-group-names" aria-label="Neuer Gruppenname" style="flex:1;min-width:10em"><button class="btn sm" type="submit">Umbenennen</button></form>
+    <form method="post" action="/settings/datasources/groups/rename" class="row mt-6"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="old" value="{{ group }}">
+      <input type="text" name="new" maxlength="40" value="{{ group }}" list="dl-group-names" aria-label="Neuer Gruppenname" class="flex-1" style="min-width:10em"><button class="btn sm" type="submit">Umbenennen</button></form>
     <div class="hint">Nur die Zuordnung ändert sich; Konten, Adressen, Vorgänge und Synchronisierung bleiben. Ein bestehender Gruppenname führt beide Gruppen zusammen.</div></details>{% endif %}
   <div class="ds-cards">
   {% for ds in accounts %}{% set pb = pending.get(ds.id) or [] %}{% set oc = opens.get(ds.id) or {} %}{% set h = holdings.get(ds.id) %}{% set st = states.get(ds.id) %}{% set v = values.get(ds.id) %}
@@ -136,21 +136,21 @@
       {% if not ds.enabled %}<span class="badge">deaktiviert</span>{% endif %}
       <span class="hint">Letzte erfolgreiche Synchronisierung: {% if ds.last_success_at %}{{ ds.last_success_at|datetime_de }}{% else %}–{% endif %}{% if ds.backfill_pending %} · Historie in Etappen{% endif %}</span>
     </div>
-{% if ds.parts %}<div class="row" style="margin-top:6px;gap:6px;flex-wrap:wrap">{% for pt in ds.parts %}<span class="badge {{ {'complete': 'good', 'progress': 'info', 'blocked': 'warn', 'off': ''}.get(pt.state, '') }}" title="{{ pt.text }}">{{ pt.label }} · {{ {'complete': 'vollständig', 'progress': 'in Bearbeitung', 'blocked': 'blockiert', 'off': 'aus'}.get(pt.state, pt.state) }}</span>{% endfor %}</div>{% endif %}
-        {% if ds.progress.running %}<div style="margin-top:8px">{% with p=ds.progress %}{% include "partials/ds_progress.html" %}{% endwith %}</div>{% endif %}
+{% if ds.parts %}<div class="row mt-6 gap-6 fx-wrap">{% for pt in ds.parts %}<span class="badge {{ {'complete': 'good', 'progress': 'info', 'blocked': 'warn', 'off': ''}.get(pt.state, '') }}" title="{{ pt.text }}">{{ pt.label }} · {{ {'complete': 'vollständig', 'progress': 'in Bearbeitung', 'blocked': 'blockiert', 'off': 'aus'}.get(pt.state, pt.state) }}</span>{% endfor %}</div>{% endif %}
+        {% if ds.progress.running %}<div class="mt-8">{% with p=ds.progress %}{% include "partials/ds_progress.html" %}{% endwith %}</div>{% endif %}
     {% if not ds.supported %}
-    <div class="alert" style="margin-top:8px"><span class="icon">i</span><div><b>Manuell / noch nicht unterstützt:</b> Für {{ ds.provider_label }} gibt es keine automatische Anbindung – Buchungen per <a href="/journal/csv">CSV-Import</a>.</div></div>
+    <div class="alert mt-8"><span class="icon">i</span><div><b>Manuell / noch nicht unterstützt:</b> Für {{ ds.provider_label }} gibt es keine automatische Anbindung – Buchungen per <a href="/journal/csv">CSV-Import</a>.</div></div>
     {% elif ds.endpoint and ds.endpoint.key_required and not (provider_keys|selectattr('id', 'equalto', ds.endpoint.key_provider)|selectattr('mode')|list) %}
-    <div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div><b>Schlüssel fehlt:</b> {{ ds.endpoint.label }} verlangt einen API-Key – unter <a href="#anbieter">Anbieter-Schlüssel</a> hinterlegen ({{ ds.endpoint.terms }}). Bis dahin wird nichts abgerufen.</div></div>
+    <div class="alert warn mt-8"><span class="icon">!</span><div><b>Schlüssel fehlt:</b> {{ ds.endpoint.label }} verlangt einen API-Key – unter <a href="#anbieter">Anbieter-Schlüssel</a> hinterlegen ({{ ds.endpoint.terms }}). Bis dahin wird nichts abgerufen.</div></div>
     {% endif %}
-    {% if st == 'error' and ds.last_error %}<div class="alert crit" style="margin-top:8px"><span class="icon">!</span><div><b>Technischer Fehler:</b> {{ ds.last_error }}{% if ds.last_error_at %} <span class="hint">({{ ds.last_error_at|datetime_de }})</span>{% endif %}<div class="hint">Bisher übernommene Daten und der letzte Bestand bleiben unverändert; der nächste Lauf setzt am gespeicherten Stand fort.</div></div></div>
-    {% elif st == 'partial' %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div><b>Teilweise:</b> {% for g in ds.gaps %}{{ g }}{% if not loop.last %}; {% endif %}{% else %}{{ ds.last_error or 'Abruf unvollständig – wird fortgesetzt' }}{% endfor %}</div></div>{% endif %}
+    {% if st == 'error' and ds.last_error %}<div class="alert crit mt-8"><span class="icon">!</span><div><b>Technischer Fehler:</b> {{ ds.last_error }}{% if ds.last_error_at %} <span class="hint">({{ ds.last_error_at|datetime_de }})</span>{% endif %}<div class="hint">Bisher übernommene Daten und der letzte Bestand bleiben unverändert; der nächste Lauf setzt am gespeicherten Stand fort.</div></div></div>
+    {% elif st == 'partial' %}<div class="alert warn mt-8"><span class="icon">!</span><div><b>Teilweise:</b> {% for g in ds.gaps %}{{ g }}{% if not loop.last %}; {% endif %}{% else %}{{ ds.last_error or 'Abruf unvollständig – wird fortgesetzt' }}{% endfor %}</div></div>{% endif %}
     {% set nt = notes.get(ds.id) or [] %}
     {% if nt %}<div class="ds-notes"><div class="k hint">Datenhinweise (unabhängig vom Abruf)</div><ul class="small">{% for n in nt %}<li class="note-{{ n.kind }} wrap-any">{{ n.text }}</li>{% endfor %}</ul>{% if oc %}<a class="small" href="/journal/pruefung?source={{ ds.id }}">Jetzt prüfen</a>{% endif %}</div>{% endif %}
-    <div class="hint wrap-any" style="margin-top:8px">Konto in Portfolia: <b>{{ ds.account }}</b> · hinzugefügt {{ ds.created_at|datetime_de }}</div>
-    {% if h and h['items'] %}<details style="margin-top:6px"><summary class="hint">Bestände ({{ h['items']|length }}){% if h.observed_at %} · beobachtet {{ h.observed_at|datetime_de }}{% endif %}</summary>{{ holdings_table(h, 8) }}</details>{% endif %}
-    {% if ds.limits %}<details style="margin-top:6px"><summary class="hint">Abdeckungsgrenzen ({{ ds.limits|length }})</summary><ul class="small" style="margin:4px 0 0 16px">{% for l in ds.limits %}<li>{{ l }}</li>{% endfor %}</ul></details>{% endif %}
-    <div class="row" style="margin-top:10px">
+    <div class="hint wrap-any mt-8">Konto in Portfolia: <b>{{ ds.account }}</b> · hinzugefügt {{ ds.created_at|datetime_de }}</div>
+    {% if h and h['items'] %}<details class="mt-6"><summary class="hint">Bestände ({{ h['items']|length }}){% if h.observed_at %} · beobachtet {{ h.observed_at|datetime_de }}{% endif %}</summary>{{ holdings_table(h, 8) }}</details>{% endif %}
+    {% if ds.limits %}<details class="mt-6"><summary class="hint">Abdeckungsgrenzen ({{ ds.limits|length }})</summary><ul class="small" style="margin:4px 0 0 16px">{% for l in ds.limits %}<li>{{ l }}</li>{% endfor %}</ul></details>{% endif %}
+    <div class="row mt-10">
       {% if ds.supported and ds.enabled %}
         <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary sm" type="submit" {% if ds.progress.running %}disabled{% endif %}>{{ '↻ Aktualisieren' if ds.last_success_at else 'Erstabruf starten' }}</button></form>
         <form method="post" action="/settings/datasources/{{ ds.id }}/check" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Verbindung testen</button></form>
@@ -159,7 +159,7 @@
       <details class="ds-more"><summary class="btn ghost sm" aria-label="Weitere Aktionen für {{ ds.name }}">Mehr …</summary>
         <div class="ds-more-body">
           <form method="post" action="/settings/datasources/{{ ds.id }}/group" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="text" name="group" maxlength="40" value="{{ ds.group }}" list="dl-group-names" placeholder="ohne Gruppe" aria-label="Gruppe von {{ ds.name }}" style="flex:1;min-width:8em"><button class="btn sm" type="submit">Gruppe speichern</button></form>
+            <input type="text" name="group" maxlength="40" value="{{ ds.group }}" list="dl-group-names" placeholder="ohne Gruppe" aria-label="Gruppe von {{ ds.name }}" class="flex-1" style="min-width:8em"><button class="btn sm" type="submit">Gruppe speichern</button></form>
           <div class="row">
             <form method="post" action="/settings/datasources/{{ ds.id }}/toggle" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost sm" type="submit">{{ 'Deaktivieren' if ds.enabled else 'Aktivieren' }}</button></form>
             <a class="btn ghost sm" href="/settings/datasources/{{ ds.id }}/entfernen">Entfernen …</a>
@@ -178,7 +178,7 @@
   {% set pb = pending.get(ds.id) or [] %}
   {% set oc = opens.get(ds.id) or {} %}
   <div class="card-head">
-    <div style="min-width:0">
+    <div class="min-0">
       <h2 style="overflow-wrap:anywhere">{{ ds.name }}</h2>
       <div class="hint">{{ ds.kind_label }} · {{ ds.provider_label }}</div>
     </div>
@@ -205,13 +205,13 @@
     <div class="fact"><div class="k">Letzte erfolgreiche Synchronisierung</div><div class="v">{{ ds.last_success_at|datetime_de if ds.last_success_at else '–' }}{% if ds.coverage and not ds.coverage.complete %}<div class="hint">unvollständig</div>{% endif %}</div></div>
     <div class="fact"><div class="k">Nächster Lauf</div><div class="v">{% if ds.next_run_at %}{{ ds.next_run_at|datetime_de }}{% if ds.sched.next_reason %}<div class="hint">{{ ds.sched.next_reason }}</div>{% endif %}{% else %}–<div class="hint">{{ 'deaktiviert' if not ds.enabled else ('keine automatische Anbindung' if not ds.supported else 'nur manuell') }}</div>{% endif %}</div></div>
     {% if ds.supported and ds.needs_key %}<div class="fact"><div class="k">Zugang</div><div class="v">{% if ds.key_mode == 'app' %}API-Key <span class="mono">{{ ds.key_hint }}</span>{% elif ds.key_mode == 'env' %}<span class="mono">{{ ds.credential_ref }}</span> <span class="badge {{ 'good' if ds.credential_state == 'gesetzt' else 'warn' }}">{{ ds.credential_state }}</span>{% else %}–{% endif %}{% if ds.check %}<div class="hint">Prüfung: {{ 'in Ordnung' if ds.check.ok else 'fehlgeschlagen' }}</div>{% endif %}</div></div>{% endif %}
-    {% if ds.credential_ref and not ds.needs_key %}<div class="fact" style="grid-column:1/-1"><div class="k">Zugangsdaten (Umgebungsvariable)</div><div class="v"><span class="mono">{{ ds.credential_ref }}</span> <span class="badge {{ 'good' if ds.credential_state == 'gesetzt' else 'warn' }}">{{ ds.credential_state }}</span></div></div>{% endif %}
-    {% if ds.last_error %}<div class="fact" style="grid-column:1/-1"><div class="k">Letzter Fehler{% if ds.last_error_at %} · {{ ds.last_error_at|datetime_de }}{% endif %}</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
+    {% if ds.credential_ref and not ds.needs_key %}<div class="fact span-all"><div class="k">Zugangsdaten (Umgebungsvariable)</div><div class="v"><span class="mono">{{ ds.credential_ref }}</span> <span class="badge {{ 'good' if ds.credential_state == 'gesetzt' else 'warn' }}">{{ ds.credential_state }}</span></div></div>{% endif %}
+    {% if ds.last_error %}<div class="fact span-all"><div class="k">Letzter Fehler{% if ds.last_error_at %} · {{ ds.last_error_at|datetime_de }}{% endif %}</div><div class="v" style="font-weight:500;color:var(--crit-ink)">{{ ds.last_error }}</div></div>{% endif %}
   </div>
   {{ open_line(oc, pb, ds.id) }}
   <details class="box" style="margin-top:14px" {% if not ds.supported and not li %}open{% endif %}><summary>{{ 'Neuer Import' if li or bk else 'Exportdatei importieren' }} (CSV, XLSX, ZIP)</summary>
     {{ import_form('/settings/datasources/' ~ ds.id ~ '/upload', lb) }}</details>
-  <div class="row" style="margin-top:12px">
+  <div class="row mt-12">
     {% if ds.supported and ds.enabled %}
       <form method="post" action="/settings/datasources/{{ ds.id }}/sync" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn primary" type="submit" {% if ds.needs_key and not ds.key_mode %}disabled{% endif %}>{{ 'Jetzt synchronisieren' if ds.last_success_at else 'Historischen Abgleich starten' }}</button></form>
       {% if not ds.needs_key or ds.key_mode %}<form method="post" action="/settings/datasources/{{ ds.id }}/check" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Verbindung testen</button></form>{% endif %}
@@ -220,7 +220,7 @@
     <form method="post" action="/settings/datasources/{{ ds.id }}/toggle" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">{{ 'Deaktivieren' if ds.enabled else 'Aktivieren' }}</button></form>
     <a class="btn ghost" href="/settings/datasources/{{ ds.id }}/entfernen">Entfernen …</a>
   </div>
-  <div style="margin-top:8px">{{ account_tools(ds.account) }}</div>
+  <div class="mt-8">{{ account_tools(ds.account) }}</div>
 </section>
 {% endfor %}
 {% if others %}
@@ -233,13 +233,13 @@
   <article class="box ds-card" id="konto-{{ loop.index }}">
     <div class="ds-card-head"><div class="ds-card-title"><h3 class="wrap-any">{{ r.name }}</h3>
       <div class="hint">{% if a %}{% for o, n in a.origins.items() %}<span class="badge">{{ o }} · {{ n }}</span> {% endfor %}{% elif r.empty %}<span class="badge">leer</span>{% endif %}{% if r.depot_group %}<span class="badge">Gruppe {{ r.depot_group }}</span>{% endif %}</div></div></div>
-    {% if a %}<div class="hint" style="margin-top:6px">{{ a.n }} Buchung{{ '' if a.n == 1 else 'en' }} · {{ a.first|date_de }} – {{ a.last|date_de }} {% if a.provider != 'other_exchange' %} · Börse: {{ a.provider_label }}{% endif %}</div>
-    <div class="row" style="margin-top:6px"><span class="badge">manuell · Datei-Import</span></div>
+    {% if a %}<div class="hint mt-6">{{ a.n }} Buchung{{ '' if a.n == 1 else 'en' }} · {{ a.first|date_de }} – {{ a.last|date_de }} {% if a.provider != 'other_exchange' %} · Börse: {{ a.provider_label }}{% endif %}</div>
+    <div class="row mt-6"><span class="badge">manuell · Datei-Import</span></div>
     {% for s in a.suggestions %}
-    <div class="alert" style="margin-top:6px"><span class="icon">i</span><div>
+    <div class="alert mt-6"><span class="icon">i</span><div>
       <b>Mögliche Datenquelle:</b> {{ s.target_source }} <span class="mono wrap-any">({{ s.target }})</span><br>
       <span class="hint">{{ s.reasons|join(' · ') }}</span>
-      <form method="post" action="/accounts/merge/preview" class="inline" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="alias" value="{{ a.account }}"><input type="hidden" name="target" value="{{ s.target }}"><button class="btn sm primary" type="submit">Mit „{{ s.target_source }}“ zusammenführen …</button></form>
+      <form method="post" action="/accounts/merge/preview" class="inline mt-6"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="alias" value="{{ a.account }}"><input type="hidden" name="target" value="{{ s.target }}"><button class="btn sm primary" type="submit">Mit „{{ s.target_source }}“ zusammenführen …</button></form>
       <span class="hint">Die Datenquelle bleibt das führende Konto; Vorschau zeigt Bestände und mögliche Doppelbuchungen, nichts wird gelöscht.</span></div></div>
     {% endfor %}
     <div class="ds-actions">
@@ -247,8 +247,8 @@
         {{ import_form('/settings/datasources/account-source', a.last, a.account, a.provider) }}</details>
       <form method="post" action="/settings/datasources/account-source" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ a.account }}"><input type="hidden" name="provider" value="{{ a.provider }}"><button class="btn ghost sm" type="submit">Als Datenquelle führen</button></form>
     </div>
-    {% else %}<div class="hint" style="margin-top:6px">Noch keine Buchungen und keine Anbindung.</div>{% endif %}
-    <div style="margin-top:8px">{{ account_tools(r.name) }}</div>
+    {% else %}<div class="hint mt-6">Noch keine Buchungen und keine Anbindung.</div>{% endif %}
+    <div class="mt-8">{{ account_tools(r.name) }}</div>
   </article>
   {% endfor %}
   </div>

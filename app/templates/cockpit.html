@@ -9,7 +9,7 @@
     <div class="row">{% for k, (l, b) in labels.items() %}<span class="badge {{ b }}">{{ cp.counts.get(k, 0) }} {{ l }}</span>{% endfor %}</div></div>
   <p class="hint">Jede Dimension beantwortet eine eigene Frage; sie werden bewusst nicht zu einer Gesamtnote verrechnet. Alle Zahlen sind berechnet – diese Seite ändert nichts.</p>
   <div class="cockpit-grid">{% for d in cp.dims %}{% set st = labels[d.state] %}
-    <a class="cockpit-dim" href="{{ d.link }}"><div class="row" style="justify-content:space-between"><b>{{ d.title }}</b><span class="badge {{ st[1] }}">{{ st[0] }}</span></div>
+    <a class="cockpit-dim" href="{{ d.link }}"><div class="row justify-between"><b>{{ d.title }}</b><span class="badge {{ st[1] }}">{{ st[0] }}</span></div>
       <div class="hint">{{ d.question }}</div><div class="cockpit-fig">{{ d.figure }}</div>
       {% for x in d.details %}<div class="hint">{{ x }}</div>{% endfor %}</a>
   {% endfor %}</div>

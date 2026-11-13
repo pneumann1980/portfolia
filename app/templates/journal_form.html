@@ -88,7 +88,7 @@
     </div>
     {{ field('note', 'Notiz (optional)', placeholder='z. B. Beleg-Nr., Anlass') }}
     <p class="hint">Konto fehlt? Einfach den neuen Namen eintippen – es entsteht mit der ersten Buchung. Asset fehlt in der Liste? Ganz unten in der Auswahl „Neues Asset anlegen“ oder <a href="/journal/asset?next={{ ('/journal/new?kind=' ~ kind)|urlencode }}">Neues Asset anlegen</a> – danach geht es hier weiter.</p>
-    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+    <div class="row gap-8 fx-wrap mt-12">
       <button class="btn primary" type="submit">Speichern</button>
       {% if not tx_id %}<button class="btn" type="submit" name="again" value="1">Speichern und nächste erfassen</button>{% endif %}
       <a class="btn ghost" href="/journal">Abbrechen</a>

@@ -36,13 +36,13 @@
     <p><b>{{ case.question.text }}</b></p>
     <p class="hint">{{ case.question.why }}</p>
     <ul>{% for e in case.question.expect %}<li>{{ e.qty }} {{ case.question.asset }} – {{ e.label }}</li>{% endfor %}</ul>
-    <form method="post" action="/quality/klaerung/{{ case.key }}/bestand" class="stack" style="gap:6px">
+    <form method="post" action="/quality/klaerung/{{ case.key }}/bestand" class="stack gap-6">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="account" value="{{ case.question.account }}"><input type="hidden" name="asset" value="{{ case.question.asset }}">
       <label>Angezeigter Bestand ({{ case.question.asset }}; 0 ist gültig) <input name="qty" required inputmode="decimal"></label>
-      <div class="row" style="gap:8px;flex-wrap:wrap"><label>Datum <input type="date" name="as_of" required></label><label>Uhrzeit <input type="time" name="time" step="1"></label><label>Zeitzone <input name="tz" value="Europe/Berlin"></label></div>
-      <div class="row" style="gap:8px;flex-wrap:wrap"><label>Quelle <select name="source"><option value="api">Anzeige beim Anbieter</option><option value="statement">Kontoauszug</option><option value="other">sonstiger Beleg</option></select></label>
+      <div class="row gap-8 fx-wrap"><label>Datum <input type="date" name="as_of" required></label><label>Uhrzeit <input type="time" name="time" step="1"></label><label>Zeitzone <input name="tz" value="Europe/Berlin"></label></div>
+      <div class="row gap-8 fx-wrap"><label>Quelle <select name="source"><option value="api">Anzeige beim Anbieter</option><option value="statement">Kontoauszug</option><option value="other">sonstiger Beleg</option></select></label>
         <label>Umfang <select name="scope"><option value="">–</option>{% for s in case.question.scopes %}<option value="{{ s.key }}">{{ s.label }}</option>{% endfor %}</select></label><label>Unterkonto <input name="subaccount"></label></div>
-      <details><summary class="hint">Gebundene Mengen (optional)</summary><div class="row" style="gap:8px;flex-wrap:wrap"><label>davon gebunden <input name="qty_locked" inputmode="decimal"></label><label>Margin (nur Angabe) <input name="qty_margin" inputmode="decimal"></label><label>offenes Ergebnis (nur Angabe) <input name="qty_pnl" inputmode="decimal"></label></div></details>
+      <details><summary class="hint">Gebundene Mengen (optional)</summary><div class="row gap-8 fx-wrap"><label>davon gebunden <input name="qty_locked" inputmode="decimal"></label><label>Margin (nur Angabe) <input name="qty_margin" inputmode="decimal"></label><label>offenes Ergebnis (nur Angabe) <input name="qty_pnl" inputmode="decimal"></label></div></details>
       <label>Notiz <input name="note"></label>
       <label class="check"><input type="checkbox" name="apply" value="1"> Passt der Bestand zu genau einer belegten Lösung, diese in einem Schritt übernehmen</label>
       <div class="hint">Ein EUR-Gesamtwert ersetzt keine Assetmenge. Der Nachweis ist keine Buchung; ein fortgeschriebener Bestand gilt nicht als heute bestätigt – der Vergleich erfolgt zum angegebenen Zeitpunkt.</div>
@@ -51,8 +51,8 @@
   </section>{% endif %}
 
   <details class="card dq-tech" id="technik"><summary><b>Technik und Belege</b> <span class="hint">Dimensionen, Regelprüfung der Entscheidung, Dossier, Kandidaten und Hypothesen im Einzelnen</span></summary>
-  <div class="stack" style="margin-top:12px">
-    <div id="dimensionen">    <div class="table-wrap cards-wrap" style="margin-top:8px"><table class="table cards"><thead><tr><th>Dimension</th><th>Zustand</th><th>Stand</th></tr></thead><tbody>
+  <div class="stack mt-12">
+    <div id="dimensionen">    <div class="table-wrap cards-wrap mt-8"><table class="table cards"><thead><tr><th>Dimension</th><th>Zustand</th><th>Stand</th></tr></thead><tbody>
     {% for k in dim_order %}{% if k in dims %}<tr><td><b>{{ dim_label[k] }}</b></td><td data-label="Zustand"><span class="badge {{ dim_state[dims[k][0]][1] }}">{{ dim_state[dims[k][0]][0] }}</span></td><td class="wide" data-label="Stand">{{ dims[k][1] }}</td></tr>{% endif %}{% endfor %}
     </tbody></table></div>
 </div>
@@ -69,12 +69,12 @@
     {% if case.cands %}<div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Kandidat</th><th>Beleglage</th><th>Art</th></tr></thead><tbody>
     {% for c in case.cands %}<tr><td class="wide"><b>{{ c.label }}</b></td><td data-label="Beleglage">{{ evidence[c.evidence] }}{% if c.notes %}<div class="hint">{{ c.notes|join('; ') }}</div>{% endif %}</td><td data-label="Art">{{ c.action }}</td></tr>{% endfor %}</tbody></table></div>
     {% else %}<p class="hint">Keine aus Belegen ableitbare Lösung. Eine Bestandsdifferenz allein begründet keine Buchung.</p>{% endif %}
-    {% if case.hyps|length > 1 %}<div class="table-wrap cards-wrap" style="margin-top:8px"><table class="table cards"><thead><tr><th>Hypothese</th><th>Simulation</th><th>Bestandsnachweis</th><th></th></tr></thead><tbody>
+    {% if case.hyps|length > 1 %}<div class="table-wrap cards-wrap mt-8"><table class="table cards"><thead><tr><th>Hypothese</th><th>Simulation</th><th>Bestandsnachweis</th><th></th></tr></thead><tbody>
     {% for h in case.hyps %}{% if not h.base %}<tr><td class="wide"><b>{{ h.label }}</b></td>
       <td class="wide" data-label="Simulation">{% if h.ok %}zulässig{% else %}<b>nicht zulässig:</b> {{ h.reasons|join('; ') }}{% endif %}{% if h.lot_dates %}<div class="hint">Anschaffungsdaten: {% for d in h.lot_dates[:3] %}{{ d[0] }} · {{ d[1] }}: {{ d[2] }} → {{ d[3] }}{{ '; ' if not loop.last }}{% endfor %}</div>{% endif %}{% if h.successors %}<div class="hint">danach eigenständig zu prüfen: {{ h.successors|join('; ') }}</div>{% endif %}</td>
       <td data-label="Bestandsnachweis">{{ {'alle_erfuellt': 'erfüllt', 'unberuehrt': 'unverändert', 'teilweise': 'teilweise', 'widerspruch': 'widerspricht', 'kein_nachweis': 'kein Nachweis'}.get(h.stock, h.stock) }}</td>
       <td class="actions wide">{% if h.ok %}<form method="post" action="/quality/klaerung/{{ case.key }}/uebernehmen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="hyp" value="{{ h.id }}"><input type="hidden" name="version" value="{{ case.version }}"><input type="hidden" name="tokens" value="{{ tokens(h) }}"><button class="btn sm ghost" type="submit" title="Ausdrückliche Bestätigung: übernimmt nur Verknüpfen/Ausblenden, atomar und rückgängig zu machen">Ausdrücklich übernehmen</button></form>{% endif %}</td></tr>{% endif %}{% endfor %}</tbody></table></div>{% endif %}
-    <div class="row" style="margin-top:8px">
+    <div class="row mt-8">
       <form method="post" action="/quality/klaerung/{{ case.key }}/zurueckstellen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit" title="Gilt nur, solange keine neue Evidenz vorliegt">Zurückstellen</button></form>
     </div>
   </section>

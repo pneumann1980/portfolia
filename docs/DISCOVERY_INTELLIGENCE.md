@@ -1,4 +1,4 @@
-# Discovery & Intelligence (0.116.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe; einfache Einstellungen)
+# Discovery & Intelligence (0.117.0 – „Steckbrief, KI per Knopf, Vorwärtstest“; Modell je Aufgabe; einfache Einstellungen)
 
 **Neu in 0.116** (Review-Korrekturen): Begriffe vereinheitlicht – „Watchlist“ ist der Bereich, „Vorschlag“ das
 Ergebnis, „Discovery“ nur noch der Name der Suchfunktion; Brotkrumen überall „Bereich › Seite“; Marktkapitalisierung

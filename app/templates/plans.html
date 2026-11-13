@@ -15,7 +15,7 @@
 
 <section class="card" id="pending">
   <div class="card-head"><h2>Zu prüfen {% if pending %}<span class="badge warn">{{ pending|length }}</span>{% endif %}</h2>
-    <div class="row" style="gap:8px">
+    <div class="row gap-8">
       <form method="post" action="/plans/update"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm" type="submit">Jetzt prüfen</button></form>
       {% if pending %}{% set n_warn = pending|selectattr('price_warn')|list|length %}<form method="post" action="/plans/tx/confirm-all"{% if n_warn %} data-confirm="{{ n_warn }} {{ 'Schätzung hat' if n_warn == 1 else 'Schätzungen haben' }} einen auffälligen Kurs. Trotzdem alle freigeben?"{% endif %}><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm primary" type="submit">Alle freigeben</button></form>{% endif %}
     </div></div>
@@ -46,7 +46,7 @@
   {% else %}<p class="hint">Keine offenen Schätzungen. Neue Ausführungen werden morgens und abends ergänzt.</p>{% endif %}
 </section>
 
-<section class="card" id="confirmed" style="margin-top:16px">
+<section class="card mt-16" id="confirmed">
   <div class="card-head"><h2>Freigegeben – noch nicht im Import</h2>
     {% if confirmed %}<a class="btn sm" href="/plans/export.csv" download>CSV für den Import</a>{% endif %}</div>
   {% if confirmed %}
@@ -76,7 +76,7 @@
   {% else %}<p class="hint">Keine freigegebenen Buchungen außerhalb des Imports.</p>{% endif %}
 </section>
 
-<section class="card" id="plans" style="margin-top:16px">
+<section class="card mt-16" id="plans">
   <div class="card-head"><h2>Erkannte Sparpläne</h2><span class="hint">aus den Käufen der letzten 14 Monate je Konto und Position</span></div>
   {% if plans %}
   <div class="table-wrap cards-wrap"><table class="compact cards">
@@ -118,7 +118,7 @@
 </section>
 
 {% if history %}
-<details class="box" style="margin-top:16px"><summary>Verlauf <span class="badge">{{ history|length }}</span></summary>
+<details class="box mt-16"><summary>Verlauf <span class="badge">{{ history|length }}</span></summary>
   <div class="table-wrap"><table class="compact">
     <thead><tr><th>Termin</th><th>Position</th><th class="num">Betrag</th><th>Status</th><th>Hinweis</th></tr></thead>
     <tbody>{% for e in history %}

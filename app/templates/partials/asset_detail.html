@@ -3,7 +3,7 @@
 <div class="stack" data-asset-detail="{{ a.asset_id }}">
   <div class="asset-head">
     <span class="dot" style="width:14px;height:14px;margin-top:8px;background:{{ colors.light }}" data-color-light="{{ colors.light }}" data-color-dark="{{ colors.dark }}"></span>
-    <div style="flex:1;min-width:0">
+    <div class="flex-1 min-0">
       <h1 style="font-size:1.2rem">{{ a.name }}</h1>
       <div class="hint">{{ a.symbol }}{% if a.wkn %} · WKN {{ a.wkn }}{% endif %}{% if a.isin %} · {{ a.isin }}{% endif %} · {{ a.category_label }}
         {% if series %} · Quelle {{ series.split(':')[0]|replace('cg','CoinGecko')|replace('yahoo','Yahoo')|replace('demo','Demo') }}{% endif %}
@@ -33,7 +33,7 @@
       {% if pos and pos.qty and not a.is_fiat %}<div class="hint pos-line">Position <b>{{ pos.value|eur }}</b> · {{ pos.qty|qty }} {{ a.symbol }}
         {% if pos.day_change is not none %} · 24h <span class="delta {{ pos.day_change|tone }}">{{ pos.day_change|eur(2, true) }}</span>{% endif %}
         · G/V <span class="delta {{ pos.unrealized|tone }}">{{ pos.unrealized|eur(2, true) }}{% if pos.unrealized_pct is not none %} ({{ pos.unrealized_pct|pct }}){% endif %}</span></div>{% endif %}
-      {% if not a.is_fiat %}<div class="row quick-btns" style="margin-top:6px;gap:6px;justify-content:flex-end">
+      {% if not a.is_fiat %}<div class="row quick-btns mt-6 gap-6 justify-end">
         <a class="btn sm qt-sell" href="/journal/quick?asset={{ aid_q }}&amp;side=sell" title="Verkauf erfassen">− Verkauf</a>
         <a class="btn sm qt-buy" href="/journal/quick?asset={{ aid_q }}&amp;side=buy" title="Kauf erfassen">+ Kauf</a>
         {% if pos %}<a class="btn sm ghost" href="/journal/writeoff?asset={{ aid_q }}" title="Bestand als Verlust (Totalverlust) ausbuchen">Ausbuchen …</a>{% endif %}
@@ -62,7 +62,7 @@
       <span><i style="background:var(--ink-2)"></i>Ø Einstand</span>
     </div>
     {% if quality and not a.is_fiat %}
-    <div class="row quality-line" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+    <div class="row quality-line mt-6 gap-6 fx-wrap">
       <span class="badge {{ quality.badge }}">{{ quality.label }}</span>
       {% if quality.estimated_days %}<span class="hint">{{ quality.estimated_days }} Tage geschätzt</span>{% endif %}
       {% if quality.alt_days %}<span class="hint">{{ quality.alt_days }} Tage von {{ (quality.segments|selectattr('kind', 'equalto', 'alt')|first).source|replace('yahoo:', 'Yahoo ') }}</span>{% endif %}
@@ -142,7 +142,7 @@
   <section class="card">
     <div class="card-head"><h2>FIFO-Lots</h2><span class="hint">{{ lots|length }} offen · {% if tax_pack %}Zuordnung laut Steuer-Regelwerk{% else %}Reihenfolge {{ 'global je Asset' if account_scope == 'global' else 'je Konto' }}{% endif %}</span></div>
     {% if balances|length > 1 %}
-    <div class="row" style="margin-bottom:8px">{% for acc, q in balances.items() %}<span class="badge">{{ acc }}: {{ q|qty }}</span>{% endfor %}</div>
+    <div class="row mb-8">{% for acc, q in balances.items() %}<span class="badge">{{ acc }}: {{ q|qty }}</span>{% endfor %}</div>
     {% endif %}
     <div class="table-wrap">
     <table>

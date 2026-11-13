@@ -5,7 +5,7 @@
       <button class="btn sm" hx-post="/news/pipeline/run" hx-include="#pipe-fetch" hx-target="#pipe-live" hx-swap="outerHTML">Jetzt abarbeiten</button></div></div>
   {% include "partials/news_pipeline.html" %}
 </section>
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>Heute</h2></div>
   <dl class="kv">
     <dt>Importiert (Artikel)</dt><dd>{{ st.imported }}</dd>
@@ -14,7 +14,7 @@
     <dt>Analysiert</dt><dd>{{ st.analyzed }}{% if st.analysis_failed %} · {{ st.analysis_failed }} verworfen{% endif %}</dd>
   </dl>
 </section>
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>KI-Anbieter</h2><span class="hint">{{ 'aktiv' if ai_s.enabled else 'inaktiv' }}</span></div>
   <dl class="kv">
     <dt>Anbieter / Modell</dt><dd>{{ ai_s.provider|capitalize }} · <span class="mono">{{ ai_s.model }}</span>{% if ai_s.provider == 'gemini' %} (Nachrichten) · Profil: {{ ai_s.profile_label }}{% endif %}</dd>
@@ -40,7 +40,7 @@
   <p class="hint">Aufgaben mit demselben Modell teilen dessen Kontingent. Ist ein Modell erschöpft, wartet nur seine Aufgabe; Aufgaben auf anderen Modellen laufen weiter. Modell und Grenzen: <a href="/settings/ki">Einstellungen → KI &amp; Modelle</a>.</p>{% endif %}
   {% if ai_s.provider == 'gemini' %}<p class="hint">Die lokalen Zähler halten die Last unter Ihren eingestellten Grenzen. Sie garantieren <b>nicht</b>, dass Google die Nutzung als kostenlos wertet: Kontingent und Abrechnung gelten je Google-Projekt; im kostenlosen Kontingent dürfen Eingaben zur Produktverbesserung verwendet werden (daher nur öffentliche Texte).</p>{% endif %}
 </section>
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>Jobs</h2></div>
   <div class="table-wrap"><table>
     <thead><tr><th>Job</th><th>Letzter Lauf</th><th>Status</th><th>Ergebnis</th></tr></thead>
@@ -51,6 +51,6 @@
   </table></div>
 </section>
 {% if st.errors %}
-<section class="card" style="margin-top:16px"><div class="card-head"><h2>Letzte Fehler</h2></div>
+<section class="card mt-16"><div class="card-head"><h2>Letzte Fehler</h2></div>
   <ul class="reader-list">{% for e in st.errors %}<li><b>{{ e.job }}</b>{% if e.at %} ({{ e.at|datetime_de }}){% endif %}: {{ e.text }}</li>{% endfor %}</ul></section>
 {% endif %}

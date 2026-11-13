@@ -10,7 +10,7 @@
   {% if msg %}<div class="alert good" role="status"><span class="icon">✓</span><div>{{ msg }}</div></div>{% endif %}
   {% if err %}<div class="alert crit" role="alert"><span class="icon">!</span><div>{{ err }}</div></div>{% endif %}
   <div class="alert"><span class="icon">i</span><div>Je Befund ist die <strong>bevorzugte Lösung</strong> vorausgewählt (Konfidenz: eindeutig → hoch plausibel → prüfbedürftig → widersprüchlich; erklärbare Stufen, keine Wahrscheinlichkeiten). Die Sammelvorschau rechnet alle Änderungen gemeinsam durch, schließt widersprüchliche, sich überschneidende und gemeinsam zu negativen Beständen führende Fälle aus und übernimmt erst nach deiner Bestätigung – in einer Transaktion, je Befund einzeln protokolliert und rückgängig zu machen.</div></div>
-  <form method="get" action="/quality/diagnose/bulk" class="filters row" style="gap:8px;flex-wrap:wrap">
+  <form method="get" action="/quality/diagnose/bulk" class="filters row gap-8 fx-wrap">
     <select name="conf" aria-label="Konfidenz"><option value="">jede Konfidenz</option>{% for c in confs %}<option value="{{ c }}"{% if f.conf == c %} selected{% endif %}>{{ c }}</option>{% endfor %}</select>
     <select name="account" aria-label="Konto"><option value="">alle Konten</option>{% for a in acc_all %}<option value="{{ a }}"{% if f.account == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select>
     <select name="asset" aria-label="Asset"><option value="">alle Assets</option>{% for a in asset_all %}<option value="{{ a }}"{% if f.asset == a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select>
@@ -23,17 +23,17 @@
 <section class="card">
   <div class="card-head"><h2>Befunde ({{ rows|length }})</h2></div>
   {% if not rows %}<p class="hint">Keine offenen Dubletten- oder Transfer-Befunde.</p>{% else %}
-  <form method="get" action="/quality/diagnose/bulk/preview" class="stack" style="gap:8px">
+  <form method="get" action="/quality/diagnose/bulk/preview" class="stack gap-8">
     {% for r in rows %}{% set x = r.f %}
-    <label class="finding row" style="gap:8px;align-items:flex-start;padding:8px">
+    <label class="finding row gap-8 items-start" style="padding:8px">
       <input type="checkbox" name="f" value="{{ x.id }}"{% if r.conf in ('eindeutig', 'hoch plausibel') %} checked{% endif %}{% if r.conf == 'widersprüchlich' %} disabled{% endif %}>
-      <span style="flex:1">
+      <span class="flex-1">
         <span class="row"><span class="badge {{ 'good' if r.conf == 'eindeutig' else ('info' if r.conf == 'hoch plausibel' else ('warn' if r.conf == 'prüfbedürftig' else 'crit')) }}">{{ r.conf }}</span><span class="badge {{ status_badge[x.status] }}">{{ x.status }}</span>{% if r.value %}<span class="hint">betroffener Wert {{ r.value|eur }}</span>{% endif %}</span>
         <span class="f-title">{{ x.title }}</span>
         <span class="hint">Bevorzugt: {{ r.label or '– (nur einzeln entscheidbar)' }}{% if x.sources %} · Quellen: {{ x.sources|join(', ') }}{% endif %} · <a href="/quality/diagnose?f={{ x.id }}#{{ x.id }}">einzeln / Alternativen</a></span>
       </span>
     </label>{% endfor %}
-    <label class="row" style="gap:6px"><input type="checkbox" name="review" value="1"> auch <b>prüfbedürftige</b> Fälle einbeziehen (nur nach eigener Prüfung, z. B. Kontoauszug)</label>
+    <label class="row gap-6"><input type="checkbox" name="review" value="1"> auch <b>prüfbedürftige</b> Fälle einbeziehen (nur nach eigener Prüfung, z. B. Kontoauszug)</label>
     <div><button class="btn primary" type="submit">Sammelvorschau</button></div>
   </form>
   {% endif %}

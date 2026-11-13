@@ -28,7 +28,7 @@
         {% if m.value_text %}<div>Wert laut Buchung: {{ sens(m.value_text) }}</div>{% endif %}
         {% if m.sources %}<div class="table-wrap cards-wrap"><table class="table cards"><thead><tr><th>Quelle</th><th>Rolle</th><th>Kennung</th><th></th></tr></thead><tbody>{% for s in m.sources %}<tr><td><b>{{ s.label }}</b></td><td data-label="Rolle">{{ s.role }}</td><td class="wide" data-label="Kennung"><code>{{ s.ext_id or '–' }}</code></td><td class="wide">{% if s.batch_url %}<a href="{{ s.batch_url }}">Importlauf</a>{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
         <dl class="vk-tech">{% for k, v in m.technical.items() if v %}<dt>{{ k }}</dt><dd><code class="vk-full">{{ v }}</code></dd>{% endfor %}</dl>
-        <div class="row" style="gap:10px;flex-wrap:wrap">{% if m.group_url %}<a href="{{ m.group_url }}">Ereignisgruppe</a>{% endif %}{% if m.edit_url %}<a href="{{ m.edit_url }}">Buchung bearbeiten</a>{% endif %}</div>
+        <div class="row gap-10 fx-wrap">{% if m.group_url %}<a href="{{ m.group_url }}">Ereignisgruppe</a>{% endif %}{% if m.edit_url %}<a href="{{ m.edit_url }}">Buchung bearbeiten</a>{% endif %}</div>
       </details>
     </li>
 {% endmacro %}
@@ -39,11 +39,11 @@
 
   {% if view.action %}
   <div class="vk-next" role="region" aria-label="Nächster Schritt">
-    <div class="row" style="gap:8px;flex-wrap:wrap"><b>Nächster Schritt: {{ view.action.label }}</b>
+    <div class="row gap-8 fx-wrap"><b>Nächster Schritt: {{ view.action.label }}</b>
       <span class="badge {{ {'automatisch': 'good', 'bestaetigung': 'info', 'information': 'warn'}[view.action.mode] }}">{{ {'automatisch': 'automatisch möglich', 'bestaetigung': 'braucht Ihre Bestätigung', 'information': 'braucht weitere Information'}[view.action.mode] }}</span></div>
     <p>{{ view.action.why }}</p>
     {% if view.action.key == 'hyp' and view.hyp_id == view.action.hyp_id and view.impact and view.impact.ok %}
-      <form method="post" action="/quality/klaerung/{{ case.key }}/uebernehmen" class="row" style="gap:8px;flex-wrap:wrap">
+      <form method="post" action="/quality/klaerung/{{ case.key }}/uebernehmen" class="row gap-8 fx-wrap">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="hyp" value="{{ view.hyp_id }}"><input type="hidden" name="version" value="{{ case.version }}"><input type="hidden" name="tokens" value="{{ tokens(case.decision.hyp) }}">
         <button class="btn sm primary" type="submit">Diese Lösung jetzt übernehmen</button><span class="hint">atomar, nachgeprüft, gemeinsam rückgängig zu machen</span></form>
     {% elif view.action.href %}<a class="btn sm primary" href="{{ view.action.href }}">{{ view.action.label }}</a>{% endif %}
@@ -74,7 +74,7 @@
     {% if im.lots %}<p><b>Anschaffungsdaten:</b></p><ul class="plain-list">{% for l in im.lots[:4] %}<li>{{ l[0] }} · {{ l[1] }}: {{ l[2] }} → {{ l[3] }}</li>{% endfor %}</ul>{% endif %}
     {% for n in im.notes %}<p class="hint">{{ n }}</p>{% endfor %}
     {% if im.ok and not (view.action and view.action.key == 'hyp' and view.hyp_id == view.action.hyp_id) %}
-    <form method="post" action="/quality/klaerung/{{ case.key }}/uebernehmen" class="row" style="gap:8px;flex-wrap:wrap">
+    <form method="post" action="/quality/klaerung/{{ case.key }}/uebernehmen" class="row gap-8 fx-wrap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="hyp" value="{{ view.hyp_id }}"><input type="hidden" name="version" value="{{ case.version }}">
       {% for h in case.hyps if h.id == view.hyp_id %}<input type="hidden" name="tokens" value="{{ tokens(h) }}">{% endfor %}
       <button class="btn sm" type="submit" title="Ausdrückliche Bestätigung; übernimmt nur Verknüpfen/Ausblenden/Neubuchen, atomar, nachgeprüft, rückgängig zu machen">Ausdrücklich übernehmen</button>
@@ -87,7 +87,7 @@
   <ul class="vk-places">
     {% for p in view.places if not p.unknown %}
     <li class="vk-place{{ ' vk-sel' if sel == p.pid }}" id="{{ p.pid }}">
-      <div class="row" style="gap:8px;align-items:flex-start">{{ chip(view, p.pid, sel) }}</div>
+      <div class="row gap-8 items-start">{{ chip(view, p.pid, sel) }}</div>
       <div class="hint">{{ p.kind_label }}{% if p.own %} · eigenes Konto{% endif %}
         · Netzwerk: {{ p.network or 'nicht bekannt' }}{% if p.network_basis %} ({{ p.network_basis }}){% endif %}
         · Unterkonto/Umfang: {{ p.sub or 'nicht bekannt' }}{% if p.sub_basis %} ({{ p.sub_basis }}){% endif %}</div>
@@ -125,7 +125,7 @@
     <li class="hint">Keine Vorgänge im Fall – es geht um einen Bestand ohne zugeordnete Buchung.</li>
   {% endfor %}
   {% if view.moves|length > 8 %}<li class="vk-rest"><details {% if view.selected and view.selected.kind == 'move' and view.selected.move in view.moves[8:] %}open{% endif %}><summary><b>{{ view.moves|length - 8 }} weitere Verbindungen anzeigen</b></summary>
-    <ol class="vk-moves" style="margin-top:8px">{% for m in view.moves[8:] %}{{ move_item(m) }}{% endfor %}</ol></details></li>{% endif %}
+    <ol class="vk-moves mt-8">{% for m in view.moves[8:] %}{{ move_item(m) }}{% endfor %}</ol></details></li>{% endif %}
   </ol>
 
   <details class="vk-table"><summary class="hint">Als Tabelle (Textalternative)</summary>

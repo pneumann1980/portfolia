@@ -42,8 +42,8 @@
     </tr>{% endfor %}</tbody>
   </table></div>
   {% for r in rows %}{% set t = r.t %}
-  <details class="box" style="margin-top:6px"><summary>Originalfelder und Herkunft: <span class="mono">{{ t.tx_id }}</span></summary>
-    <dl class="kv" style="margin-top:6px">
+  <details class="box mt-6"><summary>Originalfelder und Herkunft: <span class="mono">{{ t.tx_id }}</span></summary>
+    <dl class="kv mt-6">
       <dt>Herkunft</dt><dd>{{ origin_label.get(t.origin, t.origin) }}{% if r.meta %} · Quelle {{ r.meta.source }} · Status {{ r.meta.status }}{% if r.meta.external_id %} · externe ID <span class="mono">{{ r.meta.external_id }}</span>{% endif %}{% if r.meta.event_key %} · Ereignis <span class="mono">{{ r.meta.event_key }}</span>{% endif %}{% endif %}</dd>
       <dt>Zeitpunkt</dt><dd>{{ utc_fmt(t.ts) }}{% if t.date_only %} (nur Datum){% endif %}</dd>
       <dt>Quelle / Kennung</dt><dd>{{ t.source or '–' }} · <span class="mono">{{ t.source_ref or '–' }}</span></dd>
@@ -64,7 +64,7 @@
   {% if f.evidence %}<h4>Was übereinstimmt (Belege dafür)</h4><ul>{% for x in f.evidence %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
   {% if f.uncertainty %}<h4>Was widerspricht bzw. unsicher ist</h4><ul>{% for x in f.uncertainty %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
   {% if f.suspected %}<h4>Vermutung bzw. noch ungeklärt</h4><ul>{% for x in f.suspected %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
-  {% if f.pairs %}<h4>Gegenüberstellung</h4><div class="stack" style="gap:10px">{% for a, b, why in f.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">{{ why }}</div></div>{% endfor %}</div>{% endif %}
+  {% if f.pairs %}<h4>Gegenüberstellung</h4><div class="stack gap-10">{% for a, b, why in f.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">{{ why }}</div></div>{% endfor %}</div>{% endif %}
   {% if f.scenario %}<div class="scenario" role="note"><div class="scenario-label">Szenario (hypothetisch) – nicht gebucht</div><p>{{ f.scenario.text }}</p>
     {% if f.scenario.rows %}<div class="scen-rows"><div class="scen-row scen-head"><span>Größe</span><span>aktuell</span><span>im Szenario</span></div>
     {% for label, cur, alt in f.scenario.rows %}<div class="scen-row"><span class="scen-label">{{ label }}</span><span><em class="scen-k">aktuell: </em>{{ cur }}</span><span><em class="scen-k">im Szenario: </em>{{ alt }}</span></div>{% endfor %}</div>{% endif %}</div>{% endif %}

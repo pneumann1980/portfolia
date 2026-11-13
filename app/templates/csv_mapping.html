@@ -15,7 +15,7 @@
     <div class="table-wrap"><table class="compact"><thead><tr>{% for h in header %}<th>{{ h }}</th>{% endfor %}</tr></thead>
       <tbody>{% for r in sample %}<tr>{% for h in header %}<td class="nowrap">{{ r.get(h, '') }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
   </details>
-  <form method="post" action="/journal/csv/{{ b.id }}/mapping" class="stack" style="gap:12px;margin-top:12px">
+  <form method="post" action="/journal/csv/{{ b.id }}/mapping" class="stack gap-12 mt-12">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="edit-grid">
       {% for f, label in fields.items() %}{% set cur = spec.get('columns', {}).get(f, '') %}

@@ -14,7 +14,7 @@
     Herkunft (A belegt · B rekonstruiert · C geschätzt · ungelöst).</p>
   {% if cfg.ocr and not ocr_available %}<div class="alert warn"><span class="icon">!</span><div>Texterkennung (Tesseract) ist auf diesem System nicht installiert – Screenshots und gescannte PDFs können nicht gelesen werden. Im Docker-Image ist sie enthalten.</div></div>{% endif %}
   {% if running %}<div class="alert"><span class="icon">i</span><div>Ein Dokumentimport läuft gerade – ein neuer Stapel startet erst danach.</div></div>{% endif %}
-  <form id="doc-upload" method="post" action="/journal/documents/upload" enctype="multipart/form-data" class="stack" style="gap:10px"
+  <form id="doc-upload" method="post" action="/journal/documents/upload" enctype="multipart/form-data" class="stack gap-10"
         data-max-files="{{ max_files }}" data-max-file="{{ max_file_mb * 1024 * 1024 }}" data-max-total="{{ max_stack_mb * 1024 * 1024 }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label class="dropzone" id="doc-drop">
@@ -26,9 +26,9 @@
     <div class="grid-3">
       <label class="field">Konto / Depot (optional)<input type="text" name="account" list="dl-accounts" placeholder="leer: aus Beleg bzw. Datenquelle" autocomplete="off" maxlength="80">
         <span class="hint">nur nötig, wenn der Anbieter mehrere Konten hat – im Prüf-Stapel änderbar</span></label>
-      <label class="check" style="align-self:end"><input type="checkbox" name="public" value="1" {% if not cfg.public %}disabled{% endif %}> Öffentliche Explorer abfragen (nur Transaktions-Hash)
+      <label class="check self-end"><input type="checkbox" name="public" value="1" {% if not cfg.public %}disabled{% endif %}> Öffentliche Explorer abfragen (nur Transaktions-Hash)
         {% if not cfg.public %}<span class="hint">in den Einstellungen unten freigeben</span>{% endif %}</label>
-      <label class="check" style="align-self:end"><input type="checkbox" name="reanalyze" value="1"> Bereits verarbeitete Belege erneut auswerten</label>
+      <label class="check self-end"><input type="checkbox" name="reanalyze" value="1"> Bereits verarbeitete Belege erneut auswerten</label>
     </div>
     <datalist id="dl-accounts">{% for a in accounts %}<option value="{{ a }}">{% endfor %}</datalist>
     <div class="upload-progress" id="doc-progress" hidden>
@@ -59,7 +59,7 @@
 <section class="card" id="belege">
   <div class="card-head"><h2>Belege ({{ docs|length }})</h2></div>
   {% if docs %}
-  <form method="post" action="/journal/documents/bulk" class="stack" style="gap:10px">
+  <form method="post" action="/journal/documents/bulk" class="stack gap-10">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="table-wrap cards-wrap"><table class="cards">
       <thead><tr><th><span class="sr-only">Auswahl</span></th><th>Beleg</th><th>Art</th><th>Status</th><th class="num">Vorgänge</th><th>Original</th></tr></thead>
@@ -79,7 +79,7 @@
         <option value="reevaluate">neu bewerten (ohne erneute OCR)</option>
         <option value="delete_original">Original und Volltext löschen</option>
       </select></label>
-      <button class="btn sm" type="submit" style="align-self:end">Ausführen</button>
+      <button class="btn sm self-end" type="submit">Ausführen</button>
     </div>
     <p class="hint">Löschen entfernt die Datei und den extrahierten Text; erhalten bleiben Prüfsumme (SHA-256), Feldbelege mit Herkunft und die Prüfzeilen bzw. Buchungen.</p>
   </form>
@@ -88,7 +88,7 @@
 
 <section class="card" id="einstellungen">
   <div class="card-head"><h2>Einstellungen und Datenschutz</h2></div>
-  <form method="post" action="/journal/documents/settings" class="stack" style="gap:8px">
+  <form method="post" action="/journal/documents/settings" class="stack gap-8">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label class="check"><input type="checkbox" name="keep_originals" value="1" {% if cfg.keep %}checked{% endif %}> <span>Originalbelege lokal aufbewahren (unverändert, im Datenverzeichnis unter <code>documents/</code>) – nötig für Ausschnitt und Download</span></label>
     <label class="check"><input type="checkbox" name="ocr" value="1" {% if cfg.ocr %}checked{% endif %}> Lokale Texterkennung (Tesseract) für Screenshots und Scans</label>

@@ -43,7 +43,7 @@
     <div class="sub">größter Rückgang vom Hoch</div></div>
 </section>
 
-<div class="grid-2" style="margin-top:16px">
+<div class="grid-2 mt-16">
   <section class="card span-2">
     <div class="card-head"><h2>Kumulierte Rendite vs. Benchmark</h2><span class="hint">TTWROR in % · Benchmarks: Kursentwicklung in EUR</span></div>
     <div class="chart tall" data-chart="perf" data-src="/api/performance/series?scope={{ urlq(scope) }}&period={{ period }}&start={{ start }}&end={{ end }}" role="img" aria-label="Kumulierte Rendite des Portfolios im Vergleich zu Benchmarks"></div>
@@ -62,7 +62,7 @@
   </section>
 </div>
 
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   <div class="card-head"><h2>Zeiträume</h2></div>
   <div class="table-wrap">
   <table>
@@ -79,7 +79,7 @@
     </tbody>
   </table>
   </div>
-  <details class="box" style="margin-top:12px">
+  <details class="box mt-12">
     <summary>Methodik</summary>
     <p class="small"><b>TTWROR</b> (zeitgewichtet): r<sub>t</sub> = (MV<sub>t</sub> + Abflüsse<sub>t</sub>) / (MV<sub>t−1</sub> + Zuflüsse<sub>t</sub>) − 1, verkettet über alle Tage. Externe Zahlungsströme sind neutralisiert – misst die Qualität der Anlageentscheidungen.
       <b>IRR</b> (geldgewichtet): interner Zinsfuß aus Anfangswert, datierten Zahlungsströmen und Endwert – misst die tatsächliche Verzinsung des eingesetzten Kapitals.</p>

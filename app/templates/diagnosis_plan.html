@@ -16,8 +16,8 @@
   <div class="f-title" style="margin:6px 0">{{ f.title }}</div>
   <div class="alert"><span class="icon">i</span><div><strong>Vorschau – noch nichts geändert.</strong> Die Auswirkungen sind auf einer Kopie im Speicher berechnet (Ledger, Diagnose, Steuer-Regelwerk). Erst „Übernehmen“ ändert Daten; jede Korrektur lässt sich danach als Ganzes zurücknehmen.</div></div>
   <p><span class="hint">{{ 'Empfehlung (nach Prüfung)' if rec.conditional else 'Empfehlung' }}:</span> {{ rec.text }}</p>
-  {% if rec.checks %}<details class="box"><summary>Vorher prüfen ({{ rec.checks|length }})</summary><ul class="plain-list" style="margin-top:6px">{% for text, links in rec.checks %}<li>{{ text }}{{ dm.ext_links(links) }}</li>{% endfor %}</ul></details>{% endif %}
-  {% if rec.fixes|length > 1 %}<div class="row" style="margin-top:8px"><span class="hint">Andere Lösung:</span>{% for o in rec.fixes if o.key != plan.option.key %}<a class="btn sm ghost wrap" href="/quality/diagnose/plan?f={{ f.id }}&amp;o={{ o.key }}">{{ o.label }}</a>{% endfor %}</div>{% endif %}
+  {% if rec.checks %}<details class="box"><summary>Vorher prüfen ({{ rec.checks|length }})</summary><ul class="plain-list mt-6">{% for text, links in rec.checks %}<li>{{ text }}{{ dm.ext_links(links) }}</li>{% endfor %}</ul></details>{% endif %}
+  {% if rec.fixes|length > 1 %}<div class="row mt-8"><span class="hint">Andere Lösung:</span>{% for o in rec.fixes if o.key != plan.option.key %}<a class="btn sm ghost wrap" href="/quality/diagnose/plan?f={{ f.id }}&amp;o={{ o.key }}">{{ o.label }}</a>{% endfor %}</div>{% endif %}
   {% endif %}
 </section>
 
@@ -25,7 +25,7 @@
 {% if plan.option.params %}
 <section class="card">
   <h2>Auswahl</h2>
-  <form method="get" action="/quality/diagnose/plan" class="stack" style="gap:10px">
+  <form method="get" action="/quality/diagnose/plan" class="stack gap-10">
     <input type="hidden" name="f" value="{{ f.id }}"><input type="hidden" name="o" value="{{ plan.option.key }}"><input type="hidden" name="p__set" value="1">{% if request.query_params.get('back') == 'liste' %}<input type="hidden" name="back" value="liste">{% endif %}
     {% for p in plan.option.params %}{{ dm.param_field(p, plan.params.get(p.name, [])) }}{% endfor %}
     <div><button class="btn sm" type="submit">Vorschau aktualisieren</button></div>

@@ -4,5 +4,5 @@
   (z. B. News-Quellen, Steuerregeln, Steuerberichte) noch nicht ersetzt{% if restore.error %} – letzter Fehler: {{ restore.error }}{% endif %}.
   <div class="hint">Portfolia setzt den Vorgang beim nächsten Start automatisch fort; bisherige Dateien bleiben bis dahin unverändert bzw. als
     <code>.bak-…</code> gesichert. Ursache beheben (z. B. Schreibrechte, Speicherplatz) und dann fortsetzen.</div>
-  <form method="post" action="/actions/restore/resume" class="inline" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm primary" type="submit">Jetzt fortsetzen</button></form>
+  <form method="post" action="/actions/restore/resume" class="inline mt-6"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm primary" type="submit">Jetzt fortsetzen</button></form>
 </div></div>

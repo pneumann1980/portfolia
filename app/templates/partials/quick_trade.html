@@ -15,16 +15,16 @@
     <label class="field">Uhrzeit<input type="time" name="time" value="{{ data.time or '' }}"></label>
   </div>
   <details {{ 'open' if data.price or data.amount or data.fee or data.note }}><summary>Kurs, Betrag, Gebühren, Konto (optional)</summary>
-    <div class="form-grid" style="margin-top:8px">
+    <div class="form-grid mt-8">
       <label class="field">Kurs je Stück (EUR)<input name="price" inputmode="decimal" value="{{ data.price or '' }}" placeholder="leer = Marktkurs des Tages"></label>
       <label class="field">Gesamtbetrag (EUR)<input name="amount" inputmode="decimal" value="{{ data.amount or '' }}"></label>
       <label class="field">Gebühren (EUR)<input name="fee" inputmode="decimal" value="{{ data.fee or '' }}"></label>
       <label class="field">Börse/Wallet (Konto)<input name="account" list="qt-accounts" required value="{{ data.account or '' }}"></label>
-      <label class="field" style="grid-column:1/-1">Notiz<input name="note" maxlength="200" value="{{ data.note or '' }}"></label>
+      <label class="field span-all">Notiz<input name="note" maxlength="200" value="{{ data.note or '' }}"></label>
     </div>
     <datalist id="qt-accounts">{% for acc in accounts %}<option value="{{ acc }}">{% endfor %}</datalist>
   </details>
   {% if not data.price and not data.amount %}<p class="hint">Ohne Kurs und Betrag wird der historische Marktkurs des gewählten Tages verwendet (Herkunft wird an der Buchung vermerkt).</p>{% endif %}
-  <div class="row" style="gap:8px"><button class="btn primary" type="submit">{{ 'Verkauf' if sell else 'Kauf' }} speichern</button>
+  <div class="row gap-8"><button class="btn primary" type="submit">{{ 'Verkauf' if sell else 'Kauf' }} speichern</button>
     <a class="btn ghost" href="/journal/new?kind={{ data.kind }}&amp;asset={{ urlq(a.asset_id) }}">Vollständiges Formular</a></div>
 </form>

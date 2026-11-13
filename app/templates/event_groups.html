@@ -9,7 +9,7 @@
   <div class="review-stats"><a href="/journal/ereignisse" class="{{ 'active' if not kind }}"><b>{{ counts.values()|sum }}</b><span>alle</span></a>
     {% for k, l in kinds.items() %}<a href="?kind={{ k }}" class="{{ 'active' if kind == k }}"><b>{{ counts.get(k, 0) }}</b><span>{{ l }}</span></a>{% endfor %}</div>
 </section>
-<section class="card" style="margin-top:16px">
+<section class="card mt-16">
   {% if not items %}<p class="hint">Keine Widersprüche gefunden.</p>{% else %}
   <ul class="plain">{% for x in items %}
     <li><span class="badge warn">{{ x.label }}</span> {{ x.text }}

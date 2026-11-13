@@ -28,7 +28,7 @@
   <ul class="diag-counts">
     {% for k, label in categories.items() %}<li><a href="{{ iurl(category=k) }}">{{ label }}</a><span class="row">{% set n = c.category.get(k, 0) %}{% if n %}<span class="badge">{{ n }} offen</span>{% else %}<span class="muted">keine</span>{% endif %}</span></li>{% endfor %}
   </ul>
-  <div class="row" style="gap:6px;margin-top:6px">{% for s, badge in severities.items() %}{% set n = c.severity.get(s, 0) %}<a class="badge {{ badge }}" href="{{ iurl(severity=s) }}">{{ n }} {{ s }}</a>{% endfor %}</div>
+  <div class="row gap-6 mt-6">{% for s, badge in severities.items() %}{% set n = c.severity.get(s, 0) %}<a class="badge {{ badge }}" href="{{ iurl(severity=s) }}">{{ n }} {{ s }}</a>{% endfor %}</div>
   {% else %}
   <p class="hint">Noch keine Prüfung durchgeführt.</p>
   {% endif %}
@@ -37,7 +37,7 @@
 {% if run %}
 <section class="card" id="items">
   <div class="card-head"><h2>Befunde ({{ items|length }})</h2></div>
-  <form method="get" action="/quality/integrity" class="filters row" style="gap:8px;flex-wrap:wrap">
+  <form method="get" action="/quality/integrity" class="filters row gap-8 fx-wrap">
     <select name="category" aria-label="Kategorie"><option value="">alle Kategorien</option>{% for k, label in categories.items() %}<option value="{{ k }}"{% if f.category == k %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
     <select name="severity" aria-label="Schweregrad"><option value="">jeder Schweregrad</option>{% for s in severities %}<option value="{{ s }}"{% if f.severity == s %} selected{% endif %}>{{ s }}</option>{% endfor %}</select>
     <select name="status" aria-label="Status"><option value="">jeder Status</option>{% for s in statuses %}<option value="{{ s }}"{% if f.status == s %} selected{% endif %}>{{ s }}</option>{% endfor %}</select>
@@ -47,7 +47,7 @@
     <button class="btn sm" type="submit">Anwenden</button>
   </form>
   {% if not items %}<p class="hint">Keine Befunde für diese Auswahl.</p>{% endif %}
-  <div class="stack" style="gap:10px">
+  <div class="stack gap-10">
   {% for it in items %}
   <details class="finding" id="{{ it.id }}">
     <summary>
@@ -66,7 +66,7 @@
         <dt>Befund-ID</dt><dd class="mono">{{ it.id }}</dd>
       </dl>
       {% if it.finding_id and it.status == 'offen' %}
-      <div class="row" style="gap:6px;margin-top:8px">
+      <div class="row gap-6 mt-8">
         {% if it.preferred_key %}<a class="btn sm primary" href="/quality/diagnose/plan?f={{ it.finding_id }}&amp;o={{ it.preferred_key }}">Vorschau der empfohlenen Lösung</a>{% endif %}
         <a class="btn sm" href="/quality/diagnose?f={{ it.finding_id }}#{{ it.finding_id }}">Alternativen in der Diagnose</a>
         {% if it.confidence %}<form method="post" action="/quality/diagnose/dismiss" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="f" value="{{ it.finding_id }}"><input type="hidden" name="note" value="{{ independent_note }}"><input type="hidden" name="back" value="/quality/integrity"><button class="btn sm ghost" type="submit">Als unabhängige Buchung bestätigen</button></form>{% endif %}

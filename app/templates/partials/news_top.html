@@ -9,7 +9,7 @@
 {% endif %}
 <div class="list top-news">
 {% for i in top.rows %}
-  <article class="list-item top-item" style="display:block">
+  <article class="list-item top-item d-block">
     <a class="title" href="/news/{{ i.id }}">{{ i.title }}</a>
     <div class="meta meta-row">
       {% if i.ai %}

@@ -2,7 +2,7 @@
 {% block title %}Einstellungen{% endblock %}
 {% block heading %}Einstellungen{% endblock %}
 {% macro save(section) %}<input type="hidden" name="section" value="{{ section }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-  <div class="row" style="margin-top:12px"><button class="btn primary" type="submit">Speichern</button>{% if saved == section %}<span class="badge good">✓ gespeichert</span>{% endif %}</div>{% endmacro %}
+  <div class="row mt-12"><button class="btn primary" type="submit">Speichern</button>{% if saved == section %}<span class="badge good">✓ gespeichert</span>{% endif %}</div>{% endmacro %}
 {% block content %}
 <nav class="tabs" aria-label="Einstellungen"><a class="active" href="/settings">Einstellungen</a><a href="/settings/ki">KI &amp; Modelle</a><a href="/settings/zugaenge">Zugänge</a></nav>
 <div class="stack">
@@ -32,16 +32,16 @@
           <option value="global" {% if s['ledger.scope'] == 'global' %}selected{% endif %}>FIFO global je Asset (Standard)</option>
           <option value="account" {% if s['ledger.scope'] == 'account' %}selected{% endif %}>FIFO je Konto/Wallet</option>
         </select></label>
-      <label class="check" style="align-self:end"><input type="checkbox" name="unmatched_flows" value="1" {% if s['ledger.unmatched_transfers_as_flows'] %}checked{% endif %}>
+      <label class="check self-end"><input type="checkbox" name="unmatched_flows" value="1" {% if s['ledger.unmatched_transfers_as_flows'] %}checked{% endif %}>
         Nicht zugeordnete Krypto-/Wertpapier-Zu- und Abgänge als externe Zahlungsströme (zum Marktwert)</label>
     </div>
-    <h3 style="margin-top:14px">Fiat-Guthaben (EUR/USD)</h3>
+    <h3 class="mt-12">Fiat-Guthaben (EUR/USD)</h3>
     <p class="hint">Derzeit: <b>{% if s['ledger.fiat_off'] %}nicht geführt – nur Assets zählen{% else %}je Konto wie unten eingestellt{% endif %}</b>.
       „Nicht geführt“ beseitigt Abweichungen durch Verrechnungskonten und doppelte Einzahlungen (z. B. Bitpanda, Scalable). Die EUR-Werte von Käufen und Verkäufen bleiben, die Steuer ändert sich nicht.
       <a href="/settings/fiat">Wirkung ansehen und umschalten</a></p>
-    <h3 style="margin-top:14px">Stichtag</h3>
+    <h3 class="mt-12">Stichtag</h3>
     <p class="hint">Alles vor einem Stichtag einfrieren: Ab dann zählt der geprüfte Eröffnungsstand (Lots mit ihrem ursprünglichen Anschaffungsdatum) plus alle Buchungen danach; Depotwert und eingesetztes Kapital laufen weiter ab Depotstart. <a href="/settings/stichtag">Vorschau und Einrichtung</a></p>
-    <h3 style="margin-top:14px">Cash-Führung je Konto</h3>
+    <h3 class="mt-12">Cash-Führung je Konto</h3>
     <p class="hint">Konten <b>ohne</b> Cash-Führung behandeln Käufe als Einzahlung und Verkaufserlöse als Auszahlung (z. B. Depot, dessen Verrechnungskonto nicht im Ledger steht). „Automatisch“ erkennt Konten mit Fiat-Ein-/Auszahlungen als geführt.</p>
     <div class="table-wrap"><table><thead><tr><th>Konto</th><th>Erkannt</th><th>Einstellung</th></tr></thead><tbody>
       {% for acc in accounts %}{% set ov = s['ledger.cash_overrides'].get(acc) %}
@@ -69,8 +69,8 @@
       <label class="field">Wertpapiere &amp; Devisen (Yahoo, nur zu Handelszeiten)
         <select name="stock_interval_min">{% for m, label, calls in pp.stock %}<option value="{{ m }}" {% if m == pp.stock_now %}selected{% endif %}>{{ label }}{% if m == pp.rec_stock %} – empfohlen{% endif %}</option>{% endfor %}</select></label>
     </div>
-    <div class="box" style="margin-top:10px">
-      <div class="row" style="justify-content:space-between;gap:8px"><b>CoinGecko-Hochrechnung · {{ pp.every(pp.crypto_now) }}</b>
+    <div class="box mt-10">
+      <div class="row justify-between gap-8"><b>CoinGecko-Hochrechnung · {{ pp.every(pp.crypto_now) }}</b>
         <span class="badge {{ {'ok': 'good', 'tight': 'warn', 'over': 'crit'}[est.level] }}">{{ {'ok': 'passt', 'tight': 'knapp – wird gedrosselt', 'over': 'reicht nicht'}[est.level] }}</span></div>
       <ul class="small" style="margin:6px 0 0 16px">
         <li>Kurse: ≈ {{ est.quotes|num(0) }} ({{ inp.cg_held }} gehaltene Kryptowerte, {{ [inp.cg_calls, 1]|max }} Aufruf je Aktualisierung)</li>
@@ -80,16 +80,16 @@
         <li>Yahoo {{ pp.every(pp.stock_now) }}: ≈ {{ pp.stock_calls|num(0) }} Abrufe/Monat ({{ inp.yahoo_symbols }} Wertpapiere{% if inp.fx %} + Devisen{% endif %}, nur zu Handelszeiten; kein festes Kontingent)</li>
         <li>Dieser Monat: {{ pp.used.used|num(0) }} verbraucht ({{ pp.used.pct|num(1) }} %){% if pp.used.projected %} · Prognose Monatsende ≈ {{ pp.used.projected|num(0) }}{% endif %}{% if pp.used.throttled %} <span class="badge warn">gedrosselt</span>{% endif %}</li>
       </ul>
-      <p class="hint" style="margin-top:6px">Empfohlen ist das kürzeste Intervall (ab 5 Min.), bei dem die Hochrechnung unter der
+      <p class="hint mt-6">Empfohlen ist das kürzeste Intervall (ab 5 Min.), bei dem die Hochrechnung unter der
         Drosselschwelle bleibt: hier <b>{{ pp.every(pp.rec_crypto) }}</b>; gedrosselt <b>{{ pp.every(pp.rec_throttled) }}</b>
         (das Rest-Kontingent soll bis Monatsende reichen). Yahoo hat kein veröffentlichtes Kontingent, sperrt aber bei
         zu vielen Anfragen je IP zeitweise – <b>{{ pp.every(pp.rec_stock) }}</b> genügt, außerhalb der Handelszeiten wird nichts
         abgerufen. Nutzt du den CoinGecko-Schlüssel auch anderswo, das Monatslimit hier entsprechend kleiner setzen.
         {% if next_runs.get('prices_crypto') %}Nächster Krypto-Abruf: {{ next_runs.get('prices_crypto')|datetime_de }}.{% endif %}</p>
     </div>
-    {% if not pp.has_key %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div>Kein CoinGecko-Schlüssel gesetzt – die öffentliche API hat deutlich engere Grenzen. Kostenlosen Demo-Schlüssel als <span class="mono">COINGECKO_API_KEY</span> eintragen.</div></div>{% endif %}
-    {% if pp.stale_hint %}<div class="alert warn" style="margin-top:8px"><span class="icon">!</span><div>{{ pp.stale_hint }}</div></div>{% endif %}
-    <h3 style="margin-top:14px">Bewertung</h3>
+    {% if not pp.has_key %}<div class="alert warn mt-8"><span class="icon">!</span><div>Kein CoinGecko-Schlüssel gesetzt – die öffentliche API hat deutlich engere Grenzen. Kostenlosen Demo-Schlüssel als <span class="mono">COINGECKO_API_KEY</span> eintragen.</div></div>{% endif %}
+    {% if pp.stale_hint %}<div class="alert warn mt-8"><span class="icon">!</span><div>{{ pp.stale_hint }}</div></div>{% endif %}
+    <h3 class="mt-12">Bewertung</h3>
     <div class="grid-3">
       <label class="field">Krypto veraltet nach (Minuten ohne erfolgreichen Abruf)<input type="number" name="stale_crypto_minutes" min="5" value="{{ s['prices.stale_crypto_minutes'] }}"></label>
       <label class="field">Krypto ohne Kursänderung veraltet nach (Stunden)<input type="number" name="stale_crypto_market_hours" min="1" max="720" value="{{ s['prices.stale_crypto_market_hours'] }}">
@@ -105,13 +105,13 @@
     <p class="hint">Kryptowerte ohne Kursquelle werden im CoinGecko-Katalog gesucht; Vorschläge und Zuordnungen unter
       <a href="/quality/sources">Datenqualität → Kursquellen</a>.</p>
     <p class="hint">Ersatzkurse gelten für Positionen ohne Marktkurse (Kursquelle „none“/„manual“): manuelle Kurse aus dem Import und Transaktionskurse (Wert ÷ Menge). Zwischen zwei Kursen wird fortgeschrieben, nach dem letzten höchstens die angegebene Zahl Tage – danach ist die Position unbewertet (0 €). 0 = unbegrenzt.</p>
-    <label class="field" style="margin-top:10px"><span>Benchmarks (eine Zeile je Benchmark: <code>Name | Quelle:Symbol</code>, z. B. <code>MSCI World | yahoo:EUNL.DE</code>)</span>
+    <label class="field mt-10"><span>Benchmarks (eine Zeile je Benchmark: <code>Name | Quelle:Symbol</code>, z. B. <code>MSCI World | yahoo:EUNL.DE</code>)</span>
       <textarea name="benchmarks">{% for b in s['performance.benchmarks'] %}{{ b.name }} | {{ b.series }}
 {% endfor %}</textarea></label>
-    <label class="check" style="margin-top:10px"><input type="checkbox" name="crypto_history_auto" value="1" {% if s['prices.crypto_history_auto'] %}checked{% endif %}>
+    <label class="check mt-10"><input type="checkbox" name="crypto_history_auto" value="1" {% if s['prices.crypto_history_auto'] %}checked{% endif %}>
       Krypto-Historie vor dem CoinGecko-Fenster (Demo: 365 Tage) automatisch über Yahoo Finance ergänzen</label>
     <p class="hint">Gesucht werden <code>SYMBOL-EUR</code> bzw. <code>SYMBOL-USD</code> (USD mit EZB-Devisenkurs umgerechnet). Übernommen wird nur, was im Überlappungszeitraum mit den CoinGecko-Kursen übereinstimmt – gleich lautende Symbole anderer Coins werden so abgelehnt. Ergebnis je Reihe unter <a href="/quality/technik#prices">Datenqualität → Kursqualität</a>; an Yahoo gehen nur Symbole.</p>
-    <label class="field" style="margin-top:10px"><span>Ausdrückliche Zuordnung (Vorrang vor der automatischen Suche; <code>SYMBOL=YAHOO-SYMBOL</code>, z. B. <code>UNI=UNI7083-USD</code>)</span>
+    <label class="field mt-10"><span>Ausdrückliche Zuordnung (Vorrang vor der automatischen Suche; <code>SYMBOL=YAHOO-SYMBOL</code>, z. B. <code>UNI=UNI7083-USD</code>)</span>
       <textarea name="crypto_history_fallback">{% for k, v in s['prices.crypto_history_fallback'].items() %}{{ k }}={{ v }}
 {% endfor %}</textarea></label>
     {{ save('prices') }}
@@ -128,7 +128,7 @@
     <h3 class="reader-sub">Artikeltexte</h3>
     <label class="check"><input type="checkbox" name="news_enrich" value="1" {% if s['news.enrich'] %}checked{% endif %}>
       Artikeltext im Hintergrund nachladen (Leseansicht in Portfolia; Bezahl- und Zustimmungsschranken werden nicht umgangen)</label>
-    <label class="field" style="margin-top:8px">Speicherumfang
+    <label class="field mt-8">Speicherumfang
       <select name="content_mode"><option value="full" {% if s['news.content_mode'] != 'excerpt' %}selected{% endif %}>bereinigter Volltext (nur lokal, nur zur privaten Lektüre)</option>
         <option value="excerpt" {% if s['news.content_mode'] == 'excerpt' %}selected{% endif %}>nur Auszug (ca. 1500 Zeichen)</option></select></label>
     <h3 class="reader-sub">KI-Auswertung</h3>
@@ -181,7 +181,7 @@
     <b>Neu einrichten:</b> Datei in den Importordner legen – auf einer neuen Installation wird alles automatisch übernommen, sonst
     nach Rückfrage. Unveränderte Stände werden nicht erneut gesichert; importierte ZIP-Dateien werden zusätzlich mit Datum archiviert.</p>
   <form method="post" action="/settings/save" class="grid-3">
-    <label class="check" style="align-self:end"><input type="checkbox" name="auto" value="1" {% if s['export.auto'] %}checked{% endif %}> Nach Änderungen automatisch sichern</label>
+    <label class="check self-end"><input type="checkbox" name="auto" value="1" {% if s['export.auto'] %}checked{% endif %}> Nach Änderungen automatisch sichern</label>
     <label class="field">Anzahl ZIP-Sicherungen<input type="number" min="1" max="1000" name="keep" value="{{ s['export.keep'] }}"></label>
     <label class="field">Anzahl archivierter Import-Dateien<input type="number" min="1" max="1000" name="import_keep" value="{{ s['export.import_keep'] }}"></label>
     <div>{{ save('export') }}</div>
@@ -194,7 +194,7 @@
   </tbody></table></div>
   {% else %}<p class="hint">Noch keine ZIP-Sicherung – sie entsteht bei der nächsten Änderung oder mit „Jetzt sichern“.</p>{% endif %}
   {% if archive %}
-  <details class="box" style="margin-top:8px"><summary>Archivierte Import-Dateien <span class="badge">{{ archive|length }}</span></summary>
+  <details class="box mt-8"><summary>Archivierte Import-Dateien <span class="badge">{{ archive|length }}</span></summary>
     <div class="table-wrap"><table class="compact"><thead><tr><th>Datei</th><th>Archiviert</th><th class="num">Größe</th></tr></thead><tbody>
       {% for e in archive %}<tr><td class="mono"><a href="/exports/{{ e.name }}" download>{{ e.name }}</a></td><td>{{ e.created|datetime_de }}</td><td class="num">{{ (e.bytes / 1024)|round(1) }} KB</td></tr>{% endfor %}
     </tbody></table></div>

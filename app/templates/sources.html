@@ -8,7 +8,7 @@
 
 <section class="card">
   <div class="card-head"><h2>Kursquellen für Kryptowerte</h2>
-    <div class="row" style="gap:8px;flex-wrap:wrap">
+    <div class="row gap-8 fx-wrap">
       <a class="btn sm ghost" href="/quality/technik#prices">Zur Datenqualität</a>
       {% if not demo %}<form method="post" action="/quality/sources/run" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="btn sm primary" type="submit">Jetzt auf CoinGecko suchen</button></form>{% endif %}
@@ -26,7 +26,7 @@
         Spam-Token werden übersprungen.</li>
     </ul></details>
   {% if demo %}<div class="alert"><span class="icon">i</span><div>Im Demo-Modus ist CoinGecko nicht angebunden.</div></div>{% endif %}
-  <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0">
+  <div class="row gap-6 fx-wrap" style="margin:8px 0">
     <span class="badge warn">{{ ov.counts.suggested }} Vorschläge</span>
     <span class="badge">{{ ov.counts.open }} noch nicht gesucht</span>
     <span class="badge">{{ ov.counts.none }} ohne Treffer</span>
@@ -55,7 +55,7 @@
             {% for c in it.candidates if c.id == r.quote_id %}<div class="hint">{{ c.name }} · {{ c.price|price if c.price else 'kein Kurs' }}{% if c.market_cap %} · Marktkap. {{ c.market_cap|eur_compact }}{% endif %}</div>{% endfor %}
           {% else %}–{% endif %}
           {% if it.candidates|length > (1 if r and r.quote_id else 0) and not (r and r.quote_source == 'kaspacom') %}
-          <details style="margin-top:4px"><summary class="hint">{{ it.candidates|length }} Coin{{ 's' if it.candidates|length != 1 }} mit diesem Symbol</summary>
+          <details class="mt-4"><summary class="hint">{{ it.candidates|length }} Coin{{ 's' if it.candidates|length != 1 }} mit diesem Symbol</summary>
             <ul class="small" style="margin:4px 0 0;padding-left:16px">
             {% for c in it.candidates %}<li>{{ cg_link(c.id) }} – {{ c.name }} · {{ c.price|price if c.price else 'kein Kurs' }}{% if c.market_cap %} · {{ c.market_cap|eur_compact }}{% endif %}
               {% if c.platforms %}<br><span class="hint">{{ c.platforms[:4]|join(', ') }}{% if c.platforms|length > 4 %} …{% endif %}</span>{% endif %}

@@ -53,8 +53,8 @@
       {% if sec.key != 'bestand' %}<span class="hint ds-cc">offen{% if sec.cc.nachgewiesen %} · {{ sec.cc.nachgewiesen }} nachgewiesen{% endif %}{% if sec.cc.wahrscheinlich %} · {{ sec.cc.wahrscheinlich }} wahrscheinlich{% endif %}{% if sec.cc.ungeklaert %} · {{ sec.cc.ungeklaert }} ungeklärt{% endif %}{% if sec.cc.abgelehnt %} · {{ sec.cc.abgelehnt }} abgelehnt{% endif %}{% if sec.cc.uebernommen %} · {{ sec.cc.uebernommen }} übernommen{% endif %}</span>{% endif %}
       {% if sec.extra %}<span class="hint">{{ sec.extra }}</span>{% endif %}</a>{% endfor %}
   </nav>
-  <details class="box" style="margin-top:10px"><summary>Was bedeuten die Status?</summary>
-    <dl class="kv" style="margin-top:8px">
+  <details class="box mt-10"><summary>Was bedeuten die Status?</summary>
+    <dl class="kv mt-8">
       {% for s, text in statuses.items() %}<dt><span class="badge {{ status_badge[s] }}">{{ s }}</span></dt><dd>{{ text }}</dd>{% endfor %}
     </dl>
     <p class="hint">Bestandsabgleich:</p>
@@ -68,7 +68,7 @@
   <div class="card-head"><h2>{{ 'Aufgaben' if not status else 'Befunde' }} ({{ shown|length }}{% if kind or status %} von {{ n_open }}{% endif %})</h2>
     {% if n_hints %}<a class="btn sm" href="/quality/diagnose/hints{% if kind %}?kind={{ kind }}{% endif %}" title="Hinweise ohne festgestellten Fehler gesammelt als geprüft markieren – ändert keine Daten">{{ n_hints }} Hinweise als geprüft markieren …</a>{% endif %}</div>
   {% if not status and n_hints %}<p class="hint">Angezeigt werden Aufgaben (belegt, wahrscheinlich, Verdacht). Hinweise ohne festgestellten Fehler ({{ n_hints }}) sind ausgeblendet – <a href="{{ qurl(kind, 'hinweis') }}">anzeigen</a> oder <a href="{{ qurl(kind, 'alle') }}">alles zeigen</a>.</p>{% endif %}
-  {% if bulks %}<div class="stack" style="gap:6px;margin-bottom:8px">{% for b in bulks %}
+  {% if bulks %}<div class="stack gap-6 mb-8">{% for b in bulks %}
     <form method="post" action="/quality/diagnose/hints/{{ b.token }}/undo" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><span class="hint">Sammelaktion {{ b.at|datetime_de }}: {{ b.active }} Hinweise als geprüft markiert</span><button class="btn sm ghost" type="submit">Rückgängig</button></form>{% endfor %}</div>{% endif %}
   <div class="filters">
     <div class="seg" role="group" aria-label="Befundart">
@@ -82,7 +82,7 @@
     </div>
   </div>
   {% if not shown %}<p class="hint">Keine Befunde{% if kind or status %} für diese Auswahl{% endif %}.</p>{% endif %}
-  <div class="stack" style="gap:10px">
+  <div class="stack gap-10">
   {% for f in shown %}
   <details class="finding" id="{{ f.id }}" {% if open_id == f.id %}open{% endif %}>
     <summary>
@@ -104,7 +104,7 @@
       {% if f.uncertainty %}<div><h4>Unsicherheiten</h4><ul>{% for x in f.uncertainty %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
       {% if f.pairs %}
       <div><h4>Gegenüberstellung</h4>
-        <div class="stack" style="gap:10px">{% for a, b, why in f.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">Begründung: {{ why }}</div></div>{% endfor %}</div>
+        <div class="stack gap-10">{% for a, b, why in f.pairs %}<div class="pair">{{ dm.txref(a) }}{{ dm.txref(b) }}<div class="pair-why">Begründung: {{ why }}</div></div>{% endfor %}</div>
       </div>
       {% elif f.txs %}
       <div><h4>Betroffene Buchungen ({{ f.txs|length }})</h4><div class="tx-grid">{% for t in f.txs %}{{ dm.txref(t) }}{% endfor %}</div></div>
@@ -128,8 +128,8 @@
   {% endfor %}
   </div>
   {% if auto_rows or applied %}
-  <details class="box" id="erledigt" style="margin-top:12px"><summary><strong>Erledigt ({{ auto_rows|length + applied|length }})</strong> <span class="hint">– automatisch erklärt bzw. korrigiert; hier lässt sich alles nachsehen und zurücknehmen</span></summary>
-    <div class="stack" style="gap:8px;margin-top:8px">
+  <details class="box mt-12" id="erledigt"><summary><strong>Erledigt ({{ auto_rows|length + applied|length }})</strong> <span class="hint">– automatisch erklärt bzw. korrigiert; hier lässt sich alles nachsehen und zurücknehmen</span></summary>
+    <div class="stack gap-8 mt-8">
     {% for h in auto_rows %}
       <div class="checked-row">
         <div><span class="badge info">automatisch erklärt</span> <span class="badge">Bestand</span> <b>{{ h.asset }}</b> auf {{ h.account }}: ausgebuchte Menge {{ h.writeoff|qty_exact }} wird von der Quelle weiter angezeigt
@@ -148,8 +148,8 @@
   </details>
   {% endif %}
   {% if dismissed %}
-  <details class="box" id="checked" style="margin-top:12px"><summary><strong>Als geprüft markiert ({{ dismissed|length }})</strong> <span class="hint">– ohne Handlungsbedarf; kommen zurück, sobald sich ihre Daten ändern</span></summary>
-    <div class="stack" style="gap:8px;margin-top:8px">
+  <details class="box mt-12" id="checked"><summary><strong>Als geprüft markiert ({{ dismissed|length }})</strong> <span class="hint">– ohne Handlungsbedarf; kommen zurück, sobald sich ihre Daten ändern</span></summary>
+    <div class="stack gap-8 mt-8">
     {% for f in dismissed %}{% set d = marks[f.id] %}
       <div class="checked-row">
         <div><span class="badge {{ status_badge[f.status] }}">{{ f.status }}</span> <span class="badge">{{ f.kind_label }}</span> {{ f.title }}
@@ -166,14 +166,14 @@
   <div class="card-head"><h2>Entscheidungen und Korrekturen</h2></div>
   {% if not decisions %}<p class="hint">Noch keine. Übernommene Korrekturen und „als geprüft markiert“ erscheinen hier – mit allen Änderungen und „Rückgängig“.</p>{% else %}
   <p class="hint">Rückgängig nimmt eine Korrektur als Ganzes zurück (in einer Transaktion). Wurde ein betroffenes Objekt danach anderweitig geändert, verweigert Portfolia das Zurücksetzen statt es zu überschreiben.</p>
-  <div class="stack" style="gap:8px">
+  <div class="stack gap-8">
   {% for d in decisions %}
     <details class="box decision-row" id="d-{{ d.id }}"{% if loop.first and d.active and msg %} open{% endif %}>
       <summary><span class="badge {{ 'info' if d.action == 'fix' else '' }}">{{ 'Korrektur' if d.action == 'fix' else 'geprüft' }} #{{ d.id }}</span>
         {% if d.active %}<span class="badge good">aktiv</span>{% else %}<span class="badge">zurückgenommen{% if d.undone_at %} {{ d.undone_at|datetime_de }}{% endif %}</span>{% endif %}
         <span class="f-title">{{ d.option_label or 'kein Handlungsbedarf' }}</span>
         <span class="hint">{{ d.created|datetime_de }} · {{ d.title }}</span></summary>
-      <div class="stack" style="gap:6px;margin-top:8px">
+      <div class="stack gap-6 mt-8">
         {% if d.changes %}<ul class="plain-list">{% for c in d.changes %}<li>{{ c.label }}{% if c.kind == 'create' %} <span class="mono">{{ c.target }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
         {% if d.note %}<div class="hint">Notiz: {{ d.note }}</div>{% endif %}
         {% if d.active %}

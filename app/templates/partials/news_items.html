@@ -44,7 +44,7 @@
 {% else %}<p class="hint">Keine Meldungen für diese Auswahl. Quellen werden alle 30 Minuten abgerufen; Status unter „Quellen“.</p>{% endif %}
 {% endfor %}
 {% if total > page * page_size %}
-<div id="news-more" class="vmore" style="text-align:center;margin-top:10px">
+<div id="news-more" class="vmore mt-10" style="text-align:center">
   <button class="btn" hx-get="/news?tab={{ params.tab }}&asset={{ urlq(params.asset) }}&source={{ urlq(params.source) }}&days={{ params.days }}&status={{ params.status }}&sort={{ params.sort }}&shorts={{ params.shorts }}&hidden={{ params.hidden }}&page={{ page + 1 }}"
           hx-target="#news-more" hx-swap="outerHTML">Weitere laden ({{ total - page * page_size }})</button>
 </div>

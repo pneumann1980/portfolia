@@ -8,7 +8,7 @@
   <div class="card-head"><h2>Woher stammen Anschaffungszeitpunkt und -kosten?</h2>
     <div class="row"><a class="btn sm" href="/quality/diagnose">Diagnose</a><a class="btn sm" href="/quality/abdeckung">Quellenabdeckung</a></div></div>
   <p class="hint">FIFO ordnet jeder Veräußerung Lots zu. Belegt sind Anschaffungen aus Kauf/Tausch, Erträgen (Zuflusswert), fortgeführten Kapitalmaßnahmen und nachgewiesenen Eröffnungspositionen. Externe Zugänge ohne Beleg tragen den Wert beim Zugang als Ersatz bzw. „unbekannt“ – nie 0 €. Transfers zwischen eigenen Konten behalten den ursprünglichen Anschaffungszeitpunkt. Diese Sicht ändert nichts.</p>
-  <div class="row" style="flex-wrap:wrap;gap:6px">{% for k, l in rep.classes.items() %}<span class="badge {{ 'good' if k in evidenced else 'warn' if k in ('unbekannt', 'ohne_basis') else '' }}">{{ l }}</span>{% endfor %}</div>
+  <div class="row fx-wrap gap-6">{% for k, l in rep.classes.items() %}<span class="badge {{ 'good' if k in evidenced else 'warn' if k in ('unbekannt', 'ohne_basis') else '' }}">{{ l }}</span>{% endfor %}</div>
 </section>
 <section class="card">
   <div class="card-head"><h2>Offene Bestände je Asset</h2></div>

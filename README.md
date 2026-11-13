@@ -2287,6 +2287,23 @@ Schritt „Veröffentlichte Tags“ nennt Tags und Digest.
 
 ---
 
+### Darstellung: eine Skala (ab 0.117)
+
+`app/static/css/app.css` kennt für Abstände, Schriftgrößen und Schriftstärken nur noch Variablen:
+
+| Zweck | Variablen | Werte |
+|---|---|---|
+| Abstände (`padding`, `margin`, `gap`) | `--sp-2 … --sp-48` | 2, 4, 6, 8, 10, 12, 16, 24, 32, 48 px |
+| Schriftgrößen | `--fs-2xs … --fs-xl` | 0,72 / 0,78 / 0,85 / 0,92 / 1 / 1,1 / 1,3 rem (größere Anzeigezahlen frei) |
+| Schriftstärken | `--fw-normal … --fw-bold` | 400, 500, 600, 650, 700 |
+| Abstand zwischen Karten/Blöcken | `--gap-block` | 16 px |
+| Höhe von Eingabefeldern und Auswahllisten | `--control-h` | 36 px |
+
+Templates verwenden statt `style="margin-top:8px"` die Hilfsklassen `mt-*`, `mb-*`, `gap-*` (gleiche Skala) sowie
+`fx-wrap`, `flex-1`, `items-center`, `justify-between`, `span-all` u. a. `tests/test_0117.py` schlägt fehl, sobald ein
+freier Wert im CSS auftaucht oder die Zahl der Inline-Styles wieder wächst. Umbruchpunkte: 700 px (Navigation),
+900 px, 1024 px, 1200 px; kleinere nur für einzelne Bauteile.
+
 ## Grenzen und Lizenz
 
 Bekannte Grenzen (Auswahl, vollständig in [`docs/MILESTONES.md`](docs/MILESTONES.md)):

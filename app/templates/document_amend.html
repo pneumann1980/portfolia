@@ -17,7 +17,7 @@
 {% if prop.changes and not prop.blocked %}
 <section class="card">
   <h2>Ergänzungen ({{ prop.changes|length }})</h2>
-  <form method="get" action="/journal/documents/{{ d.id }}/amend" class="stack" style="gap:8px">
+  <form method="get" action="/journal/documents/{{ d.id }}/amend" class="stack gap-8">
     <input type="hidden" name="n" value="{{ n }}"><input type="hidden" name="set" value="1">
     <div class="table-wrap cards-wrap"><table class="cards">
       <thead><tr><th><span class="sr-only">Auswahl</span></th><th>Feld</th><th>Buchung</th><th>Beleg</th><th>Begründung</th></tr></thead>

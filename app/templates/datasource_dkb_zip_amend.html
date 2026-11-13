@@ -18,7 +18,7 @@
   {% if items %}
   <section class="card">
     <h2>Vorschläge ({{ items|length }})</h2>
-    <form method="get" action="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/ergaenzen" class="stack" style="gap:8px">
+    <form method="get" action="/settings/datasources/{{ ds.id }}/dkb/zip/{{ run.id }}/ergaenzen" class="stack gap-8">
       <input type="hidden" name="v" value="1"><input type="hidden" name="quelle" value="{{ quelle }}">
       <div class="table-wrap cards-wrap"><table class="cards">
         <thead><tr><th><span class="sr-only">Auswahl</span></th><th>Beleg</th><th>Buchung</th><th>Änderung</th><th>Hinweis</th></tr></thead>

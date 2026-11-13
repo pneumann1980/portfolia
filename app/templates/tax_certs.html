@@ -17,7 +17,7 @@
 
   <section class="card" id="upload">
     <div class="card-head"><h2>Dokumente hochladen</h2><span class="hint">Jahressteuerbescheinigung · Erträgnisaufstellung („Erläuterungen zur Steuerbescheinigung“)</span></div>
-    <form method="post" action="/tax/certs/upload" enctype="multipart/form-data" class="stack" style="gap:10px">
+    <form method="post" action="/tax/certs/upload" enctype="multipart/form-data" class="stack gap-10">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label class="field">PDF-Dateien (bis zu {{ max_files }}, je höchstens {{ max_mb }} MB)<input type="file" name="file" accept=".pdf,application/pdf" multiple required></label>
       <div><button class="btn primary" type="submit">Hochladen und lesen</button></div>
@@ -47,13 +47,13 @@
         {% if 'share_gains_gross' in r.vals %}<tr><td>nachrichtlich: Aktiengewinne vor Verrechnung mit sonstigen Verlusten</td><td>–</td><td class="num">{{ r.vals.share_gains_gross|eur }}</td></tr>{% endif %}
       </tbody></table></div>
     {% for n in r.b.notes %}<p class="hint">Hinweis: {{ n }}</p>{% endfor %}
-    <div class="row" style="gap:8px;margin-top:6px"><a class="btn sm" href="/tax/certs/{{ r.year }}/bescheinigung.pdf" target="_blank" rel="noopener">Original öffnen</a>
+    <div class="row gap-8 mt-6"><a class="btn sm" href="/tax/certs/{{ r.year }}/bescheinigung.pdf" target="_blank" rel="noopener">Original öffnen</a>
       <span class="hint">{{ r.b.filename }} · hochgeladen {{ r.b.uploaded[:10]|date_de }}</span>
-      <form method="post" action="/tax/certs/{{ r.year }}/bescheinigung/delete" data-confirm="Jahressteuerbescheinigung {{ r.year }} löschen?" style="margin:0"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form></div>
+      <form method="post" action="/tax/certs/{{ r.year }}/bescheinigung/delete" data-confirm="Jahressteuerbescheinigung {{ r.year }} löschen?" class="m-0"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form></div>
     {% endif %}
 
     {% if r.e %}
-    <h3 style="margin-top:14px">Erträgnisaufstellung</h3>
+    <h3 class="mt-12">Erträgnisaufstellung</h3>
     <div class="table-wrap"><table class="compact">
       <thead><tr><th>Summenzeile</th><th class="num">Betrag</th></tr></thead>
       <tbody>
@@ -67,9 +67,9 @@
       </tbody></table></div>
     <p class="hint">{{ r.e.events|length }} Einzelvorgänge gelesen{% if r.e.column_probe %}; Spaltensummen stimmen mit der Summenzeile überein{% elif r.e.column_probe is not none %}; Spaltensummen weichen ab – nur die Summenzeile wird verwendet{% endif %}.
       Der Abgleich der Verkäufe mit Portfolia steht im Steuerbericht (Aufstellung zur Anlage KAP).</p>
-    <div class="row" style="gap:8px;margin-top:6px"><a class="btn sm" href="/tax/certs/{{ r.year }}/ertraegnis.pdf" target="_blank" rel="noopener">Original öffnen</a>
+    <div class="row gap-8 mt-6"><a class="btn sm" href="/tax/certs/{{ r.year }}/ertraegnis.pdf" target="_blank" rel="noopener">Original öffnen</a>
       <span class="hint">{{ r.e.filename }} · hochgeladen {{ r.e.uploaded[:10]|date_de }}</span>
-      <form method="post" action="/tax/certs/{{ r.year }}/ertraegnis/delete" data-confirm="Erträgnisaufstellung {{ r.year }} löschen?" style="margin:0"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form></div>
+      <form method="post" action="/tax/certs/{{ r.year }}/ertraegnis/delete" data-confirm="Erträgnisaufstellung {{ r.year }} löschen?" class="m-0"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm ghost" type="submit">Löschen</button></form></div>
     {% endif %}
   </section>
   {% else %}
