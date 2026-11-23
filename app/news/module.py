@@ -116,6 +116,11 @@ def job_enrich(ctx: AppContext) -> dict[str, Any]:
 def job_analyze(ctx: AppContext) -> dict[str, Any]:
     _observe(ctx)
     res = AnalysisService(ctx).run()
+    if res.get("skipped") == "läuft bereits" and ctx.scheduler is not None:
+        from app.news import aiplan
+
+        if aiplan.pending_requests(ctx):  # per Knopf angefordert, Lauf war belegt: gleich noch einmal
+            ctx.scheduler.trigger("news_analyze", 30)
     _observe(ctx)
     if ctx.scheduler is not None and res.get("analyzed"):
         ctx.scheduler.trigger("news_group", 5)
@@ -180,6 +185,12 @@ def job_digest(ctx: AppContext) -> dict[str, Any]:
 @extra_jobs
 def _register_jobs(s: Scheduler) -> None:
     svc = news_service(s.ctx)
+    try:
+        from app.news import aiplan
+
+        aiplan.migrate_report_time(s.ctx)
+    except Exception as e:  # Umstellung darf den Start nie verhindern
+        log.warning("Berichtszeit nicht umgestellt: %s", e)
     minutes = int(svc.cfg.settings.get("fetch_interval_minutes", 30) or 30)
     # Eigener Pool „news“: die langen News-Läufe (Abruf, Textabruf, KI-Analyse) verdrängen keine Kurs-/Import-Jobs
     s.register("news_fetch", job_fetch, IntervalTrigger(minutes=max(10, minutes)), executor="news")
@@ -318,12 +329,17 @@ def _decorate(ctx: AppContext, page: list[dict[str, Any]]) -> list[dict[str, Any
                           f"WHERE summary IS NOT NULL AND item_id IN ({ph})", ids):
             sentiment[a["item_id"]] = (a["sentiment"], a["importance"])
     trstates = transcript_states(ctx, [x["row"]["id"] for x in page if x["row"]["kind"] == "video"])
+    from app.news import aiplan
+
+    aistates = aiplan.item_states(ctx, [x["row"]["id"] for x in page
+                                        if x["row"]["kind"] == "article" and not x["row"]["llm_summary"]])
     for x in page:
         x["assets"] = [(aid, pf.asset(aid).name if pf else aid) for aid in assets_by_item.get(x["row"]["id"], [])]
         x["event"] = events.get(x["row"]["id"])
         x["cstatus"] = cstatus.get(x["row"]["id"])
         x["sentiment"], x["importance"] = sentiment.get(x["row"]["id"], (None, None))
         x["tr"] = trstates.get(x["row"]["id"])
+        x["ai"] = aistates.get(x["row"]["id"])
     return page
 
 
@@ -351,6 +367,9 @@ def transcript_states(ctx: AppContext, ids: list[int]) -> dict[int, dict[str, An
             from app.news.ai import next_pacific_midnight
 
             vwait = {"until": next_pacific_midnight(), "reason": "Tageslimit des Video-Modells erreicht"}
+    from app.news import aiplan
+
+    manual_videos = aiplan.video_mode(ctx) == "manual"
     ph = ",".join("?" * len(ids))
     out: dict[int, dict[str, Any]] = {}
     for r in ctx.db.q(
@@ -360,6 +379,7 @@ def transcript_states(ctx: AppContext, ids: list[int]) -> dict[int, dict[str, An
         reason = str(r["reason"] or "")
         if r["status"] == "success" and reason.startswith("transcript:"):
             st = ("done" if r["asum"] else "analysis_failed" if r["aid"] else
+                  "none" if ai_on and manual_videos and not r["tr_requested_at"] else  # 0.119: nur per Knopf
                   ("ai_waiting" if vwait else "analyzing") if ai_on else "ai_off")
         elif r["status"] == "failed":
             st = "no_captions" if reason in ("no_transcript", "unavailable") else "failed"
@@ -553,7 +573,14 @@ def reader_context(ctx: AppContext, row: Any, back: str = "") -> dict[str, Any]:
     return {"n": row, "content": content, "paragraphs": paragraphs, "analysis": analysis, "event": ev,
             "others": others, "assets": assets, "back": _safe_back(back), "ai": AiGateway(ctx),
             "transcript": transcript, "video_url": row["url"], "video_at": video_at,
-            "tr": transcript_states(ctx, [iid]).get(iid) if row["kind"] == "video" else None}
+            "tr": transcript_states(ctx, [iid]).get(iid) if row["kind"] == "video" else None,
+            "ai_state": _ai_state(ctx, iid) if row["kind"] == "article" and analysis is None else None}
+
+
+def _ai_state(ctx: AppContext, iid: int) -> dict[str, Any] | None:
+    from app.news import aiplan
+
+    return aiplan.item_states(ctx, [iid]).get(iid)
 
 
 def video_at(url: str, stelle: str) -> str:
@@ -781,6 +808,28 @@ def make_router() -> APIRouter:
         ctx = get_ctx(request)
         return render(request, "partials/news_tr_state.html", alerts=[], iid=item_id,
                       tr=request_transcript(ctx, item_id))
+
+    @router.post("/news/{item_id:int}/summarize", response_class=HTMLResponse)
+    def summarize_request(request: Request, item_id: int, full: int = 0) -> HTMLResponse:
+        """Knopf „Zusammenfassen“ (0.119) an Artikelkarte und Leseansicht – Fragment mit Live-Stand."""
+        from app.news import aiplan
+
+        ctx = get_ctx(request)
+        try:
+            st = aiplan.request(ctx, item_id)
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+        return render(request, "partials/news_ai_state.html", alerts=[], iid=item_id, aist=st, ai_full=bool(full))
+
+    @router.get("/news/{item_id:int}/ai/state", response_class=HTMLResponse)
+    def summarize_state(request: Request, item_id: int, full: int = 0) -> HTMLResponse:
+        from app.news import aiplan
+
+        ctx = get_ctx(request)
+        st = aiplan.item_states(ctx, [item_id]).get(item_id)
+        if st is None:
+            raise HTTPException(404)
+        return render(request, "partials/news_ai_state.html", alerts=[], iid=item_id, aist=st, ai_full=bool(full))
 
     @router.get("/news/{item_id:int}/transcript/state", response_class=HTMLResponse)
     def transcript_state(request: Request, item_id: int) -> HTMLResponse:

@@ -1,4 +1,4 @@
-# News-Intelligence (0.46; Tempo 0.118): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
+# News-Intelligence (0.46; Tempo 0.118; KI je Bereich 0.119): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
 
 Stand: 0.48.2. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
 **rückwärtskompatibel**: der Feed-Import, die Relevanz-/Dedupe-Logik, YouTube und Claude-Zusammenfassungen laufen
@@ -396,6 +396,47 @@ Gemessen mit einem Bestand wie nach 90 Tagen Aufbewahrung (≈37.000 Meldungen, 
   Links ohne JavaScript bleiben erhalten).
 * **Ladezeiten:** Server-Antwortzeit der News-Seite und der Vorschaubilder (Median, 95 %, Höchstwert der letzten bis zu
   200 Aufrufe) im Reiter „Status“.
+
+## 0.119: KI je Bereich – Top-News automatisch, übrige per Knopf
+
+Ziel: weniger KI-Anfragen, ohne Tagesbericht, Stimmungsbarometer und Nachrichtensignale aufzugeben.
+Einstellungen → KI & Modelle → **KI je Bereich** (`app/news/aiplan.py`):
+
+| Bereich | Auswahl | Standard |
+|---|---|---|
+| Artikel (`news.ai_articles`) | Top-News automatisch, übrige per Knopf · Alle automatisch (Verhalten bis 0.118) · Nur per Knopf | Top-News, **50 je Tag** (`news.ai_top_per_day`) |
+| Community (`news.ai_community`) | Alle automatisch · Nur per Knopf · Aus | Alle automatisch |
+| Videos (`news.ai_videos`) | Lieblingskanäle automatisch, übrige per Knopf · Nur per Knopf | wie bisher |
+| Halbvolle Pakete (`news.ai_batch_wait_min`) | Minuten | 30 |
+| Tagesbericht | Uhrzeit unter Einstellungen → News | **22:15** (nach US-Börsenschluss) |
+
+* **Top-News ohne KI ausgewählt:** lokale Rangfolge der letzten 24 Stunden (Relevanz, Mehrfachberichte, Gewicht der
+  Quelle, Aktualität – dieselbe Formel wie die Analysewarteschlange); analysiert wird, was unter den ersten N steht.
+  **Quoten:** je gehaltener Position die zwei relevantesten Meldungen (Barometer je Position braucht mindestens zwei)
+  und je Watchlist-/Vorschlags-Unternehmen die relevanteste Meldung, die Namen oder Symbol nennt (Nachrichtensignale).
+  **Tagesobergrenze** N je lokalem Kalendertag (gezählt über `news_analysis.trigger` = `top`/`quote`); in den 90
+  Minuten vor dem Tagesbericht dürfen zehn weitere nachrücken.
+* **Knopf „Zusammenfassen“** an jeder nicht analysierten Artikelkarte und in der Leseansicht
+  (`POST /news/<id>/summarize`, Live-Stand über `/news/<id>/ai/state`): Anforderung in `news_item.ai_requested_at`,
+  Vorrang in der Warteschlange und bei der Rücklage für manuelle Starts, Lauf nach 20 s (Klicks dazwischen gehen in
+  ein Paket), höchstens 3 Minuten Warten auf den Artikeltext. Ergebnis: dieselbe Aufbereitung wie bisher; es fließt in
+  Tagesbericht, Barometer und Signale ein und zählt nicht gegen die Tagesobergrenze.
+* **Volle Pakete:** Gesendet wird je Aufgabe in Paketen zu 6; ein halbvolles Paket wartet, bis die älteste Meldung 30
+  Minuten alt ist (Knopf und „Jetzt abarbeiten“ senden sofort).
+* **Community als eigene KI-Aufgabe** `community`: getrennt gezählt, im Profil „Individuell“ ein eigenes Modell
+  wählbar (ohne Angabe: Modell der Nachrichten), im Profil „Kostenbewusst“ Flash-Lite. Quellen mit `ai: false`
+  bleiben ausgenommen (Telegram ist ohne Angabe `ai: false`).
+* **Ereignis-Grenzfälle:** außer im Modus „Alle automatisch“ prüft die KI nur Paare, deren Meldungen beide analysiert
+  sind.
+* **Herkunft je Analyse:** `news_analysis.trigger` = `top` | `quote` | `alle` | `knopf` | `community` (Migration 46).
+* **Verbrauch je Bereich:** Anfragen heute und im Schnitt der letzten bis zu sieben Tage; geschätzter Tagesbedarf
+  aus Einstellung und Zufluss.
+* **Tagesbericht 22:15:** neuer Standard; eine gespeicherte Zeit 07:30 (alter Standard) wird einmalig umgestellt, eine
+  selbst gewählte Zeit bleibt.
+
+Grenzen: Der Bericht sortiert weiter nach der KI-Bedeutung – aber nur unter den analysierten Meldungen. Eine wichtige
+Meldung aus nur einer Quelle ohne Positions- oder Watchlist-Bezug kann außerhalb der Top-Auswahl bleiben. Das
+Barometer misst die Stimmung der wichtigsten und der selbst angeforderten Meldungen, nicht mehr aller Meldungen.
 
 ## Tests
 

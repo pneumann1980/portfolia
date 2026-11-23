@@ -62,6 +62,9 @@
   {% elif tr and tr.state == 'ai_off' %}
   <section class="card"><p class="hint">Die KI ist ausgeschaltet – Kernaussagen entstehen, sobald sie aktiviert ist (<a href="/settings/ki">Einstellungen → KI &amp; Modelle</a>). Das Transkript steht unten.</p></section>
   {% endif %}
+  {% if ai_state and ai_state.state not in ('off', 'done') %}
+  <section class="card"><div class="card-head"><h2>KI-Zusammenfassung</h2></div>{% set aist = ai_state %}{% set iid = n.id %}{% set ai_full = True %}{% include "partials/news_ai_state.html" %}</section>
+  {% endif %}
   {% if analysis %}
   <section class="card ai-box" aria-label="KI-Analyse">
     <div class="card-head"><h2>{{ 'Kernaussagen des Videos' if analysis.video else 'KI-Zusammenfassung' }} <span class="badge info">KI</span></h2>

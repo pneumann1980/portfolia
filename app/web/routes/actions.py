@@ -254,6 +254,10 @@ async def save_settings(request: Request) -> Response:
                 ctx.scheduler.trigger("history_backfill", 1)
         elif section == "ai":  # 0.113: KI & Modelle – eigener Bereich, nur übermittelte Felder
             _save_ai(ctx, f)
+        elif section == "news_ai":  # 0.119: KI je Bereich (Artikel, Community, Videos)
+            from app.news import aiplan
+
+            aiplan.save(ctx, f)
         elif section == "news":  # nur News-Schlüssel; Anbieter, Modelle und KI-Budgets: Bereich „ai“
             s.set("news.min_relevance", _float(f.get("min_relevance"), 0.2, 0.0, 5.0))
             s.set("news.dashboard_count", _int(f.get("dashboard_count"), 5, 1, 20))
@@ -286,7 +290,8 @@ async def save_settings(request: Request) -> Response:
             schedule_export(ctx)
         except Exception as e:  # pragma: no cover – Sicherung darf das Speichern nie verhindern
             log.debug("Sicherung nicht eingeplant: %s", e)
-        target = "/settings/ki?saved=ai#ki" if section == "ai" else f"/settings?saved={section}#{section}"
+        target = ("/settings/ki?saved=ai#ki" if section == "ai" else "/settings/ki?saved=news_ai#ki-bereiche"
+                  if section == "news_ai" else f"/settings?saved={section}#{section}")
         if request.headers.get("hx-request") == "true":
             return Response(status_code=204, headers={"HX-Redirect": target})
         return Response(status_code=303, headers={"Location": target})

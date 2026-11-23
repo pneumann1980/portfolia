@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.context import AppContext
-from app.news import hosts
+from app.news import aiplan, hosts
 from app.news.ai import (
     AiError,
     AiGateway,
@@ -49,6 +49,7 @@ MAX_SECONDS = 480  # Laufzeit-Obergrenze je Job-Lauf (der nächste Lauf macht we
 PER_ROUND = BATCH * 6
 TEXT_LIMIT = 3200  # Zeichen je Artikel in der Anfrage (Anfang des Artikels enthält die Kernaussagen)
 RETRY_AFTER_ERROR = timedelta(hours=12)
+KNOPF_TEXT_WAIT = timedelta(minutes=3)  # per Knopf angefordert: so lange höchstens auf den Artikeltext warten
 WAIT_MIN = 60  # so lange (ab Import) wartet die Analyse höchstens auf den Artikeltext (news.analysis_wait_min)
 PROTECT_HOURS = 6  # Rückstau-Schutz ab dieser geschätzten Abarbeitungsdauer (Einstellung news.analysis_protect_hours)
 PROTECT_AGE_H = 24  # unter Schutz nur Meldungen bis zu diesem Alter (news.analysis_protect_age_h)
@@ -302,6 +303,7 @@ class AnalysisService:
         self.ctx = ctx
         self.db = ctx.db
         self.ai = gateway or AiGateway(ctx)
+        self.flush = False  # True: halbvolle Pakete sofort senden (manueller Lauf)
 
     def enabled(self) -> bool:
         return bool(self.ctx.settings.get("news.analysis", True)) and self.ai.enabled()
@@ -313,13 +315,14 @@ class AnalysisService:
         since = iso(datetime.now(UTC) - timedelta(hours=hours))
         skip_sql, skip_args = not_in_clause("n.source_id", ai_off_ids(self.ctx.config.sources_path))
         rows = self.db.q(
-            """SELECT n.id, n.url, n.title, n.summary, n.source_name, n.published_at, n.relevance, n.dup_count,
-                      n.source_weight, n.fetched_at,
+            """SELECT n.id, n.url, n.title, n.summary, n.source_id, n.source_name, n.published_at, n.relevance,
+                      n.dup_count, n.source_weight, n.fetched_at, n.ai_requested_at,
                       c.status AS cstatus, c.final_url, c.content, c.excerpt, c.content_hash, c.word_count,
                       a.input_hash AS ahash, a.analyzed_at, a.summary AS asummary
                FROM news_item n LEFT JOIN news_content c ON c.item_id=n.id
                     LEFT JOIN news_analysis a ON a.item_id=n.id
-               WHERE n.kind='article' AND n.hidden_reason IS NULL AND n.published_at >= ?""" + skip_sql + """
+               WHERE n.kind='article' AND n.hidden_reason IS NULL
+                 AND (n.published_at >= ? OR n.ai_requested_at IS NOT NULL)""" + skip_sql + """
                ORDER BY n.published_at DESC LIMIT 5000""", (since, *skip_args))
         # Auf den Artikeltext wartet nur, wer ihn bald bekommt: Text fertig (auch gesperrt/fehlgeschlagen), Abruf aus,
         # Quelle pausiert oder „nur Teaser“ (kommt nie) oder die Wartezeit abgelaufen → sonst später (Teaser-Analyse)
@@ -331,10 +334,12 @@ class AnalysisService:
         out = []
         for r in rows:
             r = dict(r)
+            asked = parse_iso(r["ai_requested_at"])
             if (enrich_on and r["cstatus"] not in ("success", "partial", "blocked", "failed")
                     and (parse_iso(r["fetched_at"]) or now) > ready_before
+                    and not (asked and now - asked >= KNOPF_TEXT_WAIT)
                     and not hosts.text_unlikely(hosts.host_of(r["final_url"] or r["url"]), paused, teaser)):
-                continue  # Text wird noch erwartet
+                continue  # Text wird noch erwartet (per Knopf angefordert: höchstens wenige Minuten)
             h = input_hash(r["title"], r["content_hash"], r["summary"] or "")
             if r["ahash"] == h:
                 if r["asummary"]:
@@ -346,16 +351,17 @@ class AnalysisService:
             age_h = max(0.0, (now - pub).total_seconds() / 3600)
             r["hash"] = h
             r["age_h"] = age_h
-            r["priority"] = (float(r["relevance"]) + 0.06 * min(int(r["dup_count"]), 6)
-                             + 0.1 * float(r["source_weight"]) + 0.2 / (1.0 + age_h / 12.0))
+            r["priority"] = aiplan.local_priority(r["relevance"], r["dup_count"], r["source_weight"], age_h)
             out.append(r)
-        return out
+        return aiplan.plan(self.ctx, out)  # 0.119: KI je Bereich – nur Top-News/Community/Knopf (Einstellung)
 
     def video_candidates(self, limit: int) -> list[dict[str, Any]]:
         """Videos mit geladenem Transkript, die (für diesen Stand) noch keine Analyse haben – angeforderte (Knopf,
         auch ältere als ``news.video_analysis_hours``) zuerst, danach neueste zuerst."""
         hours = int(self.ctx.settings.get("news.video_analysis_hours", VIDEO_HOURS))
         skip_sql, skip_args = not_in_clause("n.source_id", ai_off_ids(self.ctx.config.sources_path))
+        if aiplan.video_mode(self.ctx) == "manual":  # 0.119: nur per Knopf angeforderte Videos
+            skip_sql += " AND 0"
         rows = self.db.q(
             """SELECT n.id, n.title, n.url, n.channel_name, n.source_name, n.published_at, n.duration_s,
                       n.tr_requested_at, c.content, c.content_hash, c.reason AS creason,
@@ -498,7 +504,7 @@ class AnalysisService:
         guard = self.pressure(out)
         if guard["active"]:
             age_max = guard["age_h"]
-            out = [r for r in out if r["age_h"] <= age_max]
+            out = [r for r in out if r["age_h"] <= age_max or r.get("trigger") == "knopf"]
             for r in out:  # neueste zuerst; die Relevanz entscheidet nur noch innerhalb ähnlicher Aktualität
                 r["priority"] += max(0.0, 1.0 - r["age_h"] / age_max)
         out.sort(key=lambda x: -x["priority"])
@@ -552,12 +558,13 @@ class AnalysisService:
             (since, *skip_args), default=0) or 0)
 
     def run(self, limit: int | None = None, max_seconds: float | None = None, *, wait_s: float = 0.0,
-            on_batch: Callable[[int], None] | None = None) -> dict[str, Any]:
+            on_batch: Callable[[int], None] | None = None, flush: bool = False) -> dict[str, Any]:
         """Rückstau abarbeiten: in Runden zu je ``PER_ROUND`` Meldungen (nach Priorität), bis nichts mehr wartet, ein
         Limit (Minute/Tag/Budget) greift, der Anbieter stört oder die Laufzeit-Obergrenze erreicht ist.
         ``wait_s`` wartet auf einen laufenden Lauf derselben Stufe, ``on_batch`` meldet die Zahl der je Anfrage
         bearbeiteten Meldungen (Lebenszeichen des manuellen Laufs)."""
         res: dict[str, Any] = {"analyzed": 0, "rejected": 0, "requests": 0}
+        self.flush = flush
         if not self.enabled():
             return {"skipped": "Analyse deaktiviert oder KI nicht konfiguriert"}
         with exclusive(self.ctx, "analyze", wait_s) as got:
@@ -577,14 +584,16 @@ class AnalysisService:
         if self._videos(res, deadline):
             res["backlog_left"] = self.backlog()
             return res
+        held: set[int] = set()  # halbvolle Pakete, die noch auf weitere Meldungen warten (0.119)
         while res["selected"] < limit and time.monotonic() < deadline:
-            rows = self.candidates(min(PER_ROUND, limit - res["selected"]))
-            if not rows:
+            rows = [r for r in self.candidates(PER_ROUND + len(held)) if r["id"] not in held]
+            rows = rows[:max(0, min(PER_ROUND, limit - res["selected"]))]
+            chunks = self._packets(rows, held)
+            if not chunks:
                 break
-            res["selected"] += len(rows)
             stop = False
-            for i in range(0, len(rows), BATCH):
-                chunk = rows[i:i + BATCH]
+            for chunk in chunks:
+                res["selected"] += len(chunk)
                 try:
                     self._batch(chunk, res)
                     if on_batch is not None:
@@ -603,12 +612,40 @@ class AnalysisService:
                     break
             if stop:
                 break
+        if held:
+            res["waiting_full_packet"] = len(held)
         res["backlog_left"] = self.backlog()
         return res
 
+    def _packets(self, rows: list[dict[str, Any]], held: set[int]) -> list[list[dict[str, Any]]]:
+        """Pakete je Aufgabe (``news`` | ``community``) zu je ``BATCH`` Meldungen. Ein halbvolles Paket geht nur raus,
+        wenn es eine per Knopf angeforderte Meldung enthält, seine älteste Meldung schon ``news.ai_batch_wait_min``
+        Minuten wartet oder der Lauf ausdrücklich alles abarbeiten soll (``self.flush``, „Jetzt abarbeiten“) – sonst
+        wartet es (``held``) auf weitere Meldungen: ein halbvolles Paket kostet eine ganze Anfrage."""
+        wait = timedelta(0) if self.flush else aiplan.batch_wait(self.ctx)
+        now = datetime.now(UTC)
+        out: list[list[dict[str, Any]]] = []
+        by_task: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            by_task.setdefault(str(r.get("task") or "news"), []).append(r)
+        for group in by_task.values():
+            group.sort(key=lambda x: (x.get("trigger") != "knopf", -float(x.get("priority") or 0)))
+            for i in range(0, len(group), BATCH):
+                chunk = group[i:i + BATCH]
+                if len(chunk) < BATCH and not any(r.get("trigger") == "knopf" for r in chunk):
+                    oldest = min((parse_iso(r["fetched_at"]) or now) for r in chunk)
+                    if now - oldest < wait:
+                        held.update(r["id"] for r in chunk)
+                        continue
+                out.append(chunk)
+        return out
+
     def _batch(self, chunk: list[dict[str, Any]], res: dict[str, Any]) -> None:
         user, basis = self.payload(chunk)
-        out = self.ai.generate(SYSTEM, user, None, 1800 * len(chunk), json_mode=True, task="news")
+        task = str(chunk[0].get("task") or "news")  # Pakete sind je Aufgabe getrennt (news | community)
+        manual = any(r.get("trigger") == "knopf" for r in chunk)
+        out = self.ai.generate(SYSTEM, user, None, 1800 * len(chunk), json_mode=True, task=task,
+                               priority="manual" if manual else None)
         res["requests"] += 1
         try:
             data = parse_json(out.text)
@@ -641,17 +678,18 @@ class AnalysisService:
                prompt_version: int = PROMPT_VERSION) -> None:
         self.db.x(
             """INSERT INTO news_analysis(item_id, input_hash, provider, model, prompt_version, basis, category, scope,
-                   sentiment, importance, confidence, summary, result_json, input_tokens, output_tokens, analyzed_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   sentiment, importance, confidence, summary, result_json, input_tokens, output_tokens, analyzed_at,
+                   trigger)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(item_id) DO UPDATE SET input_hash=excluded.input_hash, provider=excluded.provider,
                    model=excluded.model, prompt_version=excluded.prompt_version, basis=excluded.basis,
                    category=excluded.category, scope=excluded.scope, sentiment=excluded.sentiment,
                    importance=excluded.importance, confidence=excluded.confidence, summary=excluded.summary,
                    result_json=excluded.result_json, input_tokens=excluded.input_tokens,
-                   output_tokens=excluded.output_tokens, analyzed_at=excluded.analyzed_at""",
+                   output_tokens=excluded.output_tokens, analyzed_at=excluded.analyzed_at, trigger=excluded.trigger""",
             (r["id"], r["hash"], out.provider, out.model, prompt_version, basis, v["kategorie"], v["geltungsbereich"],
              v["stimmung"], v["bedeutung"], v["konfidenz"], v["zusammenfassung"], json.dumps(v, ensure_ascii=False),
-             tin, tout, iso(datetime.now(UTC))))
+             tin, tout, iso(datetime.now(UTC)), r.get("trigger")))
         # die Listenansicht zeigt die KI-Zusammenfassung wie bisher (llm_summary), jetzt aus der Analyse
         self.db.x("UPDATE news_item SET llm_summary=?, llm_score=? WHERE id=?",
                   (v["zusammenfassung"][:1000], v["bedeutung"], r["id"]))
@@ -659,12 +697,12 @@ class AnalysisService:
     def _store_error(self, r: dict[str, Any], code: str, out: Any = None) -> None:
         self.db.x(
             """INSERT INTO news_analysis(item_id, input_hash, provider, model, prompt_version, basis, result_json,
-                   analyzed_at) VALUES (?,?,?,?,?,?,?,?)
+                   analyzed_at, trigger) VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(item_id) DO UPDATE SET input_hash=excluded.input_hash, result_json=excluded.result_json,
-                   summary=NULL, analyzed_at=excluded.analyzed_at""",
+                   summary=NULL, analyzed_at=excluded.analyzed_at, trigger=excluded.trigger""",
             (r["id"], r["hash"], getattr(out, "provider", self.ai.provider_name()),
              getattr(out, "model", self.ai.model()), PROMPT_VERSION, "error", json.dumps({"error": code}),
-             iso(datetime.now(UTC))))
+             iso(datetime.now(UTC)), r.get("trigger")))
 
     # -- Lesen ---------------------------------------------------------------------------------------------
     def get(self, item_id: int) -> dict[str, Any] | None:

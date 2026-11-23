@@ -1,0 +1,19 @@
+{# KI-Zusammenfassung je Artikel (0.119). Erwartet: iid, aist (aiplan.item_states) und optional ai_full (Leseansicht).
+   Zustände: none (Knopf) | auto (folgt automatisch) | queued | waiting | done | failed | off. #}
+<div id="ais-{{ iid }}" class="ai-state"{% if aist.poll %} hx-get="/news/{{ iid }}/ai/state{{ '?full=1' if ai_full }}" hx-trigger="every {{ aist.poll }}" hx-swap="outerHTML"{% endif %}>
+  {% if aist.state == 'none' %}
+    <button class="btn sm" hx-post="/news/{{ iid }}/summarize{{ '?full=1' if ai_full }}" hx-target="#ais-{{ iid }}" hx-swap="outerHTML" title="Artikel von der KI zusammenfassen und einordnen lassen (Fakten, Einordnung, betroffene Werte) – fließt auch in Tagesbericht und Stimmungsbarometer ein">Zusammenfassen</button>
+  {% elif aist.state == 'auto' %}
+    <span class="hint" title="Gehört zu den Top-News bzw. zur Community – die KI-Auswertung folgt automatisch (Pakete werden gesammelt, höchstens 30 Minuten)">KI-Auswertung folgt automatisch</span>
+  {% elif aist.state == 'queued' %}
+    <span class="badge info" role="status"><span class="spinner" aria-hidden="true"></span> KI fasst zusammen …</span>
+  {% elif aist.state == 'waiting' %}
+    <span class="badge warn" role="status" title="{{ aist.reason }}">vorgemerkt – KI pausiert bis {{ aist.until|datetime_de }}</span>
+  {% elif aist.state == 'done' %}
+    {% if ai_full %}<a class="btn sm" href="/news/{{ iid }}">KI-Zusammenfassung anzeigen</a>
+    {% else %}<div class="summary"><span class="badge info">KI</span> {{ aist.summary }}</div><a class="small" href="/news/{{ iid }}">Ganze Auswertung lesen →</a>{% endif %}
+  {% elif aist.state == 'failed' %}
+    <span class="badge warn">KI-Auswertung fehlgeschlagen</span>
+    <button class="btn sm ghost" hx-post="/news/{{ iid }}/summarize{{ '?full=1' if ai_full }}" hx-target="#ais-{{ iid }}" hx-swap="outerHTML">Erneut versuchen</button>
+  {% endif %}
+</div>

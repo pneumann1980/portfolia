@@ -104,8 +104,14 @@ DEFAULTS: dict[str, Any] = {
     "news.group_hours": 72,
     "news.group_llm": True,
     "news.report": True,  # täglicher Finanzmarktbericht (nur mit aktivierter KI)
-    "news.report_hour": 7,
-    "news.report_minute": 30,
+    "news.report_hour": 22,  # 0.119: nach US-Börsenschluss (22:00 MEZ) – der ganze Handelstag ist enthalten
+    "news.report_minute": 15,
+    # KI je Bereich (0.119): was automatisch analysiert wird und was nur per Knopf
+    "news.ai_articles": "top",  # top = Top-News automatisch, übrige per Knopf | all = alle automatisch | manual
+    "news.ai_top_per_day": 50,  # Obergrenze automatisch analysierter Artikel je Tag (ohne Knopf und Community)
+    "news.ai_community": "all",  # all = alle Community-Beiträge automatisch | manual = per Knopf | off
+    "news.ai_videos": "favorites",  # favorites = Lieblingskanäle automatisch, übrige per Knopf | manual
+    "news.ai_batch_wait_min": 30,  # halbvolle Pakete warten höchstens so lange auf weitere Meldungen
     "news.report_hours": 24,
     # Steuer
     "tax.rulepack": "auto",
