@@ -1357,6 +1357,13 @@ CREATE TABLE IF NOT EXISTS img_fail (
   tries     INTEGER NOT NULL DEFAULT 1
 ) WITHOUT ROWID;
 """),
+    (46, """
+-- 0.119: KI je Bereich – Knopf „Zusammenfassen“ (Anforderung je Meldung) und Herkunft jeder Analyse
+-- (top | quote | alle | knopf | community | video), damit die Tagesobergrenze der Top-News zählbar ist.
+ALTER TABLE news_item ADD COLUMN ai_requested_at TEXT;
+ALTER TABLE news_analysis ADD COLUMN trigger TEXT;
+CREATE INDEX IF NOT EXISTS ix_news_analysis_trigger ON news_analysis(trigger, analyzed_at);
+"""),
 ]
 
 

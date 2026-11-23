@@ -462,7 +462,9 @@ def settings_ai_page(request: Request, saved: str = "", models: str = "", models
     """Einstellungen → KI & Modelle (0.113): Anbieter, Modellstrategie, wirksame Modelle, Kontingent; Technik unter
     „Erweitert“."""
     ctx = get_ctx(request)
-    return render(request, "settings_ai.html", active="settings", s=ctx.settings.all(),
+    from app.news import aiplan
+
+    return render(request, "settings_ai.html", active="settings", s=ctx.settings.all(), areas=aiplan.overview(ctx),
                   secrets=ctx.config.secrets.status(), gemini_models=_gemini_models(ctx), ai_cfg=_ai_cfg(ctx),
                   saved=saved, models_msg=models[:6], models_err=models_err[:240])
 
@@ -511,7 +513,8 @@ def settings_page(request: Request, saved: str = "", err: str = "") -> HTMLRespo
 
 
 # Aufgaben in der Reihenfolge und mit den Namen der Einstellungsseite (interne Schlüssel unverändert)
-TASK_UI = {"news": "Nachrichtenanalyse", "events": "Ereignisgruppierung", "report": "Tagesbericht",
+TASK_UI = {"news": "Nachrichtenanalyse", "community": "Community-Beiträge", "events": "Ereignisgruppierung",
+           "report": "Tagesbericht",
            "discovery": "KI-Discovery", "company": "Unternehmensanalyse", "video": "Video-Kernaussagen"}
 STRATEGIES = {"free_tier": ("Kostenbewusst optimiert", "passende Modelle für jede Aufgabe (empfohlen)"),
               "einzeln": ("Ein Modell für alles", "einfachste Konfiguration"),

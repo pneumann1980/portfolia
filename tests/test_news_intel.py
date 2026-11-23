@@ -66,6 +66,17 @@ def ctx(config):
 
 
 @pytest.fixture(autouse=True)
+def _analyse_all_articles(monkeypatch):
+    """Diese Tests prüfen die Analyse-Warteschlange (Runden, Rückstau-Schutz, Grenzfälle) – wie bis 0.118 mit
+    „Alle automatisch“ und ohne Wartezeit für halbvolle Pakete. Der Standard seit 0.119 (Top-News, Knopf, volle
+    Pakete) steht in tests/test_0119.py."""
+    from app.settings_store import DEFAULTS
+
+    monkeypatch.setitem(DEFAULTS, "news.ai_articles", "all")
+    monkeypatch.setitem(DEFAULTS, "news.ai_batch_wait_min", 0)
+
+
+@pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
     class Instant:
         def __init__(self, *_a, **_k) -> None:
@@ -1642,7 +1653,7 @@ def test_dashboard_shows_top_news_with_ai_and_falls_back(sample_client):
     assert "KI-Auswertung derzeit eingeschränkt" not in page
     assert "data-news-switch" in page and 'class="nv nv-orig"' in page and 'data-news-view="orig"' in page
     assert f'href="/news/{a}"' in page and f'href="/news/{b}"' in page and f'href="/news/{raw}"' in page
-    assert ">negativ<" in page and ">positiv<" in page and "KI ausstehend" in page and "hohe Bedeutung" in page
+    assert ">negativ<" in page and ">positiv<" in page and "noch ohne KI" in page and "hohe Bedeutung" in page
     assert "keine Anlageberatung" in page
 
 

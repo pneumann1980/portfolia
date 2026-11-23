@@ -110,6 +110,24 @@ def ai_off_ids(path: Path) -> frozenset[str]:
     return ids
 
 
+_TG_CACHE: dict[str, tuple[float, frozenset[str]]] = {}
+
+
+def telegram_ids(path: Path) -> frozenset[str]:
+    """IDs der Community-Quellen (Telegram), je Änderungszeit von ``sources.yaml`` zwischengespeichert (0.119)."""
+    try:
+        mtime = Path(path).stat().st_mtime
+    except OSError:
+        return frozenset()
+    hit = _TG_CACHE.get(str(path))
+    if hit and hit[0] == mtime:
+        return hit[1]
+    cfg = SourcesConfig(Path(path), Path(path))
+    ids = frozenset(src.id for src in cfg.sources() if src.type == "telegram")
+    _TG_CACHE[str(path)] = (mtime, ids)
+    return ids
+
+
 def not_in_clause(column: str, ids: frozenset[str]) -> tuple[str, tuple[str, ...]]:
     """``AND <column> NOT IN (...)`` für SQL; leer, wenn nichts auszuschließen ist."""
     if not ids:

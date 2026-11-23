@@ -221,7 +221,7 @@ class WaveRunner:
             if time.monotonic() > deadline:
                 note = note or "Zeitlimit"
                 break
-            res = self.analysis.run(wait_s=LOCK_WAIT_S, on_batch=self._alive)
+            res = self.analysis.run(wait_s=LOCK_WAIT_S, on_batch=self._alive, flush=True)
             self._observe()
             if res.get("skipped"):
                 break

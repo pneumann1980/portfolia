@@ -211,6 +211,9 @@ class EventService:
                     pairs[key] = (0.0, "") if a["event_id"] and a["event_id"] == b["event_id"] else self.score(a, b)
         res = {"items": len(items), "merged": 0, "llm_pairs": 0, "events": 0}
         grey: list[tuple[int, int]] = []
+        from app.news import aiplan
+
+        all_analyzed = aiplan.article_mode(self.ctx) == "all"
         for (x, y), (sc, _method) in sorted(pairs.items(), key=lambda kv: -kv[1][0]):  # stärkste Paare zuerst
             a, b = by_id[x], by_id[y]
             locked = bool(a["locked"] or b["locked"])
@@ -219,7 +222,9 @@ class EventService:
                     continue  # manuell bestätigte Ereignisse werden nicht automatisch erweitert
                 self._try_merge(x, y, uf, comp, by_id, pairs, force=sc >= 1.0)  # gleicher Text (1,0) ist immer sicher
             elif sc >= WEAK and not locked and abs((a["pub"] - b["pub"]).total_seconds()) <= 24 * 3600:
-                grey.append((x, y))
+                # 0.119: KI-Grenzfälle nur zwischen analysierten Meldungen, wenn nicht alle Artikel analysiert werden
+                if all_analyzed or (a["result_json"] and b["result_json"]):
+                    grey.append((x, y))
         if grey and self.ctx.settings.get("news.group_llm", True) and self.ai.enabled():
             grey.sort(key=lambda p: -pairs[p][0])
             decided = self._ask_llm([(by_id[x], by_id[y]) for x, y in grey[:LLM_PAIRS]], res)

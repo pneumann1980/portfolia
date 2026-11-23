@@ -85,5 +85,35 @@
   </form>
   <p class="hint">Ausgeblendete Felder (anderer Anbieter, andere Strategie) werden nicht verändert – deine Einstellungen bleiben beim Wechsel erhalten. Welche Funktionen KI nutzen, stellst du unter <a href="/settings#news">News &amp; Artikeltexte</a> und auf der <a href="/discovery#disc-einstellungen">Discovery-Seite</a> ein.</p>
 </section>
+
+<section class="card mt-16" id="ki-bereiche">
+  <div class="card-head"><div><h2>KI je Bereich</h2><span class="hint">Was die KI automatisch auswertet – und was nur per Knopf „Zusammenfassen“ bzw. „Kernaussagen erstellen“</span></div>
+    {% if saved == 'news_ai' %}<span class="badge good">✓ gespeichert</span>{% endif %}</div>
+  <form method="post" action="/settings/save">
+    <input type="hidden" name="section" value="news_ai">
+    <div class="grid-2">
+      <label class="field">Artikel
+        <select name="ai_articles">{% for k, lbl in areas.article_modes.items() %}<option value="{{ k }}" {% if areas.articles == k %}selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></label>
+      <label class="field">Top-News je Tag (automatisch)
+        <input type="number" min="5" max="300" name="ai_top_per_day" value="{{ areas.top_per_day }}"></label>
+      <label class="field">Community (Telegram)
+        <select name="ai_community">{% for k, lbl in areas.community_modes.items() %}<option value="{{ k }}" {% if areas.community == k %}selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></label>
+      <label class="field">Videos
+        <select name="ai_videos">{% for k, lbl in areas.video_modes.items() %}<option value="{{ k }}" {% if areas.videos == k %}selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></label>
+      <label class="field">Halbvolle Pakete warten höchstens (Minuten)
+        <input type="number" min="0" max="240" name="ai_batch_wait_min" value="{{ areas.batch_wait }}"></label>
+      <div class="field"><span>Tagesbericht</span>
+        <span class="hint">{% if areas.report_on %}täglich um {{ areas.report_time }} Uhr{% else %}ausgeschaltet{% endif %} – Uhrzeit unter <a href="/settings#news">Einstellungen → News</a></span></div>
+    </div>
+    <p class="hint mt-8">Top-News wählt Portfolia <b>ohne KI</b> aus: Relevanz, Zahl der Berichte zum selben Thema, Gewicht der Quelle und Aktualität der letzten 24 Stunden – dazu je Position die zwei relevantesten Meldungen (Stimmungsbarometer je Position) und Meldungen zu Watchlist-Unternehmen (Nachrichtensignale). Heute bereits automatisch ausgewertet: {{ areas.used_today }} von {{ areas.top_per_day }}; kurz vor dem Tagesbericht dürfen bis zu zehn weitere nachrücken. Per Knopf zusammengefasste Artikel fließen ebenfalls in Bericht und Barometer ein.</p>
+    {% if areas.community_off_sources %}<p class="hint">Community-Quellen mit „KI aus“ in den Quellen bleiben ausgenommen: {{ areas.community_off_sources|join(', ') }} (<a href="/news?tab=sources">Quellen</a>).</p>{% endif %}
+    <div class="row mt-12"><button class="btn primary" type="submit">Speichern</button></div>
+  </form>
+  <h3 class="mt-16">Verbrauch je Bereich</h3>
+  <div class="table-wrap"><table class="compact"><thead><tr><th>Bereich</th><th class="num">Anfragen heute</th><th class="num">Ø je Tag ({{ areas.days }} {{ "Tag" if areas.days == 1 else "Tage" }})</th></tr></thead><tbody>
+    {% for u in areas.usage %}<tr><td>{{ u.label }}</td><td class="num">{{ u.today }}</td><td class="num">{{ u.avg|num(1) }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="hint mt-8">Geschätzter Tagesbedarf mit dieser Einstellung: Artikel ≈ {{ areas.estimate.articles }}, Community ≈ {{ areas.estimate.community }}, Tagesbericht {{ areas.estimate.report }} – zusammen ≈ {{ areas.estimate.total }} Anfragen, dazu Knöpfe, Videos und Ereignis-Grenzfälle (Zufluss der letzten 7 Tage: {{ areas.inflow.articles }} Artikel und {{ areas.inflow.community }} Community-Beiträge je Tag; 6 Meldungen je Anfrage).</p>
+</section>
 </div>
 {% endblock %}

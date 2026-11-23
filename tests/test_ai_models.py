@@ -77,7 +77,7 @@ def test_legacy_settings_are_taken_over_unchanged(ctx):
 def test_free_tier_and_own_profile_mapping(ctx):
     gw = gemini_ctx(ctx, lambda r: gem_ok(), **{"llm.gemini_profile": "free_tier"})
     assert gw.task_models() == {"news": LITE, "events": LITE, "report": LITE, "discovery": LITE,
-                                "video": FLASH_VIDEO, "company": FLASH_CO}
+                                "video": FLASH_VIDEO, "company": FLASH_CO, "community": LITE}
     ctx.settings.set("llm.gemini_profile", "eigen")
     ctx.settings.set("llm.task_models", {"video": "gemini-2.5-flash", "company": "gemini-2.5-pro"})  # pro: verboten
     assert gw.model_for("video") == "gemini-2.5-flash"
@@ -454,4 +454,4 @@ def test_minute_limit_wait_reason_and_status_card(config, monkeypatch):
 def test_settings_json_is_public_data_only():
     """Die Modellzuordnung ändert nichts an der Nutzlast: weiterhin nur öffentliche Daten (siehe test_discovery)."""
     assert "Depot" not in json.dumps(A.PROFILES) and set(A.TASKS) == {"news", "events", "report", "discovery",
-                                                                      "video", "company"}
+                                                                      "video", "company", "community"}

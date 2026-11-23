@@ -63,6 +63,7 @@ TASKS: dict[str, str] = {
     "report": "Tagesbericht",
     "discovery": "KI-Discovery: Themen und erste Thesen",
     "video": "Video-Kernaussagen",
+    "community": "Community-Beiträge (Telegram)",
     "company": "Firmenanalyse: Bericht, Disruption, Portfolia-Score",
 }
 # Profile: „einzeln“ = ein Modell für alle (Übernahme bestehender Installationen), „free_tier“ = Empfehlung für einen
@@ -71,7 +72,8 @@ PROFILES: dict[str, dict[str, Any]] = {
     "einzeln": {"label": "Ein Modell für alles"},
     "free_tier": {"label": "Kostenbewusst optimiert", "models": {
         "news": "gemini-3.5-flash-lite", "events": "gemini-3.5-flash-lite", "report": "gemini-3.5-flash-lite",
-        "discovery": "gemini-3.5-flash-lite", "video": "gemini-3.6-flash", "company": "gemini-3.8-flash"}},
+        "discovery": "gemini-3.5-flash-lite", "video": "gemini-3.6-flash", "company": "gemini-3.8-flash",
+        "community": "gemini-3.5-flash-lite"}},
     "eigen": {"label": "Individuell"},
 }
 # Vorsichtige lokale Startwerte je Modell (eigene Annahmen – die gültigen Free-Tier-Werte zeigt Google AI Studio je
@@ -365,7 +367,9 @@ class AiGateway:
         if prof == "free_tier":
             m = str(PROFILES["free_tier"]["models"].get(task) or "")
         elif prof == "eigen":
-            m = str((self.s.get("llm.task_models") or {}).get(task) or "")
+            own = self.s.get("llm.task_models") or {}
+            # Community (0.119) ohne eigene Zuordnung: wie bisher auf dem Modell der Nachrichten
+            m = str(own.get(task) or (own.get("news") if task == "community" else "") or "")
         else:
             m = ""
         return m if m and model_allowed(m) else self.base_model()
