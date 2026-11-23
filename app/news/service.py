@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -28,6 +29,9 @@ log = logging.getLogger(__name__)
 
 EXAMPLE_SOURCES = Path(__file__).resolve().parent.parent.parent / "examples" / "sources.yaml"
 HOST_INTERVALS = {"news.google.com": 2.5, "feeds.finance.yahoo.com": 1.2, "www.youtube.com": 1.0}
+REMATCH_DAYS = 30  # Neuzuordnung nach Import: nur dieser Zeitraum (ältere Meldungen behalten ihre Zuordnung)
+REMATCH_CHUNK = 300  # Meldungen je Transaktion
+REMATCH_PAUSE_S = 0.05  # Pause zwischen den Portionen: Seitenaufrufe kommen dazwischen durch
 _LIVE_WORDS = ("live", "livestream", "live stream", "🔴")
 
 
@@ -516,14 +520,31 @@ class NewsService:
                 "units_today": self.yt.units_used()}
 
     # -- Pflege -----------------------------------------------------------------------------------------
-    def rematch(self) -> dict[str, Any]:
-        """Nach Import/Konfigurationsänderung: Zuordnungen und Relevanz aller gespeicherten Meldungen neu berechnen."""
+    def rematch(self, days: int = REMATCH_DAYS, chunk: int = REMATCH_CHUNK, pause_s: float = REMATCH_PAUSE_S
+                ) -> dict[str, Any]:
+        """Nach Import/Konfigurationsänderung: Zuordnungen und Relevanz der Meldungen der letzten ``days`` Tage neu
+        berechnen (ältere behalten ihre Zuordnung; die Listen zeigen standardmäßig 7 Tage).
+
+        In Portionen zu ``chunk`` Meldungen mit je eigener kurzer Transaktion und einer Pause dazwischen: Der Lauf
+        rechnet im selben Prozess wie die Weboberfläche; ohne Pausen bremste er bei 90 Tagen Bestand (≈37.000 Meldungen,
+        16 s) jeden Seitenaufruf auf das Dreißigfache."""
         matcher, pfac = self.matcher()
         sources = {s.id: s for s in self.cfg.sources()}
         chans = {f"yt:{st['channel_id']}": st["channel"] for st in self.channel_state() if st["channel_id"]}
-        rows = self.db.q("SELECT id, title, summary, source_id, source_weight FROM news_item")
+        since = iso(datetime.now(UTC) - timedelta(days=days))
+        rows = self.db.q("SELECT id, title, summary, source_id, source_weight FROM news_item WHERE published_at >= ? "
+                         "ORDER BY id", (since,))
+        for i in range(0, len(rows), chunk):
+            if i:
+                time.sleep(pause_s)
+            self._rematch_chunk(rows[i:i + chunk], matcher, pfac, sources, chans)
+        return {"items": len(rows), "days": days}
+
+    def _rematch_chunk(self, rows: list[Any], matcher: Any, pfac: dict[str, float], sources: dict[str, Any],
+                       chans: dict[str, Any]) -> None:
+        ids = [r["id"] for r in rows]
         with self.db.transaction() as c:
-            c.execute("DELETE FROM news_asset")
+            c.execute(f"DELETE FROM news_asset WHERE item_id IN ({','.join('?' * len(ids))})", ids)
             for r in rows:
                 implicit = []
                 src = sources.get(r["source_id"])
@@ -541,7 +562,6 @@ class NewsService:
                                json.dumps({"where": m.where, "terms": m.terms})))
                 rel = max(scores.values()) if scores else round(0.25 * w, 4)
                 c.execute("UPDATE news_item SET relevance=? WHERE id=?", (rel, r["id"]))
-        return {"items": len(rows)}
 
     def retention(self) -> int:
         days = int(self.cfg.settings.get("retention_days", 90))

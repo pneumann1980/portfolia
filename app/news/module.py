@@ -21,7 +21,9 @@ from app.news.ai import AiGateway
 from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
 from app.news.events import EventService
-from app.news.images import cached_image
+from app.news.images import image_key, recently_failed
+from app.news.images import lookup as image_lookup
+from app.news.images import prefetch as prefetch_images
 from app.news.llm import LlmService
 from app.news.locks import exclusive
 from app.news.relevance import recency_factor
@@ -77,6 +79,7 @@ def job_fetch(ctx: AppContext) -> dict[str, Any]:
         ctx.scheduler.trigger("news_enrich", 5)
         ctx.scheduler.trigger("news_transcripts", 15)
         ctx.scheduler.trigger("news_group", 20)
+        ctx.scheduler.trigger("news_images", 30)  # Vorschaubilder vorladen (Seitenaufrufe holen nie selbst)
     return res
 
 
@@ -145,6 +148,14 @@ def _report_progress(ctx: AppContext) -> Progress:
                         phases=["rep_collect", "rep_ai", "rep_save"], unit="Schritte")
 
 
+def job_images(ctx: AppContext) -> dict[str, Any]:
+    """Vorschaubilder neuer Meldungen im Hintergrund laden (Telegram-Bilder holt der Abruf selbst)."""
+    with exclusive(ctx, "images") as got:
+        if not got:
+            return {"skipped": "läuft bereits"}
+        return prefetch_images(ctx, skip_sources=frozenset(community_ids(news_service(ctx))))
+
+
 def job_report(ctx: AppContext, manual: bool = False) -> dict[str, Any]:
     svc = ReportService(ctx)
     if manual:
@@ -181,6 +192,7 @@ def _register_jobs(s: Scheduler) -> None:
     s.register("news_group", job_group, IntervalTrigger(minutes=20), executor="news")
     s.register("news_report", job_report, IntervalTrigger(minutes=15), executor="interactive")
     s.register("news_wave", job_wave, None, executor="wave")
+    s.register("news_images", job_images, None, executor="news")
 
 
 startup_job("news_fetch", 45)
@@ -695,6 +707,9 @@ def make_router() -> APIRouter:
         elif tab == "status":
             base["st"] = pipeline_status(ctx)
             base["pipe_note"] = ""
+            from app.web.accesslog import timings
+
+            base["timings"] = timings()
         elif tab == "suggestions":
             base["has_yt_key"] = bool(ctx.config.secrets.youtube_api_key)
             base["suggestions"] = ctx.db.q(
@@ -1053,6 +1068,8 @@ def make_router() -> APIRouter:
 
     @router.get("/img/news/{item_id}")
     def news_image(request: Request, item_id: int) -> Response:
+        """Nur aus dem Cache (0.118): Ein Seitenaufruf wartet nie auf fremde Bild-Hosts. Fehlt das Bild, lädt der Job
+        ``news_images`` es im Hintergrund nach; beim nächsten Aufruf ist es da (bis dahin 404, nicht gespeichert)."""
         ctx = get_ctx(request)
         row = ctx.db.q1("SELECT image_url FROM news_item WHERE id=?", (item_id,))
         if row is None or not row["image_url"]:
@@ -1061,9 +1078,11 @@ def make_router() -> APIRouter:
         host = (urlsplit(url).hostname or "").lower()
         if host == "i.ytimg.com":
             return RedirectResponse(url, status_code=302)
-        path = cached_image(ctx, url)
+        path = image_lookup(ctx, url)
         if path is None:
-            raise HTTPException(404)
+            if ctx.scheduler is not None and not recently_failed(ctx, image_key(url)):
+                ctx.scheduler.trigger("news_images", 2)
+            raise HTTPException(404, headers={"Cache-Control": "no-store"})
         return FileResponse(path[0], media_type=path[1], headers={"Cache-Control": "public, max-age=604800"})
 
     return router

@@ -14,6 +14,15 @@
     <dt>Analysiert</dt><dd>{{ st.analyzed }}{% if st.analysis_failed %} · {{ st.analysis_failed }} verworfen{% endif %}</dd>
   </dl>
 </section>
+{% if timings %}<section class="card mt-16">
+  <div class="card-head"><h2>Ladezeiten</h2><span class="hint">letzte bis zu 200 Aufrufe seit dem Start · Server-Antwortzeit</span></div>
+  <dl class="kv">
+    {% for key, label in (('news', 'News-Seite'), ('img', 'Vorschaubilder')) %}{% set t = timings[key] %}
+    <dt>{{ label }}</dt><dd>{% if t.n %}Median {{ t.median|num(0) }} ms · 95 % unter {{ t.p95|num(0) }} ms · höchstens {{ t.max|num(0) }} ms <span class="hint">({{ t.n }} Aufrufe)</span>{% else %}<span class="hint">noch keine Aufrufe gemessen</span>{% endif %}</dd>
+    {% endfor %}
+  </dl>
+  <p class="hint">Vorschaubilder kommen nur aus dem lokalen Speicher; fehlende lädt der Hintergrund-Job „news_images“ nach, nicht abrufbare werden 24 Stunden nicht erneut versucht.</p>
+</section>{% endif %}
 <section class="card mt-16">
   <div class="card-head"><h2>KI-Anbieter</h2><span class="hint">{{ 'aktiv' if ai_s.enabled else 'inaktiv' }}</span></div>
   <dl class="kv">
