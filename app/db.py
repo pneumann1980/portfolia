@@ -1349,6 +1349,14 @@ ALTER TABLE disc_job ADD COLUMN wait_reason TEXT;
 DROP INDEX IF EXISTS ux_disc_job_active;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_disc_job_active ON disc_job(slot) WHERE status IN ('geplant', 'laeuft', 'wartet');
 """),
+    (45, """
+-- 0.118: nicht abrufbare Vorschaubilder – 24 Stunden lang kein neuer Versuch (Seitenaufrufe holen nie selbst).
+CREATE TABLE IF NOT EXISTS img_fail (
+  key       TEXT PRIMARY KEY,
+  failed_at TEXT NOT NULL,
+  tries     INTEGER NOT NULL DEFAULT 1
+) WITHOUT ROWID;
+"""),
 ]
 
 

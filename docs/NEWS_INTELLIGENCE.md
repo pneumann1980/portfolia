@@ -1,4 +1,4 @@
-# News-Intelligence (0.46): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
+# News-Intelligence (0.46; Tempo 0.118): Artikeltext, Leseansicht, KI-Analyse, Ereignisse, Tagesbericht
 
 Stand: 0.48.2. Ergänzt die bestehende News-Pipeline (`docs/MILESTONES.md` M3) um fünf Bausteine. Alles ist
 **rückwärtskompatibel**: der Feed-Import, die Relevanz-/Dedupe-Logik, YouTube und Claude-Zusammenfassungen laufen
@@ -375,6 +375,27 @@ eigenen Server):
 * **Grenzen:** nicht gegen eine echte RSS-Bridge-Instanz getestet (Tests mit synthetischem Atom nach dem üblichen Format);
   Albums/Mehrfachbilder: nur das erste Bild; Videos/Sprachnachrichten ohne Text werden verworfen; private Kanäle gehen nur,
   wenn die Bridge sie liefert. Kein Telegram-Konto in der App.
+
+## 0.118: Tempo der News-Seiten
+
+Gemessen mit einem Bestand wie nach 90 Tagen Aufbewahrung (≈37.000 Meldungen, 300 MB): Die Seiten selbst kommen in
+0,05–0,17 s vom Server. Gebremst haben zwei andere Dinge, die 0.118 behebt:
+
+* **Vorschaubilder** (`app/news/images.py`): `/img/news/<id>` liefert nur noch aus dem lokalen Speicher (`lookup`) und
+  wartet nie auf fremde Hosts. Fehlt ein Bild, antwortet die Seite sofort mit 404 (nicht zwischengespeichert) und stößt
+  den Job `news_images` an; er läuft außerdem 30 s nach jedem Abruf und lädt die Bilder der neuesten Meldungen
+  (7 Tage, höchstens 80 je Lauf, 90 s) vor. Wartezeit je Bild 4 s statt 10 s; ein Host, der dreimal in Folge scheitert,
+  wird im Lauf übersprungen; nicht abrufbare Bilder stehen 24 h in `img_fail` (Migration 45) und werden so lange nicht
+  erneut versucht. Vorher wurden fehlende Bilder beim Anzeigen live geholt (bis 10 s, Fehlschläge bei jedem Aufruf neu)
+  – bei 30 Karten belegte das alle 6 Verbindungen des Browsers, auch der Klick auf den nächsten Reiter wartete.
+  Telegram-Bilder holt weiterhin der Abruf selbst (signierte Links, eigene Bridge erlaubt).
+* **Neuzuordnung nach Importen** (`NewsService.rematch`): nur die letzten 30 Tage, in Portionen zu 300 Meldungen mit
+  eigener kurzer Transaktion und 50 ms Pause. Ältere Meldungen behalten ihre Zuordnung. Messung: vorher 16 s für alle
+  Meldungen, währenddessen jede Seite 2,3 s statt 0,07 s; jetzt 6,6 s für 12.000 Meldungen, Seiten währenddessen 0,17 s.
+* **Reiter ohne Vollneuladen:** Die Reiterleiste tauscht per HTMX nur `#news-main` aus (Adresse, Zurück-Taste und
+  Links ohne JavaScript bleiben erhalten).
+* **Ladezeiten:** Server-Antwortzeit der News-Seite und der Vorschaubilder (Median, 95 %, Höchstwert der letzten bis zu
+  200 Aufrufe) im Reiter „Status“.
 
 ## Tests
 

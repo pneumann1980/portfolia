@@ -16,6 +16,7 @@ import re
 import secrets
 import time
 import traceback
+from collections import deque
 from typing import Any
 from urllib.parse import parse_qsl
 
@@ -26,6 +27,21 @@ from app.logging_setup import request_id
 
 log = logging.getLogger("app.web")
 SLOW_S = 1.0
+# Ladezeiten ausgewählter Seiten (0.118): die letzten Aufrufe je Gruppe im Speicher – Anzeige im News-Status-Reiter.
+_TIMED: tuple[tuple[str, re.Pattern[str]], ...] = (("news", re.compile(r"^/news/?$")),
+                                                     ("img", re.compile(r"^/img/news/\d+$")))
+_timings: dict[str, deque[float]] = {k: deque(maxlen=200) for k, _ in _TIMED}
+
+
+def timings() -> dict[str, dict[str, Any]]:
+    """Median, 95. Perzentil und Höchstwert (ms) der letzten bis zu 200 Aufrufe je Gruppe seit dem Start."""
+    out: dict[str, dict[str, Any]] = {}
+    for key, values in _timings.items():
+        xs = sorted(values)
+        n = len(xs)
+        out[key] = {"n": n, "median": xs[n // 2] if n else None,
+                    "p95": xs[min(n - 1, int(n * 0.95))] if n else None, "max": xs[-1] if n else None}
+    return out
 # Dauerabfragen der Oberfläche (htmx-Polling): im Modus „all“ nicht einzeln protokollieren
 _QUIET = re.compile(r"^(/healthz|/static/|/sw\.js|/favicon).*|.*/(live|progress|status|batch-progress)(/.*)?$")
 
@@ -102,6 +118,10 @@ class AccessLogMiddleware:
         return scope.get("method", "?"), safe_target(scope.get("path", ""), query)
 
     def _log_done(self, scope: Scope, rid: str, status: int, size: int, secs: float) -> None:
+        path = scope.get("path", "")
+        for key, rx in _TIMED:
+            if rx.match(path) and scope.get("method") == "GET":
+                _timings[key].append(round(secs * 1000, 1))
         if self.mode == "off":
             return
         method, target = self._target(scope)
