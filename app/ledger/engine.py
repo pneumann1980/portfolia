@@ -309,6 +309,10 @@ class _Engine:
         else:
             self.cash = detect_cash_accounts(pf, opts)
         self.lots: dict[str, list[Lot]] = defaultdict(list)
+        # Assets, in deren Lot-Liste seit dem letzten Aufräumen ein Lot mit Menge ≤ DUST liegen kann (0.121): nur
+        # diese Listen muss :meth:`_compact` neu filtern. Mengen ändern sich ausschließlich in :meth:`_take`; neue
+        # Lots kommen nur über :meth:`_insert` – beide melden hier. Ergebnis identisch, ohne O(Lots) je Abgang.
+        self._dusty: set[str] = set()
         self.ids = itertools.count(1)
         self.bal: dict[tuple[str, str], Decimal] = defaultdict(lambda: ZERO)
         self.disposals: list[Disposal] = []
@@ -376,6 +380,8 @@ class _Engine:
     def _insert(self, lot: Lot) -> None:
         lst = self.lots[lot.asset]
         bisect.insort(lst, lot, key=Lot.sort_key)
+        if lot.qty <= DUST:
+            self._dusty.add(lot.asset)
 
     def _new_lot(self, asset: str, account: str, qty: Decimal, cost: Decimal, ts: datetime, d: date, tx_id: str,
                  origin: str, income_tag: str | None = None, root_id: int | None = None) -> Lot:
@@ -385,7 +391,10 @@ class _Engine:
         return lot
 
     def _compact(self, asset: str) -> None:
+        if asset not in self._dusty:  # alle Lots dieses Assets haben Menge > DUST – Filtern änderte nichts
+            return
         self.lots[asset] = [lot for lot in self.lots[asset] if lot.qty > DUST]
+        self._dusty.discard(asset)
 
     def _take(self, lot: Lot, qty: Decimal) -> Decimal:
         """Menge aus Lot entnehmen, anteiligen Einstand zurückgeben."""
@@ -398,6 +407,8 @@ class _Engine:
                 cost = lot.cost * qty / lot.qty
                 lot.qty -= qty
                 lot.cost -= cost
+        if lot.qty <= DUST:
+            self._dusty.add(lot.asset)
         return cost
 
     # -- Lot-Operationen ----------------------------------------------------------------------
@@ -459,7 +470,11 @@ class _Engine:
             return ZERO
         remaining = qty
         new_lots: list[Lot] = []
-        for lot in [lot for lot in self.lots[asset] if lot.account == src]:
+        # Liste wird in der Schleife nicht verändert (neue Lots erst danach), Konten nur an bereits besuchten Lots –
+        # daher gleichwertig zur vorab gefilterten Kopie, endet aber beim ersten Abbruch (0.121)
+        for lot in self.lots[asset]:
+            if lot.account != src:
+                continue
             if remaining <= DUST:
                 break
             take = min(lot.qty, remaining)
@@ -489,7 +504,9 @@ class _Engine:
             ratio = dst_qty / src_qty
         remaining = src_qty
         consumed: list[tuple[Lot, Decimal, Decimal]] = []
-        for lot in [lot for lot in self.lots[src_asset] if lot.account == src_acc]:
+        for lot in self.lots[src_asset]:  # gleichwertig zur gefilterten Kopie (Liste unverändert in der Schleife)
+            if lot.account != src_acc:
+                continue
             if remaining <= DUST:
                 break
             take = min(lot.qty, remaining)

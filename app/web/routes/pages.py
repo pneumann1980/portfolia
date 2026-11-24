@@ -472,9 +472,12 @@ def settings_ai_page(request: Request, saved: str = "", models: str = "", models
 @router.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, saved: str = "", err: str = "") -> HTMLResponse:
     ctx = get_ctx(request)
-    pf = ctx.portfolio()
-    led = ctx.ledger()
-    accounts = pf.all_accounts() if pf else []
+    # 0.121: Konten, erkannte Cash-Führung und Abrufkennzahlen aus dem vorgerechneten Stand (Hintergrund-Job) – nach
+    # dem Speichern der Ledger-Karte frisch berechnet, damit die eigene Änderung sofort sichtbar ist
+    from app.jobs.warm import settings_inputs
+
+    si, _current = settings_inputs(ctx, fresh=saved == "ledger")
+    accounts = si.accounts
     backups: list[dict[str, Any]] = []
     try:
         from app.jobs.maintenance import list_backups
@@ -501,12 +504,11 @@ def settings_page(request: Request, saved: str = "", err: str = "") -> HTMLRespo
     from app.fullexport import status as restore_status
     from app.prices.budget import plan_view
 
-    price_plan = plan_view(ctx.settings, ctx.prices.budget_inputs(pf, led), ctx.prices.cg_budget(),
+    price_plan = plan_view(ctx.settings, si.budget_inputs, ctx.prices.cg_budget(),
                            ctx.config.coingecko_plan, bool(ctx.config.secrets.coingecko_api_key))
     next_runs = ctx.scheduler.next_runs() if ctx.scheduler else {}
     return render(request, "settings.html", active="settings", s=ctx.settings.all(), accounts=accounts,
-                  has_tx=ctx.recorded_portfolio() is not None,
-                  detected_cash=(led.cash_tracked if led else {}), secrets=ctx.config.secrets.status(),
+                  has_tx=si.has_tx, detected_cash=si.detected_cash, secrets=ctx.config.secrets.status(),
                   config=ctx.config, saved=saved, err=err[:400], backups=backups, exports=exports, archive=archive,
                   export_job=job, ds_summary=ds_summary, pp=price_plan, next_runs=next_runs,
                   restore=restore_status(ctx))

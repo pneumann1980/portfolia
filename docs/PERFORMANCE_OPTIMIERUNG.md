@@ -161,3 +161,48 @@ mit einer anderen mypy-Version gemessen als die historischen 344.
 - **Performance-Kennzahlen:** Die doppelte Zeitraumberechnung ist entfernt (9 → 8). Der Laufzeitgewinn liegt im
   Rauschen. Die Änderung ist ein lokales Wörterbuch mit acht Zeilen, ohne Zustand über die Anfrage hinaus.
 - Die fachlichen Ergebnisse bleiben in allen geprüften Fällen bitgenau gleich.
+
+---
+
+# 0.121: Tempo nach Datenänderungen (Ledger, Vorrechnen, Einstellungsseite)
+
+Ausgangslage: Nach jeder Datenänderung (Import, Sparplan-Abgleich, Kursquelle, Buchung) verwirft der Kontext
+Portfolio, Ledger, Bewertung und Historie (Cache-Regel aus 0.96, N26 – unverändert). Die erste Seite danach rechnete
+alles neu. Gemessen auf einem Bestand mit 6000 Buchungen; der Volltest lief parallel, Werte daher mit Streuung.
+
+| Seite nach Datenänderung | bis 0.120 | 0.121 ohne Vorrechnen | 0.121 nach Vorrechnen |
+|---|---|---|---|
+| Übersicht `/` | 1388 ms | 950 ms | 196 ms |
+| Einstellungen `/settings` | 791 ms | 394 ms | 78 ms |
+| Positionen `/positions` | 1035 ms | 922 ms | 21 ms |
+
+## C – Ledger-Engine (`app/ledger/engine.py`)
+
+* `_compact` filterte nach **jedem** Abgang die gesamte Lot-Liste des Assets (O(Lots) je Abgang, ≈ 50 % der
+  Ledger-Zeit). Jetzt nur, wenn seit dem letzten Aufräumen ein Lot dieses Assets auf ≤ `DUST` gefallen sein kann
+  (`_dusty`). Mengen ändern sich ausschließlich in `_take`, neue Lots kommen nur über `_insert` – beide melden dort.
+* `_move` und `convert` iterierten über eine vorab gefilterte Kopie; jetzt direkt über die Liste mit Abbruch. Die
+  Liste wird in der Schleife nicht verändert (neue Lots erst danach), Konten nur an bereits besuchten Lots geändert –
+  daher gleichwertig.
+* Ledger global/FIFO (Standard): ≈ 0,67 s → ≈ 0,18–0,34 s. HIFO profitiert kaum (sortiert je Abgang; nicht Standard).
+
+**Gleichheit nachgewiesen:** vollständiges `LedgerResult` (Lots, Abgänge, Erträge, Gebühren, Steuern, Flüsse,
+Mengenereignisse, Hinweise, Bestände, Tagesstände) bitgleich (`repr` des Dataclass-Tupels, `PYTHONHASHSEED=0`) für
+6 Datensätze (realistischer Bestand, Stichtag-Bestand, Beispielimport, drei synthetische Großimporte à ≈ 5700
+Buchungen) × global/je Konto × FIFO/LIFO/HIFO × Fiat an/aus × Transfer-Flüsse an/aus = 144 Läufe, 0 Abweichungen.
+Dauerhaft abgesichert in `tests/test_0121.py` gegen eine wörtliche Kopie der bisherigen Methoden.
+
+## A – Vorrechnen im Hintergrund (`app/jobs/warm.py`)
+
+Job `warm_caches`, 3 s nach der letzten Datenänderung (entprellt, `ctx.change_listeners`) und 20 s nach dem Start:
+Bewertung, Historie, Hinweiszeile, News-Positionen und Kennzahlen der Einstellungsseite. Berechnung unverändert, nur
+der Zeitpunkt. Grenzen: Klick in den ersten Sekunden nach einer Änderung rechnet wie bisher selbst (dann doppelt mit
+dem Job); jede Änderung kostet einen Lauf (hier ≈ 0,7–1 s CPU), auch wenn niemand hinschaut.
+
+## B – Einstellungsseite ohne Ledger
+
+Die Seite braucht aus Portfolio/Ledger nur Konten, erkannte Cash-Führung und die Kennzahlen der CoinGecko-Hochrechnung.
+Diese liegen mit ihrem Cache-Schlüssel (aktiver Import, Überlagerung, persistente Revision inkl. `ledger.*`/`tax.*`,
+Engine-Optionen) vor: Schlüssel gleich → exakt; sonst letzter Stand und Hintergrundlauf. Direkt nach dem Speichern
+der Ledger-Karte (`saved=ledger`) wird im Aufruf neu berechnet, damit die eigene Änderung sofort sichtbar ist. Ohne
+Hintergrund-Jobs (`SCHEDULER_ENABLED=false`) wie bisher synchron.
