@@ -11,6 +11,9 @@ from fastapi.testclient import TestClient
 from app.main import build_app
 from app.news import aiplan
 
+_SKIP = re.compile(r"\.(js|css|json|png|ico|webmanifest|zip|csv|txt)$"
+                   r"|^/(static|api|img|health)|/progress|/status$|/live$")
+
 
 class _Forms(HTMLParser):
     def __init__(self) -> None:
@@ -58,8 +61,8 @@ def client(config):
 
 
 def test_every_plain_post_form_has_csrf_field(client):
-    paths = sorted({p for p, m in _routes(client.app.routes) if "GET" in m and "{" not in p
-                    and not re.search(r"\.(js|css|json|png|ico|webmanifest|zip|csv|txt)$|^/(static|api|img|health)|/progress|/status$|/live$", p)})
+    paths = sorted({p for p, m in _routes(client.app.routes)
+                    if "GET" in m and "{" not in p and not _SKIP.search(p)})
     checked, missing = 0, []
     for path in paths:
         r = client.get(path)
