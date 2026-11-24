@@ -309,6 +309,12 @@ Portfolia nach („Coin oder Börsensymbol“). Der Name des gewählten Vorschla
 zwischen zwei Stützpunkten linear interpoliert); der tatsächliche Ausführungskurs steht im Tooltip. Grund für die
 frühere Abweichung: Ausführungskurs (inkl. Spread, Intraday, ggf. andere Währung/Börse) ≠ Tagesschlusskurs der Linie.
 
+0.121.1: Zwei Restfälle behoben (gemessen: 96 Diagramme, 246 Marker, vorher 69 neben der Linie, nachher 0 über 2 px):
+(1) Die Linie wurde ausgedünnt (`sampling: "lttb"`) – bei „MAX“ zeichnete ECharts nur jeden 5.–7. Punkt, die Marker
+saßen auf dem vollständigen Verlauf (bis 16 px daneben). Jetzt alle Punkte. (2) Geschäfte vor dem ersten bzw. nach
+dem letzten Kurspunkt standen auf der Höhe des Randkurses neben dem Linienende; jetzt Ausführungskurs, hohler Marker
+und Hinweis im Tooltip.
+
 ## 1. Produktvision und Funktionsumfang
 
 Fünf Stufen, jede mit eigenem Ergebnis:

@@ -350,7 +350,9 @@
       series.push({ name: "Kurs", type: "candlestick", data: d.candles.map(function (c) { return [c[0], c[1], c[2], c[3], c[4]]; }),
         itemStyle: { color: t.pos, color0: t.neg, borderColor: t.pos, borderColor0: t.neg }, barMaxWidth: 12 });
     } else {
-      series.push({ name: "Kurs", type: "line", data: pts.map(function (p) { return [p[0], p[1], p[2]]; }), showSymbol: false, sampling: "lttb",
+      // 0.121.1: kein Ausdünnen (sampling) – sonst zeichnet ECharts bei „MAX“ nur jeden 5.–7. Punkt und die Marker
+      // (am vollständigen Verlauf ausgerichtet) liegen bis zu 16 px neben der Linie; 2–3 Tsd. Punkte sind unkritisch
+      series.push({ name: "Kurs", type: "line", data: pts.map(function (p) { return [p[0], p[1], p[2]]; }), showSymbol: false,
         lineStyle: { width: 2, color: t.s1 }, itemStyle: { color: t.s1 }, areaStyle: { color: t.s1, opacity: 0.08 } });
     }
     var buys = (d.markers || []).filter(function (m) { return m.side === "buy"; });
@@ -361,12 +363,14 @@
     (candle ? d.candles.map(function (c) { return [c[0], c[2]]; }) : pts).forEach(function (p) {
       if (p[1] !== null && p[1] !== undefined) { lineT.push(new Date(p[0]).getTime()); lineV.push(p[1]); }
     });
-    function onLine(ts, fallback) {
+    // Liegt das Geschäft vor dem ersten bzw. nach dem letzten Kurspunkt, gibt es dort keine Linie: dann null – der
+    // Marker zeigt den Ausführungskurs und wird hohl gezeichnet (0.121.1; vorher scheinbar auf einer Randlinie)
+    function onLine(ts) {
       var x = new Date(ts).getTime();
-      if (!lineT.length || isNaN(x)) return fallback;
+      if (!lineT.length || isNaN(x)) return null;
       var lo = 0, hi = lineT.length - 1;
-      if (x <= lineT[0]) return lineV[0];
-      if (x >= lineT[hi]) return lineV[hi];
+      if (x < lineT[0] || x > lineT[hi]) return null;
+      if (x === lineT[hi]) return lineV[hi];
       while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (lineT[mid] <= x) lo = mid; else hi = mid; }
       if (lineT[lo] === x || candle) return lineV[lo];
       return lineV[lo] + (lineV[hi] - lineV[lo]) * (x - lineT[lo]) / (lineT[hi] - lineT[lo]);  // zwischen zwei Punkten
@@ -374,7 +378,12 @@
     function mk(list, name, color, rot) {
       return { name: name, type: "scatter", symbol: "triangle", symbolRotate: rot, symbolSize: 12, z: 5,
         itemStyle: { color: color, borderColor: t.surface, borderWidth: 2 },
-        data: list.map(function (m) { return { value: [m.t, onLine(m.t, m.price)], _m: m }; }) };
+        data: list.map(function (m) {
+          var y = onLine(m.t);
+          if (y !== null) return { value: [m.t, y], _m: m };
+          return { value: [m.t, m.price], _m: m, _off: true,  // kein Kurs an diesem Tag: Ausführungskurs, hohl
+            itemStyle: { color: t.surface, borderColor: color, borderWidth: 2 } };
+        }) };
     }
     if (buys.length) series.push(mk(buys, "Kauf", t.s2, 0));
     if (sells.length) series.push(mk(sells, "Verkauf", t.s3, 180));
@@ -410,7 +419,8 @@
             } else if (p.data && p.data._m) {
               var m = p.data._m;
               s += '<div style="margin-top:6px"><b>' + (m.side === "buy" ? "Kauf" : "Verkauf") + "</b></div>" +
-                row(null, "Menge", num(m.qty, 6)) + row(null, "Ausführungskurs", eur(m.price)) + row(null, "Wert", eur(m.value));
+                row(null, "Menge", num(m.qty, 6)) + row(null, "Ausführungskurs", eur(m.price)) + row(null, "Wert", eur(m.value)) +
+                (p.data._off ? '<div style="color:' + t.ink2 + '">Für diesen Tag liegt kein Kurs vor – Marker auf dem Ausführungskurs</div>' : "");
             }
           });
           return s;
