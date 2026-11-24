@@ -23,7 +23,7 @@ THREADPOOL_TOKENS = 24
 
 MODULES = (
     "app.news.module", "app.tax.module", "app.plans.module", "app.journal.module", "app.csvimport.module",
-    "app.jobs.maintenance", "app.jobs.exports", "app.prices.sources_web", "app.datasources.web",
+    "app.jobs.maintenance", "app.jobs.exports", "app.jobs.warm", "app.prices.sources_web", "app.datasources.web",
     "app.datasources.dkb_web", "app.datasources.archive_web",
     "app.datasources.bitpanda", "app.datasources.chains.evm", "app.datasources.chains.bitcoin",
     "app.datasources.chains.solana", "app.datasources.chains.kaspa", "app.datasources.chains.xrpl",
