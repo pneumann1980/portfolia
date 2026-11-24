@@ -397,6 +397,13 @@ Gemessen mit einem Bestand wie nach 90 Tagen Aufbewahrung (≈37.000 Meldungen, 
 * **Ladezeiten:** Server-Antwortzeit der News-Seite und der Vorschaubilder (Median, 95 %, Höchstwert der letzten bis zu
   200 Aufrufe) im Reiter „Status“.
 
+## 0.119.1: Speichern der Karte „KI je Bereich“
+
+Das Formular trug kein `csrf_token`-Feld; Speichern endete mit „CSRF-Token fehlt oder ist ungültig“. Feld ergänzt.
+Neuer Test (`tests/test_0119_1.py`) rendert alle GET-Seiten ohne Pfadparameter und prüft jedes klassisch
+abgeschickte POST-Formular auf das Feld; die Karte wird zusätzlich genau so abgeschickt, wie sie gerendert wird.
+Grenze: Seiten mit Pfadparametern (z. B. `/journal/csv/{id}`) und HTMX-Formulare (Header statt Feld) prüft er nicht.
+
 ## 0.119: KI je Bereich – Top-News automatisch, übrige per Knopf
 
 Ziel: weniger KI-Anfragen, ohne Tagesbericht, Stimmungsbarometer und Nachrichtensignale aufzugeben.

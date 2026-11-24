@@ -90,7 +90,7 @@
   <div class="card-head"><div><h2>KI je Bereich</h2><span class="hint">Was die KI automatisch auswertet – und was nur per Knopf „Zusammenfassen“ bzw. „Kernaussagen erstellen“</span></div>
     {% if saved == 'news_ai' %}<span class="badge good">✓ gespeichert</span>{% endif %}</div>
   <form method="post" action="/settings/save">
-    <input type="hidden" name="section" value="news_ai">
+    <input type="hidden" name="section" value="news_ai"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="grid-2">
       <label class="field">Artikel
         <select name="ai_articles">{% for k, lbl in areas.article_modes.items() %}<option value="{{ k }}" {% if areas.articles == k %}selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></label>
