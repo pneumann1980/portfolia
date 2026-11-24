@@ -106,6 +106,7 @@ DEFAULTS: dict[str, Any] = {
     "news.report": True,  # täglicher Finanzmarktbericht (nur mit aktivierter KI)
     "news.report_hour": 22,  # 0.119: nach US-Börsenschluss (22:00 MEZ) – der ganze Handelstag ist enthalten
     "news.report_minute": 15,
+    "news.retention_days": 7,  # 0.120: Meldungen nach 7 Tagen vergessen (gemerkte ★ bleiben); vorher 90 in sources.yaml
     # KI je Bereich (0.119): was automatisch analysiert wird und was nur per Knopf
     "news.ai_articles": "top",  # top = Top-News automatisch, übrige per Knopf | all = alle automatisch | manual
     "news.ai_top_per_day": 50,  # Obergrenze automatisch analysierter Artikel je Tag (ohne Knopf und Community)

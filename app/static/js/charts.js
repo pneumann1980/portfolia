@@ -5,6 +5,32 @@
   "use strict";
 
   var instances = new Map();
+
+  // ECharts (1,1 MB) nur laden, wenn die Seite ein Diagramm zeichnet (0.120) – News, Einstellungen & Co. sparen das
+  // Parsen bei jedem Seitenwechsel (gemessen ~100 ms auf einem Mittelklasse-Handy, beim ersten Laden ~600 ms).
+  var VER = (function () {
+    var s = document.currentScript && document.currentScript.src;
+    var m = s && s.match(/[?&]v=([^&]+)/);
+    return m ? "?v=" + m[1] : "";
+  })();
+  var echartsReady = null;
+  function addScript(src) {
+    return new Promise(function (resolve, reject) {
+      var el = document.createElement("script");
+      el.src = src; el.async = false;
+      el.onload = resolve; el.onerror = function () { reject(new Error("Skript nicht geladen")); };
+      document.head.appendChild(el);
+    });
+  }
+  function needEcharts() {
+    if (window.echarts) return Promise.resolve();
+    if (!echartsReady) {
+      echartsReady = addScript("/static/vendor/echarts.min.js" + VER)
+        .then(function () { return addScript("/static/vendor/echarts-langDE.js" + VER); })
+        .catch(function (e) { echartsReady = null; throw e; });
+    }
+    return echartsReady;
+  }
   var NF2 = new Intl.NumberFormat("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   var NF0 = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 });
   var NFP = new Intl.NumberFormat("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: "exceptZero" });
@@ -145,15 +171,18 @@
     if (builder && el.dataset.inline && !el.dataset.src) {  // Daten liegen im Dokument (kein Abruf nötig)
       try { el._data = JSON.parse(document.getElementById(el.dataset.inline).textContent); }
       catch (e) { return empty(el, "Diagrammdaten ungültig."); }
-      return builder(el, el._data);
+      return needEcharts().then(function () { builder(el, el._data); },
+        function () { empty(el, "Diagrammbibliothek konnte nicht geladen werden."); });
     }
     if (!builder || !el.dataset.src) return;
     el.classList.add("loading");
     var url = buildUrl(el);
-    fetch(url, { credentials: "same-origin" }).then(function (r) {
+    // Daten und Bibliothek parallel laden
+    Promise.all([fetch(url, { credentials: "same-origin" }).then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
-    }).then(function (data) {
+    }), needEcharts()]).then(function (res) {
+      var data = res[0];
       el._data = data;
       el.classList.remove("loading");
       builder(el, data);
@@ -727,6 +756,7 @@
 
   window.PortfoliaCharts = {
     initAll: initAll, reload: function (el, keep) { load(el, keep); }, disposeIn: disposeIn, register: function (name, fn) { BUILDERS[name] = fn; },
+    ready: needEcharts,
     util: { eur: eur, eurCompact: eurCompact, pct: pct, share: share, num: num, fdate: fdate, esc: esc, tok: tok, row: row,
       tooltipBase: tooltipBase, axisCommon: axisCommon, getInstance: getInstance, empty: empty },
   };

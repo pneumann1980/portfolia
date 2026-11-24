@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.context import AppContext
 from app.jobs.scheduler import Scheduler, extra_jobs, startup_job
+from app.news import held as held_cache
 from app.news import queue, wave, ytlib
 from app.news.ai import AiGateway
 from app.news.analysis import AnalysisService
@@ -28,7 +29,7 @@ from app.news.llm import LlmService
 from app.news.locks import exclusive
 from app.news.relevance import recency_factor
 from app.news.report import ReportService
-from app.news.service import NewsService
+from app.news.service import NewsService, retention_days
 from app.news.status import pipeline_status
 from app.news.telegram import TelegramInputError, add_telegram_source
 from app.news.transcripts import TranscriptService, is_transcript
@@ -314,7 +315,7 @@ def _decorate(ctx: AppContext, page: list[dict[str, Any]]) -> list[dict[str, Any
         ph = ",".join("?" * len(ids))
         for a in ctx.db.q(f"SELECT item_id, asset_id FROM news_asset WHERE item_id IN ({ph}) ORDER BY score DESC", ids):
             assets_by_item.setdefault(a["item_id"], []).append(a["asset_id"])
-    pf = ctx.portfolio()
+    names = held_cache.held(ctx)  # Namen ohne Portfolioaufbau (0.120)
     events: dict[int, Any] = {}
     cstatus: dict[int, str] = {}
     sentiment: dict[int, tuple[str, float]] = {}
@@ -334,7 +335,7 @@ def _decorate(ctx: AppContext, page: list[dict[str, Any]]) -> list[dict[str, Any
     aistates = aiplan.item_states(ctx, [x["row"]["id"] for x in page
                                         if x["row"]["kind"] == "article" and not x["row"]["llm_summary"]])
     for x in page:
-        x["assets"] = [(aid, pf.asset(aid).name if pf else aid) for aid in assets_by_item.get(x["row"]["id"], [])]
+        x["assets"] = [(aid, names.name(aid)) for aid in assets_by_item.get(x["row"]["id"], [])]
         x["event"] = events.get(x["row"]["id"])
         x["cstatus"] = cstatus.get(x["row"]["id"])
         x["sentiment"], x["importance"] = sentiment.get(x["row"]["id"], (None, None))
@@ -565,8 +566,8 @@ def reader_context(ctx: AppContext, row: Any, back: str = "") -> dict[str, Any]:
     events = EventService(ctx)
     ev = events.event_of(iid)
     others = [m for m in events.members(ev["id"]) if m["id"] != iid] if ev else []
-    pf = ctx.portfolio()
-    assets = [(r["asset_id"], pf.asset(r["asset_id"]).name if pf else r["asset_id"]) for r in ctx.db.q(
+    names = held_cache.held(ctx)
+    assets = [(r["asset_id"], names.name(r["asset_id"])) for r in ctx.db.q(
         "SELECT asset_id FROM news_asset WHERE item_id=? ORDER BY score DESC", (iid,))]
     paragraphs = [p for p in (content["content"] or "").split("\n\n") if p.strip()] if content else []
     transcript = [_ts_paragraph(p, row["url"]) for p in paragraphs] if is_transcript(content) else None
@@ -680,9 +681,8 @@ def make_router() -> APIRouter:
                   "shorts": shorts, "hidden": hidden}
         base: dict[str, Any] = {"active": "news", "params": params, "cfg_errors": svc.cfg.errors,
                                 "back_url": "/news?" + urlencode({k: v for k, v in params.items() if v not in ("", 0)})}
-        pf = ctx.portfolio()
-        val = ctx.valuation()
-        base["assets"] = [(p.asset_id, p.asset.name) for p in (val.positions if val else []) if not p.asset.is_fiat]
+        # 0.120: Positionen aus dem Zwischenspeicher der News-Jobs – kein Ledger-/Bewertungsaufbau im Seitenaufruf
+        base["assets"] = held_cache.held(ctx).options
         base["sources"] = source_options(ctx)
         base["n_suggestions"] = ctx.db.scalar("SELECT COUNT(*) FROM yt_suggestion WHERE status='new'", default=0)
         digest = ctx.db.q1("SELECT * FROM digest ORDER BY day DESC LIMIT 1")
@@ -726,7 +726,8 @@ def make_router() -> APIRouter:
             base.update(src_list=svc.cfg.sources(), status_rows=status_rows, counts=counts,
                         channels=svc.channel_state(), discovery=svc.cfg.discovery(),
                         yt_units=svc.yt.units_used(), has_yt_key=bool(ctx.config.secrets.youtube_api_key),
-                        settings=svc.cfg.settings, sources_path=str(ctx.config.sources_path),
+                        settings=svc.cfg.settings, retention_days=retention_days(ctx),
+                        sources_path=str(ctx.config.sources_path),
                         tg_bridge=str(ctx.settings.get("news.telegram_bridge", "")), tr=transcripts_view(ctx),
                         tr_result=None)
         elif tab == "report":
@@ -742,7 +743,6 @@ def make_router() -> APIRouter:
             base["suggestions"] = ctx.db.q(
                 "SELECT * FROM yt_suggestion ORDER BY CASE status WHEN 'new' THEN 0 ELSE 1 END, hits DESC, "
                 "subscribers DESC LIMIT 200")
-        del pf
         return render(request, "news.html", **base)
 
     @router.get("/news/{item_id:int}", response_class=HTMLResponse)

@@ -241,9 +241,13 @@ _CACHE: dict[int, tuple[tuple[Any, ...], list[Hint]]] = {}
 _LOCK = threading.Lock()
 
 
-def hints(ctx: Any) -> list[Hint]:
+def _key(ctx: Any) -> tuple[tuple[Any, ...], str]:
     rev = ctx.cache_rev() if hasattr(ctx, "cache_rev") else ""  # persistente Revision vor der Berechnung (N26)
-    key = (getattr(ctx, "data_version", 0), getattr(ctx, "overlay_version", 0), version(), today_local(), rev)
+    return (getattr(ctx, "data_version", 0), getattr(ctx, "overlay_version", 0), version(), today_local(), rev), rev
+
+
+def hints(ctx: Any) -> list[Hint]:
+    key, rev = _key(ctx)
     with _LOCK:
         hit = _CACHE.get(id(ctx))
         if hit is not None and hit[0] == key:
@@ -257,3 +261,40 @@ def hints(ctx: Any) -> list[Hint]:
         with _LOCK:
             _CACHE[id(ctx)] = (key, res)
     return res
+
+
+_REFRESHING: set[int] = set()
+
+
+def hints_nowait(ctx: Any) -> list[Hint]:
+    """Hinweiszeile jeder Seite (0.120): nie im Seitenaufruf rechnen.
+
+    Nach einer Datenänderung (Import, Sparplan-Abgleich, Kursquelle) bräuchte :func:`hints` das komplette Ledger –
+    gemessen 0,7–1,4 s bei 6000 Buchungen, auf jeder Seite. Stattdessen: letzter bekannter Stand; ein Hintergrundlauf
+    rechnet neu (und wärmt dabei Ledger/Portfolio vor). Ohne Hintergrund-Jobs (Tests, ``SCHEDULER_ENABLED=false``)
+    wie bisher synchron."""
+    config = getattr(ctx, "config", None)
+    if config is None or not getattr(config, "scheduler_enabled", False):
+        return hints(ctx)
+    key, _rev = _key(ctx)
+    with _LOCK:
+        hit = _CACHE.get(id(ctx))
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        start = id(ctx) not in _REFRESHING
+        if start:
+            _REFRESHING.add(id(ctx))
+    if start:
+        threading.Thread(target=_refresh, args=(ctx,), name="asset-hints", daemon=True).start()
+    return hit[1] if hit is not None else []
+
+
+def _refresh(ctx: Any) -> None:
+    try:
+        hints(ctx)
+    finally:
+        with _LOCK:
+            _REFRESHING.discard(id(ctx))
+        db = getattr(ctx, "db", None)
+        if db is not None and hasattr(db, "close_thread_conn"):
+            db.close_thread_conn()

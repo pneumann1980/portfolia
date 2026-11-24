@@ -228,7 +228,7 @@
       <dt>Mehrdeutige Kürzel</dt><dd>{{ settings.ambiguous_terms|join(', ') }}</dd>
       <dt>Kontextwörter</dt><dd>{{ settings.context_words|join(', ') }}</dd>
       <dt>Sprachen</dt><dd>{{ settings.languages|join(', ') }}</dd>
-      <dt>Aufbewahrung</dt><dd>{{ settings.retention_days }} Tage · Abruf alle {{ settings.fetch_interval_minutes }} Minuten</dd>
+      <dt>Aufbewahrung</dt><dd>{{ retention_days }} Tage, gemerkte ★ unbegrenzt (<a href="/settings#news">ändern</a>) · Abruf alle {{ settings.fetch_interval_minutes }} Minuten</dd>
     </dl>
   </section>
 {% endif %}

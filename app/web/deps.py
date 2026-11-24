@@ -55,9 +55,9 @@ def global_alerts(ctx: AppContext) -> list[dict[str, str]]:
     except Exception as e:  # Tabelle erst nach Migration vorhanden
         log.debug("Sparplan-Hinweise nicht verfügbar: %s", e)
     try:
-        from app.assetchange.detect import hints
+        from app.assetchange.detect import hints_nowait
 
-        for h in [h for h in hints(ctx) if h.confidence == "hoch"][:2]:
+        for h in [h for h in hints_nowait(ctx) if h.confidence == "hoch"][:2]:
             ratio = f" (1 : {h.ratio.normalize():f})" if h.ratio is not None else ""
             alerts.append({"level": "warn", "text": f"Mögliche Token-Umstellung: {h.old_asset} → {h.target}{ratio} – "
                                                     "Restbestand prüfen und umstellen.", "href": "/changes"})

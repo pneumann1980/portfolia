@@ -28,8 +28,8 @@ news_report (15 min, prüft Uhrzeit)             Tagesbericht → news_report   
 
 ## Datenmodell (Migration 33)
 
-Alle Tabellen hängen per `ON DELETE CASCADE` an `news_item`; die Aufbewahrungsfrist (`retention_days`, 90 Tage)
-löscht Inhalt, Analyse und Ereigniszuordnung mit. Bestehende Daten bleiben unverändert (`news_item`, `news_asset`,
+Alle Tabellen hängen per `ON DELETE CASCADE` an `news_item`; die Aufbewahrungsfrist (seit 0.120 Einstellung
+`news.retention_days`, Standard 7 Tage; vorher `retention_days` in `sources.yaml`, 90 Tage) löscht Inhalt, Analyse und Ereigniszuordnung mit. Bestehende Daten bleiben unverändert (`news_item`, `news_asset`,
 `llm_usage`, `digest` unberührt).
 
 * `news_content` – Status `pending | success | partial | blocked | failed`, Grund (`reason`), `final_url`,
@@ -396,6 +396,36 @@ Gemessen mit einem Bestand wie nach 90 Tagen Aufbewahrung (≈37.000 Meldungen, 
   Links ohne JavaScript bleiben erhalten).
 * **Ladezeiten:** Server-Antwortzeit der News-Seite und der Vorschaubilder (Median, 95 %, Höchstwert der letzten bis zu
   200 Aufrufe) im Reiter „Status“.
+
+## 0.120: News schlanker – Aufbewahrung 7 Tage, Seiten ohne Ledger-Neuaufbau
+
+Messung (synthetischer Bestand 37 000 Meldungen/90 Tage; Journal mit 6000 Buchungen):
+
+| Seitenaufruf | vorher | nachher |
+|---|---|---|
+| `/news` warm | 6–60 ms | unverändert |
+| `/news` nach Datenänderung (Import, Sparplan-Abgleich, Kursquelle) | 702–757 ms | 8 ms |
+| Seitenwechsel im Browser, CPU 4× gedrosselt (DOMContentLoaded) | ≈ 500 ms | ≈ 420 ms |
+| erster Seitenaufruf ohne Browser-Cache (gedrosselt) | ≈ 1000 ms | ≈ 410 ms |
+
+Ursachen und Änderungen:
+
+* **Hinweiszeile jeder Seite** („Mögliche Token-Umstellung“, `assetchange.detect.hints`) brauchte nach jeder
+  Datenänderung das komplette Ledger – auf *jeder* Seite. Jetzt `hints_nowait`: letzter bekannter Stand, ein
+  Hintergrundlauf rechnet neu (wärmt dabei Ledger/Portfolio für Übersicht & Co. vor). Ohne Hintergrund-Jobs
+  (`SCHEDULER_ENABLED=false`, Tests) synchron wie bisher. Ledger-Berechnung selbst unverändert.
+* **News-Seite und Leseansicht** brauchten Portfolio und Bewertung nur für die Auswahl „Asset“ und Namen an den
+  Karten. Jetzt aus `app/news/held.py`, das die News-Jobs (Abruf, Neuzuordnung, Analyse) bei jedem Lauf auffrischen.
+  Grenze: nach einem Import bis zur Neuzuordnung (direkt danach) bzw. zum nächsten Abruf alter Positionsstand.
+* **ECharts (1,1 MB)** lädt nur noch auf Seiten mit Diagramm (`charts.js` → `needEcharts`), parallel zum Datenabruf.
+* **Aufbewahrung** als Einstellung (Einstellungen → News, 3–90 Tage, Standard **7**); gemerkte ★ bleiben samt Text,
+  Analyse und Transkript. Gelöscht wird in Portionen à 500 mit kurzer Pause, damit der erste Lauf nach der Umstellung
+  (zehntausende Zeilen) Seiten und Jobs nicht blockiert. Den frei gewordenen Platz gibt die wöchentliche Wartung
+  (sonntags 04:40, `VACUUM` ab 25 % freiem Platz) zurück.
+
+Folgen der kürzeren Aufbewahrung: Videos samt Kernaussagen verschwinden ebenfalls nach 7 Tagen (außer gemerkt);
+Discovery „Meldungen der letzten … Tage“ (Standard 14) sieht höchstens die Aufbewahrungsfrist – schon übernommene
+Nachrichtensignale bleiben, sie liegen in eigenen Tabellen. News auf der Asset-Seite reichen 7 Tage zurück.
 
 ## 0.119.1: Speichern der Karte „KI je Bereich“
 
