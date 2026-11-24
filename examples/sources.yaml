@@ -42,7 +42,7 @@ version: 1
 
 settings:
   fetch_interval_minutes: 30
-  retention_days: 90
+  # Aufbewahrung der Meldungen: seit 0.120 unter Einstellungen → News (Standard 7 Tage, gemerkte bleiben)
   request_timeout_s: 20
   max_items_per_feed: 60
   languages: [de, en]

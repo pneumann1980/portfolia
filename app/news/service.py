@@ -16,6 +16,7 @@ import httpx
 
 from app.context import AppContext
 from app.ledger.models import AssetInfo
+from app.news import held as held_cache
 from app.news.config import Channel, Source, SourcesConfig
 from app.news.dedupe import TitleIndex, normalize_title, normalize_url
 from app.news.images import cached_image
@@ -29,9 +30,22 @@ log = logging.getLogger(__name__)
 
 EXAMPLE_SOURCES = Path(__file__).resolve().parent.parent.parent / "examples" / "sources.yaml"
 HOST_INTERVALS = {"news.google.com": 2.5, "feeds.finance.yahoo.com": 1.2, "www.youtube.com": 1.0}
+RETENTION_DEFAULT_DAYS = 7  # 0.120: Meldungen nach 7 Tagen vergessen (gemerkte bleiben); vorher 90
+RETENTION_MIN_DAYS, RETENTION_MAX_DAYS = 3, 90
+RETENTION_CHUNK = 500  # Meldungen je Lösch-Transaktion
+RETENTION_PAUSE_S = 0.05
 REMATCH_DAYS = 30  # Neuzuordnung nach Import: nur dieser Zeitraum (ältere Meldungen behalten ihre Zuordnung)
 REMATCH_CHUNK = 300  # Meldungen je Transaktion
 REMATCH_PAUSE_S = 0.05  # Pause zwischen den Portionen: Seitenaufrufe kommen dazwischen durch
+
+
+def retention_days(ctx: AppContext) -> int:
+    """Aufbewahrungsfrist in Tagen (Einstellungen → News); gemerkte Meldungen sind ausgenommen."""
+    try:
+        days = int(ctx.settings.get("news.retention_days", RETENTION_DEFAULT_DAYS) or RETENTION_DEFAULT_DAYS)
+    except (TypeError, ValueError):
+        days = RETENTION_DEFAULT_DAYS
+    return max(RETENTION_MIN_DAYS, min(RETENTION_MAX_DAYS, days))
 _LIVE_WORDS = ("live", "livestream", "live stream", "🔴")
 
 
@@ -62,6 +76,7 @@ class NewsService:
     # -- Kontext ------------------------------------------------------------------------------------
     def held(self) -> tuple[list[AssetInfo], dict[str, float]]:
         val = self.ctx.valuation()
+        held_cache.remember(self.ctx, val, self.ctx.portfolio())  # Positionen/Namen für die News-Seiten (0.120)
         if val is None:
             return [], {}
         assets = [p.asset for p in val.positions if not p.asset.is_fiat]
@@ -304,8 +319,7 @@ class NewsService:
         published = it.published or now
         if published > now + timedelta(hours=2):
             published = now
-        retention = int(settings.get("retention_days", 90))
-        if published < now - timedelta(days=retention):
+        if published < now - timedelta(days=retention_days(self.ctx)):
             return None
         lang = language or (src.language if src else "en")
         if lang not in (settings.get("languages") or ["de", "en"]):
@@ -563,12 +577,25 @@ class NewsService:
                 rel = max(scores.values()) if scores else round(0.25 * w, 4)
                 c.execute("UPDATE news_item SET relevance=? WHERE id=?", (rel, r["id"]))
 
-    def retention(self) -> int:
-        days = int(self.cfg.settings.get("retention_days", 90))
-        cutoff = iso(datetime.now(UTC) - timedelta(days=days))
-        # gemerkte Meldungen (★) bleiben – samt Text, Analyse, Transkript und Zuordnung (ON DELETE CASCADE greift nicht)
-        with self.db.transaction() as c:
-            c.execute("DELETE FROM news_asset WHERE item_id IN (SELECT id FROM news_item WHERE published_at<? "
-                      "AND saved_at IS NULL)", (cutoff,))
-            n = c.execute("DELETE FROM news_item WHERE published_at<? AND saved_at IS NULL", (cutoff,)).rowcount
-        return n
+    def retention(self, chunk: int = RETENTION_CHUNK) -> int:
+        """Meldungen älter als die Aufbewahrungsfrist löschen – gemerkte (★) bleiben samt Text, Analyse, Transkript und
+        Zuordnung. In Portionen mit eigener Transaktion (0.120): der erste Lauf nach dem Verkürzen auf 7 Tage löscht
+        zehntausende Zeilen samt Volltext; eine einzige Transaktion würde Seiten und Jobs so lange blockieren."""
+        cutoff = iso(datetime.now(UTC) - timedelta(days=retention_days(self.ctx)))
+        total = 0
+        while True:
+            ids = [r[0] for r in self.db.q("SELECT id FROM news_item WHERE published_at<? AND saved_at IS NULL "
+                                           "LIMIT ?", (cutoff, chunk))]
+            if not ids:
+                break
+            ph = ",".join("?" * len(ids))
+            with self.db.transaction() as c:  # news_content/analysis/event_item hängen per ON DELETE CASCADE daran
+                c.execute(f"DELETE FROM news_asset WHERE item_id IN ({ph})", ids)
+                c.execute(f"DELETE FROM news_event_split WHERE item_id IN ({ph}) OR other_id IN ({ph})", ids + ids)
+                total += c.execute(f"DELETE FROM news_item WHERE id IN ({ph})", ids).rowcount
+            if len(ids) < chunk:
+                break
+            time.sleep(RETENTION_PAUSE_S)  # andere Threads (Seitenaufrufe) zwischen den Portionen an die Reihe lassen
+        if total:
+            log.info("Aufbewahrung: %d Meldungen älter als %d Tage gelöscht", total, retention_days(self.ctx))
+        return total

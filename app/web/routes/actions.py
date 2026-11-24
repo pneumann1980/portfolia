@@ -267,8 +267,10 @@ async def save_settings(request: Request) -> Response:
             s.set("news.group", f.get("news_group") == "1")
             s.set("news.group_llm", f.get("news_group_llm") == "1")
             s.set("news.report", f.get("news_report") == "1")
-            s.set("news.report_hour", _int(f.get("report_hour"), 7, 0, 23))
-            s.set("news.report_minute", _int(f.get("report_minute"), 30, 0, 59))
+            s.set("news.report_hour", _int(f.get("report_hour"), 22, 0, 23))
+            s.set("news.report_minute", _int(f.get("report_minute"), 15, 0, 59))
+            if f.get("retention_days") is not None:  # 0.120: Aufbewahrung der Meldungen (gemerkte bleiben)
+                s.set("news.retention_days", _int(f.get("retention_days"), 7, 3, 90))
         elif section == "backup":
             s.set("backup.keep", _int(f.get("keep"), 14, 1, 365))
             s.set("backup.hour", _int(f.get("hour"), 3, 0, 23))

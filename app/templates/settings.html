@@ -124,6 +124,8 @@
     <div class="grid-3">
       <label class="field">Mindest-Relevanz für Dashboard/Feed<input type="number" step="0.05" min="0" name="min_relevance" value="{{ s['news.min_relevance'] }}"></label>
       <label class="field">News im Dashboard<input type="number" min="1" max="20" name="dashboard_count" value="{{ s['news.dashboard_count'] }}"></label>
+      <label class="field">Meldungen aufbewahren (Tage)<input type="number" min="3" max="90" name="retention_days" value="{{ s['news.retention_days'] }}">
+        <span class="hint">Ältere Meldungen samt Text, KI-Auswertung und Transkript werden gelöscht – gemerkte ★ bleiben.</span></label>
     </div>
     <h3 class="reader-sub">Artikeltexte</h3>
     <label class="check"><input type="checkbox" name="news_enrich" value="1" {% if s['news.enrich'] %}checked{% endif %}>

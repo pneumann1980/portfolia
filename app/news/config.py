@@ -21,7 +21,6 @@ SOURCE_TYPES = {"rss", "rss_per_asset", "finnhub", "cryptopanic", "binance_api",
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "fetch_interval_minutes": 30,
-    "retention_days": 90,
     "request_timeout_s": 20,
     "max_items_per_feed": 60,
     "languages": ["de", "en"],

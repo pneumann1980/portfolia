@@ -14,6 +14,7 @@ from app.news import ytlib
 from app.news.analysis import AnalysisService
 from app.news.enrich import EnrichService
 from app.news.module import NOTE_MAX, READ_ALL_UNDO, news_service
+from app.news.service import retention_days
 from app.news.status import pipeline_status
 from app.util.timeutil import iso
 from tests.test_news_intel import FakeGateway, add_item, store_content
@@ -95,7 +96,7 @@ def test_saved_tab_lists_all_kinds_newest_saved_first_without_time_window(client
 
 def test_retention_keeps_saved_items_with_content_analysis_and_assets(client):
     ctx = wctx(client)
-    days = int(news_service(ctx).cfg.settings.get("retention_days", 90))
+    days = retention_days(ctx)
     old_saved = add_item(ctx, "Gemerkte alte Meldung", "https://pub.example.com/s", hours=24 * (days + 5),
                          assets=("BTC",))
     old_plain = add_item(ctx, "Alte Meldung", "https://pub.example.com/p", hours=24 * (days + 5), assets=("BTC",))
