@@ -653,10 +653,18 @@ def _row_detail(ctx: Any, task: Task) -> Task:
             Answer("row:include", "Nein, das ist ein eigener Vorgang – zusätzlich buchen",
                    "Wird gebucht: " + (", ".join(it.legs) or what) + ".", recommended=it.action == "include")]
     else:
+        # 0.122: Prüfhinweis der Quelle (z. B. Gebühr nicht belegbar) sichtbar machen – dann keine Empfehlung, denn
+        # „buchen“ übernähme genau die offene Annahme (etwa die Gebühr als zusätzlichen Abzug)
+        review = next((str(rc.rec.review) for rc in rows if getattr(rc.rec, "review", None)), "")
         task.question = "Soll dieser Vorgang gebucht werden?"
-        task.context = f"{what}. Ein Gegenstück in deinen Buchungen gibt es nicht."
-        task.answers = [Answer("row:include", "Ja, buchen", "Wird gebucht: " + (", ".join(it.legs) or what) + ".",
-                               recommended=True)]
+        task.context = f"{what}. Ein Gegenstück in deinen Buchungen gibt es nicht." + (
+            f" Hinweis der Quelle: {review}." if review else "")
+        task.answers = [Answer("row:include", "Ja, buchen" + (" (wie angezeigt)" if review else ""),
+                               "Wird gebucht: " + (", ".join(it.legs) or what) + ".", recommended=not review)]
+        if review:
+            task.answers.append(Answer("go:open", "Im Prüf-Stapel ansehen und anpassen",
+                                       "Öffnet genau diesen Vorgang – dort lassen sich Gebühr, Menge und Wert vor dem "
+                                       "Buchen korrigieren. Danach geht es hier weiter."))
     _bind_rows(ctx, task, csv_service(ctx).rows(it.batch_id))
     task.answers += [
         Answer("row:skip", "Nicht buchen (gehört nicht in mein Depot)",

@@ -374,10 +374,28 @@ class Plan:
         return hashlib.sha256(f"{self.action}|{int(self.force)}|{data}|{refs}".encode()).hexdigest()[:24]
 
 
+LIVE = "aktueller Kurs"  # Herkunft eines Schätzwerts aus dem laufend aktualisierten Kurs (Vorgang von heute/gestern)
+
+
+def _bound_row(rc: RowCtx) -> list[tuple[str, Any]]:
+    """Zeileninhalt für die Bindung. EUR-Werte, die nur aus dem *aktuellen* Kurs geschätzt sind (Vorgang ohne Wert
+    von heute/gestern), ändern sich mit jedem Kursabruf – gebunden wird dann nur „Schätzwert aus aktuellem Kurs“,
+    nicht die Zahl (0.122). Sonst meldete jede Antwort zwischen zwei Kursabrufen „hat sich geändert“, obwohl Betrag,
+    Konto, Gebühr und Zuordnung gleich blieben. Werte aus Datei, Tageskurs oder Eingabe bleiben gebunden."""
+    row = dict(rc.row or {})
+    live_value = str(rc.value_src or "").startswith(LIVE)
+    if live_value and row.get("value_eur"):
+        row["value_eur"] = LIVE
+    fee_src = str(rc.fee_src or "")
+    if row.get("fee_eur") and (fee_src.startswith(LIVE) or (live_value and fee_src == "Kurs des Vorgangs")):
+        row["fee_eur"] = LIVE
+    return sorted(row.items())
+
+
 def row_state(rc: RowCtx) -> list[Any]:
     """Entscheidungsrelevanter Stand einer Zeile (für Vorschau-Bindung und Assistenten-Karten)."""
     return [rc.status, rc.decision or "", rc.value_in or "", rc.fee_in or "", rc.pair_ref or "", rc.pair_conf or "",
-            rc.pair_ok if rc.pair_ok is not None else "", rc.tx_id or "", sorted((rc.row or {}).items()),
+            rc.pair_ok if rc.pair_ok is not None else "", rc.tx_id or "", _bound_row(rc),
             sorted(rc.pair_alts or []), rc.counterpart or "", rc.pair_rev or ""]
 
 

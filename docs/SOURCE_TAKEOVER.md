@@ -141,3 +141,18 @@ nicht gebucht und zählen in der Vorgangszählung als bewusst ausgelassen. Der B
 ab dem Stichtag müssen den Bestand der Quelle ergeben; weicht er ab, ist der Eröffnungsstand die Ursache und der
 *Ausgleich zum Stichtag* die Lösung. Als Sicherung gibt es die Pflichtprüfung „Archiv vor dem Stichtag bleibt
 unverändert“ (nur bei festgeschriebenem Stichtag). Bis 0.101.0 war die Übernahme in diesem Fall gesperrt.
+
+## 0.122: Neue API-Vorgänge ohne unnötige Rückfrage
+
+* **Bitpanda – Gebühr bei Einzelvorgängen belegbar:** Der Abruf merkt sich je Wallet und Asset den letzten belegten
+  Saldo (`asset_balance_after`) im Abrufstand. Ein Folgeabruf, der nur einen neuen Vorgang liefert, vergleicht damit –
+  vorher fehlte der Vorgänger, die Gebühr galt als „nicht belegbar“ und die automatische Übernahme ließ den Vorgang
+  (z. B. jeden täglichen Reward mit Gebühr) zur Prüfung liegen. Nur nach vollständigem Abruf gespeichert; passt die
+  Differenz nicht, bleibt es bei der Prüfung.
+* **Karte „Soll dieser Vorgang gebucht werden?“:** zeigt den Prüfhinweis der Quelle und empfiehlt dann nichts
+  („Ja, buchen“ übernähme genau die offene Annahme); zusätzlich „Im Prüf-Stapel ansehen und anpassen“.
+* **„Hat sich seit der Anzeige geändert“:** EUR-Werte, die nur aus dem *aktuellen* Kurs geschätzt sind (Vorgang ohne
+  Wert von heute/gestern), gehen nicht mehr als Zahl in die Bindung ein – sie änderten sich mit jedem Kursabruf und
+  blockierten die Antwort, obwohl Betrag, Konto, Gebühr und Zuordnung gleich blieben. Gebucht wird der Schätzwert zum
+  Zeitpunkt der Antwort. Werte aus Datei, Tageskurs oder Eingabe bleiben gebunden.
+
