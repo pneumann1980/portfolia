@@ -572,27 +572,63 @@ def _rate_mode(fiat: Decimal | None, qty: Decimal | None, rate: Decimal | None,
     return None
 
 
-def _chain(ops: list[_Op], diag: _Diag) -> None:
+Point = tuple[datetime, Decimal]  # (Zeitpunkt, asset_balance_after) des letzten Teils je Wallet und Asset
+
+
+def _seed_from(cursor: dict[str, Any] | None) -> dict[tuple[str, str], Point]:
+    """Gespeicherte Salden aus dem Abrufstand; Unlesbares wird ignoriert (dann wie bisher ohne Vorgänger)."""
+    out: dict[tuple[str, str], Point] = {}
+    raw = (cursor or {}).get("bal")
+    if not isinstance(raw, dict):
+        return out
+    for k, v in raw.items():
+        wallet, _, ref = str(k).partition("|")
+        if not wallet or not ref or not isinstance(v, list) or len(v) != 2:
+            continue
+        ts, bal = _ts(v[0]), _dec(v[1])
+        if ts is not None and bal is not None:
+            out[(wallet, ref)] = (ts, bal)
+    return out
+
+
+def _seed_to(last: dict[tuple[str, str], Point]) -> dict[str, list[str]]:
+    return {f"{w}|{r}": [ts.astimezone(UTC).isoformat(), _s(bal)] for (w, r), (ts, bal) in sorted(last.items())}
+
+
+def _chain(ops: list[_Op], diag: _Diag,
+           seed: dict[tuple[str, str], Point] | None = None) -> dict[tuple[str, str], Point]:
     """Saldoverlauf je Wallet und Asset (``asset_balance_after``): Differenz zum zeitlich vorhergehenden Teil
     desselben Wallets gegen den Betrag. Belegt, ob eine Gebühr zusätzlich abgezogen wurde (``extra``) oder im
-    Betrag steckt bzw. den Bestand nicht berührt (``inside``); Brüche deuten auf fehlende Vorgänge."""
+    Betrag steckt bzw. den Bestand nicht berührt (``inside``); Brüche deuten auf fehlende Vorgänge.
+
+    ``seed`` (0.122): letzter belegter Saldo je Wallet aus dem vorigen, vollständigen Abruf. Er ist Vorgänger des
+    ersten Teils, der *nach* ihm liegt – ein Folgeabruf beginnt vor diesem Zeitpunkt (Überlappung), alle späteren
+    Teile sind also im Abruf. Vorher fehlte dem einzeln eintreffenden Vorgang (z. B. ein Reward) der Vorgänger,
+    seine Gebühr galt als nicht belegbar und blockierte die automatische Übernahme. Fehlt dazwischen etwas, passt
+    die Differenz nicht („Bruch“) und es bleibt bei der Prüfung. Rückgabe: neuer letzter Saldo je Wallet."""
     groups: dict[tuple[str, str], list[_Leg]] = defaultdict(list)
     for op in ops:
         for lg in op.legs:
             if lg.wallet and lg.balance_ref and lg.ts is not None and lg.balance_after is not None \
                     and lg.amount is not None and lg.side in ("in", "out"):
                 groups[(lg.wallet, lg.balance_ref)].append(lg)
-    for legs in groups.values():
+    last: dict[tuple[str, str], Point] = dict(seed or {})
+    for key, legs in groups.items():
         legs.sort(key=lambda x: x.ts)  # type: ignore[arg-type, return-value]
+        stored = (seed or {}).get(key)
         for i, lg in enumerate(legs):
-            if i == 0:
-                continue
-            prev = legs[i - 1]
-            same_time = prev.ts == lg.ts or (i + 1 < len(legs) and legs[i + 1].ts == lg.ts)
+            if i == 0:  # Vorgänger nur aus dem vorigen Abruf – und nur, wenn er eindeutig davor liegt
+                if stored is None or not stored[0] < lg.ts:  # type: ignore[operator]
+                    continue
+                prev_ts, prev_bal = stored
+                diag.count("Saldoverlauf: Vorgänger aus dem vorigen Abruf")
+            else:
+                prev_ts, prev_bal = legs[i - 1].ts, legs[i - 1].balance_after  # type: ignore[assignment]
+            same_time = prev_ts == lg.ts or (i + 1 < len(legs) and legs[i + 1].ts == lg.ts)
             if same_time:
                 diag.count("Saldoverlauf: Reihenfolge nicht eindeutig")
                 continue
-            delta = lg.balance_after - prev.balance_after  # type: ignore[operator]
+            delta = lg.balance_after - prev_bal  # type: ignore[operator]
             signed = lg.amount if lg.side == "in" else -lg.amount  # type: ignore[operator]
             fee = lg.fee if lg.fee_same else ZERO
             tfee = lg.trade_fee if lg.trade_fee_ref == lg.ref else ZERO
@@ -609,6 +645,10 @@ def _chain(ops: list[_Op], diag: _Diag) -> None:
                 lg.trade_fee_extra = True
             else:
                 diag.count("Saldoverlauf: Brüche")
+        newest = legs[-1]
+        if stored is None or stored[0] < newest.ts:  # type: ignore[operator]
+            last[key] = (newest.ts, newest.balance_after)  # type: ignore[assignment]
+    return last
 
 
 def chain_gaps(ops: list[_Op]) -> tuple[dict[str, list[dict[str, Any]]], dict[str, tuple[datetime, Decimal]]]:
@@ -977,7 +1017,7 @@ class BitpandaConnector(K.Connector):
                 notes.append(f"{len(items) - len(ops)} Einträge ohne Objektstruktur übersprungen – Abdeckung unklar")
                 complete = False
             self._resolve(api, ops, notes)
-            _chain(ops, diag)
+            last = _chain(ops, diag, _seed_from(cursor) if since is not None else None)
             events, skipped = self._map(ops, started)
             balances = self._balances(api, ops, complete and since is None, coverage, notes, diag)
             coverage.update(requests=api.requests, throttled=api.throttled, waited_s=round(api.waited, 1))
@@ -988,7 +1028,9 @@ class BitpandaConnector(K.Connector):
         coverage["time_fields"] = dict(diag.time_sources)
         coverage["diagnostics"] = diag.summary()
         coverage["limits"] = self._limits(events)
-        nxt = {"v": CURSOR_VERSION, "from": _iso_ms(started - OVERLAP)} if complete else None
+        # letzter belegter Saldo je Wallet für den Folgeabruf (0.122) – nur nach vollständigem Abruf, sonst wäre die
+        # Kette zwischen gespeichertem Punkt und neuem Vorgang nicht lückenlos
+        nxt = {"v": CURSOR_VERSION, "from": _iso_ms(started - OVERLAP), "bal": _seed_to(last)} if complete else None
         return K.FetchResult(events=events, cursor=nxt, complete=complete, warnings=notes, skipped=skipped,
                              coverage=coverage, balances=balances)
 

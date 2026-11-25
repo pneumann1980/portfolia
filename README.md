@@ -875,9 +875,13 @@ durch den Abrufzeitpunkt; liefert Bitpanda den Zeitpunkt später, ersetzt der n�
 
 **Gebühren** (Bedeutung nicht dokumentiert – übernommen wird nur, was die Daten selbst belegen):
 
-* `fee_amount`: Der Saldoverlauf (`asset_balance_after` desselben Wallets gegenüber dem vorherigen Teil im selben
-  Abruf) zeigt, ob die Gebühr *zusätzlich* abgezogen wurde (Buchung: Betrag + Gebühr) oder *im Betrag* steckt
-  (Abgang = Betrag − Gebühr, dazu die Gebühr; bei Eingängen nur Hinweis). Ohne Beleg: Betrag + Gebühr, prüfbedürftig.
+* `fee_amount`: Der Saldoverlauf (`asset_balance_after` desselben Wallets gegenüber dem vorherigen Teil – im selben
+  Abruf oder, seit 0.122, gemerkt aus dem vorigen vollständigen Abruf) zeigt, ob die Gebühr *zusätzlich* abgezogen
+  wurde (Buchung: Betrag + Gebühr) oder *im Betrag* steckt (Abgang = Betrag − Gebühr, dazu die Gebühr; bei Eingängen
+  nur Hinweis). Ohne Beleg: Betrag + Gebühr, prüfbedürftig. Der gemerkte Saldo steht im Abrufstand (`bal` je Wallet
+  und Asset); ein einzeln eintreffender Vorgang (z. B. täglicher Reward mit Gebühr) bleibt damit belegbar und wird bei
+  „Eindeutige neue Vorgänge automatisch übernehmen“ ohne Rückfrage gebucht. Passt die Differenz nicht (Vorgang fehlt
+  dazwischen), bleibt er prüfbedürftig.
 * `trade.fee`: Betrag ≈ Menge × `rate_with_fee` → Gebühr im Fiat-Betrag enthalten (Einstand bzw. Erlös stimmen ohne
   weitere Gebühr, Hinweis an der Zeile); Betrag ≈ Menge × `rate` → zusätzlich (Gebühr an der Buchung, prüfbedürftig,
   solange der Saldoverlauf die Abbuchung nicht belegt); sonst prüfbedürftig, nichts geraten.
