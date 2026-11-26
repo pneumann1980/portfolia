@@ -1364,6 +1364,18 @@ ALTER TABLE news_item ADD COLUMN ai_requested_at TEXT;
 ALTER TABLE news_analysis ADD COLUMN trigger TEXT;
 CREATE INDEX IF NOT EXISTS ix_news_analysis_trigger ON news_analysis(trigger, analyzed_at);
 """),
+    (47, """
+-- 0.122.1: Antwort der KI je Grenzfall-Paar der Ereignisgruppierung – jedes Paar wird höchstens einmal gefragt
+-- (vorher bei jedem Lauf alle 20 Minuten erneut, ≈ 110 Anfragen am Tag). Fällt mit der Meldung weg.
+CREATE TABLE IF NOT EXISTS news_event_verdict (
+  a          INTEGER NOT NULL REFERENCES news_item(id) ON DELETE CASCADE,
+  b          INTEGER NOT NULL REFERENCES news_item(id) ON DELETE CASCADE,
+  same       INTEGER NOT NULL,
+  decided_at TEXT NOT NULL,
+  PRIMARY KEY (a, b)
+);
+CREATE INDEX IF NOT EXISTS ix_news_event_verdict_b ON news_event_verdict(b);
+"""),
 ]
 
 
