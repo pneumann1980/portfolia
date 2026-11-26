@@ -508,3 +508,25 @@ Zahlenkonflikt, KI-Grenzfall, Korrektur), Tagesbericht (Belegprüfung, Idempoten
   Anriss (kein Headless-Browser).
 * Kein Wechsel zu anderen KI-Modellen bei Ausfall (bewusst); kein Mehrbenutzerbetrieb der Pausenlogik (Zustand je Instanz).
 * Free-Tier-Zahlen sind Annahmen (siehe oben); die lokale Zählung ist kein Abrechnungsnachweis.
+
+## 0.122.2: Messpunkte – wohin die Ladezeit geht, KI-Fehler nach Art
+
+**Ladezeiten.** Für die gemessenen Seiten (News, Übersicht, Einstellungen …) zeichnet die Middleware je Aufruf
+Zeitanteile auf (`app/util/reqtiming.py`, ContextVar, wirkt auch im Thread-Pool):
+
+| Anteil | Bedeutung |
+|---|---|
+| Warten auf Bearbeitung | Eintreffen → Beginn im Handler (Thread-Pool belegt, andere Anfragen, Hintergrund-Jobs) |
+| Rechenzeit | CPU-Zeit des bearbeitenden Threads bis zum fertigen HTML; deutlich kleiner als die Bearbeitungszeit ⇒ der Aufruf wartet (GIL durch Hintergrund-Jobs, Festplatte) |
+| Datenbank | Summe aller Abfragen dieses Aufrufs |
+| Portfolio/Bewertung | `ctx.portfolio/ledger/valuation/history`, äußerster Aufruf |
+| Seitenaufbau | Rendern der Vorlage |
+
+Die Statuskarte zeigt je Seite den Median jedes Anteils und den langsamsten Aufruf mit seinen Anteilen. Die Anteile
+überlappen (Datenbank steckt teils in Portfolio) – sie sind Diagnose, keine Summe. Grenzen: nur im Speicher (seit
+Programmstart, letzte Aufrufe je Seite); Netzwerk/Browser-Zeit ist nicht enthalten.
+
+**KI-Fehler nach Art.** Jeder Fehler eines KI-Anbieters wird je Tag, Modell, Aufgabe und Art gezählt
+(`ai_error`, Migration 48): Kontingent erschöpft, nicht erreichbar, abgelehnt (Anfrage/Modell/Zugang), sonstiger
+Fehler – mit letztem Fehlertext und Zeitpunkt. Die KI-Karte zeigt „Fehler heute nach Art“. Es werden keine
+Anfrage- oder Artikelinhalte gespeichert, nur die Fehlermeldung des Anbieters (gekürzt).

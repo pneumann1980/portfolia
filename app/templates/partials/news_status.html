@@ -1,4 +1,4 @@
-{% set ai_s = st.ai %}
+{% set ai_s = st.ai %}{% set task_labels = {'news': 'Nachrichten', 'community': 'Community', 'events': 'Ereignis-Grenzfälle', 'report': 'Tagesbericht', 'video': 'Videos', 'discovery': 'Watchlist-Suche', 'company': 'Firmenanalyse'} %}
 <section class="card">
   <div class="card-head"><h2>Pipeline</h2>
     <div class="row"><select name="fetch" id="pipe-fetch" class="sm" aria-label="Import"><option value="1">mit Import</option><option value="0">ohne Import</option></select>
@@ -19,8 +19,13 @@
   <dl class="kv">
     {% for key, label in (('news', 'News-Seite'), ('img', 'Vorschaubilder')) %}{% set t = timings[key] %}
     <dt>{{ label }}</dt><dd>{% if t.n %}Median {{ t.median|num(0) }} ms · 95 % unter {{ t.p95|num(0) }} ms · höchstens {{ t.max|num(0) }} ms <span class="hint">({{ t.n }} Aufrufe)</span>{% else %}<span class="hint">noch keine Aufrufe gemessen</span>{% endif %}</dd>
+    {% if key == 'news' and t.parts %}{% set p = t.parts %}{% set s = t.slowest %}
+    <dt>davon (Median)</dt><dd>Warten auf Bearbeitung {{ (p.queue or 0)|num(0) }} ms · Rechenzeit {{ (p.cpu or 0)|num(0) }} ms · Datenbank {{ (p.db or 0)|num(0) }} ms · Portfolio/Bewertung {{ (p.portfolio or 0)|num(0) }} ms · Seitenaufbau {{ (p.render or 0)|num(0) }} ms</dd>
+    <dt>langsamster Aufruf</dt><dd>{{ s.total|num(0) }} ms: Warten {{ (s.queue or 0)|num(0) }} · Rechenzeit {{ (s.cpu or 0)|num(0) }} · Datenbank {{ (s.db or 0)|num(0) }} · Portfolio {{ (s.portfolio or 0)|num(0) }} · Seitenaufbau {{ (s.render or 0)|num(0) }} ms</dd>
+    {% endif %}
     {% endfor %}
   </dl>
+  {% if timings.news and timings.news.parts %}<p class="hint">Die Anteile überlappen (Datenbank steckt teils in Portfolio). „Warten auf Bearbeitung“: Zeit bis der Server den Aufruf annimmt (andere Aufrufe, Hintergrund-Jobs). Ist die Rechenzeit deutlich kleiner als die Bearbeitungszeit, wartet der Aufruf auf die CPU (Hintergrund-Jobs) oder die Festplatte.</p>{% endif %}
   <p class="hint">Vorschaubilder kommen nur aus dem lokalen Speicher; fehlende lädt der Hintergrund-Job „news_images“ nach, nicht abrufbare werden 24 Stunden nicht erneut versucht.</p>
 </section>{% endif %}
 <section class="card mt-16">
@@ -35,6 +40,7 @@
     {% else %}
     <dt>Restbudget</dt><dd>{% if ai_s.enabled %}{{ ai_s.tokens_left|num(0) }} Tokens{% else %}–{% endif %}</dd>
     {% endif %}
+    {% if ai_s.errors_today %}<dt>Fehler heute nach Art</dt><dd>{% for g in ai_s.errors_today %}<div><b>{{ g.n }} × {{ g.label }}</b> <span class="hint">({% for task, n in g.tasks.items() %}{{ task_labels.get(task, task) }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}){% if g.last_text %} · zuletzt {{ g.last_at|datetime_de }}: „{{ g.last_text }}“{% endif %}</span></div>{% endfor %}</dd>{% endif %}
     {% if ai_s.access_paused and ai_s.access_paused[0] %}<dt>Zugang pausiert</dt><dd><span class="badge crit">bis {{ ai_s.access_paused[0]|datetime_de }}</span> {{ ai_s.access_paused[1] }} – betrifft alle Modelle</dd>
     {% elif ai_s.paused_until %}<dt>Nachrichten pausiert bis</dt><dd><span class="badge warn">{{ ai_s.paused_until|datetime_de }}</span></dd>{% endif %}
   </dl>
