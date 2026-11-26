@@ -397,6 +397,19 @@ Gemessen mit einem Bestand wie nach 90 Tagen Aufbewahrung (≈37.000 Meldungen, 
 * **Ladezeiten:** Server-Antwortzeit der News-Seite und der Vorschaubilder (Median, 95 %, Höchstwert der letzten bis zu
   200 Aufrufe) im Reiter „Status“.
 
+## 0.122.1: Ereignis-Grenzfälle – jedes Paar nur einmal an die KI
+
+Befund aus dem Betrieb: „Ereignis-Grenzfälle“ waren mit Ø 114 Anfragen am Tag der größte KI-Verbraucher – mehr als die
+Artikelanalyse vor 0.119. Ursache: Die Gruppierung läuft alle 20 Minuten (und nach Abruf/Analyse) und schickte jedes
+Mal alle noch offenen Grenzfall-Paare (bis 8 je Anfrage) an die KI – auch Paare, die sie schon mit „nicht dasselbe
+Ereignis“ beantwortet hatte; nach einem Fehler ebenso bei jedem Lauf erneut.
+
+* Antwort je Paar in `news_event_verdict` (Migration 47, fällt mit der Meldung weg): „gleich“ wird bei jedem Lauf
+  wieder angewandt, „nicht gleich“ nie wieder gefragt.
+* Nach einem Fehler (keine/kaputte Antwort) eine Stunde Pause (`news.events_llm_pause_until`), dann erneut.
+* Erwartung: Anfragen nur noch für *neue* Grenzfall-Paare – bei ≈ 50 analysierten Meldungen am Tag eine Handvoll statt
+  ≈ 110. Messbar unter Einstellungen → KI & Modelle → KI je Bereich → „Ereignis-Grenzfälle“.
+
 ## 0.120: News schlanker – Aufbewahrung 7 Tage, Seiten ohne Ledger-Neuaufbau
 
 Messung (synthetischer Bestand 37 000 Meldungen/90 Tage; Journal mit 6000 Buchungen):

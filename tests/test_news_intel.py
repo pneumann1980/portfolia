@@ -1069,12 +1069,16 @@ def test_events_number_conflict_is_grey_zone_decided_by_ai_only_when_available(c
     EventService(ctx, no).run()
     assert events_of(ctx) == [] and len(no.calls) == 1 and "Im Zweifel false" in no.calls[0]["system"]
     yes = FakeGateway({"paare": [{"id": 0, "gleich": True}]})
+    EventService(ctx, yes).run()  # 0.122.1: Antwort gespeichert – dasselbe Paar wird nicht erneut gefragt
+    assert events_of(ctx) == [] and yes.calls == []
+    ctx.db.x("DELETE FROM news_event_verdict")
     EventService(ctx, yes).run()
-    assert events_of(ctx) == [{d, e}]
+    assert events_of(ctx) == [{d, e}] and len(yes.calls) == 1
     assert ctx.db.scalar("SELECT method FROM news_event_item WHERE item_id=?", (e,)) in ("llm",) or ctx.db.scalar(
         "SELECT COUNT(*) FROM news_event_item WHERE method='llm'") >= 1
     bad = FakeGateway("kein json")
     ctx.db.x("DELETE FROM news_event")
+    ctx.db.x("DELETE FROM news_event_verdict")
     EventService(ctx, bad).run()  # kaputte KI-Antwort: Grenzfall bleibt getrennt, nichts bricht
     assert events_of(ctx) == []
 
