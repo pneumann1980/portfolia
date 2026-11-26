@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import functools
 import json
 import logging
 import sqlite3
 import threading
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 from app.analytics.history import History, compute_history, persist_snapshots
 from app.analytics.valuation import FlowValuer, Valuation, latest_update_time, net_invested, value_positions
@@ -32,6 +33,7 @@ from app.prices.service import PriceService
 from app.prices.store import PriceStore
 from app.prices.yahoo import YahooProvider
 from app.settings_store import Settings
+from app.util import reqtiming
 from app.util.http import Quota, SourceGuard, make_client
 from app.util.timeutil import iso, today_local
 
@@ -58,6 +60,19 @@ def _revs(c: Any) -> tuple[str, str]:
         return "", ""
     rev = ",".join(f"{r[0]}:{r[1]}" for r in rows)
     return rev, next((str(r[1]) for r in rows if r[0] == "imports"), "")
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _timed(fn: Callable[_P, _R]) -> Callable[_P, _R]:  # noqa: UP047 – Syntax muss auch unter 3.11 laufen
+    """Zeitanteil „Portfolio/Bewertung“ eines Seitenaufrufs (0.122.2, nur gemessen, wenn die Seite gemessen wird)."""
+    @functools.wraps(fn)
+    def wrapper(*a: _P.args, **k: _P.kwargs) -> _R:
+        with reqtiming.measure("portfolio"):
+            return fn(*a, **k)
+    return wrapper
 
 
 class AppContext:
@@ -254,6 +269,7 @@ class AppContext:
                 self._rec = (key, pf)
         return pf
 
+    @_timed
     def portfolio(self) -> Portfolio | None:
         """Erfasste Buchungen plus Sparplan-Schätzungen (``Tx.flag`` = estimated) – Grundlage aller Ansichten."""
         with self.read_state() as st:
@@ -355,6 +371,7 @@ class AppContext:
             fiat_off=bool(self.settings.get("ledger.fiat_off", False)),
         )
 
+    @_timed
     def ledger(self, scope: str | None = None, opts: EngineOptions | None = None) -> LedgerResult | None:
         with self.read_state() as st:
             pf = self.portfolio()  # öffentliche Schnittstelle; teilt den Lesestand
@@ -411,6 +428,7 @@ class AppContext:
             return frozenset({name}), name
         return None, None
 
+    @_timed
     def valuation(self, selector: str | None = None) -> Valuation | None:
         # prozesslokale Zähler *vor* dem Lesestand lesen: ein Eintrag ist höchstens neuer als sein Schlüssel, nie älter
         versions = (self.prices.version, self.settings.version, self.history_version)
@@ -436,6 +454,7 @@ class AppContext:
                     self._vals[key] = v
             return v
 
+    @_timed
     def history(self) -> History | None:
         versions = (self.history_version, self.settings.version, today_local())  # vor dem Lesestand (s. valuation)
         with self.read_state() as st:

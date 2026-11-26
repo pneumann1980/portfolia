@@ -96,6 +96,12 @@ def manual_priority() -> Iterator[None]:
         AI_PRIORITY.reset(tok)
 
 
+ERROR_KINDS = {"quota": "Kontingent erschöpft (429)",
+               "unavailable": "nicht erreichbar / Zeitüberschreitung / Serverfehler",
+               "rejected": "Anfrage abgelehnt (Inhalt/Format)", "rejected_model": "Modell abgelehnt",
+               "rejected_access": "Zugang abgelehnt (Schlüssel/Berechtigung)", "error": "sonstiger Fehler"}
+
+
 class AiError(Exception):
     """Basisklasse; ``code`` = stabiler Kurzcode, ``text`` = bereinigte Meldung für Protokoll und Oberfläche."""
 
@@ -567,6 +573,34 @@ class AiGateway:
         for m in set(GEMINI_MODELS) | set(self.models_in_use()):
             self.db.set_state(f"ai.pause.gemini:{m}", None)
 
+    def _error_kind(self, provider: str, model: str, task: str, e: AiError) -> None:
+        """Fehler nach Art zählen (0.122.2) – mit dem letzten bereinigten Fehlertext (nie Inhalte oder Schlüssel)."""
+        code = e.code if e.code in ERROR_KINDS else "error"
+        if code == "rejected" and getattr(e, "scope", "") in ("access", "model"):
+            code = f"rejected_{e.scope}"  # type: ignore[attr-defined]
+        try:
+            self.db.x("INSERT INTO ai_error(day, model, task, code, n, last_text, last_at) VALUES (?,?,?,?,1,?,?) "
+                      "ON CONFLICT(day, model, task, code) DO UPDATE SET n=n+1, last_text=excluded.last_text, "
+                      "last_at=excluded.last_at",
+                      (self.day_key(provider), model or provider, task or "news", code, (e.text or "")[:200],
+                       iso(datetime.now(UTC))))
+        except Exception as ex:  # Zählen darf den eigentlichen Fehlerpfad nie stören
+            log.debug("KI-Fehlerart nicht gespeichert: %s", ex)
+
+    def errors_today(self) -> list[dict[str, Any]]:
+        """Fehler des laufenden Tages nach Art, häufigste zuerst: Art, Bezeichnung, Anzahl, Aufgaben, letzter Text."""
+        rows = self.db.q("SELECT code, task, n, last_text, last_at FROM ai_error WHERE day=? ORDER BY n DESC",
+                         (self.day_key(self.provider_name()),))
+        out: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            g = out.setdefault(r["code"], {"code": r["code"], "label": ERROR_KINDS.get(r["code"], ERROR_KINDS["error"]),
+                                           "n": 0, "tasks": {}, "last_text": "", "last_at": ""})
+            g["n"] += int(r["n"])
+            g["tasks"][r["task"]] = g["tasks"].get(r["task"], 0) + int(r["n"])
+            if str(r["last_at"] or "") > g["last_at"]:
+                g["last_text"], g["last_at"] = r["last_text"] or "", str(r["last_at"] or "")
+        return sorted(out.values(), key=lambda g: -g["n"])
+
     def last_error(self) -> str:
         st = self.db.get_state("ai.last_error")
         return str(st.get("text", "")) if isinstance(st, dict) else ""
@@ -625,7 +659,9 @@ class AiGateway:
         after = llm.usage_today()
         if not text:
             self._error("Claude: keine verwertbare Antwort (Fehler, Rate-Limit oder Ablehnung)")
-            raise AiUnavailable("Claude: keine Antwort")
+            err = AiUnavailable("Claude: keine verwertbare Antwort (Fehler, Rate-Limit oder Ablehnung)")
+            self._error_kind("claude", "claude", "news", err)
+            raise err
         self._ok()
         return AiResult(text, after[0] - before[0], after[1] - before[1], "claude", self.model_for("news"))
 
@@ -672,6 +708,7 @@ class AiGateway:
             except QuotaExceeded as e:
                 slot[1] = 0
                 settle(ok=False, quota=True)
+                self._error_kind("gemini", model, task, e)
                 self._learn(model, e.limits)
                 if e.scope == "day":
                     until = next_pacific_midnight()
@@ -683,6 +720,7 @@ class AiGateway:
             except AiError as e:
                 slot[1] = 0
                 settle(ok=False)
+                self._error_kind("gemini", model, task, e)
                 self._error(e.text)
                 if isinstance(e, AiRejected) and e.scope == "access":
                     self._pause("gemini", datetime.now(UTC) + timedelta(minutes=30), e.text, scope="access")
@@ -791,7 +829,7 @@ class AiGateway:
                 "requests_left": self.requests_left(), "paused_until": self.paused_until(p),
                 "last_error": self.last_error(), "day": self.day_key(p), "profile": self.profile(),
                 "profile_label": PROFILES[self.profile()]["label"], "tasks": self.task_status(),
-                "access_paused": self.access_paused(p)}
+                "access_paused": self.access_paused(p), "errors_today": self.errors_today()}
 
 
 def parse_json(text: str) -> Any:

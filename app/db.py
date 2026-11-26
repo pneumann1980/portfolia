@@ -12,6 +12,8 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
+from app.util import reqtiming
+
 log = logging.getLogger(__name__)
 
 def fallback(what: str, exc: BaseException, *, quiet: bool = False) -> None:
@@ -1376,6 +1378,20 @@ CREATE TABLE IF NOT EXISTS news_event_verdict (
 );
 CREATE INDEX IF NOT EXISTS ix_news_event_verdict_b ON news_event_verdict(b);
 """),
+    (48, """
+-- 0.122.2: KI-Fehler nach Art (Kontingent, nicht erreichbar, abgelehnt, sonstige) je Tag, Modell und Aufgabe – mit
+-- dem letzten (bereinigten) Fehlertext. Bisher zählte ai_model_usage nur „Fehler“ ohne Art.
+CREATE TABLE IF NOT EXISTS ai_error (
+  day       TEXT NOT NULL,
+  model     TEXT NOT NULL,
+  task      TEXT NOT NULL,
+  code      TEXT NOT NULL,
+  n         INTEGER NOT NULL DEFAULT 0,
+  last_text TEXT,
+  last_at   TEXT,
+  PRIMARY KEY (day, model, task, code)
+);
+"""),
 ]
 
 
@@ -1547,6 +1563,7 @@ class Database:
     # -- Helfer -----------------------------------------------------------------------------
     def _slow(self, sql: str, t0: float) -> None:
         dt = time.perf_counter() - t0
+        reqtiming.add("db", dt)  # 0.122.2: Datenbankanteil des laufenden Seitenaufrufs (sonst wirkungslos)
         if dt >= SLOW_SQL_S:
             # nur die ersten Zeichen der Anweisung, nie die Parameter (können Eingaben enthalten)
             log.warning("Langsame Datenbankanweisung (%d ms, Thread %s): %s", round(dt * 1000),

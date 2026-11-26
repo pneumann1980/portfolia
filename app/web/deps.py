@@ -13,11 +13,13 @@ from app import health
 from app.context import AppContext
 from app.db import fallback
 from app.progress import view as progress_view
+from app.util import reqtiming
 
 log = logging.getLogger(__name__)
 
 
 def get_ctx(request: Request) -> AppContext:
+    reqtiming.handler_started()  # 0.122.2: Beginn der Bearbeitung (Warteschlange davor, Rechenzeit ab hier)
     return request.app.state.ctx
 
 
@@ -140,4 +142,7 @@ def render(request: Request, template: str, status_code: int = 200, **kw: Any) -
         "tx_recheck": _recheck_lookup(ctx),
     }
     base.update(kw)
-    return tpl.TemplateResponse(request, template, base, status_code=status_code)
+    with reqtiming.measure("render"):
+        resp = tpl.TemplateResponse(request, template, base, status_code=status_code)
+    reqtiming.rendered()
+    return resp

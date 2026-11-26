@@ -24,6 +24,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.logging_setup import request_id
+from app.util import reqtiming
 
 log = logging.getLogger("app.web")
 SLOW_S = 1.0
@@ -31,16 +32,27 @@ SLOW_S = 1.0
 _TIMED: tuple[tuple[str, re.Pattern[str]], ...] = (("news", re.compile(r"^/news/?$")),
                                                      ("img", re.compile(r"^/img/news/\d+$")))
 _timings: dict[str, deque[float]] = {k: deque(maxlen=200) for k, _ in _TIMED}
+# 0.122.2: Zeitanteile je Aufruf (Warteschlange, Rechenzeit, Datenbank, Portfolio, Seitenaufbau) – app.util.reqtiming
+_parts: dict[str, deque[dict[str, float]]] = {k: deque(maxlen=200) for k, _ in _TIMED}
+
+
+def _stats(xs: list[float]) -> dict[str, Any]:
+    xs = sorted(xs)
+    n = len(xs)
+    return {"n": n, "median": xs[n // 2] if n else None, "p95": xs[min(n - 1, int(n * 0.95))] if n else None,
+            "max": xs[-1] if n else None}
 
 
 def timings() -> dict[str, dict[str, Any]]:
-    """Median, 95. Perzentil und Höchstwert (ms) der letzten bis zu 200 Aufrufe je Gruppe seit dem Start."""
+    """Median, 95. Perzentil und Höchstwert (ms) der letzten bis zu 200 Aufrufe je Gruppe seit dem Start; dazu je
+    Zeitanteil der Median (``parts``) und die Anteile des langsamsten Aufrufs (``slowest``)."""
     out: dict[str, dict[str, Any]] = {}
     for key, values in _timings.items():
-        xs = sorted(values)
-        n = len(xs)
-        out[key] = {"n": n, "median": xs[n // 2] if n else None,
-                    "p95": xs[min(n - 1, int(n * 0.95))] if n else None, "max": xs[-1] if n else None}
+        out[key] = _stats(list(values))
+        rows = list(_parts[key])
+        if rows:
+            out[key]["parts"] = {p: _stats([r[p] for r in rows if p in r])["median"] for p in reqtiming.PARTS}
+            out[key]["slowest"] = max(rows, key=lambda r: r.get("total", 0.0))
     return out
 # Dauerabfragen der Oberfläche (htmx-Polling): im Modus „all“ nicht einzeln protokollieren
 _QUIET = re.compile(r"^(/healthz|/static/|/sw\.js|/favicon).*|.*/(live|progress|status|batch-progress)(/.*)?$")
@@ -88,6 +100,8 @@ class AccessLogMiddleware:
             return
         rid = secrets.token_hex(3)
         token = request_id.set(rid)
+        timed = next((k for k, rx in _TIMED if rx.match(scope.get("path", "")) and scope.get("method") == "GET"), None)
+        rt = reqtiming.begin() if timed else None
         scope.setdefault("state", {})["rid"] = rid
         t0 = time.perf_counter()
         status = 0
@@ -110,6 +124,10 @@ class AccessLogMiddleware:
         else:
             self._log_done(scope, rid, status, size, time.perf_counter() - t0)
         finally:
+            if rt is not None:
+                parts = reqtiming.end(rt)
+                if parts is not None and timed is not None and status < 400:
+                    _parts[timed].append({**parts, "total": round((time.perf_counter() - t0) * 1000, 1)})
             request_id.reset(token)
 
     def _target(self, scope: Scope) -> tuple[str, str]:
